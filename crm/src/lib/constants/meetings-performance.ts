@@ -1,0 +1,1 @@
+export const MEETINGS_LIST_LIMIT = 150

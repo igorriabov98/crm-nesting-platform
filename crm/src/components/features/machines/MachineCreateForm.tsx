@@ -1,0 +1,958 @@
+﻿'use client'
+
+import { useEffect, useState, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useForm, useFieldArray, useWatch, type FieldPath, type Resolver } from 'react-hook-form'
+import { Trash2, Plus } from 'lucide-react'
+import { toast } from 'sonner'
+import { ROUTES } from '@/lib/constants/routes'
+import { COATINGS } from '@/lib/constants/coatings'
+import { createMachineSchema, type CreateMachineInput } from '@/lib/types/schemas'
+import { createMachine } from '@/app/(protected)/sales-plan/actions'
+import type { ProductOption } from '@/lib/actions/products'
+import type { Client, FactorySummary } from '@/lib/types'
+import { ClientCreateDialog } from '@/components/features/clients/ClientCreateDialog'
+import { paymentTermsLabel } from '@/components/features/clients/ClientFormFields'
+import { getFactoryWorkshopOptionsById } from '@/lib/constants/factory-workshops'
+import { getProductionMonthOptions, monthStartValue } from '@/lib/utils/production-months'
+
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { LoadingButton } from '@/components/ui/loading-button'
+import { Switch } from '@/components/ui/switch'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { DatePicker } from '@/components/ui/date-picker'
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Неизвестная ошибка'
+}
+
+function toNumberInputValue(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : ''
+}
+
+function parseNumberInput(value: string) {
+  if (value === '') return undefined
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function parseIntegerInput(value: string) {
+  if (value === '') return undefined
+  const numberValue = Number.parseInt(value, 10)
+  return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function toFiniteNumber(value: unknown, fallback = 0) {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : fallback
+}
+
+export function MachineCreateForm({ clients: initialClients, factories, products }: { clients: Client[]; factories: FactorySummary[]; products: ProductOption[] }) {
+  const router = useRouter()
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [clients, setClients] = useState(initialClients)
+  const [isClientDialogOpen, setIsClientDialogOpen] = useState(false)
+  
+  const form = useForm<CreateMachineInput>({
+    resolver: zodResolver(createMachineSchema) as unknown as Resolver<CreateMachineInput>,
+    defaultValues: {
+      name: '',
+      client_id: '',
+      is_confirmed: false,
+      desired_shipping_date: undefined,
+      production_month: monthStartValue(),
+      factory_id: '',
+      production_workshop: undefined,
+      items: [],
+      samples: [],
+      expenses: []
+    },
+  })
+
+  const { fields: itemFields, append: appendItem, remove: removeItem } = useFieldArray({
+    control: form.control,
+    name: "items"
+  })
+
+  const { fields: expenseFields, append: appendExpense, remove: removeExpense } = useFieldArray({
+    control: form.control,
+    name: "expenses"
+  })
+
+  const { fields: sampleFields, append: appendSample, remove: removeSample } = useFieldArray({
+    control: form.control,
+    name: "samples"
+  })
+
+  const watchedItems = useWatch({
+    control: form.control,
+    name: "items",
+    defaultValue: []
+  })
+
+  const watchedSamples = useWatch({
+    control: form.control,
+    name: "samples",
+    defaultValue: []
+  })
+  
+  const watchedExpenses = useWatch({
+    control: form.control,
+    name: "expenses",
+    defaultValue: []
+  })
+
+  const selectedClientId = useWatch({
+    control: form.control,
+    name: 'client_id',
+  })
+
+  const selectedClient = useMemo(
+    () => clients.find((client) => client.id === selectedClientId) || null,
+    [clients, selectedClientId],
+  )
+
+  const selectedFactoryId = useWatch({
+    control: form.control,
+    name: 'factory_id',
+  })
+
+  const selectedWorkshop = useWatch({
+    control: form.control,
+    name: 'production_workshop',
+  })
+
+  const workshopOptions = useMemo(
+    () => getFactoryWorkshopOptionsById(factories, selectedFactoryId),
+    [factories, selectedFactoryId],
+  )
+  const productionMonthOptions = useMemo(() => getProductionMonthOptions(), [])
+
+  useEffect(() => {
+    if (!selectedFactoryId) {
+      form.setValue('production_workshop', undefined)
+      return
+    }
+
+    if (workshopOptions.length === 1) {
+      form.setValue('production_workshop', workshopOptions[0].value)
+      return
+    }
+
+    if (selectedWorkshop && !workshopOptions.some((option) => option.value === selectedWorkshop)) {
+      form.setValue('production_workshop', undefined)
+    }
+  }, [form, selectedFactoryId, selectedWorkshop, workshopOptions])
+
+  const totals = useMemo(() => {
+    const itemWeight = (watchedItems || []).reduce((acc, item) => acc + (toFiniteNumber(item.weight) * toFiniteNumber(item.quantity, 1)), 0)
+    const sampleWeight = (watchedSamples || []).reduce((acc, item) => acc + (toFiniteNumber(item.weight) * toFiniteNumber(item.quantity, 1)), 0)
+    const itemsCost = (watchedItems || []).reduce((acc, item) => acc + (toFiniteNumber(item.price) * toFiniteNumber(item.quantity, 1)), 0)
+    const samplesCost = (watchedSamples || []).reduce((acc, item) => acc + (toFiniteNumber(item.price) * toFiniteNumber(item.quantity, 1)), 0)
+    const expensesCost = (watchedExpenses || []).reduce((acc, exp) => acc + toFiniteNumber(exp.amount), 0)
+    return {
+      totalWeight: (itemWeight + sampleWeight) / 1000,
+      itemsCost,
+      samplesCost,
+      expensesCost,
+      totalCost: itemsCost + samplesCost + expensesCost
+    }
+  }, [watchedItems, watchedSamples, watchedExpenses])
+
+  // Уникальные RAL для автодополнения (можно использовать <datalist>)
+  const uniqueRals = useMemo(() => {
+    const rals = new Set<string>()
+    ;[...(watchedItems || []), ...(watchedSamples || [])].forEach(i => {
+      if (i.coating === 'powder_coating' && i.ral_number) rals.add(i.ral_number)
+    })
+    return Array.from(rals)
+  }, [watchedItems, watchedSamples])
+
+  function rowPath(name: 'items' | 'samples', index: number, field: keyof NonNullable<CreateMachineInput['items']>[number]) {
+    return `${name}.${index}.${field}` as FieldPath<CreateMachineInput>
+  }
+
+  function setRowValue(name: 'items' | 'samples', index: number, field: keyof NonNullable<CreateMachineInput['items']>[number], value: unknown) {
+    form.setValue(rowPath(name, index, field), value as never)
+  }
+
+  function getRowValue(name: 'items' | 'samples', index: number, field: keyof NonNullable<CreateMachineInput['items']>[number]) {
+    return form.getValues(rowPath(name, index, field)) as unknown
+  }
+
+  function applyProductToRow(name: 'items' | 'samples', index: number, productId: string) {
+    const product = products.find((item) => item.id === productId)
+    if (!product) return
+    const quantity = toFiniteNumber(getRowValue(name, index, 'quantity'), 1)
+    setRowValue(name, index, 'product_id', product.id)
+    setRowValue(name, index, 'drawing_number', product.drawing_number)
+    setRowValue(name, index, 'product_name', product.name_uk)
+    setRowValue(name, index, 'product_name_uk', product.name_uk)
+    setRowValue(name, index, 'product_name_en', product.name_en)
+    setRowValue(name, index, 'product_uktzed', product.uktzed)
+    setRowValue(name, index, 'product_drawing_number', product.drawing_number)
+    setRowValue(name, index, 'product_characteristics', product.characteristics)
+    setRowValue(name, index, 'weight', Number(product.unit_weight_kg))
+    setRowValue(name, index, 'net_weight', Number((Number(product.unit_weight_kg) * quantity).toFixed(3)))
+    setRowValue(name, index, 'price', Number(product.base_price_eur))
+  }
+
+  function updateQuantity(name: 'items' | 'samples', index: number, quantity: number | undefined) {
+    const unitWeight = toFiniteNumber(getRowValue(name, index, 'weight'))
+    setRowValue(name, index, 'net_weight', quantity ? Number((unitWeight * quantity).toFixed(3)) : undefined)
+  }
+
+  async function onSubmit(data: CreateMachineInput) {
+    setIsSubmitting(true)
+    try {
+      const payload: CreateMachineInput = {
+        ...data,
+        items: [
+          ...(data.items || []).map((item) => ({ ...item, is_sample: false })),
+          ...(data.samples || []).map((item) => ({ ...item, is_sample: true })),
+        ],
+        samples: [],
+      }
+      const res = await createMachine(payload)
+      if (!res.success) throw new Error(res.error || 'Не удалось создать машину')
+      
+      toast.success('Машина успешно создана')
+      router.push(ROUTES.SALES_PLAN)
+      router.refresh()
+    } catch (e: unknown) {
+      toast.error(getErrorMessage(e))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <Card className="max-w-4xl bg-white border-[#E8ECF0] mx-auto">
+      <CardHeader>
+        <CardTitle className="text-[#1B3A6B] text-xl">Создание машины</CardTitle>
+        <CardDescription className="text-[#6B7280]">
+          Машина состоит из товаров и формирует производственные этапы автоматически. 
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+            
+            <div className="grid gap-4 md:grid-cols-2 max-w-2xl">
+              <FormField
+                control={form.control}
+                name="client_id"
+                render={({ field }) => (
+                  <FormItem className="md:col-span-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <FormLabel className="text-[#374151]">Клиент *</FormLabel>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setIsClientDialogOpen(true)}>
+                        <Plus className="mr-1 h-4 w-4" />
+                        Новый клиент
+                      </Button>
+                    </div>
+                    <Select
+                      value={field.value || ''}
+                      onValueChange={(value) => {
+                        field.onChange(value)
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
+                          <SelectValue placeholder="Выберите компанию" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {clients.map((client) => (
+                          <SelectItem key={client.id} value={client.id}>
+                            {client.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedClient && (
+                      <p className="text-xs text-[#6B7280]">
+                        {selectedClient.primary_contact_name || 'Контакт не указан'} · {paymentTermsLabel(selectedClient.payment_terms_type, selectedClient.payment_due_days, selectedClient.prepayment_percent, selectedClient.final_payment_due_days)}
+                      </p>
+                    )}
+                    <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[#374151]">Название машины *</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Например: ТН-1400" {...field} className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]" />
+                    </FormControl>
+                    <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="production_month"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[#374151]">Месяц производства *</FormLabel>
+                    <Select value={field.value || ''} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
+                          <SelectValue placeholder="Выберите месяц" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {productionMonthOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="factory_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[#374151]">Завод *</FormLabel>
+                    <Select value={field.value || ''} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
+                          <SelectValue placeholder="Выберите завод" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {factories.map((factory) => (
+                          <SelectItem key={factory.id} value={factory.id}>
+                            {factory.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="production_workshop"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[#374151]">Цех *</FormLabel>
+                    <Select
+                      value={field.value ? String(field.value) : ''}
+                      onValueChange={(value) => field.onChange(Number(value))}
+                      disabled={!selectedFactoryId}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
+                          <SelectValue placeholder={selectedFactoryId ? 'Выберите цех' : 'Сначала выберите завод'} />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {workshopOptions.map((option) => (
+                          <SelectItem key={option.value} value={String(option.value)}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="is_confirmed"
+                render={({ field }) => (
+                  <FormItem className="flex h-full flex-row items-center justify-between rounded-md border border-[#E8ECF0] bg-[#F8F9FA] px-3 py-2">
+                    <div>
+                      <FormLabel className="text-[#374151]">Подтверждена</FormLabel>
+                      <p className="text-xs text-[#6B7280]">
+                        Машина готова к планированию и производству
+                      </p>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value || false}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="material_type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[#374151]">Тип материала</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || 'undefined'}>
+                      <FormControl>
+                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
+                          <SelectValue placeholder="Выберите материал" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="undefined">Не определён</SelectItem>
+                        <SelectItem value="standard">Стандартный (Черный металл)</SelectItem>
+                        <SelectItem value="non_standard">Нестандартный (Нержавейка)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name="desired_shipping_date"
+              render={({ field }) => (
+                <FormItem className="max-w-xs">
+                  <FormLabel className="text-[#374151]">Желаемая дата отгрузки</FormLabel>
+                  <FormControl>
+                    <DatePicker
+                      value={field.value ? new Date(field.value) : undefined}
+                      onChange={(date) => field.onChange(date ? date.toISOString().split('T')[0] : undefined)}
+                      placeholder="Выберите дату"
+                      displayFormat="dd.MM.yyyy"
+                    />
+                  </FormControl>
+                  <p className="text-xs text-[#6B7280]">До какой даты клиент хочет получить машину</p>
+                  <FormMessage className="text-[#DC2626]" />
+                </FormItem>
+              )}
+            />
+
+            {/* ТОВАРЫ */}
+            <div className="space-y-4">
+              <div className="border-b pb-2">
+                <h3 className="text-lg font-semibold text-[#1B3A6B]">Товары</h3>
+                <p className="text-sm text-[#6B7280]">Необязательно. Машину можно создать пустой и заполнить позже.</p>
+              </div>
+              {itemFields.map((field, index) => {
+                const coatingValue = watchedItems?.[index]?.coating || 'none'
+                
+                return (
+                  <Card key={field.id} className="p-4 bg-[#F8F9FA] border-[#E8ECF0] relative">
+                    <div className="absolute top-2 right-2">
+                      <Button 
+                        type="button" 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={() => removeItem(index)}
+                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 pr-10">
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.product_id`}
+                        render={({ field }) => (
+                          <FormItem className="md:col-span-2 lg:col-span-4">
+                            <FormLabel className="text-xs">Товар из базы продукции *</FormLabel>
+                            <Select value={field.value || ''} onValueChange={(value) => applyProductToRow('items', index, value || '')}>
+                              <FormControl>
+                                <SelectTrigger className="h-9 bg-white">
+                                  <SelectValue placeholder="Выберите активный продукт" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {products.map((product) => (
+                                  <SelectItem key={product.id} value={product.id}>
+                                    {product.name_uk} · {product.uktzed} · {product.drawing_number}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.drawing_number`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Чертёж *</FormLabel>
+                            <FormControl><Input {...field} disabled className="h-8 text-sm bg-white text-[#6B7280]" placeholder="Выберите продукт" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.product_name`}
+                        render={({ field }) => (
+                          <FormItem className="lg:col-span-2">
+                            <FormLabel className="text-xs">Часть / Наименование товара *</FormLabel>
+                            <FormControl><Input {...field} disabled className="h-8 text-sm bg-white text-[#6B7280]" placeholder="Выберите продукт" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.coating`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Покрытие *</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value || ''}>
+                              <FormControl>
+                                <SelectTrigger className="h-8 text-sm bg-white">
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {Object.entries(COATINGS).map(([val, {label}]) => (
+                                  <SelectItem key={val} value={val}>{label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.weight`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Вес ед. (кг) *</FormLabel>
+                            <FormControl><Input type="number" step="0.01" {...field} value={toNumberInputValue(field.value)} disabled className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.quantity`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Количество *</FormLabel>
+                            <FormControl><Input type="number" {...field} value={toNumberInputValue(field.value)} onChange={e => {
+                              const quantity = parseIntegerInput(e.target.value)
+                              field.onChange(quantity)
+                              updateQuantity('items', index, quantity)
+                            }} className="h-8 text-sm" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.net_weight`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Нетто вес (кг)</FormLabel>
+                            <FormControl><Input type="number" min={0} step="0.001" {...field} value={toNumberInputValue(field.value)} onChange={e => field.onChange(parseNumberInput(e.target.value))} className="h-8 text-sm bg-white" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.price`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Цена ед. (€) *</FormLabel>
+                            <FormControl><Input type="number" step="0.01" {...field} value={toNumberInputValue(field.value)} disabled className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.packing_type`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Тип упаковки</FormLabel>
+                            <FormControl><Input {...field} value={field.value || ''} placeholder="Pack/пачка" className="h-8 text-sm bg-white" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.packing_places`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Кол-во мест</FormLabel>
+                            <FormControl><Input type="number" min={0} {...field} value={toNumberInputValue(field.value)} onChange={e => field.onChange(parseIntegerInput(e.target.value))} className="h-8 text-sm bg-white" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+
+                      {coatingValue === 'powder_coating' && (
+                        <FormField
+                          control={form.control}
+                          name={`items.${index}.ral_number`}
+                          render={({ field }) => (
+                            <FormItem className="animate-in fade-in">
+                              <FormLabel className="text-xs text-orange-500">RAL</FormLabel>
+                              <FormControl>
+                                <Input 
+                                  {...field} 
+                                  list="ral-options"
+                                  className="h-8 text-sm border-orange-200" 
+                                  placeholder="9005" 
+                                />
+                              </FormControl>
+                              <FormMessage className="text-[10px] text-[#DC2626]" />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+
+                    </div>
+                  </Card>
+                )
+              })}
+              
+              <datalist id="ral-options">
+                {uniqueRals.map(r => <option key={r} value={r} />)}
+              </datalist>
+
+              <Button 
+                type="button" 
+                variant="outline" 
+                size="sm" 
+                className="mt-2 text-[#1B3A6B]"
+                onClick={() => appendItem({ product_id: null, drawing_number: '', product_name: '', weight: 0, net_weight: 0, price: 0, quantity: 1, packing_type: '', packing_places: undefined, coating: 'none', ral_number: '' })}
+              >
+                <Plus className="w-4 h-4 mr-1" /> Добавить товар
+              </Button>
+            </div>
+
+            {/* SAMPLES */}
+            <div className="space-y-4 pt-4 border-t border-[#E8ECF0]">
+              <div>
+                <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Образцы</h3>
+                <p className="mt-2 text-sm text-[#6B7280]">
+                  Образцы учитываются в общем весе, стоимости и требованиях к покрытию.
+                </p>
+              </div>
+              {sampleFields.map((field, index) => {
+                const coatingValue = watchedSamples?.[index]?.coating || 'none'
+
+                return (
+                  <Card key={field.id} className="p-4 bg-amber-50/60 border-amber-200 relative">
+                    <div className="absolute top-2 right-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeSample(index)}
+                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 pr-10">
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.product_id`}
+                        render={({ field }) => (
+                          <FormItem className="md:col-span-2 lg:col-span-4">
+                            <FormLabel className="text-xs">Товар из базы продукции *</FormLabel>
+                            <Select value={field.value || ''} onValueChange={(value) => applyProductToRow('samples', index, value || '')}>
+                              <FormControl>
+                                <SelectTrigger className="h-9 bg-white">
+                                  <SelectValue placeholder="Выберите активный продукт" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {products.map((product) => (
+                                  <SelectItem key={product.id} value={product.id}>
+                                    {product.name_uk} · {product.uktzed} · {product.drawing_number}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.drawing_number`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Чертёж *</FormLabel>
+                            <FormControl><Input {...field} disabled className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.product_name`}
+                        render={({ field }) => (
+                          <FormItem className="lg:col-span-2">
+                            <FormLabel className="text-xs">Товар *</FormLabel>
+                            <FormControl><Input {...field} disabled className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.coating`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Покрытие *</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value || ''}>
+                              <FormControl>
+                                <SelectTrigger className="h-8 text-sm bg-white"><SelectValue /></SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {Object.entries(COATINGS).map(([val, { label }]) => (
+                                  <SelectItem key={val} value={val}>{label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.weight`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Вес ед. (кг) *</FormLabel>
+                            <FormControl><Input type="number" step="0.01" {...field} value={toNumberInputValue(field.value)} disabled className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.quantity`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Кол-во *</FormLabel>
+                            <FormControl><Input type="number" {...field} value={toNumberInputValue(field.value)} onChange={e => {
+                              const quantity = parseIntegerInput(e.target.value)
+                              field.onChange(quantity)
+                              updateQuantity('samples', index, quantity)
+                            }} className="h-8 text-sm" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.net_weight`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Нетто вес (кг)</FormLabel>
+                            <FormControl><Input type="number" min={0} step="0.001" {...field} value={toNumberInputValue(field.value)} onChange={e => field.onChange(parseNumberInput(e.target.value))} className="h-8 text-sm bg-white" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.price`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Цена ед. (€) *</FormLabel>
+                            <FormControl><Input type="number" step="0.01" {...field} value={toNumberInputValue(field.value)} disabled className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.packing_type`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Тип упаковки</FormLabel>
+                            <FormControl><Input {...field} value={field.value || ''} placeholder="Pack/пачка" className="h-8 text-sm bg-white" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`samples.${index}.packing_places`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Кол-во мест</FormLabel>
+                            <FormControl><Input type="number" min={0} {...field} value={toNumberInputValue(field.value)} onChange={e => field.onChange(parseIntegerInput(e.target.value))} className="h-8 text-sm bg-white" /></FormControl>
+                            <FormMessage className="text-[10px] text-[#DC2626]" />
+                          </FormItem>
+                        )}
+                      />
+                      {coatingValue === 'powder_coating' && (
+                        <FormField
+                          control={form.control}
+                          name={`samples.${index}.ral_number`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs text-orange-500">RAL</FormLabel>
+                              <FormControl><Input {...field} list="ral-options" className="h-8 text-sm border-orange-200" /></FormControl>
+                              <FormMessage className="text-[10px] text-[#DC2626]" />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+                    </div>
+                  </Card>
+                )
+              })}
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2 text-[#1B3A6B]"
+                onClick={() => appendSample({ product_id: null, drawing_number: '', product_name: '', weight: 0, net_weight: 0, price: 0, quantity: 1, packing_type: '', packing_places: undefined, coating: 'none', ral_number: '', is_sample: true })}
+              >
+                <Plus className="w-4 h-4 mr-1" /> Добавить образец
+              </Button>
+            </div>
+
+            {/* РАСХОДЫ */}
+            <div className="space-y-4 pt-4 border-t border-[#E8ECF0]">
+              <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Дополнительные расходы</h3>
+              {expenseFields.map((field, index) => (
+                <div key={field.id} className="flex gap-4 items-start">
+                  <FormField
+                    control={form.control}
+                    name={`expenses.${index}.category`}
+                    render={({ field }) => (
+                      <FormItem className="flex-1">
+                        <FormControl><Input {...field} placeholder="Категория расхода" className="h-9" /></FormControl>
+                        <FormMessage className="text-[10px]" />
+                      </FormItem>
+                    )}
+                  />
+                   <FormField
+                    control={form.control}
+                    name={`expenses.${index}.amount`}
+                    render={({ field }) => (
+                      <FormItem className="w-32">
+                        <FormControl><Input type="number" {...field} value={toNumberInputValue(field.value)} onChange={e => field.onChange(parseNumberInput(e.target.value))} placeholder="Сумма" className="h-9" /></FormControl>
+                        <FormMessage className="text-[10px]" />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name={`expenses.${index}.comment`}
+                    render={({ field }) => (
+                      <FormItem className="flex-1">
+                        <FormControl><Input {...field} placeholder="Комментарий" className="h-9" /></FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <Button 
+                    type="button" variant="ghost" size="icon"
+                    onClick={() => removeExpense(index)}
+                    className="text-red-500 mt-0.5"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
+              
+              <Button 
+                type="button" 
+                variant="outline" 
+                size="sm" 
+                className="mt-2 text-[#1B3A6B]"
+                onClick={() => appendExpense({ category: '', amount: 0, comment: '' })}
+              >
+                <Plus className="w-4 h-4 mr-1" /> Добавить расход
+              </Button>
+            </div>
+
+            {/* ИТОГОВАЯ ПАНЕЛЬ */}
+            <div className="bg-[#1B3A6B]/5 p-4 rounded-lg flex flex-wrap gap-8 items-center border border-[#1B3A6B]/10">
+              <div>
+                <p className="text-sm text-gray-500">Общий вес</p>
+                <p className="text-xl font-semibold text-[#1B3A6B]">{totals.totalWeight.toFixed(2)} т</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Стоимость товаров</p>
+                <p className="text-xl font-semibold text-[#1B3A6B]">€{totals.itemsCost.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Образцы</p>
+                <p className="text-xl font-semibold text-[#1B3A6B]">€{totals.samplesCost.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Доп. расходы</p>
+                <p className="text-xl font-semibold text-[#1B3A6B]">€{totals.expensesCost.toLocaleString()}</p>
+              </div>
+              <div className="ml-auto text-right">
+                <p className="text-sm text-[#16A34A] font-medium">ИТОГО</p>
+                <p className="text-2xl font-bold text-[#16A34A]">€{totals.totalCost.toLocaleString()}</p>
+              </div>
+            </div>
+
+            <div className="flex w-full justify-end gap-4 pt-6">
+              <Link href={ROUTES.SALES_PLAN}>
+                <Button type="button" variant="outline" disabled={isSubmitting}>
+                  Отмена
+                </Button>
+              </Link>
+              <LoadingButton type="submit" loading={isSubmitting} className="bg-[#1B3A6B] hover:bg-[#152D54] text-white">
+                Создать машину
+              </LoadingButton>
+            </div>
+          </form>
+        </Form>
+      </CardContent>
+      <ClientCreateDialog
+        open={isClientDialogOpen}
+        onOpenChange={setIsClientDialogOpen}
+        onCreated={(client) => {
+          setClients((current) => [...current, client].sort((a, b) => a.name.localeCompare(b.name)))
+          form.setValue('client_id', client.id)
+        }}
+      />
+    </Card>
+  )
+}
+

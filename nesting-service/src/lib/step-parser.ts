@@ -1,0 +1,321 @@
+import * as fs from 'node:fs';
+import {
+  type BBox3D,
+  type ClassificationMethod,
+  type Point2D,
+  computeBoundingBox,
+  classifySheetMetalV2,
+  convexHull,
+  ensureClockwise,
+  extractBoundaryContour,
+  generateThumbnailSvg,
+  normalizeContour,
+  projectTo2D,
+  simplifyContour,
+} from './geometry';
+import { extractStepOccurrenceNames } from './step-source-names';
+import { normalizeCadText } from './text-encoding';
+
+interface OcctNode {
+  name?: string;
+  meshes?: number[];
+  children?: OcctNode[];
+}
+
+interface OcctMesh {
+  name?: string;
+  attributes?: {
+    position?: {
+      array?: Float32Array | number[];
+    };
+  };
+  index?: {
+    array?: Uint32Array | number[];
+  };
+}
+
+interface OcctResult {
+  success: boolean;
+  root?: OcctNode;
+  meshes?: OcctMesh[];
+  error?: string;
+  message?: string;
+}
+
+export interface ParsedPart {
+  name: string;
+  thickness: number;
+  width: number;
+  height: number;
+  contour: Point2D[];
+  holes: Point2D[][];
+  isSheetMetal: boolean;
+  hasBends: boolean;
+  confidence: number;
+  classificationMethod: ClassificationMethod;
+  classificationWarning: string | null;
+  thumbnailSvg: string;
+  boundingBox: BBox3D;
+}
+
+export interface StepParseResult {
+  success: boolean;
+  parts: ParsedPart[];
+  totalMeshes: number;
+  sheetMetalCount: number;
+  errors: string[];
+  parseTimeMs: number;
+}
+
+let occtInstance: any = null;
+let occtLoading: Promise<any> | null = null;
+
+async function getOcct(): Promise<any> {
+  if (occtInstance) {
+    return occtInstance;
+  }
+
+  if (!occtLoading) {
+    const occtimportjs = require('occt-import-js');
+    occtLoading = occtimportjs().then((loaded: any) => {
+      console.log('[step-parser] OCCT WASM loaded');
+      occtInstance = loaded;
+      return loaded;
+    });
+  }
+
+  return occtLoading;
+}
+
+export async function parseStepFile(filePath: string): Promise<StepParseResult> {
+  const startTime = Date.now();
+  const errors: string[] = [];
+  const parts: ParsedPart[] = [];
+
+  try {
+    const occt = await getOcct();
+    const fileContent = fs.readFileSync(filePath);
+    const fileBytes = new Uint8Array(fileContent.buffer, fileContent.byteOffset, fileContent.byteLength);
+    const result = occt.ReadStepFile(fileBytes, {
+      linearUnit: 'millimeter',
+      linearDeflectionType: 'bounding_box_ratio',
+      linearDeflection: 0.001,
+    }) as OcctResult;
+
+    if (!result.success && isStepContainerWithoutGeometry(fileContent)) {
+      return {
+        success: true,
+        parts: [],
+        totalMeshes: 0,
+        sheetMetalCount: 0,
+        errors: ['STEP file contains no geometry bodies.'],
+        parseTimeMs: Date.now() - startTime,
+      };
+    }
+
+    if (!result.success) {
+      return {
+        success: false,
+        parts: [],
+        totalMeshes: 0,
+        sheetMetalCount: 0,
+        errors: [extractOcctError(result)],
+        parseTimeMs: Date.now() - startTime,
+      };
+    }
+
+    const meshes = result.meshes ?? [];
+    const sourceMeshNames = extractStepOccurrenceNames(fileContent);
+    const meshNames = extractMeshNames(result.root);
+
+    for (let i = 0; i < meshes.length; i += 1) {
+      const mesh = meshes[i];
+
+      try {
+        const part = processMesh(mesh, i, meshNames, sourceMeshNames, errors);
+        if (part) {
+          parts.push(part);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`Mesh #${i + 1} (${mesh.name ?? 'unnamed'}): ${message}`);
+      }
+    }
+
+    return {
+      success: true,
+      parts,
+      totalMeshes: meshes.length,
+      sheetMetalCount: parts.filter((part) => part.isSheetMetal).length,
+      errors,
+      parseTimeMs: Date.now() - startTime,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    return {
+      success: false,
+      parts: [],
+      totalMeshes: 0,
+      sheetMetalCount: 0,
+      errors: [`Failed to parse STEP file: ${message}`],
+      parseTimeMs: Date.now() - startTime,
+    };
+  }
+}
+
+function extractMeshNames(root: OcctNode | undefined): Map<number, string> {
+  const names = new Map<number, string>();
+
+  function traverse(node: OcctNode, parentName: string): void {
+    const nodeName = node.name || parentName;
+
+    for (const meshIndex of node.meshes ?? []) {
+      if (Number.isInteger(meshIndex) && nodeName) {
+        names.set(meshIndex, nodeName);
+      }
+    }
+
+    for (const child of node.children ?? []) {
+      traverse(child, nodeName);
+    }
+  }
+
+  if (root) {
+    traverse(root, '');
+  }
+
+  return names;
+}
+
+function processMesh(
+  mesh: OcctMesh,
+  index: number,
+  meshNames: Map<number, string>,
+  sourceMeshNames: Map<number, string>,
+  errors: string[]
+): ParsedPart | null {
+  const positionArray = mesh.attributes?.position?.array;
+
+  if (!positionArray || positionArray.length < 9) {
+    return null;
+  }
+
+  const positions = toFloat32Array(positionArray);
+  const indices = mesh.index?.array ? toUint32Array(mesh.index.array) : new Uint32Array();
+  const rawName = sourceMeshNames.get(index) || mesh.name || meshNames.get(index) || `Part_${index + 1}`;
+  const name = normalizeCadText(rawName);
+  const boundingBox = computeBoundingBox(positions);
+  const classification = classifySheetMetalV2(boundingBox, positions, indices.length >= 3 ? indices : null, 0.15);
+  const classificationWarning = classification.warnings.length > 0 ? classification.warnings.join('; ') : null;
+  const holes: Point2D[][] = [];
+  let contour: Point2D[] = [];
+
+  if (classificationWarning) {
+    errors.push(`${name}: ${classificationWarning}`);
+  }
+
+  if (classification.developedBlank) {
+    contour = classification.developedBlank.contour;
+  } else if (classification.isSheetMetal) {
+    try {
+      if (indices.length >= 3) {
+        contour = extractBoundaryContour(positions, indices, classification.projectionAxis);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${name}: exact contour extraction failed (${message}), convex hull fallback used`);
+    }
+  }
+
+  if (contour.length < 3) {
+    const projected = projectTo2D(positions, classification.projectionAxis);
+    contour = convexHull(projected);
+  }
+
+  contour = simplifyContour(contour, classification.isSheetMetal ? 0.5 : 1);
+  contour = normalizeContour(contour);
+  contour = ensureClockwise(contour);
+
+  const { width, height } = getContourSize(contour);
+  const thumbnailSvg = generateThumbnailSvg(contour, holes);
+
+  return {
+    name,
+    thickness: classification.thickness,
+    width,
+    height,
+    contour,
+    holes,
+    isSheetMetal: classification.isSheetMetal,
+    hasBends: classification.hasBends,
+    confidence: classification.confidence,
+    classificationMethod: classification.method,
+    classificationWarning,
+    thumbnailSvg,
+    boundingBox,
+  };
+}
+
+function extractOcctError(result: OcctResult): string {
+  if (result.error) {
+    return result.error;
+  }
+
+  if (result.message) {
+    return result.message;
+  }
+
+  return 'Unable to read STEP file. The file is damaged or uses an unsupported format.';
+}
+
+function isStepContainerWithoutGeometry(fileContent: Buffer): boolean {
+  const content = fileContent.toString('utf8', 0, Math.min(fileContent.length, 2048)).toUpperCase();
+  const hasStepEnvelope =
+    content.includes('ISO-10303-21') &&
+    content.includes('HEADER') &&
+    content.includes('DATA') &&
+    content.includes('END-ISO-10303-21');
+  const dataSection = content.match(/DATA\s*;([\s\S]*?)ENDSEC\s*;/);
+
+  if (!hasStepEnvelope || !dataSection) {
+    return false;
+  }
+
+  const dataBody = dataSection[1].replace(/\s+/g, '');
+  return dataBody.length === 0;
+}
+
+function getContourSize(contour: Point2D[]): { width: number; height: number } {
+  if (contour.length === 0) {
+    return { width: 0, height: 0 };
+  }
+
+  const xs = contour.map((point) => point.x);
+  const ys = contour.map((point) => point.y);
+
+  return {
+    width: roundSize(Math.max(...xs) - Math.min(...xs)),
+    height: roundSize(Math.max(...ys) - Math.min(...ys)),
+  };
+}
+
+function roundSize(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function toFloat32Array(value: Float32Array | number[]): Float32Array {
+  if (value instanceof Float32Array) {
+    return value;
+  }
+
+  return Float32Array.from(Array.from(value));
+}
+
+function toUint32Array(value: Uint32Array | number[]): Uint32Array {
+  if (value instanceof Uint32Array) {
+    return value;
+  }
+
+  return Uint32Array.from(Array.from(value));
+}

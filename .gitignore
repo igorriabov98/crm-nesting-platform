@@ -1,0 +1,37 @@
+# dependencies
+**/node_modules/
+
+# builds
+**/.next/
+**/dist/
+**/build/
+**/out/
+**/*.tsbuildinfo
+
+# runtime data
+**/.runtime/
+**/.pm2/
+**/.pm2-test/
+**/logs/
+**/uploads/
+**/output/
+**/*.log
+
+# env files
+**/.env
+**/.env.*
+!**/.env.example
+
+# local tooling
+**/.vercel/
+**/.supabase/
+**/supabase/.temp/
+**/.DS_Store
+**/*.pem
+
+# codex local artifacts
+**/.codex-*/
+**/.codex-node/
+**/.codex-swc-*/
+**/.codex-*.zip
+**/.codex-*.tgz

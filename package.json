@@ -1,0 +1,13 @@
+{
+  "name": "crm-nesting-platform",
+  "private": true,
+  "workspaces": [
+    "crm",
+    "nesting-service"
+  ],
+  "scripts": {
+    "build": "npm run build:crm && npm run build:nesting",
+    "build:crm": "npm --prefix crm run build",
+    "build:nesting": "npm --prefix nesting-service run build"
+  }
+}

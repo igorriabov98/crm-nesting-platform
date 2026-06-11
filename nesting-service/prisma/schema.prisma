@@ -1,0 +1,223 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["nesting"]
+}
+
+model NestingProject {
+  id           String         @id @default(cuid())
+  orderNumber  String
+  quantity     Int            @default(1)
+  strategy     String         @default("minWaste")
+  status       String         @default("created")
+  errorMessage String?
+  createdBy    String         @default("system")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  stepFileUrl  String?
+  pdfFileUrl   String?
+  inputs       ProjectInput[]
+  parts        Part[]
+  sheets       NestingSheet[]
+  specification ProjectSpecification?
+
+  @@index([orderNumber])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@schema("nesting")
+}
+
+model ProjectInput {
+  id            String         @id @default(cuid())
+  projectId     String
+  project       NestingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceId      String
+  sourceType    String         @default("crm_machine_item")
+  machineId     String?
+  machineName   String?
+  machineItemId String?
+  productId     String?
+  productName   String?
+  drawingNumber String?
+  quantity      Int            @default(1)
+  stepFileUrl   String
+  pdfFileUrl    String?
+  sortOrder     Int            @default(0)
+  parts         Part[]
+  createdAt     DateTime       @default(now())
+
+  @@index([projectId])
+  @@index([sourceId])
+  @@schema("nesting")
+}
+
+model Part {
+  id           String         @id @default(cuid())
+  projectId    String
+  project      NestingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceInputId String?
+  sourceInput   ProjectInput? @relation(fields: [sourceInputId], references: [id], onDelete: SetNull)
+  sourceId      String?
+  sourceType    String?
+  sourceLabel   String?
+  sourceMachineId String?
+  sourceMachineName String?
+  sourceMachineItemId String?
+  sourceProductId String?
+  name         String
+  thickness    Float
+  material     String         @default("Сталь")
+  steelTypeId   String?
+  steelTypeName String?
+  steelTypeRaw  String?
+  width        Float
+  height       Float
+  contour      Json
+  holes        Json?
+  quantity     Int            @default(1)
+  isSheetMetal Boolean        @default(true)
+  grainLock    Boolean        @default(false)
+  hasBends     Boolean        @default(false)
+  thumbnailSvg String?
+  classificationMethod  String?
+  classificationWarning String?
+
+  @@index([projectId])
+  @@index([sourceInputId])
+  @@index([sourceId])
+  @@index([material, thickness])
+  @@index([steelTypeId])
+  @@schema("nesting")
+}
+
+model AISettings {
+  id            String   @id @default("singleton")
+  apiKey        String?
+  model         String   @default("anthropic/claude-sonnet-4-6")
+  baseUrl       String   @default("https://openrouter.ai/api/v1")
+  maxTokens     Int      @default(4000)
+  monthlyBudget Float    @default(50)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@schema("nesting")
+}
+
+model AIUsageLog {
+  id         String   @id @default(cuid())
+  projectId  String
+  tokensUsed Int
+  model      String
+  cost       Float
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+  @@index([createdAt])
+  @@schema("nesting")
+}
+
+model ProjectSpecification {
+  id            String         @id @default(cuid())
+  projectId     String         @unique
+  project       NestingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  bom           Json
+  matches       Json
+  unmatchedBom  Json
+  rawResponse   String
+  tokensUsed    Int
+  model         String
+  cost          Float
+  budgetWarning Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([projectId])
+  @@schema("nesting")
+}
+
+model NestingSheet {
+  id          String         @id @default(cuid())
+  projectId   String
+  project     NestingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sheetRefId  String?
+  remnantId   String?
+  material    String
+  steelTypeId   String?
+  steelTypeName String?
+  thickness   Float
+  width       Float
+  height      Float
+  sheetIndex  Int
+  placements  Json
+  utilization Float
+  waste       Float
+  remnantGeom Json?
+  dxfFileUrl  String?
+
+  @@index([projectId])
+  @@schema("nesting")
+}
+
+model SheetCatalog {
+  id        String   @id @default(cuid())
+  material  String
+  thickness Float
+  width     Float
+  height    Float
+  price     Float?
+  stock     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([material, thickness, width, height], name: "sheet_catalog_unique_dimensions")
+  @@index([material, thickness])
+  @@index([isActive])
+  @@schema("nesting")
+}
+
+model GapTable {
+  id           String @id @default(cuid())
+  material     String
+  thicknessMin Float
+  thicknessMax Float
+  gap          Float
+
+  @@unique([material, thicknessMin, thicknessMax], name: "gap_table_unique_range")
+  @@index([material])
+  @@schema("nesting")
+}
+
+model KFactor {
+  id           String @id @default(cuid())
+  material     String
+  thicknessMin Float
+  thicknessMax Float
+  kFactor      Float
+
+  @@unique([material, thicknessMin, thicknessMax], name: "kfactor_unique_range")
+  @@index([material])
+  @@schema("nesting")
+}
+
+model Remnant {
+  id          String    @id @default(cuid())
+  material    String
+  thickness   Float
+  width       Float
+  height      Float
+  contour     Json?
+  sourceOrder String?
+  sourceSheet String?
+  createdAt   DateTime  @default(now())
+  usedAt      DateTime?
+  usedInOrder String?
+  isAvailable Boolean   @default(true)
+
+  @@index([material, thickness])
+  @@index([isAvailable])
+  @@schema("nesting")
+}

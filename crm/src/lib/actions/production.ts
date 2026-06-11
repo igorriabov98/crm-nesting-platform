@@ -1,0 +1,320 @@
+"use server"
+
+import { revalidatePath } from 'next/cache'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { ROUTES } from '@/lib/constants/routes'
+import { isDirector } from '@/lib/utils/permissions'
+import { STAGE_ORDER } from '@/lib/constants/stages'
+import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
+import type { CurrentUser } from '@/lib/types'
+import type { Database } from '@/lib/types/database'
+
+type ProductionStageUpdate = Database['public']['Tables']['production_stages']['Update']
+type MachineUpdate = Database['public']['Tables']['machines']['Update']
+type DbUpdateResult = { error: { message?: string } | null }
+type MachineUpdateEqQuery = {
+  eq: (column: string, value: unknown) => Promise<DbUpdateResult>
+}
+type MachineUpdateQuery = {
+  update: (values: MachineUpdate) => MachineUpdateEqQuery
+}
+type MachineDateField =
+  | 'desired_shipping_date'
+  | 'planned_material_date'
+  | 'actual_material_date'
+  | 'actual_shipping_date'
+  | 'delivery_to_client_date'
+type StageForUpdate = {
+  machine_id: string
+  stage_type: Database['public']['Enums']['stage_type']
+  machines: { factory_id: string | null; is_archived: boolean } | null
+}
+type MachineItemCoating = {
+  coating: Database['public']['Enums']['coating_type']
+}
+type StageDateRow = {
+  id: string
+  stage_type: Database['public']['Enums']['stage_type']
+  date_start: string | null
+  date_end: string | null
+  is_skipped: boolean | null
+}
+type MachineLifecycleRow = {
+  status: Database['public']['Enums']['machine_status']
+  is_confirmed: boolean | null
+  factory_id: string | null
+  material_type: Database['public']['Enums']['material_type'] | null
+  planned_material_date: string | null
+  actual_material_date: string | null
+  actual_shipping_date: string | null
+}
+
+function todayDateOnly() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function dateOnly(value: unknown) {
+  if (typeof value !== 'string' || value.length === 0) return null
+  return value.slice(0, 10)
+}
+
+function getStagePosition(stageType: StageDateRow['stage_type']) {
+  const index = STAGE_ORDER.indexOf(stageType)
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index
+}
+
+function stageLabel(stageType: StageDateRow['stage_type']) {
+  const labels: Partial<Record<StageDateRow['stage_type'], string>> = {
+    cutting: 'Заготовка',
+    assembly: 'Сборка',
+    cleaning: 'Зачистка',
+    galvanizing: 'Цинк',
+    post_galvanizing_cleaning: 'Зачистка после цинка',
+    painting: 'Малярка',
+    packaging: 'Упаковка',
+    shipping: 'Готовность к погрузке',
+    actual_shipping: 'Факт отгрузки',
+  }
+  return labels[stageType] || stageType
+}
+
+function validateStageDates(stages: StageDateRow[], changedStageId: string) {
+  const activeStages = [...stages]
+    .filter((stage) => !stage.is_skipped)
+    .sort((a, b) => getStagePosition(a.stage_type) - getStagePosition(b.stage_type))
+
+  for (const stage of activeStages) {
+    if (stage.date_start && stage.date_end && stage.date_end < stage.date_start) {
+      throw new Error(`Дата окончания этапа "${stageLabel(stage.stage_type)}" не может быть раньше даты начала`)
+    }
+    if (stage.stage_type === 'actual_shipping' && stage.date_end && stage.date_end < todayDateOnly()) {
+      throw new Error('Факт отгрузки нельзя поставить раньше сегодняшнего дня')
+    }
+  }
+
+  const changedIndex = activeStages.findIndex((stage) => stage.id === changedStageId)
+  if (changedIndex === -1) return
+
+  const currentStage = activeStages[changedIndex]
+  if (!currentStage?.date_start) return
+
+  const previousStage = [...activeStages.slice(0, changedIndex)].reverse().find((stage) => stage.date_start)
+  if (previousStage?.date_start && currentStage.date_start < previousStage.date_start) {
+    throw new Error(`Дата начала этапа "${stageLabel(currentStage.stage_type)}" не может быть раньше начала предыдущего этапа "${stageLabel(previousStage.stage_type)}"`)
+  }
+
+  const nextStage = activeStages.slice(changedIndex + 1).find((stage) => stage.date_start)
+  if (nextStage?.date_start && currentStage.date_start > nextStage.date_start) {
+    throw new Error(`Дата начала этапа "${stageLabel(currentStage.stage_type)}" не может быть позже начала следующего этапа "${stageLabel(nextStage.stage_type)}"`)
+  }
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Неизвестная ошибка'
+}
+
+function inferMachineStatus(machine: MachineLifecycleRow) {
+  if (machine.actual_shipping_date) return 'shipped' as const
+  if (machine.actual_material_date) return 'material_received' as const
+  if (machine.status !== 'in_production') return machine.status
+  if (machine.factory_id && machine.material_type && machine.material_type !== 'undefined' && machine.planned_material_date) {
+    return 'planned' as const
+  }
+  if (machine.is_confirmed) return 'confirmed' as const
+  return 'created' as const
+}
+
+async function reconcileMachineStatus(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, machineId: string) {
+  const { data, error } = await supabase
+    .from('machines')
+    .select('status, is_confirmed, factory_id, material_type, planned_material_date, actual_material_date, actual_shipping_date')
+    .eq('id', machineId)
+    .single()
+
+  if (error || !data) throw error || new Error('Машина не найдена')
+  const machine = data as unknown as MachineLifecycleRow
+  const nextStatus = inferMachineStatus(machine)
+  if (nextStatus === machine.status) return
+
+  const { error: updateError } = await (supabase.from('machines') as unknown as MachineUpdateQuery)
+    .update({ status: nextStatus, updated_at: new Date().toISOString() })
+    .eq('id', machineId)
+
+  if (updateError) throw updateError
+}
+
+async function requireAuth() {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Не авторизован')
+
+  const { data: profile } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', user.id)
+    .single()
+
+  if (!profile) throw new Error('Профиль не найден')
+  return { supabase, user: profile as unknown as CurrentUser }
+}
+
+export async function updateProductionStage(stageId: string, data: ProductionStageUpdate) {
+  try {
+    const { supabase, user } = await requireAuth()
+
+    const canEdit = user.role === 'production_manager' || isDirector(user.role)
+    if (!canEdit) throw new Error('Недостаточно прав для редактирования этапа производства')
+
+    const { data: currentStage, error: stageErr } = await supabase
+      .from('production_stages')
+      .select('machine_id, stage_type, machines(factory_id, is_archived)')
+      .eq('id', stageId)
+      .single()
+
+    if (stageErr || !currentStage) throw new Error('Этап не найден')
+
+    const stageObj = currentStage as unknown as StageForUpdate
+    const machine = stageObj.machines
+    if (!machine) throw new Error('Машина не найдена')
+    if (machine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
+    if (machine.factory_id !== user.factory_id) throw new Error('Доступ запрещён')
+
+    const { data: machineItemsData, error: itemsErr } = await supabase
+      .from('machine_items')
+      .select('coating')
+      .eq('machine_id', stageObj.machine_id)
+
+    if (itemsErr) throw itemsErr
+    const machineItems = (machineItemsData ?? []) as MachineItemCoating[]
+    const hasZinc = machineItems?.some((item) => item.coating === 'zinc') ?? false
+
+    if (data.is_skipped === true && stageObj.stage_type === 'galvanizing' && hasZinc) {
+      throw new Error('Нельзя пропустить цинкование, если хотя бы у одного товара выбрано покрытие цинком')
+    }
+
+    const fixedWorkshopStages = ['cutting', 'painting', 'packaging']
+    if (data.workshop !== undefined && fixedWorkshopStages.includes(stageObj.stage_type)) {
+      if (stageObj.stage_type === 'cutting') data.workshop = 1
+      else data.workshop = 2
+    }
+
+    const { data: allStages, error: allStagesError } = await supabase
+      .from('production_stages')
+      .select('id, stage_type, date_start, date_end, is_skipped')
+      .eq('machine_id', stageObj.machine_id)
+
+    if (allStagesError) throw allStagesError
+
+    const mergedStages = ((allStages || []) as StageDateRow[]).map((stage) => {
+      if (stage.id !== stageId) return stage
+      return {
+        ...stage,
+        date_start: 'date_start' in data ? dateOnly(data.date_start) : stage.date_start,
+        date_end: 'date_end' in data ? dateOnly(data.date_end) : stage.date_end,
+        is_skipped: 'is_skipped' in data ? Boolean(data.is_skipped) : stage.is_skipped,
+      }
+    })
+    validateStageDates(mergedStages, stageId)
+
+    const { error: updateErr } = await supabase
+      .from('production_stages')
+      .update(data as never)
+      .eq('id', stageId)
+
+    if (updateErr) throw updateErr
+    await reconcileMachineStatus(supabase, stageObj.machine_id)
+    if (stageObj.stage_type === 'shipping' && ('date_end' in data || 'planned_date_end' in data)) {
+      await syncTransportCostTask(supabase, stageObj.machine_id)
+    }
+
+    revalidatePath(`${ROUTES.SALES_PLAN}/${stageObj.machine_id}`)
+    revalidatePath(ROUTES.PRODUCTION)
+    revalidatePath(ROUTES.GANTT)
+    revalidatePath(ROUTES.DASHBOARD)
+    revalidatePath(ROUTES.MEETINGS)
+    revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
+    revalidatePath(ROUTES.TASKS)
+    return { success: true }
+  } catch (err: unknown) {
+    return { success: false, error: getErrorMessage(err) }
+  }
+}
+
+export async function toggleStageSkip(stageId: string, isSkipped: boolean) {
+  return updateProductionStage(stageId, { is_skipped: isSkipped })
+}
+
+export async function clearProductionStageDates(stageId: string) {
+  return updateProductionStage(stageId, { date_start: null, date_end: null })
+}
+
+export async function updateMachineDate(
+  machineId: string,
+  field: MachineDateField,
+  value: string | null
+) {
+  try {
+    const { supabase, user } = await requireAuth()
+
+    const salesFields: MachineDateField[] = ['desired_shipping_date', 'delivery_to_client_date']
+    const productionFields: MachineDateField[] = [
+      'planned_material_date',
+      'actual_material_date',
+      'actual_shipping_date',
+    ]
+
+    const canEditSalesDate = user.role === 'sales_manager' || isDirector(user.role)
+    const canEditProductionDate = user.role === 'production_manager' || isDirector(user.role)
+
+    if (
+      (salesFields.includes(field) && !canEditSalesDate) ||
+      (productionFields.includes(field) && !canEditProductionDate)
+    ) {
+      throw new Error('Недостаточно прав для редактирования даты')
+    }
+
+    const { data: machine, error: machineError } = await supabase
+      .from('machines')
+      .select('factory_id, is_archived')
+      .eq('id', machineId)
+      .single()
+
+    if (machineError || !machine) throw new Error('Машина не найдена')
+    const selectedMachine = machine as unknown as { factory_id: string | null; is_archived: boolean }
+    if (selectedMachine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
+    if (user.role === 'production_manager' && selectedMachine.factory_id !== user.factory_id) {
+      throw new Error('Доступ запрещён')
+    }
+
+    const dateValue = value ? value.slice(0, 10) : null
+    if (field === 'actual_shipping_date' && dateValue && dateValue < todayDateOnly()) {
+      throw new Error('Факт отгрузки нельзя поставить раньше сегодняшнего дня')
+    }
+
+    const updateData: MachineUpdate = { [field]: dateValue }
+    const { error } = await (supabase.from('machines') as unknown as MachineUpdateQuery)
+      .update(updateData)
+      .eq('id', machineId)
+
+    if (error) throw error
+    await reconcileMachineStatus(supabase, machineId)
+    if (field === 'desired_shipping_date') {
+      await syncTransportCostTask(supabase, machineId)
+    }
+
+    revalidatePath(ROUTES.PRODUCTION)
+    revalidatePath(ROUTES.GANTT)
+    revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+    revalidatePath(ROUTES.INVOICES)
+    revalidatePath(ROUTES.TASKS)
+
+    return { success: true, error: null }
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}

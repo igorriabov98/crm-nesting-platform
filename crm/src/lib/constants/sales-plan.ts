@@ -1,0 +1,1 @@
+export const SALES_PLAN_MACHINE_LIMIT = 100

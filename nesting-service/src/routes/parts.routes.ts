@@ -1,0 +1,114 @@
+import type { FastifyInstance } from 'fastify';
+import { prisma } from '../lib/prisma';
+import { NotFoundError, ValidationError } from '../lib/errors';
+import { normalizeCadText } from '../lib/text-encoding';
+import { idParamSchema } from '../schemas/common.schema';
+import { projectPartParamsSchema, updatePartSchema } from '../schemas/project.schema';
+
+const partListSelect = {
+  id: true,
+  sourceInputId: true,
+  sourceId: true,
+  sourceType: true,
+  sourceLabel: true,
+  sourceMachineId: true,
+  sourceMachineName: true,
+  sourceMachineItemId: true,
+  sourceProductId: true,
+  name: true,
+  thickness: true,
+  material: true,
+  steelTypeId: true,
+  steelTypeName: true,
+  steelTypeRaw: true,
+  width: true,
+  height: true,
+  quantity: true,
+  isSheetMetal: true,
+  grainLock: true,
+  hasBends: true,
+  thumbnailSvg: true,
+  classificationMethod: true,
+  classificationWarning: true,
+} as const;
+
+function normalizePartText<T extends { name: string; material: string }>(part: T): T {
+  return {
+    ...part,
+    name: normalizeCadText(part.name),
+    material: normalizeCadText(part.material),
+  };
+}
+
+async function getProjectStatusOrThrow(id: string): Promise<string> {
+  const project = await prisma.nestingProject.findUnique({
+    where: { id },
+    select: { status: true },
+  });
+
+  if (!project) {
+    throw new NotFoundError('Проект', id);
+  }
+
+  return project.status;
+}
+
+export async function partsRoutes(app: FastifyInstance) {
+  app.get('/:id/parts', async (request) => {
+    const { id } = idParamSchema.parse(request.params);
+    const status = await getProjectStatusOrThrow(id);
+
+    if (status === 'created' || status === 'parsing') {
+      throw new ValidationError('Парсинг ещё не завершён');
+    }
+
+    const [parts, total] = await prisma.$transaction([
+      prisma.part.findMany({
+        where: { projectId: id },
+        orderBy: { name: 'asc' },
+        select: partListSelect,
+      }),
+      prisma.part.count({ where: { projectId: id } }),
+    ]);
+
+    return { data: parts.map(normalizePartText), total };
+  });
+
+  app.get('/:id/parts/:partId', async (request) => {
+    const { id, partId } = projectPartParamsSchema.parse(request.params);
+    await getProjectStatusOrThrow(id);
+
+    const part = await prisma.part.findFirst({
+      where: { id: partId, projectId: id },
+    });
+
+    if (!part) {
+      throw new NotFoundError('Деталь', partId);
+    }
+
+    return { data: normalizePartText(part) };
+  });
+
+  app.put('/:id/parts/:partId', async (request) => {
+    const { id, partId } = projectPartParamsSchema.parse(request.params);
+    await getProjectStatusOrThrow(id);
+
+    const data = updatePartSchema.parse(request.body ?? {});
+    const part = await prisma.part.findFirst({
+      where: { id: partId, projectId: id },
+      select: { id: true },
+    });
+
+    if (!part) {
+      throw new NotFoundError('Деталь', partId);
+    }
+
+    const updated = await prisma.part.update({
+      where: { id: partId },
+      data,
+      select: partListSelect,
+    });
+
+    return { data: normalizePartText(updated) };
+  });
+}

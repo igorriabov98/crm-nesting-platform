@@ -1,0 +1,6 @@
+export const SUPPLY_DASHBOARD_MACHINE_LIMIT = 150
+export const INVOICES_LIST_LIMIT = 150
+export const TASKS_LIST_LIMIT = 150
+export const INVENTORY_LIST_LIMIT = 150
+export const CLIENTS_LIST_LIMIT = 150
+export const NESTING_QUEUE_LIMIT = 150

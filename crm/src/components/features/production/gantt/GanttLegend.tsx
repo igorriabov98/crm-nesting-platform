@@ -1,0 +1,141 @@
+"use client"
+
+import React from 'react'
+import { NIGHT_SHIFT_COLOR, STAGE_ORDER } from '@/lib/constants/stages'
+import {
+  GANTT_BAR_HEIGHT,
+  GANTT_MARKER_SIZE,
+  GANTT_SHIPPING_MARKER_HEIGHT,
+  GANTT_STAGE_DOT_SIZE,
+  getGanttStageColor,
+  getGanttStageLabel,
+} from './types'
+
+export function GanttLegend() {
+  return (
+    <div className="flex flex-wrap items-start gap-6 rounded-md border border-[#E8ECF0] bg-white p-4 text-xs">
+      <div>
+        <p className="mb-2 font-medium uppercase tracking-wide text-[#6B7280]">Этапы производства</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+          {STAGE_ORDER.map((stage) => (
+            <div key={stage} className="flex items-center gap-1.5">
+              <div
+                className="shrink-0 rounded-sm"
+                style={{
+                  width: GANTT_STAGE_DOT_SIZE,
+                  height: GANTT_STAGE_DOT_SIZE,
+                  backgroundColor: getGanttStageColor(stage),
+                }}
+              />
+              <span className="text-[#374151]">{getGanttStageLabel(stage)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-2 font-medium uppercase tracking-wide text-[#6B7280]">Статус этапа</p>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <div
+              className="w-9 rounded-md border-2 border-dashed border-[#4472C4] bg-white"
+              style={{ height: GANTT_BAR_HEIGHT }}
+            />
+            <span className="text-[#374151]">Запланировано</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div
+              className="w-9 rounded-md bg-[#4472C4] shadow-sm"
+              style={{ height: GANTT_BAR_HEIGHT }}
+            />
+            <span className="text-[#374151]">В работе</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div
+              className="w-9 rounded-md bg-[#4472C4] shadow-sm ring-2 ring-red-500"
+              style={{ height: GANTT_BAR_HEIGHT }}
+            />
+            <span className="text-[#374151]">Просрочено вручную</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div
+              className="relative w-9 overflow-hidden rounded-md bg-[#4472C4] shadow-sm"
+              style={{ height: GANTT_BAR_HEIGHT }}
+            >
+              <div className="absolute inset-y-0 left-3 w-3 opacity-75" style={{ backgroundColor: NIGHT_SHIFT_COLOR }} />
+            </div>
+            <span className="text-[#374151]">Ночная смена</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-2 font-medium uppercase tracking-wide text-[#6B7280]">Снабжение</p>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <div
+              className="rounded-sm bg-[#70AD47] shadow-[0_1px_2px_rgba(15,23,42,0.18)]"
+              style={{ width: GANTT_MARKER_SIZE, height: GANTT_MARKER_SIZE }}
+            />
+            <span className="text-[#374151]">Получено</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div
+              className="rounded-sm bg-[#FFC000] shadow-[0_1px_2px_rgba(15,23,42,0.18)]"
+              style={{ width: GANTT_MARKER_SIZE, height: GANTT_MARKER_SIZE }}
+            />
+            <span className="text-[#374151]">Заказано</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div
+              className="rounded-sm bg-[#DC2626] shadow-[0_1px_2px_rgba(15,23,42,0.18)]"
+              style={{ width: GANTT_MARKER_SIZE, height: GANTT_MARKER_SIZE }}
+            />
+            <span className="text-[#374151]">Просрочено</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-2 font-medium uppercase tracking-wide text-[#6B7280]">Маркеры</p>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <div
+              className="rotate-45 border-2 border-[#16A34A] bg-white shadow-[0_1px_2px_rgba(22,163,74,0.25)]"
+              style={{ width: GANTT_MARKER_SIZE, height: GANTT_MARKER_SIZE }}
+            />
+            <span className="text-[#374151]">План. поставка материала</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div
+              className="rotate-45 bg-[#16A34A] shadow-[0_1px_2px_rgba(22,163,74,0.25)]"
+              style={{ width: GANTT_MARKER_SIZE, height: GANTT_MARKER_SIZE }}
+            />
+            <span className="text-[#374151]">Факт. поставка материала</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div
+              className="h-0 w-0 border-l-transparent border-r-transparent border-t-[#DC2626] drop-shadow-sm"
+              style={{
+                borderLeftWidth: GANTT_MARKER_SIZE / 2,
+                borderRightWidth: GANTT_MARKER_SIZE / 2,
+                borderTopWidth: GANTT_SHIPPING_MARKER_HEIGHT,
+              }}
+            />
+            <span className="text-[#374151]">Факт. отгрузка с завода</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-4 border-l-2 border-dashed border-[#DC2626]" />
+            <span className="text-[#374151]">Желаемая дата отгрузки</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="relative h-5 w-9 rounded-sm bg-red-100">
+              <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-red-500" />
+            </div>
+            <span className="text-[#374151]">Сегодня</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
