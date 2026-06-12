@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
@@ -17,9 +17,11 @@ type DbError = { message?: string; details?: string; hint?: string }
 type LooseDbResult = { data: unknown; error: DbError | null }
 type LooseQuery = PromiseLike<LooseDbResult> & {
   select: (columns?: string) => LooseQuery
-  update: (values: unknown) => LooseQuery
+  insert: (values: unknown) => LooseQuery
+  upsert: (values: unknown, options?: unknown) => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
   single: () => Promise<LooseDbResult>
+  maybeSingle: () => Promise<LooseDbResult>
 }
 type LooseDb = {
   from: (table: string) => LooseQuery
@@ -43,6 +45,28 @@ function getErrorMessage(error: unknown) {
 
 async function requireCompanySettingsAccess(operation: PermissionOperation = 'view') {
   return requirePermission('company_settings', operation)
+}
+
+async function loadCompanySettingsFromAdmin(): Promise<CompanySettings> {
+  const adminSupabase = createAdminClient()
+  const db = dbFrom(adminSupabase)
+  const { data, error } = await db
+    .from('company_settings')
+    .select('*')
+    .eq('id', COMPANY_SETTINGS_ID)
+    .maybeSingle()
+
+  if (error) throw error
+  if (data) return data as CompanySettings
+
+  const { data: created, error: createError } = await db
+    .from('company_settings')
+    .insert({ id: COMPANY_SETTINGS_ID })
+    .select('*')
+    .single()
+
+  if (createError) throw createError
+  return created as CompanySettings
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -72,21 +96,15 @@ function assertPngOrJpg(file: File) {
 }
 
 export async function getCompanySettings(): Promise<CompanySettings> {
-  const { supabase } = await requireCompanySettingsAccess()
-  const { data, error } = await dbFrom(supabase)
-    .from('company_settings')
-    .select('*')
-    .eq('id', COMPANY_SETTINGS_ID)
-    .single()
-
-  if (error) throw error
-  return data as CompanySettings
+  await requireCompanySettingsAccess()
+  return loadCompanySettingsFromAdmin()
 }
 
 export async function updateCompanySettings(data: UpdateCompanySettingsData): Promise<{ success: boolean; error: string | null }> {
   try {
-    const { supabase } = await requireCompanySettingsAccess('manage')
-    const db = dbFrom(supabase)
+    await requireCompanySettingsAccess('manage')
+    const adminSupabase = createAdminClient()
+    const db = dbFrom(adminSupabase)
     const parsed = companySettingsSchema.parse(data)
     const payload: CompanySettingsUpdate = {
       name_en: normalizeText(parsed.name_en),
@@ -107,8 +125,7 @@ export async function updateCompanySettings(data: UpdateCompanySettingsData): Pr
 
     const { error } = await db
       .from('company_settings')
-      .update(payload)
-      .eq('id', COMPANY_SETTINGS_ID)
+      .upsert({ id: COMPANY_SETTINGS_ID, ...payload }, { onConflict: 'id' })
 
     if (error) throw error
 
@@ -124,9 +141,12 @@ export async function uploadCompanyImage(
   type: 'signature' | 'stamp'
 ): Promise<{ success: boolean; path?: string; error: string | null }> {
   let uploadedPath: string | null = null
+  let adminSupabase: ReturnType<typeof createAdminClient> | null = null
 
   try {
-    const { supabase } = await requireCompanySettingsAccess('manage')
+    await requireCompanySettingsAccess('manage')
+    adminSupabase = createAdminClient()
+    const db = dbFrom(adminSupabase)
     if (type !== 'signature' && type !== 'stamp') throw new Error('Некорректный тип изображения')
 
     const file = formData.get('file')
@@ -135,7 +155,7 @@ export async function uploadCompanyImage(
     const extension = assertPngOrJpg(file)
     uploadedPath = `company/${type}/${Date.now()}-${randomUUID()}${extension}`
 
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await adminSupabase.storage
       .from('product-files')
       .upload(uploadedPath, file, {
         cacheControl: '3600',
@@ -149,10 +169,9 @@ export async function uploadCompanyImage(
       ? { signature_image_path: uploadedPath, updated_at: new Date().toISOString() }
       : { stamp_image_path: uploadedPath, updated_at: new Date().toISOString() }
 
-    const { error: updateError } = await dbFrom(supabase)
+    const { error: updateError } = await db
       .from('company_settings')
-      .update(payload)
-      .eq('id', COMPANY_SETTINGS_ID)
+      .upsert({ id: COMPANY_SETTINGS_ID, ...payload }, { onConflict: 'id' })
 
     if (updateError) throw updateError
 
@@ -160,8 +179,10 @@ export async function uploadCompanyImage(
     return { success: true, path: uploadedPath, error: null }
   } catch (error) {
     if (uploadedPath) {
-      const { supabase } = await getCurrentUserContext().catch(() => ({ supabase: null }))
-      await supabase?.storage.from('product-files').remove([uploadedPath]).catch(() => undefined)
+      await (adminSupabase ?? createAdminClient()).storage
+        .from('product-files')
+        .remove([uploadedPath])
+        .catch(() => undefined)
     }
     return { success: false, error: getErrorMessage(error) }
   }
