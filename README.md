@@ -1,21 +1,47 @@
 # CRM + Nesting Platform
 
-This repository contains two separate services that are published together as one GitHub repository.
+This repository publishes the CRM and the nesting service together.
 
-## Projects
+## Structure
 
-- `crm/` - Next.js CRM application.
-- `nesting-service/` - Node.js nesting microservice used by the CRM.
+- Repository root - Next.js CRM application, ready for Vercel.
+- `nesting-service/` - separate Node.js nesting microservice used by the CRM.
+
+## CRM Deployment On Vercel
+
+Import this repository into Vercel as a Next.js project.
+
+Use the repository root as the Vercel Root Directory. The default build command is:
+
+```bash
+npm run build
+```
+
+Required CRM environment variables:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+NEXT_PUBLIC_APP_URL=
+NESTING_SERVICE_URL=
+```
+
+## Nesting Service
+
+Deploy `nesting-service/` separately on a Node.js host that supports a long-running API process and workers.
+After deploying it, set the CRM `NESTING_SERVICE_URL` to the public HTTPS URL of that service.
 
 ## Local Development
 
-Install and run each service from its own folder:
+CRM:
 
 ```bash
-cd crm
 npm install
 npm run dev
 ```
+
+Nesting service:
 
 ```bash
 cd nesting-service
@@ -23,28 +49,4 @@ npm install
 npm run dev
 ```
 
-The CRM talks to the nesting service through `NESTING_SERVICE_URL`.
-
-## Environment Files
-
-Real `.env` and `.env.local` files are intentionally ignored and must not be committed.
-Use each service's `.env.example` as a template:
-
-- `crm/.env.example`
-- `nesting-service/.env.example`
-
-## Deployment
-
-For Vercel CRM deployment, import this repository and set the Vercel Root Directory to:
-
-```text
-crm
-```
-
-Deploy `nesting-service/` separately on a Node.js host that supports long-running processes and workers, then set the CRM environment variable:
-
-```text
-NESTING_SERVICE_URL=https://your-nesting-service.example.com
-```
-
-The nesting service also requires its own database/runtime environment variables.
+Real `.env` and `.env.local` files are intentionally ignored.
