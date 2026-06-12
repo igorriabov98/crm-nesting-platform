@@ -50,7 +50,6 @@ const productStatusLabels: Record<ProductInput['status'], string> = {
 
 export function ProductForm({ product }: { product?: Product | null }) {
   const router = useRouter()
-  const stepInputRef = useRef<HTMLInputElement>(null)
   const pdfInputRef = useRef<HTMLInputElement>(null)
   const [values, setValues] = useState<ProductFormState>(() => initialState(product))
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -104,9 +103,7 @@ export function ProductForm({ product }: { product?: Product | null }) {
     formData.append('base_price_eur', String(payload.base_price_eur))
     formData.append('status', payload.status)
 
-    const stepFile = stepInputRef.current?.files?.[0]
     const pdfFile = pdfInputRef.current?.files?.[0]
-    if (stepFile) formData.append('step_file', stepFile)
     if (pdfFile) formData.append('pdf_file', pdfFile)
     return formData
   }
@@ -154,10 +151,6 @@ export function ProductForm({ product }: { product?: Product | null }) {
       </div>
       {!isEdit && (
         <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="step_file">STEP файл</Label>
-            <Input id="step_file" ref={stepInputRef} type="file" accept=".step,.stp" disabled={isSubmitting} />
-          </div>
           <div className="space-y-2">
             <Label htmlFor="pdf_file">PDF файл</Label>
             <Input id="pdf_file" ref={pdfInputRef} type="file" accept=".pdf,application/pdf" disabled={isSubmitting} />
