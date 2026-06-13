@@ -26,12 +26,15 @@ const materials = ['Сталь', 'Нержавейка', 'Алюминий']
 const noSteelTypeValue = '__none__'
 
 function sanitizeThumbnail(svg: string | null) {
-  if (!svg) return ''
-  return svg
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
-    .replace(/\son\w+="[^"]*"/gi, '')
-    .replace(/\son\w+='[^']*'/gi, '')
-    .replace(/javascript:/gi, '')
+  const value = svg?.trim()
+  if (!value || value.length > 100_000) return ''
+  if (!/^<svg[\s>]/i.test(value)) return ''
+
+  const forbidden = /<(?:script|iframe|object|embed|foreignObject)\b|on[a-z]+\s*=|(?:href|xlink:href)\s*=\s*["']?\s*(?:javascript:|data:)/i
+  if (forbidden.test(value)) return ''
+
+  const src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(value)}`
+  return `<img src="${src}" alt="" class="max-h-[44px] max-w-[44px]" />`
 }
 
 function thicknessClass(index: number) {

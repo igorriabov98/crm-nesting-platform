@@ -4,17 +4,21 @@ import { dispatchMeetingAgendaReminders } from '@/lib/services/meeting-reminders
 export const dynamic = 'force-dynamic'
 
 function isAuthorized(request: Request) {
-  const secret = process.env.MEETING_REMINDER_CRON_SECRET || process.env.CRON_SECRET
-  if (!secret) return true
+  const secret = (process.env.MEETING_REMINDER_CRON_SECRET || process.env.CRON_SECRET || '').trim()
+  if (!secret) return { ok: false as const, status: 503, error: 'Cron secret is not configured' }
 
   const authHeader = request.headers.get('authorization')
   const headerSecret = request.headers.get('x-cron-secret')
-  return authHeader === `Bearer ${secret}` || headerSecret === secret
+  const allowed = authHeader === `Bearer ${secret}` || headerSecret === secret
+  return allowed
+    ? { ok: true as const }
+    : { ok: false as const, status: 401, error: 'Unauthorized' }
 }
 
 async function runMeetingReminderDispatch(request: Request) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authorization = isAuthorized(request)
+  if (!authorization.ok) {
+    return NextResponse.json({ error: authorization.error }, { status: authorization.status })
   }
 
   try {

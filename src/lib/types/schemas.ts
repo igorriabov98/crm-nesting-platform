@@ -15,7 +15,7 @@ const roles = [
 
 export const createUserSchema = z.object({
   email: z.string().email('Некорректный email'),
-  password: z.string().min(6, 'Пароль должен содержать минимум 6 символов'),
+  password: z.string().min(12, 'Пароль должен содержать минимум 12 символов'),
   full_name: z.string().min(2, 'Имя должно содержать минимум 2 символа'),
   role: z.string().refine((val) => roles.includes(val), {
     message: 'Выберите допустимую роль'
@@ -218,7 +218,7 @@ export type PromoteProductVersionInput = z.infer<typeof promoteProductVersionSch
 export type UpdateCompanySettingsData = z.input<typeof companySettingsSchema>
 
 export const resetPasswordSchema = z.object({
-  password: z.string().min(6, 'Пароль должен содержать минимум 6 символов'),
+  password: z.string().min(12, 'Пароль должен содержать минимум 12 символов'),
   confirmPassword: z.string(),
 }).refine(
   (data) => data.password === data.confirmPassword,

@@ -5,7 +5,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
-import type { CreateUserInput, UpdateUserInput } from '@/lib/types/schemas'
+import { createUserSchema, resetPasswordSchema, type CreateUserInput, type UpdateUserInput } from '@/lib/types/schemas'
 import type { CurrentUser, FactorySummary } from '@/lib/types'
 
 type DbResult = { data?: unknown; error: { message?: string } | null }
@@ -186,14 +186,15 @@ export async function getUserCreatePageData() {
 export async function createUser(data: CreateUserInput) {
   try {
     await requireAdmin()
+    const parsed = createUserSchema.parse(data)
     const adminSupabase = createAdminClient()
     const db = adminSupabase as unknown as LooseAdminDb
-    const factoryId = normalizeUserFactory(data.role, data.factory_id)
+    const factoryId = normalizeUserFactory(parsed.role, parsed.factory_id)
 
     // 1. Создаем auth.users рекорд
     const { data: authData, error: authError } = await adminSupabase.auth.admin.createUser({
-      email: data.email,
-      password: data.password,
+      email: parsed.email,
+      password: parsed.password,
       email_confirm: true,
     })
 
@@ -204,11 +205,11 @@ export async function createUser(data: CreateUserInput) {
     const { error: dbError } = await db.from('users')
       .insert({
         id: authData.user.id,
-        email: data.email,
-        full_name: data.full_name,
-        role: data.role,
+        email: parsed.email,
+        full_name: parsed.full_name,
+        role: parsed.role,
         factory_id: factoryId,
-        telegram_chat_id: data.telegram_chat_id || null,
+        telegram_chat_id: parsed.telegram_chat_id || null,
         is_active: true,
       })
 
@@ -296,10 +297,11 @@ export async function updateUser(userId: string, data: UpdateUserInput) {
 export async function resetUserPassword(userId: string, newPassword: string) {
   try {
     await requireAdmin()
+    const parsed = resetPasswordSchema.parse({ password: newPassword, confirmPassword: newPassword })
     const adminSupabase = createAdminClient()
 
     const { error } = await adminSupabase.auth.admin.updateUserById(userId, {
-      password: newPassword,
+      password: parsed.password,
     })
 
     if (error) throw error

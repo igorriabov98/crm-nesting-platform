@@ -180,9 +180,17 @@ async function sendFinanceDailyReminders(supabase: any) {
 }
 
 Deno.serve(async (req) => {
-  // Check authorization if needed, or rely on Supabase Cron triggering it securely with headers
-  // Usually Cron jobs inject a special auth header, but for simplicity here we simply use the service key
-  
+  const cronSecret = (Deno.env.get('DAILY_CHECK_SECRET') || Deno.env.get('CRON_SECRET') || '').trim()
+  if (!cronSecret) {
+    return new Response('DAILY_CHECK_SECRET or CRON_SECRET is required', { status: 503 })
+  }
+
+  const authHeader = req.headers.get('authorization')
+  const headerSecret = req.headers.get('x-cron-secret')
+  if (authHeader !== `Bearer ${cronSecret}` && headerSecret !== cronSecret) {
+    return new Response('Unauthorized', { status: 401 })
+  }
+
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 

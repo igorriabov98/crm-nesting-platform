@@ -4,12 +4,61 @@ import { requireNestingProxyAccess } from '@/lib/nesting/proxy-auth'
 
 export const dynamic = 'force-dynamic'
 
+const STEP_MAX_BYTES = 500 * 1024 * 1024
+const PDF_MAX_BYTES = 50 * 1024 * 1024
+const MULTIPART_OVERHEAD_BYTES = 5 * 1024 * 1024
+
+function hasAllowedExtension(file: File, extensions: string[]) {
+  const name = file.name.toLowerCase()
+  return extensions.some((extension) => name.endsWith(extension))
+}
+
+function validateFile(file: FormDataEntryValue | null, extensions: string[], maxBytes: number, label: string) {
+  if (!(file instanceof File)) return `${label} file is required`
+  if (!hasAllowedExtension(file, extensions)) return `${label}: unsupported file extension`
+  if (file.size <= 0) return `${label}: empty file`
+  if (file.size > maxBytes) return `${label}: file is too large`
+  return null
+}
+
+function validateUploadFormData(formData: FormData) {
+  const stepError = validateFile(formData.get('stepFile'), ['.step', '.stp'], STEP_MAX_BYTES, 'STEP')
+  if (stepError) return stepError
+
+  const pdfFile = formData.get('pdfFile')
+  if (pdfFile) {
+    const pdfError = validateFile(pdfFile, ['.pdf'], PDF_MAX_BYTES, 'PDF')
+    if (pdfError) return pdfError
+  }
+
+  const orderNumber = String(formData.get('orderNumber') || '').trim()
+  if (!orderNumber) return 'Order number is required'
+  if (orderNumber.length > 120) return 'Order number is too long'
+
+  const quantity = Number(formData.get('quantity') || 1)
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) {
+    return 'Quantity is invalid'
+  }
+
+  return null
+}
+
 export async function POST(request: NextRequest) {
   try {
     const denied = await requireNestingProxyAccess('nesting')
     if (denied) return denied
 
+    const contentLength = Number(request.headers.get('content-length') || 0)
+    if (contentLength > STEP_MAX_BYTES + PDF_MAX_BYTES + MULTIPART_OVERHEAD_BYTES) {
+      return NextResponse.json({ error: 'Upload is too large' }, { status: 413 })
+    }
+
     const formData = await request.formData()
+    const validationError = validateUploadFormData(formData)
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 })
+    }
+
     const res = await fetch(`${getNestingServiceUrl()}/api/projects`, {
       method: 'POST',
       body: formData,

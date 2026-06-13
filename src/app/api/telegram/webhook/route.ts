@@ -4,6 +4,7 @@ import { addDays, format, parse } from 'date-fns'
 export const dynamic = 'force-dynamic'
 
 const TELEGRAM_API = 'https://api.telegram.org/bot'
+const TELEGRAM_FINANCE_ROLES = new Set(['financial_director', 'planning_director', 'supply_manager'])
 
 type TelegramUpdate = {
   callback_query?: {
@@ -20,6 +21,23 @@ type TelegramUpdate = {
 }
 
 type EventType = 'income' | 'expense'
+
+type TelegramFinanceUser = {
+  id: string
+  full_name: string | null
+  role: string | null
+  is_active: boolean | null
+}
+
+function authorizeTelegramWebhook(request: Request) {
+  const secret = (process.env.TELEGRAM_WEBHOOK_SECRET || '').trim()
+  if (!secret) return { ok: false as const, status: 503, error: 'Telegram webhook secret is not configured' }
+
+  const headerSecret = request.headers.get('x-telegram-bot-api-secret-token')
+  return headerSecret === secret
+    ? { ok: true as const }
+    : { ok: false as const, status: 401, error: 'Unauthorized' }
+}
 
 function getSupabaseAdmin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -63,10 +81,14 @@ function parseUserDate(text: string) {
 async function findTelegramUser(supabase: ReturnType<typeof getSupabaseAdmin>, chatId: string) {
   const { data } = await supabase
     .from('users')
-    .select('id, full_name')
+    .select('id, full_name, role, is_active')
     .eq('telegram_chat_id', chatId)
     .maybeSingle()
-  return data
+  return data as TelegramFinanceUser | null
+}
+
+function isAuthorizedFinanceTelegramUser(user: TelegramFinanceUser | null): user is TelegramFinanceUser {
+  return Boolean(user?.id && user.is_active !== false && user.role && TELEGRAM_FINANCE_ROLES.has(user.role))
 }
 
 async function logAction(
@@ -92,7 +114,7 @@ async function updateFinanceEvent(
   eventType: EventType,
   eventId: string,
   action: 'paid' | 'partial' | 'postpone' | 'reject',
-  performedBy: string | null,
+  performedBy: string,
   values: { amount?: number; date?: string; comment?: string } = {}
 ) {
   if (eventType === 'expense') {
@@ -171,7 +193,7 @@ async function setDialogState(
   eventType: EventType,
   eventId: string,
   action: string,
-  userId: string | null
+  userId: string
 ) {
   await supabase.from('finance_telegram_dialog_states').upsert({
     chat_id: chatId,
@@ -198,25 +220,31 @@ async function handleCallback(update: TelegramUpdate, supabase: ReturnType<typeo
     return
   }
   const user = await findTelegramUser(supabase, chatId)
+  if (!isAuthorizedFinanceTelegramUser(user)) {
+    const text = 'Нет доступа к финансовым действиям через Telegram'
+    if (callback?.id) await telegramCall(token, 'answerCallbackQuery', { callback_query_id: callback.id, text, show_alert: true })
+    await telegramCall(token, 'sendMessage', { chat_id: chatId, text })
+    return
+  }
 
   try {
     let resultText = ''
     if (action === 'paid') {
-      await updateFinanceEvent(supabase, eventType, eventId, 'paid', user?.id || null)
+      await updateFinanceEvent(supabase, eventType, eventId, 'paid', user.id)
       resultText = 'Оплата подтверждена.'
     } else if (action === 'post1' || action === 'post3' || action === 'post7') {
       const days = action === 'post1' ? 1 : action === 'post3' ? 3 : 7
       const newDate = format(addDays(new Date(), days), 'yyyy-MM-dd')
-      await updateFinanceEvent(supabase, eventType, eventId, 'postpone', user?.id || null, { date: newDate })
+      await updateFinanceEvent(supabase, eventType, eventId, 'postpone', user.id, { date: newDate })
       resultText = `Перенесено на ${newDate}.`
     } else if (action === 'postc') {
-      await setDialogState(supabase, chatId, eventType, eventId, 'postpone', user?.id || null)
+      await setDialogState(supabase, chatId, eventType, eventId, 'postpone', user.id)
       resultText = 'Введите новую дату в формате YYYY-MM-DD или DD.MM.YYYY.'
     } else if (action === 'partial') {
-      await setDialogState(supabase, chatId, eventType, eventId, 'partial', user?.id || null)
+      await setDialogState(supabase, chatId, eventType, eventId, 'partial', user.id)
       resultText = 'Введите сумму частичной оплаты числом.'
     } else if (action === 'reject') {
-      await setDialogState(supabase, chatId, eventType, eventId, 'reject', user?.id || null)
+      await setDialogState(supabase, chatId, eventType, eventId, 'reject', user.id)
       resultText = 'Напишите комментарий, почему событие не подтверждено.'
     } else {
       throw new Error('Неизвестное действие')
@@ -252,19 +280,26 @@ async function handleMessage(update: TelegramUpdate, supabase: ReturnType<typeof
 
   if (!state) return
 
+  const user = await findTelegramUser(supabase, chatId)
+  if (!isAuthorizedFinanceTelegramUser(user) || user.id !== state.user_id) {
+    await supabase.from('finance_telegram_dialog_states').delete().eq('chat_id', chatId)
+    await telegramCall(token, 'sendMessage', { chat_id: chatId, text: 'Нет доступа к финансовым действиям через Telegram' })
+    return
+  }
+
   try {
     if (state.action === 'partial') {
       const amount = Number(text.replace(',', '.'))
       if (!Number.isFinite(amount) || amount <= 0) throw new Error('Введите сумму числом больше 0.')
-      await updateFinanceEvent(supabase, state.event_type, state.event_id, 'partial', state.user_id, { amount })
+      await updateFinanceEvent(supabase, state.event_type, state.event_id, 'partial', user.id, { amount })
       await telegramCall(token, 'sendMessage', { chat_id: chatId, text: 'Частичная оплата сохранена.' })
     } else if (state.action === 'postpone') {
       const date = parseUserDate(text)
       if (!date) throw new Error('Не удалось распознать дату. Используйте YYYY-MM-DD или DD.MM.YYYY.')
-      await updateFinanceEvent(supabase, state.event_type, state.event_id, 'postpone', state.user_id, { date })
+      await updateFinanceEvent(supabase, state.event_type, state.event_id, 'postpone', user.id, { date })
       await telegramCall(token, 'sendMessage', { chat_id: chatId, text: `Перенесено на ${date}.` })
     } else if (state.action === 'reject') {
-      await updateFinanceEvent(supabase, state.event_type, state.event_id, 'reject', state.user_id, { comment: text })
+      await updateFinanceEvent(supabase, state.event_type, state.event_id, 'reject', user.id, { comment: text })
       await telegramCall(token, 'sendMessage', { chat_id: chatId, text: 'Комментарий сохранен.' })
     }
 
@@ -277,6 +312,11 @@ async function handleMessage(update: TelegramUpdate, supabase: ReturnType<typeof
 
 export async function POST(request: Request) {
   try {
+    const authorization = authorizeTelegramWebhook(request)
+    if (!authorization.ok) {
+      return Response.json({ ok: false, error: authorization.error }, { status: authorization.status })
+    }
+
     const supabase = getSupabaseAdmin()
     const token = await getTelegramToken(supabase)
     const update = (await request.json()) as TelegramUpdate

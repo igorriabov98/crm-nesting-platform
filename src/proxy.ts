@@ -45,8 +45,12 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  const isDocumentGenerationApi = pathname.startsWith('/api/documents/generate')
-  if (!user && isDocumentGenerationApi) {
+  const allowsRouteLevelAuth =
+    pathname.startsWith('/api/documents/generate') ||
+    pathname.startsWith('/api/telegram/webhook') ||
+    pathname.startsWith('/api/meetings/reminders')
+
+  if (!user && allowsRouteLevelAuth) {
     return supabaseResponse
   }
 
