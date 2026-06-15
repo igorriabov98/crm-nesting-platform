@@ -1,6 +1,7 @@
 'use server'
 
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { requirePermission } from '@/lib/permissions/server'
 import type { SteelType } from '@/lib/types/database'
 
 type DbResult<T = unknown> = { data: T | null; error: { message?: string } | null; count?: number | null }
@@ -21,6 +22,14 @@ async function getDb() {
   return await createServerSupabaseClient() as unknown as LooseDb
 }
 
+async function requireSteelTypeManage() {
+  try {
+    await requirePermission('materials', 'manage')
+  } catch {
+    await requirePermission('nesting_catalog', 'manage')
+  }
+}
+
 export async function getSteelTypes(): Promise<SteelType[]> {
   const supabase = await getDb()
   const { data, error } = await supabase
@@ -36,6 +45,7 @@ export async function createSteelType(
   name: string,
   density_g_cm3: number
 ): Promise<SteelType> {
+  await requireSteelTypeManage()
   const supabase = await getDb()
   const { data, error } = await supabase
     .from<SteelType>('steel_types')
@@ -55,6 +65,7 @@ export async function updateSteelTypeDensity(
   id: string,
   density_g_cm3: number
 ): Promise<void> {
+  await requireSteelTypeManage()
   const supabase = await getDb()
   const { error } = await supabase
     .from('steel_types')
@@ -65,6 +76,7 @@ export async function updateSteelTypeDensity(
 }
 
 export async function deleteSteelType(id: string): Promise<void> {
+  await requireSteelTypeManage()
   const supabase = await getDb()
   const tables = [
     'request_sheet_metal',
