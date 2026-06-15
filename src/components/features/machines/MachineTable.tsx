@@ -1,7 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
@@ -33,6 +34,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
+import type { ProductionMonthOption } from '@/lib/utils/production-months'
 
 import { MACHINE_STATUS_LABELS, MachineStatusBadge } from './MachineStatusBadge'
 
@@ -94,9 +96,23 @@ interface MachineTableProps {
   isDirector: boolean
   factories: FactorySummary[]
   resultLimit?: number
+  productionMonthFilter?: string | null
+  productionMonthOptions: ProductionMonthOption[]
 }
 
-export function MachineTable({ machines, userRole, canViewInvoice, isDirector, factories, resultLimit }: MachineTableProps) {
+export function MachineTable({
+  machines,
+  userRole,
+  canViewInvoice,
+  isDirector,
+  factories,
+  resultLimit,
+  productionMonthFilter,
+  productionMonthOptions,
+}: MachineTableProps) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [searchQuery, setSearchQuery] = useState('')
   const [coatingFilter, setCoatingFilter] = useState<string>('all')
   const [invoiceFilter, setInvoiceFilter] = useState<string>('all')
@@ -114,12 +130,30 @@ export function MachineTable({ machines, userRole, canViewInvoice, isDirector, f
   const canDelete = isDirector
 
   const normalizedSearch = useMemo(() => searchQuery.trim().toLowerCase(), [searchQuery])
+  const selectedProductionMonth = productionMonthFilter || 'all'
+  const selectedProductionMonthLabel = productionMonthFilter
+    ? productionMonthOptions.find((option) => option.value === productionMonthFilter)?.label || productionMonthFilter
+    : 'Все месяцы'
+
+  const setProductionMonthFilter = useCallback((value: string) => {
+    const params = new URLSearchParams(searchParams.toString())
+
+    if (!value || value === 'all') {
+      params.delete('productionMonth')
+    } else {
+      params.set('productionMonth', value)
+    }
+
+    const query = params.toString()
+    router.push(query ? `${pathname}?${query}` : pathname)
+  }, [pathname, router, searchParams])
 
   const filteredMachines = useMemo(() => machines.filter((m) => {
     const matchesSearch = !normalizedSearch || m.name?.toLowerCase().includes(normalizedSearch)
     
     // m.uniqueCoatings - это ["zinc", "powder_coating"] и так далее
     const matchesCoating = coatingFilter === 'all' || (m.uniqueCoatings && m.uniqueCoatings.includes(coatingFilter as CoatingType))
+    const matchesProductionMonth = !productionMonthFilter || m.production_month === productionMonthFilter
     const matchesStatus = statusFilter === 'all' || m.status === statusFilter
     const matchesMaterial = materialFilter === 'all' || m.material_type === materialFilter
     const matchesConfirmation = confirmationFilter === 'all'
@@ -135,8 +169,8 @@ export function MachineTable({ machines, userRole, canViewInvoice, isDirector, f
       if (selectedInvoice !== 'none' && status !== selectedInvoice) matchesInvoice = false
     }
 
-    return matchesSearch && matchesCoating && matchesStatus && matchesMaterial && matchesConfirmation && matchesInvoice
-  }), [canViewInvoice, coatingFilter, confirmationFilter, invoiceFilter, machines, materialFilter, normalizedSearch, statusFilter])
+    return matchesSearch && matchesCoating && matchesProductionMonth && matchesStatus && matchesMaterial && matchesConfirmation && matchesInvoice
+  }), [canViewInvoice, coatingFilter, confirmationFilter, invoiceFilter, machines, materialFilter, normalizedSearch, productionMonthFilter, statusFilter])
 
   // Вспомогательные функции рендеринга Badge
   const getCoatingBadge = (c: CoatingType) => {
@@ -180,7 +214,7 @@ export function MachineTable({ machines, userRole, canViewInvoice, isDirector, f
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col sm:flex-row gap-3 flex-1">
+        <div className="flex flex-col gap-3 flex-1 sm:flex-row sm:flex-wrap">
           <Input
             placeholder="Поиск по имени..."
             value={searchQuery}
@@ -196,6 +230,20 @@ export function MachineTable({ machines, userRole, canViewInvoice, isDirector, f
               <SelectItem value="zinc">Цинк</SelectItem>
               <SelectItem value="powder_coating">Порошковая покраска</SelectItem>
               <SelectItem value="none">Без покрытия</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={selectedProductionMonth} onValueChange={(val) => setProductionMonthFilter(val || 'all')}>
+            <SelectTrigger className="w-full sm:w-[190px] bg-white border-[#E8ECF0] text-[#1B3A6B]">
+              <SelectValue>{selectedProductionMonthLabel}</SelectValue>
+            </SelectTrigger>
+            <SelectContent className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]">
+              <SelectItem value="all">Все месяцы</SelectItem>
+              {productionMonthOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           

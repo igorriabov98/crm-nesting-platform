@@ -11,6 +11,7 @@ import { createMachineSchema, machineExpenseSchema, machineItemSchema } from '@/
 import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
 import { SALES_PLAN_MACHINE_LIMIT } from '@/lib/constants/sales-plan'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
+import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
 import type { CreateMachineInput, UpdateMachineInput } from '@/lib/types/schemas'
 import type { CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, Product } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
@@ -58,6 +59,14 @@ function applyProductionManagerFactoryScope<T>(query: T, factoryId: string | nul
   const scopedQuery = query as { or: (filters: string) => T; is: (column: string, value: unknown) => T }
   if (!factoryId) return scopedQuery.is('factory_id', null)
   return scopedQuery.or(`factory_id.eq.${factoryId},factory_id.is.null`)
+}
+
+function applySalesPlanFactoryScope<T>(query: T, user: CurrentUser, factoryFilter?: string | null): T {
+  const scopedQuery = query as { eq: (column: string, value: unknown) => T; is: (column: string, value: unknown) => T }
+  if (user.role === 'production_manager') return applyProductionManagerFactoryScope(query, user.factory_id)
+  if (factoryFilter === 'no_factory') return scopedQuery.is('factory_id', null)
+  if (factoryFilter && factoryFilter !== 'all') return scopedQuery.eq('factory_id', factoryFilter)
+  return query
 }
 
 async function requireSalesPlanPermission(operation: 'view' | 'manage') {
@@ -483,9 +492,43 @@ async function syncCoatingDependentProductionStages(db: LooseDb, machineId: stri
 }
 
 // === Получение списка ===
-export async function getMachines(factoryFilter?: string | null) {
+export async function getProductionMonthFilterOptions(factoryFilter?: string | null) {
   try {
     const { supabase, user } = await requireSalesPlanPermission('view')
+
+    let query = supabase
+      .from('machines')
+      .select('production_month')
+      .eq('is_archived', false)
+      .not('production_month', 'is', null)
+
+    query = applySalesPlanFactoryScope(query, user, factoryFilter)
+
+    const { data, error } = await query
+      .order('production_month', { ascending: false })
+      .limit(120)
+
+    if (error) throw error
+
+    const months = Array.from(new Set(
+      ((data || []) as Array<{ production_month: string | null }>)
+        .map((row) => normalizeProductionMonthValue(row.production_month))
+        .filter((value): value is string => Boolean(value))
+    ))
+
+    return {
+      data: months.map((value) => ({ value, label: formatProductionMonth(value) } satisfies ProductionMonthOption)),
+      error: null,
+    }
+  } catch (error: unknown) {
+    return { data: null, error: getErrorMessage(error) }
+  }
+}
+
+export async function getMachines(factoryFilter?: string | null, productionMonthFilter?: string | null) {
+  try {
+    const { supabase, user } = await requireSalesPlanPermission('view')
+    const normalizedProductionMonth = normalizeProductionMonthValue(productionMonthFilter)
 
     let query = supabase
       .from('machines_with_totals')
@@ -504,12 +547,10 @@ export async function getMachines(factoryFilter?: string | null) {
       `)
       .eq('is_archived', false)
 
-    if (user.role === 'production_manager') {
-      query = applyProductionManagerFactoryScope(query, user.factory_id)
-    } else if (factoryFilter === 'no_factory') {
-      query = query.is('factory_id', null)
-    } else if (factoryFilter && factoryFilter !== 'all') {
-      query = query.eq('factory_id', factoryFilter)
+    query = applySalesPlanFactoryScope(query, user, factoryFilter)
+
+    if (normalizedProductionMonth) {
+      query = query.eq('production_month', normalizedProductionMonth)
     }
 
     const { data: rawData, error } = await query
