@@ -72,10 +72,19 @@ export function ContractSelectField({ clientId, value, onChange, onCreated }: Co
     () => contractState.clientId === clientId ? contractState.contracts : [],
     [clientId, contractState.clientId, contractState.contracts],
   )
-  const selectedValue = useMemo(
-    () => contracts.some((contract) => contract.id === value) ? value || 'none' : 'none',
+  const selectedContract = useMemo(
+    () => contracts.find((contract) => contract.id === value) || null,
     [contracts, value],
   )
+  const selectedValue = useMemo(
+    () => selectedContract ? selectedContract.id : 'none',
+    [selectedContract],
+  )
+  const selectedLabel = selectedContract
+    ? contractLabel(selectedContract)
+    : clientId
+      ? 'Без контракта'
+      : 'Сначала выберите клиента'
 
   const submit = () => {
     if (!clientId) return
@@ -111,7 +120,9 @@ export function ContractSelectField({ clientId, value, onChange, onCreated }: Co
         disabled={!clientId}
       >
         <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-          <SelectValue placeholder={clientId ? 'Выберите контракт' : 'Сначала выберите клиента'} />
+          <SelectValue placeholder={clientId ? 'Выберите контракт' : 'Сначала выберите клиента'}>
+            {selectedLabel}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="none">Без контракта</SelectItem>
