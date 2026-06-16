@@ -42,6 +42,15 @@ function dbFrom(client: unknown): LooseDb {
   return client as LooseDb
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error || '')
+}
+
+function isMissingTransportTaskTypeError(error: unknown) {
+  const message = getErrorMessage(error)
+  return message.includes('invalid input value for enum task_type') && message.includes(TRANSPORT_TASK_TYPE)
+}
+
 function dateOnly(value: string | null | undefined) {
   if (!value) return null
   return value.slice(0, 10)
@@ -108,7 +117,7 @@ async function resolveTransportAssignee(db: LooseDb, creatorId: string | null) {
   return director.id
 }
 
-export async function syncTransportCostTask(client: unknown, machineId: string) {
+async function syncTransportCostTaskInternal(client: unknown, machineId: string) {
   const db = dbFrom(client)
 
   const { data: machineData, error: machineError } = await db
@@ -194,5 +203,14 @@ export async function syncTransportCostTask(client: unknown, machineId: string) 
 
   if (insertError && !String(insertError.message || '').includes('duplicate key')) {
     throw new Error(insertError.message || 'Не удалось создать задачу по транспорту')
+  }
+}
+
+export async function syncTransportCostTask(client: unknown, machineId: string) {
+  try {
+    await syncTransportCostTaskInternal(client, machineId)
+  } catch (error) {
+    if (isMissingTransportTaskTypeError(error)) return
+    throw error
   }
 }
