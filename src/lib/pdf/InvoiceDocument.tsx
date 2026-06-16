@@ -126,6 +126,7 @@ const styles = StyleSheet.create({
   groupCell: {
     width: '100%',
     fontWeight: 'bold',
+    textAlign: 'center',
   },
   itemNo: {
     width: '7%',
@@ -148,6 +149,7 @@ const styles = StyleSheet.create({
   totalsLabel: {
     width: '86%',
     fontWeight: 'bold',
+    textAlign: 'center',
   },
   itemNameEn: {
     fontWeight: 'bold',
@@ -187,11 +189,11 @@ const styles = StyleSheet.create({
 
 const COLS = {
   no: [styles.cell, styles.center, styles.itemNo],
-  name: [styles.cell, styles.itemName],
+  name: [styles.cell, styles.center, styles.itemName],
   measurement: [styles.cell, styles.center, styles.measurement],
   quantity: [styles.cell, styles.center, styles.quantity],
-  price: [styles.cell, styles.right, styles.price],
-  total: [styles.cell, styles.right, styles.total],
+  price: [styles.cell, styles.center, styles.price],
+  total: [styles.cell, styles.center, styles.total],
 }
 
 function isTransportExpense(expense: DocumentExpense) {
@@ -313,21 +315,21 @@ function InvoiceItemsTable({ data }: { data: DocumentData }) {
 
       {transportTotal > 0 && (
         <View style={styles.tableRow} wrap={false}>
-          <Text style={[styles.cell, { width: '86%' }]}>Foreightcost/Транспорт</Text>
+          <Text style={[styles.cell, styles.center, { width: '86%' }]}>Foreightcost/Транспорт</Text>
           <Text style={COLS.total}>{formatMoney(transportTotal)}</Text>
         </View>
       )}
 
       {otherExpenses.map((expense, index) => (
         <View key={`${expense.label}-${index}`} style={styles.tableRow} wrap={false}>
-          <Text style={[styles.cell, { width: '86%' }]}>Additional expenses / Додаткові витрати: {expense.label}</Text>
+          <Text style={[styles.cell, styles.center, { width: '86%' }]}>Additional expenses / Додаткові витрати: {expense.label}</Text>
           <Text style={COLS.total}>{formatMoney(expense.amount)}</Text>
         </View>
       ))}
 
       <View style={styles.tableRow} wrap={false}>
         <Text style={[styles.cell, styles.totalsLabel]}>Total/Всього:</Text>
-        <Text style={[styles.cell, styles.right, styles.bold, styles.total]}>{formatMoney(data.totals.grand_total)}</Text>
+        <Text style={[styles.cell, styles.center, styles.bold, styles.total]}>{formatMoney(data.totals.grand_total)}</Text>
       </View>
     </View>
   )
@@ -412,6 +414,7 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
               <Text>{data.company.name_ua}</Text>
             </View>
             <View style={styles.stampWrap}>
+              <PdfImage src={data.signatureUrl} type="signature" />
               <PdfImage src={data.stampUrl} type="stamp" />
             </View>
             <View style={styles.signatureRight}>
