@@ -118,6 +118,8 @@ export async function updateCompanySettings(data: UpdateCompanySettingsData): Pr
       swift: normalizeText(parsed.swift),
       bank_name: normalizeText(parsed.bank_name),
       bank_address: normalizeText(parsed.bank_address),
+      delivery_basis_en: normalizeText(parsed.delivery_basis_en) || 'Delivery Basis: DAP',
+      delivery_basis_ua: normalizeText(parsed.delivery_basis_ua) || 'Базис постачання: DAP',
       intermediary_bank_name: normalizeText(parsed.intermediary_bank_name),
       intermediary_bank_swift: normalizeText(parsed.intermediary_bank_swift),
       updated_at: new Date().toISOString(),

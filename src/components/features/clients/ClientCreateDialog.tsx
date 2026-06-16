@@ -31,6 +31,8 @@ export function ClientCreateDialog({ open, onOpenChange, onCreated }: ClientCrea
       country_city: '',
       address: '',
       delivery_address: '',
+      delivery_basis_location_en: '',
+      delivery_basis_location_ua: '',
       director_name: '',
       second_director_name: '',
       second_director_name_en: '',

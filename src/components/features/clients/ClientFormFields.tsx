@@ -110,6 +110,20 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
               <FormMessage />
             </FormItem>
           )} />
+          <FormField control={form.control} name="delivery_basis_location_en" render={({ field }) => (
+            <FormItem>
+              <FormLabel>Место доставки EN для инвойса</FormLabel>
+              <FormControl><Input {...field} value={field.value || ''} placeholder="Charleville-Mésières, France" /></FormControl>
+              <FormMessage />
+            </FormItem>
+          )} />
+          <FormField control={form.control} name="delivery_basis_location_ua" render={({ field }) => (
+            <FormItem>
+              <FormLabel>Місце доставки UA для інвойсу</FormLabel>
+              <FormControl><Input {...field} value={field.value || ''} placeholder="Шарлевіль-Мезьєр,Франція" /></FormControl>
+              <FormMessage />
+            </FormItem>
+          )} />
         </div>
       </div>
 

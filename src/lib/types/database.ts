@@ -108,6 +108,8 @@ export type Database = {
           swift: string
           bank_name: string
           bank_address: string
+          delivery_basis_en: string
+          delivery_basis_ua: string
           intermediary_bank_name: string
           intermediary_bank_swift: string
           signature_image_path: string | null
@@ -128,6 +130,8 @@ export type Database = {
           swift?: string
           bank_name?: string
           bank_address?: string
+          delivery_basis_en?: string
+          delivery_basis_ua?: string
           intermediary_bank_name?: string
           intermediary_bank_swift?: string
           signature_image_path?: string | null
@@ -148,6 +152,8 @@ export type Database = {
           swift?: string
           bank_name?: string
           bank_address?: string
+          delivery_basis_en?: string
+          delivery_basis_ua?: string
           intermediary_bank_name?: string
           intermediary_bank_swift?: string
           signature_image_path?: string | null
@@ -166,6 +172,8 @@ export type Database = {
           country_city: string | null
           address: string | null
           delivery_address: string | null
+          delivery_basis_location_en: string | null
+          delivery_basis_location_ua: string | null
           director_name: string | null
           second_director_name: string | null
           second_director_name_en: string | null
@@ -188,6 +196,8 @@ export type Database = {
           country_city?: string | null
           address?: string | null
           delivery_address?: string | null
+          delivery_basis_location_en?: string | null
+          delivery_basis_location_ua?: string | null
           director_name?: string | null
           second_director_name?: string | null
           second_director_name_en?: string | null
@@ -210,6 +220,8 @@ export type Database = {
           country_city?: string | null
           address?: string | null
           delivery_address?: string | null
+          delivery_basis_location_en?: string | null
+          delivery_basis_location_ua?: string | null
           director_name?: string | null
           second_director_name?: string | null
           second_director_name_en?: string | null

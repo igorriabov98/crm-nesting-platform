@@ -39,6 +39,8 @@ function defaultValues(settings: CompanySettings): UpdateCompanySettingsData {
     swift: settings.swift || '',
     bank_name: settings.bank_name || '',
     bank_address: settings.bank_address || '',
+    delivery_basis_en: settings.delivery_basis_en || 'Delivery Basis: DAP',
+    delivery_basis_ua: settings.delivery_basis_ua || 'Базис постачання: DAP',
     intermediary_bank_name: settings.intermediary_bank_name || '',
     intermediary_bank_swift: settings.intermediary_bank_swift || '',
     signature_image_path: settings.signature_image_path,
@@ -175,6 +177,18 @@ export function CompanySettingsPage({ settings, imageUrls }: CompanySettingsPage
                 <TextField form={form} name="bank_address" label="Адрес банка" />
                 <TextField form={form} name="intermediary_bank_name" label="Банк-корреспондент" />
                 <TextField form={form} name="intermediary_bank_swift" label="SWIFT банка-корреспондента" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white">
+            <CardHeader>
+              <CardTitle className="text-lg text-[#1B3A6B]">Инвойс</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 md:grid-cols-2">
+                <TextField form={form} name="delivery_basis_en" label="Delivery Basis EN" />
+                <TextField form={form} name="delivery_basis_ua" label="Базис постачання UA" />
               </div>
             </CardContent>
           </Card>

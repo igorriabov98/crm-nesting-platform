@@ -50,6 +50,8 @@ export function ClientEditDialog({ client, open, onOpenChange }: ClientEditDialo
       country_city: client.country_city || '',
       address: client.address || '',
       delivery_address: client.delivery_address || '',
+      delivery_basis_location_en: client.delivery_basis_location_en || '',
+      delivery_basis_location_ua: client.delivery_basis_location_ua || '',
       director_name: client.director_name || '',
       second_director_name: client.second_director_name || '',
       second_director_name_en: client.second_director_name_en || '',

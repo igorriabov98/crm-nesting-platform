@@ -51,9 +51,18 @@ const styles = StyleSheet.create({
   detailsCell: {
     width: '49%',
     minHeight: 72,
+    borderBottomWidth: 0.7,
+    borderColor: '#111111',
+  },
+  detailsCellTop: {
+    minHeight: 30,
     padding: 3,
     borderBottomWidth: 0.7,
     borderColor: '#111111',
+  },
+  detailsCellBottom: {
+    minHeight: 42,
+    padding: 3,
   },
   bankCell: {
     padding: 3,
@@ -86,6 +95,11 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   buyerCellText: {
+    fontSize: 7.8,
+    fontWeight: 'bold',
+    lineHeight: 1.32,
+  },
+  detailsCellText: {
     fontSize: 7.8,
     fontWeight: 'bold',
     lineHeight: 1.32,
@@ -247,6 +261,14 @@ function buyerAddressLines(address: string, clientName: string) {
   return [value]
 }
 
+function deliveryBasisLine(prefix: string, location: string) {
+  const cleanPrefix = prefix.trim()
+  const cleanLocation = location.trim()
+  if (!cleanPrefix) return cleanLocation
+  if (!cleanLocation) return cleanPrefix
+  return `${cleanPrefix} - ${cleanLocation}`
+}
+
 function rowNumberFor(groups: ReturnType<typeof groupItemsByHsCode>, groupIndex: number, itemIndex: number) {
   return groups
     .slice(0, groupIndex)
@@ -330,7 +352,10 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
   const date = formatDate(data.machine.specification_date)
   const contractNumber = data.contract?.number || ''
   const contractDate = formatDate(data.contract?.date)
-  const deliveryCity = data.client.country_city || ''
+  const deliveryLocationEn = data.client.delivery_basis_location_en || data.client.country_city || ''
+  const deliveryLocationUa = data.client.delivery_basis_location_ua || data.client.delivery_basis_location_en || data.client.country_city || ''
+  const deliveryBasisEn = deliveryBasisLine(data.company.delivery_basis_en, deliveryLocationEn)
+  const deliveryBasisUa = deliveryBasisLine(data.company.delivery_basis_ua, deliveryLocationUa)
 
   return (
     <Document>
@@ -360,12 +385,16 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
               ))}
             </View>
             <View style={styles.detailsCell}>
-              <Text>Contract / Контракт {contractNumber} від {contractDate}</Text>
-              <Text>Specification / Специфікація {number} від {date}</Text>
-              <Text style={styles.mutedLine}>Delivery Basis: DAP - {deliveryCity}</Text>
-              <Text>Базис постачання: DAP - {deliveryCity}</Text>
-              <Text>The country of origin: Ukraine</Text>
-              <Text>Країна походження: Україна</Text>
+              <View style={styles.detailsCellTop}>
+                <Text style={styles.detailsCellText}>Contract / Контракт {contractNumber} від {contractDate}</Text>
+                <Text style={styles.detailsCellText}>Specification/ Специфікація {number} від {date}</Text>
+              </View>
+              <View style={styles.detailsCellBottom}>
+                <Text style={styles.detailsCellText}>{deliveryBasisEn}</Text>
+                <Text style={styles.detailsCellText}>{deliveryBasisUa}</Text>
+                <Text style={styles.detailsCellText}>The country of origin: Ukraine</Text>
+                <Text style={styles.detailsCellText}>Країна походження: Україна</Text>
+              </View>
             </View>
           </View>
 

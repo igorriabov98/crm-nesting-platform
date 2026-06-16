@@ -15,6 +15,8 @@ type ClientRow = Pick<
   | 'name'
   | 'address'
   | 'country_city'
+  | 'delivery_basis_location_en'
+  | 'delivery_basis_location_ua'
   | 'director_name'
   | 'second_director_name'
   | 'second_director_name_en'
@@ -33,6 +35,8 @@ type CompanyRow = Pick<
   | 'swift'
   | 'bank_name'
   | 'bank_address'
+  | 'delivery_basis_en'
+  | 'delivery_basis_ua'
   | 'intermediary_bank_name'
   | 'intermediary_bank_swift'
   | 'signature_image_path'
@@ -107,6 +111,8 @@ export type DocumentData = {
     name: string
     address: string
     country_city: string
+    delivery_basis_location_en: string
+    delivery_basis_location_ua: string
     director_name: string
     second_director_name: string
     second_director_name_en: string
@@ -124,6 +130,8 @@ export type DocumentData = {
     swift: string
     bank_name: string
     bank_address: string
+    delivery_basis_en: string
+    delivery_basis_ua: string
     intermediary_bank_name: string
     intermediary_bank_swift: string
     signature_image_path: string | null
@@ -155,6 +163,8 @@ const FALLBACK_COMPANY = {
   swift: 'KHABUA2K',
   bank_name: 'JOINT STOCK COMPANY "UKRSIBBANK"',
   bank_address: '07205696, JSC "UKRSIBBANK", Andriivska str. 2/12, Kyiv, Ukraine',
+  delivery_basis_en: 'Delivery Basis: DAP',
+  delivery_basis_ua: 'Базис постачання: DAP',
   intermediary_bank_name: 'BNP PARIBAS SA Paris, France',
   intermediary_bank_swift: 'BNPAFRPP',
 } satisfies Omit<DocumentData['company'], 'signature_image_path' | 'stamp_image_path'>
@@ -239,6 +249,8 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
         name,
         address,
         country_city,
+        delivery_basis_location_en,
+        delivery_basis_location_ua,
         director_name,
         second_director_name,
         second_director_name_en,
@@ -300,6 +312,8 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       swift,
       bank_name,
       bank_address,
+      delivery_basis_en,
+      delivery_basis_ua,
       intermediary_bank_name,
       intermediary_bank_swift,
       signature_image_path,
@@ -380,6 +394,8 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       name: clean(client.name),
       address: clean(client.address),
       country_city: clean(client.country_city),
+      delivery_basis_location_en: clean(client.delivery_basis_location_en),
+      delivery_basis_location_ua: clean(client.delivery_basis_location_ua),
       director_name: clean(client.director_name),
       second_director_name: clean(client.second_director_name),
       second_director_name_en: clean(client.second_director_name_en),
@@ -397,6 +413,8 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       swift: companyValue(company, 'swift'),
       bank_name: companyValue(company, 'bank_name'),
       bank_address: companyValue(company, 'bank_address'),
+      delivery_basis_en: companyValue(company, 'delivery_basis_en'),
+      delivery_basis_ua: companyValue(company, 'delivery_basis_ua'),
       intermediary_bank_name: companyValue(company, 'intermediary_bank_name'),
       intermediary_bank_swift: companyValue(company, 'intermediary_bank_swift'),
       signature_image_path: company.signature_image_path,
