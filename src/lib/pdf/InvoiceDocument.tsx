@@ -70,39 +70,25 @@ const styles = StyleSheet.create({
   label: {
     fontWeight: 'bold',
   },
-  title: {
+  topBlockText: {
     fontSize: 7.8,
     fontWeight: 'bold',
-    lineHeight: 1.35,
+    lineHeight: 1.32,
+  },
+  title: {
     marginTop: 2,
   },
   invoiceTitle: {
     marginTop: 18,
-    fontSize: 7.8,
-    fontWeight: 'bold',
-    lineHeight: 1.35,
   },
   invoiceTitleGap: {
     height: 9,
   },
   invoiceDate: {
-    fontSize: 7.8,
-    fontWeight: 'bold',
-    lineHeight: 1.35,
     textAlign: 'right',
   },
   mutedLine: {
     marginTop: 1,
-  },
-  buyerCellText: {
-    fontSize: 7.8,
-    fontWeight: 'bold',
-    lineHeight: 1.32,
-  },
-  detailsCellText: {
-    fontSize: 7.8,
-    fontWeight: 'bold',
-    lineHeight: 1.32,
   },
   table: {
     marginTop: 4,
@@ -363,52 +349,52 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
         <View style={styles.borderedBlock} wrap={false}>
           <View style={styles.row}>
             <View style={styles.topCellLeft}>
-              <Text style={styles.label}>Seller/Продавець</Text>
-              <Text style={styles.bold}>{formatSellerName(data.company.name_en)}</Text>
-              <Text style={styles.bold}>{data.company.address_en}</Text>
+              <Text style={styles.topBlockText}>Seller/Продавець</Text>
+              <Text style={styles.topBlockText}>{formatSellerName(data.company.name_en)}</Text>
+              <Text style={styles.topBlockText}>{data.company.address_en}</Text>
             </View>
             <View style={styles.topCellRight}>
-              <Text style={styles.invoiceDate}>Date/Дата {date}</Text>
-              <Text style={styles.invoiceTitle}>INVOICE № {number}</Text>
+              <Text style={[styles.topBlockText, styles.invoiceDate]}>Date/Дата {date}</Text>
+              <Text style={[styles.topBlockText, styles.invoiceTitle]}>INVOICE № {number}</Text>
               <View style={styles.invoiceTitleGap} />
-              <Text style={styles.title}>РАХУНОК-ФАКТУРА № {number}</Text>
+              <Text style={[styles.topBlockText, styles.title]}>РАХУНОК-ФАКТУРА № {number}</Text>
             </View>
           </View>
 
           <View style={styles.row}>
             <View style={styles.buyerCell}>
-              <Text style={styles.buyerCellText}>Buyer/Payer/Consignee</Text>
-              <Text style={styles.buyerCellText}>Покупець/Платник/Вантажоотримувач</Text>
-              <Text style={styles.buyerCellText}>{data.client.name}</Text>
+              <Text style={styles.topBlockText}>Buyer/Payer/Consignee</Text>
+              <Text style={styles.topBlockText}>Покупець/Платник/Вантажоотримувач</Text>
+              <Text style={styles.topBlockText}>{data.client.name}</Text>
               {buyerAddressLines(data.client.address, data.client.name).map((line) => (
-                <Text key={line} style={styles.buyerCellText}>{line}</Text>
+                <Text key={line} style={styles.topBlockText}>{line}</Text>
               ))}
             </View>
             <View style={styles.detailsCell}>
               <View style={styles.detailsCellTop}>
-                <Text style={styles.detailsCellText}>Contract / Контракт {contractNumber} від {contractDate}</Text>
-                <Text style={styles.detailsCellText}>Specification/ Специфікація {number} від {date}</Text>
+                <Text style={styles.topBlockText}>Contract / Контракт {contractNumber} від {contractDate}</Text>
+                <Text style={styles.topBlockText}>Specification/ Специфікація {number} від {date}</Text>
               </View>
               <View style={styles.detailsCellBottom}>
-                <Text style={styles.detailsCellText}>{deliveryBasisEn}</Text>
-                <Text style={styles.detailsCellText}>{deliveryBasisUa}</Text>
-                <Text style={styles.detailsCellText}>The country of origin: Ukraine</Text>
-                <Text style={styles.detailsCellText}>Країна походження: Україна</Text>
+                <Text style={styles.topBlockText}>{deliveryBasisEn}</Text>
+                <Text style={styles.topBlockText}>{deliveryBasisUa}</Text>
+                <Text style={styles.topBlockText}>The country of origin: Ukraine</Text>
+                <Text style={styles.topBlockText}>Країна походження: Україна</Text>
               </View>
             </View>
           </View>
 
           <View style={styles.bankCell}>
-            <Text style={styles.label}>Bank details/Банківські реквізити:</Text>
-            <Text>Legal entity {data.company.name_en}</Text>
-            <Text>Enterprise code: {data.company.enterprise_code}</Text>
-            <Text>Currency of account: EUR</Text>
-            <Text>IBAN: {data.company.iban}</Text>
-            <Text>Bank name: {data.company.bank_name}</Text>
-            <Text>Beneficiary bank: {data.company.bank_address}</Text>
-            <Text>SWIFT code: {data.company.swift}</Text>
-            <Text>Intermediary bank: {data.company.intermediary_bank_name}</Text>
-            <Text>SWIFT code: {data.company.intermediary_bank_swift}</Text>
+            <Text style={styles.topBlockText}>Bank details/Банківські реквізити:</Text>
+            <Text style={styles.topBlockText}>Legal entity: {data.company.name_en}</Text>
+            <Text style={styles.topBlockText}>Enterprise code: {data.company.enterprise_code}</Text>
+            <Text style={styles.topBlockText}>Currency of account: EUR</Text>
+            <Text style={styles.topBlockText}>IBAN: {data.company.iban}</Text>
+            <Text style={styles.topBlockText}>Bank name: {data.company.bank_name}</Text>
+            <Text style={styles.topBlockText}>Beneficiary bank: {data.company.bank_address}</Text>
+            <Text style={styles.topBlockText}>SWIFT code: {data.company.swift}</Text>
+            <Text style={styles.topBlockText}>Intermediary bank: {data.company.intermediary_bank_name}</Text>
+            <Text style={styles.topBlockText}>SWIFT code: {data.company.intermediary_bank_swift}</Text>
           </View>
         </View>
 
