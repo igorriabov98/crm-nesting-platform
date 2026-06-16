@@ -62,16 +62,33 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   title: {
-    fontSize: 7,
+    fontSize: 7.8,
     fontWeight: 'bold',
+    lineHeight: 1.35,
+    marginTop: 2,
   },
   invoiceTitle: {
-    marginTop: 4,
-    fontSize: 7.2,
+    marginTop: 18,
+    fontSize: 7.8,
     fontWeight: 'bold',
+    lineHeight: 1.35,
+  },
+  invoiceTitleGap: {
+    height: 9,
+  },
+  invoiceDate: {
+    fontSize: 7.8,
+    fontWeight: 'bold',
+    lineHeight: 1.35,
+    textAlign: 'right',
   },
   mutedLine: {
     marginTop: 1,
+  },
+  buyerCellText: {
+    fontSize: 7.8,
+    fontWeight: 'bold',
+    lineHeight: 1.32,
   },
   table: {
     marginTop: 4,
@@ -182,6 +199,54 @@ function isTransportExpense(expense: DocumentExpense) {
   return category === 'транспорт' || category === 'transport' || category.includes('транспорт')
 }
 
+function formatSellerName(name: string) {
+  const baseName = name
+    .trim()
+    .replace(/\s+LLC\.?$/i, '')
+    .replace(/^["«]+/, '')
+    .replace(/["»]+$/, '')
+    .trim()
+
+  return baseName ? `«${baseName}» LLC` : ''
+}
+
+function buyerAddressLines(address: string, clientName: string) {
+  let value = address.trim()
+  if (!value) return []
+
+  const normalizedClientName = clientName.trim()
+  if (normalizedClientName && value.toLowerCase().startsWith(normalizedClientName.toLowerCase())) {
+    value = value.slice(normalizedClientName.length).replace(/^[\s,]+/, '').trim()
+  }
+
+  const explicitLines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (explicitLines.length > 1) return explicitLines
+
+  const postalMatch = /^(.+?)\s+(\d{4,6}\s+[^,]+),\s*(.+)$/.exec(value)
+  if (postalMatch) {
+    return [postalMatch[1], `${postalMatch[2]},`, postalMatch[3]]
+  }
+
+  const commaParts = value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  if (commaParts.length >= 3) {
+    return [
+      commaParts.slice(0, -2).join(', '),
+      `${commaParts.at(-2)},`,
+      commaParts.at(-1) || '',
+    ].filter(Boolean)
+  }
+
+  return [value]
+}
+
 function rowNumberFor(groups: ReturnType<typeof groupItemsByHsCode>, groupIndex: number, itemIndex: number) {
   return groups
     .slice(0, groupIndex)
@@ -274,25 +339,25 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
           <View style={styles.row}>
             <View style={styles.topCellLeft}>
               <Text style={styles.label}>Seller/Продавець</Text>
-              <Text style={styles.bold}>{data.company.name_en}</Text>
-              <Text>{data.company.name_ua}</Text>
-              <Text>{data.company.address_en}</Text>
-              <Text>{data.company.address_ua}</Text>
+              <Text style={styles.bold}>{formatSellerName(data.company.name_en)}</Text>
+              <Text style={styles.bold}>{data.company.address_en}</Text>
             </View>
             <View style={styles.topCellRight}>
-              <Text>Date/Дата {date}</Text>
+              <Text style={styles.invoiceDate}>Date/Дата {date}</Text>
               <Text style={styles.invoiceTitle}>INVOICE № {number}</Text>
+              <View style={styles.invoiceTitleGap} />
               <Text style={styles.title}>РАХУНОК-ФАКТУРА № {number}</Text>
             </View>
           </View>
 
           <View style={styles.row}>
             <View style={styles.buyerCell}>
-              <Text style={styles.label}>Buyer/Payer/Consignee</Text>
-              <Text style={styles.label}>Покупець/Платник/Вантажоотримувач</Text>
-              <Text style={styles.mutedLine}>{data.client.name}</Text>
-              <Text>{data.client.address}</Text>
-              <Text>{deliveryCity}</Text>
+              <Text style={styles.buyerCellText}>Buyer/Payer/Consignee</Text>
+              <Text style={styles.buyerCellText}>Покупець/Платник/Вантажоотримувач</Text>
+              <Text style={styles.buyerCellText}>{data.client.name}</Text>
+              {buyerAddressLines(data.client.address, data.client.name).map((line) => (
+                <Text key={line} style={styles.buyerCellText}>{line}</Text>
+              ))}
             </View>
             <View style={styles.detailsCell}>
               <Text>Contract / Контракт {contractNumber} від {contractDate}</Text>
