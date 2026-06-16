@@ -1,6 +1,6 @@
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
 import type { DocumentData, DocumentExpense, DocumentItem } from '@/lib/actions/document-generation'
-import { PdfImage } from './components'
+import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
 import { amountToWordsEn, amountToWordsUa, formatDate, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
 
@@ -188,7 +188,6 @@ const styles = StyleSheet.create({
   companyAssets: {
     height: 92,
     marginTop: 2,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -420,8 +419,7 @@ function Footer({ data }: { data: DocumentData }) {
           <Text style={styles.signatureLine}>Директор / Director</Text>
           <Text style={styles.signatureName}>{sellerDirectorName(data)}</Text>
           <View style={styles.companyAssets}>
-            <PdfImage src={data.signatureUrl} type="signature" />
-            <PdfImage src={data.stampUrl} type="stamp" />
+            <PdfSignatureStampOverlay signatureSrc={data.signatureUrl} stampSrc={data.stampUrl} />
           </View>
         </View>
       </View>

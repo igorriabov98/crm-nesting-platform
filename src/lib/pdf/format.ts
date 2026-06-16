@@ -169,8 +169,12 @@ export function amountToWordsEn(value: number) {
 
 export function amountToWordsUa(value: number) {
   const rounded = Math.round((Number.isFinite(value) ? value : 0) * 100)
-  const euros = Math.floor(rounded / 100)
-  return `${capitalize(numberToWordsUa(euros))} євро`
+  const absoluteRounded = Math.abs(rounded)
+  const euros = Math.floor(absoluteRounded / 100)
+  const cents = absoluteRounded % 100
+  const centWord = uaPlural(cents, 'євроцент', 'євроценти', 'євроцентів')
+
+  return `${capitalize(numberToWordsUa(euros))} євро і ${numberToWordsUa(cents)} ${centWord}`
 }
 
 export function groupItemsByHsCode(items: DocumentItem[]): ItemGroup[] {

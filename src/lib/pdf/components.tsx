@@ -145,3 +145,20 @@ export function PdfImage({ src, type }: { src: string | null; type: 'signature' 
   if (!src) return null
   return <Image src={src} style={type === 'signature' ? pdfStyles.signatureImage : pdfStyles.stampImage} />
 }
+
+export function PdfSignatureStampOverlay({
+  signatureSrc,
+  stampSrc,
+}: {
+  signatureSrc: string | null
+  stampSrc: string | null
+}) {
+  if (!signatureSrc && !stampSrc) return null
+
+  return (
+    <View style={pdfStyles.signatureStampOverlay}>
+      {stampSrc && <Image src={stampSrc} style={pdfStyles.signatureStampStampImage} />}
+      {signatureSrc && <Image src={signatureSrc} style={pdfStyles.signatureStampSignatureImage} />}
+    </View>
+  )
+}

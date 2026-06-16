@@ -1,6 +1,6 @@
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
 import type { DocumentData, DocumentExpense } from '@/lib/actions/document-generation'
-import { PdfImage } from './components'
+import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
 import { amountToWordsEn, amountToWordsUa, formatDate, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
 
@@ -173,15 +173,16 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   signatureLeft: {
-    width: '38%',
+    width: '35%',
   },
   stampWrap: {
-    width: '24%',
+    width: '30%',
     alignItems: 'center',
-    marginTop: -8,
+    minHeight: 98,
+    marginTop: -10,
   },
   signatureRight: {
-    width: '38%',
+    width: '35%',
     paddingTop: 14,
     alignItems: 'flex-end',
   },
@@ -414,8 +415,7 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
               <Text>{data.company.name_ua}</Text>
             </View>
             <View style={styles.stampWrap}>
-              <PdfImage src={data.signatureUrl} type="signature" />
-              <PdfImage src={data.stampUrl} type="stamp" />
+              <PdfSignatureStampOverlay signatureSrc={data.signatureUrl} stampSrc={data.stampUrl} />
             </View>
             <View style={styles.signatureRight}>
               <Text>{data.company.director_name_en}</Text>

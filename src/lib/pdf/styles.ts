@@ -133,6 +133,27 @@ export const pdfStyles = StyleSheet.create({
     objectFit: 'contain',
     marginTop: 2,
   },
+  signatureStampOverlay: {
+    position: 'relative',
+    width: 180,
+    height: 98,
+  },
+  signatureStampStampImage: {
+    position: 'absolute',
+    left: 18,
+    top: 0,
+    width: 96,
+    height: 96,
+    objectFit: 'contain',
+  },
+  signatureStampSignatureImage: {
+    position: 'absolute',
+    left: 82,
+    top: 15,
+    width: 120,
+    height: 66,
+    objectFit: 'contain',
+  },
   smallText: {
     fontSize: 7,
   },
