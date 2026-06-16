@@ -1,5 +1,6 @@
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
 import type { DocumentData, DocumentExpense } from '@/lib/actions/document-generation'
+import { isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
 import { amountToWordsEn, amountToWordsUa, formatDate, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
@@ -151,6 +152,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textAlign: 'center',
   },
+  transportLabel: {
+    width: '86%',
+    fontWeight: 'bold',
+    textAlign: 'left',
+  },
   itemNameEn: {
     fontWeight: 'bold',
   },
@@ -198,8 +204,7 @@ const COLS = {
 }
 
 function isTransportExpense(expense: DocumentExpense) {
-  const category = expense.category.trim().toLowerCase()
-  return category === 'транспорт' || category === 'transport' || category.includes('транспорт')
+  return isTransportExpenseCategory(expense.category)
 }
 
 function formatSellerName(name: string) {
@@ -316,8 +321,8 @@ function InvoiceItemsTable({ data }: { data: DocumentData }) {
 
       {transportTotal > 0 && (
         <View style={styles.tableRow} wrap={false}>
-          <Text style={[styles.cell, styles.center, { width: '86%' }]}>Foreightcost/Транспорт</Text>
-          <Text style={COLS.total}>{formatMoney(transportTotal)}</Text>
+          <Text style={[styles.cell, styles.transportLabel]}>Foreightcost/Транспорт</Text>
+          <Text style={[styles.cell, styles.center, styles.bold, styles.total]}>{formatMoney(transportTotal)}</Text>
         </View>
       )}
 

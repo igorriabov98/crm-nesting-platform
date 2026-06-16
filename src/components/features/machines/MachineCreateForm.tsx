@@ -17,6 +17,7 @@ import { ClientCreateDialog } from '@/components/features/clients/ClientCreateDi
 import { paymentTermsLabel } from '@/components/features/clients/ClientFormFields'
 import { getFactoryWorkshopOptionsById } from '@/lib/constants/factory-workshops'
 import { getProductionMonthOptions, monthStartValue } from '@/lib/utils/production-months'
+import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 
 import {
   Form,
@@ -64,6 +65,7 @@ export function MachineCreateForm({ clients: initialClients, factories, products
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [clients, setClients] = useState(initialClients)
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false)
+  const [transportAmount, setTransportAmount] = useState<number | undefined>(undefined)
   
   const form = useForm<CreateMachineInput>({
     resolver: zodResolver(createMachineSchema) as unknown as Resolver<CreateMachineInput>,
@@ -161,7 +163,10 @@ export function MachineCreateForm({ clients: initialClients, factories, products
     const sampleWeight = (watchedSamples || []).reduce((acc, item) => acc + (toFiniteNumber(item.weight) * toFiniteNumber(item.quantity, 1)), 0)
     const itemsCost = (watchedItems || []).reduce((acc, item) => acc + (toFiniteNumber(item.price) * toFiniteNumber(item.quantity, 1)), 0)
     const samplesCost = (watchedSamples || []).reduce((acc, item) => acc + (toFiniteNumber(item.price) * toFiniteNumber(item.quantity, 1)), 0)
-    const expensesCost = (watchedExpenses || []).reduce((acc, exp) => acc + toFiniteNumber(exp.amount), 0)
+    const transportCost = Math.max(0, toFiniteNumber(transportAmount))
+    const expensesCost = transportCost + (watchedExpenses || [])
+      .filter((expense) => !isTransportExpenseCategory(expense.category))
+      .reduce((acc, exp) => acc + toFiniteNumber(exp.amount), 0)
     return {
       totalWeight: (itemWeight + sampleWeight) / 1000,
       itemsCost,
@@ -169,7 +174,7 @@ export function MachineCreateForm({ clients: initialClients, factories, products
       expensesCost,
       totalCost: itemsCost + samplesCost + expensesCost
     }
-  }, [watchedItems, watchedSamples, watchedExpenses])
+  }, [transportAmount, watchedItems, watchedSamples, watchedExpenses])
 
   // Уникальные RAL для автодополнения (можно использовать <datalist>)
   const uniqueRals = useMemo(() => {
@@ -217,6 +222,8 @@ export function MachineCreateForm({ clients: initialClients, factories, products
   async function onSubmit(data: CreateMachineInput) {
     setIsSubmitting(true)
     try {
+      const transportCost = Math.max(0, toFiniteNumber(transportAmount))
+      const regularExpenses = (data.expenses || []).filter((expense) => !isTransportExpenseCategory(expense.category))
       const payload: CreateMachineInput = {
         ...data,
         items: [
@@ -224,6 +231,10 @@ export function MachineCreateForm({ clients: initialClients, factories, products
           ...(data.samples || []).map((item) => ({ ...item, is_sample: true })),
         ],
         samples: [],
+        expenses: [
+          ...(transportCost > 0 ? [{ category: TRANSPORT_EXPENSE_CATEGORY, amount: transportCost, comment: '' }] : []),
+          ...regularExpenses,
+        ],
       }
       const res = await createMachine(payload)
       if (!res.success) throw new Error(res.error || 'Не удалось создать машину')
@@ -855,6 +866,29 @@ export function MachineCreateForm({ clients: initialClients, factories, products
             {/* РАСХОДЫ */}
             <div className="space-y-4 pt-4 border-t border-[#E8ECF0]">
               <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Дополнительные расходы</h3>
+              <div className="flex gap-4 items-start rounded-md border border-[#E8ECF0] bg-[#F8F9FA] p-3">
+                <div className="flex-1">
+                  <FormLabel className="text-xs text-[#374151]">Категория</FormLabel>
+                  <Input value={TRANSPORT_EXPENSE_CATEGORY} disabled className="mt-1 h-9 bg-white font-medium text-[#1B3A6B]" />
+                </div>
+                <div className="w-32">
+                  <FormLabel className="text-xs text-[#374151]">Сумма (€)</FormLabel>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={toNumberInputValue(transportAmount)}
+                    onChange={(event) => setTransportAmount(parseNumberInput(event.target.value))}
+                    placeholder="0"
+                    className="mt-1 h-9 bg-white"
+                  />
+                </div>
+                <div className="flex-1">
+                  <FormLabel className="text-xs text-[#374151]">Инвойс</FormLabel>
+                  <Input value="Foreightcost/Транспорт" disabled className="mt-1 h-9 bg-white text-[#6B7280]" />
+                </div>
+                <div className="w-10" />
+              </div>
               {expenseFields.map((field, index) => (
                 <div key={field.id} className="flex gap-4 items-start">
                   <FormField

@@ -14,6 +14,7 @@ import {
 import { useRole } from '@/lib/hooks/useRole'
 import { MachineEditDialog } from '../MachineEditDialog'
 import type { MachineDetails, MachineExpense } from '@/lib/types'
+import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 
 interface ExpensesTabProps {
   machine: MachineDetails
@@ -24,7 +25,24 @@ export function ExpensesTab({ machine }: ExpensesTabProps) {
   const canEdit = isDirector || role === 'sales_manager'
   const [isEditOpen, setIsEditOpen] = useState(false)
 
-  const expenses = machine.machine_expenses || []
+  const allExpenses = machine.machine_expenses || []
+  const transportExpenses = allExpenses.filter(
+    (expense) => isTransportExpenseCategory(expense.category) && Number(expense.amount) > 0,
+  )
+  const transportExpense = transportExpenses[0]
+  const regularExpenses = allExpenses.filter((expense) => !isTransportExpenseCategory(expense.category))
+  const transportTotal = transportExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0)
+  const expenses = transportExpense
+    ? [
+        {
+          ...transportExpense,
+          category: TRANSPORT_EXPENSE_CATEGORY,
+          amount: transportTotal,
+          comment: transportExpense.comment || null,
+        },
+        ...regularExpenses,
+      ]
+    : regularExpenses
 
   return (
     <div className="space-y-6">
@@ -60,7 +78,9 @@ export function ExpensesTab({ machine }: ExpensesTabProps) {
               expenses.map((expense: MachineExpense, idx: number) => (
                 <TableRow key={expense.id || idx} className="border-[#E8ECF0] hover:bg-[#F8F9FA]">
                   <TableCell className="text-center text-[#9CA3AF]">{idx + 1}</TableCell>
-                  <TableCell className="font-medium text-[#374151]">{expense.category}</TableCell>
+                  <TableCell className="font-medium text-[#374151]">
+                    {isTransportExpenseCategory(expense.category) ? TRANSPORT_EXPENSE_CATEGORY : expense.category}
+                  </TableCell>
                   <TableCell className="text-right font-medium text-[#1B3A6B]">
                     €{Number(expense.amount).toLocaleString()}
                   </TableCell>

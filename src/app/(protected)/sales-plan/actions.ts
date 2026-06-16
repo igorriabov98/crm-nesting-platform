@@ -55,6 +55,12 @@ type RpcClient = Awaited<ReturnType<typeof createServerSupabaseClient>> & {
 
 const DIRECTOR_ROLES = ['planning_director', 'financial_director', 'commercial_director'] as const
 
+function omitExpenseId<T extends { id?: unknown }>(expense: T) {
+  const { id: _id, ...payload } = expense
+  void _id
+  return payload
+}
+
 function applyProductionManagerFactoryScope<T>(query: T, factoryId: string | null): T {
   const scopedQuery = query as { or: (filters: string) => T; is: (column: string, value: unknown) => T }
   if (!factoryId) return scopedQuery.is('factory_id', null)
@@ -1299,9 +1305,10 @@ export async function addMachineExpense(machineId: string, data: unknown) {
     requireMachineMutationAccess(user)
     await assertMachineNotArchived(db, machineId)
     const parsed = machineExpenseActionSchema.parse(data)
+    const expensePayload = omitExpenseId(parsed)
     const { error } = await db.from('machine_expenses').insert({
       machine_id: machineId,
-      ...parsed
+      ...expensePayload
     })
     if (error) throw error
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
@@ -1315,7 +1322,8 @@ export async function updateMachineExpense(expenseId: string, data: unknown, mac
     requireMachineMutationAccess(user)
     await assertMachineNotArchived(db, machineId)
     const parsed = machineExpenseUpdateSchema.parse(data)
-    const { error } = await db.from('machine_expenses').update(parsed).eq('id', expenseId).eq('machine_id', machineId)
+    const expensePayload = omitExpenseId(parsed)
+    const { error } = await db.from('machine_expenses').update(expensePayload).eq('id', expenseId).eq('machine_id', machineId)
     if (error) throw error
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
     return { success: true, error: null }

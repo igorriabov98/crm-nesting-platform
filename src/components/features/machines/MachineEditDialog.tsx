@@ -14,6 +14,7 @@ import { getFactoryWorkshopOptionsById, productionQueueLabel } from '@/lib/const
 import { formatProductionMonth, getProductionMonthOptions } from '@/lib/utils/production-months'
 import { ContractSelectField } from '@/components/features/contracts/ContractSelectField'
 import type { FactorySummary, MachineDetails, MachineExpense, MachineItem, MachineListItem } from '@/lib/types'
+import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 
 import {
   Dialog,
@@ -100,6 +101,20 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
   const defaultSamples: (Partial<MachineItem> | NonNullable<MachineListItem['machine_items']>[number])[] = allDefaultItems.filter((item) => item.is_sample)
   
   const defaultExpenses = machine.machine_expenses || []
+  const defaultTransportExpenses = defaultExpenses.filter((expense) => isTransportExpenseCategory(expense.category))
+  const defaultTransportExpense = defaultTransportExpenses[0]
+  const defaultTransportAmount = defaultTransportExpenses.reduce(
+    (sum, expense) => sum + Math.max(0, toFiniteNumber(expense.amount)),
+    0,
+  )
+  const duplicateTransportExpenseIds = defaultTransportExpenses
+    .slice(1)
+    .map((expense) => expense.id)
+    .filter((id): id is string => typeof id === 'string')
+  const defaultRegularExpenses = defaultExpenses.filter((expense) => !isTransportExpenseCategory(expense.category))
+  const [transportAmount, setTransportAmount] = useState<number | undefined>(
+    defaultTransportAmount > 0 ? defaultTransportAmount : undefined,
+  )
   const documentFields = machine as EditableMachine & {
     contract_id?: string | null
     specification_number?: string | null
@@ -158,7 +173,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
         ral_number: i.ral_number || '',
         is_sample: true
       })),
-      expenses: defaultExpenses.map((e) => ({
+      expenses: defaultRegularExpenses.map((e) => ({
         id: e.id,
         category: e.category,
         amount: Number(e.amount),
@@ -285,7 +300,10 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     const totalWeight = allItems.reduce((acc, item) => acc + ((Number(item.weight) || 0) * (Number(item.quantity) || 1)), 0) / 1000
     const itemsCost = (watchedItems || []).reduce((acc, item) => acc + ((Number(item.price) || 0) * (Number(item.quantity) || 1)), 0)
     const samplesCost = (watchedSamples || []).reduce((acc, item) => acc + ((Number(item.price) || 0) * (Number(item.quantity) || 1)), 0)
-    const expensesCost = (watchedExpenses || []).reduce((acc, exp) => acc + (Number(exp.amount) || 0), 0)
+    const transportCost = Math.max(0, toFiniteNumber(transportAmount))
+    const expensesCost = transportCost + (watchedExpenses || [])
+      .filter((expense) => !isTransportExpenseCategory(expense.category))
+      .reduce((acc, exp) => acc + (Number(exp.amount) || 0), 0)
     return {
       totalWeight,
       itemsCost,
@@ -293,7 +311,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
       expensesCost,
       totalCost: itemsCost + samplesCost + expensesCost
     }
-  }, [watchedItems, watchedSamples, watchedExpenses])
+  }, [transportAmount, watchedItems, watchedSamples, watchedExpenses])
 
   const uniqueRals = useMemo(() => {
     const rals = new Set<string>()
@@ -366,6 +384,21 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
   async function onSubmit(data: MachineFormInput) {
     setIsSubmitting(true)
     try {
+      const transportCost = Math.max(0, toFiniteNumber(transportAmount))
+      const expenseIdsToDelete = new Set<string>([
+        ...deletedExpenseIds,
+        ...duplicateTransportExpenseIds,
+        ...(data.expenses || [])
+          .filter((expense) => isTransportExpenseCategory(expense.category))
+          .map((expense) => expense.id)
+          .filter((id): id is string => typeof id === 'string'),
+      ])
+      const regularExpenses = (data.expenses || []).filter((expense) => !isTransportExpenseCategory(expense.category))
+
+      if (transportCost <= 0 && defaultTransportExpense?.id) {
+        expenseIdsToDelete.add(defaultTransportExpense.id)
+      }
+
       const payload = {
         ...data,
         items: [
@@ -373,8 +406,19 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
           ...(data.samples || []).map((item) => ({ ...item, is_sample: true })),
         ],
         samples: [],
+        expenses: [
+          ...(transportCost > 0
+            ? [{
+                id: defaultTransportExpense?.id,
+                category: TRANSPORT_EXPENSE_CATEGORY,
+                amount: transportCost,
+                comment: defaultTransportExpense?.comment || '',
+              }]
+            : []),
+          ...regularExpenses,
+        ],
         deletedItemIds,
-        deletedExpenseIds
+        deletedExpenseIds: Array.from(expenseIdsToDelete),
       }
       
       const res = await updateMachine(machine.id, payload)
@@ -962,6 +1006,29 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
             {/* РАСХОДЫ */}
             <div className="space-y-4 pt-4 border-t border-[#E8ECF0]">
               <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Дополнительные расходы</h3>
+              <div className="flex gap-4 items-start rounded-md border border-[#E8ECF0] bg-[#F8F9FA] p-3">
+                <div className="flex-1">
+                  <FormLabel className="text-xs text-[#374151]">Категория</FormLabel>
+                  <Input value={TRANSPORT_EXPENSE_CATEGORY} disabled className="mt-1 h-9 bg-white font-medium text-[#1B3A6B]" />
+                </div>
+                <div className="w-32">
+                  <FormLabel className="text-xs text-[#374151]">Сумма (€)</FormLabel>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={toNumberInputValue(transportAmount)}
+                    onChange={(event) => setTransportAmount(parseNumberInput(event.target.value))}
+                    placeholder="0"
+                    className="mt-1 h-9 bg-white"
+                  />
+                </div>
+                <div className="flex-1">
+                  <FormLabel className="text-xs text-[#374151]">Инвойс</FormLabel>
+                  <Input value="Foreightcost/Транспорт" disabled className="mt-1 h-9 bg-white text-[#6B7280]" />
+                </div>
+                <div className="w-10" />
+              </div>
               {expenseFields.map((field, index) => (
                 <div key={field.id} className="flex gap-4 items-start">
                   <FormField

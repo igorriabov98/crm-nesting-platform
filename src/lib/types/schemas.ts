@@ -72,6 +72,7 @@ export const machineItemSchema = z.object({
 
 // Схема доп. расхода
 export const machineExpenseSchema = z.object({
+  id: z.string().uuid().optional(),
   category: z.string().min(1, 'Введите категорию'),
   amount: z.number().min(0, 'Сумма не может быть отрицательной'),
   comment: z.string().optional(),
