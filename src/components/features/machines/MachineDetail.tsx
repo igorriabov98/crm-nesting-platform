@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { DocumentGenerationButtons } from '@/components/features/documents/DocumentGenerationButtons'
 import { ItemsTab } from './tabs/ItemsTab'
 import { ExpensesTab } from './tabs/ExpensesTab'
+import { PackingListTab } from './tabs/PackingListTab'
 import { ProductionTab } from './tabs/ProductionTab'
 import { SupplyTab } from './tabs/SupplyTab'
 import { InvoiceTab } from './tabs/InvoiceTab'
@@ -371,6 +372,12 @@ export function MachineDetail({
           >
             Расходы
           </TabsTrigger>
+          <TabsTrigger 
+            value="packing" 
+            className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-blue-500 data-[state=active]:text-[#1B3A6B] rounded-none px-6 text-[#6B7280] h-full text-base font-medium"
+          >
+            Packing list
+          </TabsTrigger>
           {showInvoiceTab && (
             <TabsTrigger 
               value="invoice" 
@@ -393,6 +400,9 @@ export function MachineDetail({
           </TabsContent>
           <TabsContent value="expenses" className="outline-none">
             <ExpensesTab machine={machine} />
+          </TabsContent>
+          <TabsContent value="packing" className="outline-none">
+            <PackingListTab machine={machine} canEdit={canEdit} />
           </TabsContent>
           {showInvoiceTab && (
             <TabsContent value="invoice" className="outline-none">

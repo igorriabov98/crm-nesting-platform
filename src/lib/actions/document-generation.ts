@@ -7,7 +7,14 @@ const COMPANY_SETTINGS_ID = '00000000-0000-0000-0000-000000000001'
 
 type MachineRow = Pick<
   Database['public']['Tables']['machines']['Row'],
-  'id' | 'name' | 'specification_number' | 'specification_date'
+  | 'id'
+  | 'name'
+  | 'specification_number'
+  | 'specification_date'
+  | 'packing_gross_weight_kg'
+  | 'packing_net_weight_kg'
+  | 'packing_summary_en'
+  | 'packing_summary_ua'
 >
 type ContractRow = Pick<Database['public']['Tables']['contracts']['Row'], 'number' | 'date'>
 type ClientRow = Pick<
@@ -65,6 +72,15 @@ type MachineExpenseRow = Pick<
   Database['public']['Tables']['machine_expenses']['Row'],
   'category' | 'amount' | 'comment'
 >
+type MachinePackingGroupRow = Pick<
+  Database['public']['Tables']['machine_packing_groups']['Row'],
+  | 'start_item_number'
+  | 'end_item_number'
+  | 'packing_type_en'
+  | 'packing_type_ua'
+  | 'places'
+  | 'sort_order'
+>
 
 type MaybeArray<T> = T | T[] | null
 
@@ -73,6 +89,7 @@ type MachineDocumentRow = MachineRow & {
   contract: MaybeArray<ContractRow>
   machine_items: MachineItemRow[] | null
   machine_expenses: MachineExpenseRow[] | null
+  machine_packing_groups: MachinePackingGroupRow[] | null
 }
 
 export type DocumentItem = {
@@ -98,12 +115,25 @@ export type DocumentExpense = {
   amount: number
 }
 
+export type DocumentPackingGroup = {
+  start_item_number: number
+  end_item_number: number
+  packing_type_en: string
+  packing_type_ua: string
+  places: number
+  sort_order: number
+}
+
 export type DocumentData = {
   machine: {
     id: string
     name: string
     specification_number: string
     specification_date: string
+    packing_gross_weight_kg: number | null
+    packing_net_weight_kg: number | null
+    packing_summary_en: string
+    packing_summary_ua: string
   }
   contract: {
     number: string
@@ -143,6 +173,7 @@ export type DocumentData = {
   }
   items: DocumentItem[]
   expenses: DocumentExpense[]
+  packingGroups: DocumentPackingGroup[]
   totals: {
     goods_total: number
     expenses_total: number
@@ -251,6 +282,10 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       name,
       specification_number,
       specification_date,
+      packing_gross_weight_kg,
+      packing_net_weight_kg,
+      packing_summary_en,
+      packing_summary_ua,
       client:clients(
         name,
         address,
@@ -285,6 +320,14 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
         category,
         amount,
         comment
+      ),
+      machine_packing_groups(
+        start_item_number,
+        end_item_number,
+        packing_type_en,
+        packing_type_ua,
+        places,
+        sort_order
       )
     `)
     .eq('id', parsedMachineId)
@@ -375,6 +418,20 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       }
     })
     .filter((expense) => expense.amount > 0)
+  const packingGroups: DocumentPackingGroup[] = (machine.machine_packing_groups || [])
+    .map((group) => ({
+      start_item_number: Math.max(1, Math.trunc(toNumber(group.start_item_number))),
+      end_item_number: Math.max(1, Math.trunc(toNumber(group.end_item_number))),
+      packing_type_en: clean(group.packing_type_en),
+      packing_type_ua: clean(group.packing_type_ua),
+      places: Math.max(1, Math.trunc(toNumber(group.places))),
+      sort_order: Math.trunc(toNumber(group.sort_order)),
+    }))
+    .filter((group) => group.packing_type_en && group.end_item_number >= group.start_item_number)
+    .sort((a, b) => {
+      const byOrder = a.sort_order - b.sort_order
+      return byOrder || a.start_item_number - b.start_item_number
+    })
 
   const goodsTotal = items.reduce((sum, item) => sum + item.total, 0)
   const expensesTotal = expenses.reduce((sum, expense) => sum + expense.amount, 0)
@@ -393,6 +450,14 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       name: clean(machine.name),
       specification_number: clean(machine.specification_number),
       specification_date: clean(machine.specification_date),
+      packing_gross_weight_kg: machine.packing_gross_weight_kg === null || machine.packing_gross_weight_kg === undefined
+        ? null
+        : toNumber(machine.packing_gross_weight_kg),
+      packing_net_weight_kg: machine.packing_net_weight_kg === null || machine.packing_net_weight_kg === undefined
+        ? null
+        : toNumber(machine.packing_net_weight_kg),
+      packing_summary_en: clean(machine.packing_summary_en),
+      packing_summary_ua: clean(machine.packing_summary_ua),
     },
     contract: firstOrNull(machine.contract)
       ? {
@@ -434,6 +499,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
     },
     items,
     expenses,
+    packingGroups,
     totals: {
       goods_total: goodsTotal,
       expenses_total: expensesTotal,

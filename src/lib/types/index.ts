@@ -14,6 +14,7 @@ export type Notification = Database['public']['Tables']['notifications']['Row']
 export type MachineItem = Database['public']['Tables']['machine_items']['Row']
 export type MachineItemNestingRun = Database['public']['Tables']['machine_item_nesting_runs']['Row']
 export type MachineExpense = Database['public']['Tables']['machine_expenses']['Row']
+export type MachinePackingGroup = Database['public']['Tables']['machine_packing_groups']['Row']
 export type Product = Database['public']['Tables']['products']['Row']
 export type ProductFile = Database['public']['Tables']['product_files']['Row']
 export type ProductProject = Database['public']['Tables']['product_projects']['Row']
@@ -116,6 +117,7 @@ export type MachineRelation = Pick<Machine,
 export type MachineDetails = Machine & {
   machine_items: MachineItem[]
   machine_expenses: MachineExpense[]
+  machine_packing_groups?: MachinePackingGroup[]
   production_stages: ProductionStage[]
   supply_items: SupplyItem[]
   invoice: Invoice | Invoice[] | null

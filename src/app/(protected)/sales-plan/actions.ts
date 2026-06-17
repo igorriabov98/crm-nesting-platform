@@ -7,12 +7,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { dispatchPendingTelegramDeliveries, notifyNewTasks } from '@/lib/services/task-notifications'
-import { createMachineSchema, machineExpenseSchema, machineItemSchema } from '@/lib/types/schemas'
+import { createMachineSchema, machineExpenseSchema, machineItemSchema, machinePackingSettingsSchema } from '@/lib/types/schemas'
 import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
 import { SALES_PLAN_MACHINE_LIMIT } from '@/lib/constants/sales-plan'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
-import type { CreateMachineInput, UpdateMachineInput } from '@/lib/types/schemas'
+import type { CreateMachineInput, MachinePackingSettingsInput, UpdateMachineInput } from '@/lib/types/schemas'
 import type { CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, Product } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
 
@@ -32,6 +32,7 @@ type MachineItemInsert = Database['public']['Tables']['machine_items']['Insert']
 type MachineItemUpdate = Database['public']['Tables']['machine_items']['Update']
 type MachineExpenseInsert = Database['public']['Tables']['machine_expenses']['Insert']
 type MachineExpenseUpdate = Database['public']['Tables']['machine_expenses']['Update']
+type MachinePackingGroupInsert = Database['public']['Tables']['machine_packing_groups']['Insert']
 type InventoryReservation = Database['public']['Tables']['inventory_reservations']['Row']
 export type MachineDocumentFieldsInput = z.input<typeof machineDocumentFieldsSchema>
 type ProductSnapshot = Pick<Product, 'id' | 'name_uk' | 'name_en' | 'uktzed' | 'drawing_number' | 'characteristics' | 'unit_weight_kg' | 'base_price_eur' | 'status'>
@@ -92,6 +93,16 @@ async function getMachineItemsCount(db: LooseDb, machineId: string) {
 
   if (error) throw new Error(error.message || 'Не удалось проверить товары и образцы машины')
   return ((data || []) as Array<{ id: string }>).length
+}
+
+async function getMachineGoodsCount(db: LooseDb, machineId: string) {
+  const { data, error } = await db
+    .from('machine_items')
+    .select('id, is_sample')
+    .eq('machine_id', machineId)
+
+  if (error) throw new Error(error.message || 'Не удалось проверить товары машины')
+  return ((data || []) as Array<{ id: string; is_sample: boolean | null }>).filter((item) => !item.is_sample).length
 }
 
 async function refreshMaterialUndefinedAgenda(
@@ -613,6 +624,7 @@ export async function getMachine(id: string) {
         *,
         machine_items(*),
         machine_expenses(*),
+        machine_packing_groups(*),
         production_stages(*),
         supply_items(*),
         invoice:invoices(*),
@@ -634,6 +646,12 @@ export async function getMachine(id: string) {
     const machineData = data as unknown as MachineDetails
     if (machineData.machine_items) {
       machineData.machine_items.sort((a, b) => a.sort_order - b.sort_order)
+    }
+    if (machineData.machine_packing_groups) {
+      machineData.machine_packing_groups.sort((a, b) => {
+        const byOrder = (a.sort_order || 0) - (b.sort_order || 0)
+        return byOrder || a.start_item_number - b.start_item_number
+      })
     }
     
     // Считаем totals на лету для страницы деталей.
@@ -819,6 +837,70 @@ export async function updateMachineDocumentFields(machineId: string, data: Machi
       .eq('id', parsedMachineId)
 
     if (error) throw error
+
+    revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(`${ROUTES.SALES_PLAN}/${parsedMachineId}`)
+
+    return { success: true, error: null }
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function updateMachinePackingSettings(machineId: string, data: MachinePackingSettingsInput) {
+  try {
+    const { db, user } = await requireSalesPlanPermission('manage')
+    requireMachineMutationAccess(user)
+    const parsedMachineId = machineIdSchema.parse(machineId)
+    const parsed = machinePackingSettingsSchema.parse(data)
+
+    await assertMachineNotArchived(db, parsedMachineId)
+
+    const goodsCount = await getMachineGoodsCount(db, parsedMachineId)
+    for (const group of parsed.groups) {
+      if (group.end_item_number > goodsCount) {
+        throw new Error(`Диапазон упаковки ${group.start_item_number}-${group.end_item_number} выходит за количество товаров (${goodsCount})`)
+      }
+    }
+
+    const { error: machineError } = await db
+      .from('machines')
+      .update({
+        packing_gross_weight_kg: parsed.gross_weight_kg,
+        packing_net_weight_kg: parsed.net_weight_kg,
+        packing_summary_en: parsed.summary_en?.trim() || null,
+        packing_summary_ua: parsed.summary_ua?.trim() || null,
+        updated_at: new Date().toISOString(),
+      } satisfies MachineUpdate)
+      .eq('id', parsedMachineId)
+
+    if (machineError) throw machineError
+
+    const { error: deleteError } = await db
+      .from('machine_packing_groups')
+      .delete()
+      .eq('machine_id', parsedMachineId)
+
+    if (deleteError) throw deleteError
+
+    const rows: MachinePackingGroupInsert[] = parsed.groups.map((group, index) => ({
+      machine_id: parsedMachineId,
+      start_item_number: group.start_item_number,
+      end_item_number: group.end_item_number,
+      packing_type_en: group.packing_type_en.trim(),
+      packing_type_ua: group.packing_type_ua?.trim() || null,
+      places: group.places,
+      sort_order: index,
+      updated_at: new Date().toISOString(),
+    }))
+
+    if (rows.length > 0) {
+      const { error: insertError } = await db
+        .from('machine_packing_groups')
+        .insert(rows)
+
+      if (insertError) throw insertError
+    }
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${parsedMachineId}`)

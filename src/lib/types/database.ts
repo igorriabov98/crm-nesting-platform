@@ -380,6 +380,10 @@ export type Database = {
           specification_number: string | null
           specification_date: string | null
           freight_cost: number | null
+          packing_gross_weight_kg: number | null
+          packing_net_weight_kg: number | null
+          packing_summary_en: string | null
+          packing_summary_ua: string | null
           payment_terms_type: Database['public']['Enums']['payment_terms_type']
           payment_due_days: number
           prepayment_percent: number | null
@@ -412,6 +416,10 @@ export type Database = {
           specification_number?: string | null
           specification_date?: string | null
           freight_cost?: number | null
+          packing_gross_weight_kg?: number | null
+          packing_net_weight_kg?: number | null
+          packing_summary_en?: string | null
+          packing_summary_ua?: string | null
           payment_terms_type?: Database['public']['Enums']['payment_terms_type']
           payment_due_days?: number
           prepayment_percent?: number | null
@@ -444,6 +452,10 @@ export type Database = {
           specification_number?: string | null
           specification_date?: string | null
           freight_cost?: number | null
+          packing_gross_weight_kg?: number | null
+          packing_net_weight_kg?: number | null
+          packing_summary_en?: string | null
+          packing_summary_ua?: string | null
           payment_terms_type?: Database['public']['Enums']['payment_terms_type']
           payment_due_days?: number
           prepayment_percent?: number | null
@@ -680,6 +692,44 @@ export type Database = {
           amount?: number
           comment?: string | null
           created_at?: string
+        }
+      }
+      machine_packing_groups: {
+        Row: {
+          id: string
+          machine_id: string
+          start_item_number: number
+          end_item_number: number
+          packing_type_en: string
+          packing_type_ua: string | null
+          places: number
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          machine_id: string
+          start_item_number: number
+          end_item_number: number
+          packing_type_en: string
+          packing_type_ua?: string | null
+          places: number
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          machine_id?: string
+          start_item_number?: number
+          end_item_number?: number
+          packing_type_en?: string
+          packing_type_ua?: string | null
+          places?: number
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
         }
       }
       products: {

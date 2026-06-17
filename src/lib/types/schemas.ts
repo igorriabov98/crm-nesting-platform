@@ -78,6 +78,31 @@ export const machineExpenseSchema = z.object({
   comment: z.string().optional(),
 })
 
+const optionalPackingNumber = z.preprocess(
+  (value) => (value === '' || value === null || value === undefined ? null : value),
+  z.coerce.number().min(0).nullable()
+)
+
+export const machinePackingGroupSchema = z.object({
+  id: z.string().uuid().optional(),
+  start_item_number: z.coerce.number().int().min(1),
+  end_item_number: z.coerce.number().int().min(1),
+  packing_type_en: z.string().trim().min(1),
+  packing_type_ua: z.string().trim().optional().nullable(),
+  places: z.coerce.number().int().min(1),
+}).refine((group) => group.end_item_number >= group.start_item_number, {
+  message: 'Конечный номер не может быть меньше начального',
+  path: ['end_item_number'],
+})
+
+export const machinePackingSettingsSchema = z.object({
+  gross_weight_kg: optionalPackingNumber,
+  net_weight_kg: optionalPackingNumber,
+  summary_en: z.string().trim().optional().nullable(),
+  summary_ua: z.string().trim().optional().nullable(),
+  groups: z.array(machinePackingGroupSchema).default([]),
+})
+
 export const productStatusSchema = z.enum(['draft', 'active', 'archived'])
 export const productFileKindSchema = z.enum(['drawing', 'step', 'pdf', 'photo', 'other'])
 export const productProjectStatusSchema = z.enum(['draft', 'engineering', 'client_review', 'approved', 'added_to_products', 'cancelled'])
@@ -221,6 +246,7 @@ export type ProductProjectInput = z.infer<typeof productProjectSchema>
 export type ProductProjectVersionInput = z.infer<typeof productProjectVersionSchema>
 export type PromoteProductVersionInput = z.infer<typeof promoteProductVersionSchema>
 export type UpdateCompanySettingsData = z.input<typeof companySettingsSchema>
+export type MachinePackingSettingsInput = z.input<typeof machinePackingSettingsSchema>
 
 export const resetPasswordSchema = z.object({
   password: z.string().min(12, 'Пароль должен содержать минимум 12 символов'),
