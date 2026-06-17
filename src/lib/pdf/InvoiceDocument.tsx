@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
   transportLabel: {
     width: '86%',
     fontWeight: 'bold',
-    textAlign: 'left',
+    textAlign: 'center',
   },
   itemNameEn: {
     fontWeight: 'bold',
@@ -196,7 +196,8 @@ const styles = StyleSheet.create({
 
 const COLS = {
   no: [styles.cell, styles.center, styles.itemNo],
-  name: [styles.cell, styles.center, styles.itemName],
+  nameHeader: [styles.cell, styles.center, styles.itemName],
+  name: [styles.cell, styles.itemName],
   measurement: [styles.cell, styles.center, styles.measurement],
   quantity: [styles.cell, styles.center, styles.quantity],
   price: [styles.cell, styles.center, styles.price],
@@ -273,7 +274,7 @@ function TableHeader() {
   return (
     <View style={styles.tableHeader} fixed>
       <Text style={COLS.no}>№</Text>
-      <Text style={COLS.name}>Item name{'\n'}(Найменування товару)</Text>
+      <Text style={COLS.nameHeader}>Item name{'\n'}(Найменування товару)</Text>
       <Text style={COLS.measurement}>Measure-ment{'\n'}(Од. вим.)</Text>
       <Text style={COLS.quantity}>Q-ty{'\n'}(Кіл-ть)</Text>
       <Text style={COLS.price}>Price in Euro{'\n'}(Ціна Євро)</Text>
