@@ -39,31 +39,33 @@ const styles = StyleSheet.create({
   },
   specHeader: {
     width: TABLE_WIDTH,
-    minHeight: 67,
-    paddingTop: 9,
+    minHeight: 72,
+    paddingTop: 4,
     paddingRight: 4,
-    paddingBottom: 6,
+    paddingBottom: 8,
     paddingLeft: 4,
-    borderRightWidth: 0.7,
-    borderBottomWidth: 0.7,
-    borderColor: '#111111',
+    alignSelf: 'center',
+    justifyContent: 'flex-start',
     textAlign: 'center',
   },
   titleLine: {
-    fontSize: 5.8,
+    fontSize: 7.4,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 2,
+    lineHeight: 1.08,
   },
   subtitleLine: {
-    fontSize: 5.4,
+    fontSize: 7.2,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 2,
+    lineHeight: 1.08,
+  },
+  englishTitleLine: {
+    marginTop: 7,
   },
   headerRow: {
     flexDirection: 'row',
-    minHeight: 26.2,
+    minHeight: 20,
   },
   tableRow: {
     flexDirection: 'row',
@@ -95,7 +97,9 @@ const styles = StyleSheet.create({
   },
   headerCell: {
     justifyContent: 'center',
+    fontSize: 6.9,
     fontWeight: 'bold',
+    lineHeight: 1.05,
     textAlign: 'center',
   },
   center: {
@@ -285,9 +289,11 @@ function Header({ number, date, contractNumber, contractDate }: {
 }) {
   return (
     <View style={styles.specHeader} wrap={false}>
-      <Text style={styles.titleLine}>СПЕЦИФІКАЦІЯ № {number} Від {date}</Text>
+      <Text style={styles.titleLine}>СПЕЦИФІКАЦІЯ № {number}</Text>
+      <Text style={styles.subtitleLine}>Від {date}</Text>
       <Text style={styles.subtitleLine}>До Контракту № {contractNumber} від {contractDate}</Text>
-      <Text style={styles.titleLine}>SPECIFICATION No.{number} dd. {date}</Text>
+      <Text style={[styles.titleLine, styles.englishTitleLine]}>SPECIFICATION No.{number}</Text>
+      <Text style={styles.subtitleLine}>dd. {date}</Text>
       <Text style={styles.subtitleLine}>To Contract No. {contractNumber} dated {contractDate}</Text>
     </View>
   )
@@ -323,71 +329,72 @@ function SpecificationItemsTable({
   const otherExpenses = data.expenses.filter((expense) => !isTransportExpense(expense))
 
   return (
-    <View style={styles.table}>
+    <View>
       {showDocumentHeader && (
-        <>
-          <Header
-            number={data.machine.specification_number || data.machine.name}
-            date={formatDate(data.machine.specification_date)}
-            contractNumber={data.contract?.number || ''}
-            contractDate={formatDate(data.contract?.date)}
-          />
-          <TableHeader />
-        </>
+        <Header
+          number={data.machine.specification_number || data.machine.name}
+          date={formatDate(data.machine.specification_date)}
+          contractNumber={data.contract?.number || ''}
+          contractDate={formatDate(data.contract?.date)}
+        />
       )}
 
-      {rows.map((row, rowIndex) => {
-        if (row.type === 'group') {
-          const hsRowStyle = !showDocumentHeader && rowIndex === 0
-            ? [styles.hsRow, styles.continuationHsRow]
-            : styles.hsRow
+      <View style={styles.table}>
+        {showDocumentHeader && <TableHeader />}
+
+        {rows.map((row, rowIndex) => {
+          if (row.type === 'group') {
+            const hsRowStyle = !showDocumentHeader && rowIndex === 0
+              ? [styles.hsRow, styles.continuationHsRow]
+              : styles.hsRow
+
+            return (
+              <View
+                key={row.key}
+                style={hsRowStyle}
+                wrap={false}
+              >
+                <Text style={styles.hsCell}>HS code (код УКТЗЕД) {row.uktzed}</Text>
+              </View>
+            )
+          }
 
           return (
-            <View
-              key={row.key}
-              style={hsRowStyle}
-              wrap={false}
-            >
-              <Text style={styles.hsCell}>HS code (код УКТЗЕД) {row.uktzed}</Text>
+            <View key={row.key} style={styles.tableRow} wrap={false}>
+              <Text style={columnStyles.no}>{row.number}</Text>
+              <View style={columnStyles.item}>
+                <Text style={styles.itemNameEn}>{row.item.product_name_en}</Text>
+                <Text style={styles.itemNameUa}>{row.item.product_name_uk}</Text>
+              </View>
+              <Text style={columnStyles.measurement}>Pcs/шт</Text>
+              <Text style={columnStyles.quantity}>{formatQuantity(row.item.quantity)}</Text>
+              <Text style={columnStyles.price}>{formatUnitPrice(row.item.price)}</Text>
+              <Text style={columnStyles.total}>{formatMoney(row.item.total)}</Text>
             </View>
           )
-        }
+        })}
 
-        return (
-          <View key={row.key} style={styles.tableRow} wrap={false}>
-            <Text style={columnStyles.no}>{row.number}</Text>
-            <View style={columnStyles.item}>
-              <Text style={styles.itemNameEn}>{row.item.product_name_en}</Text>
-              <Text style={styles.itemNameUa}>{row.item.product_name_uk}</Text>
-            </View>
-            <Text style={columnStyles.measurement}>Pcs/шт</Text>
-            <Text style={columnStyles.quantity}>{formatQuantity(row.item.quantity)}</Text>
-            <Text style={columnStyles.price}>{formatUnitPrice(row.item.price)}</Text>
-            <Text style={columnStyles.total}>{formatMoney(row.item.total)}</Text>
+        {showTotals && transportTotal > 0 && (
+          <View style={styles.summaryRow} wrap={false}>
+            <Text style={[styles.totalsLabelCell, styles.bold]}>Foreightcost/Транспорт</Text>
+            <Text style={[styles.cell, styles.right, styles.bold, { width: COLS.total }]}>{formatMoney(transportTotal)}</Text>
           </View>
-        )
-      })}
+        )}
 
-      {showTotals && transportTotal > 0 && (
-        <View style={styles.summaryRow} wrap={false}>
-          <Text style={[styles.totalsLabelCell, styles.bold]}>Foreightcost/Транспорт</Text>
-          <Text style={[styles.cell, styles.right, styles.bold, { width: COLS.total }]}>{formatMoney(transportTotal)}</Text>
-        </View>
-      )}
+        {showTotals && otherExpenses.map((expense, index) => (
+          <View key={`${expense.label}-${index}`} style={styles.summaryRow} wrap={false}>
+            <Text style={styles.totalsLabelCell}>Additional expenses / Додаткові витрати: {expense.label}</Text>
+            <Text style={columnStyles.total}>{formatMoney(expense.amount)}</Text>
+          </View>
+        ))}
 
-      {showTotals && otherExpenses.map((expense, index) => (
-        <View key={`${expense.label}-${index}`} style={styles.summaryRow} wrap={false}>
-          <Text style={styles.totalsLabelCell}>Additional expenses / Додаткові витрати: {expense.label}</Text>
-          <Text style={columnStyles.total}>{formatMoney(expense.amount)}</Text>
-        </View>
-      ))}
-
-      {showTotals && (
-        <View style={styles.totalRow} wrap={false}>
-          <Text style={[styles.totalsLabelCell, styles.bold]}>Total/Всього:</Text>
-          <Text style={[styles.cell, styles.right, styles.bold, { width: COLS.total }]}>{formatMoney(data.totals.grand_total)}</Text>
-        </View>
-      )}
+        {showTotals && (
+          <View style={styles.totalRow} wrap={false}>
+            <Text style={[styles.totalsLabelCell, styles.bold]}>Total/Всього:</Text>
+            <Text style={[styles.cell, styles.right, styles.bold, { width: COLS.total }]}>{formatMoney(data.totals.grand_total)}</Text>
+          </View>
+        )}
+      </View>
     </View>
   )
 }
