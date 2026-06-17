@@ -192,20 +192,25 @@ const styles = StyleSheet.create({
   },
   footerText: {
     textAlign: 'center',
-    fontSize: 5.5,
-    marginBottom: 3,
+    fontSize: 7.1,
+    lineHeight: 1.2,
+    marginBottom: 3.5,
   },
   footerTextBold: {
     textAlign: 'center',
-    fontSize: 5.5,
+    fontSize: 7.1,
     fontWeight: 'bold',
-    marginBottom: 3,
+    lineHeight: 1.2,
+    marginBottom: 3.5,
+  },
+  amountBlock: {
+    marginTop: 10,
   },
   deliveryBlock: {
-    marginTop: 7,
+    marginTop: 13,
   },
   signatureRow: {
-    marginTop: 17,
+    marginTop: 20,
     flexDirection: 'row',
     minHeight: 132,
   },
@@ -214,28 +219,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   signatureTitle: {
-    fontSize: 5.4,
+    fontSize: 7.1,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 2,
+    marginBottom: 2.5,
   },
   signatureLine: {
-    fontSize: 5.2,
+    fontSize: 7.1,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 2,
+    marginBottom: 3,
   },
   signatureName: {
-    fontSize: 5.2,
+    fontSize: 7.1,
     fontWeight: 'bold',
     textAlign: 'center',
   },
-  emptyAssetSpace: {
-    height: 84,
-  },
-  companyAssets: {
-    height: 92,
-    marginTop: 2,
+  signatureAssets: {
+    height: 102,
+    marginTop: 5,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -468,18 +470,25 @@ function SpecificationItemsTable({
 }
 
 function Footer({ data }: { data: DocumentData }) {
-  const deliveryCity = data.client.country_city || ''
+  const deliveryBasisEn = data.company.delivery_basis_en || 'Delivery Basis: DAP'
+  const deliveryBasisUa = data.company.delivery_basis_ua || 'Базис постачання: DAP'
+  const deliveryLocationEn = data.client.delivery_basis_location_en || data.client.country_city || ''
+  const deliveryLocationUa = data.client.delivery_basis_location_ua || deliveryLocationEn
+  const deliveryTextEn = deliveryLocationEn ? `${deliveryBasisEn} - ${deliveryLocationEn}` : deliveryBasisEn
+  const deliveryTextUa = deliveryLocationUa ? `${deliveryBasisUa} - ${deliveryLocationUa}` : deliveryBasisUa
 
   return (
     <View style={styles.footer} wrap={false}>
       <Text style={styles.footerTextBold}>Goods price includes packaging cost.</Text>
-      <Text style={styles.footerText}>Ціна товару включає вартість упаковки (тари)</Text>
-      <Text style={styles.footerTextBold}>{specificationAmountToWordsEn(data.totals.grand_total)}</Text>
-      <Text style={styles.footerText}>{amountToWordsUa(data.totals.grand_total)}</Text>
+      <Text style={styles.footerTextBold}>Ціна товару включає вартість упаковки (тари)</Text>
+      <View style={styles.amountBlock}>
+        <Text style={styles.footerTextBold}>{specificationAmountToWordsEn(data.totals.grand_total)}</Text>
+        <Text style={styles.footerText}>{amountToWordsUa(data.totals.grand_total)}</Text>
+      </View>
 
       <View style={styles.deliveryBlock}>
-        <Text style={styles.footerTextBold}>Delivery Basis: DAP - {deliveryCity}</Text>
-        <Text style={styles.footerText}>Базис постачання: DAP - {deliveryCity}</Text>
+        <Text style={styles.footerTextBold}>{deliveryTextEn}</Text>
+        <Text style={styles.footerText}>{deliveryTextUa}</Text>
       </View>
 
       <View style={styles.signatureRow}>
@@ -487,13 +496,15 @@ function Footer({ data }: { data: DocumentData }) {
           <Text style={styles.signatureTitle}>ПОКУПЕЦЬ / THE BUYER</Text>
           <Text style={styles.signatureLine}>Директор / Director</Text>
           <Text style={styles.signatureName}>{buyerDirectorName(data)}</Text>
-          <View style={styles.emptyAssetSpace} />
+          <View style={styles.signatureAssets}>
+            <PdfSignatureStampOverlay signatureSrc={data.clientSignatureUrl} stampSrc={data.clientStampUrl} />
+          </View>
         </View>
         <View style={styles.signatureBlock}>
           <Text style={styles.signatureTitle}>ПОКУПЕЦЬ / THE BUYER</Text>
           <Text style={styles.signatureLine}>Директор / Director</Text>
           <Text style={styles.signatureName}>{sellerDirectorName(data)}</Text>
-          <View style={styles.companyAssets}>
+          <View style={styles.signatureAssets}>
             <PdfSignatureStampOverlay signatureSrc={data.signatureUrl} stampSrc={data.stampUrl} />
           </View>
         </View>

@@ -1,6 +1,8 @@
 "use server"
 
+import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { CLIENTS_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ROUTES } from '@/lib/constants/routes'
@@ -32,6 +34,7 @@ type LooseDb = {
 }
 
 type NumericLike = number | string | null
+type ClientImageType = 'signature' | 'stamp'
 
 type ClientPaymentTermsRow = {
   payment_terms_type: string
@@ -94,6 +97,39 @@ function getErrorMessage(error: unknown) {
       .join(' ') || 'Неизвестная ошибка'
   }
   return 'Неизвестная ошибка'
+}
+
+function fileExtension(file: File) {
+  const name = file.name.toLowerCase()
+  if (name.endsWith('.png')) return '.png'
+  if (name.endsWith('.jpg')) return '.jpg'
+  if (name.endsWith('.jpeg')) return '.jpeg'
+  if (file.type === 'image/png') return '.png'
+  if (file.type === 'image/jpeg') return '.jpg'
+  return ''
+}
+
+function assertPngOrJpg(file: File) {
+  if (!file || file.size === 0) throw new Error('Выберите файл')
+
+  const extension = fileExtension(file)
+  const allowedType = file.type === 'image/png' || file.type === 'image/jpeg' || file.type === ''
+  if (!extension || !allowedType) {
+    throw new Error('Загрузите изображение в формате PNG или JPG')
+  }
+
+  return extension
+}
+
+async function createSignedImageUrl(path: string | null | undefined) {
+  if (!path) return null
+
+  const { data, error } = await createAdminClient().storage
+    .from('product-files')
+    .createSignedUrl(path, 3600)
+
+  if (error) return null
+  return data?.signedUrl || null
 }
 
 function assertCanManageClients(user: CurrentUser) {
@@ -175,6 +211,27 @@ export async function getClient(id: string) {
   }
 }
 
+export async function getClientImageUrls(id: string) {
+  try {
+    const { supabase } = await requireClientPermission('view')
+    const { data, error } = await looseDb(supabase).from('clients')
+      .select('signature_image_path, stamp_image_path')
+      .eq('id', id)
+      .single()
+
+    if (error) throw error
+    const client = data as Pick<Client, 'signature_image_path' | 'stamp_image_path'>
+    const [signature, stamp] = await Promise.all([
+      createSignedImageUrl(client.signature_image_path),
+      createSignedImageUrl(client.stamp_image_path),
+    ])
+
+    return { data: { signature, stamp }, error: null }
+  } catch (error) {
+    return { data: { signature: null, stamp: null }, error: getErrorMessage(error) }
+  }
+}
+
 export async function createClient(input: ClientInput) {
   try {
     const { supabase, user } = await requireClientPermission('manage')
@@ -250,6 +307,60 @@ export async function updateClient(id: string, input: ClientInput) {
     revalidatePath(`${ROUTES.CLIENTS}/${id}`)
     return { success: true, error: null }
   } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function uploadClientImage(
+  clientId: string,
+  formData: FormData,
+  type: ClientImageType
+): Promise<{ success: boolean; path?: string; error: string | null }> {
+  let uploadedPath: string | null = null
+  let adminSupabase: ReturnType<typeof createAdminClient> | null = null
+
+  try {
+    const { user } = await requireClientPermission('manage')
+    assertCanManageClients(user)
+    if (type !== 'signature' && type !== 'stamp') throw new Error('Некорректный тип изображения')
+
+    const file = formData.get('file')
+    if (!(file instanceof File)) throw new Error('Выберите файл')
+
+    const extension = assertPngOrJpg(file)
+    uploadedPath = `clients/${clientId}/${type}/${Date.now()}-${randomUUID()}${extension}`
+    adminSupabase = createAdminClient()
+
+    const { error: uploadError } = await adminSupabase.storage
+      .from('product-files')
+      .upload(uploadedPath, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: file.type || undefined,
+      })
+
+    if (uploadError) throw uploadError
+
+    const payload: ClientUpdate = type === 'signature'
+      ? { signature_image_path: uploadedPath, updated_at: new Date().toISOString() }
+      : { stamp_image_path: uploadedPath, updated_at: new Date().toISOString() }
+
+    const { error: updateError } = await looseDb(adminSupabase).from('clients')
+      .update(payload)
+      .eq('id', clientId)
+
+    if (updateError) throw updateError
+
+    revalidatePath(ROUTES.CLIENTS)
+    revalidatePath(`${ROUTES.CLIENTS}/${clientId}`)
+    return { success: true, path: uploadedPath, error: null }
+  } catch (error) {
+    if (uploadedPath) {
+      await (adminSupabase ?? createAdminClient()).storage
+        .from('product-files')
+        .remove([uploadedPath])
+        .catch(() => undefined)
+    }
     return { success: false, error: getErrorMessage(error) }
   }
 }

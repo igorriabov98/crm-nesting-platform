@@ -1,11 +1,14 @@
 "use client"
 
-import { useState } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type RefObject } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { Pencil } from 'lucide-react'
+import { ImageIcon, Pencil, Upload } from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { uploadClientImage } from '@/lib/actions/clients'
 import { ROUTES } from '@/lib/constants/routes'
 import { paymentTermsLabel } from './ClientFormFields'
 import { ClientContactsSection } from './ClientContactsSection'
@@ -13,7 +16,14 @@ import { ClientContractsSection } from './ClientContractsSection'
 import { ClientEditDialog } from './ClientEditDialog'
 import type { Client, ClientContact, Contract, MachineDetails } from '@/lib/types'
 
-type ClientDetailData = Client & { client_contacts?: ClientContact[]; contracts?: Contract[]; machines: MachineDetails[] }
+type ClientImageType = 'signature' | 'stamp'
+type ClientDetailData = Client & {
+  client_contacts?: ClientContact[]
+  contracts?: Contract[]
+  machines: MachineDetails[]
+  clientSignatureUrl?: string | null
+  clientStampUrl?: string | null
+}
 
 const money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'EUR' })
 
@@ -28,8 +38,23 @@ function paymentTermTitle(type: Client['payment_terms_type']) {
   return 'От даты инвойса'
 }
 
+function isPngOrJpg(file: File) {
+  const name = file.name.toLowerCase()
+  return file.type === 'image/png'
+    || file.type === 'image/jpeg'
+    || /\.(png|jpe?g)$/.test(name)
+}
+
 export function ClientDetail({ client, contractsError }: { client: ClientDetailData; contractsError?: string | null }) {
+  const router = useRouter()
   const [isEditOpen, setIsEditOpen] = useState(false)
+  const signatureInputRef = useRef<HTMLInputElement>(null)
+  const stampInputRef = useRef<HTMLInputElement>(null)
+  const [uploadingType, setUploadingType] = useState<ClientImageType | null>(null)
+  const [localPreviews, setLocalPreviews] = useState<Record<ClientImageType, string | null>>({
+    signature: null,
+    stamp: null,
+  })
   const machines = client.machines || []
   const contacts = client.client_contacts || []
   const contracts = client.contracts || []
@@ -41,6 +66,51 @@ export function ClientDetail({ client, contractsError }: { client: ClientDetailD
     const dueDate = invoice?.due_date || invoice?.payment_date
     return dueDate && new Date(dueDate) < new Date()
   })
+
+  useEffect(() => {
+    return () => {
+      Object.values(localPreviews).forEach((url) => {
+        if (url) URL.revokeObjectURL(url)
+      })
+    }
+  }, [localPreviews])
+
+  async function uploadImage(type: ClientImageType, file: File) {
+    if (!isPngOrJpg(file)) {
+      toast.error('Загрузите изображение в формате PNG или JPG')
+      return
+    }
+
+    const localPreview = URL.createObjectURL(file)
+    setLocalPreviews((current) => {
+      if (current[type]) URL.revokeObjectURL(current[type])
+      return { ...current, [type]: localPreview }
+    })
+    setUploadingType(type)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const result = await uploadClientImage(client.id, formData, type)
+      if (!result.success) throw new Error(result.error || 'Не удалось загрузить изображение')
+      toast.success(type === 'signature' ? 'Подпись клиента загружена' : 'Печать клиента загружена')
+      router.refresh()
+    } catch (error) {
+      setLocalPreviews((current) => {
+        if (current[type]) URL.revokeObjectURL(current[type])
+        return { ...current, [type]: null }
+      })
+      toast.error(error instanceof Error ? error.message : 'Неизвестная ошибка')
+    } finally {
+      setUploadingType(null)
+    }
+  }
+
+  function onFileChange(type: ClientImageType, event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (file) void uploadImage(type, file)
+  }
 
   return (
     <div className="space-y-6">
@@ -102,6 +172,30 @@ export function ClientDetail({ client, contractsError }: { client: ClientDetailD
               </div>
             </div>
           )}
+        </div>
+
+        <div className="mt-6 rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-4">
+          <div className="text-xs font-semibold uppercase text-[#9CA3AF]">Документы клиента</div>
+          <div className="mt-3 grid gap-4 md:grid-cols-2">
+            <ClientImageUploadBlock
+              title="Подпись клиента"
+              buttonLabel="Загрузить подпись"
+              previewUrl={localPreviews.signature || client.clientSignatureUrl || null}
+              isUploading={uploadingType === 'signature'}
+              inputRef={signatureInputRef}
+              onPick={() => signatureInputRef.current?.click()}
+              onFileChange={(event) => onFileChange('signature', event)}
+            />
+            <ClientImageUploadBlock
+              title="Печать клиента"
+              buttonLabel="Загрузить печать"
+              previewUrl={localPreviews.stamp || client.clientStampUrl || null}
+              isUploading={uploadingType === 'stamp'}
+              inputRef={stampInputRef}
+              onPick={() => stampInputRef.current?.click()}
+              onFileChange={(event) => onFileChange('stamp', event)}
+            />
+          </div>
         </div>
 
         {client.notes && (
@@ -175,6 +269,51 @@ export function ClientDetail({ client, contractsError }: { client: ClientDetailD
       </section>
 
       <ClientEditDialog client={client} open={isEditOpen} onOpenChange={setIsEditOpen} />
+    </div>
+  )
+}
+
+function ClientImageUploadBlock({
+  title,
+  buttonLabel,
+  previewUrl,
+  isUploading,
+  inputRef,
+  onPick,
+  onFileChange,
+}: {
+  title: string
+  buttonLabel: string
+  previewUrl: string | null
+  isUploading: boolean
+  inputRef: RefObject<HTMLInputElement | null>
+  onPick: () => void
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void
+}) {
+  return (
+    <div className="rounded-lg border border-[#E8ECF0] bg-white p-4">
+      <div className="text-sm font-semibold text-[#1B3A6B]">{title}</div>
+      <div className="mt-3 flex h-44 items-center justify-center rounded-lg border border-dashed border-[#D1D5DB] bg-[#F8F9FA] p-3">
+        {previewUrl ? (
+          <img src={previewUrl} alt={title} className="max-h-full max-w-full object-contain" />
+        ) : (
+          <div className="flex flex-col items-center gap-2 text-[#9CA3AF]">
+            <ImageIcon className="h-8 w-8" />
+            <span className="text-sm">Файл не загружен</span>
+          </div>
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+        className="hidden"
+        onChange={onFileChange}
+      />
+      <Button type="button" variant="outline" className="mt-3" disabled={isUploading} onClick={onPick}>
+        <Upload className="mr-2 h-4 w-4" />
+        {isUploading ? 'Загрузка...' : buttonLabel}
+      </Button>
     </div>
   )
 }

@@ -178,6 +178,8 @@ export type Database = {
           second_director_name: string | null
           second_director_name_en: string | null
           second_director_name_ua: string | null
+          signature_image_path: string | null
+          stamp_image_path: string | null
           vat_number: string | null
           notes: string | null
           payment_terms_type: Database['public']['Enums']['payment_terms_type']
@@ -202,6 +204,8 @@ export type Database = {
           second_director_name?: string | null
           second_director_name_en?: string | null
           second_director_name_ua?: string | null
+          signature_image_path?: string | null
+          stamp_image_path?: string | null
           vat_number?: string | null
           notes?: string | null
           payment_terms_type?: Database['public']['Enums']['payment_terms_type']
@@ -226,6 +230,8 @@ export type Database = {
           second_director_name?: string | null
           second_director_name_en?: string | null
           second_director_name_ua?: string | null
+          signature_image_path?: string | null
+          stamp_image_path?: string | null
           vat_number?: string | null
           notes?: string | null
           payment_terms_type?: Database['public']['Enums']['payment_terms_type']

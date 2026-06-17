@@ -21,6 +21,8 @@ type ClientRow = Pick<
   | 'second_director_name'
   | 'second_director_name_en'
   | 'second_director_name_ua'
+  | 'signature_image_path'
+  | 'stamp_image_path'
 >
 type CompanyRow = Pick<
   Database['public']['Tables']['company_settings']['Row'],
@@ -117,6 +119,8 @@ export type DocumentData = {
     second_director_name: string
     second_director_name_en: string
     second_director_name_ua: string
+    signature_image_path: string | null
+    stamp_image_path: string | null
   }
   company: {
     name_en: string
@@ -149,6 +153,8 @@ export type DocumentData = {
   }
   signatureUrl: string | null
   stampUrl: string | null
+  clientSignatureUrl: string | null
+  clientStampUrl: string | null
 }
 
 const FALLBACK_COMPANY = {
@@ -254,7 +260,9 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
         director_name,
         second_director_name,
         second_director_name_en,
-        second_director_name_ua
+        second_director_name_ua,
+        signature_image_path,
+        stamp_image_path
       ),
       contract:contracts(number, date),
       machine_items(
@@ -372,9 +380,11 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
   const expensesTotal = expenses.reduce((sum, expense) => sum + expense.amount, 0)
   const totalNetWeight = items.reduce((sum, item) => sum + item.net_weight, 0)
   const totalPlaces = items.reduce((sum, item) => sum + item.packing_places, 0)
-  const [signatureUrl, stampUrl] = await Promise.all([
+  const [signatureUrl, stampUrl, clientSignatureUrl, clientStampUrl] = await Promise.all([
     createSignedImageUrl(adminSupabase, company.signature_image_path),
     createSignedImageUrl(adminSupabase, company.stamp_image_path),
+    createSignedImageUrl(adminSupabase, client.signature_image_path),
+    createSignedImageUrl(adminSupabase, client.stamp_image_path),
   ])
 
   return {
@@ -400,6 +410,8 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       second_director_name: clean(client.second_director_name),
       second_director_name_en: clean(client.second_director_name_en),
       second_director_name_ua: clean(client.second_director_name_ua),
+      signature_image_path: client.signature_image_path,
+      stamp_image_path: client.stamp_image_path,
     },
     company: {
       name_en: companyValue(company, 'name_en'),
@@ -432,5 +444,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
     },
     signatureUrl,
     stampUrl,
+    clientSignatureUrl,
+    clientStampUrl,
   }
 }
