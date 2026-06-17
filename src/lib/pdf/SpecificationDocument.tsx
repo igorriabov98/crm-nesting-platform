@@ -104,7 +104,20 @@ const styles = StyleSheet.create({
     fontSize: 6.9,
     fontWeight: 'bold',
     lineHeight: 1.05,
+    marginTop: -3.4,
     textAlign: 'center',
+  },
+  headerTextSingle: {
+    marginTop: -2.3,
+  },
+  headerTextItem: {
+    marginTop: -3.8,
+  },
+  headerTextMeasure: {
+    marginTop: -3.65,
+  },
+  headerTextAmount: {
+    marginTop: -3.8,
   },
   center: {
     textAlign: 'center',
@@ -129,6 +142,7 @@ const styles = StyleSheet.create({
   },
   hsText: {
     fontWeight: 'bold',
+    marginTop: -3.4,
     textAlign: 'center',
   },
   itemNameEn: {
@@ -311,22 +325,22 @@ function TableHeader() {
   return (
     <View style={styles.headerRow} wrap={false}>
       <View style={[styles.cell, { width: COLS.no }, styles.headerCell]}>
-        <Text style={styles.headerText}>№</Text>
+        <Text style={[styles.headerText, styles.headerTextSingle]}>№</Text>
       </View>
       <View style={[styles.cell, { width: COLS.item }, styles.headerCell]}>
-        <Text style={styles.headerText}>Item name{'\n'}(Найменування товару)</Text>
+        <Text style={[styles.headerText, styles.headerTextItem]}>Item name{'\n'}(Найменування товару)</Text>
       </View>
       <View style={[styles.cell, { width: COLS.measurement }, styles.headerCell]}>
-        <Text style={styles.headerText}>Measure-ment{'\n'}(Од. вим.)</Text>
+        <Text style={[styles.headerText, styles.headerTextMeasure]}>Measure-ment{'\n'}(Од. вим.)</Text>
       </View>
       <View style={[styles.cell, { width: COLS.quantity }, styles.headerCell]}>
         <Text style={styles.headerText}>Q-ty{'\n'}(Кіл-ть)</Text>
       </View>
       <View style={[styles.cell, { width: COLS.price }, styles.headerCell]}>
-        <Text style={styles.headerText}>Price in Euro{'\n'}(Ціна Євро)</Text>
+        <Text style={[styles.headerText, styles.headerTextAmount]}>Price in Euro{'\n'}(Ціна Євро)</Text>
       </View>
       <View style={[styles.cell, { width: COLS.total }, styles.headerCell]}>
-        <Text style={styles.headerText}>Total in Euro{'\n'}(Сума Євро)</Text>
+        <Text style={[styles.headerText, styles.headerTextAmount]}>Total in Euro{'\n'}(Сума Євро)</Text>
       </View>
     </View>
   )
