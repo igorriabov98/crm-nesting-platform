@@ -119,6 +119,25 @@ const styles = StyleSheet.create({
   headerTextAmount: {
     marginTop: -3.8,
   },
+  itemRowCell: {
+    justifyContent: 'center',
+    height: '100%',
+  },
+  itemRowCellCenter: {
+    alignItems: 'center',
+  },
+  itemRowCellLeft: {
+    alignItems: 'flex-start',
+  },
+  itemRowText: {
+    fontSize: 6.9,
+    lineHeight: 1.05,
+    marginTop: -2.4,
+    textAlign: 'center',
+  },
+  itemRowTextTotal: {
+    marginTop: -2.9,
+  },
   center: {
     textAlign: 'center',
   },
@@ -146,11 +165,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   itemNameEn: {
-    fontSize: 5.6,
+    fontSize: 6.9,
     fontWeight: 'bold',
+    lineHeight: 1.05,
+    marginTop: -2.15,
   },
   itemNameUa: {
-    fontSize: 5.3,
+    fontSize: 6.9,
+    lineHeight: 1.05,
   },
   totalsLabelCell: {
     width: TOTALS_LABEL_WIDTH,
@@ -397,15 +419,25 @@ function SpecificationItemsTable({
 
           return (
             <View key={row.key} style={styles.tableRow} wrap={false}>
-              <Text style={columnStyles.no}>{row.number}</Text>
-              <View style={columnStyles.item}>
+              <View style={[styles.cell, { width: COLS.no }, styles.itemRowCell, styles.itemRowCellCenter]}>
+                <Text style={styles.itemRowText}>{row.number}</Text>
+              </View>
+              <View style={[styles.cell, { width: COLS.item }, styles.itemRowCell, styles.itemRowCellLeft]}>
                 <Text style={styles.itemNameEn}>{row.item.product_name_en}</Text>
                 <Text style={styles.itemNameUa}>{row.item.product_name_uk}</Text>
               </View>
-              <Text style={columnStyles.measurement}>Pcs/шт</Text>
-              <Text style={columnStyles.quantity}>{formatQuantity(row.item.quantity)}</Text>
-              <Text style={columnStyles.price}>{formatUnitPrice(row.item.price)}</Text>
-              <Text style={columnStyles.total}>{formatMoney(row.item.total)}</Text>
+              <View style={[styles.cell, { width: COLS.measurement }, styles.itemRowCell, styles.itemRowCellCenter]}>
+                <Text style={styles.itemRowText}>Pcs/шт</Text>
+              </View>
+              <View style={[styles.cell, { width: COLS.quantity }, styles.itemRowCell, styles.itemRowCellCenter]}>
+                <Text style={styles.itemRowText}>{formatQuantity(row.item.quantity)}</Text>
+              </View>
+              <View style={[styles.cell, { width: COLS.price }, styles.itemRowCell, styles.itemRowCellCenter]}>
+                <Text style={styles.itemRowText}>{formatUnitPrice(row.item.price)}</Text>
+              </View>
+              <View style={[styles.cell, { width: COLS.total }, styles.itemRowCell, styles.itemRowCellCenter]}>
+                <Text style={[styles.itemRowText, styles.itemRowTextTotal]}>{formatMoney(row.item.total)}</Text>
+              </View>
             </View>
           )
         })}
