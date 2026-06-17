@@ -69,7 +69,7 @@ const styles = StyleSheet.create({
   },
   tableRow: {
     flexDirection: 'row',
-    minHeight: 27,
+    minHeight: 18.8,
   },
   hsRow: {
     flexDirection: 'row',
