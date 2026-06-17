@@ -7,7 +7,6 @@ import { useRouter } from 'next/navigation'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Table,
   TableBody,
@@ -28,21 +27,18 @@ type DraftGroup = {
   places: string
 }
 
+type ParsedDraftGroup = {
+  id?: string
+  start_item_number: number
+  end_item_number: number
+  packing_type_en: string
+  packing_type_ua: string | null
+  places: number
+}
+
 interface PackingListTabProps {
   machine: MachineDetails
   canEdit: boolean
-}
-
-function numberInputValue(value: number | null | undefined) {
-  if (value === null || value === undefined) return ''
-  return String(value)
-}
-
-function parseOptionalNumber(value: string) {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  const parsed = Number(trimmed.replace(',', '.'))
-  return Number.isFinite(parsed) ? parsed : null
 }
 
 function fallbackGroups(machine: MachineDetails): DraftGroup[] {
@@ -82,6 +78,54 @@ function initialGroups(machine: MachineDetails): DraftGroup[] {
     }))
 }
 
+function parseDraftGroups(groups: DraftGroup[]): ParsedDraftGroup[] {
+  return groups
+    .map((group) => ({
+      id: group.id,
+      start_item_number: Number(group.start_item_number),
+      end_item_number: Number(group.end_item_number),
+      packing_type_en: group.packing_type_en.trim(),
+      packing_type_ua: group.packing_type_ua.trim() || null,
+      places: Number(group.places),
+    }))
+    .filter((group) => group.packing_type_en || group.places || group.start_item_number || group.end_item_number)
+}
+
+function formatWeight(value: number) {
+  const safeValue = Number.isFinite(value) ? value : 0
+  return safeValue.toFixed(3).replace(/\.?0+$/, '')
+}
+
+function pluralizeEn(type: string, count: number) {
+  if (!type) return count === 1 ? 'place' : 'places'
+  if (count === 1 || type.endsWith('s')) return type
+  if (type.endsWith('y')) return `${type.slice(0, -1)}ies`
+  return `${type}s`
+}
+
+function joinSummaryParts(parts: string[], conjunction: string) {
+  if (parts.length <= 1) return parts.join('')
+  return `${parts.slice(0, -1).join(', ')} ${conjunction} ${parts[parts.length - 1]}`
+}
+
+function packingSummaryFromGroups(groups: ParsedDraftGroup[], language: 'en' | 'ua') {
+  const totals = new Map<string, number>()
+  for (const group of groups) {
+    if (!Number.isFinite(group.places) || group.places <= 0) continue
+    const type = language === 'en'
+      ? group.packing_type_en
+      : group.packing_type_ua || group.packing_type_en
+    if (!type) continue
+    totals.set(type, (totals.get(type) || 0) + group.places)
+  }
+
+  const parts = Array.from(totals.entries()).map(([type, count]) => (
+    language === 'en' ? `${count} ${pluralizeEn(type, count)}` : `${count} ${type}`
+  ))
+
+  return joinSummaryParts(parts, language === 'en' ? 'and' : 'та')
+}
+
 export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -89,11 +133,28 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
     () => [...(machine.machine_items || [])].filter((item) => !item.is_sample).sort((a, b) => a.sort_order - b.sort_order),
     [machine.machine_items],
   )
-  const [grossWeight, setGrossWeight] = useState(numberInputValue(machine.packing_gross_weight_kg))
-  const [netWeight, setNetWeight] = useState(numberInputValue(machine.packing_net_weight_kg))
-  const [summaryEn, setSummaryEn] = useState(machine.packing_summary_en || '')
-  const [summaryUa, setSummaryUa] = useState(machine.packing_summary_ua || '')
   const [groups, setGroups] = useState<DraftGroup[]>(() => initialGroups(machine))
+  const calculated = useMemo(() => {
+    const netWeight = goods.reduce((sum, item) => {
+      const fallbackWeight = Number(item.weight || 0) * Number(item.quantity || 0)
+      return sum + Number(item.net_weight ?? fallbackWeight)
+    }, 0)
+    const grossWeight = netWeight * 1.05
+    const parsedGroups = parseDraftGroups(groups).filter(
+      (group) => group.packing_type_en && Number.isFinite(group.places) && group.places > 0,
+    )
+    const totalPlaces = parsedGroups.reduce((sum, group) => sum + group.places, 0)
+    const summaryEn = packingSummaryFromGroups(parsedGroups, 'en') || '-'
+    const summaryUa = packingSummaryFromGroups(parsedGroups, 'ua') || summaryEn
+
+    return {
+      netWeight,
+      grossWeight,
+      totalPlaces,
+      summaryEn,
+      summaryUa,
+    }
+  }, [goods, groups])
 
   const updateGroup = (index: number, patch: Partial<DraftGroup>) => {
     setGroups((current) => current.map((group, groupIndex) => groupIndex === index ? { ...group, ...patch } : group))
@@ -121,16 +182,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
   }
 
   const save = () => {
-    const parsedGroups = groups
-      .map((group) => ({
-        id: group.id,
-        start_item_number: Number(group.start_item_number),
-        end_item_number: Number(group.end_item_number),
-        packing_type_en: group.packing_type_en.trim(),
-        packing_type_ua: group.packing_type_ua.trim() || null,
-        places: Number(group.places),
-      }))
-      .filter((group) => group.packing_type_en || group.places || group.start_item_number || group.end_item_number)
+    const parsedGroups = parseDraftGroups(groups)
 
     for (const group of parsedGroups) {
       if (!Number.isInteger(group.start_item_number) || group.start_item_number < 1) {
@@ -157,10 +209,6 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
 
     startTransition(async () => {
       const result = await updateMachinePackingSettings(machine.id, {
-        gross_weight_kg: parseOptionalNumber(grossWeight),
-        net_weight_kg: parseOptionalNumber(netWeight),
-        summary_en: summaryEn,
-        summary_ua: summaryUa,
         groups: parsedGroups,
       })
 
@@ -187,43 +235,25 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
       </div>
 
       <div className="grid gap-4 rounded-lg border border-[#E8ECF0] bg-white p-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="packing-gross">Gross weight, kg</Label>
-          <Input
-            id="packing-gross"
-            value={grossWeight}
-            onChange={(event) => setGrossWeight(event.target.value)}
-            disabled={!canEdit || isPending}
-            inputMode="decimal"
-          />
+        <div className="rounded-md bg-[#F8F9FA] p-3">
+          <div className="text-xs font-medium uppercase text-[#6B7280]">Net weight, kg</div>
+          <div className="mt-1 text-lg font-semibold text-[#1B3A6B]">{formatWeight(calculated.netWeight)}</div>
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="packing-net">Net weight, kg</Label>
-          <Input
-            id="packing-net"
-            value={netWeight}
-            onChange={(event) => setNetWeight(event.target.value)}
-            disabled={!canEdit || isPending}
-            inputMode="decimal"
-          />
+        <div className="rounded-md bg-[#F8F9FA] p-3">
+          <div className="text-xs font-medium uppercase text-[#6B7280]">Gross weight, kg (+5%)</div>
+          <div className="mt-1 text-lg font-semibold text-[#1B3A6B]">{formatWeight(calculated.grossWeight)}</div>
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="packing-summary-en">TOTAL EN</Label>
-          <Input
-            id="packing-summary-en"
-            value={summaryEn}
-            onChange={(event) => setSummaryEn(event.target.value)}
-            disabled={!canEdit || isPending}
-          />
+        <div className="rounded-md bg-[#F8F9FA] p-3">
+          <div className="text-xs font-medium uppercase text-[#6B7280]">TOTAL EN</div>
+          <div className="mt-1 text-sm font-medium text-[#374151]">
+            TOTAL: {calculated.totalPlaces} places:{calculated.summaryEn}
+          </div>
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="packing-summary-ua">ВСЬОГО UA</Label>
-          <Input
-            id="packing-summary-ua"
-            value={summaryUa}
-            onChange={(event) => setSummaryUa(event.target.value)}
-            disabled={!canEdit || isPending}
-          />
+        <div className="rounded-md bg-[#F8F9FA] p-3">
+          <div className="text-xs font-medium uppercase text-[#6B7280]">ВСЬОГО UA</div>
+          <div className="mt-1 text-sm font-medium text-[#374151]">
+            ВСЬОГО: {calculated.totalPlaces} місць:{calculated.summaryUa}
+          </div>
         </div>
       </div>
 

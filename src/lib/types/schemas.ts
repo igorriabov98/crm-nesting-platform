@@ -78,11 +78,6 @@ export const machineExpenseSchema = z.object({
   comment: z.string().optional(),
 })
 
-const optionalPackingNumber = z.preprocess(
-  (value) => (value === '' || value === null || value === undefined ? null : value),
-  z.coerce.number().min(0).nullable()
-)
-
 export const machinePackingGroupSchema = z.object({
   id: z.string().uuid().optional(),
   start_item_number: z.coerce.number().int().min(1),
@@ -96,10 +91,6 @@ export const machinePackingGroupSchema = z.object({
 })
 
 export const machinePackingSettingsSchema = z.object({
-  gross_weight_kg: optionalPackingNumber,
-  net_weight_kg: optionalPackingNumber,
-  summary_en: z.string().trim().optional().nullable(),
-  summary_ua: z.string().trim().optional().nullable(),
   groups: z.array(machinePackingGroupSchema).default([]),
 })
 

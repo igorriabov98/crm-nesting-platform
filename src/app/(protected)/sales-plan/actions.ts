@@ -863,19 +863,6 @@ export async function updateMachinePackingSettings(machineId: string, data: Mach
       }
     }
 
-    const { error: machineError } = await db
-      .from('machines')
-      .update({
-        packing_gross_weight_kg: parsed.gross_weight_kg,
-        packing_net_weight_kg: parsed.net_weight_kg,
-        packing_summary_en: parsed.summary_en?.trim() || null,
-        packing_summary_ua: parsed.summary_ua?.trim() || null,
-        updated_at: new Date().toISOString(),
-      } satisfies MachineUpdate)
-      .eq('id', parsedMachineId)
-
-    if (machineError) throw machineError
-
     const { error: deleteError } = await db
       .from('machine_packing_groups')
       .delete()

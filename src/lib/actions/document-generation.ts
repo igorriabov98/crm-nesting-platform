@@ -505,7 +505,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       expenses_total: expensesTotal,
       grand_total: goodsTotal + expensesTotal,
       total_net_weight: totalNetWeight,
-      total_gross_weight: totalNetWeight * 1.02,
+      total_gross_weight: totalNetWeight * 1.05,
       total_places: totalPlaces,
     },
     signatureUrl,

@@ -469,10 +469,10 @@ export function PackingListDocument({ data }: { data: DocumentData }) {
   const totalPlaces = packingGroups.length > 0
     ? packingGroups.reduce((sum, group) => sum + group.places, 0)
     : data.totals.total_places
-  const summaryEn = data.machine.packing_summary_en || packingSummaryFromGroups(packingGroups, 'en') || packingSummary(data.items) || '-'
-  const summaryUa = data.machine.packing_summary_ua || packingSummaryFromGroups(packingGroups, 'ua') || summaryEn
-  const netWeight = data.machine.packing_net_weight_kg ?? data.totals.total_net_weight
-  const grossWeight = data.machine.packing_gross_weight_kg ?? data.totals.total_gross_weight
+  const summaryEn = packingSummaryFromGroups(packingGroups, 'en') || packingSummary(data.items) || '-'
+  const summaryUa = packingSummaryFromGroups(packingGroups, 'ua') || summaryEn
+  const netWeight = data.items.reduce((sum, item) => sum + item.net_weight, 0)
+  const grossWeight = netWeight * 1.05
   const sellerName = formatSellerName(data.company.name_en) || data.company.name_en
   const sellerLines = addressLines(data.company.address_en)
   const buyerLines = addressLines(data.client.address, data.client.name)
