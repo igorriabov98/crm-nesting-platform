@@ -65,7 +65,7 @@ const styles = StyleSheet.create({
   },
   headerRow: {
     flexDirection: 'row',
-    minHeight: 20,
+    height: 27,
   },
   tableRow: {
     flexDirection: 'row',
@@ -97,6 +97,10 @@ const styles = StyleSheet.create({
   },
   headerCell: {
     justifyContent: 'center',
+    alignItems: 'center',
+    height: '100%',
+  },
+  headerText: {
     fontSize: 6.9,
     fontWeight: 'bold',
     lineHeight: 1.05,
@@ -120,6 +124,10 @@ const styles = StyleSheet.create({
     borderRightWidth: 0.7,
     borderBottomWidth: 0.7,
     borderColor: '#111111',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  hsText: {
     fontWeight: 'bold',
     textAlign: 'center',
   },
@@ -302,12 +310,24 @@ function Header({ number, date, contractNumber, contractDate }: {
 function TableHeader() {
   return (
     <View style={styles.headerRow} wrap={false}>
-      <Text style={[styles.cell, styles.center, { width: COLS.no }, styles.headerCell]}>№</Text>
-      <Text style={[styles.cell, { width: COLS.item }, styles.headerCell]}>Item name{'\n'}(Найменування товару)</Text>
-      <Text style={[styles.cell, styles.center, { width: COLS.measurement }, styles.headerCell]}>Measure-ment{'\n'}(Од. вим.)</Text>
-      <Text style={[styles.cell, styles.center, { width: COLS.quantity }, styles.headerCell]}>Q-ty{'\n'}(Кіл-ть)</Text>
-      <Text style={[styles.cell, styles.right, { width: COLS.price }, styles.headerCell]}>Price in Euro{'\n'}(Ціна Євро)</Text>
-      <Text style={[styles.cell, styles.right, { width: COLS.total }, styles.headerCell]}>Total in Euro{'\n'}(Сума Євро)</Text>
+      <View style={[styles.cell, { width: COLS.no }, styles.headerCell]}>
+        <Text style={styles.headerText}>№</Text>
+      </View>
+      <View style={[styles.cell, { width: COLS.item }, styles.headerCell]}>
+        <Text style={styles.headerText}>Item name{'\n'}(Найменування товару)</Text>
+      </View>
+      <View style={[styles.cell, { width: COLS.measurement }, styles.headerCell]}>
+        <Text style={styles.headerText}>Measure-ment{'\n'}(Од. вим.)</Text>
+      </View>
+      <View style={[styles.cell, { width: COLS.quantity }, styles.headerCell]}>
+        <Text style={styles.headerText}>Q-ty{'\n'}(Кіл-ть)</Text>
+      </View>
+      <View style={[styles.cell, { width: COLS.price }, styles.headerCell]}>
+        <Text style={styles.headerText}>Price in Euro{'\n'}(Ціна Євро)</Text>
+      </View>
+      <View style={[styles.cell, { width: COLS.total }, styles.headerCell]}>
+        <Text style={styles.headerText}>Total in Euro{'\n'}(Сума Євро)</Text>
+      </View>
     </View>
   )
 }
@@ -354,7 +374,9 @@ function SpecificationItemsTable({
                 style={hsRowStyle}
                 wrap={false}
               >
-                <Text style={styles.hsCell}>HS code (код УКТЗЕД) {row.uktzed}</Text>
+                <View style={styles.hsCell}>
+                  <Text style={styles.hsText}>HS code (код УКТЗЕД) {row.uktzed}</Text>
+                </View>
               </View>
             )
           }
