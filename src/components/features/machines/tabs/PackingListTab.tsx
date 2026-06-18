@@ -41,27 +41,8 @@ interface PackingListTabProps {
   canEdit: boolean
 }
 
-function fallbackGroups(machine: MachineDetails): DraftGroup[] {
-  const goods = (machine.machine_items || []).filter((item) => !item.is_sample)
-  return goods
-    .map((item, index) => {
-      const places = Number(item.packing_places || 0)
-      if (places <= 0 || !item.packing_type?.trim()) return null
-      const rowNumber = String(index + 1)
-      return {
-        start_item_number: rowNumber,
-        end_item_number: rowNumber,
-        packing_type_en: item.packing_type.trim(),
-        packing_type_ua: '',
-        places: String(places),
-      }
-    })
-    .filter((group): group is DraftGroup => Boolean(group))
-}
-
 function initialGroups(machine: MachineDetails): DraftGroup[] {
   const groups = machine.machine_packing_groups || []
-  if (groups.length === 0) return fallbackGroups(machine)
 
   return [...groups]
     .sort((a, b) => {
@@ -135,10 +116,10 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
   )
   const [groups, setGroups] = useState<DraftGroup[]>(() => initialGroups(machine))
   const calculated = useMemo(() => {
-    const netWeight = goods.reduce((sum, item) => {
-      const fallbackWeight = Number(item.weight || 0) * Number(item.quantity || 0)
-      return sum + Number(item.net_weight ?? fallbackWeight)
-    }, 0)
+    const netWeight = goods.reduce(
+      (sum, item) => sum + Number(item.weight || 0) * Number(item.quantity || 0),
+      0,
+    )
     const grossWeight = netWeight * 1.05
     const parsedGroups = parseDraftGroups(groups).filter(
       (group) => group.packing_type_en && Number.isFinite(group.places) && group.places > 0,
@@ -365,7 +346,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
                   <div className="text-sm text-[#6B7280]">{item.product_name_uk || item.product_name}</div>
                 </TableCell>
                 <TableCell className="text-center">{item.quantity}</TableCell>
-                <TableCell className="text-right">{Number(item.net_weight ?? Number(item.weight) * Number(item.quantity)).toLocaleString()}</TableCell>
+                <TableCell className="text-right">{(Number(item.weight) * Number(item.quantity)).toLocaleString()}</TableCell>
               </TableRow>
             ))}
           </TableBody>

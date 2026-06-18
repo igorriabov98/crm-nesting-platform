@@ -106,7 +106,7 @@ export type MachineRelation = Pick<Machine,
   | 'production_workshop'
   | 'production_queue_number'
 > & {
-  machine_items?: (Pick<MachineItem, 'id' | 'product_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'price' | 'quantity' | 'weight' | 'net_weight' | 'packing_type' | 'packing_places' | 'coating' | 'ral_number' | 'is_sample'> & {
+  machine_items?: (Pick<MachineItem, 'id' | 'product_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'price' | 'quantity' | 'weight' | 'coating' | 'ral_number' | 'is_sample'> & {
     sort_order?: number | null
   })[]
   total_weight?: number
@@ -138,7 +138,7 @@ export type MachineListItem = MachineWithTotals & {
   created_by_user?: Pick<User, 'full_name'> | null
   client?: Pick<Client, 'id' | 'name' | 'primary_contact_name'> | null
   product?: string | null
-  machine_items?: Pick<MachineItem, 'id' | 'product_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'weight' | 'net_weight' | 'price' | 'quantity' | 'packing_type' | 'packing_places' | 'coating' | 'ral_number' | 'is_sample'>[]
+  machine_items?: Pick<MachineItem, 'id' | 'product_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'weight' | 'price' | 'quantity' | 'coating' | 'ral_number' | 'is_sample'>[]
   production_stages?: Pick<ProductionStage, 'stage_type' | 'date_start' | 'date_end' | 'is_skipped'>[]
   supply_items?: Pick<SupplyItem, 'id' | 'status'>[]
   invoice?: Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount'> | Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount'>[] | null

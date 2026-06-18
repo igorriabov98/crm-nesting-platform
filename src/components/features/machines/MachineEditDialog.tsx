@@ -145,11 +145,8 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
         product_uktzed: i.product_uktzed || null,
         product_drawing_number: i.product_drawing_number || null,
         weight: Number(i.weight),
-        net_weight: i.net_weight ?? null,
         price: Number(i.price),
         quantity: Number(i.quantity),
-        packing_type: i.packing_type || '',
-        packing_places: i.packing_places ?? null,
         coating: i.coating || 'none',
         ral_number: i.ral_number || '',
         is_sample: false
@@ -164,11 +161,8 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
         product_uktzed: i.product_uktzed || null,
         product_drawing_number: i.product_drawing_number || null,
         weight: Number(i.weight),
-        net_weight: i.net_weight ?? null,
         price: Number(i.price),
         quantity: Number(i.quantity),
-        packing_type: i.packing_type || '',
-        packing_places: i.packing_places ?? null,
         coating: i.coating || 'none',
         ral_number: i.ral_number || '',
         is_sample: true
@@ -329,14 +323,9 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     form.setValue(rowPath(name, index, field), value as never)
   }
 
-  function getRowValue(name: 'items' | 'samples', index: number, field: keyof MachineFormItem) {
-    return form.getValues(rowPath(name, index, field)) as unknown
-  }
-
   function applyProductToRow(name: 'items' | 'samples', index: number, productId: string) {
     const product = products.find((item) => item.id === productId)
     if (!product) return
-    const quantity = toFiniteNumber(getRowValue(name, index, 'quantity'), 1)
     setRowValue(name, index, 'product_id', product.id)
     setRowValue(name, index, 'drawing_number', product.drawing_number)
     setRowValue(name, index, 'product_name', product.name_uk)
@@ -346,13 +335,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     setRowValue(name, index, 'product_drawing_number', product.drawing_number)
     setRowValue(name, index, 'product_characteristics', product.characteristics)
     setRowValue(name, index, 'weight', Number(product.unit_weight_kg))
-    setRowValue(name, index, 'net_weight', Number((Number(product.unit_weight_kg) * quantity).toFixed(3)))
     setRowValue(name, index, 'price', Number(product.base_price_eur))
-  }
-
-  function updateQuantity(name: 'items' | 'samples', index: number, quantity: number | undefined) {
-    const unitWeight = toFiniteNumber(getRowValue(name, index, 'weight'))
-    setRowValue(name, index, 'net_weight', quantity ? Number((unitWeight * quantity).toFixed(3)) : undefined)
   }
 
   const handleRemoveItem = (index: number) => {
@@ -674,6 +657,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
               <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Товары</h3>
               {itemFields.map((field, index) => {
                 const coatingValue = watchedItems?.[index]?.coating || 'none'
+                const totalWeight = toFiniteNumber(watchedItems?.[index]?.weight) * toFiniteNumber(watchedItems?.[index]?.quantity)
                 return (
                   <div key={field.id} className="p-4 bg-[#F8F9FA] border border-[#E8ECF0] rounded-md relative shadow-sm">
                     <div className="absolute top-2 right-2">
@@ -764,7 +748,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="text-xs text-[#374151]">Вес ед. (кг) *</FormLabel>
-                            <FormControl><Input type="number" step="0.01" {...field} disabled={Boolean(watchedItems?.[index]?.product_id)} onChange={e => field.onChange(parseFloat(e.target.value))} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                            <FormControl><Input type="number" step="0.01" {...field} disabled className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
                             <FormMessage className="text-[10px]" />
                           </FormItem>
                         )}
@@ -775,26 +759,17 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="text-xs text-[#374151]">Кол-во *</FormLabel>
-                            <FormControl><Input type="number" {...field} onChange={e => {
-                              const quantity = parseIntegerInput(e.target.value)
-                              field.onChange(quantity)
-                              updateQuantity('items', index, quantity)
-                            }} className="h-8 text-sm" /></FormControl>
+                            <FormControl><Input type="number" {...field} onChange={e => field.onChange(parseIntegerInput(e.target.value))} className="h-8 text-sm" /></FormControl>
                             <FormMessage className="text-[10px]" />
                           </FormItem>
                         )}
                       />
-                      <FormField
-                        control={form.control}
-                        name={`items.${index}.net_weight`}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-xs text-[#374151]">Нетто вес (кг)</FormLabel>
-                            <FormControl><Input type="number" min={0} step="0.001" {...field} value={toNumberInputValue(field.value)} onChange={e => field.onChange(parseNumberInput(e.target.value))} className="h-8 text-sm bg-white" /></FormControl>
-                            <FormMessage className="text-[10px]" />
-                          </FormItem>
-                        )}
-                      />
+                      <FormItem>
+                        <FormLabel className="text-xs text-[#374151]">Общий вес (кг)</FormLabel>
+                        <FormControl>
+                          <Input value={Number(totalWeight.toFixed(3))} disabled className="h-8 text-sm bg-white text-[#6B7280]" />
+                        </FormControl>
+                      </FormItem>
                       <FormField
                         control={form.control}
                         name={`items.${index}.price`}
@@ -802,28 +777,6 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                           <FormItem>
                             <FormLabel className="text-xs text-[#374151]">Цена ед. (€) *</FormLabel>
                             <FormControl><Input type="number" step="0.01" {...field} disabled={Boolean(watchedItems?.[index]?.product_id)} onChange={e => field.onChange(parseFloat(e.target.value))} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
-                            <FormMessage className="text-[10px]" />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name={`items.${index}.packing_type`}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-xs text-[#374151]">Тип упаковки</FormLabel>
-                            <FormControl><Input {...field} value={field.value || ''} placeholder="Pack/пачка" className="h-8 text-sm bg-white" /></FormControl>
-                            <FormMessage className="text-[10px]" />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name={`items.${index}.packing_places`}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-xs text-[#374151]">Кол-во мест</FormLabel>
-                            <FormControl><Input type="number" min={0} {...field} value={toNumberInputValue(field.value)} onChange={e => field.onChange(parseIntegerInput(e.target.value))} className="h-8 text-sm bg-white" /></FormControl>
                             <FormMessage className="text-[10px]" />
                           </FormItem>
                         )}
@@ -854,7 +807,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
 
               <Button 
                 type="button" variant="outline" size="sm" className="text-[#1B3A6B]"
-                onClick={() => appendItem({ product_id: null, drawing_number: '', product_name: '', weight: 0, net_weight: 0, price: 0, quantity: 1, packing_type: '', packing_places: undefined, coating: 'none', ral_number: '' })}
+                onClick={() => appendItem({ product_id: null, drawing_number: '', product_name: '', weight: 0, price: 0, quantity: 1, coating: 'none', ral_number: '' })}
               >
                 <Plus className="w-4 h-4 mr-1" /> Добавить товар
               </Button>
@@ -868,6 +821,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
               </div>
               {sampleFields.map((field, index) => {
                 const coatingValue = watchedSamples?.[index]?.coating || 'none'
+                const totalWeight = toFiniteNumber(watchedSamples?.[index]?.weight) * toFiniteNumber(watchedSamples?.[index]?.quantity)
                 return (
                   <div key={field.id} className="p-4 bg-amber-50/60 border border-amber-200 rounded-md relative shadow-sm">
                     <div className="absolute top-2 right-2">
@@ -935,46 +889,27 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                       <FormField control={form.control} name={`samples.${index}.weight`} render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-xs text-[#374151]">Вес ед. (кг) *</FormLabel>
-                          <FormControl><Input type="number" step="0.01" {...field} disabled={Boolean(watchedSamples?.[index]?.product_id)} onChange={e => field.onChange(parseFloat(e.target.value))} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                          <FormControl><Input type="number" step="0.01" {...field} disabled className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
                           <FormMessage className="text-[10px]" />
                         </FormItem>
                       )} />
                       <FormField control={form.control} name={`samples.${index}.quantity`} render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-xs text-[#374151]">Кол-во *</FormLabel>
-                          <FormControl><Input type="number" {...field} onChange={e => {
-                            const quantity = parseIntegerInput(e.target.value)
-                            field.onChange(quantity)
-                            updateQuantity('samples', index, quantity)
-                          }} className="h-8 text-sm" /></FormControl>
+                          <FormControl><Input type="number" {...field} onChange={e => field.onChange(parseIntegerInput(e.target.value))} className="h-8 text-sm" /></FormControl>
                           <FormMessage className="text-[10px]" />
                         </FormItem>
                       )} />
-                      <FormField control={form.control} name={`samples.${index}.net_weight`} render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-xs text-[#374151]">Нетто вес (кг)</FormLabel>
-                          <FormControl><Input type="number" min={0} step="0.001" {...field} value={toNumberInputValue(field.value)} onChange={e => field.onChange(parseNumberInput(e.target.value))} className="h-8 text-sm bg-white" /></FormControl>
-                          <FormMessage className="text-[10px]" />
-                        </FormItem>
-                      )} />
+                      <FormItem>
+                        <FormLabel className="text-xs text-[#374151]">Общий вес (кг)</FormLabel>
+                        <FormControl>
+                          <Input value={Number(totalWeight.toFixed(3))} disabled className="h-8 text-sm bg-white text-[#6B7280]" />
+                        </FormControl>
+                      </FormItem>
                       <FormField control={form.control} name={`samples.${index}.price`} render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-xs text-[#374151]">Цена ед. (€) *</FormLabel>
                           <FormControl><Input type="number" step="0.01" {...field} disabled={Boolean(watchedSamples?.[index]?.product_id)} onChange={e => field.onChange(parseFloat(e.target.value))} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
-                          <FormMessage className="text-[10px]" />
-                        </FormItem>
-                      )} />
-                      <FormField control={form.control} name={`samples.${index}.packing_type`} render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-xs text-[#374151]">Тип упаковки</FormLabel>
-                          <FormControl><Input {...field} value={field.value || ''} placeholder="Pack/пачка" className="h-8 text-sm bg-white" /></FormControl>
-                          <FormMessage className="text-[10px]" />
-                        </FormItem>
-                      )} />
-                      <FormField control={form.control} name={`samples.${index}.packing_places`} render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-xs text-[#374151]">Кол-во мест</FormLabel>
-                          <FormControl><Input type="number" min={0} {...field} value={toNumberInputValue(field.value)} onChange={e => field.onChange(parseIntegerInput(e.target.value))} className="h-8 text-sm bg-white" /></FormControl>
                           <FormMessage className="text-[10px]" />
                         </FormItem>
                       )} />
@@ -997,7 +932,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                 variant="outline"
                 size="sm"
                 className="text-[#1B3A6B]"
-                onClick={() => appendSample({ product_id: null, drawing_number: '', product_name: '', weight: 0, net_weight: 0, price: 0, quantity: 1, packing_type: '', packing_places: undefined, coating: 'none', ral_number: '', is_sample: true })}
+                onClick={() => appendSample({ product_id: null, drawing_number: '', product_name: '', weight: 0, price: 0, quantity: 1, coating: 'none', ral_number: '', is_sample: true })}
               >
                 <Plus className="w-4 h-4 mr-1" /> Добавить образец
               </Button>

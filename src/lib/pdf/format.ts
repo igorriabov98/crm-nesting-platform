@@ -192,24 +192,3 @@ export function groupItemsByHsCode(items: DocumentItem[]): ItemGroup[] {
 
   return groups
 }
-
-function pluralizePacking(type: string, count: number) {
-  if (!type) return count === 1 ? 'place' : 'places'
-  if (count === 1 || type.endsWith('s')) return type
-  if (type.endsWith('y')) return `${type.slice(0, -1)}ies`
-  return `${type}s`
-}
-
-export function packingSummary(items: DocumentItem[]) {
-  const totals = new Map<string, number>()
-
-  for (const item of items) {
-    const type = item.packing_type || 'place'
-    totals.set(type, (totals.get(type) || 0) + item.packing_places)
-  }
-
-  return Array.from(totals.entries())
-    .filter(([, places]) => places > 0)
-    .map(([type, places]) => `${places} ${pluralizePacking(type, places)}`)
-    .join(', ')
-}

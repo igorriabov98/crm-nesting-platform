@@ -202,9 +202,6 @@ function productBackedItemPayload(
     weight: Number(product.unit_weight_kg),
     price: Number(product.base_price_eur),
     quantity: item.quantity,
-    net_weight: item.net_weight ?? null,
-    packing_type: item.packing_type || null,
-    packing_places: item.packing_places ?? null,
     coating: item.coating,
     ral_number: item.ral_number || null,
     is_sample: item.is_sample ?? false,
@@ -215,9 +212,6 @@ function productBackedItemPayload(
 function productBackedItemUpdate(item: NonNullable<UpdateMachineInput['items']>[number], index: number): MachineItemUpdate {
   return {
     quantity: item.quantity,
-    net_weight: item.net_weight ?? null,
-    packing_type: item.packing_type || null,
-    packing_places: item.packing_places ?? null,
     coating: item.coating,
     ral_number: item.ral_number || null,
     is_sample: item.is_sample ?? false,
@@ -557,7 +551,7 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
         factory:factories(name),
         client:clients(id, name, primary_contact_name),
         created_by_user:users!machines_created_by_fkey(full_name),
-        machine_items(id, product_id, drawing_number, product_name, product_name_uk, product_name_en, product_uktzed, product_drawing_number, weight, net_weight, price, quantity, packing_type, packing_places, coating, ral_number, is_sample),
+        machine_items(id, product_id, drawing_number, product_name, product_name_uk, product_name_en, product_uktzed, product_drawing_number, weight, price, quantity, coating, ral_number, is_sample),
         production_stages(stage_type, date_start, date_end, is_skipped),
         supply_items(id, status),
         invoice:invoices(status, payment_date, due_date, amount, paid_amount)
@@ -622,7 +616,7 @@ export async function getMachine(id: string) {
       .from('machines')
       .select(`
         *,
-        machine_items(*),
+        machine_items(id, machine_id, product_id, drawing_number, product_name, product_name_uk, product_name_en, product_uktzed, product_drawing_number, product_characteristics, weight, price, quantity, coating, ral_number, is_sample, sort_order, created_at),
         machine_expenses(*),
         machine_packing_groups(*),
         production_stages(*),
@@ -1061,10 +1055,10 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
         .map((item) => (item as MachineItem & { id?: string }).id)
         .filter((id): id is string => Boolean(id))
       const { data: existingItemsData, error: existingItemsError } = existingIds.length > 0
-        ? await db.from('machine_items').select('*').in('id', existingIds)
+        ? await db.from('machine_items').select('id, product_id').in('id', existingIds)
         : { data: [], error: null }
       if (existingItemsError) throw existingItemsError
-      const existingItems = new Map(((existingItemsData || []) as MachineItem[]).map((item) => [item.id, item]))
+      const existingItems = new Map(((existingItemsData || []) as Pick<MachineItem, 'id' | 'product_id'>[]).map((item) => [item.id, item]))
       const productIdsForInsert = data.items.flatMap((item) => {
         const itemObj = item as MachineItem & { id?: string }
         const existing = itemObj.id ? existingItems.get(itemObj.id) : null
@@ -1095,12 +1089,8 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
             await db.from('machine_items').update({
               drawing_number: item.drawing_number,
               product_name: item.product_name,
-              weight: item.weight,
-              net_weight: item.net_weight ?? null,
               price: item.price,
               quantity: item.quantity,
-              packing_type: item.packing_type || null,
-              packing_places: item.packing_places ?? null,
               coating: item.coating,
               ral_number: item.ral_number || null,
               is_sample: item.is_sample ?? false,
@@ -1302,12 +1292,12 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
     const parsed = machineItemUpdateSchema.parse(data)
     const { data: existingData, error: existingError } = await db
       .from('machine_items')
-      .select('*')
+      .select('id, product_id, quantity, coating, is_sample, sort_order')
       .eq('id', itemId)
       .eq('machine_id', machineId)
       .single()
     if (existingError || !existingData) throw existingError || new Error('Позиция не найдена')
-    const existing = existingData as MachineItem
+    const existing = existingData as Pick<MachineItem, 'id' | 'product_id' | 'quantity' | 'coating' | 'is_sample' | 'sort_order'>
     let updatePayload: MachineItemUpdate
     if (existing.product_id) {
       updatePayload = {
@@ -1328,7 +1318,10 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
       void machine_id
       updatePayload = payload
     } else {
-      updatePayload = parsed
+      const { weight: _ignoredWeight, product_id: _ignoredProductId, ...legacyPayload } = parsed
+      void _ignoredWeight
+      void _ignoredProductId
+      updatePayload = legacyPayload
     }
     const { error } = await db.from('machine_items').update(updatePayload).eq('id', itemId).eq('machine_id', machineId)
     if (error) throw error

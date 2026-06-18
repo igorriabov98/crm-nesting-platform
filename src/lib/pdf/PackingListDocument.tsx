@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import type { DocumentData, DocumentItem, DocumentPackingGroup } from '@/lib/actions/document-generation'
 import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
-import { formatDate, formatQuantity, formatWeight, groupItemsByHsCode, packingSummary } from './format'
+import { formatDate, formatQuantity, formatWeight, groupItemsByHsCode } from './format'
 
 registerPdfFonts()
 
@@ -343,24 +343,6 @@ function packingSummaryFromGroups(groups: DocumentPackingGroup[], language: 'en'
   return joinSummaryParts(parts, language === 'en' ? 'and' : 'та')
 }
 
-function normalizePackingGroups(data: DocumentData) {
-  if (data.packingGroups.length > 0) return data.packingGroups
-
-  return data.items
-    .map((item, index) => {
-      if (!item.packing_type || item.packing_places <= 0) return null
-      return {
-        start_item_number: index + 1,
-        end_item_number: index + 1,
-        packing_type_en: item.packing_type,
-        packing_type_ua: '',
-        places: item.packing_places,
-        sort_order: index,
-      }
-    })
-    .filter((group): group is DocumentPackingGroup => Boolean(group))
-}
-
 function findPackingGroup(itemNumber: number, groups: DocumentPackingGroup[]) {
   return groups.find((group) => itemNumber >= group.start_item_number && itemNumber <= group.end_item_number) || null
 }
@@ -477,11 +459,9 @@ export function PackingListDocument({ data }: { data: DocumentData }) {
   const deliveryLocationUa = data.client.delivery_basis_location_ua || data.client.delivery_basis_location_en || data.client.country_city || ''
   const deliveryBasisEn = deliveryBasisLine(data.company.delivery_basis_en, deliveryLocationEn)
   const deliveryBasisUa = deliveryBasisLine(data.company.delivery_basis_ua, deliveryLocationUa)
-  const packingGroups = normalizePackingGroups(data)
-  const totalPlaces = packingGroups.length > 0
-    ? packingGroups.reduce((sum, group) => sum + group.places, 0)
-    : data.totals.total_places
-  const summaryEn = packingSummaryFromGroups(packingGroups, 'en') || packingSummary(data.items) || '-'
+  const packingGroups = data.packingGroups
+  const totalPlaces = packingGroups.reduce((sum, group) => sum + group.places, 0)
+  const summaryEn = packingSummaryFromGroups(packingGroups, 'en') || '-'
   const summaryUa = packingSummaryFromGroups(packingGroups, 'ua') || summaryEn
   const netWeight = data.items.reduce((sum, item) => sum + item.net_weight, 0)
   const grossWeight = netWeight * 1.05

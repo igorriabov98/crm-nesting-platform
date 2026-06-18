@@ -11,10 +11,6 @@ type MachineRow = Pick<
   | 'name'
   | 'specification_number'
   | 'specification_date'
-  | 'packing_gross_weight_kg'
-  | 'packing_net_weight_kg'
-  | 'packing_summary_en'
-  | 'packing_summary_ua'
 >
 type ContractRow = Pick<Database['public']['Tables']['contracts']['Row'], 'number' | 'date'>
 type ClientRow = Pick<
@@ -57,9 +53,6 @@ type MachineItemRow = Pick<
   | 'quantity'
   | 'price'
   | 'weight'
-  | 'net_weight'
-  | 'packing_type'
-  | 'packing_places'
   | 'coating'
   | 'ral_number'
   | 'is_sample'
@@ -98,8 +91,6 @@ export type DocumentItem = {
   total: number
   weight: number
   net_weight: number
-  packing_type: string
-  packing_places: number
   coating: Database['public']['Enums']['coating_type']
   ral_number: string
 }
@@ -126,10 +117,6 @@ export type DocumentData = {
     name: string
     specification_number: string
     specification_date: string
-    packing_gross_weight_kg: number | null
-    packing_net_weight_kg: number | null
-    packing_summary_en: string
-    packing_summary_ua: string
   }
   contract: {
     number: string
@@ -273,10 +260,6 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       name,
       specification_number,
       specification_date,
-      packing_gross_weight_kg,
-      packing_net_weight_kg,
-      packing_summary_en,
-      packing_summary_ua,
       client:clients(
         name,
         address,
@@ -297,9 +280,6 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
         quantity,
         price,
         weight,
-        net_weight,
-        packing_type,
-        packing_places,
         coating,
         ral_number,
         is_sample
@@ -370,9 +350,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
     const quantity = toNumber(item.quantity)
     const price = toNumber(item.price)
     const weight = toNumber(item.weight)
-    const netWeight = item.net_weight === null || item.net_weight === undefined
-      ? weight * quantity
-      : toNumber(item.net_weight)
+    const netWeight = weight * quantity
 
     return {
       sort_order: item.sort_order || 0,
@@ -384,8 +362,6 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       total: quantity * price,
       weight,
       net_weight: netWeight,
-      packing_type: clean(item.packing_type),
-      packing_places: Math.max(0, Math.trunc(toNumber(item.packing_places))),
       coating: item.coating,
       ral_number: clean(item.ral_number),
     }
@@ -423,7 +399,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
   const goodsTotal = items.reduce((sum, item) => sum + item.total, 0)
   const expensesTotal = expenses.reduce((sum, expense) => sum + expense.amount, 0)
   const totalNetWeight = items.reduce((sum, item) => sum + item.net_weight, 0)
-  const totalPlaces = items.reduce((sum, item) => sum + item.packing_places, 0)
+  const totalPlaces = packingGroups.reduce((sum, group) => sum + group.places, 0)
   const [signatureUrl, stampUrl, clientSignatureUrl, clientStampUrl] = await Promise.all([
     createSignedImageUrl(adminSupabase, company.signature_image_path),
     createSignedImageUrl(adminSupabase, company.stamp_image_path),
@@ -437,14 +413,6 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       name: clean(machine.name),
       specification_number: clean(machine.specification_number),
       specification_date: clean(machine.specification_date),
-      packing_gross_weight_kg: machine.packing_gross_weight_kg === null || machine.packing_gross_weight_kg === undefined
-        ? null
-        : toNumber(machine.packing_gross_weight_kg),
-      packing_net_weight_kg: machine.packing_net_weight_kg === null || machine.packing_net_weight_kg === undefined
-        ? null
-        : toNumber(machine.packing_net_weight_kg),
-      packing_summary_en: clean(machine.packing_summary_en),
-      packing_summary_ua: clean(machine.packing_summary_ua),
     },
     contract: firstOrNull(machine.contract)
       ? {
