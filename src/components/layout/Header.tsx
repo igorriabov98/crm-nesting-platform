@@ -21,7 +21,6 @@ import { useUserStore } from '@/lib/hooks/useUser'
 import { NotificationBell } from './NotificationBell'
 import { Sidebar } from './Sidebar'
 import { Breadcrumbs } from '@/components/features/layout/Breadcrumbs'
-import { FactoryFilter } from '@/components/features/layout/FactoryFilter'
 import { useNavigationProgress } from '@/lib/hooks/useNavigationProgress'
 import type { PermissionMap } from '@/lib/permissions/resources'
 import type { CurrentUser } from '@/lib/types'
@@ -48,11 +47,10 @@ const PAGE_TITLES: Record<string, string> = {
 
 interface HeaderProps {
   user: CurrentUser
-  factories: { id: string; name: string }[]
   permissions: PermissionMap
 }
 
-export function Header({ user, factories, permissions }: HeaderProps) {
+export function Header({ user, permissions }: HeaderProps) {
   const router = useRouter()
   const pathname = usePathname()
   const { reset } = useUserStore()
@@ -77,7 +75,6 @@ export function Header({ user, factories, permissions }: HeaderProps) {
     .slice(0, 2) ?? '?'
 
   const title = PAGE_TITLES[pathname] || 'CRM Завода'
-
   return (
     <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-[#E8ECF0] bg-white px-4 sm:px-6">
       <div className="flex items-center gap-4">
@@ -101,7 +98,6 @@ export function Header({ user, factories, permissions }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-2 sm:gap-4">
-        <FactoryFilter user={user} factories={factories} />
         <NotificationBell userId={user.id} />
 
         <DropdownMenu>
