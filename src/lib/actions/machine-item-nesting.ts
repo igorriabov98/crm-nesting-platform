@@ -5,7 +5,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
-import { getNestingServiceUrl, getResult, type SheetResult } from '@/lib/nesting/api'
+import { fetchNestingService as fetch, getNestingServiceUrl, getResult, type SheetResult } from '@/lib/nesting/api'
 import { resolveSheetMetalMaterialForRequestRow } from '@/lib/actions/request-sheet-metal-materials'
 import type { Database } from '@/lib/types/database'
 import type { PermissionOperation } from '@/lib/permissions/resources'
@@ -241,22 +241,17 @@ async function createNestingProject(input: {
   stepFile: ProductFileRow
   drawingFile: ProductFileRow
 }) {
-  const [stepBlob, drawingBlob] = await Promise.all([
-    downloadProductFile(input.stepFile),
-    downloadProductFile(input.drawingFile),
-  ])
-
-  const formData = new FormData()
-  formData.append('stepFile', stepBlob, input.stepFile.file_name)
-  formData.append('pdfFile', drawingBlob, input.drawingFile.file_name)
-  formData.append('orderNumber', input.orderNumber)
-  formData.append('quantity', String(input.quantity))
-
   let res: Response
   try {
     res = await fetch(`${getNestingServiceUrl()}/api/projects`, {
       method: 'POST',
-      body: formData,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orderNumber: input.orderNumber,
+        quantity: input.quantity,
+        stepStorageUri: `supabase://product-files/${input.stepFile.file_path}`,
+        pdfStorageUri: `supabase://product-files/${input.drawingFile.file_path}`,
+      }),
     })
   } catch (error) {
     const details = error instanceof Error ? error.message : 'неизвестная ошибка'

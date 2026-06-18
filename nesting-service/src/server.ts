@@ -10,11 +10,13 @@ import { stopBoss } from './lib/queue';
 import { AppError } from './lib/errors';
 import { ensureDir } from './lib/utils';
 import { disconnectPrisma } from './lib/prisma';
+import { verifyServiceAuthorization } from './lib/service-auth';
 
 async function main() {
-  ensureDir(config.UPLOAD_DIR);
-  ensureDir(config.OUTPUT_DIR);
-  ensureDir('./logs');
+  if (config.NODE_ENV !== 'production') {
+    ensureDir(config.UPLOAD_DIR);
+    ensureDir(config.OUTPUT_DIR);
+  }
 
   const app = Fastify({
     logger: {
@@ -33,10 +35,19 @@ async function main() {
       files: 200,
     },
   });
-  await app.register(fastifyStatic, {
-    root: path.resolve(config.OUTPUT_DIR),
-    prefix: '/files/',
-    decorateReply: false,
+  if (config.NODE_ENV !== 'production') {
+    await app.register(fastifyStatic, {
+      root: path.resolve(config.OUTPUT_DIR),
+      prefix: '/files/',
+      decorateReply: false,
+    });
+  }
+
+  app.addHook('onRequest', async (request, reply) => {
+    if (!request.url.startsWith('/api/')) return;
+    if (!verifyServiceAuthorization(request.headers.authorization)) {
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
   });
 
   app.setNotFoundHandler((request, reply) => {

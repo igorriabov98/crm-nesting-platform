@@ -6,12 +6,22 @@ import type { ProjectListFilter } from '../schemas/project.schema';
 import { queueService } from './queue.service';
 import { uploadService } from './upload.service';
 import type { BatchUploadInput } from './upload.service';
+import { removeOwnedStorageUris, removeProjectStorageObjects } from '../lib/storage';
 
 interface CreateProjectInput {
   id?: string;
   orderNumber: string;
   quantity: number;
 }
+
+export type ProjectFileRefs = {
+  stepFilePath?: string | null;
+  pdfFilePath?: string | null;
+  stepStorageUri?: string | null;
+  pdfStorageUri?: string | null;
+};
+
+export type BatchProjectInput = Omit<BatchUploadInput, 'stepFilePath' | 'pdfFilePath'> & ProjectFileRefs;
 
 export interface ProjectWithStats {
   id: string;
@@ -44,11 +54,13 @@ type ProjectWithCounts = NestingProject & {
   };
   inputs?: Array<{
     pdfFileUrl: string | null;
+    pdfStorageUri: string | null;
   }>;
 };
 
 function toProjectWithStats(project: ProjectWithCounts, avgUtilization: number | null = null): ProjectWithStats {
-  const inputPdfFileUrl = project.inputs?.find((input) => input.pdfFileUrl)?.pdfFileUrl ?? null;
+  const inputPdfFileUrl = project.inputs
+    ?.find((input) => input.pdfStorageUri || input.pdfFileUrl);
 
   return {
     id: project.id,
@@ -61,7 +73,11 @@ function toProjectWithStats(project: ProjectWithCounts, avgUtilization: number |
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     stepFileUrl: project.stepFileUrl,
-    pdfFileUrl: project.pdfFileUrl ?? inputPdfFileUrl,
+    pdfFileUrl: project.pdfStorageUri
+      ?? project.pdfFileUrl
+      ?? inputPdfFileUrl?.pdfStorageUri
+      ?? inputPdfFileUrl?.pdfFileUrl
+      ?? null,
     partsCount: project._count.parts,
     sheetsCount: project._count.sheets,
     avgUtilization,
@@ -82,8 +98,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 export class ProjectService {
   async createProject(
     input: CreateProjectInput,
-    stepFilePath: string,
-    pdfFilePath: string | null
+    files: ProjectFileRefs
   ): Promise<{ id: string; status: string }> {
     const id = input.id ?? generateId();
     let created = false;
@@ -95,14 +110,16 @@ export class ProjectService {
           orderNumber: input.orderNumber,
           quantity: input.quantity,
           status: 'created',
-          stepFileUrl: stepFilePath,
-          pdfFileUrl: pdfFilePath,
+          stepFileUrl: files.stepFilePath ?? null,
+          pdfFileUrl: files.pdfFilePath ?? null,
+          stepStorageUri: files.stepStorageUri ?? null,
+          pdfStorageUri: files.pdfStorageUri ?? null,
         },
       });
       created = true;
 
       await withTimeout(
-        queueService.addStepParsingJob({ projectId: id, stepFilePath, pdfFilePath }),
+        queueService.addStepParsingJob({ projectId: id, ...files }),
         5000,
         'Не удалось поставить STEP-файл в очередь парсинга'
       );
@@ -121,13 +138,14 @@ export class ProjectService {
         await prisma.nestingProject.delete({ where: { id } }).catch(() => undefined);
       }
       await uploadService.cleanupProjectFiles(id).catch(() => undefined);
+      await removeOwnedStorageUris([files.stepStorageUri, files.pdfStorageUri]).catch(() => undefined);
       throw error;
     }
   }
 
   async createBatchProject(
     input: Pick<CreateProjectInput, 'id' | 'orderNumber'>,
-    batchInputs: BatchUploadInput[]
+    batchInputs: BatchProjectInput[]
   ): Promise<{ id: string; status: string }> {
     const id = input.id ?? generateId();
     let created = false;
@@ -160,8 +178,10 @@ export class ProjectService {
               productName: batchInput.productName ?? sourceLabel,
               drawingNumber: batchInput.drawingNumber ?? null,
               quantity: batchInput.quantity,
-              stepFileUrl: batchInput.stepFilePath,
-              pdfFileUrl: batchInput.pdfFilePath,
+              stepFileUrl: batchInput.stepFilePath ?? null,
+              pdfFileUrl: batchInput.pdfFilePath ?? null,
+              stepStorageUri: batchInput.stepStorageUri ?? null,
+              pdfStorageUri: batchInput.pdfStorageUri ?? null,
               sortOrder: batchInput.sortOrder,
             },
           }));
@@ -185,6 +205,8 @@ export class ProjectService {
             quantity: row.quantity,
             stepFilePath: row.stepFileUrl,
             pdfFilePath: row.pdfFileUrl,
+            stepStorageUri: row.stepStorageUri,
+            pdfStorageUri: row.pdfStorageUri,
           })),
         }),
         5000,
@@ -205,6 +227,7 @@ export class ProjectService {
         await prisma.nestingProject.delete({ where: { id } }).catch(() => undefined);
       }
       await uploadService.cleanupProjectFiles(id).catch(() => undefined);
+      await removeOwnedStorageUris(batchInputs.flatMap((item) => [item.stepStorageUri, item.pdfStorageUri])).catch(() => undefined);
       throw error;
     }
   }
@@ -214,7 +237,7 @@ export class ProjectService {
       where: { id },
       include: {
         inputs: {
-          select: { pdfFileUrl: true },
+          select: { pdfFileUrl: true, pdfStorageUri: true },
           orderBy: { sortOrder: 'asc' },
         },
         _count: {
@@ -285,7 +308,13 @@ export class ProjectService {
   }
 
   async deleteProject(id: string): Promise<void> {
-    const project = await prisma.nestingProject.findUnique({ where: { id } });
+    const project = await prisma.nestingProject.findUnique({
+      where: { id },
+      include: {
+        inputs: { select: { stepStorageUri: true, pdfStorageUri: true } },
+        sheets: { select: { dxfStorageUri: true } },
+      },
+    });
     if (!project) {
       throw new NotFoundError('Проект', id);
     }
@@ -298,8 +327,19 @@ export class ProjectService {
       ).catch(() => undefined);
     }
 
+    const storageUris = [
+      project.stepStorageUri,
+      project.pdfStorageUri,
+      ...project.inputs.flatMap((input) => [input.stepStorageUri, input.pdfStorageUri]),
+      ...project.sheets.map((sheet) => sheet.dxfStorageUri),
+    ];
+
     await prisma.nestingProject.delete({ where: { id } });
     await uploadService.cleanupProjectFiles(id);
+    await Promise.all([
+      removeOwnedStorageUris(storageUris),
+      removeProjectStorageObjects(id),
+    ]);
   }
 
   async updateStatus(id: string, status: string, errorMessage?: string): Promise<void> {

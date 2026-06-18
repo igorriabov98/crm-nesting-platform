@@ -6,7 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { NESTING_QUEUE_LIMIT } from '@/lib/constants/performance-limits'
 import { requirePermission } from '@/lib/permissions/server'
-import { getNestingServiceUrl, getProjectStatus } from '@/lib/nesting/api'
+import { fetchNestingService as fetch, getNestingServiceUrl, getProjectStatus } from '@/lib/nesting/api'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 
 type ActionResult<T> = {
@@ -524,15 +524,12 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
         product,
         stepFile: stepFiles[0],
         drawingFile: drawingFiles[0],
-        stepField: `stepFile_${index}`,
-        pdfField: `pdfFile_${index}`,
         sortOrder: index,
       }
     })
 
     const orderNumber = `Batch ${new Date().toISOString().slice(0, 10)} / ${prepared.length} поз.`
-    const formData = new FormData()
-    formData.append('metadata', JSON.stringify({
+    const servicePayload = {
       orderNumber,
       inputs: prepared.map((row) => ({
         sourceId: row.item.id,
@@ -544,24 +541,16 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
         productName: row.item.product_name || row.product.name_uk,
         drawingNumber: row.item.drawing_number || row.product.drawing_number || '',
         quantity: Math.max(1, Math.trunc(Number(row.item.quantity) || 1)),
-        stepField: row.stepField,
-        pdfField: row.pdfField,
+        stepStorageUri: `supabase://product-files/${row.stepFile.file_path}`,
+        pdfStorageUri: `supabase://product-files/${row.drawingFile.file_path}`,
         sortOrder: row.sortOrder,
       })),
-    }))
-
-    for (const row of prepared) {
-      const [stepBlob, pdfBlob] = await Promise.all([
-        downloadProductFile(row.stepFile),
-        downloadProductFile(row.drawingFile),
-      ])
-      formData.append(row.stepField, stepBlob, row.stepFile.file_name)
-      formData.append(row.pdfField, pdfBlob, row.drawingFile.file_name)
     }
 
     const response = await fetch(`${getNestingServiceUrl()}/api/projects/batch`, {
       method: 'POST',
-      body: formData,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(servicePayload),
     })
 
     if (!response.ok) {

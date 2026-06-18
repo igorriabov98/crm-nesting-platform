@@ -3,8 +3,13 @@ import { config } from '../config';
 import { AppError, ValidationError } from '../lib/errors';
 import { generateId } from '../lib/utils';
 import { idParamSchema } from '../schemas/common.schema';
-import { projectListFilterSchema } from '../schemas/project.schema';
-import { projectService } from '../services/project.service';
+import {
+  createStorageBatchProjectSchema,
+  createStorageProjectSchema,
+  projectListFilterSchema,
+} from '../schemas/project.schema';
+import { parseStorageUri } from '../lib/storage';
+import { projectService, type BatchProjectInput } from '../services/project.service';
 import { uploadService } from '../services/upload.service';
 
 const UPLOAD_WINDOW_MS = 60_000;
@@ -36,6 +41,24 @@ export async function projectsRoutes(app: FastifyInstance) {
   app.post('/', async (request, reply) => {
     enforceUploadRateLimit(request);
 
+    if (request.headers['content-type']?.includes('application/json')) {
+      const body = createStorageProjectSchema.parse(request.body ?? {});
+      parseStorageUri(body.stepStorageUri);
+      if (body.pdfStorageUri) parseStorageUri(body.pdfStorageUri);
+
+      const project = await projectService.createProject(
+        { orderNumber: body.orderNumber, quantity: body.quantity },
+        { stepStorageUri: body.stepStorageUri, pdfStorageUri: body.pdfStorageUri ?? null }
+      );
+
+      return reply.status(201).send({
+        data: { id: project.id, orderNumber: body.orderNumber, status: project.status },
+      });
+    }
+
+    if (config.NODE_ENV === 'production') {
+      throw new ValidationError('Production accepts JSON storage references only');
+    }
     if (!request.isMultipart()) {
       throw new ValidationError('multipart/form-data обязателен');
     }
@@ -50,8 +73,7 @@ export async function projectsRoutes(app: FastifyInstance) {
           orderNumber: upload.orderNumber,
           quantity: upload.quantity,
         },
-        upload.stepFilePath,
-        upload.pdfFilePath
+        { stepFilePath: upload.stepFilePath, pdfFilePath: upload.pdfFilePath }
       );
 
       request.log.info({ projectId, orderNumber: upload.orderNumber }, 'Project created and queued for STEP parsing');
@@ -74,6 +96,33 @@ export async function projectsRoutes(app: FastifyInstance) {
   app.post('/batch', async (request, reply) => {
     enforceUploadRateLimit(request);
 
+    if (request.headers['content-type']?.includes('application/json')) {
+      const body = createStorageBatchProjectSchema.parse(request.body ?? {});
+      const inputs: BatchProjectInput[] = body.inputs.map((input) => {
+        parseStorageUri(input.stepStorageUri);
+        if (input.pdfStorageUri) parseStorageUri(input.pdfStorageUri);
+        return {
+          ...input,
+          pdfStorageUri: input.pdfStorageUri ?? null,
+        };
+      });
+      const project = await projectService.createBatchProject(
+        { orderNumber: body.orderNumber },
+        inputs
+      );
+      return reply.status(201).send({
+        data: {
+          id: project.id,
+          orderNumber: body.orderNumber,
+          status: project.status,
+          inputCount: inputs.length,
+        },
+      });
+    }
+
+    if (config.NODE_ENV === 'production') {
+      throw new ValidationError('Production accepts JSON storage references only');
+    }
     if (!request.isMultipart()) {
       throw new ValidationError('multipart/form-data Ð¾Ð±ÑÐ·Ð°Ñ‚ÐµÐ»ÐµÐ½');
     }

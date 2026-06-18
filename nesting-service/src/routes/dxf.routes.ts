@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { idParamSchema } from '../schemas/common.schema';
 import { projectSheetParamsSchema } from '../schemas/project.schema';
 import { dxfService } from '../services/dxf.service';
+import { downloadStorageBuffer } from '../lib/storage';
 
 export async function dxfRoutes(app: FastifyInstance) {
   app.get('/:id/dxf', async (request, reply) => {
@@ -12,7 +13,8 @@ export async function dxfRoutes(app: FastifyInstance) {
     reply.header('Content-Type', 'application/zip');
     reply.header('Content-Disposition', contentDisposition(result.fileName));
 
-    return reply.send(createReadStream(result.filePath));
+    if (result.storageUri) return reply.send(await downloadStorageBuffer(result.storageUri));
+    return reply.send(createReadStream(result.filePath!));
   });
 
   app.get('/:id/dxf/:sheetId', async (request, reply) => {
@@ -22,7 +24,8 @@ export async function dxfRoutes(app: FastifyInstance) {
     reply.header('Content-Type', 'application/dxf');
     reply.header('Content-Disposition', contentDisposition(result.fileName));
 
-    return reply.send(createReadStream(result.filePath));
+    if (result.storageUri) return reply.send(await downloadStorageBuffer(result.storageUri));
+    return reply.send(createReadStream(result.filePath!));
   });
 }
 

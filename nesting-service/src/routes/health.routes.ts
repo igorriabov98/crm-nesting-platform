@@ -72,16 +72,14 @@ function resolveStatus(database: TimedCheck): HealthStatus {
 }
 
 export async function healthRoutes(app: FastifyInstance) {
-  app.get('/health', async (_request, reply) => {
+  const inspect = async () => {
     const [database, queues] = await Promise.all([
       measure('database', () => prisma.$queryRaw`SELECT 1`),
       getQueueStats(),
     ]);
 
     const status = resolveStatus(database);
-    const statusCode = status === 'down' ? 503 : 200;
-
-    return reply.status(statusCode).send({
+    return {
       status,
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
@@ -90,6 +88,16 @@ export async function healthRoutes(app: FastifyInstance) {
         queues,
       },
       version: VERSION,
-    });
+    };
+  };
+
+  app.get('/health', async (_request, reply) => {
+    const health = await inspect();
+    return reply.status(health.status === 'down' ? 503 : 200).send({ status: health.status });
+  });
+
+  app.get('/api/health', async (_request, reply) => {
+    const health = await inspect();
+    return reply.status(health.status === 'down' ? 503 : 200).send(health);
   });
 }

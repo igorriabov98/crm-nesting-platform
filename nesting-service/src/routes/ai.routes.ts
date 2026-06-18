@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { AppError, NotFoundError, ValidationError } from '../lib/errors';
@@ -13,6 +12,7 @@ import {
   updateAISettings,
 } from '../lib/ai/settings';
 import { testOpenRouterConnection } from '../lib/ai/openrouter';
+import { materializeValidatedStorageObject } from '../lib/storage';
 
 const steelTypeSchema = z.object({
   id: z.string().min(1),
@@ -53,8 +53,9 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       select: {
         id: true,
         pdfFileUrl: true,
+        pdfStorageUri: true,
         inputs: {
-          select: { pdfFileUrl: true },
+          select: { pdfFileUrl: true, pdfStorageUri: true },
           orderBy: { sortOrder: 'asc' },
         },
       },
@@ -63,21 +64,26 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     if (!project) {
       throw new NotFoundError('Проект', id);
     }
-    const pdfFileUrl = project.pdfFileUrl ?? project.inputs.find((input) => input.pdfFileUrl)?.pdfFileUrl ?? null;
+    const pdfFileRef = project.pdfStorageUri
+      ?? project.pdfFileUrl
+      ?? project.inputs.find((input) => input.pdfStorageUri || input.pdfFileUrl)?.pdfStorageUri
+      ?? project.inputs.find((input) => input.pdfFileUrl)?.pdfFileUrl
+      ?? null;
 
-    if (!pdfFileUrl) {
+    if (!pdfFileRef) {
       throw new ValidationError('PDF не загружен');
     }
-    if (!existsSync(pdfFileUrl)) {
+    if (!pdfFileRef) {
       throw new ValidationError('PDF файл не найден на диске');
     }
 
+    const materialized = await materializeValidatedStorageObject(pdfFileRef, 'pdf');
     const result = await analyzeProjectPdf({
       projectId: id,
-      pdfFilePath: pdfFileUrl,
+      pdfFilePath: materialized.filePath,
       autoApply: true,
       steelTypes: body.steelTypes,
-    });
+    }).finally(() => materialized.cleanup());
 
     if (!result.success) {
       throw new AppError(500, result.error || 'Ошибка анализа PDF через AI');

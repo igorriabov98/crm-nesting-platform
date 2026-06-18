@@ -10,6 +10,7 @@ import { gapsRoutes } from './catalog/gaps.routes';
 import { kfactorsRoutes } from './catalog/kfactors.routes';
 import { remnantsRoutes } from './catalog/remnants.routes';
 import { sheetsRoutes } from './catalog/sheets.routes';
+import { uploadsRoutes } from './uploads.routes';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes);
@@ -20,6 +21,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(remnantsRoutes, { prefix: '/api/catalog/remnants' });
 
   await app.register(aiRoutes, { prefix: '/api/ai' });
+  await app.register(uploadsRoutes, { prefix: '/api/uploads' });
   await app.register(projectsRoutes, { prefix: '/api/projects' });
   await app.register(aiProjectRoutes, { prefix: '/api/projects' });
   await app.register(partsRoutes, { prefix: '/api/projects' });

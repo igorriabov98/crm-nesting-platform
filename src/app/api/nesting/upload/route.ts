@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getNestingServiceUrl } from '@/lib/nesting/api'
+import { fetchNestingService as fetch, getNestingServiceUrl } from '@/lib/nesting/api'
 import { requireNestingProxyAccess } from '@/lib/nesting/proxy-auth'
 
 export const dynamic = 'force-dynamic'
@@ -43,10 +43,47 @@ function validateUploadFormData(formData: FormData) {
   return null
 }
 
+function isAllowedManualStorageUri(value: unknown) {
+  if (typeof value !== 'string') return false
+  const prefix = 'supabase://nesting-files/uploads/'
+  const objectPath = value.slice(prefix.length)
+  return value.startsWith(prefix)
+    && objectPath.length > 0
+    && !objectPath.includes('..')
+    && !objectPath.includes('\\')
+}
+
 export async function POST(request: NextRequest) {
   try {
     const denied = await requireNestingProxyAccess('nesting')
     if (denied) return denied
+
+    const contentType = request.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const body = await request.json() as {
+        orderNumber?: unknown
+        quantity?: unknown
+        stepStorageUri?: unknown
+        pdfStorageUri?: unknown
+      }
+      if (!isAllowedManualStorageUri(body.stepStorageUri)
+        || (body.pdfStorageUri != null && !isAllowedManualStorageUri(body.pdfStorageUri))) {
+        return NextResponse.json({ error: 'Storage reference is not allowed' }, { status: 400 })
+      }
+      const res = await fetch(`${getNestingServiceUrl()}/api/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json().catch(() => ({ error: 'Unable to create nesting project' }))
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    const serviceUrl = new URL(getNestingServiceUrl())
+    const isLocalService = ['localhost', '127.0.0.1', '::1'].includes(serviceUrl.hostname)
+    if (process.env.NODE_ENV === 'production' || !isLocalService) {
+      return NextResponse.json({ error: 'Multipart upload is available only for local development' }, { status: 415 })
+    }
 
     const contentLength = Number(request.headers.get('content-length') || 0)
     if (contentLength > STEP_MAX_BYTES + PDF_MAX_BYTES + MULTIPART_OVERHEAD_BYTES) {

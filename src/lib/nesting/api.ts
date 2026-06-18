@@ -208,6 +208,21 @@ export function getNestingServiceUrl() {
   return process.env.NESTING_SERVICE_URL || 'http://localhost:4000'
 }
 
+export function withNestingServiceAuth(init: RequestInit = {}): RequestInit {
+  const secret = process.env.NESTING_SERVICE_SECRET
+  if (!secret && process.env.NODE_ENV === 'production') {
+    throw new Error('NESTING_SERVICE_SECRET is required in production')
+  }
+
+  const headers = new Headers(init.headers)
+  if (secret) headers.set('Authorization', `Bearer ${secret}`)
+  return { ...init, headers }
+}
+
+export function fetchNestingService(input: URL | string, init: RequestInit = {}) {
+  return fetch(input, withNestingServiceAuth(init))
+}
+
 function buildUrl(path: string, params?: Record<string, string | number | undefined>) {
   const url = new URL(path, getNestingServiceUrl())
   for (const [key, value] of Object.entries(params ?? {})) {
@@ -233,7 +248,7 @@ async function readJson<T>(res: Response, fallbackMessage: string): Promise<T> {
 
 async function request(url: URL | string, init: RequestInit | undefined, fallbackMessage: string) {
   try {
-    return await fetch(url, init)
+    return await fetchNestingService(url, init)
   } catch (error) {
     const details = error instanceof Error ? error.message : 'неизвестная ошибка'
     throw new Error(`${fallbackMessage}: сервис раскладки недоступен (${details})`)

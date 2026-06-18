@@ -20,6 +20,8 @@ model NestingProject {
   updatedAt    DateTime       @updatedAt
   stepFileUrl  String?
   pdfFileUrl   String?
+  stepStorageUri String?
+  pdfStorageUri  String?
   inputs       ProjectInput[]
   parts        Part[]
   sheets       NestingSheet[]
@@ -44,8 +46,10 @@ model ProjectInput {
   productName   String?
   drawingNumber String?
   quantity      Int            @default(1)
-  stepFileUrl   String
+  stepFileUrl   String?
   pdfFileUrl    String?
+  stepStorageUri String?
+  pdfStorageUri  String?
   sortOrder     Int            @default(0)
   parts         Part[]
   createdAt     DateTime       @default(now())
@@ -157,6 +161,7 @@ model NestingSheet {
   waste       Float
   remnantGeom Json?
   dxfFileUrl  String?
+  dxfStorageUri String?
 
   @@index([projectId])
   @@schema("nesting")

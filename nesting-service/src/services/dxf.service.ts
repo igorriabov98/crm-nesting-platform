@@ -1,6 +1,7 @@
 import archiver from 'archiver';
 import { createWriteStream, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import type { Part } from '@prisma/client';
 import { config } from '../config';
 import { AppError, NotFoundError, ValidationError } from '../lib/errors';
@@ -11,6 +12,7 @@ import type { Point2D } from '../lib/nesting/types';
 import { prisma } from '../lib/prisma';
 import { normalizeCadText } from '../lib/text-encoding';
 import { ensureDir, sanitizeFilename, transliterate } from '../lib/utils';
+import { isStorageConfigured, uploadStorageBuffer } from '../lib/storage';
 
 type PlacementForDxf = {
   partId: string;
@@ -23,14 +25,16 @@ type PlacementForDxf = {
 };
 
 type DxfSheetResult = {
-  filePath: string;
+  filePath: string | null;
   fileName: string;
   dxfContent: string;
+  storageUri: string | null;
 };
 
 type DxfZipResult = {
-  filePath: string;
+  filePath: string | null;
   fileName: string;
+  storageUri: string | null;
 };
 
 export class DxfService {
@@ -95,23 +99,32 @@ export class DxfService {
       console.warn('[dxf] warnings:', validation.warnings);
     }
 
-    const outputDir = path.resolve(config.OUTPUT_DIR, projectId);
-    ensureDir(outputDir);
-
     const orderLatin = sanitizeFilename(transliterate(project.orderNumber));
     const materialLatin = sanitizeFilename(transliterate(material));
     const thickness = formatThicknessForFilename(sheet.thickness);
     const fileName = sanitizeFilename(`${orderLatin}_${materialLatin}_${thickness}mm_sheet${sheet.sheetIndex}.dxf`);
-    const filePath = path.join(outputDir, fileName);
+    let filePath: string | null = null;
+    let storageUri: string | null = null;
 
-    writeFileSync(filePath, dxfContent, 'utf-8');
+    if (isStorageConfigured()) {
+      storageUri = await uploadStorageBuffer(
+        `projects/${projectId}/${fileName}`,
+        Buffer.from(dxfContent, 'utf8'),
+        'application/dxf'
+      );
+    } else {
+      const outputDir = path.resolve(config.OUTPUT_DIR, projectId);
+      ensureDir(outputDir);
+      filePath = path.join(outputDir, fileName);
+      writeFileSync(filePath, dxfContent, 'utf-8');
+    }
 
     await prisma.nestingSheet.update({
       where: { id: sheetId },
-      data: { dxfFileUrl: filePath },
+      data: { dxfFileUrl: filePath, dxfStorageUri: storageUri },
     });
 
-    return { filePath, fileName, dxfContent };
+    return { filePath, fileName, dxfContent, storageUri };
   }
 
   async generateZip(projectId: string): Promise<DxfZipResult> {
@@ -142,15 +155,31 @@ export class DxfService {
       files.push({ fileName: result.fileName, content: result.dxfContent });
     }
 
-    const outputDir = path.resolve(config.OUTPUT_DIR, projectId);
-    ensureDir(outputDir);
-
     const orderLatin = sanitizeFilename(transliterate(project.orderNumber));
     const fileName = sanitizeFilename(`${orderLatin}_all_sheets.zip`);
-    const filePath = path.join(outputDir, fileName);
+    let filePath: string | null = null;
+    let storageUri: string | null = null;
 
-    await new Promise<void>((resolve, reject) => {
-      const output = createWriteStream(filePath);
+    if (isStorageConfigured()) {
+      const zipBuffer = await new Promise<Buffer>((resolve, reject) => {
+        const output = new PassThrough();
+        const chunks: Buffer[] = [];
+        output.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+        output.on('end', () => resolve(Buffer.concat(chunks)));
+        output.on('error', reject);
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        archive.on('error', reject);
+        archive.pipe(output);
+        for (const file of files) archive.append(file.content, { name: file.fileName });
+        archive.finalize().catch(reject);
+      });
+      storageUri = await uploadStorageBuffer(`projects/${projectId}/${fileName}`, zipBuffer, 'application/zip');
+    } else {
+      const outputDir = path.resolve(config.OUTPUT_DIR, projectId);
+      ensureDir(outputDir);
+      filePath = path.join(outputDir, fileName);
+      await new Promise<void>((resolve, reject) => {
+        const output = createWriteStream(filePath!);
       const archive = archiver('zip', { zlib: { level: 9 } });
 
       output.on('close', resolve);
@@ -163,10 +192,11 @@ export class DxfService {
         archive.append(file.content, { name: file.fileName });
       }
 
-      archive.finalize().catch(reject);
-    });
+        archive.finalize().catch(reject);
+      });
+    }
 
-    return { filePath, fileName };
+    return { filePath, fileName, storageUri };
   }
 }
 

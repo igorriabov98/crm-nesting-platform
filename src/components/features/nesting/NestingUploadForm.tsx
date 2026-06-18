@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { LoadingButton } from '@/components/ui/loading-button'
 import { Progress } from '@/components/ui/progress'
 import { UploadZone } from '@/components/features/nesting/UploadZone'
+import { createClient } from '@/lib/supabase/client'
 
 const STEP_MAX_BYTES = 500 * 1024 * 1024
 const PDF_MAX_BYTES = 50 * 1024 * 1024
@@ -73,7 +74,91 @@ export function NestingUploadForm() {
     setPdfFile(file)
   }
 
+  async function uploadDirect(file: File, kind: 'step' | 'pdf') {
+    const signedResponse = await fetch('/api/nesting/upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind,
+        fileName: file.name,
+        contentType: file.type || 'application/octet-stream',
+        size: file.size,
+      }),
+    })
+    const signedPayload = await signedResponse.json() as {
+      data?: { bucket: string; objectPath: string; token: string; storageUri: string }
+      error?: string
+    }
+    if (!signedResponse.ok || !signedPayload.data) {
+      throw new Error(signedPayload.error || 'Не удалось получить ссылку загрузки')
+    }
+
+    const { bucket, objectPath, token, storageUri } = signedPayload.data
+    const { error } = await createClient().storage
+      .from(bucket)
+      .uploadToSignedUrl(objectPath, token, file, {
+        contentType: file.type || 'application/octet-stream',
+        upsert: false,
+      })
+    if (error) throw error
+    return storageUri
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!stepFile || !orderNumber.trim()) return
+
+    setIsUploading(true)
+    setProgress(0)
+    setLoadedBytes(0)
+    const uploadBytes = stepFile.size + (pdfFile?.size ?? 0)
+    setTotalBytes(uploadBytes)
+    const uploadedUris: string[] = []
+
+    try {
+      const stepStorageUri = await uploadDirect(stepFile, 'step')
+      uploadedUris.push(stepStorageUri)
+      setLoadedBytes(stepFile.size)
+      setProgress(Math.round((stepFile.size / Math.max(1, uploadBytes)) * 100))
+
+      const pdfStorageUri = pdfFile ? await uploadDirect(pdfFile, 'pdf') : null
+      if (pdfStorageUri) uploadedUris.push(pdfStorageUri)
+      setLoadedBytes(uploadBytes)
+      setProgress(100)
+
+      const response = await fetch('/api/nesting/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderNumber: orderNumber.trim(),
+          quantity: Math.max(1, quantity),
+          stepStorageUri,
+          pdfStorageUri,
+        }),
+      })
+      const data = await response.json() as { data?: { id?: string }; error?: string; message?: string }
+      if (!response.ok || !data.data?.id) {
+        throw new Error(data.error || data.message || 'Не удалось создать проект раскладки')
+      }
+
+      toast.success('Файлы загружены, парсинг запущен')
+      uploadedUris.length = 0
+      router.push(`/nesting/${data.data.id}/parts`)
+    } catch (error) {
+      if (uploadedUris.length > 0) {
+        void fetch('/api/nesting/upload-url', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ storageUris: uploadedUris }),
+        })
+      }
+      toast.error(error instanceof Error ? error.message : 'Не удалось загрузить файлы')
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  async function handleLegacySubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!stepFile || !orderNumber.trim()) return
 

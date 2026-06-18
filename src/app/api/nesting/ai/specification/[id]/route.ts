@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { getNestingServiceUrl } from '@/lib/nesting/api'
+import { fetchNestingService as fetch, getNestingServiceUrl } from '@/lib/nesting/api'
 import { forwardJsonResponse, requireNestingProxyAccess, serviceUnavailable } from '@/lib/nesting/proxy-auth'
 
 export const dynamic = 'force-dynamic'

@@ -4,9 +4,10 @@ Sheet metal nesting microservice for laser cutting workflows. The service expose
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22
 - PostgreSQL 15+ from the CRM environment
 - A working `DATABASE_URL`
+- A private Supabase Storage bucket named `nesting-files`
 
 Queues run through `pg-boss`, which uses PostgreSQL and creates its own `pgboss` schema on first startup. Redis and Docker are not required.
 
@@ -45,12 +46,18 @@ cmd /d /c 'pushd "\\Mac\Home\Desktop\Tehnolog\nesting-service" && npm.cmd instal
 
 ```powershell
 curl.exe http://localhost:4000/health
-curl.exe http://localhost:4000/api/catalog/sheets
-curl.exe http://localhost:4000/api/catalog/gaps
+curl.exe http://localhost:4000/api/catalog/sheets -H "Authorization: Bearer <NESTING_SERVICE_SECRET>"
+curl.exe http://localhost:4000/api/catalog/gaps -H "Authorization: Bearer <NESTING_SERVICE_SECRET>"
 curl.exe -X POST http://localhost:4000/api/catalog/sheets -H "Content-Type: application/json" -d "{\"material\":\"Сталь\",\"thickness\":3,\"width\":2500,\"height\":1250}"
 ```
 
-`/health` returns `ok` when PostgreSQL is available and `down` when it is not. The response no longer contains a Redis service:
+`/health` is public and intentionally returns only the overall status. Detailed database and queue state is available at protected `/api/health`:
+
+```json
+{
+  "status": "ok"
+}
+```
 
 ```json
 {
@@ -76,15 +83,11 @@ npm.cmd run worker:nesting
 
 The STEP worker handles one job at a time. The nesting worker registers two pg-boss workers in the same process for two concurrent nesting jobs.
 
-## Production
+## Production / Railway
 
-Build the service and run PM2 with `ecosystem.config.js`:
+Railway must use this directory as the service root. `Dockerfile` builds on Node 22 and `pm2-runtime` starts one API process, one STEP worker, and one nesting worker. Use one Railway replica.
 
-```powershell
-npm.cmd run build
-npx.cmd pm2 start ecosystem.config.js
-npx.cmd pm2 status
-```
+Apply `../supabase/migrations/20260618000000_nesting_storage.sql` before deployment. Set `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NESTING_SERVICE_SECRET`, `CORS_ORIGIN`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL`, and `AI_SETTINGS_ENCRYPTION_KEY` in Railway.
 
 Expected PM2 processes:
 
@@ -92,4 +95,4 @@ Expected PM2 processes:
 - `step-worker`
 - `nesting-worker`
 
-The API runs as one `fork` instance because pg-boss relies on PostgreSQL locks and should not be started in PM2 cluster mode for this service.
+Production accepts JSON `supabase://bucket/path` references only. Legacy multipart remains available only in local development. Railway has no persistent volume; workers materialize Storage objects under the OS temporary directory and remove them after processing. DXF and ZIP outputs are written back to `nesting-files`.

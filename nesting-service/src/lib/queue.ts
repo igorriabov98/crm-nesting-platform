@@ -9,8 +9,10 @@ export const QUEUE_NESTING_CALCULATION = 'nesting-calculation';
 
 export interface StepParsingJobData {
   projectId: string;
-  stepFilePath?: string;
+  stepFilePath?: string | null;
   pdfFilePath?: string | null;
+  stepStorageUri?: string | null;
+  pdfStorageUri?: string | null;
   inputs?: Array<{
     sourceInputId: string;
     sourceId: string;
@@ -21,8 +23,10 @@ export interface StepParsingJobData {
     sourceMachineItemId?: string | null;
     sourceProductId?: string | null;
     quantity: number;
-    stepFilePath: string;
+    stepFilePath?: string | null;
     pdfFilePath?: string | null;
+    stepStorageUri?: string | null;
+    pdfStorageUri?: string | null;
   }>;
 }
 

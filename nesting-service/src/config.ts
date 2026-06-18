@@ -28,6 +28,10 @@ const envSchema = z.object({
   MAX_FILE_SIZE_MB: z.coerce.number().positive().default(500),
   UPLOAD_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   CORS_ORIGIN: z.string().min(1).default('*'),
+  NESTING_SERVICE_SECRET: optionalString,
+  SUPABASE_URL: optionalString,
+  SUPABASE_SERVICE_ROLE_KEY: optionalString,
+  NESTING_STORAGE_BUCKET: z.string().min(1).default('nesting-files'),
   ANTHROPIC_API_KEY: optionalString,
   OPENROUTER_API_KEY: optionalString,
   OPENROUTER_MODEL: optionalString,
@@ -43,6 +47,24 @@ if (!parsedEnv.success) {
     .join('\n- ');
 
   throw new Error(`Invalid environment configuration:\n- ${details}`);
+}
+
+const productionSecrets = parsedEnv.data.NODE_ENV === 'production'
+  ? ['NESTING_SERVICE_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'AI_SETTINGS_ENCRYPTION_KEY'].filter(
+      (key) => !parsedEnv.data[key as keyof typeof parsedEnv.data]
+    )
+  : [];
+
+if (productionSecrets.length > 0) {
+  throw new Error(`Missing production environment variables: ${productionSecrets.join(', ')}`);
+}
+
+if (parsedEnv.data.NODE_ENV === 'production' && parsedEnv.data.CORS_ORIGIN === '*') {
+  throw new Error('CORS_ORIGIN must be explicit in production');
+}
+
+if (parsedEnv.data.NESTING_STORAGE_BUCKET !== 'nesting-files') {
+  throw new Error('NESTING_STORAGE_BUCKET must be nesting-files');
 }
 
 export const config = parsedEnv.data;

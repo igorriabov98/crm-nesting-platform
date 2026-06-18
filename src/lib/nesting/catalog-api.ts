@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { ROUTES } from '@/lib/constants/routes'
-import { getNestingServiceUrl, type NestingMaterial, type PaginatedResponse } from '@/lib/nesting/api'
+import { fetchNestingService, getNestingServiceUrl, type NestingMaterial, type PaginatedResponse } from '@/lib/nesting/api'
 
 type ErrorPayload = {
   error?: string
@@ -66,7 +66,7 @@ function buildCatalogUrl(path: string, params?: Record<string, QueryValue>) {
 
 async function request(url: URL | string, init: RequestInit | undefined, fallbackMessage: string) {
   try {
-    return await fetch(url, init)
+    return await fetchNestingService(url, init)
   } catch (error) {
     const details = error instanceof Error ? error.message : 'неизвестная ошибка'
     throw new Error(`${fallbackMessage}: сервис раскладки недоступен (${details})`)

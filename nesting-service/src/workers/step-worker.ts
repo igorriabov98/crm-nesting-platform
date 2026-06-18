@@ -1,10 +1,13 @@
-import { existsSync } from 'node:fs';
 import type { Prisma } from '@prisma/client';
 import { getBoss, QUEUE_STEP_PARSING, stopBoss } from '../lib/queue';
 import type { StepParsingJobData } from '../lib/queue';
 import { parseStepFile, type ParsedPart } from '../lib/step-parser';
 import { prisma } from '../lib/prisma';
 import { analyzeProjectPdf } from '../lib/ai/service';
+import {
+  materializeValidatedStorageObject,
+  type MaterializedStorageObject,
+} from '../lib/storage';
 
 type StepJob = {
   id: string;
@@ -21,21 +24,28 @@ type StepInputContext = {
   sourceMachineItemId?: string | null;
   sourceProductId?: string | null;
   quantity: number;
-  stepFilePath: string;
-  pdfFilePath?: string | null;
+  stepFileRef: string;
+  pdfFileRef?: string | null;
   isBatch: boolean;
 };
 
 function getInputs(data: StepParsingJobData, projectId: string): StepInputContext[] {
   if (data.inputs?.length) {
-    return data.inputs.map((input) => ({
-      ...input,
-      sourceInputId: input.sourceInputId,
-      isBatch: true,
-    }));
+    return data.inputs.map((input) => {
+      const stepFileRef = input.stepStorageUri || input.stepFilePath;
+      if (!stepFileRef) throw new Error(`No STEP input provided for ${input.sourceLabel}`);
+      return {
+        ...input,
+        sourceInputId: input.sourceInputId,
+        stepFileRef,
+        pdfFileRef: input.pdfStorageUri || input.pdfFilePath,
+        isBatch: true,
+      };
+    });
   }
 
-  if (!data.stepFilePath) return [];
+  const stepFileRef = data.stepStorageUri || data.stepFilePath;
+  if (!stepFileRef) return [];
 
   return [{
     sourceInputId: null,
@@ -43,8 +53,8 @@ function getInputs(data: StepParsingJobData, projectId: string): StepInputContex
     sourceType: 'single_project',
     sourceLabel: 'Single project',
     quantity: 1,
-    stepFilePath: data.stepFilePath,
-    pdfFilePath: data.pdfFilePath,
+    stepFileRef,
+    pdfFileRef: data.pdfStorageUri || data.pdfFilePath,
     isBatch: false,
   }];
 }
@@ -59,6 +69,7 @@ async function processStepJob(job: StepJob) {
 
   console.log(`[step-worker] Job ${job.id} started, project: ${projectId}`);
   console.log(`[step-worker] Inputs: ${inputs.length}`);
+  let retainedPdf: MaterializedStorageObject | null = null;
 
   try {
     const project = await prisma.nestingProject.findUnique({
@@ -82,30 +93,38 @@ async function processStepJob(job: StepJob) {
     let totalParseMs = 0;
 
     for (const input of inputs) {
-      console.log(`[step-worker] STEP file: ${input.stepFilePath}`);
-      if (input.pdfFilePath) {
-        console.log(`[step-worker] PDF file: ${input.pdfFilePath}`);
+      console.log(`[step-worker] STEP source: ${input.stepFileRef}`);
+      const stepObject = await materializeValidatedStorageObject(input.stepFileRef, 'step');
+      let pdfObject: MaterializedStorageObject | null = null;
+
+      try {
+        pdfObject = input.pdfFileRef
+          ? await materializeValidatedStorageObject(input.pdfFileRef, 'pdf')
+          : null;
+        const result = await parseStepFile(stepObject.filePath);
+        totalMeshes += result.totalMeshes;
+        sheetMetalCount += result.sheetMetalCount;
+        totalParseMs += result.parseTimeMs;
+
+        console.log(
+          `[step-worker] Parsed ${input.sourceLabel} in ${result.parseTimeMs}ms: ${result.totalMeshes} meshes, ${result.sheetMetalCount} sheet metal`
+        );
+
+        if (!result.success) {
+          throw new Error(`${input.sourceLabel}: ${result.errors.join('; ') || 'STEP parsing failed'}`);
+        }
+
+        errors.push(...result.errors.map((error) => `${input.sourceLabel}: ${error}`));
+        parsedParts.push(...result.parts.map((part) => ({ input, part })));
+
+        if (!input.isBatch && pdfObject) {
+          retainedPdf = pdfObject;
+          pdfObject = null;
+        }
+      } finally {
+        await stepObject.cleanup();
+        await pdfObject?.cleanup();
       }
-
-      if (!existsSync(input.stepFilePath)) {
-        throw new Error(`STEP file not found: ${input.stepFilePath}`);
-      }
-
-      const result = await parseStepFile(input.stepFilePath);
-      totalMeshes += result.totalMeshes;
-      sheetMetalCount += result.sheetMetalCount;
-      totalParseMs += result.parseTimeMs;
-
-      console.log(
-        `[step-worker] Parsed ${input.sourceLabel} in ${result.parseTimeMs}ms: ${result.totalMeshes} meshes, ${result.sheetMetalCount} sheet metal`
-      );
-
-      if (!result.success) {
-        throw new Error(`${input.sourceLabel}: ${result.errors.join('; ') || 'STEP parsing failed'}`);
-      }
-
-      errors.push(...result.errors.map((error) => `${input.sourceLabel}: ${error}`));
-      parsedParts.push(...result.parts.map((part) => ({ input, part })));
     }
 
     const statusMessage = buildStatusMessage(errors, parsedParts.length, totalMeshes);
@@ -154,13 +173,12 @@ async function processStepJob(job: StepJob) {
 
     console.log(`[step-worker] Job ${job.id} completed: ${parsedParts.length} parts saved`);
 
-    const singleInput = inputs.length === 1 && !inputs[0].isBatch ? inputs[0] : null;
-    if (singleInput?.pdfFilePath && existsSync(singleInput.pdfFilePath)) {
+    if (retainedPdf) {
       try {
         console.log('[step-worker] PDF found, analyzing with AI...');
         const aiResult = await analyzeProjectPdf({
           projectId,
-          pdfFilePath: singleInput.pdfFilePath,
+          pdfFilePath: retainedPdf.filePath,
           autoApply: true,
         });
 
@@ -206,6 +224,8 @@ async function processStepJob(job: StepJob) {
       });
 
     throw error;
+  } finally {
+    await retainedPdf?.cleanup();
   }
 }
 
