@@ -269,7 +269,11 @@ function formatSellerName(name: string) {
   return baseName ? `«${baseName}» LLC` : ''
 }
 
-function addressLines(address: string, clientName?: string) {
+function addressLines(
+  address: string,
+  options: { clientName?: string; recipient?: boolean } = {}
+) {
+  const { clientName, recipient = false } = options
   let value = address.trim()
   if (!value) return []
 
@@ -286,6 +290,14 @@ function addressLines(address: string, clientName?: string) {
 
   const parts = value.split(',').map((part) => part.trim()).filter(Boolean)
   if (parts.length <= 2) return [value]
+
+  if (recipient && parts.length >= 4) {
+    return [
+      `${parts[0]}, ${parts[1]}`,
+      `${parts.slice(2, -1).join(', ')},`,
+      parts[parts.length - 1],
+    ]
+  }
 
   return [
     `${parts[0]}, ${parts[1]},`,
@@ -475,7 +487,10 @@ export function PackingListDocument({ data }: { data: DocumentData }) {
   const grossWeight = netWeight * 1.05
   const sellerName = formatSellerName(data.company.name_en) || data.company.name_en
   const sellerLines = addressLines(data.company.address_en)
-  const buyerLines = addressLines(data.client.address, data.client.name)
+  const buyerLines = addressLines(data.client.address, {
+    clientName: data.client.name,
+    recipient: true,
+  })
 
   return (
     <Document>
