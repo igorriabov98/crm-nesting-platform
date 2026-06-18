@@ -130,7 +130,6 @@ export function ClientDetail({ client, contractsError }: { client: ClientDetailD
             <div className="text-left md:text-right">
               <div>{client.country_city || 'Страна / город не указаны'}</div>
               <div>{client.address || 'Юридический адрес не указан'}</div>
-              <div>{client.delivery_address || 'Адрес доставки не указан'}</div>
               <div>{client.delivery_basis_location_en || 'Delivery Basis EN не указан'}</div>
               <div>{client.delivery_basis_location_ua || 'Delivery Basis UA не указан'}</div>
             </div>

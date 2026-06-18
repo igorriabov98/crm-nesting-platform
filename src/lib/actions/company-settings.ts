@@ -110,7 +110,6 @@ export async function updateCompanySettings(data: UpdateCompanySettingsData): Pr
       name_en: normalizeText(parsed.name_en),
       name_ua: normalizeText(parsed.name_ua),
       address_en: normalizeText(parsed.address_en),
-      address_ua: normalizeText(parsed.address_ua),
       director_name_en: normalizeText(parsed.director_name_en),
       director_name_ua: normalizeText(parsed.director_name_ua),
       enterprise_code: normalizeText(parsed.enterprise_code),

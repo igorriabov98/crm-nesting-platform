@@ -61,13 +61,6 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
             <FormMessage />
           </FormItem>
         )} />
-        <FormField control={form.control} name="delivery_address" render={({ field }) => (
-          <FormItem>
-            <FormLabel>Адрес доставки</FormLabel>
-            <FormControl><Input {...field} value={field.value || ''} /></FormControl>
-            <FormMessage />
-          </FormItem>
-        )} />
       </div>
 
       <div className="space-y-3 rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-4">
@@ -79,34 +72,6 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
             <FormItem>
               <FormLabel>Директор EN</FormLabel>
               <FormControl><Input {...field} value={field.value || ''} placeholder="Имя как в документах на английском, напр. R. Choufany" /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )} />
-          <FormField control={form.control} name="second_director_name" render={({ field }) => (
-            <FormItem>
-              <FormLabel>Директор UA</FormLabel>
-              <FormControl><Input {...field} value={field.value || ''} placeholder="Ім'я як у документах українською, напр. Р. Шуфані" /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )} />
-          <FormField control={form.control} name="second_director_name_en" render={({ field }) => (
-            <FormItem>
-              <FormLabel>Второй директор EN</FormLabel>
-              <FormControl><Input {...field} value={field.value || ''} placeholder="Если документы подписывают двое, напр. H. Choufany" /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )} />
-          <FormField control={form.control} name="second_director_name_ua" render={({ field }) => (
-            <FormItem>
-              <FormLabel>Второй директор UA</FormLabel>
-              <FormControl><Input {...field} value={field.value || ''} placeholder="Якщо документи підписують двоє" /></FormControl>
-              <FormMessage />
-            </FormItem>
-          )} />
-          <FormField control={form.control} name="vat_number" render={({ field }) => (
-            <FormItem className="md:col-span-2">
-              <FormLabel>VAT / EORI номер</FormLabel>
-              <FormControl><Input {...field} value={field.value || ''} /></FormControl>
               <FormMessage />
             </FormItem>
           )} />

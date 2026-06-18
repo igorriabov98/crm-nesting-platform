@@ -100,7 +100,6 @@ export type Database = {
           name_en: string
           name_ua: string
           address_en: string
-          address_ua: string
           director_name_en: string
           director_name_ua: string
           enterprise_code: string
@@ -122,7 +121,6 @@ export type Database = {
           name_en?: string
           name_ua?: string
           address_en?: string
-          address_ua?: string
           director_name_en?: string
           director_name_ua?: string
           enterprise_code?: string
@@ -144,7 +142,6 @@ export type Database = {
           name_en?: string
           name_ua?: string
           address_en?: string
-          address_ua?: string
           director_name_en?: string
           director_name_ua?: string
           enterprise_code?: string
@@ -171,16 +168,11 @@ export type Database = {
           email: string | null
           country_city: string | null
           address: string | null
-          delivery_address: string | null
           delivery_basis_location_en: string | null
           delivery_basis_location_ua: string | null
           director_name: string | null
-          second_director_name: string | null
-          second_director_name_en: string | null
-          second_director_name_ua: string | null
           signature_image_path: string | null
           stamp_image_path: string | null
-          vat_number: string | null
           notes: string | null
           payment_terms_type: Database['public']['Enums']['payment_terms_type']
           payment_due_days: number
@@ -197,16 +189,11 @@ export type Database = {
           email?: string | null
           country_city?: string | null
           address?: string | null
-          delivery_address?: string | null
           delivery_basis_location_en?: string | null
           delivery_basis_location_ua?: string | null
           director_name?: string | null
-          second_director_name?: string | null
-          second_director_name_en?: string | null
-          second_director_name_ua?: string | null
           signature_image_path?: string | null
           stamp_image_path?: string | null
-          vat_number?: string | null
           notes?: string | null
           payment_terms_type?: Database['public']['Enums']['payment_terms_type']
           payment_due_days?: number
@@ -223,16 +210,11 @@ export type Database = {
           email?: string | null
           country_city?: string | null
           address?: string | null
-          delivery_address?: string | null
           delivery_basis_location_en?: string | null
           delivery_basis_location_ua?: string | null
           director_name?: string | null
-          second_director_name?: string | null
-          second_director_name_en?: string | null
-          second_director_name_ua?: string | null
           signature_image_path?: string | null
           stamp_image_path?: string | null
-          vat_number?: string | null
           notes?: string | null
           payment_terms_type?: Database['public']['Enums']['payment_terms_type']
           payment_due_days?: number

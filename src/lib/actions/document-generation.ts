@@ -25,9 +25,6 @@ type ClientRow = Pick<
   | 'delivery_basis_location_en'
   | 'delivery_basis_location_ua'
   | 'director_name'
-  | 'second_director_name'
-  | 'second_director_name_en'
-  | 'second_director_name_ua'
   | 'signature_image_path'
   | 'stamp_image_path'
 >
@@ -36,7 +33,6 @@ type CompanyRow = Pick<
   | 'name_en'
   | 'name_ua'
   | 'address_en'
-  | 'address_ua'
   | 'director_name_en'
   | 'director_name_ua'
   | 'enterprise_code'
@@ -146,9 +142,6 @@ export type DocumentData = {
     delivery_basis_location_en: string
     delivery_basis_location_ua: string
     director_name: string
-    second_director_name: string
-    second_director_name_en: string
-    second_director_name_ua: string
     signature_image_path: string | null
     stamp_image_path: string | null
   }
@@ -156,7 +149,6 @@ export type DocumentData = {
     name_en: string
     name_ua: string
     address_en: string
-    address_ua: string
     director_name_en: string
     director_name_ua: string
     enterprise_code: string
@@ -192,7 +184,6 @@ const FALLBACK_COMPANY = {
   name_en: 'LEDA WEST LLC',
   name_ua: 'ТОВ «ЛЕДА ВЕСТ»',
   address_en: '90200, Berehovo, Bohdana Khmelnytskyi Str. 112, Ukraine',
-  address_ua: '90200, м. Берегове, вул. Богдана Хмельницького, 112, Україна',
   director_name_en: 'R. Choufany',
   director_name_ua: 'Р. Шуфані',
   enterprise_code: '44794546',
@@ -293,9 +284,6 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
         delivery_basis_location_en,
         delivery_basis_location_ua,
         director_name,
-        second_director_name,
-        second_director_name_en,
-        second_director_name_ua,
         signature_image_path,
         stamp_image_path
       ),
@@ -355,7 +343,6 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       name_en,
       name_ua,
       address_en,
-      address_ua,
       director_name_en,
       director_name_ua,
       enterprise_code,
@@ -472,9 +459,6 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       delivery_basis_location_en: clean(client.delivery_basis_location_en),
       delivery_basis_location_ua: clean(client.delivery_basis_location_ua),
       director_name: clean(client.director_name),
-      second_director_name: clean(client.second_director_name),
-      second_director_name_en: clean(client.second_director_name_en),
-      second_director_name_ua: clean(client.second_director_name_ua),
       signature_image_path: client.signature_image_path,
       stamp_image_path: client.stamp_image_path,
     },
@@ -482,7 +466,6 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       name_en: companyValue(company, 'name_en'),
       name_ua: companyValue(company, 'name_ua'),
       address_en: companyValue(company, 'address_en'),
-      address_ua: companyValue(company, 'address_ua'),
       director_name_en: companyValue(company, 'director_name_en'),
       director_name_ua: companyValue(company, 'director_name_ua'),
       enterprise_code: companyValue(company, 'enterprise_code'),

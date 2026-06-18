@@ -274,8 +274,7 @@ function formatUnitPrice(value: number) {
 }
 
 function buyerDirectorName(data: DocumentData) {
-  return data.client.second_director_name_en
-    || data.client.director_name
+  return data.client.director_name
     || data.client.name
 }
 

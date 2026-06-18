@@ -141,7 +141,7 @@ export async function getClientOptions() {
     const { supabase } = await requireClientPermission('view')
 
     const { data, error } = await looseDb(supabase).from('clients')
-      .select('id, name, primary_contact_name, phone, email, country_city, address, delivery_address, delivery_basis_location_en, delivery_basis_location_ua, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days')
+      .select('id, name, primary_contact_name, phone, email, country_city, address, delivery_basis_location_en, delivery_basis_location_ua, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days')
       .order('name', { ascending: true })
 
     if (error) throw error
@@ -245,14 +245,9 @@ export async function createClient(input: ClientInput) {
       email: parsed.email || null,
       country_city: parsed.country_city || null,
       address: parsed.address || null,
-      delivery_address: parsed.delivery_address || null,
       delivery_basis_location_en: parsed.delivery_basis_location_en || null,
       delivery_basis_location_ua: parsed.delivery_basis_location_ua || null,
       director_name: parsed.director_name || null,
-      second_director_name: parsed.second_director_name || null,
-      second_director_name_en: parsed.second_director_name_en || null,
-      second_director_name_ua: parsed.second_director_name_ua || null,
-      vat_number: parsed.vat_number || null,
       notes: parsed.notes || null,
       prepayment_percent: parsed.payment_terms_type === 'prepayment_full' ? parsed.prepayment_percent ?? 50 : null,
       final_payment_due_days: parsed.payment_terms_type === 'prepayment_full' ? parsed.final_payment_due_days ?? parsed.payment_due_days : null,
@@ -286,14 +281,9 @@ export async function updateClient(id: string, input: ClientInput) {
       email: parsed.email || null,
       country_city: parsed.country_city || null,
       address: parsed.address || null,
-      delivery_address: parsed.delivery_address || null,
       delivery_basis_location_en: parsed.delivery_basis_location_en || null,
       delivery_basis_location_ua: parsed.delivery_basis_location_ua || null,
       director_name: parsed.director_name || null,
-      second_director_name: parsed.second_director_name || null,
-      second_director_name_en: parsed.second_director_name_en || null,
-      second_director_name_ua: parsed.second_director_name_ua || null,
-      vat_number: parsed.vat_number || null,
       notes: parsed.notes || null,
       prepayment_percent: parsed.payment_terms_type === 'prepayment_full' ? parsed.prepayment_percent ?? 50 : null,
       final_payment_due_days: parsed.payment_terms_type === 'prepayment_full' ? parsed.final_payment_due_days ?? parsed.payment_due_days : null,

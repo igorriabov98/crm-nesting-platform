@@ -31,7 +31,6 @@ function defaultValues(settings: CompanySettings): UpdateCompanySettingsData {
     name_en: settings.name_en || '',
     name_ua: settings.name_ua || '',
     address_en: settings.address_en || '',
-    address_ua: settings.address_ua || '',
     director_name_en: settings.director_name_en || '',
     director_name_ua: settings.director_name_ua || '',
     enterprise_code: settings.enterprise_code || '',
@@ -157,7 +156,6 @@ export function CompanySettingsPage({ settings, imageUrls }: CompanySettingsPage
                 <TextField form={form} name="name_en" label="Название компании EN" />
                 <TextField form={form} name="name_ua" label="Назва компанії UA" />
                 <TextareaField form={form} name="address_en" label="Адрес EN" />
-                <TextareaField form={form} name="address_ua" label="Адреса UA" />
                 <TextField form={form} name="director_name_en" label="Директор EN" />
                 <TextField form={form} name="director_name_ua" label="Директор UA" />
                 <TextField form={form} name="enterprise_code" label="Код підприємства" />
