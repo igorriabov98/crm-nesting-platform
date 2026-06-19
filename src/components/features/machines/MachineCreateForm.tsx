@@ -406,28 +406,6 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="material_type"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-[#374151]">Тип материала</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || 'undefined'}>
-                      <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-                          <SelectValue placeholder="Выберите материал" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="undefined">Не определён</SelectItem>
-                        <SelectItem value="standard">Стандартный (Черный металл)</SelectItem>
-                        <SelectItem value="non_standard">Нестандартный (Нержавейка)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage className="text-[#DC2626]" />
-                  </FormItem>
-                )}
-              />
             </div>
 
             <FormField

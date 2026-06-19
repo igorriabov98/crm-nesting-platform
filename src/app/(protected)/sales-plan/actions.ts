@@ -738,7 +738,7 @@ export async function createMachine(data: CreateMachineInput) {
         payment_due_days: clientTerms.payment_due_days,
         prepayment_percent: clientTerms.payment_terms_type === 'prepayment_full' ? clientTerms.prepayment_percent ?? 50 : null,
         final_payment_due_days: clientTerms.payment_terms_type === 'prepayment_full' ? clientTerms.final_payment_due_days ?? clientTerms.payment_due_days : null,
-        material_type: parsed.material_type || 'undefined',
+        material_type: 'undefined',
         is_confirmed: parsed.is_confirmed || false,
         desired_shipping_date: parsed.desired_shipping_date || null,
         production_month: productionMonth,
@@ -791,7 +791,7 @@ export async function createMachine(data: CreateMachineInput) {
     if (parsed.desired_shipping_date) {
       await syncTransportCostTask(db, machineId)
     }
-    await refreshMaterialUndefinedAgenda(supabase, parsed.material_type || 'undefined')
+    await refreshMaterialUndefinedAgenda(supabase, 'undefined')
     await dispatchPendingTelegramDeliveries({ machineId })
 
     revalidatePath(ROUTES.SALES_PLAN)

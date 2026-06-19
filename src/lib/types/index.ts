@@ -1,5 +1,7 @@
 import { Database } from './database'
 
+export * from './departments'
+
 export type CompanySettings = Database['public']['Tables']['company_settings']['Row']
 export type Factory = Database['public']['Tables']['factories']['Row']
 export type User = Database['public']['Tables']['users']['Row']

@@ -48,6 +48,52 @@ export const updateUserSchema = z.object({
   }
 })
 
+export const createPositionSchema = z.object({
+  name: z.string().min(2, 'Минимум 2 символа'),
+  level: z.number().int().min(0).max(10),
+  description: z.string().optional(),
+})
+
+export const updatePositionSchema = z.object({
+  name: z.string().min(2, 'Минимум 2 символа').optional(),
+  level: z.number().int().min(0).max(10).optional(),
+  description: z.string().nullable().optional(),
+  is_active: z.boolean().optional(),
+})
+
+export const createDepartmentSchema = z.object({
+  name: z.string().min(2, 'Минимум 2 символа'),
+  description: z.string().optional(),
+  parent_id: z.string().uuid().nullable().optional(),
+  head_user_id: z.string().uuid().nullable().optional(),
+  factory_id: z.string().uuid().nullable().optional(),
+  sort_order: z.number().int().default(0),
+})
+
+export const updateDepartmentSchema = z.object({
+  name: z.string().min(2, 'Минимум 2 символа').optional(),
+  description: z.string().nullable().optional(),
+  parent_id: z.string().uuid().nullable().optional(),
+  head_user_id: z.string().uuid().nullable().optional(),
+  factory_id: z.string().uuid().nullable().optional(),
+  sort_order: z.number().int().optional(),
+  is_active: z.boolean().optional(),
+})
+
+export const addDepartmentMemberSchema = z.object({
+  user_id: z.string().uuid(),
+  department_id: z.string().uuid(),
+  position_id: z.string().uuid().nullable().optional(),
+  reports_to_user_id: z.string().uuid().nullable().optional(),
+  is_department_head: z.boolean().default(false),
+})
+
+export const updateDepartmentMemberSchema = z.object({
+  position_id: z.string().uuid().nullable().optional(),
+  reports_to_user_id: z.string().uuid().nullable().optional(),
+  is_department_head: z.boolean().optional(),
+})
+
 // Схема одного товара
 export const machineItemSchema = z.object({
   id: z.string().uuid().optional(),
@@ -189,8 +235,6 @@ export const createMachineSchema = z.object({
   specification_number: z.string().optional().nullable(),
   specification_date: z.string().optional().nullable(),
   is_confirmed: z.boolean().default(false),
-  material_type: z.enum(['standard', 'non_standard', 'undefined']).optional()
-    .default('undefined'),
   desired_shipping_date: z.string().optional().nullable(),
   planned_material_date: z.string().optional().nullable(),
   actual_material_date: z.string().optional().nullable(),
@@ -217,7 +261,9 @@ export const createMachineSchema = z.object({
   ]).optional()
 })
 
-export const updateMachineSchema = createMachineSchema.partial()
+export const updateMachineSchema = createMachineSchema.partial().extend({
+  material_type: z.enum(['standard', 'non_standard', 'undefined']).optional(),
+})
 
 export type CreateMachineInput = z.infer<typeof createMachineSchema>
 export type UpdateMachineInput = z.infer<typeof updateMachineSchema>
