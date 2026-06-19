@@ -12,7 +12,7 @@ import { COATINGS } from '@/lib/constants/coatings'
 import { createMachineSchema, type CreateMachineInput } from '@/lib/types/schemas'
 import { createMachine } from '@/app/(protected)/sales-plan/actions'
 import type { ProductOption } from '@/lib/actions/products'
-import type { Client, FactorySummary } from '@/lib/types'
+import type { Client, CoatingType, FactorySummary } from '@/lib/types'
 import { ClientCreateDialog } from '@/components/features/clients/ClientCreateDialog'
 import { paymentTermsLabel } from '@/components/features/clients/ClientFormFields'
 import { getFactoryWorkshopOptionsById } from '@/lib/constants/factory-workshops'
@@ -58,6 +58,17 @@ function parseIntegerInput(value: string) {
 function toFiniteNumber(value: unknown, fallback = 0) {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : fallback
+}
+
+function getProductOptionLabel(products: ProductOption[], productId: string | null | undefined) {
+  const product = products.find((option) => option.id === productId)
+  return product
+    ? `${product.name_uk} · ${product.uktzed} · ${product.drawing_number}`
+    : 'Выберите активный продукт'
+}
+
+function getCoatingLabel(coating: CoatingType | null | undefined) {
+  return coating ? COATINGS[coating].label : 'Выберите покрытие'
 }
 
 export function MachineCreateForm({ clients: initialClients, factories, products }: { clients: Client[]; factories: FactorySummary[]; products: ProductOption[] }) {
@@ -317,7 +328,9 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                     <Select value={field.value || ''} onValueChange={field.onChange}>
                       <FormControl>
                         <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-                          <SelectValue placeholder="Выберите месяц" />
+                          <SelectValue placeholder="Выберите месяц">
+                            {() => productionMonthOptions.find((option) => option.value === field.value)?.label || 'Выберите месяц'}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -342,7 +355,9 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                     <Select value={field.value || ''} onValueChange={field.onChange}>
                       <FormControl>
                         <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-                          <SelectValue placeholder="Выберите завод" />
+                          <SelectValue placeholder="Выберите завод">
+                            {() => factories.find((factory) => factory.id === field.value)?.name || 'Выберите завод'}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -371,7 +386,9 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                     >
                       <FormControl>
                         <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-                          <SelectValue placeholder={selectedFactoryId ? 'Выберите цех' : 'Сначала выберите завод'} />
+                          <SelectValue placeholder={selectedFactoryId ? 'Выберите цех' : 'Сначала выберите завод'}>
+                            {() => workshopOptions.find((option) => option.value === field.value)?.label || (selectedFactoryId ? 'Выберите цех' : 'Сначала выберите завод')}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -463,7 +480,9 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                             <Select value={field.value || ''} onValueChange={(value) => applyProductToRow('items', index, value || '')}>
                               <FormControl>
                                 <SelectTrigger className="h-9 bg-white">
-                                  <SelectValue placeholder="Выберите активный продукт" />
+                                  <SelectValue placeholder="Выберите активный продукт">
+                                    {() => getProductOptionLabel(products, field.value)}
+                                  </SelectValue>
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
@@ -512,7 +531,9 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                             <Select onValueChange={field.onChange} value={field.value || ''}>
                               <FormControl>
                                 <SelectTrigger className="h-8 text-sm bg-white">
-                                  <SelectValue />
+                                  <SelectValue placeholder="Выберите покрытие">
+                                    {() => getCoatingLabel(field.value)}
+                                  </SelectValue>
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
@@ -645,7 +666,9 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                             <Select value={field.value || ''} onValueChange={(value) => applyProductToRow('samples', index, value || '')}>
                               <FormControl>
                                 <SelectTrigger className="h-9 bg-white">
-                                  <SelectValue placeholder="Выберите активный продукт" />
+                                  <SelectValue placeholder="Выберите активный продукт">
+                                    {() => getProductOptionLabel(products, field.value)}
+                                  </SelectValue>
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
@@ -690,7 +713,11 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                             <FormLabel className="text-xs">Покрытие *</FormLabel>
                             <Select onValueChange={field.onChange} value={field.value || ''}>
                               <FormControl>
-                                <SelectTrigger className="h-8 text-sm bg-white"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className="h-8 text-sm bg-white">
+                                  <SelectValue placeholder="Выберите покрытие">
+                                    {() => getCoatingLabel(field.value)}
+                                  </SelectValue>
+                                </SelectTrigger>
                               </FormControl>
                               <SelectContent>
                                 {Object.entries(COATINGS).map(([val, { label }]) => (
