@@ -271,7 +271,9 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                     >
                       <FormControl>
                         <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-                          <SelectValue placeholder="Выберите компанию" />
+                          <SelectValue placeholder="Выберите компанию">
+                            {() => selectedClient?.name || 'Выберите компанию'}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
