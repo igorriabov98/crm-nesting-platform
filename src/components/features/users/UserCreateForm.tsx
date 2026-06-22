@@ -177,7 +177,11 @@ export function UserCreateForm({ departments, positions, users }: UserCreateForm
                     <Select value={field.value || ''} onValueChange={field.onChange}>
                       <FormControl>
                         <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B] focus:ring-blue-500">
-                          <SelectValue placeholder="Выберите отдел" />
+                          <SelectValue placeholder="Выберите отдел">
+                            {field.value
+                              ? departments.find((department) => department.id === field.value)?.name || 'Выберите отдел'
+                              : 'Выберите отдел'}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]">
@@ -200,7 +204,11 @@ export function UserCreateForm({ departments, positions, users }: UserCreateForm
                     <Select value={field.value || ''} onValueChange={field.onChange}>
                       <FormControl>
                         <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B] focus:ring-blue-500">
-                          <SelectValue placeholder="Выберите должность" />
+                          <SelectValue placeholder="Выберите должность">
+                            {field.value
+                              ? positions.find((position) => position.id === field.value)?.name || 'Выберите должность'
+                              : 'Выберите должность'}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]">
@@ -226,7 +234,13 @@ export function UserCreateForm({ departments, positions, users }: UserCreateForm
                     >
                       <FormControl>
                         <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B] focus:ring-blue-500">
-                          <SelectValue placeholder="Не выбран" />
+                          <SelectValue placeholder="Не выбран">
+                            {field.value
+                              ? users.find((user) => user.id === field.value)?.full_name
+                                || users.find((user) => user.id === field.value)?.email
+                                || 'Не выбран'
+                              : 'Не выбран'}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]">
