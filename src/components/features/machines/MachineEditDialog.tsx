@@ -15,6 +15,7 @@ import { formatProductionMonth, getProductionMonthOptions } from '@/lib/utils/pr
 import { ContractSelectField } from '@/components/features/contracts/ContractSelectField'
 import type { FactorySummary, MachineDetails, MachineExpense, MachineItem, MachineListItem } from '@/lib/types'
 import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
+import { ProductOptionCombobox } from '@/components/features/machines/ProductOptionCombobox'
 
 import {
   Dialog,
@@ -678,20 +679,9 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                           return (
                             <FormItem className="md:col-span-2 lg:col-span-4">
                               <FormLabel className="text-xs text-[#374151]">Товар из базы продукции</FormLabel>
-                              <Select value={field.value || ''} onValueChange={(value) => applyProductToRow('items', index, value || '')} disabled={locked}>
-                                <FormControl>
-                                  <SelectTrigger className="h-9 bg-white">
-                                    <SelectValue placeholder="Выберите активный продукт" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  {products.map((product) => (
-                                    <SelectItem key={product.id} value={product.id}>
-                                      {product.name_uk} · {product.uktzed} · {product.drawing_number}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              <FormControl>
+                                <ProductOptionCombobox products={products} value={field.value} disabled={locked} onChange={(value) => applyProductToRow('items', index, value)} />
+                              </FormControl>
                               {locked && <p className="text-xs text-[#6B7280]">Продукт в существующей строке заблокирован. Для замены удалите строку и добавьте новую.</p>}
                               <FormMessage className="text-[10px]" />
                             </FormItem>
@@ -838,20 +828,9 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                           return (
                             <FormItem className="md:col-span-2 lg:col-span-4">
                               <FormLabel className="text-xs text-[#374151]">Товар из базы продукции</FormLabel>
-                              <Select value={field.value || ''} onValueChange={(value) => applyProductToRow('samples', index, value || '')} disabled={locked}>
-                                <FormControl>
-                                  <SelectTrigger className="h-9 bg-white">
-                                    <SelectValue placeholder="Выберите активный продукт" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  {products.map((product) => (
-                                    <SelectItem key={product.id} value={product.id}>
-                                      {product.name_uk} · {product.uktzed} · {product.drawing_number}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              <FormControl>
+                                <ProductOptionCombobox products={products} value={field.value} disabled={locked} onChange={(value) => applyProductToRow('samples', index, value)} />
+                              </FormControl>
                               {locked && <p className="text-xs text-[#6B7280]">Продукт в существующей строке заблокирован.</p>}
                               <FormMessage className="text-[10px]" />
                             </FormItem>

@@ -18,6 +18,7 @@ import { paymentTermsLabel } from '@/components/features/clients/ClientFormField
 import { getFactoryWorkshopOptionsById } from '@/lib/constants/factory-workshops'
 import { getProductionMonthOptions, monthStartValue } from '@/lib/utils/production-months'
 import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
+import { ProductOptionCombobox } from '@/components/features/machines/ProductOptionCombobox'
 
 import {
   Form,
@@ -58,13 +59,6 @@ function parseIntegerInput(value: string) {
 function toFiniteNumber(value: unknown, fallback = 0) {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : fallback
-}
-
-function getProductOptionLabel(products: ProductOption[], productId: string | null | undefined) {
-  const product = products.find((option) => option.id === productId)
-  return product
-    ? `${product.name_uk} · ${product.uktzed} · ${product.drawing_number}`
-    : 'Выберите активный продукт'
 }
 
 function getCoatingLabel(coating: CoatingType | null | undefined) {
@@ -477,22 +471,9 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                         render={({ field }) => (
                           <FormItem className="md:col-span-2 lg:col-span-4">
                             <FormLabel className="text-xs">Товар из базы продукции *</FormLabel>
-                            <Select value={field.value || ''} onValueChange={(value) => applyProductToRow('items', index, value || '')}>
-                              <FormControl>
-                                <SelectTrigger className="h-9 bg-white">
-                                  <SelectValue placeholder="Выберите активный продукт">
-                                    {() => getProductOptionLabel(products, field.value)}
-                                  </SelectValue>
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {products.map((product) => (
-                                  <SelectItem key={product.id} value={product.id}>
-                                    {product.name_uk} · {product.uktzed} · {product.drawing_number}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <FormControl>
+                              <ProductOptionCombobox products={products} value={field.value} onChange={(value) => applyProductToRow('items', index, value)} />
+                            </FormControl>
                             <FormMessage className="text-[10px] text-[#DC2626]" />
                           </FormItem>
                         )}
@@ -663,22 +644,9 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                         render={({ field }) => (
                           <FormItem className="md:col-span-2 lg:col-span-4">
                             <FormLabel className="text-xs">Товар из базы продукции *</FormLabel>
-                            <Select value={field.value || ''} onValueChange={(value) => applyProductToRow('samples', index, value || '')}>
-                              <FormControl>
-                                <SelectTrigger className="h-9 bg-white">
-                                  <SelectValue placeholder="Выберите активный продукт">
-                                    {() => getProductOptionLabel(products, field.value)}
-                                  </SelectValue>
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {products.map((product) => (
-                                  <SelectItem key={product.id} value={product.id}>
-                                    {product.name_uk} · {product.uktzed} · {product.drawing_number}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <FormControl>
+                              <ProductOptionCombobox products={products} value={field.value} onChange={(value) => applyProductToRow('samples', index, value)} />
+                            </FormControl>
                             <FormMessage className="text-[10px] text-[#DC2626]" />
                           </FormItem>
                         )}
