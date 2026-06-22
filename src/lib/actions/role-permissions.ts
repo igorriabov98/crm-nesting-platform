@@ -238,7 +238,7 @@ async function getUsers(db: LooseDb) {
 async function getMembershipRows(db: LooseDb) {
   const { data, error } = await db
     .from<MembershipRow[]>('department_members')
-    .select('id, user_id, department_id, position_id, is_department_head, department:departments(id, name), position:positions(id, name, level), user:users(id, full_name, email, is_active)')
+    .select('id, user_id, department_id, position_id, is_department_head, department:department_id(id, name), position:position_id(id, name, level), user:user_id(id, full_name, email, is_active)')
 
   if (error) throw new Error(error.message || 'Не удалось загрузить назначения пользователей')
   return Array.isArray(data) ? data : []
