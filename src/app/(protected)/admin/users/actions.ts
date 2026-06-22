@@ -59,7 +59,23 @@ async function getUsersForAdmin() {
 
   if (error) throw error
 
-  return (data || []) as CurrentUser[]
+  const authUserIds = new Set<string>()
+  const perPage = 1000
+  let page = 1
+
+  while (true) {
+    const { data: authData, error: authError } = await adminSupabase.auth.admin.listUsers({ page, perPage })
+    if (authError) throw authError
+
+    for (const authUser of authData.users) {
+      authUserIds.add(authUser.id)
+    }
+
+    if (authData.users.length < perPage) break
+    page += 1
+  }
+
+  return ((data || []) as CurrentUser[]).filter((user) => authUserIds.has(user.id))
 }
 
 async function getFactoriesForAdmin(supabase = createServerSupabaseClient()) {
@@ -361,9 +377,42 @@ export async function deleteUser(userId: string) {
     }
 
     const adminSupabase = createAdminClient()
-    const { error } = await adminSupabase.auth.admin.deleteUser(userId)
+    const db = adminSupabase as unknown as LooseAdminDb
+    const { data: profileData, error: profileError } = await adminSupabase
+      .from('users')
+      .select('id, email, is_active')
+      .eq('id', userId)
+      .maybeSingle()
+    const profile = profileData as { id: string; email: string; is_active: boolean | null } | null
 
-    if (error) throw error
+    if (profileError) throw profileError
+    if (!profile) throw new Error('Пользователь не найден')
+
+    const { data: authData, error: authLookupError } = await adminSupabase.auth.admin.getUserById(userId)
+    if (authLookupError && authLookupError.status !== 404) throw authLookupError
+
+    // Keep historical foreign-key references intact while removing the account
+    // from authentication and releasing its email for possible reuse.
+    const { error: archiveError } = await db
+      .from('users')
+      .update({
+        email: `deleted+${userId}@deleted.local`,
+        is_active: false,
+      })
+      .eq('id', userId)
+
+    if (archiveError) throw archiveError
+
+    if (authData?.user) {
+      const { error: authDeleteError } = await adminSupabase.auth.admin.deleteUser(userId)
+      if (authDeleteError) {
+        await db
+          .from('users')
+          .update({ email: profile.email, is_active: profile.is_active })
+          .eq('id', userId)
+        throw authDeleteError
+      }
+    }
 
     revalidatePath(ROUTES.ADMIN_USERS)
     revalidatePath(ROUTES.ADMIN_DEPARTMENTS)

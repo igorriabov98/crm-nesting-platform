@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { deleteUser } from '@/app/(protected)/admin/users/actions'
 import type { CurrentUser } from '@/lib/types'
@@ -24,6 +25,7 @@ interface DeleteUserDialogProps {
 }
 
 export function DeleteUserDialog({ user, isOpen, onClose }: DeleteUserDialogProps) {
+  const router = useRouter()
   const [isDeleting, setIsDeleting] = useState(false)
 
   async function handleDelete() {
@@ -34,6 +36,7 @@ export function DeleteUserDialog({ user, isOpen, onClose }: DeleteUserDialogProp
       
       toast.success('Пользователь успешно удален')
       onClose()
+      router.refresh()
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Не удалось удалить пользователя')
     } finally {
