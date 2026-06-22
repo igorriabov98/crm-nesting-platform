@@ -32,6 +32,8 @@ const statusLabel: Record<string, string> = {
   not_ordered: 'Не заказано',
 }
 
+const MARKER_HIT_SIZE = 32
+
 function totalPrice(item: GanttMaterialItem) {
   const quantity = Number(item.quantity || 0)
   const price = Number(item.price_per_unit || 0)
@@ -50,13 +52,14 @@ export const GanttMaterialMarker = React.memo(function GanttMaterialMarker({
   unitWidth,
   machineId,
   machineName,
+  title,
 }: GanttMaterialMarkerProps) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<PopoverPosition | null>(null)
   const markerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const markerDate = useMemo(() => new Date(date), [date])
-  const left = differenceInCalendarDays(markerDate, rangeStart) * unitWidth + unitWidth / 2 - GANTT_MARKER_SIZE / 2
+  const left = differenceInCalendarDays(markerDate, rangeStart) * unitWidth + unitWidth / 2 - MARKER_HIT_SIZE / 2
   const label = type === 'planned' ? 'План поставки материала' : 'Факт поставки материала'
   const emptyText = type === 'planned' ? 'Нет позиций на эту дату' : 'Нет полученных позиций'
   const isActual = type === 'actual'
@@ -128,16 +131,16 @@ export const GanttMaterialMarker = React.memo(function GanttMaterialMarker({
       <button
         ref={markerRef}
         type="button"
-        className="absolute z-20 cursor-pointer"
+        className="absolute z-20 flex cursor-pointer items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1"
         style={{
           left,
           top: '50%',
-          width: GANTT_MARKER_SIZE,
-          height: GANTT_MARKER_SIZE,
+          width: MARKER_HIT_SIZE,
+          height: MARKER_HIT_SIZE,
           transform: 'translateY(-50%)',
         }}
-        title={`${label}: ${formatDate(markerDate)}`}
-        aria-label={`${label}: ${machineName}`}
+        title={title ?? `${label}: ${formatDate(markerDate)}`}
+        aria-label={`${label}: ${machineName}, ${formatDate(markerDate)}`}
         aria-expanded={open}
         onClick={(event) => {
           event.stopPropagation()
@@ -146,8 +149,10 @@ export const GanttMaterialMarker = React.memo(function GanttMaterialMarker({
         }}
       >
         <span
-          className="block h-full w-full rotate-45 shadow-[0_1px_2px_rgba(22,163,74,0.25)]"
+          className="block rotate-45 shadow-[0_1px_2px_rgba(22,163,74,0.25)]"
           style={{
+            width: GANTT_MARKER_SIZE,
+            height: GANTT_MARKER_SIZE,
             backgroundColor: isActual ? '#16A34A' : '#FFFFFF',
             border: isActual ? 'none' : '2px solid #16A34A',
           }}

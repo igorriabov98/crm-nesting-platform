@@ -32,6 +32,7 @@ interface ProductionTableProps {
 type ProductionStage = ProductionRow['stages'][number]
 type SortDirection = 'asc' | 'desc'
 type SortConfig = { key: string; direction: SortDirection }
+type TableDensity = 'compact' | 'normal' | 'comfortable'
 
 const workshopOptions = [
   { value: '1', label: '1' },
@@ -46,7 +47,7 @@ const statusBgClass: Record<StageStatus, string> = {
   skipped: 'bg-[#FAFBFC]',
 }
 
-const stickyColumnWidths = [180, 80, 110, 120]
+const stickyColumnWidths = [164, 70, 104, 112]
 const workshopCellClass = 'w-[50px] min-w-[50px] px-1 py-1 text-center text-xs'
 const dateCellClass = 'w-[110px] min-w-[110px] px-1 py-1 text-center text-xs'
 const nightCellClass = 'w-[40px] min-w-[40px] px-1 py-1 text-center text-xs'
@@ -99,12 +100,19 @@ function SortableHeader({
   sortConfig: SortConfig | null
   onSort: (key: string) => void
 }) {
+  const sortState = sortConfig?.key === sortKey
+    ? (sortConfig.direction === 'asc' ? 'ascending' : 'descending')
+    : 'none'
+
   return (
     <button
       type="button"
       onClick={() => onSort(sortKey)}
+      aria-label="Sort by date"
+      aria-sort={sortState}
+      aria-pressed={sortState !== 'none'}
       className={cn(
-        'inline-flex w-full items-center justify-center gap-1 whitespace-nowrap rounded px-1 py-0.5 hover:bg-[#E8ECF0]',
+        'inline-flex min-h-8 w-full items-center justify-center gap-1 whitespace-nowrap rounded px-1 py-0.5 hover:bg-[#E8ECF0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]',
         sortConfig?.key === sortKey && 'text-[#1B3A6B]'
       )}
       title="Сортировать по дате"
@@ -131,11 +139,20 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
   })
   const filters = externalFilters || internalFilters
   const setFilters = onFiltersChange || setInternalFilters
-  const [tableZoom, setTableZoom] = useState(1)
+  const [tableDensity, setTableDensity] = useState<TableDensity>('normal')
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null)
   const [clearingStageId, setClearingStageId] = useState<string | null>(null)
 
-  const compactControls = tableZoom < 1
+  const compactControls = tableDensity === 'compact'
+  const displayStageTypes = useMemo(() => {
+    if (!visibleStageTypes) return STAGE_ORDER
+    const visible = new Set(visibleStageTypes)
+    return STAGE_ORDER.filter((stageType) => visible.has(stageType))
+  }, [visibleStageTypes])
+  const tableColumnSpan = useMemo(
+    () => 5 + displayStageTypes.reduce((sum, stageType) => sum + getStageColumnWidths(stageType).length, 0),
+    [displayStageTypes]
+  )
 
   const toggleSort = (key: string) => {
     setSortConfig((current) => {
@@ -339,9 +356,10 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
         type="button"
         disabled={isDisabled}
         title="Очистить даты этапа"
+        aria-label="Clear stage dates"
         onClick={() => handleClearStageDates(stage)}
         className={cn(
-          'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors',
+          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]',
           'border-[#E8ECF0] bg-white text-[#9CA3AF] hover:border-[#1B3A6B] hover:text-[#1B3A6B]',
           isDisabled && 'cursor-not-allowed opacity-40 hover:border-[#E8ECF0] hover:text-[#9CA3AF]'
         )}
@@ -358,9 +376,10 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
         type="button"
         disabled={isDisabled}
         title={stage.manual_overdue ? 'Снять ручную просрочку' : 'Отметить ручную просрочку'}
+        aria-label={stage.manual_overdue ? 'Clear manual overdue flag' : 'Set manual overdue flag'}
         onClick={() => handleUpdate(stage.id, 'manual_overdue', !stage.manual_overdue)}
         className={cn(
-          'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[10px] font-semibold transition-colors',
+          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]',
           stage.manual_overdue
             ? 'border-[#DC2626] bg-[#FEE2E2] text-[#DC2626]'
             : 'border-[#E8ECF0] bg-white text-[#9CA3AF] hover:border-[#DC2626] hover:text-[#DC2626]',
@@ -377,12 +396,29 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
       <ProductionSummary data={filtered} />
       {!hideFilters && <ProductionFilters filters={filters} onChange={setFilters} />}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E8ECF0] bg-white px-3 py-2">
-        <div className="flex items-center gap-2 text-sm text-[#374151]">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E8ECF0] bg-white px-3 py-2 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-[#374151]">
           <span className="text-xs uppercase text-[#9CA3AF]">Масштаб таблицы</span>
-          <button type="button" className={cn('rounded border px-2 py-1 text-xs', tableZoom === 0.85 ? 'border-[#1B3A6B] text-[#1B3A6B]' : 'border-[#E8ECF0]')} onClick={() => setTableZoom(0.85)}>Мелко</button>
-          <button type="button" className={cn('rounded border px-2 py-1 text-xs', tableZoom === 1 ? 'border-[#1B3A6B] text-[#1B3A6B]' : 'border-[#E8ECF0]')} onClick={() => setTableZoom(1)}>Нормально</button>
-          <button type="button" className={cn('rounded border px-2 py-1 text-xs', tableZoom === 1.15 ? 'border-[#1B3A6B] text-[#1B3A6B]' : 'border-[#E8ECF0]')} onClick={() => setTableZoom(1.15)}>Крупно</button>
+          {[
+            { value: 'compact' as const, label: 'Мелко' },
+            { value: 'normal' as const, label: 'Нормально' },
+            { value: 'comfortable' as const, label: 'Крупно' },
+          ].map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              aria-pressed={tableDensity === item.value}
+              className={cn(
+                'min-h-9 rounded border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]',
+                tableDensity === item.value
+                  ? 'border-[#1B3A6B] bg-[#EEF2FF] text-[#1B3A6B]'
+                  : 'border-[#E8ECF0] text-[#6B7280] hover:border-[#1B3A6B] hover:text-[#1B3A6B]'
+              )}
+              onClick={() => setTableDensity(item.value)}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
         {sortConfig && (
           <button type="button" className="text-xs text-[#6B7280] hover:text-[#1B3A6B]" onClick={() => setSortConfig(null)}>
@@ -391,7 +427,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
         )}
       </div>
 
-      <div style={{ zoom: tableZoom } as React.CSSProperties & { zoom: number }}>
+      <div className={cn(tableDensity === 'compact' && 'text-[12px]', tableDensity === 'comfortable' && 'text-[14px]')}>
         <StickyTable
           stickyColumns={4}
           stickyColumnWidths={stickyColumnWidths}
@@ -401,7 +437,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
           <colgroup>
             {stickyColumnWidths.map((width, index) => <col key={`sticky-${index}`} style={{ width }} />)}
             <col style={{ width: 110 }} />
-            {STAGE_ORDER.flatMap((stageType) =>
+            {displayStageTypes.flatMap((stageType) =>
               getStageColumnWidths(stageType).map((width, index) => (
                 <col key={`${stageType}-${index}`} style={{ width }} />
               ))
@@ -420,7 +456,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
               <th className="px-2 py-2 bg-[#F8F9FA] text-center whitespace-nowrap border-l border-[#E8ECF0]" rowSpan={2}>
                 <SortableHeader sortKey="actual_material_date" sortConfig={sortConfig} onSort={toggleSort}>Мат.факт</SortableHeader>
               </th>
-              {STAGE_ORDER.map((stageType) => {
+              {displayStageTypes.map((stageType) => {
                 const meta = STAGES[stageType]
                 const cols = stageType === 'shipping' || stageType === 'actual_shipping'
                   ? 1
@@ -448,7 +484,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
               })}
             </tr>
             <tr>
-              {STAGE_ORDER.map((stageType) => {
+              {displayStageTypes.map((stageType) => {
                 const hl = isHighlighted(stageType) ? 'bg-blue-900/20' : 'bg-[#F8F9FA]'
                 if (stageType === 'shipping' || stageType === 'actual_shipping') {
                   return (
@@ -479,7 +515,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
           </thead>
           <tbody>
             {paddingTop > 0 && (
-              <tr><td colSpan={50} style={{ height: paddingTop }} /></tr>
+              <tr><td colSpan={tableColumnSpan} style={{ height: paddingTop }} /></tr>
             )}
             {virtualRows.map((virtualRow) => {
               const row = sortedRows[virtualRow.index]
@@ -494,8 +530,8 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                     !row.machine.is_confirmed && 'bg-amber-50/45 text-slate-500'
                   )}
                 >
-                  <td className={cn('w-[180px] min-w-[180px] px-2 py-1.5 bg-white', !row.machine.is_confirmed && 'bg-amber-50')}>
-                    <Link href={`${ROUTES.SALES_PLAN}/${row.machine.id}`} className="text-[#2563EB] hover:underline font-medium text-sm truncate block max-w-[170px]" title={row.machine.name}>
+                  <td className={cn('w-[164px] min-w-[164px] px-2 py-1.5 bg-white', !row.machine.is_confirmed && 'bg-amber-50')}>
+                    <Link href={`${ROUTES.SALES_PLAN}/${row.machine.id}`} className="text-[#2563EB] hover:underline font-medium text-sm truncate block max-w-[154px]" title={row.machine.name}>
                       {idx + 1}. {row.machine.name}
                     </Link>
                     {!row.machine.is_confirmed && (
@@ -504,20 +540,20 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                       </span>
                     )}
                   </td>
-                  <td className={cn('w-[80px] min-w-[80px] px-2 py-1.5 text-center text-xs text-[#374151] bg-white', !row.machine.is_confirmed && 'bg-amber-50')}>
+                  <td className={cn('w-[70px] min-w-[70px] px-2 py-1.5 text-center text-xs text-[#374151] bg-white', !row.machine.is_confirmed && 'bg-amber-50')}>
                     {Number(row.machine.total_weight || 0).toFixed(2)}
                   </td>
-                  <td className={cn('w-[110px] min-w-[110px] px-2 py-1.5 text-center text-xs bg-white', !row.machine.is_confirmed && 'bg-amber-50')}>
+                  <td className={cn('w-[104px] min-w-[104px] px-2 py-1.5 text-center text-xs bg-white', !row.machine.is_confirmed && 'bg-amber-50')}>
                     {renderMachineDeadline(row.machine.desired_shipping_date)}
                   </td>
-                  <td className={cn('w-[120px] min-w-[120px] px-1 py-1.5 text-center text-xs bg-white', !row.machine.is_confirmed && 'bg-amber-50')}>
+                  <td className={cn('w-[112px] min-w-[112px] px-1 py-1.5 text-center text-xs bg-white', !row.machine.is_confirmed && 'bg-amber-50')}>
                     {renderDateEdit(row.machine.planned_material_date, canEdit, (value) => handleMachineDateUpdate(row.machine.id, 'planned_material_date', value))}
                   </td>
                   <td className={cn('w-[110px] min-w-[110px] px-1 py-1.5 text-center text-xs border-l border-[#E8ECF0]', !row.machine.is_confirmed ? 'bg-amber-50' : 'bg-white')}>
                     {renderDateEdit(row.machine.actual_material_date, canEdit, (value) => handleMachineDateUpdate(row.machine.id, 'actual_material_date', value))}
                   </td>
 
-                  {STAGE_ORDER.map((stageType) => {
+                  {displayStageTypes.map((stageType) => {
                     const stage = row.stages.find((item) => item.stage_type === stageType)
                     if (!stage) {
                       const cols = stageType === 'shipping' || stageType === 'actual_shipping'
@@ -625,11 +661,11 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
               )
             })}
             {paddingBottom > 0 && (
-              <tr><td colSpan={50} style={{ height: paddingBottom }} /></tr>
+              <tr><td colSpan={tableColumnSpan} style={{ height: paddingBottom }} /></tr>
             )}
             {sortedRows.length === 0 && (
               <tr>
-                <td colSpan={50} className="px-4 py-12 text-center text-[#9CA3AF]">
+                <td colSpan={tableColumnSpan} className="px-4 py-12 text-center text-[#9CA3AF]">
                   Нет данных о производстве
                 </td>
               </tr>

@@ -90,6 +90,7 @@ export function Header({ user, permissions }: HeaderProps) {
       <div className="flex items-center gap-4">
         <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
           <SheetTrigger
+            aria-label="Open navigation"
             className="lg:hidden flex items-center justify-center h-9 w-9 rounded-md text-[#6B7280] hover:text-[#1B3A6B] hover:bg-[#F4F6F9] transition-colors focus:outline-none"
           >
             <Menu className="h-5 w-5" />

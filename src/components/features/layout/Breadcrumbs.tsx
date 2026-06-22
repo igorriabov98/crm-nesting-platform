@@ -34,7 +34,7 @@ export function Breadcrumbs() {
     <nav className="flex items-center text-[10px] sm:text-xs text-[#6B7280] mt-0.5 px-1 pb-1" aria-label="Breadcrumb">
       <ol className="flex items-center space-x-1.5">
         <li>
-          <Link href="/dashboard" className="hover:text-[#1B3A6B] transition-colors flex items-center">
+          <Link href="/dashboard" aria-label="Go to dashboard" className="hover:text-[#1B3A6B] transition-colors flex items-center">
             <Home className="w-3.5 h-3.5" />
           </Link>
         </li>

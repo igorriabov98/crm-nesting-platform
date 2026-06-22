@@ -61,20 +61,20 @@ export function ProductionWorkspace({
   const sharedVisibleStages = sharedGanttFilters.visibleStages as StageType[]
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-[#1B3A6B]">Производство</h1>
-          <p className="mt-1 text-sm text-[#6B7280]">Гант-график и таблица производственных дат на одном экране.</p>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 rounded-xl border border-[#E8ECF0] bg-white px-3 py-3 shadow-sm sm:px-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold leading-tight text-[#1B3A6B] sm:text-2xl">Производство</h1>
+          <p className="mt-1 max-w-2xl text-sm text-[#6B7280]">Гант-график и таблица производственных дат на одном экране.</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg border border-[#E8ECF0] bg-white p-1">
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto lg:justify-end">
+          <div className="flex w-full overflow-x-auto rounded-lg border border-[#D7DEE8] bg-[#F8F9FA] p-1 sm:w-auto">
             {factories.map((factory) => (
               <Link
                 key={factory.id}
                 className={cn(
-                  'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors hover:bg-[#E8ECF0]',
+                  'inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors hover:bg-[#E8ECF0]',
                   activeFactoryId === factory.id && 'bg-[#1B3A6B] text-white hover:bg-[#1B3A6B] hover:text-white'
                 )}
                 href={`/production?factory=${factory.id}`}
@@ -85,12 +85,12 @@ export function ProductionWorkspace({
             ))}
           </div>
 
-          <div className="flex rounded-lg border border-[#E8ECF0] bg-white p-1">
+          <div className="grid w-full grid-cols-2 rounded-lg border border-[#D7DEE8] bg-[#F8F9FA] p-1 sm:w-auto">
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className={cn('h-8 px-3 text-xs', filterMode === 'shared' && 'bg-[#E8ECF0] text-[#1B3A6B]')}
+              className={cn('min-h-10 px-3 text-sm', filterMode === 'shared' && 'bg-[#E8ECF0] text-[#1B3A6B]')}
               onClick={() => setFilterMode('shared')}
             >
               Общие фильтры
@@ -99,7 +99,7 @@ export function ProductionWorkspace({
               type="button"
               variant="ghost"
               size="sm"
-              className={cn('h-8 px-3 text-xs', filterMode === 'separate' && 'bg-[#E8ECF0] text-[#1B3A6B]')}
+              className={cn('min-h-10 px-3 text-sm', filterMode === 'separate' && 'bg-[#E8ECF0] text-[#1B3A6B]')}
               onClick={() => setFilterMode('separate')}
             >
               Раздельные
@@ -115,7 +115,7 @@ export function ProductionWorkspace({
         </div>
         <GanttChart
           data={ganttData}
-          height="520px"
+          height="clamp(460px, 58dvh, 640px)"
           filters={filterMode === 'shared' ? sharedGanttFilters : undefined}
           onFiltersChange={filterMode === 'shared' ? setSharedGanttFilters : undefined}
         />

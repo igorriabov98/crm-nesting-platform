@@ -4,6 +4,7 @@ import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { addDays, subDays, differenceInCalendarDays, format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { ChevronDown } from 'lucide-react'
 import { GanttControls, type GanttFilters } from './gantt/GanttControls'
 import { GanttTimeline } from './gantt/GanttTimeline'
 import { GanttLegend } from './gantt/GanttLegend'
@@ -346,6 +347,8 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
   const [dayWidth, setDayWidth] = useState(40)
   const [rangeStart, setRangeStart] = useState<Date>(() => subDays(findEarliestDate(data), 30))
   const [rangeEnd, setRangeEnd] = useState<Date>(() => addDays(findLatestDate(data), 60))
+  const [weldingLoadOpen, setWeldingLoadOpen] = useState(true)
+  const [scrollShadows, setScrollShadows] = useState({ left: false, right: false })
   const [internalFilters, setInternalFilters] = useState<GanttFilters>({
     search: '',
     workshop: '',
@@ -422,6 +425,23 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
   const scaleItems = useMemo(() => generateDateScale(rangeStart, rangeEnd, scale), [rangeStart, rangeEnd])
   const totalWidth = scaleItems.length * dayWidth
   const weldingLoadSpacerWidth = GANTT_LEFT_WIDTH - GANTT_WORKSHOP_COL_WIDTH
+  const rangeLabel = useMemo(
+    () => `${format(rangeStart, 'dd.MM.yyyy')} - ${format(rangeEnd, 'dd.MM.yyyy')}`,
+    [rangeStart, rangeEnd]
+  )
+
+  const updateScrollShadows = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return
+
+    const next = {
+      left: el.scrollLeft > 8,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 8,
+    }
+
+    setScrollShadows((current) => (
+      current.left === next.left && current.right === next.right ? current : next
+    ))
+  }, [])
 
   const weldingLoadRows = useMemo<WeldingLoadRow[]>(() => {
     const selectedWorkshop = filters.workshop ? parseInt(filters.workshop) : null
@@ -544,6 +564,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
+    updateScrollShadows(el)
     if (el && !scrollSyncLockRef.current) {
       syncWeldingLoadScroll(el.scrollLeft)
     }
@@ -573,7 +594,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
         })
       }
     }, RANGE_CHECK_DEBOUNCE_MS)
-  }, [dayWidth, syncWeldingLoadScroll])
+  }, [dayWidth, syncWeldingLoadScroll, updateScrollShadows])
 
   const handleWeldingLoadScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     if (scrollSyncLockRef.current) return
@@ -589,18 +610,30 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
   }, [])
 
   useEffect(() => {
+    if (!weldingLoadOpen) return
+    const source = scrollRef.current
+    const target = weldingLoadScrollRef.current
+    if (!source || !target) return
+    target.scrollLeft = source.scrollLeft
+  }, [weldingLoadOpen])
+
+  useEffect(() => {
     const el = scrollRef.current
     if (!el) return
 
+    updateScrollShadows(el)
+    const handleResize = () => updateScrollShadows(el)
     el.addEventListener('scroll', handleScroll, { passive: true })
+    window.addEventListener('resize', handleResize)
 
     return () => {
       el.removeEventListener('scroll', handleScroll)
+      window.removeEventListener('resize', handleResize)
       if (scrollCheckTimeoutRef.current) {
         window.clearTimeout(scrollCheckTimeoutRef.current)
       }
     }
-  }, [handleScroll])
+  }, [handleScroll, updateScrollShadows])
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.ctrlKey || event.metaKey) {
@@ -623,12 +656,18 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
         />
       )}
 
-      <div
-        ref={scrollRef}
-        className="relative overflow-auto scroll-smooth rounded-md border border-[#D7DEE8] bg-white will-change-transform"
-        style={{ height, WebkitOverflowScrolling: 'touch' }}
-        onWheel={handleWheel}
-      >
+      <div className="flex flex-col gap-2 rounded-lg border border-[#E8ECF0] bg-white px-3 py-2 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm font-semibold text-[#1B3A6B]">Окно графика: {rangeLabel}</div>
+        <div className="text-xs text-[#6B7280]">Горизонтальный скролл синхронизирован с нагрузкой сварки</div>
+      </div>
+
+      <div className="relative">
+        <div
+          ref={scrollRef}
+          className="relative overflow-auto scroll-smooth rounded-lg border border-[#D7DEE8] bg-white will-change-transform"
+          style={{ height, WebkitOverflowScrolling: 'touch' }}
+          onWheel={handleWheel}
+        >
         <div style={{ width: GANTT_LEFT_WIDTH + totalWidth, minWidth: '100%' }}>
           <div
             className="sticky top-0 z-30 grid border-b border-[#D7DEE8] bg-[#F8F9FA]"
@@ -710,14 +749,35 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
             )}
           </div>
         </div>
+        </div>
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-y-0 left-0 w-8 rounded-l-lg bg-gradient-to-r from-white to-transparent transition-opacity',
+            scrollShadows.left ? 'opacity-100' : 'opacity-0'
+          )}
+        />
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-y-0 right-0 w-8 rounded-r-lg bg-gradient-to-l from-white to-transparent transition-opacity',
+            scrollShadows.right ? 'opacity-100' : 'opacity-0'
+          )}
+        />
       </div>
 
-      <section className="rounded-md border border-[#D7DEE8] bg-white">
-        <div className="border-b border-[#E8ECF0] px-3 py-2">
-          <div className="text-sm font-semibold text-[#1B3A6B]">Нагрузка сварки по цехам</div>
-          <div className="text-xs text-[#6B7280]">Тоннаж машины делится равномерно на каждый день этапа «Сборка», затем суммируется по цеху.</div>
-        </div>
-        <div ref={weldingLoadScrollRef} className="overflow-x-auto" onScroll={handleWeldingLoadScroll}>
+      <section className="rounded-lg border border-[#D7DEE8] bg-white shadow-sm">
+        <button
+          type="button"
+          className="flex min-h-12 w-full items-center justify-between gap-3 border-b border-[#E8ECF0] px-3 py-2 text-left transition-colors hover:bg-[#F8F9FA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+          aria-expanded={weldingLoadOpen}
+          onClick={() => setWeldingLoadOpen((current) => !current)}
+        >
+          <span>
+            <span className="block text-sm font-semibold text-[#1B3A6B]">Нагрузка сварки по цехам</span>
+            <span className="block text-xs text-[#6B7280]">Тоннаж машины делится равномерно на каждый день этапа «Сборка», затем суммируется по цеху.</span>
+          </span>
+          <ChevronDown className={cn("h-4 w-4 shrink-0 text-[#6B7280] transition-transform", weldingLoadOpen && "rotate-180")} />
+        </button>
+        {weldingLoadOpen && <div ref={weldingLoadScrollRef} className="overflow-x-auto" onScroll={handleWeldingLoadScroll}>
           <div className="min-w-full" style={{ width: Math.max(GANTT_LEFT_WIDTH + totalWidth, 900) }}>
             <div className="grid border-b border-[#E8ECF0] bg-[#F8F9FA]" style={{ gridTemplateColumns: `${GANTT_WORKSHOP_COL_WIDTH}px ${totalWidth}px ${weldingLoadSpacerWidth}px` }}>
               <div className="sticky left-0 z-10 border-r border-[#D7DEE8] bg-[#F8F9FA] px-2 py-2 text-center text-xs font-semibold text-[#1B3A6B]">Цех</div>
@@ -769,10 +829,10 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
               </div>
             )}
           </div>
-        </div>
+        </div>}
       </section>
 
-      <GanttLegend />
+      <GanttLegend defaultOpen={false} />
     </div>
   )
 }

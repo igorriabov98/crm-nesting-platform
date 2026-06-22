@@ -30,13 +30,13 @@ export function ProductionSummary({ data }: ProductionSummaryProps) {
   ]
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
       {cards.map((c) => (
-        <div key={c.label} className={`flex items-center gap-4 rounded-lg border p-4 ${c.bg}`}>
-          <c.icon className={`h-8 w-8 ${c.color}`} />
-          <div>
-            <p className="text-2xl font-bold text-[#1B3A6B]">{c.value}</p>
-            <p className="text-xs text-[#6B7280]">{c.label}</p>
+        <div key={c.label} className={`flex min-h-20 items-center gap-3 rounded-lg border px-3 py-2.5 ${c.bg}`}>
+          <c.icon className={`h-6 w-6 shrink-0 ${c.color}`} />
+          <div className="min-w-0">
+            <p className="text-xl font-bold leading-tight text-[#1B3A6B]">{c.value}</p>
+            <p className="truncate text-xs text-[#6B7280]">{c.label}</p>
           </div>
         </div>
       ))}

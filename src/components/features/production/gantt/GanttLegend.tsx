@@ -1,7 +1,9 @@
 "use client"
 
-import React from 'react'
+import React, { useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { NIGHT_SHIFT_COLOR, STAGE_ORDER } from '@/lib/constants/stages'
+import { cn } from '@/lib/utils'
 import {
   GANTT_BAR_HEIGHT,
   GANTT_MARKER_SIZE,
@@ -11,9 +13,21 @@ import {
   getGanttStageLabel,
 } from './types'
 
-export function GanttLegend() {
+export function GanttLegend({ defaultOpen = false }: { defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
+
   return (
-    <div className="flex flex-wrap items-start gap-6 rounded-md border border-[#E8ECF0] bg-white p-4 text-xs">
+    <div className="rounded-lg border border-[#E8ECF0] bg-white text-xs shadow-sm">
+      <button
+        type="button"
+        className="flex min-h-10 w-full items-center justify-between gap-3 px-3 text-left text-sm font-semibold text-[#1B3A6B] transition-colors hover:bg-[#F8F9FA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>Легенда</span>
+        <ChevronDown className={cn("h-4 w-4 text-[#6B7280] transition-transform", open && "rotate-180")} />
+      </button>
+      {open && <div className="grid gap-4 border-t border-[#E8ECF0] p-3 sm:grid-cols-2 lg:grid-cols-4">
       <div>
         <p className="mb-2 font-medium uppercase tracking-wide text-[#6B7280]">Этапы производства</p>
         <div className="flex flex-wrap gap-x-4 gap-y-1.5">
@@ -136,6 +150,7 @@ export function GanttLegend() {
           </div>
         </div>
       </div>
+      </div>}
     </div>
   )
 }
