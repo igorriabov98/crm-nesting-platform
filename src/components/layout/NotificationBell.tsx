@@ -169,6 +169,7 @@ export function NotificationBell({ userId }: NotificationBellProps) {
         <Button
           variant="ghost"
           size="icon"
+          aria-label="Open notifications"
           className="relative text-[#6B7280] hover:bg-[#F8F9FA] hover:text-[#1B3A6B]"
         >
           <Bell className="h-5 w-5" />
