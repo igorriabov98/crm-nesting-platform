@@ -211,7 +211,11 @@ export function DepartmentDialog({
                   >
                     <FormControl>
                       <SelectTrigger className="w-full border-[#E8ECF0] bg-[#F8F9FA] text-[#1B3A6B]">
-                        <SelectValue placeholder="Выберите родительский отдел" />
+                        <SelectValue placeholder="Выберите родительский отдел">
+                          {field.value
+                            ? availableParents.find((item) => item.id === field.value)?.name || 'Выберите родительский отдел'
+                            : 'Корневой отдел'}
+                        </SelectValue>
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent className="border-[#E8ECF0] bg-white text-[#1B3A6B]">
@@ -238,7 +242,11 @@ export function DepartmentDialog({
                   >
                     <FormControl>
                       <SelectTrigger className="w-full border-[#E8ECF0] bg-[#F8F9FA] text-[#1B3A6B]">
-                        <SelectValue placeholder="Выберите начальника" />
+                        <SelectValue placeholder="Выберите начальника">
+                          {field.value
+                            ? users.find((user) => user.id === field.value)?.full_name || 'Выберите начальника'
+                            : 'Не назначен'}
+                        </SelectValue>
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent className="border-[#E8ECF0] bg-white text-[#1B3A6B]">
@@ -265,7 +273,11 @@ export function DepartmentDialog({
                   >
                     <FormControl>
                       <SelectTrigger className="w-full border-[#E8ECF0] bg-[#F8F9FA] text-[#1B3A6B]">
-                        <SelectValue placeholder="Выберите завод" />
+                        <SelectValue placeholder="Выберите завод">
+                          {field.value
+                            ? factories.find((factory) => factory.id === field.value)?.name || 'Выберите завод'
+                            : 'Без привязки к заводу'}
+                        </SelectValue>
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent className="border-[#E8ECF0] bg-white text-[#1B3A6B]">
