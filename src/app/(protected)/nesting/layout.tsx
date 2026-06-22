@@ -1,14 +1,14 @@
 import { Shapes } from 'lucide-react'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { NestingModuleNav } from '@/components/features/nesting/NestingModuleNav'
-import { getRolePermissionMap, requirePermission } from '@/lib/permissions/server'
+import { requirePermission } from '@/lib/permissions/server'
 
 export default async function NestingLayout({ children }: { children: React.ReactNode }) {
   const context = await requirePermission('nesting', 'view').catch(() => null)
   if (!context) {
     return <AccessDenied />
   }
-  const permissions = await getRolePermissionMap(context.role)
+  const permissions = context.permissions
 
   return (
     <div className="flex min-h-full flex-col gap-5">
@@ -22,7 +22,7 @@ export default async function NestingLayout({ children }: { children: React.Reac
             <p className="text-xs text-[#6B7280]">Модуль оптимизации листовой резки</p>
           </div>
         </div>
-        <NestingModuleNav userRole={context.role} permissions={permissions} />
+        <NestingModuleNav permissions={permissions} />
       </div>
       <div className="flex-1">
         {children}

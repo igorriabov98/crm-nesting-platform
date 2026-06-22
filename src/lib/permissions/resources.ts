@@ -473,19 +473,34 @@ export function getDefaultPermissionMap(role: UserRole): PermissionMap {
 }
 
 export function hasResourcePermission(
-  role: UserRole,
+  _role: UserRole | null | undefined,
   permissions: PermissionMap,
   resourceKey: ResourceKey,
   operation: PermissionOperation,
 ) {
-  const resource = RESOURCE_BY_KEY[resourceKey]
-  if (!resource) return false
-  if (isLockedResource(resource)) return isDirectorRole(role)
-  if (resourceKey === 'admin_settings' && isDirectorRole(role)) return true
-
-  const fallback = getDefaultPermission(resource, role)
-  const permission = permissions[resourceKey] || fallback
+  if (!(resourceKey in RESOURCE_BY_KEY)) return false
+  const permission = permissions[resourceKey] || { canView: false, canManage: false }
   return operation === 'manage' ? permission.canManage : permission.canView || permission.canManage
+}
+
+export function hasPermission(
+  permissions: PermissionMap,
+  resourceKey: ResourceKey,
+  operation: PermissionOperation,
+) {
+  return hasResourcePermission(null, permissions, resourceKey, operation)
+}
+
+export function getEmptyPermissionMap(): PermissionMap {
+  return Object.fromEntries(
+    PERMISSION_RESOURCES.map((resource) => [resource.key, { canView: false, canManage: false }])
+  ) as PermissionMap
+}
+
+export function getFullPermissionMap(): PermissionMap {
+  return Object.fromEntries(
+    PERMISSION_RESOURCES.map((resource) => [resource.key, { canView: true, canManage: true }])
+  ) as PermissionMap
 }
 
 function normalizePathname(pathname: string) {
@@ -517,7 +532,7 @@ export function getPermissionRequirementForPath(pathname: string) {
 }
 
 export function getSidebarResources(
-  role: UserRole,
+  role: UserRole | null | undefined,
   permissions: PermissionMap,
   section: SidebarSection,
 ) {

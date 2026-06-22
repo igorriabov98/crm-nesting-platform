@@ -2,6 +2,7 @@
 // Никакого хардкода путей в компонентах — только из этого файла
 export const ROUTES = {
   LOGIN:          '/login',
+  PROFILE:        '/profile',
   DASHBOARD:      '/dashboard',
   ADMIN_USERS:    '/admin/users',
   ADMIN_USERS_NEW:'/admin/users/new',

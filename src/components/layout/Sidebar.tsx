@@ -29,7 +29,6 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { ROLES } from '@/lib/constants/roles'
 import {
   getSidebarResources,
   type PermissionMap,
@@ -103,6 +102,9 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false)
 
   const collapsed = isMobile ? false : isCollapsed
+  const profileLabel = (user.department_memberships || [])
+    .map((membership) => membership.position?.name || membership.department?.name || null)
+    .filter(Boolean)[0] || 'Профиль CRM'
 
   const primaryItems = sectionItems(user, permissions, 'primary')
   const salesItems = sectionItems(user, permissions, 'sales')
@@ -317,7 +319,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
           {!collapsed && (
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-[#1B3A6B]">{user.full_name}</p>
-              <p className="truncate text-xs text-[#9CA3AF]">{ROLES[user.role]?.label}</p>
+              <p className="truncate text-xs text-[#9CA3AF]">{profileLabel}</p>
             </div>
           )}
         </div>

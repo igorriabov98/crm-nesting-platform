@@ -3,7 +3,7 @@ import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
 import { AccessDenied } from '@/components/ui/AccessDenied'
-import { canCurrentRoleAccessPath, getRolePermissionMap } from '@/lib/permissions/server'
+import { canCurrentUserAccessPath, getCurrentUserPermissions } from '@/lib/permissions/server'
 
 export default async function ProtectedLayout({
   children,
@@ -15,8 +15,9 @@ export default async function ProtectedLayout({
   const pathname = headerList.get('x-current-pathname') || ''
 
   const { user: currentUser } = context
-  const permissions = await getRolePermissionMap(currentUser.role)
-  const canAccessCurrentPath = await canCurrentRoleAccessPath(currentUser.role, permissions, pathname)
+  const permissionDetails = await getCurrentUserPermissions(currentUser.id)
+  const permissions = permissionDetails.permissions
+  const canAccessCurrentPath = await canCurrentUserAccessPath(permissions, pathname)
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F4F6F9]">

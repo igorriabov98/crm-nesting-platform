@@ -26,7 +26,7 @@ export default async function NewUserPage() {
       </div>
 
       <div className="pt-4">
-        <UserCreateForm factories={data.factories} />
+        <UserCreateForm departments={data.departments} positions={data.positions} users={data.users} />
       </div>
     </div>
   )

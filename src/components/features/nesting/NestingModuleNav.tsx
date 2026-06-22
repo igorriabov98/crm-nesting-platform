@@ -5,12 +5,11 @@ import { usePathname } from 'next/navigation'
 import { buttonVariants } from '@/components/ui/button'
 import { ROUTES } from '@/lib/constants/routes'
 import {
-  hasResourcePermission,
+  hasPermission,
   type PermissionMap,
   type ResourceKey,
 } from '@/lib/permissions/resources'
 import { cn } from '@/lib/utils'
-import type { UserRole } from '@/lib/types'
 
 const items = [
   { href: ROUTES.NESTING, label: 'Проекты', resourceKey: 'nesting' },
@@ -23,15 +22,13 @@ const items = [
 }>
 
 export function NestingModuleNav({
-  userRole,
   permissions,
 }: {
-  userRole: UserRole
   permissions: PermissionMap
 }) {
   const pathname = usePathname()
   const visibleItems = items.filter((item) =>
-    hasResourcePermission(userRole, permissions, item.resourceKey, 'view')
+    hasPermission(permissions, item.resourceKey, 'view')
   )
 
   return (

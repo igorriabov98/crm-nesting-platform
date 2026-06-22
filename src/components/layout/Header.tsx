@@ -6,7 +6,6 @@ import { LogOut, User2, Menu } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { ROUTES } from '@/lib/constants/routes'
-import { ROLES } from '@/lib/constants/roles'
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet'
 import {
   DropdownMenu,
@@ -26,6 +25,7 @@ import type { PermissionMap } from '@/lib/permissions/resources'
 import type { CurrentUser } from '@/lib/types'
 
 const PAGE_TITLES: Record<string, string> = {
+  [ROUTES.PROFILE]: 'Профиль',
   [ROUTES.DASHBOARD]: 'Дашборд',
   [ROUTES.SALES_PLAN]: 'План продаж',
   [ROUTES.SALES_PLAN + '/new']: 'Новая машина',
@@ -75,6 +75,16 @@ export function Header({ user, permissions }: HeaderProps) {
     .slice(0, 2) ?? '?'
 
   const title = PAGE_TITLES[pathname] || 'CRM Завода'
+  const membershipLabels = (user.department_memberships || [])
+    .map((membership) => {
+      const position = membership.position?.name
+      const department = membership.department?.name
+      if (position && department) return `${position} · ${department}`
+      return position || department || null
+    })
+    .filter(Boolean)
+  const profileLabel = membershipLabels[0] || 'Профиль CRM'
+
   return (
     <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-[#E8ECF0] bg-white px-4 sm:px-6">
       <div className="flex items-center gap-4">
@@ -119,17 +129,17 @@ export function Header({ user, permissions }: HeaderProps) {
             <DropdownMenuLabel className="text-[#6B7280]">
               <div className="font-medium text-[#1B3A6B]">{user.full_name}</div>
               <div className="text-xs font-normal text-[#9CA3AF]">
-                {ROLES[user.role]?.label}
+                {profileLabel}
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="bg-[#E8ECF0]" />
             <DropdownMenuItem
               className="cursor-pointer text-[#374151] hover:bg-[#F4F6F9] hover:text-[#1B3A6B]"
               onClick={() => {
-                if (pathname !== ROUTES.ADMIN_USERS) {
+                if (pathname !== ROUTES.PROFILE) {
                   start()
                 }
-                router.push(ROUTES.ADMIN_USERS)
+                router.push(ROUTES.PROFILE)
               }}
             >
               <User2 className="mr-2 h-4 w-4" />

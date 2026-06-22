@@ -8,10 +8,8 @@ import { useForm } from 'react-hook-form'
 import { Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { ROUTES } from '@/lib/constants/routes'
-import { ROLES } from '@/lib/constants/roles'
 import { createUserSchema, type CreateUserInput } from '@/lib/types/schemas'
-import { createUser } from '@/app/(protected)/admin/users/actions'
-import type { FactorySummary, UserRole } from '@/lib/types'
+import { createUser, type UserCreateOption, type UserSupervisorOption } from '@/app/(protected)/admin/users/actions'
 
 import {
   Form,
@@ -26,27 +24,16 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { LoadingButton } from '@/components/ui/loading-button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
-const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
-  financial_director: 'Полный доступ + управление инвойсами',
-  commercial_director: 'Полный доступ ко всем данным',
-  planning_director: 'Полный доступ + управление пользователями',
-  sales_manager: 'Создание машин, управление планом продаж и инвойсами',
-  engineer: 'Подтверждение чертежей',
-  technologist: 'Внесение номенклатуры, единиц измерения, количества',
-  supply_manager: 'Управление поставщиками, ценами, статусами поставок',
-  production_manager: 'Планирование этапов, цехов, дат производства',
-  procurement_head: 'Ввод остатков ножей и комплектации',
-  painting_head: 'Ввод остатков краски',
-}
-const ACTIVE_ROLE_OPTIONS = Object.entries(ROLES).filter(([key]) => key !== 'procurement_head' && key !== 'painting_head')
-
 interface UserCreateFormProps {
-  factories: FactorySummary[]
+  departments: UserCreateOption[]
+  positions: UserCreateOption[]
+  users: UserSupervisorOption[]
 }
 
-export function UserCreateForm({ factories }: UserCreateFormProps) {
+export function UserCreateForm({ departments, positions, users }: UserCreateFormProps) {
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -59,30 +46,28 @@ export function UserCreateForm({ factories }: UserCreateFormProps) {
       full_name: '',
       role: 'engineer',
       factory_id: null,
+      department_id: '',
+      position_id: '',
+      reports_to_user_id: null,
+      is_department_head: false,
       telegram_chat_id: '',
     },
   })
-
-  // Следим за ролью для вывода ее описания
-  const currentRole = form.watch('role') as UserRole
-  const isProductionManager = currentRole === 'production_manager'
-  const currentFactoryId = form.watch('factory_id')
-  const currentFactoryName = factories.find((factory) => factory.id === currentFactoryId)?.name || null
 
   async function onSubmit(data: CreateUserInput) {
     setIsSubmitting(true)
     try {
       const res = await createUser(data)
       if (!res.success) {
-        // Проверка типичной ошибки Auth
         if (res.error?.includes('already registered')) {
           throw new Error('Пользователь с таким email уже существует')
         }
         throw new Error(res.error || 'Не удалось создать пользователя')
       }
       
-      toast.success('Пользователь ' + data.full_name + ' успешно создан!')
+      toast.success(`Пользователь ${data.full_name} создан`)
       router.push(ROUTES.ADMIN_USERS)
+      router.refresh()
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Произошла ошибка')
     } finally {
@@ -95,7 +80,7 @@ export function UserCreateForm({ factories }: UserCreateFormProps) {
       <CardHeader>
         <CardTitle className="text-[#1B3A6B] text-xl">Создание профиля</CardTitle>
         <CardDescription className="text-[#6B7280]">
-          Новый сотрудник получит доступ к CRM текущего завода
+          Новый сотрудник сразу привязывается к отделу и должности. Доступ будет рассчитан по матрице отдела.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -139,8 +124,8 @@ export function UserCreateForm({ factories }: UserCreateFormProps) {
                     <div className="relative">
                       <FormControl>
                         <Input 
-                          type={showPassword ? "text" : "password"} 
-                          placeholder="••••••••" 
+                          type={showPassword ? 'text' : 'password'}
+                          placeholder="••••••••••••"
                           {...field} 
                           className="bg-[#F8F9FA] border-[#E8ECF0] pr-10 text-[#1B3A6B] focus-visible:ring-blue-500" 
                         />
@@ -154,81 +139,12 @@ export function UserCreateForm({ factories }: UserCreateFormProps) {
                       </button>
                     </div>
                     <FormDescription className="text-[#9CA3AF] text-xs">
-                      Минимум 6 символов
+                      Минимум 12 символов
                     </FormDescription>
                     <FormMessage className="text-[#DC2626]" />
                   </FormItem>
                 )}
               />
-
-              <FormField
-                control={form.control}
-                name="role"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-[#374151]">Роль доступа</FormLabel>
-                    <Select
-                      value={field.value || ''}
-                      onValueChange={(value) => {
-                        field.onChange(value)
-                        if (value !== 'production_manager') form.setValue('factory_id', null)
-                      }}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B] focus:ring-blue-500">
-                          <SelectValue placeholder="Установите должность" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]">
-                        {ACTIVE_ROLE_OPTIONS.map(([key, def]) => (
-                          <SelectItem key={key} value={key}>
-                            {key === 'production_manager' ? 'Начальник производства (выбрать завод)' : def.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {currentRole && (
-                      <FormDescription className="text-[#6B7280] text-xs">
-                        {ROLE_DESCRIPTIONS[currentRole]}
-                      </FormDescription>
-                    )}
-                    <FormMessage className="text-[#DC2626]" />
-                  </FormItem>
-                )}
-              />
-
-              {isProductionManager && (
-                <FormField
-                  control={form.control}
-                  name="factory_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-[#374151]">Завод</FormLabel>
-                      <Select value={field.value || ''} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B] focus:ring-blue-500">
-                            <SelectValue placeholder="Выберите завод" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]">
-                          {factories.map((factory) => (
-                            <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormDescription className="text-[#6B7280] text-xs">
-                        Начальник производства будет видеть машины этого завода и машины без завода.
-                      </FormDescription>
-                      {currentFactoryName && (
-                        <FormDescription className="text-[#1B3A6B] text-xs font-medium">
-                          Должность: Начальник производства {currentFactoryName}
-                        </FormDescription>
-                      )}
-                      <FormMessage className="text-[#DC2626]" />
-                    </FormItem>
-                  )}
-                />
-              )}
 
               <FormField
                 control={form.control}
@@ -245,10 +161,111 @@ export function UserCreateForm({ factories }: UserCreateFormProps) {
                       />
                     </FormControl>
                     <FormDescription className="text-[#6B7280] text-xs">
-                      Используется для Telegram-уведомлений начальникам участков
-                      {(currentRole === 'procurement_head' || currentRole === 'painting_head') ? '. Рекомендуется заполнить.' : ''}
+                      Необязательно. Используется для Telegram-уведомлений.
                     </FormDescription>
                     <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="department_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[#374151]">Отдел</FormLabel>
+                    <Select value={field.value || ''} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B] focus:ring-blue-500">
+                          <SelectValue placeholder="Выберите отдел" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]">
+                        {departments.map((department) => (
+                          <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="position_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[#374151]">Должность</FormLabel>
+                    <Select value={field.value || ''} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B] focus:ring-blue-500">
+                          <SelectValue placeholder="Выберите должность" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]">
+                        {positions.map((position) => (
+                          <SelectItem key={position.id} value={position.id}>{position.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="reports_to_user_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-[#374151]">Руководитель</FormLabel>
+                    <Select
+                      value={field.value || 'none'}
+                      onValueChange={(value) => field.onChange(value === 'none' ? null : value)}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B] focus:ring-blue-500">
+                          <SelectValue placeholder="Не выбран" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]">
+                        <SelectItem value="none">Не выбран</SelectItem>
+                        {users.map((user) => (
+                          <SelectItem key={user.id} value={user.id}>
+                            {user.full_name || user.email}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormDescription className="text-[#6B7280] text-xs">
+                      Необязательно для начальника отдела.
+                    </FormDescription>
+                    <FormMessage className="text-[#DC2626]" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="is_department_head"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-4 shadow-sm md:col-span-2">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base text-[#374151]">
+                        Начальник отдела
+                      </FormLabel>
+                      <FormDescription className="text-xs text-[#9CA3AF]">
+                        Если включено, пользователь получит права из блока «Начальник отдела», а отдел будет синхронизирован с ним как руководителем.
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        className="data-[state=checked]:bg-emerald-500"
+                      />
+                    </FormControl>
                   </FormItem>
                 )}
               />

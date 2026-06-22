@@ -21,6 +21,10 @@ export const createUserSchema = z.object({
     message: 'Выберите допустимую роль'
   }),
   factory_id: z.string().uuid('Выберите завод').optional().nullable(),
+  department_id: z.string().uuid('Выберите отдел'),
+  position_id: z.string().uuid('Выберите должность'),
+  reports_to_user_id: z.string().uuid('Выберите руководителя').optional().nullable(),
+  is_department_head: z.boolean(),
   telegram_chat_id: z.string().optional().nullable(),
 }).superRefine((data, ctx) => {
   if (data.role === 'production_manager' && !data.factory_id) {

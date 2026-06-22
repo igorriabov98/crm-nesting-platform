@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { DepartmentsPage } from '@/components/features/departments/DepartmentsPage'
 import { getActiveUsers, getDepartments, getPositions } from './actions'
-import { getRolePermissionMap, requirePermission } from '@/lib/permissions/server'
+import { requirePermission } from '@/lib/permissions/server'
 
 export const metadata: Metadata = {
   title: 'Отделы и структура — CRM Завода',
@@ -18,7 +18,7 @@ export default async function DepartmentsRoute() {
   }
 
   const [permissions, departmentsResult, positionsResult, usersResult, factoriesResult] = await Promise.all([
-    getRolePermissionMap(context.role),
+    Promise.resolve(context.permissions),
     getDepartments(),
     getPositions(),
     getActiveUsers(),

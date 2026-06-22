@@ -29,7 +29,7 @@ export default async function AdminUsersPage() {
         </div>
       </div>
 
-      <UserTable users={data.users} factories={data.factories} currentUser={data.currentUser} />
+      <UserTable users={data.users} currentUser={data.currentUser} canManage={data.canManage} />
     </div>
   )
 }

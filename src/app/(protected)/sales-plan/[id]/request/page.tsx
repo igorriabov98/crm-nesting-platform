@@ -1,13 +1,12 @@
-import { notFound, redirect } from 'next/navigation'
+import { notFound } from 'next/navigation'
 import { TechnologistRequestPage } from '@/components/features/requests/TechnologistRequestPage'
 import { CreateRequestPanel } from '@/components/features/requests/CreateRequestPanel'
 import { getMachine } from '@/app/(protected)/sales-plan/actions'
 import { getRequest } from '@/lib/actions/technologist-requests'
 import { getSteelTypes } from '@/lib/actions/steel-types'
-import { getRolePermissionMap } from '@/lib/permissions/server'
-import { hasResourcePermission } from '@/lib/permissions/resources'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
-import type { UserRole } from '@/lib/types'
+import { getCurrentUserPermissions } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
+import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 
 export const metadata = {
   title: 'Заявка на материалы | CRM Завода',
@@ -15,29 +14,19 @@ export const metadata = {
 
 export default async function RequestPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const { user } = await getCurrentUserContextOrRedirect()
+  const permissionDetails = await getCurrentUserPermissions(user.id)
+  const permissions = permissionDetails.permissions
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-
-  const role = (profile as unknown as { role: UserRole } | null)?.role
-  if (!role) redirect('/login')
-
-  const [{ data: machine, error }, { data: requestData }, steelTypes, permissions] = await Promise.all([
+  const [{ data: machine, error }, { data: requestData }, steelTypes] = await Promise.all([
     getMachine(id),
     getRequest(id),
     getSteelTypes(),
-    getRolePermissionMap(role),
   ])
   if (error || !machine) notFound()
 
   if (!requestData) {
-    const canManageRequest = hasResourcePermission(role, permissions, 'technologist_requests', 'manage')
+    const canManageRequest = hasPermission(permissions, 'technologist_requests', 'manage')
     return (
       <CreateRequestPanel
         machineId={id}
@@ -53,7 +42,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
       suppliers={{
         sheetMetal: [],
       }}
-      canManage={hasResourcePermission(role, permissions, 'technologist_requests', 'manage')}
+      canManage={hasPermission(permissions, 'technologist_requests', 'manage')}
       steelTypes={steelTypes}
     />
   )

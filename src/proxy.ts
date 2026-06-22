@@ -63,11 +63,11 @@ export async function proxy(request: NextRequest) {
   if (user && pathname.startsWith(ROUTES.LOGIN)) {
     const { data: profile } = await supabase
       .from('users')
-      .select('role')
+      .select('id, is_active')
       .eq('id', user.id)
       .maybeSingle()
 
-    if (profile?.role) {
+    if (profile?.id && profile.is_active !== false) {
       const url = request.nextUrl.clone()
       url.pathname = ROUTES.DASHBOARD
       return NextResponse.redirect(url)
