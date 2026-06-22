@@ -145,7 +145,7 @@ fallback_department AS (
   SELECT department_id AS id
   FROM department_members
   WHERE user_id = (SELECT id FROM igor_user)
-  ORDER BY is_department_head DESC, created_at NULLS LAST
+  ORDER BY is_department_head DESC, joined_at NULLS LAST
   LIMIT 1
 ),
 selected_department AS (
