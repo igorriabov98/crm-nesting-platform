@@ -109,6 +109,17 @@ type LooseDb = {
   from: <T = unknown>(table: string) => LooseQuery<T>
 }
 
+type LooseAuthAdminClient = LooseDb & {
+  auth: {
+    admin: {
+      listUsers: (params: { page: number; perPage: number }) => Promise<{
+        data: { users: Array<{ id: string }> }
+        error: { message?: string } | null
+      }>
+    }
+  }
+}
+
 export type DepartmentAccessPermissionInput = {
   departmentId: string
   subjectScope: DepartmentAccessSubjectScope
@@ -225,14 +236,37 @@ async function getDepartments(db: LooseDb) {
   return Array.isArray(data) ? data : []
 }
 
-async function getUsers(db: LooseDb) {
-  const { data, error } = await db
-    .from<UserRow[]>('users')
-    .select('id, full_name, email, role, is_active')
-    .order('full_name', { ascending: true })
+async function getAuthUserIds(client: LooseAuthAdminClient) {
+  const authUserIds = new Set<string>()
+  const perPage = 1000
+  let page = 1
+
+  while (true) {
+    const { data, error } = await client.auth.admin.listUsers({ page, perPage })
+    if (error) throw new Error(error.message || 'Не удалось загрузить пользователей авторизации')
+
+    for (const authUser of data.users) {
+      authUserIds.add(authUser.id)
+    }
+
+    if (data.users.length < perPage) break
+    page += 1
+  }
+
+  return authUserIds
+}
+
+async function getUsers(client: LooseAuthAdminClient) {
+  const [{ data, error }, authUserIds] = await Promise.all([
+    client
+      .from<UserRow[]>('users')
+      .select('id, full_name, email, role, is_active')
+      .order('full_name', { ascending: true }),
+    getAuthUserIds(client),
+  ])
 
   if (error) throw new Error(error.message || 'Не удалось загрузить пользователей')
-  return Array.isArray(data) ? data : []
+  return Array.isArray(data) ? data.filter((user) => authUserIds.has(user.id)) : []
 }
 
 async function getMembershipRows(db: LooseDb) {
@@ -458,7 +492,7 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
 export async function getRolePermissionsPageData(): Promise<{ data: RolePermissionsPageData | null; error: string | null }> {
   try {
     await requireAccessSettingsPermission()
-    const db = createAdminClient() as unknown as LooseDb
+    const db = createAdminClient() as unknown as LooseAuthAdminClient
     const [departments, users, memberships, accessRows, auditRows] = await Promise.all([
       getDepartments(db),
       getUsers(db),
