@@ -54,6 +54,17 @@ type ProductProjectUpdate = Database['public']['Tables']['product_projects']['Up
 type ProductProjectVersionInsert = Database['public']['Tables']['product_project_versions']['Insert']
 type ProductProjectVersionUpdate = Database['public']['Tables']['product_project_versions']['Update']
 type ProductProjectFileInsert = Database['public']['Tables']['product_project_files']['Insert']
+type DepartmentRow = {
+  id: string
+  name: string
+  parent_id: string | null
+  is_active: boolean
+}
+type DepartmentUserRow = UserSummary & { is_active: boolean }
+type DepartmentMemberUserRow = {
+  department_id: string
+  user?: DepartmentUserRow | DepartmentUserRow[] | null
+}
 
 export type ProductOption = Pick<Product,
   | 'id'
@@ -101,6 +112,79 @@ async function requireProductManageAccess(resourceKey: Extract<ResourceKey, 'pro
 
 function cleanNullableId(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function relationOne<T>(value: T | T[] | null | undefined) {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null
+}
+
+function normalizeDepartmentName(value: string) {
+  return value.toLocaleLowerCase('ru').replaceAll('ё', 'е').replace(/\s+/g, ' ').trim()
+}
+
+function isTechnicalDepartmentName(value: string) {
+  const normalized = normalizeDepartmentName(value)
+  return normalized === 'технический отдел'
+    || normalized === 'технический'
+    || normalized.includes('техническ')
+    || normalized.includes('technical')
+}
+
+function collectDepartmentTreeIds(departments: DepartmentRow[], rootIds: Set<string>) {
+  const ids = new Set(rootIds)
+  let changed = true
+
+  while (changed) {
+    changed = false
+    for (const department of departments) {
+      if (department.parent_id && ids.has(department.parent_id) && !ids.has(department.id)) {
+        ids.add(department.id)
+        changed = true
+      }
+    }
+  }
+
+  return Array.from(ids)
+}
+
+async function getTechnicalDepartmentIds(db: LooseDb) {
+  const { data, error } = await db
+    .from('departments')
+    .select('id, name, parent_id, is_active')
+    .eq('is_active', true)
+
+  if (error) throw error
+
+  const departments = (data || []) as DepartmentRow[]
+  const rootIds = new Set(
+    departments
+      .filter((department) => isTechnicalDepartmentName(department.name))
+      .map((department) => department.id),
+  )
+
+  return collectDepartmentTreeIds(departments, rootIds)
+}
+
+async function assertTechnicalDepartmentUser(db: LooseDb, userId: string) {
+  const technicalDepartmentIds = await getTechnicalDepartmentIds(db)
+  if (technicalDepartmentIds.length === 0) {
+    throw new Error('Технический отдел не найден')
+  }
+
+  const { data, error } = await db
+    .from('department_members')
+    .select('department_id, user:user_id(id, full_name, role, factory_id, is_active)')
+    .eq('user_id', userId)
+    .in('department_id', technicalDepartmentIds)
+
+  if (error) throw error
+
+  const hasActiveTechnicalUser = ((data || []) as DepartmentMemberUserRow[])
+    .some((row) => Boolean(relationOne(row.user)?.is_active))
+
+  if (!hasActiveTechnicalUser) {
+    throw new Error('Выберите сотрудника технического отдела')
+  }
 }
 
 function storageFileExtension(name: string) {
@@ -166,6 +250,8 @@ async function insertProductProjectWithInitialVersion(
   input: ProductProjectInput,
 ) {
   const parsed = productProjectSchema.parse(input)
+  await assertTechnicalDepartmentUser(db, parsed.assigned_engineer_id)
+
   const payload: ProductProjectInsert = {
     title: parsed.title.trim(),
     client_id: cleanNullableId(parsed.client_id),
@@ -429,15 +515,33 @@ export async function deleteProductFile(fileId: string, productId: string) {
 export async function getEngineerOptions() {
   try {
     const { db } = await requireProductAccess('product_projects')
+    const technicalDepartmentIds = await getTechnicalDepartmentIds(db)
+
+    if (technicalDepartmentIds.length === 0) {
+      return { data: [] as UserSummary[], error: null }
+    }
+
     const { data, error } = await db
-      .from('users')
-      .select('id, full_name, role, factory_id')
-      .eq('role', 'engineer')
-      .eq('is_active', true)
-      .order('full_name', { ascending: true })
+      .from('department_members')
+      .select('department_id, user:user_id(id, full_name, role, factory_id, is_active)')
+      .in('department_id', technicalDepartmentIds)
 
     if (error) throw error
-    return { data: (data || []) as UserSummary[], error: null }
+
+    const usersById = new Map<string, UserSummary>()
+    for (const row of (data || []) as DepartmentMemberUserRow[]) {
+      const user = relationOne(row.user)
+      if (!user?.is_active) continue
+      usersById.set(user.id, {
+        id: user.id,
+        full_name: user.full_name,
+        role: user.role,
+        factory_id: user.factory_id,
+      })
+    }
+
+    const engineers = Array.from(usersById.values()).sort((a, b) => a.full_name.localeCompare(b.full_name, 'ru'))
+    return { data: engineers, error: null }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
@@ -565,6 +669,8 @@ export async function updateProductProject(id: string, input: ProductProjectInpu
   try {
     const { db, user } = await requireProductManageAccess('product_projects')
     const parsed = productProjectSchema.parse(input)
+    await assertTechnicalDepartmentUser(db, parsed.assigned_engineer_id)
+
     const payload: ProductProjectUpdate = {
       title: parsed.title.trim(),
       client_id: cleanNullableId(parsed.client_id),
