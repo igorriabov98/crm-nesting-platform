@@ -6,6 +6,7 @@ import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { ResourceKey } from '@/lib/permissions/resources'
 import {
   productFileKindSchema,
@@ -86,18 +87,6 @@ export type ProductProjectDetails = ProductProject & {
 
 function dbFrom(supabase: unknown): LooseDb {
   return supabase as LooseDb
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  if (error && typeof error === 'object') {
-    const record = error as Record<string, unknown>
-    return [record.message, record.details, record.hint]
-      .filter((item): item is string => typeof item === 'string' && item.length > 0)
-      .join(' ') || 'Неизвестная ошибка'
-  }
-  return 'Неизвестная ошибка'
 }
 
 async function requireProductAccess(resourceKey: Extract<ResourceKey, 'products' | 'product_projects'> = 'products') {

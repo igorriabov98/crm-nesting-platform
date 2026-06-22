@@ -69,6 +69,7 @@ export type RolePermissionsPageData = {
   resources: Array<{
     key: ResourceKey
     label: string
+    description?: string
     group: string
     locked: boolean
   }>
@@ -166,6 +167,7 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
         resources: PERMISSION_RESOURCES.map((resource) => ({
           key: resource.key,
           label: resource.label,
+          description: 'description' in resource ? resource.description : undefined,
           group: resource.group,
           locked: isLockedResource(resource),
         })),

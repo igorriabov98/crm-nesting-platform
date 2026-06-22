@@ -45,11 +45,19 @@ export default async function AdminSettingsPage() {
   const cards = [
     canOpenAccessSettings && {
       key: 'access',
-      title: 'Права доступа',
+      title: 'Управление доступом',
       description: 'Матрица ролей, доступных разделов, управления и журнал последних изменений.',
       href: ROUTES.ADMIN_ACCESS_SETTINGS,
-      buttonLabel: 'Открыть права доступа',
+      buttonLabel: 'Открыть управление доступом',
       icon: ShieldCheck,
+    },
+    canViewResource(user.role, permissions, 'departments') && {
+      key: 'departments',
+      title: 'Отделы и структура',
+      description: 'Управление отделами, должностями, руководителями и подчинением сотрудников.',
+      href: ROUTES.ADMIN_DEPARTMENTS,
+      buttonLabel: 'Открыть отделы и структуру',
+      icon: Building2,
     },
     canViewSettingsContent && canViewResource(user.role, permissions, 'nesting_settings') && {
       key: 'ai',

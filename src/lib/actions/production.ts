@@ -6,6 +6,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { isDirector } from '@/lib/utils/permissions'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { CurrentUser } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
 
@@ -111,10 +112,6 @@ function validateStageDates(stages: StageDateRow[], changedStageId: string) {
   if (nextStage?.date_start && currentStage.date_start > nextStage.date_start) {
     throw new Error(`Дата начала этапа "${stageLabel(currentStage.stage_type)}" не может быть позже начала следующего этапа "${stageLabel(nextStage.stage_type)}"`)
   }
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Неизвестная ошибка'
 }
 
 function inferMachineStatus(machine: MachineLifecycleRow) {

@@ -7,6 +7,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import { companySettingsSchema, type UpdateCompanySettingsData } from '@/lib/types/schemas'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { Database } from '@/lib/types/database'
 
 const COMPANY_SETTINGS_ID = '00000000-0000-0000-0000-000000000001'
@@ -29,18 +30,6 @@ type LooseDb = {
 
 function dbFrom(supabase: unknown): LooseDb {
   return supabase as LooseDb
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  if (error && typeof error === 'object') {
-    const record = error as DbError
-    return [record.message, record.details, record.hint]
-      .filter((item): item is string => typeof item === 'string' && item.length > 0)
-      .join(' ') || 'Неизвестная ошибка'
-  }
-  return 'Неизвестная ошибка'
 }
 
 async function requireCompanySettingsAccess(operation: PermissionOperation = 'view') {

@@ -6,6 +6,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { PermissionOperation } from '@/lib/permissions/resources'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { Client, Contract } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
 
@@ -50,21 +51,6 @@ const nextSpecificationSchema = z.object({
 
 function looseDb(supabase: unknown): LooseDb {
   return supabase as LooseDb
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  if (error && typeof error === 'object') {
-    const message = 'message' in error ? error.message : null
-    const details = 'details' in error ? error.details : null
-    const hint = 'hint' in error ? error.hint : null
-
-    return [message, details, hint]
-      .filter((item): item is string => typeof item === 'string' && item.length > 0)
-      .join(' ') || 'Неизвестная ошибка'
-  }
-  return 'Неизвестная ошибка'
 }
 
 async function requireContractAccess(operation: PermissionOperation = 'view') {

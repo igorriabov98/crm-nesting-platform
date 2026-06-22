@@ -5,11 +5,8 @@ import { z } from 'zod'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { ROUTES } from '@/lib/constants/routes'
 import { isDirector } from '@/lib/utils/permissions'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { CurrentUser } from '@/lib/types'
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Неизвестная ошибка'
-}
 
 const createSupplyItemSchema = z.object({
   nomenclature: z.string().trim().min(1, 'Введите номенклатуру'),

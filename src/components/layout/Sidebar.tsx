@@ -25,6 +25,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   FileText,
+  Building2,
+  ShieldCheck,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ROLES } from '@/lib/constants/roles'
@@ -70,13 +72,15 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   agenda: ListChecks,
   notifications: Bell,
   settings: Settings,
+  access: ShieldCheck,
+  departments: Building2,
 }
 
 function toNavItem(resource: PermissionResource): NavItem | null {
   if (!resource.defaultHref || !resource.sidebar) return null
   return {
     href: resource.defaultHref,
-    label: resource.label,
+    label: resource.key === 'admin_settings' ? 'Все настройки' : resource.label,
     icon: iconMap[resource.sidebar.icon],
   }
 }
@@ -96,6 +100,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const [isFinanceMenuOpen, setIsFinanceMenuOpen] = useState(false)
   const [isSupplyMenuOpen, setIsSupplyMenuOpen] = useState(false)
   const [isMeetingsMenuOpen, setIsMeetingsMenuOpen] = useState(false)
+  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false)
 
   const collapsed = isMobile ? false : isCollapsed
 
@@ -106,6 +111,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const supplyItems = sectionItems(user, permissions, 'supply')
   const meetingItems = sectionItems(user, permissions, 'meetings')
   const toolsItems = sectionItems(user, permissions, 'tools')
+  const settingsItems = sectionItems(user, permissions, 'settings')
 
   function navHref(item: NavItem) {
     return currentFactory ? `${item.href}?factory=${currentFactory}` : item.href
@@ -123,6 +129,8 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const isSupplyExpanded = !collapsed && (isSupplyMenuOpen || isSupplyActive)
   const isMeetingsActive = meetingItems.some(isActiveItem)
   const isMeetingsExpanded = !collapsed && (isMeetingsMenuOpen || isMeetingsActive)
+  const isSettingsActive = settingsItems.some(isActiveItem)
+  const isSettingsExpanded = !collapsed && (isSettingsMenuOpen || isSettingsActive)
 
   function renderNavItem(item: NavItem, nested = false) {
     const Icon = item.icon
@@ -289,6 +297,16 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
         })}
 
         {toolsItems.map((item) => renderNavItem(item))}
+
+        {renderMenu({
+          items: settingsItems,
+          label: 'Настройки',
+          collapsedTitle: 'Настройки',
+          isActive: isSettingsActive,
+          isExpanded: isSettingsExpanded,
+          toggle: () => setIsSettingsMenuOpen((current) => !current),
+          icon: Settings,
+        })}
       </nav>
 
       <div className="border-t border-[#E8ECF0] p-4">

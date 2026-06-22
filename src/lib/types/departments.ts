@@ -43,8 +43,14 @@ export type DepartmentMember = {
   reports_to?: { id: string; full_name: string } | null
 }
 
+export type UserDepartmentMembershipSummary = {
+  department: { id: string; name: string } | null
+  position: { id: string; name: string; level: number } | null
+  is_department_head: boolean
+}
+
 // Дерево отделов для UI
-export type DepartmentTreeNode = Department & {
+export type DepartmentTreeNode = Omit<Department, 'children'> & {
   children: DepartmentTreeNode[]
   members: DepartmentMember[]
   depth: number

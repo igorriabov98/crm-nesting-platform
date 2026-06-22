@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { Plus, MoreHorizontal, Pencil, KeyRound, Ban, Trash2, CheckCircle2 } from 'lucide-react'
+import { Plus, MoreHorizontal, Pencil, KeyRound, Ban, Trash2, CheckCircle2, Crown } from 'lucide-react'
 import { ROUTES } from '@/lib/constants/routes'
 import { ROLES } from '@/lib/constants/roles'
 import { Input } from '@/components/ui/input'
@@ -27,7 +27,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import type { CurrentUser, FactorySummary } from '@/lib/types'
+import type { CurrentUser, FactorySummary, UserDepartmentMembershipSummary } from '@/lib/types'
 import { UserEditDialog } from './UserEditDialog'
 import { ResetPasswordDialog } from './ResetPasswordDialog'
 import { DeleteUserDialog } from './DeleteUserDialog'
@@ -54,6 +54,17 @@ function getUserRoleLabel(user: CurrentUser) {
   }
 
   return ROLES[user.role]?.label || user.role
+}
+
+function getPrimaryPosition(user: CurrentUser) {
+  return (user.department_memberships || []).reduce<UserDepartmentMembershipSummary['position']>(
+    (primary, membership) => {
+      if (!membership.position) return primary
+      if (!primary || membership.position.level > primary.level) return membership.position
+      return primary
+    },
+    null
+  )
 }
 
 export function UserTable({ users, factories, currentUser }: UserTableProps) {
@@ -143,6 +154,8 @@ export function UserTable({ users, factories, currentUser }: UserTableProps) {
             <TableRow className="border-[#E8ECF0] hover:bg-transparent">
               <TableHead className="text-[#6B7280]">Имя и Email</TableHead>
               <TableHead className="text-[#6B7280]">Роль</TableHead>
+              <TableHead className="text-[#6B7280]">Отдел</TableHead>
+              <TableHead className="text-[#6B7280]">Должность</TableHead>
               <TableHead className="text-[#6B7280]">Статус</TableHead>
               <TableHead className="text-[#6B7280]">Регистрация</TableHead>
               <TableHead className="text-[#6B7280]">Завод</TableHead>
@@ -152,7 +165,7 @@ export function UserTable({ users, factories, currentUser }: UserTableProps) {
           <TableBody>
             {filteredUsers.length === 0 ? (
               <TableRow className="border-[#E8ECF0]">
-                <TableCell colSpan={6} className="h-24 text-center text-[#9CA3AF]">
+                <TableCell colSpan={8} className="h-24 text-center text-[#9CA3AF]">
                   Пользователи не найдены.
                 </TableCell>
               </TableRow>
@@ -161,6 +174,9 @@ export function UserTable({ users, factories, currentUser }: UserTableProps) {
                 const roleDef = ROLES[u.role]
                 const roleLabel = getUserRoleLabel(u)
                 const isMe = u.id === currentUser.id
+                const memberships = u.department_memberships || []
+                const departmentMemberships = memberships.filter((membership) => membership.department)
+                const primaryPosition = getPrimaryPosition(u)
                 
                 return (
                   <TableRow key={u.id} className="border-[#E8ECF0] hover:bg-[#F8F9FA]">
@@ -179,6 +195,26 @@ export function UserTable({ users, factories, currentUser }: UserTableProps) {
                       >
                         {roleLabel}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="max-w-[240px] text-sm text-[#374151]">
+                      {departmentMemberships.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+                          {departmentMemberships.map((membership, index) => (
+                            <Fragment key={membership.department?.id || index}>
+                              {index > 0 && <span className="text-[#9CA3AF]">,</span>}
+                              <span className="inline-flex items-center gap-1">
+                                {membership.is_department_head && (
+                                  <Crown className="h-3.5 w-3.5 text-amber-500" aria-label="Начальник отдела" />
+                                )}
+                                {membership.department?.name}
+                              </span>
+                            </Fragment>
+                          ))}
+                        </div>
+                      ) : '—'}
+                    </TableCell>
+                    <TableCell className="text-sm text-[#374151]">
+                      {primaryPosition?.name || '—'}
                     </TableCell>
                     <TableCell>
                       {u.is_active ? (

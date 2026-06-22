@@ -267,6 +267,12 @@ export const updateMachineSchema = createMachineSchema.partial().extend({
 
 export type CreateMachineInput = z.infer<typeof createMachineSchema>
 export type UpdateMachineInput = z.infer<typeof updateMachineSchema>
+export type CreatePositionInput = z.infer<typeof createPositionSchema>
+export type UpdatePositionInput = z.infer<typeof updatePositionSchema>
+export type CreateDepartmentInput = z.infer<typeof createDepartmentSchema>
+export type UpdateDepartmentInput = z.infer<typeof updateDepartmentSchema>
+export type AddDepartmentMemberInput = z.infer<typeof addDepartmentMemberSchema>
+export type UpdateDepartmentMemberInput = z.infer<typeof updateDepartmentMemberSchema>
 export type ClientInput = z.infer<typeof clientSchema>
 export type ClientContactInput = z.infer<typeof clientContactSchema>
 export type ProductInput = z.infer<typeof productSchema>

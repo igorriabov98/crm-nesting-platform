@@ -9,6 +9,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import { clientContactSchema, clientSchema, type ClientContactInput, type ClientInput } from '@/lib/types/schemas'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { Client, ClientContact, CurrentUser, MachineDetails } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
 
@@ -82,21 +83,6 @@ async function requireAuth() {
 async function requireClientPermission(operation: PermissionOperation) {
   const context = await requirePermission('clients', operation)
   return { supabase: context.supabase, user: context.user }
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  if (error && typeof error === 'object') {
-    const message = 'message' in error ? error.message : null
-    const details = 'details' in error ? error.details : null
-    const hint = 'hint' in error ? error.hint : null
-
-    return [message, details, hint]
-      .filter((item): item is string => typeof item === 'string' && item.length > 0)
-      .join(' ') || 'Неизвестная ошибка'
-  }
-  return 'Неизвестная ошибка'
 }
 
 function fileExtension(file: File) {

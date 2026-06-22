@@ -9,6 +9,7 @@ export const ROUTES = {
   ADMIN_SUPPLIERS_NEW:'/admin/suppliers/new',
   ADMIN_MATERIALS:'/admin/materials',
   ADMIN_SETTINGS:'/admin/settings',
+  ADMIN_DEPARTMENTS:'/admin/settings/departments',
   ADMIN_ACCESS_SETTINGS:'/admin/settings/access',
   ADMIN_TELEGRAM_SETTINGS:'/admin/settings/telegram',
   ADMIN_COMPANY_SETTINGS:'/admin/settings/company',

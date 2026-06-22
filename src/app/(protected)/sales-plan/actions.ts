@@ -12,6 +12,7 @@ import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
 import { SALES_PLAN_MACHINE_LIMIT } from '@/lib/constants/sales-plan'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { CreateMachineInput, MachinePackingSettingsInput, UpdateMachineInput } from '@/lib/types/schemas'
 import type { CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, Product } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
@@ -426,31 +427,6 @@ async function notifyProductionManagersAboutFactoryAssignment(
   })
 
   if (error) throw new Error(error.message || 'Не удалось отправить уведомление начальнику производства')
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-
-  if (error && typeof error === 'object') {
-    const record = error as Record<string, unknown>
-    if (Array.isArray(record.issues)) {
-      const messages = record.issues
-        .map((issue) => {
-          if (!issue || typeof issue !== 'object') return null
-          const message = (issue as Record<string, unknown>).message
-          return typeof message === 'string' ? message : null
-        })
-        .filter(Boolean)
-
-      if (messages.length > 0) return messages.join('; ')
-    }
-
-    if (typeof record.message === 'string') return record.message
-    if (typeof record.details === 'string') return record.details
-    if (typeof record.hint === 'string') return record.hint
-  }
-
-  return 'Неизвестная ошибка'
 }
 
 function getDisplayMachineStatus(machine: {

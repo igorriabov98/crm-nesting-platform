@@ -6,9 +6,10 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { createUserSchema, resetPasswordSchema, type CreateUserInput, type UpdateUserInput } from '@/lib/types/schemas'
-import type { CurrentUser, FactorySummary } from '@/lib/types'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
+import type { CurrentUser, FactorySummary, UserDepartmentMembershipSummary } from '@/lib/types'
 
-type DbResult = { data?: unknown; error: { message?: string } | null }
+type DbResult = { data?: unknown; error: { message?: string; code?: string } | null }
 type LooseQuery = PromiseLike<DbResult> & {
   select: (columns: string) => LooseQuery
   insert: (values: unknown) => LooseQuery
@@ -22,14 +23,8 @@ type LooseQuery = PromiseLike<DbResult> & {
 }
 type LooseAdminDb = { from: (table: string) => LooseQuery }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  if (error && typeof error === 'object' && 'message' in error) {
-    const message = (error as { message?: unknown }).message
-    if (typeof message === 'string' && message.trim()) return message
-  }
-
-  return 'Неизвестная ошибка'
+type DepartmentMembershipRow = UserDepartmentMembershipSummary & {
+  user_id: string
 }
 
 async function requireAdmin() {
@@ -61,6 +56,33 @@ async function getFactoriesForAdmin(supabase = createServerSupabaseClient()) {
   if (error) throw error
 
   return (data || []) as FactorySummary[]
+}
+
+function isMissingDepartmentMembershipsTable(error: { message?: string; code?: string }) {
+  return error.code === 'PGRST205'
+    || (
+      /department_members/i.test(error.message || '')
+      && /schema cache|could not find/i.test(error.message || '')
+    )
+}
+
+async function getDepartmentMembershipsForAdmin() {
+  const db = createAdminClient() as unknown as LooseAdminDb
+  const { data, error } = await db
+    .from('department_members')
+    .select(`
+      user_id,
+      department:department_id(id, name),
+      position:position_id(id, name, level),
+      is_department_head
+    `)
+
+  if (error) {
+    if (isMissingDepartmentMembershipsTable(error)) return []
+    throw error
+  }
+
+  return (data || []) as DepartmentMembershipRow[]
 }
 
 function normalizeUserFactory(role: string | undefined, factoryId: string | null | undefined) {
@@ -157,13 +179,27 @@ export async function getUsers() {
 export async function getUsersPageData() {
   try {
     const currentUser = await requireAdmin()
-    const [users, factories] = await Promise.all([
+    const [users, factories, memberships] = await Promise.all([
       getUsersForAdmin(),
       getFactoriesForAdmin(),
+      getDepartmentMembershipsForAdmin(),
     ])
 
+    const membershipsByUser = new Map<string, UserDepartmentMembershipSummary[]>()
+
+    for (const { user_id: userId, ...membership } of memberships) {
+      const userMemberships = membershipsByUser.get(userId) || []
+      userMemberships.push(membership)
+      membershipsByUser.set(userId, userMemberships)
+    }
+
+    const usersWithMemberships = users.map((user) => ({
+      ...user,
+      department_memberships: membershipsByUser.get(user.id) || [],
+    }))
+
     return {
-      data: { currentUser: { id: currentUser.id }, users, factories },
+      data: { currentUser: { id: currentUser.id }, users: usersWithMemberships, factories },
       error: null,
     }
   } catch (error: unknown) {
@@ -335,4 +371,3 @@ export async function deleteUser(userId: string) {
     return { success: false, error: getErrorMessage(error) }
   }
 }
-

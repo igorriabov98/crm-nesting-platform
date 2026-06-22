@@ -1,4 +1,5 @@
 import { Database } from './database'
+import type { UserDepartmentMembershipSummary } from './departments'
 
 export * from './departments'
 
@@ -69,6 +70,7 @@ export type InventoryTransactionType = Database['public']['Enums']['inventory_tr
 
 export type CurrentUser = User & {
   factory: Factory
+  department_memberships?: UserDepartmentMembershipSummary[]
 }
 
 export type UserSummary = Pick<User, 'id' | 'full_name' | 'role' | 'factory_id'>

@@ -162,9 +162,16 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                   {resources.map((resource) => (
                     <TableRow key={resource.key}>
                       <TableCell className="sticky left-0 z-20 min-w-[220px] bg-white">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-[#374151]">{resource.label}</span>
-                          {resource.locked && <Badge variant="outline">неснимаемо</Badge>}
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-[#374151]">{resource.label}</span>
+                            {resource.locked && <Badge variant="outline">неснимаемо</Badge>}
+                          </div>
+                          {resource.description && (
+                            <p className="max-w-[260px] text-xs font-normal text-[#6B7280]">
+                              {resource.description}
+                            </p>
+                          )}
                         </div>
                       </TableCell>
                       {data.roles.map((role) => {

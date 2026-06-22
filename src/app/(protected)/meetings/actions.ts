@@ -6,6 +6,7 @@ import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
 import { MEETINGS_LIST_LIMIT } from '@/lib/constants/meetings-performance'
 import { requirePermission } from '@/lib/permissions/server'
 import { dispatchPendingTelegramDeliveries, notifyNewTasks } from '@/lib/services/task-notifications'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type {
   CurrentUser,
   MachineRelation,
@@ -45,17 +46,6 @@ type LooseQuery = PromiseLike<DbResult> & {
 type LooseDb = {
   from: (table: string) => LooseQuery
   rpc: (fn: string, args?: Record<string, unknown>) => Promise<DbResult>
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  if (error && typeof error === 'object') {
-    const record = error as Record<string, unknown>
-    const parts = [record.message, record.details, record.hint, record.code]
-      .filter((part): part is string => typeof part === 'string' && part.length > 0)
-    if (parts.length > 0) return parts.join(' ')
-  }
-  return 'Неизвестная ошибка'
 }
 
 async function getFactoryName(db: LooseDb, factoryId: string) {

@@ -28,12 +28,13 @@ export type ResourceKey =
   | 'meetings_agenda_pool'
   | 'notifications'
   | 'admin_settings'
+  | 'departments'
   | 'admin_users'
   | 'telegram_settings'
   | 'company_settings'
   | 'access_settings'
 
-export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'supply' | 'meetings' | 'tools'
+export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'supply' | 'meetings' | 'tools' | 'settings'
 
 export type SidebarIconKey =
   | 'dashboard'
@@ -55,6 +56,8 @@ export type SidebarIconKey =
   | 'agenda'
   | 'notifications'
   | 'settings'
+  | 'access'
+  | 'departments'
 
 type RouteMatcher = {
   path?: string
@@ -67,6 +70,7 @@ type RouteMatcher = {
 export type PermissionResource = {
   key: ResourceKey
   label: string
+  description?: string
   group: string
   defaultHref?: string
   defaultViewRoles: readonly UserRole[] | 'all'
@@ -381,7 +385,18 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: DIRECTORS,
     defaultManageRoles: DIRECTORS,
     routes: [{ path: ROUTES.ADMIN_SETTINGS, match: 'exact', operation: 'view' }],
-    sidebar: { section: 'tools', icon: 'settings', order: 30 },
+    sidebar: { section: 'settings', icon: 'settings', order: 10 },
+  },
+  {
+    key: 'departments',
+    label: 'Отделы и структура',
+    description: 'Управление отделами, должностями и подчинением',
+    group: 'Настройки',
+    defaultHref: ROUTES.ADMIN_DEPARTMENTS,
+    defaultViewRoles: ALL,
+    defaultManageRoles: ['financial_director', 'planning_director'],
+    routes: [{ path: ROUTES.ADMIN_DEPARTMENTS, match: 'prefix', operation: 'view', priority: 90 }],
+    sidebar: { section: 'settings', icon: 'departments', order: 30 },
   },
   {
     key: 'admin_users',
@@ -415,12 +430,13 @@ export const PERMISSION_RESOURCES = [
   },
   {
     key: 'access_settings',
-    label: 'Права доступа',
+    label: 'Управление доступом',
     group: 'Настройки',
     defaultHref: ROUTES.ADMIN_ACCESS_SETTINGS,
     defaultViewRoles: DIRECTORS,
     defaultManageRoles: DIRECTORS,
     routes: [{ path: ROUTES.ADMIN_ACCESS_SETTINGS, match: 'prefix', operation: 'manage', priority: 120 }],
+    sidebar: { section: 'settings', icon: 'access', order: 20 },
     locked: true,
   },
 ] as const satisfies readonly PermissionResource[]
