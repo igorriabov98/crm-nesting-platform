@@ -123,10 +123,10 @@ type ActiveUsersResult = {
 
 const DEPARTMENT_SELECT = `
   *,
-  head:users!departments_head_user_id_fkey(id, full_name),
-  factory:factories!departments_factory_id_fkey(id, name),
-  parent:departments!departments_parent_id_fkey(id, name),
-  department_members:department_members!department_members_department_id_fkey(count)
+  head:users!head_user_id(id, full_name),
+  factory:factories!factory_id(id, name),
+  parent:departments!parent_id(id, name),
+  department_members:department_members!department_id(count)
 `
 
 const DEPARTMENT_MEMBER_SELECT = `
