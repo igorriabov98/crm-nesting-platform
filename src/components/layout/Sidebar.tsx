@@ -245,6 +245,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
           <Button
             variant="ghost"
             size="icon"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             className="h-8 w-8 shrink-0 text-[#9CA3AF] hover:text-[#1B3A6B] hover:bg-[#F4F6F9]"
             onClick={() => setIsCollapsed(!collapsed)}
           >
