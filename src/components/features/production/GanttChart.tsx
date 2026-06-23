@@ -5,7 +5,7 @@ import { addDays, subDays, differenceInCalendarDays, format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronDown } from 'lucide-react'
-import { GanttControls, type GanttFilters } from './gantt/GanttControls'
+import { GanttControls, type GanttFilters, type GanttMonthOption } from './gantt/GanttControls'
 import { GanttTimeline } from './gantt/GanttTimeline'
 import { GanttLegend } from './gantt/GanttLegend'
 import { GanttBar } from './gantt/GanttBar'
@@ -14,6 +14,7 @@ import { GanttMaterialMarker } from './gantt/GanttMaterialMarker'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { generateDateScale, type GanttScale } from '@/lib/utils/gantt'
 import { formatDesiredShippingDate } from '@/lib/utils/desired-shipping'
+import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { cn } from '@/lib/utils'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
 import type { GanttData } from '@/app/(protected)/production/gantt/actions'
@@ -353,11 +354,23 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
     search: '',
     workshop: '',
     confirmation: '',
+    productionMonth: '',
     showSupply: false,
     visibleStages: [...STAGE_ORDER],
   })
   const filters = externalFilters || internalFilters
   const setFilters = onFiltersChange || setInternalFilters
+
+  const productionMonthOptions = useMemo<GanttMonthOption[]>(() => {
+    const months = new Set<string>()
+    for (const machine of data.machines) {
+      const normalized = normalizeProductionMonthValue(machine.production_month)
+      if (normalized) months.add(normalized)
+    }
+    return Array.from(months)
+      .sort((a, b) => a.localeCompare(b))
+      .map((value) => ({ value, label: formatProductionMonth(value) }))
+  }, [data.machines])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const weldingLoadScrollRef = useRef<HTMLDivElement>(null)
@@ -368,6 +381,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
 
   const flatRows = useMemo<FlatGanttRow[]>(() => {
     const selectedWorkshop = filters.workshop ? parseInt(filters.workshop) : null
+    const selectedProductionMonth = normalizeProductionMonthValue(filters.productionMonth)
     const visibleStages = new Set(filters.visibleStages)
     const query = filters.search.trim().toLowerCase()
     const result: FlatGanttRow[] = []
@@ -376,6 +390,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
       if (query && !machine.name.toLowerCase().includes(query)) continue
       if (filters.confirmation === 'confirmed' && !machine.is_confirmed) continue
       if (filters.confirmation === 'unconfirmed' && machine.is_confirmed) continue
+      if (selectedProductionMonth && normalizeProductionMonthValue(machine.production_month) !== selectedProductionMonth) continue
 
       const rows: GanttGroupRow[] = machine.stages
         .filter((stage) => {
@@ -445,6 +460,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
 
   const weldingLoadRows = useMemo<WeldingLoadRow[]>(() => {
     const selectedWorkshop = filters.workshop ? parseInt(filters.workshop) : null
+    const selectedProductionMonth = normalizeProductionMonthValue(filters.productionMonth)
     const query = filters.search.trim().toLowerCase()
     const rowsByWorkshop = new Map<string, WeldingLoadRow>()
     const totalRow: WeldingLoadRow = { key: 'total', label: 'Итого', values: new Map(), machines: new Map(), total: 0, isTotal: true }
@@ -455,6 +471,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
       if (query && !machine.name.toLowerCase().includes(query)) continue
       if (filters.confirmation === 'confirmed' && !machine.is_confirmed) continue
       if (filters.confirmation === 'unconfirmed' && machine.is_confirmed) continue
+      if (selectedProductionMonth && normalizeProductionMonthValue(machine.production_month) !== selectedProductionMonth) continue
 
       const machineWeight = Number(machine.total_weight || 0)
       if (machineWeight <= 0) continue
@@ -653,6 +670,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
           onZoomOut={() => updateDayWidth(dayWidth - ZOOM_STEP)}
           filters={filters}
           onFiltersChange={setFilters}
+          productionMonthOptions={productionMonthOptions}
         />
       )}
 

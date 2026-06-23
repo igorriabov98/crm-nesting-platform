@@ -21,8 +21,14 @@ export interface GanttFilters {
   search: string
   workshop: string
   confirmation: string
+  productionMonth: string
   showSupply: boolean
   visibleStages: StageType[]
+}
+
+export type GanttMonthOption = {
+  value: string
+  label: string
 }
 
 interface GanttControlsProps {
@@ -33,6 +39,7 @@ interface GanttControlsProps {
   onZoomOut: () => void
   filters: GanttFilters
   onFiltersChange: (f: GanttFilters) => void
+  productionMonthOptions?: GanttMonthOption[]
   showStageFilters?: boolean
 }
 
@@ -44,6 +51,7 @@ export function GanttControls({
   onZoomOut,
   filters,
   onFiltersChange,
+  productionMonthOptions = [],
   showStageFilters = true,
 }: GanttControlsProps) {
   const setF = (partial: Partial<GanttFilters>) => onFiltersChange({ ...filters, ...partial })
@@ -119,6 +127,23 @@ export function GanttControls({
             onChange={(e) => setF({ search: e.target.value })}
             className="min-h-11 w-full border-[#E8ECF0] bg-[#F8F9FA] pl-9 text-sm text-[#1B3A6B] sm:min-h-10"
           />
+        </div>
+
+        <div className="relative w-full sm:w-[210px]">
+          <select
+            aria-label="Фильтр по месяцу производства"
+            value={filters.productionMonth || ''}
+            onChange={(event) => setF({ productionMonth: event.target.value })}
+            className="min-h-11 w-full appearance-none rounded-md border border-[#E8ECF0] bg-[#F8F9FA] px-3 pr-9 text-sm font-medium text-[#1B3A6B] outline-none transition-colors focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 sm:min-h-10"
+          >
+            <option value="">Все месяцы</option>
+            {productionMonthOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7280]" />
         </div>
 
         <div className="grid grid-cols-3 rounded-md bg-[#F8F9FA] p-0.5 gap-0.5 sm:inline-grid">

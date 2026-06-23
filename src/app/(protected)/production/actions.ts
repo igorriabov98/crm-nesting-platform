@@ -24,10 +24,14 @@ export type ProductionRow = {
   machine: {
     id: string
     name: string
+    created_at: string
     total_weight: number
     has_zinc: boolean
     has_painting: boolean
     factory_id: string | null
+    production_month: string | null
+    production_workshop: number | null
+    production_queue_number: number | null
     is_confirmed: boolean
     desired_shipping_date: string | null
     planned_material_date: string | null
@@ -54,10 +58,14 @@ type SelectedProductionStage = {
 type SelectedProductionMachine = {
   id: string
   name: string
+  created_at: string
   total_weight: number | null
   has_zinc: boolean | null
   has_painting: boolean | null
   factory_id: string | null
+  production_month: string | null
+  production_workshop: number | null
+  production_queue_number: number | null
   is_confirmed?: boolean | null
   desired_shipping_date?: string | null
   planned_material_date?: string | null
@@ -129,8 +137,10 @@ export async function getProductionData(factoryFilter?: string | null) {
   const { supabase, role: userRole, factoryId: userFactoryId } = await getCurrentUserContext()
 
   const selectWithDeadline = `
-    id, name, total_weight, has_zinc, has_painting, factory_id, is_confirmed, desired_shipping_date,
-    planned_material_date, actual_material_date, actual_shipping_date, delivery_to_client_date,
+    id, name, created_at, total_weight, has_zinc, has_painting, factory_id,
+    production_month, production_workshop, production_queue_number,
+    is_confirmed, desired_shipping_date, planned_material_date,
+    actual_material_date, actual_shipping_date, delivery_to_client_date,
     production_stages(
       id, stage_type, workshop, date_start, date_end, manual_overdue,
       is_skipped, is_night_shift, night_shift_date
@@ -138,8 +148,10 @@ export async function getProductionData(factoryFilter?: string | null) {
   `
 
   const selectWithDeadlineLegacy = `
-    id, name, total_weight, has_zinc, has_painting, factory_id, is_confirmed, desired_shipping_date,
-    planned_material_date, actual_material_date, actual_shipping_date, delivery_to_client_date,
+    id, name, created_at, total_weight, has_zinc, has_painting, factory_id,
+    production_month, production_workshop, production_queue_number,
+    is_confirmed, desired_shipping_date, planned_material_date,
+    actual_material_date, actual_shipping_date, delivery_to_client_date,
     production_stages(
       id, stage_type, workshop, date_start, date_end,
       is_skipped, is_night_shift, night_shift_date
@@ -147,7 +159,8 @@ export async function getProductionData(factoryFilter?: string | null) {
   `
 
   const selectWithoutDeadline = `
-    id, name, total_weight, has_zinc, has_painting, factory_id,
+    id, name, created_at, total_weight, has_zinc, has_painting, factory_id,
+    production_month, production_workshop, production_queue_number,
     production_stages(
       id, stage_type, workshop, date_start, date_end, manual_overdue,
       is_skipped, is_night_shift, night_shift_date
@@ -155,7 +168,8 @@ export async function getProductionData(factoryFilter?: string | null) {
   `
 
   const selectWithoutDeadlineLegacy = `
-    id, name, total_weight, has_zinc, has_painting, factory_id,
+    id, name, created_at, total_weight, has_zinc, has_painting, factory_id,
+    production_month, production_workshop, production_queue_number,
     production_stages(
       id, stage_type, workshop, date_start, date_end,
       is_skipped, is_night_shift, night_shift_date
@@ -249,10 +263,14 @@ export async function getProductionData(factoryFilter?: string | null) {
       machine: {
         id: m.id,
         name: m.name,
+        created_at: m.created_at,
         total_weight: m.total_weight || 0,
         has_zinc: Boolean(m.has_zinc),
         has_painting: Boolean(m.has_painting),
         factory_id: m.factory_id,
+        production_month: m.production_month,
+        production_workshop: m.production_workshop,
+        production_queue_number: m.production_queue_number,
         is_confirmed: Boolean(m.is_confirmed),
         desired_shipping_date: m.desired_shipping_date || null,
         planned_material_date: m.planned_material_date || null,

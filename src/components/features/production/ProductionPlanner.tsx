@@ -21,7 +21,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DatePicker } from '@/components/ui/date-picker'
-import { GanttControls, type GanttFilters } from '@/components/features/production/gantt/GanttControls'
+import { GanttControls, type GanttFilters, type GanttMonthOption } from '@/components/features/production/gantt/GanttControls'
 import { GanttTimeline } from '@/components/features/production/gantt/GanttTimeline'
 import { GanttLegend } from '@/components/features/production/gantt/GanttLegend'
 import { GanttBar } from '@/components/features/production/gantt/GanttBar'
@@ -34,6 +34,7 @@ import { useRole } from '@/lib/hooks/useRole'
 import { ROUTES } from '@/lib/constants/routes'
 import { barGeometry, generateDateScale, type GanttScale } from '@/lib/utils/gantt'
 import { formatDesiredShippingDate, getDesiredShippingInfo } from '@/lib/utils/desired-shipping'
+import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { cn } from '@/lib/utils'
 import type {
   GanttData,
@@ -56,6 +57,12 @@ type PlannerRow = {
   machine: GanttMachine
   visibleStages: GanttStage[]
   supplyItems: GanttSupplyItem[]
+  machineIndex: number
+}
+
+type UnscheduledRow = {
+  machine: GanttMachine
+  productionRow: ProductionRow
   machineIndex: number
 }
 
@@ -97,6 +104,7 @@ const defaultFilters: GanttFilters = {
   search: '',
   workshop: '',
   confirmation: '',
+  productionMonth: '',
   showSupply: false,
   visibleStages: [...STAGE_ORDER],
 }
@@ -189,8 +197,63 @@ function dayKey(date: Date) {
 }
 
 function productionMonthLabel(date: string | null | undefined) {
-  if (!date) return null
-  return format(new Date(date), 'LLLL yyyy', { locale: ru })
+  const normalized = normalizeProductionMonthValue(date)
+  if (!normalized) return null
+  return formatProductionMonth(normalized)
+}
+
+function hasScheduledStage(row: ProductionRow) {
+  return row.stages.some((stage) => !stage.is_skipped && Boolean(stage.date_start))
+}
+
+function compareProductionMachines(
+  a: Pick<GanttMachine, 'created_at' | 'production_month' | 'production_workshop' | 'production_queue_number'>,
+  b: Pick<GanttMachine, 'created_at' | 'production_month' | 'production_workshop' | 'production_queue_number'>
+) {
+  const monthA = normalizeProductionMonthValue(a.production_month) || '9999-12-01'
+  const monthB = normalizeProductionMonthValue(b.production_month) || '9999-12-01'
+  if (monthA !== monthB) return monthA.localeCompare(monthB)
+
+  const workshopA = a.production_workshop ?? 999
+  const workshopB = b.production_workshop ?? 999
+  if (workshopA !== workshopB) return workshopA - workshopB
+
+  const queueA = a.production_queue_number ?? 999999
+  const queueB = b.production_queue_number ?? 999999
+  if (queueA !== queueB) return queueA - queueB
+
+  return a.created_at.localeCompare(b.created_at)
+}
+
+function productionRowToGanttMachine(row: ProductionRow, fallback?: GanttMachine): GanttMachine {
+  const fallbackCoatings = fallback?.coatings || []
+  const coatings = fallbackCoatings.length > 0
+    ? fallbackCoatings
+    : [
+      row.machine.has_zinc ? 'zinc' : null,
+      row.machine.has_painting ? 'powder_coating' : null,
+    ].filter((coating): coating is string => Boolean(coating))
+
+  return {
+    id: row.machine.id,
+    name: row.machine.name,
+    created_at: row.machine.created_at,
+    factory_id: row.machine.factory_id,
+    production_month: normalizeProductionMonthValue(row.machine.production_month) || row.machine.production_month,
+    production_workshop: row.machine.production_workshop,
+    production_queue_number: row.machine.production_queue_number,
+    total_weight: row.machine.total_weight || 0,
+    is_confirmed: row.machine.is_confirmed,
+    desired_shipping_date: row.machine.desired_shipping_date,
+    planned_material_date: row.machine.planned_material_date,
+    actual_material_date: row.machine.actual_material_date,
+    actual_shipping_date: row.machine.actual_shipping_date,
+    delivery_to_client_date: row.machine.delivery_to_client_date,
+    coatings,
+    stages: fallback?.stages || [],
+    supply_deadlines: fallback?.supply_deadlines || [],
+    material_items: fallback?.material_items || [],
+  }
 }
 
 function formatTons(value: number) {
@@ -544,6 +607,105 @@ function PlannerVirtualRow({
         )}
       </div>
     </div>
+  )
+}
+
+function UnscheduledMachinesPanel({
+  rows,
+  open,
+  selectedMachineId,
+  onToggle,
+  onSelect,
+}: {
+  rows: UnscheduledRow[]
+  open: boolean
+  selectedMachineId: string | null
+  onToggle: () => void
+  onSelect: (machineId: string) => void
+}) {
+  if (rows.length === 0) return null
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-amber-200 bg-white shadow-sm">
+      <button
+        type="button"
+        className="flex min-h-12 w-full items-center justify-between gap-3 bg-amber-50/70 px-3 py-2 text-left transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-blue-950">Машины без дат</span>
+          <span className="block text-xs text-slate-600">
+            {rows.length} шт. не имеют запланированных дат этапов
+          </span>
+        </span>
+        <span className="inline-flex shrink-0 items-center gap-2 text-xs font-medium text-slate-600">
+          {open ? 'Скрыть' : 'Показать'}
+          <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} />
+        </span>
+      </button>
+
+      {open && (
+        <div className="divide-y divide-slate-200 border-t border-amber-200">
+          {rows.map(({ machine, machineIndex }) => {
+            const selected = selectedMachineId === machine.id
+            const monthLabel = productionMonthLabel(machine.production_month)
+            const queueLabel = productionQueueLabel(machine.production_workshop, machine.production_queue_number)
+
+            return (
+              <button
+                key={machine.id}
+                type="button"
+                className={cn(
+                  'grid min-h-14 w-full gap-2 px-3 py-2 text-left transition-colors hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600 sm:grid-cols-[minmax(180px,1fr)_minmax(160px,220px)_minmax(140px,180px)_90px] sm:items-center',
+                  selected ? 'bg-blue-50' : machineIndex % 2 === 1 ? 'bg-slate-50/70' : 'bg-white'
+                )}
+                aria-pressed={selected}
+                onClick={() => onSelect(machine.id)}
+              >
+                <span className="min-w-0">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-blue-950" title={machine.name}>
+                      {machine.name}
+                    </span>
+                    <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                      Без дат
+                    </span>
+                  </span>
+                  <span className="mt-1 flex flex-wrap gap-1.5">
+                    <span className={cn(
+                      'rounded border px-1.5 py-0.5 text-[10px] font-semibold',
+                      machine.is_confirmed
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                        : 'border-amber-200 bg-amber-50 text-amber-700'
+                    )}>
+                      {machine.is_confirmed ? 'подтверждена' : 'не подтверждена'}
+                    </span>
+                  </span>
+                </span>
+
+                <span className="min-w-0 text-xs text-slate-600">
+                  <span className="block truncate" title={monthLabel ? `${monthLabel} · ${queueLabel}` : queueLabel}>
+                    {monthLabel ? `${monthLabel} · ${queueLabel}` : queueLabel}
+                  </span>
+                </span>
+
+                <span className="flex min-w-0 items-center gap-1 text-xs text-slate-600">
+                  <PackageCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                  <span className="truncate">
+                    Мат: {formatDateValue(machine.planned_material_date, true)} / {formatDateValue(machine.actual_material_date, true)}
+                  </span>
+                </span>
+
+                <span className="text-xs font-semibold text-slate-700 sm:text-right">
+                  {Number(machine.total_weight || 0).toFixed(1)} т
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -916,6 +1078,7 @@ export function ProductionPlanner({
   const [internalFilters, setInternalFilters] = useState<GanttFilters>(defaultFilters)
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null)
   const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(true)
+  const [unscheduledOpen, setUnscheduledOpen] = useState(true)
   const [weldingLoadOpen, setWeldingLoadOpen] = useState(true)
   const [scrollShadows, setScrollShadows] = useState({ left: false, right: false })
   const [clearingStageId, setClearingStageId] = useState<string | null>(null)
@@ -940,16 +1103,41 @@ export function ProductionPlanner({
     return new Map(productionData.map((row) => [row.machine.id, row]))
   }, [productionData])
 
+  const ganttMachineById = useMemo(() => {
+    return new Map(data.machines.map((machine) => [machine.id, machine]))
+  }, [data.machines])
+
+  const productionMonthOptions = useMemo<GanttMonthOption[]>(() => {
+    const months = new Set<string>()
+
+    for (const machine of data.machines) {
+      const normalized = normalizeProductionMonthValue(machine.production_month)
+      if (normalized) months.add(normalized)
+    }
+
+    for (const row of productionData) {
+      const normalized = normalizeProductionMonthValue(row.machine.production_month)
+      if (normalized) months.add(normalized)
+    }
+
+    return Array.from(months)
+      .sort((a, b) => a.localeCompare(b))
+      .map((value) => ({ value, label: formatProductionMonth(value) }))
+  }, [data.machines, productionData])
+
   const plannerRows = useMemo<PlannerRow[]>(() => {
     const selectedWorkshop = filters.workshop ? parseInt(filters.workshop) : null
+    const selectedProductionMonth = normalizeProductionMonthValue(filters.productionMonth)
     const visibleStages = new Set(filters.visibleStages)
     const query = filters.search.trim().toLowerCase()
     const rows: PlannerRow[] = []
 
     for (const [machineIndex, machine] of data.machines.entries()) {
+      if (machine.stages.length === 0) continue
       if (query && !machine.name.toLowerCase().includes(query)) continue
       if (filters.confirmation === 'confirmed' && !machine.is_confirmed) continue
       if (filters.confirmation === 'unconfirmed' && machine.is_confirmed) continue
+      if (selectedProductionMonth && normalizeProductionMonthValue(machine.production_month) !== selectedProductionMonth) continue
 
       const visibleMachineStages = machine.stages.filter((stage) => {
         if (!stage.date_start) return false
@@ -972,14 +1160,53 @@ export function ProductionPlanner({
     return rows
   }, [data.machines, filters])
 
+  const unscheduledRows = useMemo<UnscheduledRow[]>(() => {
+    const selectedWorkshop = filters.workshop ? parseInt(filters.workshop) : null
+    const selectedProductionMonth = normalizeProductionMonthValue(filters.productionMonth)
+    const query = filters.search.trim().toLowerCase()
+    const rows: UnscheduledRow[] = []
+
+    for (const row of productionData) {
+      if (hasScheduledStage(row)) continue
+      if (query && !row.machine.name.toLowerCase().includes(query)) continue
+      if (filters.confirmation === 'confirmed' && !row.machine.is_confirmed) continue
+      if (filters.confirmation === 'unconfirmed' && row.machine.is_confirmed) continue
+      if (selectedProductionMonth && normalizeProductionMonthValue(row.machine.production_month) !== selectedProductionMonth) continue
+      if (selectedWorkshop && row.machine.production_workshop !== selectedWorkshop) continue
+
+      rows.push({
+        machine: productionRowToGanttMachine(row, ganttMachineById.get(row.machine.id)),
+        productionRow: row,
+        machineIndex: rows.length,
+      })
+    }
+
+    return rows
+      .sort((a, b) => compareProductionMachines(a.machine, b.machine))
+      .map((row, machineIndex) => ({ ...row, machineIndex }))
+  }, [filters, ganttMachineById, productionData])
+
   useEffect(() => {
-    if (selectedMachineId && plannerRows.some((row) => row.machine.id === selectedMachineId)) return
-    setSelectedMachineId(plannerRows[0]?.machine.id ?? null)
-  }, [plannerRows, selectedMachineId])
+    if (
+      selectedMachineId &&
+      (
+        plannerRows.some((row) => row.machine.id === selectedMachineId) ||
+        unscheduledRows.some((row) => row.machine.id === selectedMachineId)
+      )
+    ) {
+      return
+    }
+
+    setSelectedMachineId(plannerRows[0]?.machine.id ?? unscheduledRows[0]?.machine.id ?? null)
+  }, [plannerRows, selectedMachineId, unscheduledRows])
 
   const selectedMachine = useMemo(() => (
-    selectedMachineId ? data.machines.find((machine) => machine.id === selectedMachineId) ?? null : null
-  ), [data.machines, selectedMachineId])
+    selectedMachineId
+      ? ganttMachineById.get(selectedMachineId) ??
+        unscheduledRows.find((row) => row.machine.id === selectedMachineId)?.machine ??
+        null
+      : null
+  ), [ganttMachineById, selectedMachineId, unscheduledRows])
   const selectedProductionRow = selectedMachineId ? productionByMachineId.get(selectedMachineId) : undefined
 
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -1137,6 +1364,7 @@ export function ProductionPlanner({
 
   const weldingLoadRows = useMemo<WeldingLoadRow[]>(() => {
     const selectedWorkshop = filters.workshop ? parseInt(filters.workshop) : null
+    const selectedProductionMonth = normalizeProductionMonthValue(filters.productionMonth)
     const query = filters.search.trim().toLowerCase()
     const rowsByWorkshop = new Map<string, WeldingLoadRow>()
     const totalRow: WeldingLoadRow = { key: 'total', label: 'Итого', values: new Map(), machines: new Map(), total: 0, isTotal: true }
@@ -1147,6 +1375,7 @@ export function ProductionPlanner({
       if (query && !machine.name.toLowerCase().includes(query)) continue
       if (filters.confirmation === 'confirmed' && !machine.is_confirmed) continue
       if (filters.confirmation === 'unconfirmed' && machine.is_confirmed) continue
+      if (selectedProductionMonth && normalizeProductionMonthValue(machine.production_month) !== selectedProductionMonth) continue
 
       const machineWeight = Number(machine.total_weight || 0)
       if (machineWeight <= 0) continue
@@ -1262,7 +1491,10 @@ export function ProductionPlanner({
     }
   }, [router])
 
-  const confirmedCount = plannerRows.filter((row) => row.machine.is_confirmed).length
+  const confirmedCount = [
+    ...plannerRows.map((row) => row.machine),
+    ...unscheduledRows.map((row) => row.machine),
+  ].filter((machine) => machine.is_confirmed).length
   const visibleStageCount = plannerRows.reduce((sum, row) => sum + row.visibleStages.length, 0)
 
   return (
@@ -1273,10 +1505,14 @@ export function ProductionPlanner({
       )}
     >
       <div className="min-w-0 space-y-4">
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
           <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="text-[11px] font-medium uppercase text-slate-500">Машины</div>
+            <div className="text-[11px] font-medium uppercase text-slate-500">На графике</div>
             <div className="mt-1 text-lg font-semibold text-blue-950">{plannerRows.length}</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="text-[11px] font-medium uppercase text-slate-500">Без дат</div>
+            <div className="mt-1 text-lg font-semibold text-blue-950">{unscheduledRows.length}</div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
             <div className="text-[11px] font-medium uppercase text-slate-500">Подтверждены</div>
@@ -1300,6 +1536,18 @@ export function ProductionPlanner({
           onZoomOut={() => updateDayWidth(dayWidth - ZOOM_STEP)}
           filters={filters}
           onFiltersChange={setFilters}
+          productionMonthOptions={productionMonthOptions}
+        />
+
+        <UnscheduledMachinesPanel
+          rows={unscheduledRows}
+          open={unscheduledOpen}
+          selectedMachineId={selectedMachineId}
+          onToggle={() => setUnscheduledOpen((current) => !current)}
+          onSelect={(machineId) => {
+            setSelectedMachineId(machineId)
+            setDesktopInspectorOpen(true)
+          }}
         />
 
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
