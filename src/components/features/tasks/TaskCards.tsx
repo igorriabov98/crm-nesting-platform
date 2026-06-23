@@ -5,12 +5,25 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format, isBefore, startOfToday } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { CheckCircle2, Circle, Clock3, PlayCircle, Send, UserCheck, UserX, XCircle } from 'lucide-react'
+import {
+  CalendarDays,
+  CheckCircle2,
+  Circle,
+  ClipboardList,
+  Clock3,
+  Factory,
+  FileText,
+  PlayCircle,
+  Send,
+  UserCheck,
+  UserRound,
+  UserX,
+  XCircle,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -108,6 +121,81 @@ const DELEGATION_VISUALS: Record<TaskDelegationStatus, {
 }
 
 type TaskCardContext = 'standard' | 'incoming' | 'outgoing'
+type TaskActionLayout = 'row' | 'rail'
+
+function getTaskTone(status: TaskStatus, overdue: boolean) {
+  if (overdue) {
+    return {
+      strip: 'before:bg-red-500',
+      rowStrip: 'border-l-red-500',
+      iconWrap: 'border-red-200 bg-red-50 text-red-700',
+      badge: 'border-red-200 bg-red-50 text-red-700',
+      date: 'text-red-700',
+    }
+  }
+
+  if (status === 'completed') {
+    return {
+      strip: 'before:bg-emerald-500',
+      rowStrip: 'border-l-emerald-500',
+      iconWrap: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+      badge: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+      date: 'text-slate-600',
+    }
+  }
+
+  if (status === 'in_progress') {
+    return {
+      strip: 'before:bg-amber-500',
+      rowStrip: 'border-l-amber-500',
+      iconWrap: 'border-amber-200 bg-amber-50 text-amber-700',
+      badge: 'border-amber-200 bg-amber-50 text-amber-700',
+      date: 'text-slate-600',
+    }
+  }
+
+  if (status === 'cancelled') {
+    return {
+      strip: 'before:bg-slate-400',
+      rowStrip: 'border-l-slate-300',
+      iconWrap: 'border-slate-200 bg-slate-50 text-slate-500',
+      badge: 'border-slate-200 bg-slate-100 text-slate-500',
+      date: 'text-slate-500',
+    }
+  }
+
+  return {
+    strip: 'before:bg-blue-500',
+    rowStrip: 'border-l-blue-500',
+    iconWrap: 'border-blue-200 bg-blue-50 text-blue-700',
+    badge: 'border-blue-200 bg-blue-50 text-blue-700',
+    date: 'text-slate-600',
+  }
+}
+
+function formatTaskDate(value: string | null | undefined) {
+  return value ? format(new Date(value), 'dd.MM.yyyy', { locale: ru }) : '—'
+}
+
+function getTaskTarget(task: TaskWithRelations) {
+  if (task.machine) {
+    return {
+      href: `${ROUTES.SALES_PLAN}/${task.machine.id}`,
+      label: task.machine.name,
+      kind: 'Машина',
+    }
+  }
+
+  if (task.product_project) {
+    return {
+      href: `${ROUTES.PRODUCT_PROJECTS}/${task.product_project.id}`,
+      label: task.product_project.title,
+      kind: 'Проект',
+    }
+  }
+
+  return null
+}
 
 function getStatusIcon(status: TaskStatus, overdue: boolean) {
   if (status === 'completed') return CheckCircle2
@@ -339,33 +427,35 @@ export function TaskCards({
 
   if (tasks.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-        {emptyMessage || 'Задач пока нет. Они появятся автоматически после выбора завода, типа материала и плановой даты поставки.'}
+      <div className="flex min-h-32 items-center gap-3 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-6 text-sm text-slate-600">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-500">
+          <ClipboardList className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <div className="font-medium text-slate-900">Рабочий список пуст</div>
+          <div className="mt-1 break-words [overflow-wrap:anywhere]">
+            {emptyMessage || 'Задач пока нет. Они появятся автоматически после выбора завода, типа материала и плановой даты поставки.'}
+          </div>
+        </div>
       </div>
     )
   }
 
-  const renderStatusBadge = (task: TaskWithRelations, overdue: boolean) => (
-    <Badge
-      variant="outline"
-      className={cn(
-        task.status === 'completed' && 'border-emerald-200 bg-emerald-50 text-emerald-700',
-        task.status === 'in_progress' && 'border-amber-200 bg-amber-50 text-amber-700',
-        task.status === 'cancelled' && 'border-slate-200 bg-slate-100 text-slate-500',
-        task.status === 'pending' && !overdue && 'border-blue-200 bg-blue-50 text-blue-700',
-        overdue && 'border-red-200 bg-red-50 text-red-700'
-      )}
-    >
-      {overdue ? 'Просрочена' : STATUS_LABELS[task.status]}
-    </Badge>
-  )
+  const renderStatusBadge = (task: TaskWithRelations, overdue: boolean) => {
+    const tone = getTaskTone(task.status, overdue)
+    return (
+      <Badge variant="outline" className={cn('h-6 rounded-full px-2.5', tone.badge)}>
+        {overdue ? 'Просрочена' : STATUS_LABELS[task.status]}
+      </Badge>
+    )
+  }
 
   const renderDelegationBadge = (task: TaskWithRelations) => {
     const delegation = task.pending_delegation
     if (!delegation) return null
     const visual = DELEGATION_VISUALS[delegation.status]
     return (
-      <Badge variant="outline" className={visual.badge}>
+      <Badge variant="outline" className={cn('h-6 rounded-full px-2.5', visual.badge)}>
         {DELEGATION_STATUS_LABELS[delegation.status]}
       </Badge>
     )
@@ -381,7 +471,7 @@ export function TaskCards({
       : `Кому: ${delegation.delegated_to_user?.full_name || 'Сотрудник'}`
 
     return (
-      <div className={cn('space-y-1 rounded-md border px-3 py-2 text-xs', visual.panel)}>
+      <div className={cn('space-y-1 rounded-lg border px-3 py-2 text-xs leading-5', visual.panel)}>
         <div className="font-medium">{directionLabel}</div>
         <div>{delegation.department?.name || 'Отдел'} · {DELEGATION_STATUS_LABELS[delegation.status]}</div>
         {delegation.note && <div className={visual.mutedText}>Комментарий: {delegation.note}</div>}
@@ -392,18 +482,29 @@ export function TaskCards({
     )
   }
 
-  const renderActions = (task: TaskWithRelations, nextStatus: TaskStatus | null, actionLabel: string | null) => {
+  const renderActions = (
+    task: TaskWithRelations,
+    nextStatus: TaskStatus | null,
+    actionLabel: string | null,
+    actionLayout: TaskActionLayout = 'row'
+  ) => {
     const pendingDelegation = task.pending_delegation
     const isPendingDelegation = pendingDelegation?.status === 'pending'
+    const groupClass = actionLayout === 'rail'
+      ? 'flex w-full flex-col gap-2'
+      : 'flex w-full flex-wrap gap-2 sm:justify-end'
+    const buttonClass = actionLayout === 'rail'
+      ? 'min-h-11 w-full justify-center gap-1.5'
+      : 'min-h-11 shrink-0 gap-1.5'
 
     if (context === 'incoming' && isPendingDelegation) {
       return (
-        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+        <div className={groupClass}>
           <Button
             size="sm"
             onClick={() => handleAcceptDelegation(task)}
             disabled={updatingId === pendingDelegation.id}
-            className="min-h-10 shrink-0 gap-1.5"
+            className={buttonClass}
           >
             <UserCheck className="h-4 w-4" />
             Принять
@@ -416,7 +517,7 @@ export function TaskCards({
               setDeclineReason('')
             }}
             disabled={updatingId === pendingDelegation.id}
-            className="min-h-10 shrink-0 gap-1.5 border-red-200 text-red-700 hover:bg-red-50"
+            className={cn(buttonClass, 'border-red-200 text-red-700 hover:bg-red-50')}
           >
             <UserX className="h-4 w-4" />
             Отказаться
@@ -427,13 +528,13 @@ export function TaskCards({
 
     if (isPendingDelegation) {
       return (
-        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+        <div className={groupClass}>
           <Button
             size="sm"
             variant="outline"
             onClick={() => handleCancelDelegation(task)}
             disabled={updatingId === pendingDelegation.id}
-            className="min-h-10 shrink-0 border-slate-300 text-slate-700 hover:bg-slate-50"
+            className={cn(buttonClass, 'border-slate-300 text-slate-700 hover:bg-slate-50')}
           >
             Отменить делегирование
           </Button>
@@ -446,13 +547,13 @@ export function TaskCards({
     if (!nextStatus || !actionLabel) return null
 
     return (
-      <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+      <div className={groupClass}>
         <Button
           size="sm"
           variant={task.status === 'pending' ? 'outline' : 'default'}
           onClick={() => handleStatusChange(task.id, nextStatus)}
           disabled={updatingId === task.id}
-          className="min-h-10 shrink-0"
+          className={buttonClass}
         >
           {actionLabel}
         </Button>
@@ -465,7 +566,7 @@ export function TaskCards({
               setReason('')
             }}
             disabled={updatingId === task.id}
-            className="min-h-10 shrink-0 border-amber-200 text-amber-700 hover:bg-amber-50"
+            className={cn(buttonClass, 'border-amber-200 text-amber-700 hover:bg-amber-50')}
           >
             Завершить без заявки
           </Button>
@@ -476,7 +577,7 @@ export function TaskCards({
             variant="outline"
             onClick={() => openDelegationDialog(task)}
             disabled={updatingId === task.id}
-            className="min-h-10 shrink-0 gap-1.5 border-cyan-200 text-cyan-700 hover:bg-cyan-50"
+            className={cn(buttonClass, 'border-cyan-200 text-cyan-700 hover:bg-cyan-50')}
           >
             <Send className="h-4 w-4" />
             Делегировать
@@ -518,14 +619,14 @@ export function TaskCards({
               setReason('')
             }}
             disabled={!!updatingId}
-            className="min-h-10"
+            className="min-h-11"
           >
             Отмена
           </Button>
           <Button
             onClick={handleCompleteWithoutRequest}
             disabled={!!updatingId || reason.trim().length < 3}
-            className="min-h-10"
+            className="min-h-11"
           >
             Завершить и создать задачу
           </Button>
@@ -591,14 +692,14 @@ export function TaskCards({
               variant="outline"
               onClick={() => setDelegationTask(null)}
               disabled={!!updatingId}
-              className="min-h-10"
+              className="min-h-11"
             >
               Отмена
             </Button>
             <Button
               type="submit"
               disabled={!selectedCandidate || !!updatingId || delegationLoading}
-              className="min-h-10 gap-1.5"
+              className="min-h-11 gap-1.5"
             >
               <Send className="h-4 w-4" />
               Отправить на принятие
@@ -641,14 +742,14 @@ export function TaskCards({
               setDeclineReason('')
             }}
             disabled={!!updatingId}
-            className="min-h-10"
+            className="min-h-11"
           >
             Назад
           </Button>
           <Button
             onClick={handleDeclineDelegation}
             disabled={!!updatingId || declineReason.trim().length < 3}
-            className="min-h-10 bg-red-600 hover:bg-red-700"
+            className="min-h-11 bg-red-600 hover:bg-red-700"
           >
             Отказаться
           </Button>
@@ -695,10 +796,10 @@ export function TaskCards({
             />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDeliverablesTask(null)} className="min-h-10">
+            <Button type="button" variant="outline" onClick={() => setDeliverablesTask(null)} className="min-h-11">
               Отмена
             </Button>
-            <Button type="submit" disabled={!!deliverablesTask && updatingId === deliverablesTask.id} className="min-h-10">
+            <Button type="submit" disabled={!!deliverablesTask && updatingId === deliverablesTask.id} className="min-h-11">
               Сохранить и завершить
             </Button>
           </DialogFooter>
@@ -710,95 +811,126 @@ export function TaskCards({
   if (layout === 'list') {
     return (
       <>
-        <div className="overflow-x-auto rounded-lg border border-[#E8ECF0] bg-white">
-          <Table className="min-w-[1360px] table-fixed">
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <Table className="min-w-[1240px] table-fixed">
             <colgroup>
               <col className="w-[32%]" />
-              <col className="w-[12%]" />
-              <col className="w-[12%]" />
+              <col className="w-[13%]" />
+              <col className="w-[13%]" />
               <col className="w-[14%]" />
-              <col className="w-[9%]" />
-              <col className="w-[9%]" />
               <col className="w-[12%]" />
+              <col className="w-[16%]" />
             </colgroup>
-            <TableHeader className="bg-[#F8F9FA]">
-              <TableRow className="border-[#E8ECF0] hover:bg-transparent">
-                <TableHead className="whitespace-normal px-4 text-[#6B7280]">Задача</TableHead>
-                <TableHead className="whitespace-normal px-3 text-[#6B7280]">Тип</TableHead>
-                <TableHead className="whitespace-normal px-3 text-[#6B7280]">Статус</TableHead>
-                <TableHead className="whitespace-normal px-3 text-[#6B7280]">Исполнитель</TableHead>
-                <TableHead className="whitespace-normal px-3 text-[#6B7280]">Начать</TableHead>
-                <TableHead className="whitespace-normal px-3 text-[#6B7280]">Дедлайн</TableHead>
-                <TableHead className="whitespace-normal px-3 text-right text-[#6B7280]">Действие</TableHead>
+            <TableHeader className="sticky top-0 z-10 bg-slate-100/95">
+              <TableRow className="border-slate-200 hover:bg-transparent">
+                <TableHead className="h-11 whitespace-normal px-4 text-xs font-semibold uppercase text-slate-600">Задача</TableHead>
+                <TableHead className="h-11 whitespace-normal px-3 text-xs font-semibold uppercase text-slate-600">Статус</TableHead>
+                <TableHead className="h-11 whitespace-normal px-3 text-xs font-semibold uppercase text-slate-600">Исполнитель</TableHead>
+                <TableHead className="h-11 whitespace-normal px-3 text-xs font-semibold uppercase text-slate-600">Сроки</TableHead>
+                <TableHead className="h-11 whitespace-normal px-3 text-xs font-semibold uppercase text-slate-600">Делегирование</TableHead>
+                <TableHead className="h-11 whitespace-normal px-3 text-right text-xs font-semibold uppercase text-slate-600">Действия</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {tasks.map((task) => {
                 const deadline = new Date(task.deadline)
-                const startDate = task.start_date ? new Date(task.start_date) : null
                 const overdue = ['pending', 'in_progress'].includes(task.status) && isBefore(deadline, today)
+                const Icon = getStatusIcon(task.status, overdue)
                 const nextStatus = getNextStatus(task.status)
                 const actionLabel = getActionLabel(task.status)
-                const delegationVisual = task.pending_delegation
-                  ? DELEGATION_VISUALS[task.pending_delegation.status]
-                  : null
+                const tone = getTaskTone(task.status, overdue)
+                const target = getTaskTarget(task)
+                const TargetIcon = target?.kind === 'Машина' ? Factory : FileText
+                const delegation = task.pending_delegation
+                const delegationVisual = delegation ? DELEGATION_VISUALS[delegation.status] : null
+                const actions = renderActions(task, nextStatus, actionLabel, 'row')
 
                 return (
                   <TableRow
                     key={task.id}
                     className={cn(
-                      'border-[#E8ECF0] hover:bg-[#F8F9FA]',
-                      task.status === 'completed' && 'bg-emerald-50/40',
-                      task.status === 'cancelled' && 'bg-slate-50 opacity-80',
-                      overdue && 'bg-red-50/60',
-                      delegationVisual?.row
+                      'border-l-4 border-slate-200 bg-white hover:bg-slate-50',
+                      tone.rowStrip,
+                      task.status === 'cancelled' && 'opacity-75'
                     )}
                   >
-                    <TableCell className="whitespace-normal px-4 align-top">
-                      <div className="min-w-0 space-y-2">
-                        <div className="break-words [overflow-wrap:anywhere] font-medium leading-snug text-slate-900">{task.title}</div>
-                        {task.machine && (
-                          <Link
-                            href={`${ROUTES.SALES_PLAN}/${task.machine.id}`}
-                            className="inline-block max-w-full break-words [overflow-wrap:anywhere] text-sm text-blue-700 hover:underline"
-                          >
-                            {task.machine.name}
-                          </Link>
-                        )}
-                        {task.product_project && (
-                          <Link
-                            href={`${ROUTES.PRODUCT_PROJECTS}/${task.product_project.id}`}
-                            className="inline-block max-w-full break-words [overflow-wrap:anywhere] text-sm text-blue-700 hover:underline"
-                          >
-                            {task.product_project.title}
-                          </Link>
-                        )}
-                        {task.description && (
-                          <div className="line-clamp-3 break-words [overflow-wrap:anywhere] text-xs leading-snug text-amber-700">{task.description}</div>
-                        )}
-                        {renderDelegationDetails(task)}
+                    <TableCell className="whitespace-normal px-4 py-3 align-top">
+                      <div className="flex min-w-0 gap-3">
+                        <div className={cn('mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border', tone.iconWrap)}>
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="break-words text-sm font-semibold leading-snug text-slate-950 [overflow-wrap:anywhere]">
+                            {task.title}
+                          </div>
+                          {target && (
+                            <Link
+                              href={target.href}
+                              className="mt-1 flex max-w-full items-start gap-1.5 text-sm font-medium text-blue-700 hover:underline"
+                            >
+                              <TargetIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                                {target.kind}: {target.label}
+                              </span>
+                            </Link>
+                          )}
+                          {task.description && (
+                            <div className="mt-2 line-clamp-2 break-words text-xs leading-5 text-slate-600 [overflow-wrap:anywhere]">
+                              {task.description}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </TableCell>
-                    <TableCell className="whitespace-normal px-3 align-top">
-                      <Badge variant="outline">{TASK_TYPE_LABELS[task.task_type]}</Badge>
-                    </TableCell>
-                    <TableCell className="whitespace-normal px-3 align-top">
-                      <div className="flex flex-col items-start gap-1">
+                    <TableCell className="whitespace-normal px-3 py-3 align-top">
+                      <div className="flex flex-col items-start gap-2">
+                        <Badge variant="outline" className="h-6 rounded-full border-slate-200 bg-slate-50 px-2.5 text-slate-700">
+                          {TASK_TYPE_LABELS[task.task_type]}
+                        </Badge>
                         {renderStatusBadge(task, overdue)}
-                        {renderDelegationBadge(task)}
                       </div>
                     </TableCell>
-                    <TableCell className="whitespace-normal px-3 align-top text-sm text-slate-600">
-                      {task.assigned_user?.full_name || 'Не назначен'}
+                    <TableCell className="whitespace-normal px-3 py-3 align-top">
+                      <div className="flex min-w-0 items-start gap-2 text-sm text-slate-700">
+                        <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                        <span className="break-words leading-5 [overflow-wrap:anywhere]">
+                          {task.assigned_user?.full_name || 'Не назначен'}
+                        </span>
+                      </div>
                     </TableCell>
-                    <TableCell className="whitespace-normal px-3 align-top text-sm text-slate-600">
-                      {startDate ? format(startDate, 'dd.MM.yyyy', { locale: ru }) : '-'}
+                    <TableCell className="whitespace-normal px-3 py-3 align-top">
+                      <div className="space-y-1.5 text-xs tabular-nums">
+                        <div className="flex items-center gap-2 text-slate-600">
+                          <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                          <span className="w-14 text-slate-500">Старт</span>
+                          <span>{formatTaskDate(task.start_date)}</span>
+                        </div>
+                        <div className={cn('flex items-center gap-2 font-medium', tone.date)}>
+                          <Clock3 className="h-3.5 w-3.5 shrink-0" />
+                          <span className="w-14">Дедлайн</span>
+                          <span>{formatTaskDate(task.deadline)}</span>
+                        </div>
+                      </div>
                     </TableCell>
-                    <TableCell className="whitespace-normal px-3 align-top text-sm text-slate-600">
-                      {format(deadline, 'dd.MM.yyyy', { locale: ru })}
+                    <TableCell className="whitespace-normal px-3 py-3 align-top">
+                      {delegation ? (
+                        <div className={cn('rounded-lg border px-2.5 py-2 text-xs leading-5', delegationVisual?.panel)}>
+                          {renderDelegationBadge(task)}
+                          <div className="mt-1 font-medium">
+                            {context === 'incoming'
+                              ? `От: ${delegation.delegated_by_user?.full_name || 'Руководитель'}`
+                              : `Кому: ${delegation.delegated_to_user?.full_name || 'Сотрудник'}`}
+                          </div>
+                          <div className="text-slate-600">{delegation.department?.name || 'Отдел'}</div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">Нет</span>
+                      )}
                     </TableCell>
-                    <TableCell className="whitespace-normal px-3 text-right align-top">
-                      {renderActions(task, nextStatus, actionLabel)}
+                    <TableCell className="whitespace-normal px-3 py-3 text-right align-top">
+                      <div className="flex justify-end">
+                        {actions || <span className="text-xs text-slate-400">Нет действий</span>}
+                      </div>
                     </TableCell>
                   </TableRow>
                 )
@@ -816,83 +948,109 @@ export function TaskCards({
 
   return (
     <>
-      <div className={cn('grid gap-3', compact ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-2')}>
+      <div className={cn('grid gap-3', compact ? 'grid-cols-1' : 'grid-cols-1 2xl:grid-cols-2')}>
         {tasks.map((task) => {
           const deadline = new Date(task.deadline)
-          const startDate = task.start_date ? new Date(task.start_date) : null
           const overdue = ['pending', 'in_progress'].includes(task.status) && isBefore(deadline, today)
           const Icon = getStatusIcon(task.status, overdue)
           const nextStatus = getNextStatus(task.status)
           const actionLabel = getActionLabel(task.status)
-          const delegationVisual = task.pending_delegation
-            ? DELEGATION_VISUALS[task.pending_delegation.status]
-            : null
+          const tone = getTaskTone(task.status, overdue)
+          const target = getTaskTarget(task)
+          const TargetIcon = target?.kind === 'Машина' ? Factory : FileText
+          const actions = renderActions(task, nextStatus, actionLabel, 'rail')
 
           return (
-            <Card
+            <article
               key={task.id}
               className={cn(
-                'border-slate-200 shadow-sm',
-                task.status === 'completed' && 'border-emerald-200 bg-emerald-50/50',
-                task.status === 'in_progress' && 'border-amber-200 bg-amber-50/50',
-                task.status === 'cancelled' && 'border-slate-200 bg-slate-50 opacity-70',
-                overdue && 'border-red-200 bg-red-50/60',
-                delegationVisual?.card
+                'relative overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-colors before:absolute before:inset-y-0 before:left-0 before:w-1 hover:border-slate-300 hover:shadow-md',
+                tone.strip,
+                task.status === 'cancelled' && 'opacity-80'
               )}
             >
-              <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-                <div className="min-w-0 space-y-2">
-                  <div className="flex items-start gap-2">
-                    <Icon
+              <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_180px]">
+                <div className="min-w-0 space-y-3 pl-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="h-6 rounded-full border-slate-200 bg-slate-50 px-2.5 text-slate-700">
+                      {TASK_TYPE_LABELS[task.task_type]}
+                    </Badge>
+                    {renderStatusBadge(task, overdue)}
+                    <span
                       className={cn(
-                        'mt-0.5 h-4 w-4 shrink-0',
-                        task.status === 'completed' && 'text-emerald-600',
-                        task.status === 'in_progress' && 'text-amber-600',
-                        task.status === 'cancelled' && 'text-slate-400',
-                        overdue && 'text-red-600',
-                        task.status === 'pending' && !overdue && 'text-blue-600',
-                        delegationVisual?.icon
+                        'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-medium tabular-nums',
+                        overdue ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-slate-50 text-slate-600'
                       )}
-                    />
+                    >
+                      <CalendarDays className="h-3 w-3" />
+                      {formatTaskDate(task.deadline)}
+                    </span>
+                    {renderDelegationBadge(task)}
+                  </div>
+
+                  <div className="flex min-w-0 gap-3">
+                    <div className={cn('mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border', tone.iconWrap)}>
+                      <Icon className="h-5 w-5" />
+                    </div>
                     <div className="min-w-0">
-                      <div className="break-words [overflow-wrap:anywhere] font-medium leading-snug text-slate-900">{task.title}</div>
-                      {task.machine && (
+                      <h3 className="break-words text-base font-semibold leading-snug text-slate-950 [overflow-wrap:anywhere]">
+                        {task.title}
+                      </h3>
+                      {target && (
                         <Link
-                          href={`${ROUTES.SALES_PLAN}/${task.machine.id}`}
-                          className="inline-block max-w-full break-words [overflow-wrap:anywhere] text-sm text-blue-700 hover:underline"
+                          href={target.href}
+                          className="mt-1 flex max-w-full items-start gap-1.5 text-sm font-medium text-blue-700 hover:underline"
                         >
-                          {task.machine.name}
-                        </Link>
-                      )}
-                      {task.product_project && (
-                        <Link
-                          href={`${ROUTES.PRODUCT_PROJECTS}/${task.product_project.id}`}
-                          className="inline-block max-w-full break-words [overflow-wrap:anywhere] text-sm text-blue-700 hover:underline"
-                        >
-                          {task.product_project.title}
+                          <TargetIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                            {target.kind}: {target.label}
+                          </span>
                         </Link>
                       )}
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <Badge variant="outline">{TASK_TYPE_LABELS[task.task_type]}</Badge>
-                    {renderStatusBadge(task, overdue)}
-                    {renderDelegationBadge(task)}
-                    <span>Исполнитель: {task.assigned_user?.full_name || 'Не назначен'}</span>
-                    {startDate && <span>Начать: {format(startDate, 'dd.MM.yyyy', { locale: ru })}</span>}
-                    <span>Дедлайн: {format(deadline, 'dd.MM.yyyy', { locale: ru })}</span>
+                  {task.description && (
+                    <div className="break-words rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-700 [overflow-wrap:anywhere]">
+                      {task.description}
+                    </div>
+                  )}
+
+                  <div className="grid gap-2 text-xs sm:grid-cols-3">
+                    <div className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <div className="flex items-center gap-1.5 font-medium text-slate-500">
+                        <UserRound className="h-3.5 w-3.5" />
+                        Исполнитель
+                      </div>
+                      <div className="mt-1 break-words text-slate-900 [overflow-wrap:anywhere]">
+                        {task.assigned_user?.full_name || 'Не назначен'}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 tabular-nums">
+                      <div className="flex items-center gap-1.5 font-medium text-slate-500">
+                        <CalendarDays className="h-3.5 w-3.5" />
+                        Старт
+                      </div>
+                      <div className="mt-1 text-slate-900">{formatTaskDate(task.start_date)}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 tabular-nums">
+                      <div className={cn('flex items-center gap-1.5 font-medium', overdue ? 'text-red-700' : 'text-slate-500')}>
+                        <Clock3 className="h-3.5 w-3.5" />
+                        Дедлайн
+                      </div>
+                      <div className={cn('mt-1 font-medium', tone.date)}>{formatTaskDate(task.deadline)}</div>
+                    </div>
                   </div>
 
-                  {task.description && (
-                    <div className="break-words [overflow-wrap:anywhere] text-xs text-amber-700">{task.description}</div>
-                  )}
                   {renderDelegationDetails(task)}
                 </div>
 
-                {renderActions(task, nextStatus, actionLabel)}
-              </CardContent>
-            </Card>
+                <div className="flex min-w-0 flex-col gap-2 border-t border-slate-200 pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+                  <div className="text-xs font-semibold uppercase text-slate-500">Действия</div>
+                  {actions || <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">Нет доступных действий</div>}
+                </div>
+              </div>
+            </article>
           )
         })}
       </div>
