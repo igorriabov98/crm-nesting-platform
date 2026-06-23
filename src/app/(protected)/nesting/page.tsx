@@ -19,7 +19,7 @@ export default async function NestingProjectsPage({
 }) {
   const params = await searchParams
   const view = params?.view === 'history' ? 'history' : 'queue'
-  const scope = params?.scope === 'all' ? 'all' : 'tasks'
+  const scope = params?.scope === 'tasks' ? 'tasks' : 'all'
 
   return (
     <div className="space-y-4">

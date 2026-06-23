@@ -260,6 +260,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
     .from('machines')
     .select('id, name, desired_shipping_date, production_month, created_at, client:clients(name)')
     .eq('is_archived', false)
+    .order('created_at', { ascending: false })
     .limit(NESTING_QUEUE_LIMIT)
 
   if (scope === 'tasks') {
@@ -327,7 +328,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
   }
 }
 
-export async function getNestingQueue(scope: 'tasks' | 'all' = 'tasks'): Promise<ActionResult<NestingQueueData>> {
+export async function getNestingQueue(scope: 'tasks' | 'all' = 'all'): Promise<ActionResult<NestingQueueData>> {
   try {
     const rows = await fetchQueueRows(scope)
     const statusByProject = await syncProjectStatuses(rows.db, rows.runs)
@@ -429,7 +430,7 @@ export async function getNestingQueue(scope: 'tasks' | 'all' = 'tasks'): Promise
       const aProduction = a.productionMonth || '9999-12-31'
       const bProduction = b.productionMonth || '9999-12-31'
       if (aProduction !== bProduction) return aProduction.localeCompare(bProduction)
-      return a.createdAt.localeCompare(b.createdAt)
+      return b.createdAt.localeCompare(a.createdAt)
     })
 
     const allItems = machines.flatMap((machine) => machine.items)

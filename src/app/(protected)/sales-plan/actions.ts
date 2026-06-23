@@ -892,6 +892,7 @@ export async function createMachine(data: CreateMachineInput) {
     await dispatchPendingTelegramDeliveries({ machineId })
 
     revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(ROUTES.NESTING)
     revalidatePath(ROUTES.TASKS)
     return { success: true, machine: newMachine, error: null }
   } catch (error: unknown) {

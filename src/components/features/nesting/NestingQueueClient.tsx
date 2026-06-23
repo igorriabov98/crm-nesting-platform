@@ -117,10 +117,10 @@ export function NestingQueueClient({ queue }: { queue: NestingQueueData }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Link href="/nesting">
-            <Button variant={queue.scope === 'tasks' ? 'default' : 'outline'} size="sm">По задачам</Button>
-          </Link>
-          <Link href="/nesting?scope=all">
             <Button variant={queue.scope === 'all' ? 'default' : 'outline'} size="sm">Все активные</Button>
+          </Link>
+          <Link href="/nesting?scope=tasks">
+            <Button variant={queue.scope === 'tasks' ? 'default' : 'outline'} size="sm">По задачам</Button>
           </Link>
           <Button variant="outline" size="sm" disabled={selectedIds.length === 0 || isPending} onClick={clearSelection}>
             Сбросить
@@ -135,7 +135,7 @@ export function NestingQueueClient({ queue }: { queue: NestingQueueData }) {
       {queue.machines.length === 0 ? (
         <div className="rounded-lg border border-dashed border-[#D1D5DB] bg-white p-8 text-center">
           <p className="text-sm font-medium text-[#1B3A6B]">Нет машин в очереди раскладки</p>
-          <p className="mt-1 text-sm text-[#6B7280]">Проверьте активные задачи технолога или включите фильтр всех активных машин.</p>
+          <p className="mt-1 text-sm text-[#6B7280]">Проверьте активные машины, товарные позиции и подтверждение чертежей инженером.</p>
         </div>
       ) : (
         queue.machines.map((machine) => (
