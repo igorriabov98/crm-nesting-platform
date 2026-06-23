@@ -1363,9 +1363,10 @@ export function ProductionPlanner({
             </div>
             <div
               className={cn(
-                'pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-white to-transparent transition-opacity',
+                'pointer-events-none absolute inset-y-0 w-6 bg-gradient-to-r from-slate-300/30 to-transparent transition-opacity',
                 scrollShadows.left ? 'opacity-100' : 'opacity-0'
               )}
+              style={{ left: MACHINE_RAIL_WIDTH }}
             />
             <div
               className={cn(
