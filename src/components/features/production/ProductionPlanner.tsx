@@ -12,6 +12,8 @@ import {
   ExternalLink,
   Loader2,
   PackageCheck,
+  PanelRightClose,
+  PanelRightOpen,
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -700,6 +702,7 @@ function ProductionMachineInspector({
   onStageDateUpdate,
   onStageUpdate,
   onClearDates,
+  onCollapse,
 }: {
   machine: GanttMachine | null
   productionRow: ProductionRow | undefined
@@ -716,6 +719,7 @@ function ProductionMachineInspector({
   ) => Promise<ActionResult | void>
   onStageUpdate: (stageId: string, field: string, value: string | number | boolean | null) => Promise<ActionResult | void>
   onClearDates: (stage: ProductionStage) => Promise<ActionResult | void>
+  onCollapse?: () => void
 }) {
   const [open, setOpen] = useState(defaultOpen)
 
@@ -734,7 +738,19 @@ function ProductionMachineInspector({
   if (!machine) {
     return (
       <aside className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="text-sm font-semibold text-slate-900">Выбранная машина</div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="text-sm font-semibold text-slate-900">Выбранная машина</div>
+          {onCollapse && (
+            <button
+              type="button"
+              className="inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:border-blue-700 hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              aria-label="Скрыть инспектор машины"
+              onClick={onCollapse}
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          )}
+        </div>
         <p className="mt-2 text-sm text-slate-500">Выберите строку на графике, чтобы открыть редактирование дат.</p>
       </aside>
     )
@@ -845,6 +861,16 @@ function ProductionMachineInspector({
           </div>
         </div>
         <div className="flex shrink-0 gap-1">
+          {onCollapse && (
+            <button
+              type="button"
+              className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:border-blue-700 hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              aria-label="Скрыть инспектор машины"
+              onClick={onCollapse}
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          )}
           <Link
             href={`${ROUTES.SALES_PLAN}/${machine.id}`}
             className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:border-blue-700 hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
@@ -889,6 +915,7 @@ export function ProductionPlanner({
   const [rangeEnd, setRangeEnd] = useState<Date>(() => addDays(findLatestDate(data), 60))
   const [internalFilters, setInternalFilters] = useState<GanttFilters>(defaultFilters)
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null)
+  const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(true)
   const [weldingLoadOpen, setWeldingLoadOpen] = useState(true)
   const [scrollShadows, setScrollShadows] = useState({ left: false, right: false })
   const [clearingStageId, setClearingStageId] = useState<string | null>(null)
@@ -1239,7 +1266,12 @@ export function ProductionPlanner({
   const visibleStageCount = plannerRows.reduce((sum, row) => sum + row.visibleStages.length, 0)
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+    <div
+      className={cn(
+        'grid gap-4 transition-[grid-template-columns] duration-200 ease-out',
+        desktopInspectorOpen ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : 'xl:grid-cols-[minmax(0,1fr)]'
+      )}
+    >
       <div className="min-w-0 space-y-4">
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
@@ -1276,7 +1308,21 @@ export function ProductionPlanner({
               <h2 className="text-sm font-semibold text-blue-950">Планировщик производства</h2>
               <p className="text-xs text-slate-500">Одна строка - одна машина. Этапы выбираются на timeline, редактирование справа.</p>
             </div>
-            <div className="text-xs font-medium text-slate-600">{rangeLabel}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-xs font-medium text-slate-600">{rangeLabel}</div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="hidden min-h-10 gap-1.5 px-3 text-xs xl:inline-flex"
+                aria-label={desktopInspectorOpen ? 'Скрыть инспектор машины' : 'Показать инспектор машины'}
+                aria-expanded={desktopInspectorOpen}
+                onClick={() => setDesktopInspectorOpen((current) => !current)}
+              >
+                {desktopInspectorOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+                {desktopInspectorOpen ? 'Скрыть инспектор' : 'Показать инспектор'}
+              </Button>
+            </div>
           </div>
 
           <div className="relative">
@@ -1476,20 +1522,23 @@ export function ProductionPlanner({
         <GanttLegend defaultOpen={false} />
       </div>
 
-      <div className="hidden xl:block">
-        <div className="sticky top-4">
-          <ProductionMachineInspector
-            machine={selectedMachine}
-            productionRow={selectedProductionRow}
-            canEdit={canEdit}
-            clearingStageId={clearingStageId}
-            onMachineDateUpdate={saveMachineDate}
-            onStageDateUpdate={saveStageDate}
-            onStageUpdate={saveStageField}
-            onClearDates={clearStageDates}
-          />
+      {desktopInspectorOpen && (
+        <div className="hidden xl:block">
+          <div className="sticky top-4">
+            <ProductionMachineInspector
+              machine={selectedMachine}
+              productionRow={selectedProductionRow}
+              canEdit={canEdit}
+              clearingStageId={clearingStageId}
+              onMachineDateUpdate={saveMachineDate}
+              onStageDateUpdate={saveStageDate}
+              onStageUpdate={saveStageField}
+              onClearDates={clearStageDates}
+              onCollapse={() => setDesktopInspectorOpen(false)}
+            />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
