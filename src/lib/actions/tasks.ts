@@ -532,7 +532,7 @@ async function getCandidatesForHeadDepartments(
       id,
       user_id,
       department_id,
-      user:users!inner(id, full_name, email, is_active),
+      user:users!department_members_user_id_fkey!inner(id, full_name, email, is_active),
       department:departments!inner(id, name, is_active),
       position:positions(id, name, level)
     `)
@@ -591,7 +591,7 @@ async function assertDelegationCandidate(
       id,
       user_id,
       department_id,
-      user:users!inner(id, full_name, email, is_active),
+      user:users!department_members_user_id_fkey!inner(id, full_name, email, is_active),
       department:departments!inner(id, name, is_active),
       position:positions(id, name, level)
     `)
