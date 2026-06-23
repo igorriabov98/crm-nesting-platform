@@ -32,7 +32,7 @@ const statusLabel: Record<string, string> = {
   not_ordered: 'Не заказано',
 }
 
-const MARKER_HIT_SIZE = 32
+const MARKER_HIT_SIZE = 44
 
 function totalPrice(item: GanttMaterialItem) {
   const quantity = Number(item.quantity || 0)

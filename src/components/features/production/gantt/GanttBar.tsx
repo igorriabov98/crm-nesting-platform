@@ -17,6 +17,7 @@ interface GanttBarProps {
   unitWidth: number
   machineId: string
   isConfirmed?: boolean
+  onSelect?: () => void
 }
 
 type TooltipPosition = {
@@ -33,7 +34,7 @@ function hexToRgba(hex: string, alpha: number) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`
 }
 
-export const GanttBar = React.memo(function GanttBar({ stage, rangeStart, scale, unitWidth, machineId, isConfirmed = true }: GanttBarProps) {
+export const GanttBar = React.memo(function GanttBar({ stage, rangeStart, scale, unitWidth, machineId, isConfirmed = true, onSelect }: GanttBarProps) {
   const [showTooltip, setShowTooltip] = useState(false)
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null)
   const barRef = useRef<HTMLDivElement>(null)
@@ -101,25 +102,20 @@ export const GanttBar = React.memo(function GanttBar({ stage, rangeStart, scale,
     1,
     Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1
   )
+  const usesExpandedHitArea = Boolean(onSelect)
 
   return (
     <div
       ref={barRef}
       className={cn(
-        "absolute inset-y-0 rounded-none",
-        "cursor-pointer select-none transition-[filter,box-shadow]",
-        "hover:brightness-105",
-        isPlanned
-          ? "border-2 border-dashed"
-          : "shadow-sm",
-        stage.status === 'overdue' && "ring-2 ring-red-500"
+        "absolute rounded-none",
+        usesExpandedHitArea ? "top-1/2 -translate-y-1/2" : "inset-y-0",
+        "cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1"
       )}
       style={{
         left,
         width,
-        height: '100%',
-        borderColor: isPlanned ? color : undefined,
-        backgroundColor: isPlanned ? hexToRgba(color, 0.16) : color,
+        height: usesExpandedHitArea ? 44 : '100%',
         zIndex: 5,
       }}
       onMouseEnter={() => setShowTooltip(true)}
@@ -127,43 +123,75 @@ export const GanttBar = React.memo(function GanttBar({ stage, rangeStart, scale,
         setShowTooltip(false)
         setTooltipPosition(null)
       }}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (!onSelect) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelect()
+        }
+      }}
+      role={onSelect ? 'button' : undefined}
+      tabIndex={onSelect ? 0 : undefined}
       data-stage-status={stage.status}
       data-stage-type={stage.stage_type}
     >
-      {showNight && !isPlanned && (
+      <div
+        className={cn(
+          "absolute left-0 right-0 overflow-hidden rounded-none transition-[filter,box-shadow] hover:brightness-105",
+          usesExpandedHitArea ? "top-1/2 h-[18px] -translate-y-1/2" : "inset-0",
+          isPlanned ? "border-2 border-dashed" : "shadow-sm",
+          stage.status === 'overdue' && "ring-2 ring-red-500"
+        )}
+        style={{
+          borderColor: isPlanned ? color : undefined,
+          backgroundColor: isPlanned ? hexToRgba(color, 0.16) : color,
+        }}
+      >
+        {showNight && !isPlanned && (
+          <div
+            className="absolute top-0 bottom-0 opacity-75"
+            style={{
+              left: nightLeft,
+              width: unitWidth,
+              backgroundColor: NIGHT_SHIFT_COLOR,
+            }}
+          />
+        )}
+
         <div
-          className="absolute top-0 bottom-0 opacity-75"
+          className="pointer-events-none absolute inset-0"
           style={{
-            left: nightLeft,
-            width: unitWidth,
-            backgroundColor: NIGHT_SHIFT_COLOR,
+            backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${unitWidth}px)`,
           }}
         />
-      )}
 
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${unitWidth}px)`,
-        }}
-      />
+        {!isConfirmed && !isPlanned && (
+          <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(255,255,255,0.22)_4px,rgba(255,255,255,0.22)_8px)]" />
+        )}
 
-      {!isConfirmed && !isPlanned && (
-        <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(255,255,255,0.22)_4px,rgba(255,255,255,0.22)_8px)]" />
-      )}
-
-      {showLabel && (
-        <Link
-          href={`${ROUTES.SALES_PLAN}/${machineId}`}
-          className={cn(
-            "relative z-10 flex h-full items-center truncate px-3 text-[11px] font-medium",
-            isPlanned ? "text-[#374151]" : "text-white"
-          )}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {getGanttStageLabel(stage.stage_type)}
-        </Link>
-      )}
+        {showLabel && (onSelect ? (
+          <span
+            className={cn(
+              "relative z-10 flex h-full items-center truncate px-3 text-[11px] font-medium",
+              isPlanned ? "text-[#374151]" : "text-white"
+            )}
+          >
+            {getGanttStageLabel(stage.stage_type)}
+          </span>
+        ) : (
+          <Link
+            href={`${ROUTES.SALES_PLAN}/${machineId}`}
+            className={cn(
+              "relative z-10 flex h-full items-center truncate px-3 text-[11px] font-medium",
+              isPlanned ? "text-[#374151]" : "text-white"
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {getGanttStageLabel(stage.stage_type)}
+          </Link>
+        ))}
+      </div>
 
       {showTooltip && typeof document !== 'undefined' && createPortal(
         <div
