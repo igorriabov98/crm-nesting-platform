@@ -6,6 +6,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { isDirector } from '@/lib/utils/permissions'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
+import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { CurrentUser } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
@@ -39,6 +40,9 @@ type StageDateRow = {
   date_start: string | null
   date_end: string | null
   is_skipped: boolean | null
+}
+type StageDateValidationOptions = {
+  enforceActualShippingToday?: boolean
 }
 type MachineLifecycleRow = {
   status: Database['public']['Enums']['machine_status']
@@ -83,24 +87,30 @@ function stageLabel(stageType: StageDateRow['stage_type']) {
   return labels[stageType] || stageType
 }
 
-function validateStageDates(stages: StageDateRow[], changedStageId: string) {
+function validateStageDates(
+  stages: StageDateRow[],
+  changedStageId: string,
+  options: StageDateValidationOptions = {}
+) {
   const activeStages = [...stages]
     .filter((stage) => !stage.is_skipped)
     .sort((a, b) => getStagePosition(a.stage_type) - getStagePosition(b.stage_type))
-
-  for (const stage of activeStages) {
-    if (stage.date_start && stage.date_end && stage.date_end < stage.date_start) {
-      throw new Error(`Дата окончания этапа "${stageLabel(stage.stage_type)}" не может быть раньше даты начала`)
-    }
-    if (stage.stage_type === 'actual_shipping' && stage.date_end && stage.date_end < todayDateOnly()) {
-      throw new Error('Факт отгрузки нельзя поставить раньше сегодняшнего дня')
-    }
-  }
 
   const changedIndex = activeStages.findIndex((stage) => stage.id === changedStageId)
   if (changedIndex === -1) return
 
   const currentStage = activeStages[changedIndex]
+  if (currentStage.date_start && currentStage.date_end && currentStage.date_end < currentStage.date_start) {
+    throw new Error(`Дата окончания этапа "${stageLabel(currentStage.stage_type)}" не может быть раньше даты начала`)
+  }
+  if (
+    options.enforceActualShippingToday &&
+    currentStage.stage_type === 'actual_shipping' &&
+    currentStage.date_end &&
+    currentStage.date_end < todayDateOnly()
+  ) {
+    throw new Error('Факт отгрузки нельзя поставить раньше сегодняшнего дня')
+  }
   if (!currentStage?.date_start) return
 
   const previousStage = [...activeStages.slice(0, changedIndex)].reverse().find((stage) => stage.date_start)
@@ -199,23 +209,32 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
       else data.workshop = 2
     }
 
-    const { data: allStages, error: allStagesError } = await supabase
-      .from('production_stages')
-      .select('id, stage_type, date_start, date_end, is_skipped')
-      .eq('machine_id', stageObj.machine_id)
+    const shouldValidateDates = 'date_start' in data || 'date_end' in data || 'is_skipped' in data
+    if (shouldValidateDates) {
+      const { data: allStages, error: allStagesError } = await supabase
+        .from('production_stages')
+        .select('id, stage_type, date_start, date_end, is_skipped')
+        .eq('machine_id', stageObj.machine_id)
 
-    if (allStagesError) throw allStagesError
+      if (allStagesError) throw allStagesError
 
-    const mergedStages = ((allStages || []) as StageDateRow[]).map((stage) => {
-      if (stage.id !== stageId) return stage
-      return {
-        ...stage,
-        date_start: 'date_start' in data ? dateOnly(data.date_start) : stage.date_start,
-        date_end: 'date_end' in data ? dateOnly(data.date_end) : stage.date_end,
-        is_skipped: 'is_skipped' in data ? Boolean(data.is_skipped) : stage.is_skipped,
-      }
-    })
-    validateStageDates(mergedStages, stageId)
+      const mergedStages = ((allStages || []) as StageDateRow[]).map((stage) => {
+        if (stage.id !== stageId) return stage
+        return {
+          ...stage,
+          date_start: 'date_start' in data ? dateOnly(data.date_start) : stage.date_start,
+          date_end: 'date_end' in data ? dateOnly(data.date_end) : stage.date_end,
+          is_skipped: 'is_skipped' in data ? Boolean(data.is_skipped) : stage.is_skipped,
+        }
+      })
+      validateStageDates(mergedStages, stageId, {
+        enforceActualShippingToday:
+          stageObj.stage_type === 'actual_shipping' &&
+          'date_end' in data &&
+          data.date_end !== null &&
+          data.date_end !== undefined,
+      })
+    }
 
     const { error: updateErr } = await supabase
       .from('production_stages')
@@ -301,6 +320,10 @@ export async function updateMachineDate(
     await reconcileMachineStatus(supabase, machineId)
     if (field === 'desired_shipping_date') {
       await syncTransportCostTask(supabase, machineId)
+    }
+    if (field === 'actual_shipping_date' && dateValue) {
+      const promotion = await promoteShippedProjectSamplesToProducts(machineId)
+      if (!promotion.success) throw new Error(promotion.error || 'Не удалось добавить изготовленный образец в базу продукции')
     }
 
     revalidatePath(ROUTES.PRODUCTION)

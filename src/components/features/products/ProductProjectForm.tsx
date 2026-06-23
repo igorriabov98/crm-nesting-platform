@@ -32,7 +32,7 @@ function initialState(project?: ProductProject | null): ProjectState {
     characteristics: project?.characteristics || '',
     client_wishes: project?.client_wishes || '',
     assigned_engineer_id: project?.assigned_engineer_id || '',
-    status: project?.status || 'draft',
+    status: project?.status || 'new_project',
   }
 }
 
@@ -41,6 +41,7 @@ function errorMessage(error: unknown) {
 }
 
 const statusLabels: Record<ProductProjectInput['status'], string> = {
+  new_project: 'Новый проект',
   draft: 'Черновик',
   engineering: 'В работе у инженера',
   client_review: 'На согласовании',

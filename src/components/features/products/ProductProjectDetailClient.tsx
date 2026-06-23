@@ -3,16 +3,15 @@
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { CheckCircle2, Download, Plus, Trash2, Upload } from 'lucide-react'
+import { Download, Plus, Trash2, Upload } from 'lucide-react'
 import {
-  approveProductProjectVersion,
-  createProductProjectVersion,
   deleteProductProjectFile,
-  promoteProjectVersionToProduct,
+  approveProductProjectForClient,
+  requestProductProjectCorrection,
   uploadProductProjectFile,
   type ProductProjectDetails,
+  type ProductProjectApprovalInput,
 } from '@/lib/actions/products'
-import { ROUTES } from '@/lib/constants/routes'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,8 +19,8 @@ import { Label } from '@/components/ui/label'
 import { LoadingButton } from '@/components/ui/loading-button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ProductProjectFile, ProductProjectVersion } from '@/lib/types'
-import type { ProductProjectVersionInput, PromoteProductVersionInput } from '@/lib/types/schemas'
 
 const versionStatusLabels: Record<ProductProjectVersion['status'], string> = {
   draft: 'Черновик',
@@ -31,6 +30,7 @@ const versionStatusLabels: Record<ProductProjectVersion['status'], string> = {
 }
 
 const projectStatusLabels: Record<ProductProjectDetails['status'], string> = {
+  new_project: 'Новый проект',
   draft: 'Черновик',
   engineering: 'В работе у инженера',
   client_review: 'На согласовании',
@@ -54,67 +54,55 @@ function errorMessage(error: unknown) {
 export function ProductProjectDetailClient({ project }: { project: ProductProjectDetails }) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [versionDraft, setVersionDraft] = useState<ProductProjectVersionInput>({
-    version_label: '',
-    description: project.description || '',
-    characteristics: project.characteristics || '',
-    client_wishes: project.client_wishes || '',
-    status: 'draft',
-  })
   const [fileKind, setFileKind] = useState<ProductProjectFile['file_kind']>('drawing')
   const [fileVersionId, setFileVersionId] = useState<string>('project')
   const [isUploading, setIsUploading] = useState(false)
-  const [isAddingVersion, setIsAddingVersion] = useState(false)
-  const approvedVersion = project.versions.find((version) => version.id === project.approved_version_id) || project.versions.find((version) => version.status === 'approved') || null
-  const [promoteDraft, setPromoteDraft] = useState<PromoteProductVersionInput>({
-    name_uk: project.title,
-    name_en: project.title,
-    uktzed: '',
-    drawing_number: '',
-    unit_weight_kg: 0,
-    base_price_eur: 0,
-    status: 'active',
+  const [isApproving, setIsApproving] = useState(false)
+  const [isCorrectionOpen, setIsCorrectionOpen] = useState(false)
+  const [correctionText, setCorrectionText] = useState('')
+  const [isRequestingCorrection, setIsRequestingCorrection] = useState(false)
+  const currentVersion = [...project.versions].sort((a, b) => a.version_number - b.version_number).at(-1) || null
+  const [approvalDraft, setApprovalDraft] = useState<ProductProjectApprovalInput>({
+    name_uk: currentVersion?.name_uk || project.title,
+    name_en: currentVersion?.name_en || project.title,
+    uktzed: currentVersion?.uktzed || '',
+    base_price_eur: Number(currentVersion?.base_price_eur || 0),
   })
 
-  async function addVersion(event: React.FormEvent<HTMLFormElement>) {
+  async function approveForClient(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setIsAddingVersion(true)
+    if (!currentVersion) {
+      toast.error('Версия проекта не найдена')
+      return
+    }
+    setIsApproving(true)
     try {
-      const result = await createProductProjectVersion(project.id, versionDraft)
-      if (!result.success) throw new Error(result.error || 'Не удалось добавить версию')
-      toast.success('Версия добавлена')
-      setVersionDraft({ version_label: '', description: '', characteristics: '', client_wishes: '', status: 'draft' })
+      const result = await approveProductProjectForClient(project.id, approvalDraft)
+      if (!result.success) throw new Error(result.error || 'Не удалось утвердить проект')
+      toast.success('Проект утвержден')
       router.refresh()
     } catch (error) {
       toast.error(errorMessage(error))
     } finally {
-      setIsAddingVersion(false)
+      setIsApproving(false)
     }
   }
 
-  async function approveVersion(version: ProductProjectVersion) {
-    const result = await approveProductProjectVersion(project.id, version.id)
-    if (!result.success) {
-      toast.error(result.error || 'Не удалось подтвердить версию')
-      return
-    }
-    toast.success('Версия подтверждена')
-    router.refresh()
-  }
-
-  async function promoteVersion(event: React.FormEvent<HTMLFormElement>) {
+  async function submitCorrection(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!approvedVersion) {
-      toast.error('Сначала подтвердите итоговую версию')
-      return
+    setIsRequestingCorrection(true)
+    try {
+      const result = await requestProductProjectCorrection(project.id, { client_wishes: correctionText })
+      if (!result.success) throw new Error(result.error || 'Не удалось создать корректировку')
+      toast.success('Корректировка отправлена инженеру')
+      setCorrectionText('')
+      setIsCorrectionOpen(false)
+      router.refresh()
+    } catch (error) {
+      toast.error(errorMessage(error))
+    } finally {
+      setIsRequestingCorrection(false)
     }
-    const result = await promoteProjectVersionToProduct(project.id, approvedVersion.id, promoteDraft)
-    if (!result.success) {
-      toast.error(result.error || 'Не удалось добавить в продукцию')
-      return
-    }
-    toast.success('Версия добавлена в продукцию')
-    router.push(`${ROUTES.PRODUCTS}/${result.product?.id}`)
   }
 
   async function uploadFile(event: React.FormEvent<HTMLFormElement>) {
@@ -179,21 +167,15 @@ export function ProductProjectDetailClient({ project }: { project: ProductProjec
             <div className="mt-4 space-y-3">
               {project.versions.map((version) => (
                 <div key={version.id} className="rounded-lg border border-[#E8ECF0] p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="font-semibold text-[#1B3A6B]">
-                        Версия {version.version_label || version.version_number}
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-[#1B3A6B]">
+                          Версия {version.version_label || version.version_number}
+                        </div>
+                        <div className="text-xs text-[#9CA3AF]">#{version.version_number}</div>
                       </div>
-                      <div className="text-xs text-[#9CA3AF]">#{version.version_number}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
                       <Badge variant={version.status === 'approved' ? 'default' : 'secondary'}>{versionStatusLabels[version.status]}</Badge>
-                      <Button type="button" variant="outline" size="sm" onClick={() => void approveVersion(version)}>
-                        <CheckCircle2 className="mr-1 h-4 w-4" />
-                        Подтвердить
-                      </Button>
                     </div>
-                  </div>
                   <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
                     <InfoBlock title="Описание" value={version.description} compact />
                     <InfoBlock title="Характеристики" value={version.characteristics} compact />
@@ -260,47 +242,63 @@ export function ProductProjectDetailClient({ project }: { project: ProductProjec
         </div>
 
         <div className="space-y-6">
-          <form onSubmit={addVersion} className="space-y-4 rounded-xl border border-[#E8ECF0] bg-white p-5">
-            <h2 className="text-lg font-semibold text-[#1B3A6B]">Новая версия</h2>
-            <div className="space-y-2">
-              <Label>Метка версии</Label>
-              <Input value={versionDraft.version_label || ''} placeholder="2.3.4" onChange={(event) => setVersionDraft((current) => ({ ...current, version_label: event.target.value }))} />
+          <section className="space-y-4 rounded-xl border border-[#E8ECF0] bg-white p-5">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-[#1B3A6B]">Корректировки</h2>
+              <Button type="button" variant="outline" onClick={() => setIsCorrectionOpen(true)} disabled={project.status === 'added_to_products'}>
+                <Plus className="mr-2 h-4 w-4" />
+                Новая корректировка
+              </Button>
             </div>
-            <div className="space-y-2">
-              <Label>Описание</Label>
-              <Textarea rows={3} value={versionDraft.description || ''} onChange={(event) => setVersionDraft((current) => ({ ...current, description: event.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>Характеристики</Label>
-              <Textarea rows={3} value={versionDraft.characteristics || ''} onChange={(event) => setVersionDraft((current) => ({ ...current, characteristics: event.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>Пожелания клиента</Label>
-              <Textarea rows={3} value={versionDraft.client_wishes || ''} onChange={(event) => setVersionDraft((current) => ({ ...current, client_wishes: event.target.value }))} />
-            </div>
-            <LoadingButton type="submit" loading={isAddingVersion} className="w-full">
-              <Plus className="mr-2 h-4 w-4" />
-              Добавить версию
-            </LoadingButton>
-          </form>
-
-          <form onSubmit={promoteVersion} className="space-y-4 rounded-xl border border-[#E8ECF0] bg-white p-5">
-            <h2 className="text-lg font-semibold text-[#1B3A6B]">Добавить в продукцию</h2>
             <p className="text-sm text-[#6B7280]">
-              Переносит подтвержденную версию в базу продукции. После этого товар можно выбирать в машине.
+              Если клиент просит изменения, создайте новую версию. Задача автоматически вернется назначенному инженеру.
             </p>
-            <Input value={promoteDraft.name_uk} onChange={(event) => setPromoteDraft((current) => ({ ...current, name_uk: event.target.value }))} placeholder="Название на укр" required />
-            <Input value={promoteDraft.name_en} onChange={(event) => setPromoteDraft((current) => ({ ...current, name_en: event.target.value }))} placeholder="Название на англ" required />
-            <Input value={promoteDraft.uktzed} onChange={(event) => setPromoteDraft((current) => ({ ...current, uktzed: event.target.value }))} placeholder="УКТЗЕД" required />
-            <Input value={promoteDraft.drawing_number} onChange={(event) => setPromoteDraft((current) => ({ ...current, drawing_number: event.target.value }))} placeholder="Номер чертежа" required />
-            <Input type="number" min="0" step="0.001" value={promoteDraft.unit_weight_kg || ''} onChange={(event) => setPromoteDraft((current) => ({ ...current, unit_weight_kg: Number(event.target.value) }))} placeholder="Вес единицы, кг" required />
-            <Input type="number" min="0" step="0.01" value={promoteDraft.base_price_eur || ''} onChange={(event) => setPromoteDraft((current) => ({ ...current, base_price_eur: Number(event.target.value) }))} placeholder="Базовая цена, EUR" required />
-            <LoadingButton type="submit" disabled={!approvedVersion} loading={false} className="w-full bg-[#1B3A6B] text-white hover:bg-[#152D54]">
-              Добавить итоговую версию в продукцию
+          </section>
+
+          <form onSubmit={approveForClient} className="space-y-4 rounded-xl border border-[#E8ECF0] bg-white p-5">
+            <h2 className="text-lg font-semibold text-[#1B3A6B]">Согласование с клиентом</h2>
+            <div className="grid gap-3 text-sm md:grid-cols-2">
+              <InfoBlock title="Номер чертежа" value={currentVersion?.drawing_number} compact />
+              <InfoBlock title="Вес, кг" value={currentVersion?.unit_weight_kg ? String(currentVersion.unit_weight_kg) : null} compact />
+            </div>
+            <div className="space-y-2">
+              <Label>Название на украинском *</Label>
+              <Input value={approvalDraft.name_uk} onChange={(event) => setApprovalDraft((current) => ({ ...current, name_uk: event.target.value }))} required />
+            </div>
+            <div className="space-y-2">
+              <Label>Название на английском *</Label>
+              <Input value={approvalDraft.name_en} onChange={(event) => setApprovalDraft((current) => ({ ...current, name_en: event.target.value }))} required />
+            </div>
+            <div className="space-y-2">
+              <Label>УКТЗЕД *</Label>
+              <Input value={approvalDraft.uktzed} onChange={(event) => setApprovalDraft((current) => ({ ...current, uktzed: event.target.value }))} required />
+            </div>
+            <div className="space-y-2">
+              <Label>Базовая цена, EUR *</Label>
+              <Input type="number" min="0" step="0.01" value={approvalDraft.base_price_eur || ''} onChange={(event) => setApprovalDraft((current) => ({ ...current, base_price_eur: Number(event.target.value) }))} required />
+            </div>
+            <LoadingButton type="submit" disabled={!currentVersion || project.status === 'added_to_products'} loading={isApproving} className="w-full bg-[#1B3A6B] text-white hover:bg-[#152D54]">
+              Утвердить модель
             </LoadingButton>
           </form>
         </div>
       </div>
+
+      <Dialog open={isCorrectionOpen} onOpenChange={setIsCorrectionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Новая корректировка</DialogTitle>
+            <DialogDescription>Опишите замечания клиента. CRM создаст новую версию и задачу инженеру.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submitCorrection} className="space-y-4">
+            <Textarea value={correctionText} onChange={(event) => setCorrectionText(event.target.value)} rows={5} placeholder="Что нужно изменить" required />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsCorrectionOpen(false)}>Отмена</Button>
+              <LoadingButton type="submit" loading={isRequestingCorrection}>Отправить инженеру</LoadingButton>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

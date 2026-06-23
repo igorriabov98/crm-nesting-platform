@@ -2,6 +2,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
+import { z } from 'zod'
 import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
@@ -54,6 +55,9 @@ type ProductProjectUpdate = Database['public']['Tables']['product_projects']['Up
 type ProductProjectVersionInsert = Database['public']['Tables']['product_project_versions']['Insert']
 type ProductProjectVersionUpdate = Database['public']['Tables']['product_project_versions']['Update']
 type ProductProjectFileInsert = Database['public']['Tables']['product_project_files']['Insert']
+type TaskInsert = Database['public']['Tables']['tasks']['Insert']
+type TaskUpdate = Database['public']['Tables']['tasks']['Update']
+type MachineItemUpdate = Database['public']['Tables']['machine_items']['Update']
 type DepartmentRow = {
   id: string
   name: string
@@ -77,6 +81,15 @@ export type ProductOption = Pick<Product,
   | 'base_price_eur'
   | 'status'
 >
+
+export type ProductProjectSampleOption = ProductOption & {
+  project_id: string
+  version_id: string
+  title: string
+}
+
+export type ProductProjectApprovalInput = z.infer<typeof productProjectApprovalSchema>
+export type ProductProjectCorrectionInput = z.infer<typeof productProjectCorrectionSchema>
 
 export type ProductWithFiles = Product & {
   product_files?: ProductFile[] | null
@@ -229,6 +242,116 @@ function validateFileExtension(file: File, allowedExtensions: string[], label: s
   }
 }
 
+const DIRECTOR_ROLES = ['financial_director', 'commercial_director', 'planning_director'] as const
+
+const productProjectApprovalSchema = z.object({
+  name_uk: z.string().trim().min(1, 'Введите название на украинском'),
+  name_en: z.string().trim().min(1, 'Введите название на английском'),
+  uktzed: z.string().trim().min(1, 'Введите УКТЗЕД'),
+  base_price_eur: z.coerce.number().min(0, 'Цена не может быть отрицательной'),
+})
+
+const productProjectCorrectionSchema = z.object({
+  client_wishes: z.string().trim().min(1, 'Опишите замечания клиента'),
+})
+
+function datePlusDays(days: number) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+function drawingNumberFromFileName(name: string) {
+  return name.replace(/\.[^/.]+$/, '').trim()
+}
+
+function isDirectorRole(role: string) {
+  return DIRECTOR_ROLES.includes(role as (typeof DIRECTOR_ROLES)[number])
+}
+
+async function loadLatestProjectVersion(db: LooseDb, projectId: string) {
+  const { data, error } = await db
+    .from('product_project_versions')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('version_number', { ascending: false })
+    .limit(1)
+
+  if (error) throw error
+  const version = ((data || []) as ProductProjectVersion[])[0]
+  if (!version) throw new Error('Версия проекта не найдена')
+  return version
+}
+
+async function ensureProductProjectTask(
+  db: LooseDb,
+  projectId: string,
+  taskType: 'product_project_engineering' | 'product_project_sales_review',
+  assignedTo: string,
+  title: string,
+  description: string,
+  deadlineDays: number,
+) {
+  const { data: existingTasks, error: existingError } = await db
+    .from('tasks')
+    .select('id')
+    .eq('product_project_id', projectId)
+    .eq('task_type', taskType)
+    .in('status', ['pending', 'in_progress'])
+    .limit(1)
+
+  if (existingError) throw existingError
+  if (((existingTasks || []) as Array<{ id: string }>).length > 0) return
+
+  const payload: TaskInsert = {
+    product_project_id: projectId,
+    machine_id: null,
+    assigned_to: assignedTo,
+    task_type: taskType,
+    title,
+    description,
+    status: 'pending',
+    start_date: new Date().toISOString().slice(0, 10),
+    deadline: datePlusDays(deadlineDays),
+  }
+  const { error } = await db.from('tasks').insert(payload)
+  if (error) throw error
+}
+
+async function cancelActiveProjectTasks(
+  db: LooseDb,
+  projectId: string,
+  taskType: 'product_project_engineering' | 'product_project_sales_review',
+) {
+  const { data, error } = await db
+    .from('tasks')
+    .select('id')
+    .eq('product_project_id', projectId)
+    .eq('task_type', taskType)
+    .in('status', ['pending', 'in_progress'])
+
+  if (error) throw error
+  const ids = ((data || []) as Array<{ id: string }>).map((task) => task.id)
+  if (ids.length === 0) return
+
+  const update: TaskUpdate = {
+    status: 'cancelled',
+    updated_at: new Date().toISOString(),
+  }
+  const { error: updateError } = await db.from('tasks').update(update).in('id', ids)
+  if (updateError) throw updateError
+}
+
+function assertProjectEngineerAccess(project: ProductProject, user: { id: string; role: string }) {
+  if (project.assigned_engineer_id === user.id || isDirectorRole(user.role)) return
+  throw new Error('Заполнить инженерные данные может назначенный инженер или директор')
+}
+
+function assertVersionReadyForApproval(version: ProductProjectVersion) {
+  if (!version.drawing_number?.trim()) throw new Error('Инженер еще не загрузил чертеж')
+  if (!Number(version.unit_weight_kg || 0)) throw new Error('Инженер еще не указал вес изделия')
+}
+
 function productPayload(parsed: ProductInput, userId: string): ProductInsert {
   return {
     name_uk: parsed.name_uk.trim(),
@@ -259,7 +382,7 @@ async function insertProductProjectWithInitialVersion(
     characteristics: parsed.characteristics?.trim() || '',
     client_wishes: parsed.client_wishes?.trim() || '',
     assigned_engineer_id: parsed.assigned_engineer_id,
-    status: parsed.status,
+    status: 'new_project',
     created_by: userId,
     updated_by: userId,
   }
@@ -278,6 +401,15 @@ async function insertProductProjectWithInitialVersion(
   }
   const { error: versionError } = await db.from('product_project_versions').insert(versionPayload)
   if (versionError) throw versionError
+  await ensureProductProjectTask(
+    db,
+    project.id,
+    'product_project_engineering',
+    project.assigned_engineer_id,
+    `Создать чертеж и фото: ${project.title}`,
+    'Загрузите чертеж, фото изделия и укажите вес изделия.',
+    2,
+  )
   return project
 }
 
@@ -292,6 +424,75 @@ export async function getProductOptions() {
 
     if (error) throw error
     return { data: (data || []) as ProductOption[], error: null }
+  } catch (error) {
+    return { data: null, error: getErrorMessage(error) }
+  }
+}
+
+export async function getProductProjectSampleOptions() {
+  try {
+    const { db } = await requireProductAccess('product_projects')
+    const { data: projectsData, error: projectsError } = await db
+      .from('product_projects')
+      .select('id, title, status, approved_version_id')
+      .eq('status', 'approved')
+      .order('updated_at', { ascending: false })
+    if (projectsError) throw projectsError
+
+    const projects = ((projectsData || []) as Array<Pick<ProductProject, 'id' | 'title' | 'status' | 'approved_version_id'>>)
+      .filter((project) => Boolean(project.approved_version_id))
+    if (projects.length === 0) return { data: [] as ProductProjectSampleOption[], error: null }
+
+    const projectIds = projects.map((project) => project.id)
+    const approvedVersionIds = projects
+      .map((project) => project.approved_version_id)
+      .filter((id): id is string => Boolean(id))
+
+    const [{ data: productsData, error: productsError }, { data: versionsData, error: versionsError }] = await Promise.all([
+      db.from('products').select('source_project_id').in('source_project_id', projectIds),
+      db.from('product_project_versions').select('*').in('id', approvedVersionIds),
+    ])
+    if (productsError) throw productsError
+    if (versionsError) throw versionsError
+
+    const productizedProjectIds = new Set(
+      ((productsData || []) as Array<{ source_project_id: string | null }>)
+        .map((product) => product.source_project_id)
+        .filter((id): id is string => Boolean(id)),
+    )
+    const versionsById = new Map(((versionsData || []) as ProductProjectVersion[]).map((version) => [version.id, version]))
+
+    const options = projects.flatMap((project) => {
+      if (productizedProjectIds.has(project.id) || !project.approved_version_id) return []
+      const version = versionsById.get(project.approved_version_id)
+      if (
+        !version ||
+        !version.name_uk ||
+        !version.name_en ||
+        !version.uktzed ||
+        !version.drawing_number ||
+        !version.unit_weight_kg
+      ) {
+        return []
+      }
+
+      return [{
+        id: project.id,
+        project_id: project.id,
+        version_id: version.id,
+        title: project.title,
+        name_uk: version.name_uk,
+        name_en: version.name_en,
+        uktzed: version.uktzed,
+        drawing_number: version.drawing_number,
+        characteristics: version.characteristics || version.description || '',
+        unit_weight_kg: Number(version.unit_weight_kg),
+        base_price_eur: Number(version.base_price_eur || 0),
+        status: 'active',
+      } satisfies ProductProjectSampleOption]
+    })
+
+    return { data: options, error: null }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
@@ -712,6 +913,12 @@ export async function createProductProjectVersion(projectId: string, input: Prod
       description: parsed.description?.trim() || '',
       characteristics: parsed.characteristics?.trim() || '',
       client_wishes: parsed.client_wishes?.trim() || '',
+      name_uk: parsed.name_uk?.trim() || null,
+      name_en: parsed.name_en?.trim() || null,
+      uktzed: parsed.uktzed?.trim() || null,
+      drawing_number: parsed.drawing_number?.trim() || null,
+      unit_weight_kg: parsed.unit_weight_kg || null,
+      base_price_eur: parsed.base_price_eur ?? null,
       status: parsed.status,
       created_by: user.id,
     }
@@ -747,6 +954,226 @@ export async function approveProductProjectVersion(projectId: string, versionId:
       .eq('id', projectId)
     if (projectError) throw projectError
 
+    revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${projectId}`)
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function saveProductProjectEngineeringDeliverables(formData: FormData) {
+  const uploadedPaths: string[] = []
+
+  try {
+    const { supabase, db, user } = await requireProductManageAccess('product_projects')
+    const projectId = String(formData.get('project_id') || '')
+    const drawing = formData.get('drawing')
+    const photo = formData.get('photo')
+    const unitWeightKg = Number(formData.get('unit_weight_kg') || 0)
+
+    if (!projectId) throw new Error('Проект не найден')
+    if (!(drawing instanceof File) || drawing.size <= 0) throw new Error('Загрузите чертеж')
+    if (!(photo instanceof File) || photo.size <= 0) throw new Error('Загрузите фото изделия')
+    if (!isImageFile(photo)) throw new Error('Фото должно быть изображением')
+    if (!Number.isFinite(unitWeightKg) || unitWeightKg <= 0) throw new Error('Укажите вес изделия')
+
+    const { data: projectData, error: projectError } = await db
+      .from('product_projects')
+      .select('*')
+      .eq('id', projectId)
+      .single()
+    if (projectError || !projectData) throw projectError || new Error('Проект не найден')
+    const project = projectData as ProductProject
+    assertProjectEngineerAccess(project, user)
+
+    const version = await loadLatestProjectVersion(db, projectId)
+    const drawingPath = await uploadStorageFile(supabase, `product-projects/${projectId}/${version.id}`, drawing)
+    uploadedPaths.push(drawingPath)
+    const photoPath = await uploadStorageFile(supabase, `product-projects/${projectId}/${version.id}`, photo)
+    uploadedPaths.push(photoPath)
+
+    const files: ProductProjectFileInsert[] = [
+      {
+        project_id: projectId,
+        version_id: version.id,
+        file_kind: 'drawing',
+        file_name: drawing.name,
+        file_path: drawingPath,
+        mime_type: drawing.type || null,
+        file_size: drawing.size,
+        uploaded_by: user.id,
+      },
+      {
+        project_id: projectId,
+        version_id: version.id,
+        file_kind: 'photo',
+        file_name: photo.name,
+        file_path: photoPath,
+        mime_type: photo.type || null,
+        file_size: photo.size,
+        uploaded_by: user.id,
+      },
+    ]
+    const { error: filesError } = await db.from('product_project_files').insert(files)
+    if (filesError) throw filesError
+
+    const { error: versionError } = await db
+      .from('product_project_versions')
+      .update({
+        drawing_number: drawingNumberFromFileName(drawing.name),
+        unit_weight_kg: unitWeightKg,
+      } satisfies ProductProjectVersionUpdate)
+      .eq('id', version.id)
+      .eq('project_id', projectId)
+    if (versionError) throw versionError
+
+    const { error: projectUpdateError } = await db
+      .from('product_projects')
+      .update({ status: 'engineering', updated_by: user.id, updated_at: new Date().toISOString() } satisfies ProductProjectUpdate)
+      .eq('id', projectId)
+    if (projectUpdateError) throw projectUpdateError
+
+    revalidatePath(ROUTES.TASKS)
+    revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${projectId}`)
+    return { success: true, error: null }
+  } catch (error) {
+    if (uploadedPaths.length > 0) {
+      const supabase = createAdminClient()
+      await supabase.storage.from('product-files').remove(uploadedPaths).catch(() => undefined)
+    }
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function approveProductProjectForClient(projectId: string, input: ProductProjectApprovalInput) {
+  try {
+    const { db, user } = await requireProductManageAccess('product_projects')
+    const parsed = productProjectApprovalSchema.parse(input)
+    const version = await loadLatestProjectVersion(db, projectId)
+    assertVersionReadyForApproval(version)
+
+    const now = new Date().toISOString()
+    const { error: versionError } = await db
+      .from('product_project_versions')
+      .update({
+        name_uk: parsed.name_uk,
+        name_en: parsed.name_en,
+        uktzed: parsed.uktzed,
+        base_price_eur: parsed.base_price_eur,
+        status: 'approved',
+      } satisfies ProductProjectVersionUpdate)
+      .eq('id', version.id)
+      .eq('project_id', projectId)
+    if (versionError) throw versionError
+
+    const { error: projectError } = await db
+      .from('product_projects')
+      .update({
+        status: 'approved',
+        approved_version_id: version.id,
+        updated_by: user.id,
+        updated_at: now,
+      } satisfies ProductProjectUpdate)
+      .eq('id', projectId)
+    if (projectError) throw projectError
+
+    const { data: tasksData, error: tasksError } = await db
+      .from('tasks')
+      .select('id')
+      .eq('product_project_id', projectId)
+      .eq('task_type', 'product_project_sales_review')
+      .in('status', ['pending', 'in_progress'])
+    if (tasksError) throw tasksError
+    const taskIds = ((tasksData || []) as Array<{ id: string }>).map((task) => task.id)
+    if (taskIds.length > 0) {
+      const { error: taskUpdateError } = await db
+        .from('tasks')
+        .update({ status: 'completed', completed_at: now, updated_at: now } satisfies TaskUpdate)
+        .in('id', taskIds)
+      if (taskUpdateError) throw taskUpdateError
+    }
+
+    revalidatePath(ROUTES.TASKS)
+    revalidatePath(ROUTES.PRODUCT_PROJECTS)
+    revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${projectId}`)
+    revalidatePath(ROUTES.SALES_PLAN_NEW)
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function requestProductProjectCorrection(projectId: string, input: ProductProjectCorrectionInput) {
+  try {
+    const { db, user } = await requireProductManageAccess('product_projects')
+    const parsed = productProjectCorrectionSchema.parse(input)
+    const { data: projectData, error: projectError } = await db
+      .from('product_projects')
+      .select('*')
+      .eq('id', projectId)
+      .single()
+    if (projectError || !projectData) throw projectError || new Error('Проект не найден')
+    const project = projectData as ProductProject
+    if (project.status === 'added_to_products') throw new Error('Проект уже добавлен в базу продукции')
+
+    const latest = await loadLatestProjectVersion(db, projectId)
+    const { data: versionsData, error: versionsError } = await db
+      .from('product_project_versions')
+      .select('version_number')
+      .eq('project_id', projectId)
+      .order('version_number', { ascending: false })
+      .limit(1)
+    if (versionsError) throw versionsError
+    const nextNumber = (((versionsData || []) as Array<{ version_number: number }>)[0]?.version_number || 0) + 1
+
+    if (latest.status !== 'superseded') {
+      const { error: supersedeError } = await db
+        .from('product_project_versions')
+        .update({ status: 'superseded' } satisfies ProductProjectVersionUpdate)
+        .eq('id', latest.id)
+      if (supersedeError) throw supersedeError
+    }
+
+    const { error: insertError } = await db.from('product_project_versions').insert({
+      project_id: projectId,
+      version_number: nextNumber,
+      version_label: String(nextNumber),
+      description: latest.description || project.description || '',
+      characteristics: latest.characteristics || project.characteristics || '',
+      client_wishes: parsed.client_wishes,
+      name_uk: latest.name_uk,
+      name_en: latest.name_en,
+      uktzed: latest.uktzed,
+      base_price_eur: latest.base_price_eur,
+      status: 'draft',
+      created_by: user.id,
+    } satisfies ProductProjectVersionInsert)
+    if (insertError) throw insertError
+
+    await cancelActiveProjectTasks(db, projectId, 'product_project_sales_review')
+    const { error: updateError } = await db
+      .from('product_projects')
+      .update({
+        status: 'engineering',
+        approved_version_id: null,
+        updated_by: user.id,
+        updated_at: new Date().toISOString(),
+      } satisfies ProductProjectUpdate)
+      .eq('id', projectId)
+    if (updateError) throw updateError
+
+    await ensureProductProjectTask(
+      db,
+      projectId,
+      'product_project_engineering',
+      project.assigned_engineer_id,
+      `Корректировка изделия: ${project.title}`,
+      parsed.client_wishes,
+      2,
+    )
+
+    revalidatePath(ROUTES.TASKS)
+    revalidatePath(ROUTES.PRODUCT_PROJECTS)
     revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${projectId}`)
     return { success: true, error: null }
   } catch (error) {
@@ -818,6 +1245,148 @@ export async function promoteProjectVersionToProduct(projectId: string, versionI
     return { success: true, product, error: null }
   } catch (error) {
     return { success: false, product: null, error: getErrorMessage(error) }
+  }
+}
+
+export async function promoteShippedProjectSamplesToProducts(machineId: string) {
+  try {
+    const { userId } = await getCurrentUserContext()
+    const adminSupabase = createAdminClient()
+    const db = dbFrom(adminSupabase)
+
+    const { data: itemsData, error: itemsError } = await db
+      .from('machine_items')
+      .select('id, product_id, product_project_id, product_project_version_id')
+      .eq('machine_id', machineId)
+      .eq('is_sample', true)
+    if (itemsError) throw itemsError
+
+    const projectSampleRows = ((itemsData || []) as Array<{
+      id: string
+      product_id: string | null
+      product_project_id: string | null
+      product_project_version_id: string | null
+    }>).filter((item) => item.product_project_id && item.product_project_version_id && !item.product_id)
+    if (projectSampleRows.length === 0) return { success: true, promoted: 0, error: null }
+
+    const projectIds = Array.from(new Set(projectSampleRows.map((item) => item.product_project_id).filter((id): id is string => Boolean(id))))
+    const versionIds = Array.from(new Set(projectSampleRows.map((item) => item.product_project_version_id).filter((id): id is string => Boolean(id))))
+
+    const [
+      { data: projectsData, error: projectsError },
+      { data: versionsData, error: versionsError },
+      { data: productsData, error: productsError },
+    ] = await Promise.all([
+      db.from('product_projects').select('*').in('id', projectIds),
+      db.from('product_project_versions').select('*').in('id', versionIds),
+      db.from('products').select('*').in('source_project_id', projectIds),
+    ])
+    if (projectsError) throw projectsError
+    if (versionsError) throw versionsError
+    if (productsError) throw productsError
+
+    const projectsById = new Map(((projectsData || []) as ProductProject[]).map((project) => [project.id, project]))
+    const versionsById = new Map(((versionsData || []) as ProductProjectVersion[]).map((version) => [version.id, version]))
+    const productsByProjectId = new Map(
+      ((productsData || []) as Product[])
+        .filter((product) => product.source_project_id)
+        .map((product) => [product.source_project_id as string, product]),
+    )
+    let promoted = 0
+
+    for (const projectId of projectIds) {
+      const project = projectsById.get(projectId)
+      if (!project?.approved_version_id) continue
+      const version = versionsById.get(project.approved_version_id)
+      if (!version) continue
+
+      let product = productsByProjectId.get(projectId) || null
+      if (!product) {
+        if (
+          project.status !== 'approved' ||
+          !version.name_uk ||
+          !version.name_en ||
+          !version.uktzed ||
+          !version.drawing_number ||
+          !version.unit_weight_kg
+        ) {
+          continue
+        }
+
+        const payload: ProductInsert = {
+          name_uk: version.name_uk,
+          name_en: version.name_en,
+          uktzed: version.uktzed,
+          drawing_number: version.drawing_number,
+          characteristics: version.characteristics || version.description || '',
+          unit_weight_kg: Number(version.unit_weight_kg),
+          base_price_eur: Number(version.base_price_eur || 0),
+          status: 'active',
+          source_project_id: projectId,
+          source_version_id: version.id,
+          created_by: userId,
+          updated_by: userId,
+        }
+        const { data: productData, error: productError } = await db.from('products').insert(payload).select('*').single()
+        if (productError || !productData) throw productError || new Error('Не удалось создать товар из образца')
+        product = productData as Product
+        productsByProjectId.set(projectId, product)
+
+        const { data: filesData, error: filesError } = await db
+          .from('product_project_files')
+          .select('*')
+          .eq('project_id', projectId)
+        if (filesError) throw filesError
+        const files = ((filesData || []) as ProductProjectFile[]).filter((file) => !file.version_id || file.version_id === version.id)
+        if (files.length > 0) {
+          const productFiles: ProductFileInsert[] = files.map((file) => ({
+            product_id: product!.id,
+            file_kind: file.file_kind,
+            file_name: file.file_name,
+            file_path: file.file_path,
+            mime_type: file.mime_type,
+            file_size: file.file_size,
+            uploaded_by: userId,
+          }))
+          const { error: productFilesError } = await db.from('product_files').insert(productFiles)
+          if (productFilesError) throw productFilesError
+        }
+        promoted++
+      }
+
+      const itemUpdate: MachineItemUpdate = {
+        product_id: product.id,
+        product_name_uk: product.name_uk,
+        product_name_en: product.name_en,
+        product_uktzed: product.uktzed,
+        product_drawing_number: product.drawing_number,
+        product_characteristics: product.characteristics,
+        drawing_number: product.drawing_number,
+        product_name: product.name_uk,
+        weight: Number(product.unit_weight_kg),
+        price: Number(product.base_price_eur),
+      }
+      const { error: itemUpdateError } = await db
+        .from('machine_items')
+        .update(itemUpdate)
+        .eq('product_project_id', projectId)
+      if (itemUpdateError) throw itemUpdateError
+
+      const { error: projectUpdateError } = await db
+        .from('product_projects')
+        .update({ status: 'added_to_products', updated_by: userId, updated_at: new Date().toISOString() } satisfies ProductProjectUpdate)
+        .eq('id', projectId)
+      if (projectUpdateError) throw projectUpdateError
+    }
+
+    revalidatePath(ROUTES.PRODUCTS)
+    revalidatePath(ROUTES.PRODUCT_PROJECTS)
+    revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+    revalidatePath(ROUTES.SALES_PLAN_NEW)
+    return { success: true, promoted, error: null }
+  } catch (error) {
+    return { success: false, promoted: 0, error: getErrorMessage(error) }
   }
 }
 

@@ -102,6 +102,8 @@ export const updateDepartmentMemberSchema = z.object({
 export const machineItemSchema = z.object({
   id: z.string().uuid().optional(),
   product_id: z.string().uuid().optional().nullable(),
+  product_project_id: z.string().uuid().optional().nullable(),
+  product_project_version_id: z.string().uuid().optional().nullable(),
   product_name_uk: z.string().optional().nullable(),
   product_name_en: z.string().optional().nullable(),
   product_uktzed: z.string().optional().nullable(),
@@ -143,7 +145,7 @@ export const machinePackingSettingsSchema = z.object({
 
 export const productStatusSchema = z.enum(['draft', 'active', 'archived'])
 export const productFileKindSchema = z.enum(['drawing', 'step', 'pdf', 'photo', 'other'])
-export const productProjectStatusSchema = z.enum(['draft', 'engineering', 'client_review', 'approved', 'added_to_products', 'cancelled'])
+export const productProjectStatusSchema = z.enum(['new_project', 'draft', 'engineering', 'client_review', 'approved', 'added_to_products', 'cancelled'])
 export const productProjectVersionStatusSchema = z.enum(['draft', 'client_review', 'approved', 'superseded'])
 
 export const productSchema = z.object({
@@ -164,7 +166,7 @@ export const productProjectSchema = z.object({
   characteristics: z.string().optional().default(''),
   client_wishes: z.string().optional().default(''),
   assigned_engineer_id: z.string().uuid('Выберите инженера'),
-  status: productProjectStatusSchema.default('draft'),
+  status: productProjectStatusSchema.default('new_project'),
 })
 
 export const productProjectVersionSchema = z.object({
@@ -172,6 +174,12 @@ export const productProjectVersionSchema = z.object({
   description: z.string().optional().default(''),
   characteristics: z.string().optional().default(''),
   client_wishes: z.string().optional().default(''),
+  name_uk: z.string().optional().nullable(),
+  name_en: z.string().optional().nullable(),
+  uktzed: z.string().optional().nullable(),
+  drawing_number: z.string().optional().nullable(),
+  unit_weight_kg: z.coerce.number().positive('Вес должен быть больше 0').optional().nullable(),
+  base_price_eur: z.coerce.number().min(0, 'Цена не может быть отрицательной').optional().nullable(),
   status: productProjectVersionStatusSchema.default('draft'),
 })
 

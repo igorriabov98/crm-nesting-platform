@@ -6,6 +6,7 @@ import { buttonVariants } from '@/components/ui/button'
 import type { ProductProjectListItem } from '@/lib/actions/products'
 
 const statusLabels: Record<ProductProjectListItem['status'], string> = {
+  new_project: 'Новый проект',
   draft: 'Черновик',
   engineering: 'Инженер',
   client_review: 'Согласование',

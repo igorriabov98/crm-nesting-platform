@@ -8,7 +8,7 @@ import { toast } from 'sonner'
 import { updateMachineSchema, type UpdateMachineInput } from '@/lib/types/schemas'
 import { updateMachine } from '@/app/(protected)/sales-plan/actions'
 import { getNextSpecificationNumber } from '@/lib/actions/contracts'
-import { getProductOptions, type ProductOption } from '@/lib/actions/products'
+import { getProductOptions, getProductProjectSampleOptions, type ProductOption, type ProductProjectSampleOption } from '@/lib/actions/products'
 import { COATINGS } from '@/lib/constants/coatings'
 import { getFactoryWorkshopOptionsById, productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { formatProductionMonth, getProductionMonthOptions } from '@/lib/utils/production-months'
@@ -95,6 +95,8 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
   const [deletedItemIds, setDeletedItemIds] = useState<string[]>([])
   const [deletedExpenseIds, setDeletedExpenseIds] = useState<string[]>([])
   const [products, setProducts] = useState<ProductOption[]>([])
+  const [projectSamples, setProjectSamples] = useState<ProductProjectSampleOption[]>([])
+  const [catalogLoaded, setCatalogLoaded] = useState(false)
 
   // Подготавливаем дефолтные значения из машины
   const allDefaultItems = machine.machine_items || []
@@ -139,6 +141,8 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
       items: defaultItems.map((i) => ({
         id: i.id, // сохраняем id для update
         product_id: i.product_id || null,
+        product_project_id: i.product_project_id || null,
+        product_project_version_id: i.product_project_version_id || null,
         drawing_number: i.drawing_number || '',
         product_name: i.product_name || '',
         product_name_uk: i.product_name_uk || null,
@@ -155,6 +159,8 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
       samples: defaultSamples.map((i) => ({
         id: i.id,
         product_id: i.product_id || null,
+        product_project_id: i.product_project_id || null,
+        product_project_version_id: i.product_project_version_id || null,
         drawing_number: i.drawing_number || '',
         product_name: i.product_name || '',
         product_name_uk: i.product_name_uk || null,
@@ -247,15 +253,18 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
   const queueLabel = productionQueueLabel(machine.production_workshop, machine.production_queue_number)
 
   useEffect(() => {
-    if (!isOpen || products.length > 0) return
+    if (!isOpen || catalogLoaded) return
     let cancelled = false
-    getProductOptions().then((result) => {
-      if (!cancelled && result.data) setProducts(result.data)
+    Promise.all([getProductOptions(), getProductProjectSampleOptions()]).then(([productResult, sampleResult]) => {
+      if (cancelled) return
+      if (productResult.data) setProducts(productResult.data)
+      if (sampleResult.data) setProjectSamples(sampleResult.data)
+      setCatalogLoaded(true)
     })
     return () => {
       cancelled = true
     }
-  }, [isOpen, products.length])
+  }, [catalogLoaded, isOpen])
 
   useEffect(() => {
     if (!selectedClientId) return
@@ -328,6 +337,8 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     const product = products.find((item) => item.id === productId)
     if (!product) return
     setRowValue(name, index, 'product_id', product.id)
+    setRowValue(name, index, 'product_project_id', null)
+    setRowValue(name, index, 'product_project_version_id', null)
     setRowValue(name, index, 'drawing_number', product.drawing_number)
     setRowValue(name, index, 'product_name', product.name_uk)
     setRowValue(name, index, 'product_name_uk', product.name_uk)
@@ -337,6 +348,23 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     setRowValue(name, index, 'product_characteristics', product.characteristics)
     setRowValue(name, index, 'weight', Number(product.unit_weight_kg))
     setRowValue(name, index, 'price', Number(product.base_price_eur))
+  }
+
+  function applyProjectSampleToRow(index: number, projectId: string) {
+    const sample = projectSamples.find((item) => item.project_id === projectId)
+    if (!sample) return
+    setRowValue('samples', index, 'product_id', null)
+    setRowValue('samples', index, 'product_project_id', sample.project_id)
+    setRowValue('samples', index, 'product_project_version_id', sample.version_id)
+    setRowValue('samples', index, 'drawing_number', sample.drawing_number)
+    setRowValue('samples', index, 'product_name', sample.name_uk)
+    setRowValue('samples', index, 'product_name_uk', sample.name_uk)
+    setRowValue('samples', index, 'product_name_en', sample.name_en)
+    setRowValue('samples', index, 'product_uktzed', sample.uktzed)
+    setRowValue('samples', index, 'product_drawing_number', sample.drawing_number)
+    setRowValue('samples', index, 'product_characteristics', sample.characteristics)
+    setRowValue('samples', index, 'weight', Number(sample.unit_weight_kg))
+    setRowValue('samples', index, 'price', Number(sample.base_price_eur))
   }
 
   const handleRemoveItem = (index: number) => {
@@ -820,34 +848,57 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                       </Button>
                     </div>
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 pr-10">
-                      <FormField
-                        control={form.control}
-                        name={`samples.${index}.product_id`}
-                        render={({ field }) => {
-                          const locked = Boolean(watchedSamples?.[index]?.id && watchedSamples?.[index]?.product_id)
-                          return (
+                      {watchedSamples?.[index]?.product_id && !watchedSamples?.[index]?.product_project_id ? (
+                        <FormField
+                          control={form.control}
+                          name={`samples.${index}.product_id`}
+                          render={({ field }) => (
                             <FormItem className="md:col-span-2 lg:col-span-4">
                               <FormLabel className="text-xs text-[#374151]">Товар из базы продукции</FormLabel>
                               <FormControl>
-                                <ProductOptionCombobox products={products} value={field.value} disabled={locked} onChange={(value) => applyProductToRow('samples', index, value)} />
+                                <ProductOptionCombobox products={products} value={field.value} disabled onChange={(value) => applyProductToRow('samples', index, value)} />
                               </FormControl>
-                              {locked && <p className="text-xs text-[#6B7280]">Продукт в существующей строке заблокирован.</p>}
+                              <p className="text-xs text-[#6B7280]">Старый образец привязан к товару и заблокирован.</p>
                               <FormMessage className="text-[10px]" />
                             </FormItem>
-                          )
-                        }}
-                      />
+                          )}
+                        />
+                      ) : (
+                        <FormField
+                          control={form.control}
+                          name={`samples.${index}.product_project_id`}
+                          render={({ field }) => {
+                            const locked = Boolean(watchedSamples?.[index]?.id && watchedSamples?.[index]?.product_project_id)
+                            return (
+                              <FormItem className="md:col-span-2 lg:col-span-4">
+                                <FormLabel className="text-xs text-[#374151]">Проект изделия для образца</FormLabel>
+                                <FormControl>
+                                  <ProductOptionCombobox
+                                    products={projectSamples}
+                                    value={field.value}
+                                    disabled={locked}
+                                    placeholder="Выберите утвержденный проект"
+                                    onChange={(value) => applyProjectSampleToRow(index, value)}
+                                  />
+                                </FormControl>
+                                {locked && <p className="text-xs text-[#6B7280]">Проект в существующей строке заблокирован.</p>}
+                                <FormMessage className="text-[10px]" />
+                              </FormItem>
+                            )
+                          }}
+                        />
+                      )}
                       <FormField control={form.control} name={`samples.${index}.drawing_number`} render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-xs text-[#374151]">Чертёж *</FormLabel>
-                          <FormControl><Input {...field} disabled={Boolean(watchedSamples?.[index]?.product_id)} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                          <FormControl><Input {...field} disabled={Boolean(watchedSamples?.[index]?.product_id || watchedSamples?.[index]?.product_project_id)} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
                           <FormMessage className="text-[10px] text-[#DC2626]" />
                         </FormItem>
                       )} />
                       <FormField control={form.control} name={`samples.${index}.product_name`} render={({ field }) => (
                         <FormItem className="lg:col-span-2">
                           <FormLabel className="text-xs text-[#374151]">Товар *</FormLabel>
-                          <FormControl><Input {...field} disabled={Boolean(watchedSamples?.[index]?.product_id)} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                          <FormControl><Input {...field} disabled={Boolean(watchedSamples?.[index]?.product_id || watchedSamples?.[index]?.product_project_id)} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
                           <FormMessage className="text-[10px] text-[#DC2626]" />
                         </FormItem>
                       )} />
@@ -888,7 +939,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                       <FormField control={form.control} name={`samples.${index}.price`} render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-xs text-[#374151]">Цена ед. (€) *</FormLabel>
-                          <FormControl><Input type="number" step="0.01" {...field} disabled={Boolean(watchedSamples?.[index]?.product_id)} onChange={e => field.onChange(parseFloat(e.target.value))} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                          <FormControl><Input type="number" step="0.01" {...field} disabled={Boolean(watchedSamples?.[index]?.product_id || watchedSamples?.[index]?.product_project_id)} onChange={e => field.onChange(parseFloat(e.target.value))} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
                           <FormMessage className="text-[10px]" />
                         </FormItem>
                       )} />
@@ -911,7 +962,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                 variant="outline"
                 size="sm"
                 className="text-[#1B3A6B]"
-                onClick={() => appendSample({ product_id: null, drawing_number: '', product_name: '', weight: 0, price: 0, quantity: 1, coating: 'none', ral_number: '', is_sample: true })}
+                onClick={() => appendSample({ product_id: null, product_project_id: null, product_project_version_id: null, drawing_number: '', product_name: '', weight: 0, price: 0, quantity: 1, coating: 'none', ral_number: '', is_sample: true })}
               >
                 <Plus className="w-4 h-4 mr-1" /> Добавить образец
               </Button>

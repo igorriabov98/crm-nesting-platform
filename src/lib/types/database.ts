@@ -455,6 +455,8 @@ export type Database = {
           id: string
           machine_id: string
           product_id: string | null
+          product_project_id: string | null
+          product_project_version_id: string | null
           drawing_number: string
           product_name: string
           product_name_uk: string | null
@@ -479,6 +481,8 @@ export type Database = {
           id?: string
           machine_id: string
           product_id?: string | null
+          product_project_id?: string | null
+          product_project_version_id?: string | null
           drawing_number: string
           product_name: string
           product_name_uk?: string | null
@@ -503,6 +507,8 @@ export type Database = {
           id?: string
           machine_id?: string
           product_id?: string | null
+          product_project_id?: string | null
+          product_project_version_id?: string | null
           drawing_number?: string
           product_name?: string
           product_name_uk?: string | null
@@ -811,7 +817,7 @@ export type Database = {
           characteristics: string
           client_wishes: string
           assigned_engineer_id: string
-          status: 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
+          status: 'new_project' | 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
           approved_version_id: string | null
           created_by: string | null
           updated_by: string | null
@@ -826,7 +832,7 @@ export type Database = {
           characteristics?: string
           client_wishes?: string
           assigned_engineer_id: string
-          status?: 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
+          status?: 'new_project' | 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
           approved_version_id?: string | null
           created_by?: string | null
           updated_by?: string | null
@@ -841,7 +847,7 @@ export type Database = {
           characteristics?: string
           client_wishes?: string
           assigned_engineer_id?: string
-          status?: 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
+          status?: 'new_project' | 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
           approved_version_id?: string | null
           created_by?: string | null
           updated_by?: string | null
@@ -858,6 +864,12 @@ export type Database = {
           description: string
           characteristics: string
           client_wishes: string
+          name_uk: string | null
+          name_en: string | null
+          uktzed: string | null
+          drawing_number: string | null
+          unit_weight_kg: number | null
+          base_price_eur: number | null
           status: 'draft' | 'client_review' | 'approved' | 'superseded'
           created_by: string | null
           created_at: string
@@ -870,6 +882,12 @@ export type Database = {
           description?: string
           characteristics?: string
           client_wishes?: string
+          name_uk?: string | null
+          name_en?: string | null
+          uktzed?: string | null
+          drawing_number?: string | null
+          unit_weight_kg?: number | null
+          base_price_eur?: number | null
           status?: 'draft' | 'client_review' | 'approved' | 'superseded'
           created_by?: string | null
           created_at?: string
@@ -882,6 +900,12 @@ export type Database = {
           description?: string
           characteristics?: string
           client_wishes?: string
+          name_uk?: string | null
+          name_en?: string | null
+          uktzed?: string | null
+          drawing_number?: string | null
+          unit_weight_kg?: number | null
+          base_price_eur?: number | null
           status?: 'draft' | 'client_review' | 'approved' | 'superseded'
           created_by?: string | null
           created_at?: string
@@ -1889,11 +1913,53 @@ export type Database = {
           updated_at?: string
         }
       }
+      task_delegations: {
+        Row: {
+          id: string
+          task_id: string
+          delegated_by: string
+          delegated_from: string
+          delegated_to: string
+          department_id: string
+          status: Database['public']['Enums']['task_delegation_status']
+          note: string | null
+          decline_reason: string | null
+          delegated_at: string
+          responded_at: string | null
+        }
+        Insert: {
+          id?: string
+          task_id: string
+          delegated_by: string
+          delegated_from: string
+          delegated_to: string
+          department_id: string
+          status?: Database['public']['Enums']['task_delegation_status']
+          note?: string | null
+          decline_reason?: string | null
+          delegated_at?: string
+          responded_at?: string | null
+        }
+        Update: {
+          id?: string
+          task_id?: string
+          delegated_by?: string
+          delegated_from?: string
+          delegated_to?: string
+          department_id?: string
+          status?: Database['public']['Enums']['task_delegation_status']
+          note?: string | null
+          decline_reason?: string | null
+          delegated_at?: string
+          responded_at?: string | null
+        }
+      }
       tasks: {
         Row: {
           id: string
           machine_id: string | null
           related_meeting_id: string | null
+          product_project_id: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -1911,6 +1977,7 @@ export type Database = {
           id?: string
           machine_id?: string | null
           related_meeting_id?: string | null
+          product_project_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -1928,6 +1995,7 @@ export type Database = {
           id?: string
           machine_id?: string | null
           related_meeting_id?: string | null
+          product_project_id?: string | null
           assigned_to?: string
           task_type?: Database['public']['Enums']['task_type']
           title?: string
@@ -2735,13 +2803,28 @@ export type Database = {
       material_category: 'sheet_metal' | 'round_tube' | 'knives' | 'components' | 'paint' | 'other' | 'circle' | 'pipe' | 'mesh' | 'chain_cord'
       pipe_subtype: 'square' | 'rectangular' | 'round' | 'wire'
       chain_cord_subtype: 'chain' | 'cord'
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost'
+      task_delegation_status: 'pending' | 'accepted' | 'declined' | 'cancelled'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       request_status: 'draft' | 'pending_stock_check' | 'stock_checked' | 'submitted_to_supply' | 'completed'
       order_item_status: 'pending' | 'ordered' | 'delivered'
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment'
     }
     Functions: {
+      accept_task_delegation: {
+        Args: {
+          p_delegation_id: string
+          p_user_id: string
+        }
+        Returns: {
+          task_id: string
+          machine_id: string | null
+          product_project_id: string | null
+          delegated_by: string
+          delegated_to: string
+          task_title: string
+        }[]
+      }
       fn_refresh_meeting_agenda_pool: {
         Args: Record<string, never>
         Returns: number

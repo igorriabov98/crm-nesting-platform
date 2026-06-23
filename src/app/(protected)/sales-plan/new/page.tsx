@@ -2,7 +2,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { MachineCreateForm } from '@/components/features/machines/MachineCreateForm'
 import { getClientOptions } from '@/lib/actions/clients'
-import { getProductOptions } from '@/lib/actions/products'
+import { getProductOptions, getProductProjectSampleOptions } from '@/lib/actions/products'
 import { requirePermission } from '@/lib/permissions/server'
 
 export const metadata = {
@@ -17,10 +17,11 @@ export default async function NewMachinePage() {
 
   const supabase = await createServerSupabaseClient()
 
-  const [{ data: clients }, { data: factories }, { data: products }] = await Promise.all([
+  const [{ data: clients }, { data: factories }, { data: products }, { data: projectSamples }] = await Promise.all([
     getClientOptions(),
     supabase.from('factories').select('id, name').order('name'),
     getProductOptions(),
+    getProductProjectSampleOptions(),
   ])
 
   return (
@@ -33,7 +34,7 @@ export default async function NewMachinePage() {
       </div>
 
       <div className="pt-4">
-        <MachineCreateForm clients={clients || []} factories={factories || []} products={products || []} />
+        <MachineCreateForm clients={clients || []} factories={factories || []} products={products || []} projectSamples={projectSamples || []} />
       </div>
     </div>
   )

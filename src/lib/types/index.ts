@@ -31,6 +31,7 @@ export type InventoryTransaction = Database['public']['Tables']['inventory_trans
 export type InventoryReservation = Database['public']['Tables']['inventory_reservations']['Row']
 export type SupplierDeliveryDay = Database['public']['Tables']['supplier_delivery_days']['Row']
 export type SupplierMaterialCategory = Database['public']['Tables']['supplier_material_categories']['Row']
+export type TaskDelegation = Database['public']['Tables']['task_delegations']['Row']
 export type Task = Database['public']['Tables']['tasks']['Row']
 export type TechnologistRequest = Database['public']['Tables']['technologist_requests']['Row']
 export type RequestSheetMetal = Database['public']['Tables']['request_sheet_metal']['Row']
@@ -62,6 +63,7 @@ export type MeetingStatus = Database['public']['Enums']['meeting_status']
 export type MaterialCategory = Database['public']['Enums']['material_category']
 export type PipeSubtype = Database['public']['Enums']['pipe_subtype']
 export type ChainCordSubtype = Database['public']['Enums']['chain_cord_subtype']
+export type TaskDelegationStatus = Database['public']['Enums']['task_delegation_status']
 export type TaskType = Database['public']['Enums']['task_type']
 export type TaskStatus = Database['public']['Enums']['task_status']
 export type RequestStatus = Database['public']['Enums']['request_status']
@@ -142,7 +144,7 @@ export type MachineListItem = MachineWithTotals & {
   created_by_user?: Pick<User, 'full_name'> | null
   client?: Pick<Client, 'id' | 'name' | 'primary_contact_name'> | null
   product?: string | null
-  machine_items?: Pick<MachineItem, 'id' | 'product_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'weight' | 'price' | 'quantity' | 'coating' | 'ral_number' | 'is_sample'>[]
+  machine_items?: Pick<MachineItem, 'id' | 'product_id' | 'product_project_id' | 'product_project_version_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'weight' | 'price' | 'quantity' | 'coating' | 'ral_number' | 'is_sample'>[]
   production_stages?: Pick<ProductionStage, 'stage_type' | 'date_start' | 'date_end' | 'is_skipped'>[]
   supply_items?: Pick<SupplyItem, 'id' | 'status'>[]
   invoice?: Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount'> | Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount'>[] | null

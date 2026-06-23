@@ -11,7 +11,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { COATINGS } from '@/lib/constants/coatings'
 import { createMachineSchema, type CreateMachineInput } from '@/lib/types/schemas'
 import { createMachine } from '@/app/(protected)/sales-plan/actions'
-import type { ProductOption } from '@/lib/actions/products'
+import type { ProductOption, ProductProjectSampleOption } from '@/lib/actions/products'
 import type { Client, CoatingType, FactorySummary } from '@/lib/types'
 import { ClientCreateDialog } from '@/components/features/clients/ClientCreateDialog'
 import { paymentTermsLabel } from '@/components/features/clients/ClientFormFields'
@@ -65,7 +65,17 @@ function getCoatingLabel(coating: CoatingType | null | undefined) {
   return coating ? COATINGS[coating].label : 'Выберите покрытие'
 }
 
-export function MachineCreateForm({ clients: initialClients, factories, products }: { clients: Client[]; factories: FactorySummary[]; products: ProductOption[] }) {
+export function MachineCreateForm({
+  clients: initialClients,
+  factories,
+  products,
+  projectSamples,
+}: {
+  clients: Client[]
+  factories: FactorySummary[]
+  products: ProductOption[]
+  projectSamples: ProductProjectSampleOption[]
+}) {
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [clients, setClients] = useState(initialClients)
@@ -202,6 +212,8 @@ export function MachineCreateForm({ clients: initialClients, factories, products
     const product = products.find((item) => item.id === productId)
     if (!product) return
     setRowValue(name, index, 'product_id', product.id)
+    setRowValue(name, index, 'product_project_id', null)
+    setRowValue(name, index, 'product_project_version_id', null)
     setRowValue(name, index, 'drawing_number', product.drawing_number)
     setRowValue(name, index, 'product_name', product.name_uk)
     setRowValue(name, index, 'product_name_uk', product.name_uk)
@@ -211,6 +223,23 @@ export function MachineCreateForm({ clients: initialClients, factories, products
     setRowValue(name, index, 'product_characteristics', product.characteristics)
     setRowValue(name, index, 'weight', Number(product.unit_weight_kg))
     setRowValue(name, index, 'price', Number(product.base_price_eur))
+  }
+
+  function applyProjectSampleToRow(index: number, projectId: string) {
+    const sample = projectSamples.find((item) => item.project_id === projectId)
+    if (!sample) return
+    setRowValue('samples', index, 'product_id', null)
+    setRowValue('samples', index, 'product_project_id', sample.project_id)
+    setRowValue('samples', index, 'product_project_version_id', sample.version_id)
+    setRowValue('samples', index, 'drawing_number', sample.drawing_number)
+    setRowValue('samples', index, 'product_name', sample.name_uk)
+    setRowValue('samples', index, 'product_name_uk', sample.name_uk)
+    setRowValue('samples', index, 'product_name_en', sample.name_en)
+    setRowValue('samples', index, 'product_uktzed', sample.uktzed)
+    setRowValue('samples', index, 'product_drawing_number', sample.drawing_number)
+    setRowValue('samples', index, 'product_characteristics', sample.characteristics)
+    setRowValue('samples', index, 'weight', Number(sample.unit_weight_kg))
+    setRowValue('samples', index, 'price', Number(sample.base_price_eur))
   }
 
   async function onSubmit(data: CreateMachineInput) {
@@ -640,12 +669,17 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 pr-10">
                       <FormField
                         control={form.control}
-                        name={`samples.${index}.product_id`}
+                        name={`samples.${index}.product_project_id`}
                         render={({ field }) => (
                           <FormItem className="md:col-span-2 lg:col-span-4">
-                            <FormLabel className="text-xs">Товар из базы продукции *</FormLabel>
+                            <FormLabel className="text-xs">Проект изделия для образца *</FormLabel>
                             <FormControl>
-                              <ProductOptionCombobox products={products} value={field.value} onChange={(value) => applyProductToRow('samples', index, value)} />
+                              <ProductOptionCombobox
+                                products={projectSamples}
+                                value={field.value}
+                                placeholder="Выберите утвержденный проект"
+                                onChange={(value) => applyProjectSampleToRow(index, value)}
+                              />
                             </FormControl>
                             <FormMessage className="text-[10px] text-[#DC2626]" />
                           </FormItem>
@@ -759,7 +793,7 @@ export function MachineCreateForm({ clients: initialClients, factories, products
                 variant="outline"
                 size="sm"
                 className="mt-2 text-[#1B3A6B]"
-                onClick={() => appendSample({ product_id: null, drawing_number: '', product_name: '', weight: 0, price: 0, quantity: 1, coating: 'none', ral_number: '', is_sample: true })}
+                onClick={() => appendSample({ product_id: null, product_project_id: null, product_project_version_id: null, drawing_number: '', product_name: '', weight: 0, price: 0, quantity: 1, coating: 'none', ral_number: '', is_sample: true })}
               >
                 <Plus className="w-4 h-4 mr-1" /> Добавить образец
               </Button>
