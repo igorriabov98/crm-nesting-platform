@@ -100,6 +100,13 @@ type BatchRow = {
   order_number: string
   status: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
   error_message: string | null
+  source_nesting_project_id?: string | null
+  is_future_fill?: boolean
+}
+
+type PrecutRow = {
+  machine_item_id: string
+  quantity: number
 }
 
 export type NestingQueueItem = {
@@ -108,6 +115,8 @@ export type NestingQueueItem = {
   drawingNumber: string | null
   productName: string
   quantity: number
+  precutQuantity: number
+  remainingQuantity: number
   productStatus: ProductRow['status'] | null
   stepFileCount: number
   drawingPdfFileCount: number
@@ -158,6 +167,8 @@ export type NestingQueueData = {
 
 const startBatchSchema = z.object({
   machineItemIds: z.array(z.string().uuid()).min(1).max(100),
+  sourceNestingProjectId: z.string().min(1).optional().nullable(),
+  futureMachineItemIds: z.array(z.string().uuid()).max(100).optional(),
 })
 
 async function requireNestingPermission(operation: PermissionOperation = 'view') {
@@ -265,7 +276,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
 
   if (scope === 'tasks') {
     if (taskMachineIds.length === 0) {
-      return { db, machines: [] as MachineRow[], activeTasks, items: [] as MachineItemRow[], products: [] as ProductRow[], files: [] as ProductFileRow[], runs: [] as RunRow[], engineerTasks: [] as TaskRow[] }
+      return { db, machines: [] as MachineRow[], activeTasks, items: [] as MachineItemRow[], products: [] as ProductRow[], files: [] as ProductFileRow[], runs: [] as RunRow[], engineerTasks: [] as TaskRow[], precuts: [] as PrecutRow[] }
     }
     machineQuery = machineQuery.in('id', taskMachineIds)
   }
@@ -276,7 +287,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
   const machineIds = machines.map((machine) => machine.id)
 
   if (machineIds.length === 0) {
-    return { db, machines, activeTasks, items: [] as MachineItemRow[], products: [] as ProductRow[], files: [] as ProductFileRow[], runs: [] as RunRow[], engineerTasks: [] as TaskRow[] }
+    return { db, machines, activeTasks, items: [] as MachineItemRow[], products: [] as ProductRow[], files: [] as ProductFileRow[], runs: [] as RunRow[], engineerTasks: [] as TaskRow[], precuts: [] as PrecutRow[] }
   }
 
   const [itemsResult, engineerTasksResult] = await Promise.all([
@@ -300,7 +311,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
   const productIds = Array.from(new Set(items.map((item) => item.product_id).filter(Boolean))) as string[]
   const itemIds = items.map((item) => item.id)
 
-  const [productsResult, filesResult, runsResult] = await Promise.all([
+  const [productsResult, filesResult, runsResult, precutsResult] = await Promise.all([
     productIds.length
       ? db.from('products').select('id, name_uk, drawing_number, status').in('id', productIds)
       : Promise.resolve({ data: [], error: null } as DbResult),
@@ -309,6 +320,9 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
       : Promise.resolve({ data: [], error: null } as DbResult),
     itemIds.length
       ? db.from('machine_item_nesting_runs').select('*').in('machine_item_id', itemIds)
+      : Promise.resolve({ data: [], error: null } as DbResult),
+    itemIds.length
+      ? db.from('nesting_precut_parts').select('machine_item_id, quantity').in('machine_item_id', itemIds)
       : Promise.resolve({ data: [], error: null } as DbResult),
   ])
 
@@ -325,6 +339,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
     files: (filesResult.data || []) as ProductFileRow[],
     runs: (runsResult.data || []) as RunRow[],
     engineerTasks: (engineerTasksResult.data || []) as TaskRow[],
+    precuts: (precutsResult.data || []) as PrecutRow[],
   }
 }
 
@@ -348,6 +363,10 @@ export async function getNestingQueue(scope: 'tasks' | 'all' = 'all'): Promise<A
       filesByProduct.set(file.product_id, [...(filesByProduct.get(file.product_id) || []), file])
     }
     const runByItem = new Map(rows.runs.map((run) => [run.machine_item_id, run]))
+    const precutByItem = new Map<string, number>()
+    for (const row of rows.precuts) {
+      precutByItem.set(row.machine_item_id, (precutByItem.get(row.machine_item_id) || 0) + Number(row.quantity || 0))
+    }
     const itemsByMachine = new Map<string, MachineItemRow[]>()
     for (const item of rows.items) {
       itemsByMachine.set(item.machine_id, [...(itemsByMachine.get(item.machine_id) || []), item])
@@ -364,6 +383,10 @@ export async function getNestingQueue(scope: 'tasks' | 'all' = 'all'): Promise<A
         const run = runByItem.get(item.id) || null
         const service = run ? statusByProject.get(run.nesting_project_id) || null : null
         const serviceUnavailable = service?.status === 'unavailable'
+        const quantity = Math.max(0, Number(item.quantity || 0))
+        const precutQuantity = Math.min(quantity, precutByItem.get(item.id) || 0)
+        const remainingQuantity = Math.max(quantity - precutQuantity, 0)
+        const isPrecutDone = quantity > 0 && remainingQuantity <= 0
         const isDone = service?.status === 'done' || ((!service || serviceUnavailable) && (run?.status === 'calculated' || run?.status === 'imported'))
         const issue = item.product_id ? fileIssue(stepFileCount, drawingPdfFileCount) : 'Строка не привязана к товару из базы'
         let disabledReason: string | null = null
@@ -379,7 +402,9 @@ export async function getNestingQueue(scope: 'tasks' | 'all' = 'all'): Promise<A
           productId: item.product_id,
           drawingNumber: item.drawing_number,
           productName: item.product_name || product?.name_uk || 'Без названия',
-          quantity: Number(item.quantity || 0),
+          quantity,
+          precutQuantity,
+          remainingQuantity,
           productStatus: product?.status || null,
           stepFileCount,
           drawingPdfFileCount,
@@ -392,14 +417,14 @@ export async function getNestingQueue(scope: 'tasks' | 'all' = 'all'): Promise<A
             errorMessage: service?.errorMessage || run.error_message,
             updatedAt: run.updated_at,
           } : null,
-          selectable: !disabledReason,
+          selectable: remainingQuantity > 0 && !disabledReason,
           disabledReason,
         }
       })
 
       const progress = {
         total: items.length,
-        done: items.filter((item) => item.run?.serviceStatus === 'done' || item.run?.status === 'calculated' || item.run?.status === 'imported').length,
+        done: items.filter((item) => item.remainingQuantity <= 0 || item.run?.serviceStatus === 'done' || item.run?.status === 'calculated' || item.run?.status === 'imported').length,
         blocked: items.filter((item) => item.disabledReason && item.disabledReason !== 'Раскладка уже готова').length,
         selectable: items.filter((item) => item.selectable).length,
       }
@@ -464,12 +489,17 @@ async function deleteServiceProject(projectId: string) {
   await fetch(`${getNestingServiceUrl()}/api/projects/${projectId}`, { method: 'DELETE' }).catch(() => undefined)
 }
 
-export async function createNestingBatch(input: { machineItemIds: string[] }): Promise<ActionResult<{ nestingProjectId: string }>> {
+export async function createNestingBatch(input: {
+  machineItemIds: string[]
+  sourceNestingProjectId?: string | null
+  futureMachineItemIds?: string[]
+}): Promise<ActionResult<{ nestingProjectId: string }>> {
   let createdProjectId: string | null = null
 
   try {
     const parsed = startBatchSchema.parse(input)
     const uniqueItemIds = Array.from(new Set(parsed.machineItemIds))
+    const futureItemIds = new Set(parsed.futureMachineItemIds || [])
     const { supabase, userId } = await requireNestingPermission('manage')
     const db = supabase as unknown as LooseDb
 
@@ -485,11 +515,12 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
     const machineIds = Array.from(new Set(items.map((item) => item.machine_id)))
     const productIds = Array.from(new Set(items.map((item) => item.product_id).filter(Boolean))) as string[]
 
-    const [machinesResult, engineerTasksResult, productsResult, filesResult] = await Promise.all([
+    const [machinesResult, engineerTasksResult, productsResult, filesResult, precutsResult] = await Promise.all([
       db.from('machines').select('id, name, is_archived, desired_shipping_date, production_month, created_at').in('id', machineIds),
       db.from('tasks').select('id, machine_id, deadline, status').eq('task_type', 'engineer_confirm').eq('status', 'completed').in('machine_id', machineIds),
       productIds.length ? db.from('products').select('id, name_uk, drawing_number, status').in('id', productIds) : Promise.resolve({ data: [], error: null } as DbResult),
       productIds.length ? db.from('product_files').select('id, product_id, file_kind, file_name, file_path, mime_type').in('product_id', productIds) : Promise.resolve({ data: [], error: null } as DbResult),
+      uniqueItemIds.length ? db.from('nesting_precut_parts').select('machine_item_id, quantity').in('machine_item_id', uniqueItemIds) : Promise.resolve({ data: [], error: null } as DbResult),
     ])
 
     if (machinesResult.error) throw new Error(machinesResult.error.message || 'Не удалось загрузить машины')
@@ -503,6 +534,12 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
     const filesByProduct = new Map<string, ProductFileRow[]>()
     for (const file of (filesResult.data || []) as ProductFileRow[]) {
       filesByProduct.set(file.product_id, [...(filesByProduct.get(file.product_id) || []), file])
+    }
+    const precutByItem = new Map<string, number>()
+    if (!precutsResult.error) {
+      for (const row of (precutsResult.data || []) as PrecutRow[]) {
+        precutByItem.set(row.machine_item_id, (precutByItem.get(row.machine_item_id) || 0) + Number(row.quantity || 0))
+      }
     }
 
     const prepared = items.map((item, index) => {
@@ -518,6 +555,9 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
       const drawingFiles = files.filter(isPdfDrawing)
       const issue = fileIssue(stepFiles.length, drawingFiles.length)
       if (issue) throw new Error(`${item.product_name || product.name_uk}: ${issue}`)
+      const requestedQuantity = Math.max(1, Math.trunc(Number(item.quantity) || 1))
+      const quantityToNest = Math.max(0, requestedQuantity - Math.trunc(precutByItem.get(item.id) || 0))
+      if (quantityToNest <= 0) throw new Error(`${item.product_name || product.name_uk}: деталь уже вырезана заранее`)
 
       return {
         item,
@@ -525,6 +565,8 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
         product,
         stepFile: stepFiles[0],
         drawingFile: drawingFiles[0],
+        quantityToNest,
+        fillRole: futureItemIds.has(item.id) ? 'future' as const : 'original' as const,
         sortOrder: index,
       }
     })
@@ -541,7 +583,7 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
         productId: row.product.id,
         productName: row.item.product_name || row.product.name_uk,
         drawingNumber: row.item.drawing_number || row.product.drawing_number || '',
-        quantity: Math.max(1, Math.trunc(Number(row.item.quantity) || 1)),
+        quantity: row.quantityToNest,
         stepStorageUri: `supabase://product-files/${row.stepFile.file_path}`,
         pdfStorageUri: `supabase://product-files/${row.drawingFile.file_path}`,
         sortOrder: row.sortOrder,
@@ -570,6 +612,8 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
         order_number: payload.data?.orderNumber || orderNumber,
         status: serviceStatusToBatchStatus(payload.data?.status || 'parsing'),
         error_message: null,
+        source_nesting_project_id: parsed.sourceNestingProjectId || null,
+        is_future_fill: Boolean(parsed.sourceNestingProjectId),
         created_by: userId,
         updated_by: userId,
       })
@@ -586,7 +630,8 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
       product_id: row.product.id,
       step_file_id: row.stepFile.id,
       drawing_file_id: row.drawingFile.id,
-      quantity_multiplier: Math.max(1, Math.trunc(Number(row.item.quantity) || 1)),
+      quantity_multiplier: row.quantityToNest,
+      fill_role: row.fillRole,
       sort_order: row.sortOrder,
     }))
     const batchItemsResult = await db.from('nesting_batch_items').insert(batchItems)
@@ -601,7 +646,7 @@ export async function createNestingBatch(input: { machineItemIds: string[] }): P
       nesting_project_id: nestingProjectId,
       batch_id: batch.id,
       status: 'draft',
-      quantity_multiplier: Math.max(1, Math.trunc(Number(row.item.quantity) || 1)),
+      quantity_multiplier: row.quantityToNest,
       error_message: null,
       created_by: userId,
       updated_by: userId,

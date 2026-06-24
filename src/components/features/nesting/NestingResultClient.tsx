@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { DxfDownloadButtons } from '@/components/features/nesting/DxfDownloadButtons'
+import { FutureFillPanel } from '@/components/features/nesting/FutureFillPanel'
 import { NestingCanvas } from '@/components/features/nesting/NestingCanvas'
 import { ResultStatsCards } from '@/components/features/nesting/ResultStatsCards'
 import { SheetInfoPanel } from '@/components/features/nesting/SheetInfoPanel'
@@ -14,13 +15,16 @@ import { SheetTabs } from '@/components/features/nesting/SheetTabs'
 import { StatusBadge } from '@/components/features/nesting/StatusBadge'
 import { UnplacedPartsList } from '@/components/features/nesting/UnplacedPartsList'
 import type { NestingProject, NestingResult } from '@/lib/nesting/api'
+import type { FutureFillContext } from '@/lib/actions/nesting-future-fill'
 
 export function NestingResultClient({
   project,
   result,
+  futureFillContext,
 }: {
   project: NestingProject
   result: NestingResult
+  futureFillContext: FutureFillContext | null
 }) {
   const [activeSheetIndex, setActiveSheetIndex] = useState(0)
   const [hoveredPart, setHoveredPart] = useState<string | null>(null)
@@ -58,6 +62,8 @@ export function NestingResultClient({
       <ResultStatsCards result={result} />
 
       <GroupedDemandSummary result={result} />
+
+      <FutureFillPanel context={futureFillContext} />
 
       <UnplacedPartsList parts={result.unplacedParts} />
 

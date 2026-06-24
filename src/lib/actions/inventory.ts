@@ -30,7 +30,7 @@ type LooseDb = {
 }
 
 type ActionResult<T = unknown> = { success: boolean; error?: string; data?: T }
-const INVENTORY_LIST_COLUMNS = 'id, material_id, material_variant_id, total_quantity, reserved_quantity, available_quantity, unit, total_secondary_quantity, reserved_secondary_quantity, available_secondary_quantity, secondary_unit, calculated_weight_kg, piece_length_mm, is_business_scrap, source_inventory_id, source_reservation_id, source_machine_id, source_piece_length_mm, deleted_at, deleted_by, delete_comment, last_updated_by, created_at, updated_at'
+const INVENTORY_LIST_COLUMNS = 'id, material_id, material_variant_id, total_quantity, reserved_quantity, available_quantity, unit, total_secondary_quantity, reserved_secondary_quantity, available_secondary_quantity, secondary_unit, calculated_weight_kg, piece_length_mm, is_business_scrap, business_scrap_state, available_from_date, available_from_stage_id, source_inventory_id, source_reservation_id, source_machine_id, source_piece_length_mm, source_nesting_project_id, source_nesting_sheet_id, source_remnant_geom, deleted_at, deleted_by, delete_comment, last_updated_by, created_at, updated_at'
 const INVENTORY_LIST_COLUMNS_WITHOUT_SOURCE_MACHINE = INVENTORY_LIST_COLUMNS.replace(', source_machine_id', '')
 const MATERIAL_VARIANT_COLUMNS = 'id, material_id, category, steel_type_id, material_grade, thickness_mm, sheet_size, weight_per_unit_kg, length_m, weight_per_m_kg, piece_description, knife_dimensions, knife_material, standard_length_mm, specification, default_unit, ral_code, finish, default_waste_percent, diameter_mm, is_calibrated, pipe_type, wall_thickness_mm, width_mm, height_mm, mesh_description, mesh_length_mm, mesh_width_mm, chain_cord_type, chain_cord_parameters, unit_weight_kg, times_used, last_used_at, created_at'
 
@@ -86,6 +86,12 @@ function inventoryMatchesSearch(row: InventoryWithMaterial, value: string) {
 }
 
 export type InventoryWithMaterial = Inventory & {
+  business_scrap_state?: 'available' | 'future'
+  available_from_date?: string | null
+  available_from_stage_id?: string | null
+  source_nesting_project_id?: string | null
+  source_nesting_sheet_id?: string | null
+  source_remnant_geom?: unknown
   material: Pick<Material, 'id' | 'name' | 'category' | 'default_supplier_id'> | null
   variant: MaterialVariant | null
   variant_options: MaterialVariant[]
@@ -220,6 +226,11 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
 export async function getInventory(filters: { category?: MaterialCategory; search?: string; only_available?: boolean } = {}) {
   try {
     const { db } = await requireAccess()
+    try {
+      await db.rpc('fn_promote_due_future_business_scrap', {})
+    } catch {
+      // Inventory loading should remain available if best-effort promotion fails.
+    }
     let query = db
       .from('inventory')
       .select(INVENTORY_LIST_COLUMNS)
@@ -373,6 +384,34 @@ export async function reserveForMachine(data: {
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось забронировать материал' }
+  }
+}
+
+export async function reserveFutureBusinessScrapForMachine(data: {
+  inventory_id: string
+  machine_id: string
+  quantity: number
+  request_item_table: string
+  request_item_id: string
+  secondary_quantity?: number | null
+}): Promise<ActionResult> {
+  try {
+    const { db, userId } = await requireAccess('manage')
+    const { error } = await db.rpc('fn_reserve_future_business_scrap_for_machine', {
+      p_inventory_id: data.inventory_id,
+      p_machine_id: data.machine_id,
+      p_quantity: Number(data.quantity),
+      p_request_item_table: data.request_item_table,
+      p_request_item_id: data.request_item_id,
+      p_reserved_by: userId,
+      p_secondary_quantity: data.secondary_quantity ?? null,
+    })
+    if (error) throw new Error(error.message || 'Не удалось забронировать будущий деловой остаток')
+    revalidateOrderAndMachine(data.machine_id)
+    revalidatePath(ROUTES.INVENTORY)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось забронировать будущий деловой остаток' }
   }
 }
 

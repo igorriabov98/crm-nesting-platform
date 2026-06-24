@@ -42,13 +42,36 @@ type NewMaterialDraft = {
   fields: Record<string, string | boolean>
 }
 
+const INVENTORY_TIME_ZONE = 'Europe/Chisinau'
+
+function formatInventoryDate(value: string) {
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(`${value}T00:00:00Z`))
+}
+
+function formatInventoryDateTime(value: string) {
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZone: INVENTORY_TIME_ZONE,
+  }).format(new Date(value))
+}
+
 export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Props) {
   const router = useRouter()
   const rows = items
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string>('all')
   const [onlyAvailable, setOnlyAvailable] = useState(false)
-  const [stockMode, setStockMode] = useState<'main' | 'business_scrap'>('main')
+  const [stockMode, setStockMode] = useState<'main' | 'business_scrap' | 'future_business_scrap'>('main')
   const [receiptCategory, setReceiptCategory] = useState<MaterialCategory>('sheet_metal')
   const [receiptMaterial, setReceiptMaterial] = useState<{ id: string; name: string; category: MaterialCategory } | null>(null)
   const [receiptVariant, setReceiptVariant] = useState<MaterialVariant | null>(null)
@@ -78,9 +101,13 @@ export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Pro
   const showPipeColumns = category === 'pipe'
 
   const mainStockCount = useMemo(() => rows.filter((row) => !row.is_business_scrap).length, [rows])
-  const businessScrapCount = useMemo(() => rows.filter((row) => row.is_business_scrap).length, [rows])
+  const businessScrapCount = useMemo(() => rows.filter((row) => row.is_business_scrap && (row.business_scrap_state || 'available') !== 'future').length, [rows])
+  const futureBusinessScrapCount = useMemo(() => rows.filter((row) => row.is_business_scrap && (row.business_scrap_state || 'available') === 'future').length, [rows])
   const filtered = useMemo(() => rows.filter((row) => {
-    if (stockMode === 'business_scrap' ? !row.is_business_scrap : row.is_business_scrap) return false
+    const state = row.business_scrap_state || 'available'
+    if (stockMode === 'main' && row.is_business_scrap) return false
+    if (stockMode === 'business_scrap' && (!row.is_business_scrap || state === 'future')) return false
+    if (stockMode === 'future_business_scrap' && (!row.is_business_scrap || state !== 'future')) return false
     if (search && !inventoryMatchesSearch(row, search)) return false
     if (category !== 'all' && row.material?.category !== category) return false
     if (onlyAvailable && row.available_quantity <= 0) return false
@@ -341,8 +368,15 @@ export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Pro
             onClick={() => setStockMode('business_scrap')}
             className={`rounded-md px-3 py-1.5 text-sm font-medium ${stockMode === 'business_scrap' ? 'bg-white text-[#1B3A6B] shadow-sm' : 'text-[#6B7280]'}`}
           >
-            Деловой отход ({businessScrapCount})
+            Деловой остаток ({businessScrapCount})
           </button>
+        <button
+          type="button"
+          onClick={() => setStockMode('future_business_scrap')}
+          className={`rounded-md px-3 py-1.5 text-sm font-medium ${stockMode === 'future_business_scrap' ? 'bg-white text-[#1B3A6B] shadow-sm' : 'text-[#6B7280]'}`}
+        >
+          Будущий деловой остаток ({futureBusinessScrapCount})
+        </button>
         </div>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
           <div className="flex-1">
@@ -549,7 +583,12 @@ export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Pro
                     <div>{row.material?.name || 'Материал'}</div>
                     {row.is_business_scrap && (
                       <div className="mt-1 text-xs font-normal text-amber-700">
-                        Деловой отход после раскроя{row.source_piece_length_mm ? ` из ${formatPieceLength(row.source_piece_length_mm)}` : ''}{row.source_machine_name ? ` для машины ${row.source_machine_name}` : ''}
+                        Деловой остаток после раскроя{row.source_piece_length_mm ? ` из ${formatPieceLength(row.source_piece_length_mm)}` : ''}{row.source_machine_name ? ` для машины ${row.source_machine_name}` : ''}
+                      </div>
+                    )}
+                    {row.is_business_scrap && row.business_scrap_state === 'future' && (
+                      <div className="mt-1 text-xs font-normal text-blue-700">
+                        Будущий остаток · доступен с {row.available_from_date ? formatInventoryDate(row.available_from_date) : 'даты заготовки'}
                       </div>
                     )}
                     {row.is_legacy_variant && (
@@ -587,7 +626,7 @@ export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Pro
                   <td className="px-4 py-3">{formatWeight(row.calculated_weight_kg)}</td>
                   {showPieceLengthColumn && <td className="px-4 py-3">{formatPieceLength(row.piece_length_mm)}</td>}
                   <td className="px-4 py-3">{row.unit}{row.secondary_unit ? ` / ${row.secondary_unit}` : ''}</td>
-                  <td className="px-4 py-3 text-[#6B7280]">{new Date(row.updated_at).toLocaleString('ru-RU')}</td>
+                  <td className="px-4 py-3 text-[#6B7280]">{formatInventoryDateTime(row.updated_at)}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-2">
                       <Button type="button" size="sm" variant="outline" onClick={() => openAdjust(row)}>

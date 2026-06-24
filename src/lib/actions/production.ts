@@ -243,6 +243,15 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
 
     if (updateErr) throw updateErr
     await reconcileMachineStatus(supabase, stageObj.machine_id)
+    if (stageObj.stage_type === 'cutting' && ('date_start' in data || 'is_skipped' in data)) {
+      try {
+        await (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<unknown> })
+          .rpc('fn_promote_due_future_business_scrap', {})
+      } catch {
+        // Stage updates should remain available if best-effort promotion fails.
+      }
+      revalidatePath(ROUTES.INVENTORY)
+    }
     if (stageObj.stage_type === 'shipping' && ('date_end' in data || 'planned_date_end' in data)) {
       await syncTransportCostTask(supabase, stageObj.machine_id)
     }

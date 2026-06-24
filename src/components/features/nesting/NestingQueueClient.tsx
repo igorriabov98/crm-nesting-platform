@@ -23,6 +23,10 @@ function formatDate(value: string | null) {
 }
 
 function itemStatus(item: NestingQueueItem) {
+  if (item.quantity > 0 && item.remainingQuantity <= 0) {
+    return { label: 'Вырезано заранее', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: CheckCircle2 }
+  }
+
   if (item.run?.serviceStatus === 'done' || item.run?.status === 'calculated' || item.run?.status === 'imported') {
     return { label: 'Сделано', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: CheckCircle2 }
   }

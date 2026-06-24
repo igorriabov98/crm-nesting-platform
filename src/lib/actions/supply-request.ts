@@ -123,6 +123,7 @@ type InventoryRow = {
   secondary_unit?: string | null
   piece_length_mm: number | null
   is_business_scrap?: boolean | null
+  business_scrap_state?: 'available' | 'future' | null
   deleted_at?: string | null
   variant?: MaterialVariant | null
 }
@@ -609,7 +610,7 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
 
     const [inventoryRes, reservationsRes, steelTypesRes] = await Promise.all([
       materialIds.length
-        ? db.from('inventory').select('id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, deleted_at').in('material_id', materialIds)
+        ? db.from('inventory').select('id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       itemIds.length
         ? db.from('inventory_reservations').select('id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity').in('request_item_id', itemIds)
@@ -623,7 +624,7 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
     if (steelTypesRes.error) throw new Error(steelTypesRes.error.message || 'Не удалось загрузить типы стали')
     const steelTypeMap = new Map(((steelTypesRes.data || []) as { id: string; name: string }[]).map((steelType) => [steelType.id, steelType.name]))
 
-    const inventoryRows = ((inventoryRes.data || []) as InventoryRow[]).filter((row) => !row.deleted_at)
+    const inventoryRows = ((inventoryRes.data || []) as InventoryRow[]).filter((row) => !row.deleted_at && (row.business_scrap_state || 'available') !== 'future')
     const inventoryVariantIds = Array.from(new Set(inventoryRows.map((row) => row.material_variant_id).filter(Boolean))) as string[]
     const variantMap = new Map<string, MaterialVariant>()
     if (inventoryVariantIds.length) {

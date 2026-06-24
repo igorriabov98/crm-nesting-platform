@@ -590,6 +590,8 @@ export type Database = {
           order_number: string
           status: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
           error_message: string | null
+          source_nesting_project_id: string | null
+          is_future_fill: boolean
           created_by: string | null
           updated_by: string | null
           created_at: string
@@ -601,6 +603,8 @@ export type Database = {
           order_number: string
           status?: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
           error_message?: string | null
+          source_nesting_project_id?: string | null
+          is_future_fill?: boolean
           created_by?: string | null
           updated_by?: string | null
           created_at?: string
@@ -612,6 +616,8 @@ export type Database = {
           order_number?: string
           status?: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
           error_message?: string | null
+          source_nesting_project_id?: string | null
+          is_future_fill?: boolean
           created_by?: string | null
           updated_by?: string | null
           created_at?: string
@@ -629,6 +635,7 @@ export type Database = {
           drawing_file_id: string
           quantity_multiplier: number
           sort_order: number
+          fill_role: 'original' | 'future'
           created_at: string
         }
         Insert: {
@@ -641,6 +648,7 @@ export type Database = {
           drawing_file_id: string
           quantity_multiplier?: number
           sort_order?: number
+          fill_role?: 'original' | 'future'
           created_at?: string
         }
         Update: {
@@ -653,7 +661,55 @@ export type Database = {
           drawing_file_id?: string
           quantity_multiplier?: number
           sort_order?: number
+          fill_role?: 'original' | 'future'
           created_at?: string
+        }
+      }
+      nesting_precut_parts: {
+        Row: {
+          id: string
+          machine_id: string
+          machine_item_id: string
+          product_id: string | null
+          part_id: string | null
+          part_name: string
+          quantity: number
+          source_nesting_project_id: string
+          source_nesting_sheet_id: string | null
+          source_nesting_placement: Json | null
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          machine_id: string
+          machine_item_id: string
+          product_id?: string | null
+          part_id?: string | null
+          part_name: string
+          quantity: number
+          source_nesting_project_id: string
+          source_nesting_sheet_id?: string | null
+          source_nesting_placement?: Json | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          machine_id?: string
+          machine_item_id?: string
+          product_id?: string | null
+          part_id?: string | null
+          part_name?: string
+          quantity?: number
+          source_nesting_project_id?: string
+          source_nesting_sheet_id?: string | null
+          source_nesting_placement?: Json | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
         }
       }
       machine_expenses: {
@@ -1664,6 +1720,12 @@ export type Database = {
           source_reservation_id: string | null
           source_machine_id: string | null
           source_piece_length_mm: number | null
+          business_scrap_state: 'available' | 'future'
+          available_from_date: string | null
+          available_from_stage_id: string | null
+          source_nesting_project_id: string | null
+          source_nesting_sheet_id: string | null
+          source_remnant_geom: Json | null
           deleted_at: string | null
           deleted_by: string | null
           delete_comment: string | null
@@ -1688,6 +1750,12 @@ export type Database = {
           source_reservation_id?: string | null
           source_machine_id?: string | null
           source_piece_length_mm?: number | null
+          business_scrap_state?: 'available' | 'future'
+          available_from_date?: string | null
+          available_from_stage_id?: string | null
+          source_nesting_project_id?: string | null
+          source_nesting_sheet_id?: string | null
+          source_remnant_geom?: Json | null
           deleted_at?: string | null
           deleted_by?: string | null
           delete_comment?: string | null
@@ -1712,6 +1780,12 @@ export type Database = {
           source_reservation_id?: string | null
           source_machine_id?: string | null
           source_piece_length_mm?: number | null
+          business_scrap_state?: 'available' | 'future'
+          available_from_date?: string | null
+          available_from_stage_id?: string | null
+          source_nesting_project_id?: string | null
+          source_nesting_sheet_id?: string | null
+          source_remnant_geom?: Json | null
           deleted_at?: string | null
           deleted_by?: string | null
           delete_comment?: string | null

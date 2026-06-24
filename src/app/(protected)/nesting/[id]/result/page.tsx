@@ -1,5 +1,6 @@
 import { notFound, redirect } from 'next/navigation'
 import { NestingResultClient } from '@/components/features/nesting/NestingResultClient'
+import { getFutureFillContext } from '@/lib/actions/nesting-future-fill'
 import { getProject, getResult } from '@/lib/nesting/api'
 import type { NestingResult } from '@/lib/nesting/api'
 
@@ -32,5 +33,7 @@ export default async function NestingResultPage({
     notFound()
   }
 
-  return <NestingResultClient project={project} result={result} />
+  const futureFillContext = await getFutureFillContext(id)
+
+  return <NestingResultClient project={project} result={result} futureFillContext={futureFillContext.data || null} />
 }
