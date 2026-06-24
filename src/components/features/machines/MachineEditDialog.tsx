@@ -1081,7 +1081,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
               </div>
             </div>
 
-            <div className="sticky bottom-0 z-30 -mx-4 flex w-auto justify-end gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+            <div className="sticky bottom-0 z-30 flex w-full justify-end gap-3 border-t border-slate-200 bg-white/95 py-3 backdrop-blur">
               <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting} className="min-h-10">
                 Отмена
               </Button>
