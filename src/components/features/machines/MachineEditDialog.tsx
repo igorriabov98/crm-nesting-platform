@@ -447,7 +447,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="!w-[calc(100vw-1rem)] !max-w-6xl !p-0 max-h-[92vh] overflow-y-auto border-slate-200 bg-slate-50 text-slate-900">
+      <DialogContent className="!block !w-[calc(100vw-1rem)] !max-w-6xl !p-0 max-h-[92vh] overflow-y-auto border-slate-200 bg-slate-50 text-slate-900">
         <DialogHeader className="sticky top-0 z-30 border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
           <DialogTitle className="text-xl text-slate-950">Редактирование {machine.name}</DialogTitle>
           <DialogDescription className="text-slate-500">
