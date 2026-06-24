@@ -2,6 +2,7 @@ import { Database } from './database'
 import type { UserDepartmentMembershipSummary } from './departments'
 
 export * from './departments'
+export * from './consumables'
 
 export type CompanySettings = Database['public']['Tables']['company_settings']['Row']
 export type Factory = Database['public']['Tables']['factories']['Row']

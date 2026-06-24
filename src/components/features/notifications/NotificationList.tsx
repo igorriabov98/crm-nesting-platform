@@ -23,6 +23,7 @@ type NotificationItem = {
   created_at: string
   is_read: boolean
   related_machine_id: string | null
+  consumable_request_id: string | null
 }
 
 export function NotificationList({ initialData }: { initialData: NotificationItem[] }) {
@@ -76,14 +77,21 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
     }
   }
 
-  const handleRead = async (id: string, machineId: string | null) => {
+  const handleRead = async (notification: NotificationItem, navigate = true) => {
+    const id = notification.id
     setReadingId(id)
     try {
       await markAsRead(id)
       setData((prev) => prev.map((item) => item.id === id ? { ...item, is_read: true } : item))
 
-      if (machineId) {
-        router.push(`${ROUTES.SALES_PLAN}/${machineId}`)
+      if (navigate && notification.related_machine_id) {
+        router.push(`${ROUTES.SALES_PLAN}/${notification.related_machine_id}`)
+      } else if (navigate && notification.consumable_request_id) {
+        const supplyTypes = ['consumable_request_new', 'consumable_request_shortage']
+        const route = supplyTypes.includes(notification.type)
+          ? ROUTES.SUPPLY_CONSUMABLE_REQUESTS
+          : ROUTES.PRODUCTION_CONSUMABLE_REQUESTS
+        router.push(`${route}?request=${notification.consumable_request_id}`)
       }
     } catch {
       toast.error('Произошла ошибка')
@@ -216,17 +224,17 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
                             {notification.message}
                           </p>
 
-                          {(notification.related_machine_id || !notification.is_read) && (
+                          {(notification.related_machine_id || notification.consumable_request_id || !notification.is_read) && (
                             <div className="mt-4 flex items-center gap-3">
-                              {notification.related_machine_id && (
+                              {(notification.related_machine_id || notification.consumable_request_id) && (
                                 <LoadingButton
                                   size="sm"
                                   variant="secondary"
                                   loading={readingId === notification.id}
                                   className="bg-[#F8F9FA] text-[#2563EB] hover:bg-[#E8ECF0]"
-                                  onClick={() => handleRead(notification.id, notification.related_machine_id)}
+                                  onClick={() => handleRead(notification)}
                                 >
-                                  Перейти к машине
+                                  {notification.related_machine_id ? 'Перейти к машине' : 'Открыть заявку'}
                                 </LoadingButton>
                               )}
                               {!notification.is_read && (
@@ -235,7 +243,7 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
                                   variant="ghost"
                                   loading={readingId === notification.id}
                                   className="text-[#6B7280] hover:text-[#1B3A6B]"
-                                  onClick={() => handleRead(notification.id, null)}
+                                  onClick={() => handleRead(notification, false)}
                                 >
                                   Прочитано
                                 </LoadingButton>

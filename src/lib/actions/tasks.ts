@@ -982,6 +982,17 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       }
     }
 
+    if (
+      status === 'completed'
+      && (taskRow.task_type === 'consumable_request_review' || taskRow.task_type === 'consumable_request_shortage')
+    ) {
+      throw new Error(
+        taskRow.task_type === 'consumable_request_review'
+          ? 'Эта задача завершится автоматически после статуса заявки «Взят счёт».'
+          : 'Эта задача завершится автоматически после полного получения или закрытия недопоставленного остатка.'
+      )
+    }
+
     let completedEngineeringVersion: ProductProjectVersion | null = null
     if (status === 'completed' && taskRow.task_type === 'product_project_engineering') {
       if (!taskRow.product_project_id || !taskRow.product_project) {

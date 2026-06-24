@@ -79,7 +79,14 @@ export default async function CompanySettingsRoute() {
     return <AccessDenied />
   }
 
-  const settings = await getCompanySettings().catch((error) => ({ error }))
+  const [settings, departmentsResult] = await Promise.all([
+    getCompanySettings().catch((error) => ({ error })),
+    supabase
+      .from('departments')
+      .select('id, name')
+      .eq('is_active', true)
+      .order('name'),
+  ])
   if ('error' in settings) {
     return <CompanySettingsUnavailable error={settings.error} />
   }
@@ -96,6 +103,7 @@ export default async function CompanySettingsRoute() {
         signature: signatureImageUrl,
         stamp: stampImageUrl,
       }}
+      departments={(departmentsResult.data || []) as Array<{ id: string; name: string }>}
     />
   )
 }

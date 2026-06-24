@@ -15,6 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Input } from '@/components/ui/input'
 import { LoadingButton } from '@/components/ui/loading-button'
 import { Textarea } from '@/components/ui/textarea'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 type ImageType = 'signature' | 'stamp'
 
@@ -24,6 +25,7 @@ type CompanySettingsPageProps = {
     signature: string | null
     stamp: string | null
   }
+  departments: Array<{ id: string; name: string }>
 }
 
 function defaultValues(settings: CompanySettings): UpdateCompanySettingsData {
@@ -44,6 +46,7 @@ function defaultValues(settings: CompanySettings): UpdateCompanySettingsData {
     intermediary_bank_swift: settings.intermediary_bank_swift || '',
     signature_image_path: settings.signature_image_path,
     stamp_image_path: settings.stamp_image_path,
+    supply_consumables_department_id: settings.supply_consumables_department_id,
   }
 }
 
@@ -54,7 +57,7 @@ function isPngOrJpg(file: File) {
     || /\.(png|jpe?g)$/.test(name)
 }
 
-export function CompanySettingsPage({ settings, imageUrls }: CompanySettingsPageProps) {
+export function CompanySettingsPage({ settings, imageUrls, departments }: CompanySettingsPageProps) {
   const router = useRouter()
   const signatureInputRef = useRef<HTMLInputElement>(null)
   const stampInputRef = useRef<HTMLInputElement>(null)
@@ -160,6 +163,41 @@ export function CompanySettingsPage({ settings, imageUrls }: CompanySettingsPage
                 <TextField form={form} name="director_name_ua" label="Директор UA" />
                 <TextField form={form} name="enterprise_code" label="Код підприємства" />
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white">
+            <CardHeader>
+              <CardTitle className="text-lg text-[#1B3A6B]">Заявки на расходники</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <FormField
+                control={form.control}
+                name="supply_consumables_department_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Отдел снабжения по расходникам</FormLabel>
+                    <Select value={field.value || ''} onValueChange={(value) => field.onChange(value || null)}>
+                      <FormControl>
+                        <SelectTrigger className="max-w-xl">
+                          <SelectValue placeholder="Выберите существующий отдел" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {departments.map((department) => (
+                          <SelectItem key={department.id} value={department.id}>
+                            {department.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-[#6B7280]">
+                      Задачи по новым заявкам и недопоставкам назначаются текущему руководителю этого отдела.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </CardContent>
           </Card>
 

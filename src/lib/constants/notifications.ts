@@ -72,6 +72,36 @@ export const NOTIFICATION_TYPES = {
     bg: 'bg-purple-500/10',
     label: 'Инвойс создан'
   },
+  consumable_request_new: {
+    icon: Package,
+    color: 'text-blue-600',
+    bg: 'bg-blue-50',
+    label: 'Новая заявка на расходники'
+  },
+  consumable_request_invoice_taken: {
+    icon: Receipt,
+    color: 'text-violet-600',
+    bg: 'bg-violet-50',
+    label: 'Счёт взят'
+  },
+  consumable_request_delivery: {
+    icon: Truck,
+    color: 'text-amber-700',
+    bg: 'bg-amber-50',
+    label: 'Доставка расходника'
+  },
+  consumable_request_shortage: {
+    icon: AlertTriangle,
+    color: 'text-red-600',
+    bg: 'bg-red-50',
+    label: 'Недопоставка расходника'
+  },
+  consumable_request_partial_receipt: {
+    icon: Package,
+    color: 'text-cyan-700',
+    bg: 'bg-cyan-50',
+    label: 'Частичное получение'
+  },
 } as const
 
 // Default fallback icon

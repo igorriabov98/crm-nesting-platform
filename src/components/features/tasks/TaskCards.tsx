@@ -64,6 +64,8 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   transport_cost: 'Транспорт',
   product_project_engineering: 'Проект изделия',
   product_project_sales_review: 'Согласование изделия',
+  consumable_request_review: 'Заявка на расходники',
+  consumable_request_shortage: 'Недопоставка расходника',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {
@@ -543,6 +545,13 @@ export function TaskCards({
     }
 
     if (context === 'outgoing' && pendingDelegation) return null
+
+    if (
+      nextStatus === 'completed'
+      && (task.task_type === 'consumable_request_review' || task.task_type === 'consumable_request_shortage')
+    ) {
+      return null
+    }
 
     if (!nextStatus || !actionLabel) return null
 

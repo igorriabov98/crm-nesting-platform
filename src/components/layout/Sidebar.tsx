@@ -49,6 +49,7 @@ interface NavItem {
   href: string
   label: string
   icon: React.ElementType
+  exact?: boolean
 }
 
 const iconMap: Record<SidebarIconKey, React.ElementType> = {
@@ -62,6 +63,8 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   finance: Landmark,
   tasks: ListChecks,
   production: FactoryIcon,
+  consumableRequests: ClipboardList,
+  consumables: Warehouse,
   orders: ShoppingCart,
   inventory: Warehouse,
   suppliers: Truck,
@@ -81,6 +84,7 @@ function toNavItem(resource: PermissionResource): NavItem | null {
     href: resource.defaultHref,
     label: resource.key === 'admin_settings' ? 'Все настройки' : resource.label,
     icon: iconMap[resource.sidebar.icon],
+    exact: resource.key === 'production',
   }
 }
 
@@ -97,6 +101,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isSalesMenuOpen, setIsSalesMenuOpen] = useState(false)
   const [isFinanceMenuOpen, setIsFinanceMenuOpen] = useState(false)
+  const [isProductionMenuOpen, setIsProductionMenuOpen] = useState(false)
   const [isSupplyMenuOpen, setIsSupplyMenuOpen] = useState(false)
   const [isMeetingsMenuOpen, setIsMeetingsMenuOpen] = useState(false)
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false)
@@ -110,6 +115,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const salesItems = sectionItems(user, permissions, 'sales')
   const financeItems = sectionItems(user, permissions, 'finance')
   const workflowItems = sectionItems(user, permissions, 'workflow')
+  const productionItems = sectionItems(user, permissions, 'production')
   const supplyItems = sectionItems(user, permissions, 'supply')
   const meetingItems = sectionItems(user, permissions, 'meetings')
   const toolsItems = sectionItems(user, permissions, 'tools')
@@ -120,13 +126,15 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   }
 
   function isActiveItem(item: NavItem) {
-    return pathname === item.href || pathname.startsWith(item.href + '/')
+    return pathname === item.href || (!item.exact && pathname.startsWith(item.href + '/'))
   }
 
   const isSalesActive = salesItems.some(isActiveItem)
   const isSalesExpanded = !collapsed && (isSalesMenuOpen || isSalesActive)
   const isFinanceActive = financeItems.some(isActiveItem)
   const isFinanceExpanded = !collapsed && (isFinanceMenuOpen || isFinanceActive)
+  const isProductionActive = productionItems.some(isActiveItem)
+  const isProductionExpanded = !collapsed && (isProductionMenuOpen || isProductionActive)
   const isSupplyActive = supplyItems.some(isActiveItem)
   const isSupplyExpanded = !collapsed && (isSupplyMenuOpen || isSupplyActive)
   const isMeetingsActive = meetingItems.some(isActiveItem)
@@ -278,6 +286,16 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
         })}
 
         {workflowItems.map((item) => renderNavItem(item))}
+
+        {renderMenu({
+          items: productionItems,
+          label: 'Производство',
+          collapsedTitle: 'Производство',
+          isActive: isProductionActive,
+          isExpanded: isProductionExpanded,
+          toggle: () => setIsProductionMenuOpen((current) => !current),
+          icon: FactoryIcon,
+        })}
 
         {renderMenu({
           items: supplyItems,

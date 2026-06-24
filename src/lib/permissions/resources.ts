@@ -16,7 +16,10 @@ export type ResourceKey =
   | 'supply_finance'
   | 'tasks'
   | 'production'
+  | 'consumable_requests'
+  | 'consumables'
   | 'supply'
+  | 'supply_consumable_requests'
   | 'supply_orders'
   | 'inventory'
   | 'suppliers'
@@ -34,7 +37,7 @@ export type ResourceKey =
   | 'company_settings'
   | 'access_settings'
 
-export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'supply' | 'meetings' | 'tools' | 'settings'
+export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'production' | 'supply' | 'meetings' | 'tools' | 'settings'
 
 export type SidebarIconKey =
   | 'dashboard'
@@ -47,6 +50,8 @@ export type SidebarIconKey =
   | 'finance'
   | 'tasks'
   | 'production'
+  | 'consumableRequests'
+  | 'consumables'
   | 'orders'
   | 'inventory'
   | 'suppliers'
@@ -121,6 +126,8 @@ const REQUEST_VIEW_ROLES = ['engineer', 'technologist', 'supply_manager', ...DIR
 const REQUEST_MANAGE_ROLES = ['technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
 const SUPPLY_MANAGE_ROLES = ['engineer', 'technologist', 'supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
 const NESTING_ROLES = ['technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
+const PRODUCTION_CONSUMABLE_ROLES = ['production_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
+const SUPPLY_CONSUMABLE_ROLES = ['supply_manager', 'procurement_head', ...DIRECTORS] as const satisfies readonly UserRole[]
 
 export const PERMISSION_RESOURCES = [
   {
@@ -243,8 +250,8 @@ export const PERMISSION_RESOURCES = [
   },
   {
     key: 'production',
-    label: 'Производство',
-    group: 'Работа',
+    label: 'План производства',
+    group: 'Производство',
     defaultHref: ROUTES.PRODUCTION,
     defaultViewRoles: ALL,
     defaultManageRoles: ['production_manager', 'sales_manager', ...DIRECTORS],
@@ -252,7 +259,27 @@ export const PERMISSION_RESOURCES = [
       { path: ROUTES.GANTT, match: 'prefix', operation: 'view', priority: 80 },
       { path: ROUTES.PRODUCTION, match: 'prefix', operation: 'view' },
     ],
-    sidebar: { section: 'workflow', icon: 'production', order: 20 },
+    sidebar: { section: 'production', icon: 'production', order: 10 },
+  },
+  {
+    key: 'consumable_requests',
+    label: 'Заявки на расходники',
+    group: 'Производство',
+    defaultHref: ROUTES.PRODUCTION_CONSUMABLE_REQUESTS,
+    defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
+    defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
+    routes: [{ path: ROUTES.PRODUCTION_CONSUMABLE_REQUESTS, match: 'prefix', operation: 'view', priority: 90 }],
+    sidebar: { section: 'production', icon: 'consumableRequests', order: 20 },
+  },
+  {
+    key: 'consumables',
+    label: 'Расходники',
+    group: 'Производство',
+    defaultHref: ROUTES.PRODUCTION_CONSUMABLES,
+    defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
+    defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
+    routes: [{ path: ROUTES.PRODUCTION_CONSUMABLES, match: 'prefix', operation: 'view', priority: 90 }],
+    sidebar: { section: 'production', icon: 'consumables', order: 30 },
   },
   {
     key: 'supply',
@@ -276,6 +303,16 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: SUPPLY_AND_DIRECTORS,
     routes: [{ path: ROUTES.SUPPLY_ORDERS, match: 'prefix', operation: 'view' }],
     sidebar: { section: 'supply', icon: 'orders', order: 10 },
+  },
+  {
+    key: 'supply_consumable_requests',
+    label: 'Заявки производства',
+    group: 'Снабжение',
+    defaultHref: ROUTES.SUPPLY_CONSUMABLE_REQUESTS,
+    defaultViewRoles: SUPPLY_CONSUMABLE_ROLES,
+    defaultManageRoles: SUPPLY_CONSUMABLE_ROLES,
+    routes: [{ path: ROUTES.SUPPLY_CONSUMABLE_REQUESTS, match: 'prefix', operation: 'view', priority: 90 }],
+    sidebar: { section: 'supply', icon: 'consumableRequests', order: 5 },
   },
   {
     key: 'inventory',

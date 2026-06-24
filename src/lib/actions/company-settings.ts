@@ -110,6 +110,7 @@ export async function updateCompanySettings(data: UpdateCompanySettingsData): Pr
       delivery_basis_ua: normalizeText(parsed.delivery_basis_ua) || 'Базис постачання: DAP',
       intermediary_bank_name: normalizeText(parsed.intermediary_bank_name),
       intermediary_bank_swift: normalizeText(parsed.intermediary_bank_swift),
+      supply_consumables_department_id: parsed.supply_consumables_department_id || null,
       updated_at: new Date().toISOString(),
     }
 

@@ -200,6 +200,7 @@ export const companySettingsSchema = z.object({
   intermediary_bank_swift: z.string().optional().default(''),
   signature_image_path: z.string().optional().nullable(),
   stamp_image_path: z.string().optional().nullable(),
+  supply_consumables_department_id: z.string().uuid().optional().nullable(),
 })
 
 export const promoteProductVersionSchema = z.object({

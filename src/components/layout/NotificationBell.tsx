@@ -27,6 +27,7 @@ interface HeaderNotification {
   created_at: string
   is_read: boolean
   related_machine_id: string | null
+  consumable_request_id: string | null
   machine?: {
     name?: string | null
   } | null
@@ -143,21 +144,26 @@ export function NotificationBell({ userId }: NotificationBellProps) {
     }
   }, [fetchCount, openAndMarkVisible, userId, open])
 
-  const handleNotificationClick = async (id: string, machineId: string | null) => {
-    const href = machineId ? `${ROUTES.SALES_PLAN}/${machineId}` : ROUTES.NOTIFICATIONS
+  const handleNotificationClick = async (notification: HeaderNotification) => {
+    const isSupplyConsumableNotification = notification.type === 'consumable_request_new' || notification.type === 'consumable_request_shortage'
+    const href = notification.related_machine_id
+      ? `${ROUTES.SALES_PLAN}/${notification.related_machine_id}`
+      : notification.consumable_request_id
+        ? `${isSupplyConsumableNotification ? ROUTES.SUPPLY_CONSUMABLE_REQUESTS : ROUTES.PRODUCTION_CONSUMABLE_REQUESTS}?request=${notification.consumable_request_id}`
+        : ROUTES.NOTIFICATIONS
     if (pathname !== href) start()
 
     setOpen(false)
 
-    if (!viewedIds.has(id)) {
+    if (!viewedIds.has(notification.id)) {
       setViewedIds((current) => {
         const next = new Set(current)
-        next.add(id)
+        next.add(notification.id)
         return next
       })
-      setNotifications((current) => current.map((item) => item.id === id ? { ...item, is_read: true } : item))
+      setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, is_read: true } : item))
       setCount((current) => Math.max(0, current - 1))
-      await markAsRead(id)
+      await markAsRead(notification.id)
     }
 
     router.push(href)
@@ -211,7 +217,7 @@ export function NotificationBell({ userId }: NotificationBellProps) {
                 return (
                   <button
                     key={notif.id}
-                    onClick={() => handleNotificationClick(notif.id, notif.related_machine_id)}
+                    onClick={() => handleNotificationClick(notif)}
                     className={`w-full text-left p-4 hover:bg-[#F8F9FA]/50 transition-colors flex items-start gap-4 ${!notif.is_read ? 'bg-[#2563EB]/5' : ''}`}
                   >
                     <div className={`mt-0.5 p-2 rounded-full flex-shrink-0 ${config.bg} ${config.color}`}>

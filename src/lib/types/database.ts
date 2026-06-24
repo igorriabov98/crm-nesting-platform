@@ -113,6 +113,7 @@ export type Database = {
           intermediary_bank_swift: string
           signature_image_path: string | null
           stamp_image_path: string | null
+          supply_consumables_department_id: string | null
           created_at: string
           updated_at: string
         }
@@ -134,6 +135,7 @@ export type Database = {
           intermediary_bank_swift?: string
           signature_image_path?: string | null
           stamp_image_path?: string | null
+          supply_consumables_department_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -155,6 +157,7 @@ export type Database = {
           intermediary_bank_swift?: string
           signature_image_path?: string | null
           stamp_image_path?: string | null
+          supply_consumables_department_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1467,6 +1470,7 @@ export type Database = {
           title: string
           message: string
           related_machine_id: string | null
+          consumable_request_id: string | null
           is_read: boolean
           telegram_notified_at: string | null
           telegram_error: string | null
@@ -1479,6 +1483,7 @@ export type Database = {
           title: string
           message: string
           related_machine_id?: string | null
+          consumable_request_id?: string | null
           is_read?: boolean
           telegram_notified_at?: string | null
           telegram_error?: string | null
@@ -1491,9 +1496,303 @@ export type Database = {
           title?: string
           message?: string
           related_machine_id?: string | null
+          consumable_request_id?: string | null
           is_read?: boolean
           telegram_notified_at?: string | null
           telegram_error?: string | null
+          created_at?: string
+        }
+      }
+      consumable_categories: {
+        Row: {
+          id: string
+          factory_id: string
+          name: string
+          description: string | null
+          is_active: boolean
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          factory_id: string
+          name: string
+          description?: string | null
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          factory_id?: string
+          name?: string
+          description?: string | null
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      consumables: {
+        Row: {
+          id: string
+          factory_id: string
+          category_id: string
+          name: string
+          characteristics: string
+          article: string
+          unit: string
+          minimum_quantity: number
+          is_active: boolean
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          factory_id: string
+          category_id: string
+          name: string
+          characteristics: string
+          article: string
+          unit: string
+          minimum_quantity?: number
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          factory_id?: string
+          category_id?: string
+          name?: string
+          characteristics?: string
+          article?: string
+          unit?: string
+          minimum_quantity?: number
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      consumable_balances: {
+        Row: {
+          consumable_id: string
+          factory_id: string
+          current_quantity: number
+          updated_at: string
+        }
+        Insert: {
+          consumable_id: string
+          factory_id: string
+          current_quantity?: number
+          updated_at?: string
+        }
+        Update: {
+          consumable_id?: string
+          factory_id?: string
+          current_quantity?: number
+          updated_at?: string
+        }
+      }
+      consumable_requests: {
+        Row: {
+          id: string
+          factory_id: string
+          consumable_id: string
+          created_by: string
+          priority: Database['public']['Enums']['consumable_request_priority']
+          requested_quantity: number
+          received_quantity: number
+          status: Database['public']['Enums']['consumable_request_status']
+          auto_generated: boolean
+          quantity_is_automatic: boolean
+          request_date: string | null
+          need_by_date: string | null
+          submitted_at: string | null
+          invoice_taken_at: string | null
+          delivery_started_at: string | null
+          completed_at: string | null
+          cancelled_at: string | null
+          cancellation_reason: string | null
+          remainder_closed_reason: string | null
+          delivery_method: Database['public']['Enums']['consumable_delivery_method'] | null
+          nova_poshta_ttn: string | null
+          carrier_name: string | null
+          carrier_eta: string | null
+          tracking_status: string | null
+          tracking_status_code: string | null
+          tracking_estimated_delivery_date: string | null
+          tracking_last_checked_at: string | null
+          tracking_error: string | null
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          factory_id: string
+          consumable_id: string
+          created_by: string
+          priority?: Database['public']['Enums']['consumable_request_priority']
+          requested_quantity: number
+          received_quantity?: number
+          status?: Database['public']['Enums']['consumable_request_status']
+          auto_generated?: boolean
+          quantity_is_automatic?: boolean
+          request_date?: string | null
+          need_by_date?: string | null
+          submitted_at?: string | null
+          invoice_taken_at?: string | null
+          delivery_started_at?: string | null
+          completed_at?: string | null
+          cancelled_at?: string | null
+          cancellation_reason?: string | null
+          remainder_closed_reason?: string | null
+          delivery_method?: Database['public']['Enums']['consumable_delivery_method'] | null
+          nova_poshta_ttn?: string | null
+          carrier_name?: string | null
+          carrier_eta?: string | null
+          tracking_status?: string | null
+          tracking_status_code?: string | null
+          tracking_estimated_delivery_date?: string | null
+          tracking_last_checked_at?: string | null
+          tracking_error?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          factory_id?: string
+          consumable_id?: string
+          created_by?: string
+          priority?: Database['public']['Enums']['consumable_request_priority']
+          requested_quantity?: number
+          received_quantity?: number
+          status?: Database['public']['Enums']['consumable_request_status']
+          auto_generated?: boolean
+          quantity_is_automatic?: boolean
+          request_date?: string | null
+          need_by_date?: string | null
+          submitted_at?: string | null
+          invoice_taken_at?: string | null
+          delivery_started_at?: string | null
+          completed_at?: string | null
+          cancelled_at?: string | null
+          cancellation_reason?: string | null
+          remainder_closed_reason?: string | null
+          delivery_method?: Database['public']['Enums']['consumable_delivery_method'] | null
+          nova_poshta_ttn?: string | null
+          carrier_name?: string | null
+          carrier_eta?: string | null
+          tracking_status?: string | null
+          tracking_status_code?: string | null
+          tracking_estimated_delivery_date?: string | null
+          tracking_last_checked_at?: string | null
+          tracking_error?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      consumable_request_receipts: {
+        Row: {
+          id: string
+          request_id: string
+          quantity: number
+          received_by: string
+          received_at: string
+        }
+        Insert: {
+          id?: string
+          request_id: string
+          quantity: number
+          received_by: string
+          received_at?: string
+        }
+        Update: {
+          id?: string
+          request_id?: string
+          quantity?: number
+          received_by?: string
+          received_at?: string
+        }
+      }
+      consumable_movements: {
+        Row: {
+          id: string
+          consumable_id: string
+          factory_id: string
+          movement_type: Database['public']['Enums']['consumable_movement_type']
+          quantity_delta: number
+          balance_before: number
+          balance_after: number
+          request_id: string | null
+          created_by: string | null
+          comment: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          consumable_id: string
+          factory_id: string
+          movement_type: Database['public']['Enums']['consumable_movement_type']
+          quantity_delta: number
+          balance_before: number
+          balance_after: number
+          request_id?: string | null
+          created_by?: string | null
+          comment?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          consumable_id?: string
+          factory_id?: string
+          movement_type?: Database['public']['Enums']['consumable_movement_type']
+          quantity_delta?: number
+          balance_before?: number
+          balance_after?: number
+          request_id?: string | null
+          created_by?: string | null
+          comment?: string | null
+          created_at?: string
+        }
+      }
+      consumable_request_events: {
+        Row: {
+          id: string
+          request_id: string
+          event_type: string
+          old_status: Database['public']['Enums']['consumable_request_status'] | null
+          new_status: Database['public']['Enums']['consumable_request_status'] | null
+          details: Json
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          request_id: string
+          event_type: string
+          old_status?: Database['public']['Enums']['consumable_request_status'] | null
+          new_status?: Database['public']['Enums']['consumable_request_status'] | null
+          details?: Json
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          request_id?: string
+          event_type?: string
+          old_status?: Database['public']['Enums']['consumable_request_status'] | null
+          new_status?: Database['public']['Enums']['consumable_request_status'] | null
+          details?: Json
+          created_by?: string | null
           created_at?: string
         }
       }
@@ -2034,6 +2333,7 @@ export type Database = {
           machine_id: string | null
           related_meeting_id: string | null
           product_project_id: string | null
+          consumable_request_id: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -2052,6 +2352,7 @@ export type Database = {
           machine_id?: string | null
           related_meeting_id?: string | null
           product_project_id?: string | null
+          consumable_request_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -2070,6 +2371,7 @@ export type Database = {
           machine_id?: string | null
           related_meeting_id?: string | null
           product_project_id?: string | null
+          consumable_request_id?: string | null
           assigned_to?: string
           task_type?: Database['public']['Enums']['task_type']
           title?: string
@@ -2753,6 +3055,25 @@ export type Database = {
       }
     }
     Views: {
+      consumable_stock_overview: {
+        Row: {
+          consumable_id: string
+          factory_id: string
+          category_id: string
+          category_name: string
+          name: string
+          characteristics: string
+          article: string
+          unit: string
+          minimum_quantity: number
+          is_active: boolean
+          current_quantity: number
+          in_work_quantity: number
+          is_below_minimum: boolean
+          shortage_quantity: number
+          updated_at: string | null
+        }
+      }
       machines_with_totals: {
         Row: {
           id: string
@@ -2878,13 +3199,78 @@ export type Database = {
       pipe_subtype: 'square' | 'rectangular' | 'round' | 'wire'
       chain_cord_subtype: 'chain' | 'cord'
       task_delegation_status: 'pending' | 'accepted' | 'declined' | 'cancelled'
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+      consumable_request_priority: 'standard' | 'high'
+      consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'
+      consumable_delivery_method: 'nova_poshta' | 'other'
+      consumable_movement_type: 'initial' | 'manual_receipt' | 'request_receipt' | 'consumption' | 'adjustment'
       request_status: 'draft' | 'pending_stock_check' | 'stock_checked' | 'submitted_to_supply' | 'completed'
       order_item_status: 'pending' | 'ordered' | 'delivered'
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment'
     }
     Functions: {
+      create_consumable_item: {
+        Args: {
+          p_factory_id: string
+          p_category_id: string
+          p_name: string
+          p_characteristics: string
+          p_article: string
+          p_unit: string
+          p_minimum_quantity: number
+          p_initial_quantity: number
+        }
+        Returns: string
+      }
+      record_consumable_stock_operation: {
+        Args: {
+          p_consumable_id: string
+          p_operation: Database['public']['Enums']['consumable_movement_type']
+          p_quantity: number
+          p_comment?: string | null
+          p_new_balance?: number | null
+        }
+        Returns: number
+      }
+      sync_consumable_auto_draft: {
+        Args: { p_consumable_id: string }
+        Returns: undefined
+      }
+      submit_consumable_request: {
+        Args: {
+          p_request_id: string
+          p_priority: Database['public']['Enums']['consumable_request_priority']
+        }
+        Returns: undefined
+      }
+      transition_consumable_request_supply: {
+        Args: {
+          p_request_id: string
+          p_new_status: Database['public']['Enums']['consumable_request_status']
+          p_delivery_method?: Database['public']['Enums']['consumable_delivery_method'] | null
+          p_nova_poshta_ttn?: string | null
+          p_carrier_name?: string | null
+          p_carrier_eta?: string | null
+        }
+        Returns: undefined
+      }
+      update_consumable_other_delivery_eta: {
+        Args: { p_request_id: string; p_carrier_eta: string }
+        Returns: undefined
+      }
+      receive_consumable_request: {
+        Args: { p_request_id: string; p_quantity: number }
+        Returns: undefined
+      }
+      close_consumable_request_remainder: {
+        Args: { p_request_id: string; p_reason: string }
+        Returns: undefined
+      }
+      cancel_consumable_request: {
+        Args: { p_request_id: string; p_reason: string }
+        Returns: undefined
+      }
       accept_task_delegation: {
         Args: {
           p_delegation_id: string

@@ -23,7 +23,8 @@ export async function getNotifications(filters?: {
     .from('notifications')
     .select(`
       *,
-      machine:machines(id, name, factory_id)
+      machine:machines(id, name, factory_id),
+      consumable_request:consumable_requests(id, factory_id)
     `)
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
@@ -40,6 +41,9 @@ export async function getNotifications(filters?: {
 
   const scopedData = (data || []).filter((notification: any) => {
     if (currentUser?.role !== 'production_manager') return true
+    if (notification.consumable_request) {
+      return notification.consumable_request.factory_id === currentUser.factory_id
+    }
     if (!notification.machine) return true
     return notification.machine.factory_id === null || notification.machine.factory_id === currentUser.factory_id
   })
@@ -47,6 +51,10 @@ export async function getNotifications(filters?: {
   if (!filters?.factoryFilter || filters.factoryFilter === 'all') return scopedData
 
   return scopedData.filter((notification: any) => {
+    if (notification.consumable_request) {
+      if (filters.factoryFilter === 'no_factory') return false
+      return notification.consumable_request.factory_id === filters.factoryFilter
+    }
     if (!notification.machine) return true
     if (filters.factoryFilter === 'no_factory') return notification.machine.factory_id === null
     return notification.machine.factory_id === filters.factoryFilter
