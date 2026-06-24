@@ -46,12 +46,14 @@ export function MachineRequestPanel({ machineId, requestData, canManageTechnolog
   ].join(' · ') : null
 
   return (
-    <section className="rounded-xl border border-[#E8ECF0] bg-white p-5">
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-[#1B3A6B]" />
-            <h2 className="text-lg font-semibold text-[#1B3A6B]">Заявка на материалы</h2>
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-800">
+              <FileText className="h-4 w-4" />
+            </span>
+            <h2 className="text-lg font-semibold text-slate-950">Заявка на материалы</h2>
           </div>
           {requestData ? (
             <div className="mt-2 space-y-1 text-sm text-slate-600">
@@ -66,17 +68,17 @@ export function MachineRequestPanel({ machineId, requestData, canManageTechnolog
         {requestData ? (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <RequestStatusBadge status={requestData.request.status} />
-            <Button variant="outline" size="sm" onClick={() => router.push(`${ROUTES.SALES_PLAN}/${machineId}/request`)}>
+            <Button variant="outline" onClick={() => router.push(`${ROUTES.SALES_PLAN}/${machineId}/request`)} className="min-h-11 border-slate-200">
               Открыть заявку
             </Button>
             {canOpenSupplyRequest && (
-              <Button variant="outline" size="sm" onClick={() => router.push(`${ROUTES.SUPPLY_REQUEST}/${requestData.request.id}`)}>
+              <Button variant="outline" onClick={() => router.push(`${ROUTES.SUPPLY_REQUEST}/${requestData.request.id}`)} className="min-h-11 border-blue-200 text-blue-800">
                 Открыть для снабжения
               </Button>
             )}
           </div>
         ) : canCreate ? (
-          <Button type="button" size="sm" onClick={create} disabled={isCreating}>
+          <Button type="button" onClick={create} disabled={isCreating} className="min-h-11 bg-blue-900 text-white hover:bg-blue-800">
             <Plus className="mr-2 h-4 w-4" />
             Создать заявку на материалы
           </Button>

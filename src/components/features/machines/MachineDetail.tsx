@@ -4,13 +4,21 @@ import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, Edit, Trash2 } from 'lucide-react'
+import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, Edit, Factory, MoreHorizontal, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 import { DocumentGenerationButtons } from '@/components/features/documents/DocumentGenerationButtons'
 import { ItemsTab } from './tabs/ItemsTab'
@@ -38,6 +46,7 @@ import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requ
 import type { MachineItemNestingState } from '@/lib/actions/machine-item-nesting'
 import { ROUTES } from '@/lib/constants/routes'
 import { updateMachineConfirmation } from '@/app/(protected)/sales-plan/actions'
+import { cn } from '@/lib/utils'
 
 interface MachineDetailProps {
   machine: MachineDetails
@@ -138,10 +147,10 @@ export function MachineDetail({
   }
 
   return (
-    <div className="w-full space-y-6">
+    <div className="w-full space-y-5">
       <Button
         variant="ghost"
-        className="text-[#6B7280] hover:text-[#1B3A6B] hover:bg-[#F8F9FA] -ml-2 px-2"
+        className="-ml-2 min-h-10 px-2 text-slate-500 hover:bg-white hover:text-blue-950"
         onClick={() => router.push(ROUTES.SALES_PLAN)}
       >
         <ArrowLeft className="mr-2 h-4 w-4" />
@@ -149,7 +158,7 @@ export function MachineDetail({
       </Button>
 
       {!machine.is_confirmed && (
-        <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600" />
             <div>
@@ -161,7 +170,7 @@ export function MachineDetail({
             <Button
               onClick={handleConfirmationToggle}
               disabled={isConfirming}
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
+              className="min-h-11 bg-emerald-600 px-4 text-white hover:bg-emerald-700"
             >
               <CheckCircle2 className="mr-2 h-4 w-4" />
               Подтвердить
@@ -171,7 +180,7 @@ export function MachineDetail({
       )}
 
       {isArchived && (
-        <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-4 text-slate-700">
+        <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-700 shadow-sm">
           <div className="flex items-center gap-2 font-semibold">
             <Archive className="h-5 w-5" />
             Машина архивирована
@@ -182,15 +191,33 @@ export function MachineDetail({
         </div>
       )}
 
-      {/* Верхняя часть (Шапка карточки) */}
-      <div className="bg-white border border-[#E8ECF0] rounded-xl p-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
-          <h1 className="text-3xl font-bold text-[#1B3A6B] tracking-tight break-words max-w-3xl">
-            {machine.name}
-          </h1>
-          
-          <div className="flex flex-wrap items-center gap-2 mt-4 md:mt-0">
-            <DocumentReadinessIndicator missingFields={documentMissingFields} />
+      <div className="overflow-hidden rounded-2xl border border-blue-900/10 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
+        <div className="relative overflow-hidden bg-gradient-to-br from-blue-950 via-blue-900 to-blue-800 px-5 py-6 text-white sm:px-6">
+          <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full border border-white/10 bg-white/5" />
+          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-200">Карточка машины</div>
+              <h1 className="mt-2 max-w-3xl break-words text-3xl font-bold tracking-tight sm:text-4xl">
+                {machine.name}
+              </h1>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <MachineStatusBadge status={machine.status} className="border-white/20 bg-white/10 text-white" />
+                {machine.is_confirmed ? (
+                  <Badge variant="outline" className="border-emerald-300/40 bg-emerald-400/15 text-emerald-100">
+                    <CheckCircle2 className="mr-1 h-3 w-3" />
+                    Подтверждена
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-amber-300/40 bg-amber-300/15 text-amber-100">
+                    <AlertTriangle className="mr-1 h-3 w-3" />
+                    Предварительная
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 lg:max-w-[560px] lg:justify-end">
+              <DocumentReadinessIndicator missingFields={documentMissingFields} />
             <DocumentGenerationButtons
               machineId={machine.id}
               clientId={machine.client_id}
@@ -198,140 +225,118 @@ export function MachineDetail({
               specificationNumber={machine.specification_number}
               specificationDate={machine.specification_date}
             />
-            {canEditConfirmation && machine.is_confirmed && (
+            {!machine.factory_id && isDirector && (
               <Button
-                variant="outline"
-                className="border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                onClick={handleConfirmationToggle}
-                disabled={isConfirming}
+                className="min-h-10 bg-white text-blue-950 hover:bg-blue-50"
+                onClick={() => setIsAssignOpen(true)}
               >
-                <AlertTriangle className="mr-2 h-4 w-4" />
-                Снять подтверждение
+                <Factory className="mr-2 h-4 w-4" />
+                Назначить завод
               </Button>
             )}
             {canEdit && (
               <Button
-                variant="outline"
-                className="bg-white border-[#E8ECF0] text-[#374151] hover:bg-[#F8F9FA] hover:text-[#1B3A6B]"
+                className="min-h-10 bg-blue-600 text-white hover:bg-blue-500"
                 onClick={() => setIsEditOpen(true)}
               >
-                <Edit className="w-4 h-4 mr-2" />
+                <Edit className="mr-2 h-4 w-4" />
                 Редактировать
               </Button>
             )}
-            
-            {canDelete && (
-              <Button
-                variant="outline"
-                className="border-[#1B3A6B]/30 text-[#1B3A6B] hover:bg-blue-50"
-                onClick={() => setIsArchiveOpen(true)}
-                disabled={isArchived}
-              >
-                <Archive className="w-4 h-4 mr-2" />
-                Архивировать
-              </Button>
-            )}
-
-            {canDelete && (
-              <Button
-                variant="destructive"
-                className="bg-red-600/10 text-[#DC2626] hover:bg-red-600/20 border border-red-500/20 hover:border-red-500/30"
-                onClick={() => setIsDeleteOpen(true)}
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Удалить
-              </Button>
-            )}
-            {!machine.factory_id && isDirector && (
-              <Button
-                variant="outline"
-                className="border-[#DC2626]/30 text-[#DC2626] hover:bg-red-50"
-                onClick={() => setIsAssignOpen(true)}
-              >
-                Назначить завод
-              </Button>
-            )}
+              {(canEditConfirmation || canDelete) && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    aria-label="Дополнительные действия"
+                    className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/20 bg-white/10 text-white transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  >
+                    <MoreHorizontal className="h-5 w-5" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-60 border-slate-200 bg-white">
+                    <DropdownMenuLabel className="text-xs uppercase tracking-wide text-slate-400">Дополнительно</DropdownMenuLabel>
+                    {canEditConfirmation && machine.is_confirmed && (
+                      <DropdownMenuItem onClick={handleConfirmationToggle} disabled={isConfirming} className="cursor-pointer text-amber-700">
+                        <AlertTriangle className="mr-2 h-4 w-4" />
+                        Снять подтверждение
+                      </DropdownMenuItem>
+                    )}
+                    {canDelete && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => setIsArchiveOpen(true)} disabled={isArchived} className="cursor-pointer">
+                          <Archive className="mr-2 h-4 w-4" />
+                          Архивировать
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setIsDeleteOpen(true)} className="cursor-pointer text-red-600">
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Удалить
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-x-8 gap-y-4 text-sm text-[#374151]">
-          <div className="flex flex-col">
-            <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Статус</span>
-            <div className="mt-0.5">
-              <MachineStatusBadge status={machine.status} />
-            </div>
-          </div>
-
-          <div className="flex flex-col">
-            <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Клиент</span>
-            <span className="font-medium text-base text-[#1B3A6B]">
+        <div className="grid grid-cols-2 gap-px bg-slate-100 sm:grid-cols-3 xl:grid-cols-6">
+          <div className="bg-white p-4 sm:p-5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Клиент</span>
+            <span className="mt-1 block font-semibold text-slate-900">
               {machine.client?.name || 'Не указан'}
             </span>
           </div>
 
-          <div className="flex flex-col">
-            <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Месяц производства</span>
-            <span className={`font-medium text-base ${productionMonth ? 'text-[#1B3A6B]' : 'text-[#9CA3AF]'}`}>
+          <div className="bg-white p-4 sm:p-5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Месяц производства</span>
+            <span className={cn('mt-1 block font-semibold capitalize', productionMonth ? 'text-slate-900' : 'text-slate-400')}>
               {productionMonth || 'Не указан'}
             </span>
           </div>
 
-          <div className="flex flex-col">
-            <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Завод</span>
+          <div className="bg-white p-4 sm:p-5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Завод и очередь</span>
             {machine.factory?.name ? (
-              <div className="flex flex-col">
-                <span className="font-medium text-base text-[#1B3A6B]">{machine.factory.name}</span>
-                <span className="text-sm text-[#6B7280]">{queueLabel}</span>
+              <div className="mt-1">
+                <span className="block font-semibold text-slate-900">{machine.factory.name}</span>
+                <span className="mt-0.5 block text-xs text-slate-500">{queueLabel}</span>
               </div>
             ) : (
-              <span className="font-medium text-base text-[#DC2626]">Не назначен</span>
+              <span className="mt-1 block font-semibold text-red-700">Не назначен</span>
             )}
           </div>
 
-          <div className="flex flex-col">
-            <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Материал</span>
-            <div className="mt-0.5">{
+          <div className="bg-white p-4 sm:p-5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Материал</span>
+            <div className="mt-2">{
               machine.material_type === 'standard' ? <Badge variant="outline" className="bg-slate-100 text-slate-700">Стандарт</Badge> :
               machine.material_type === 'non_standard' ? <Badge variant="outline" className="bg-orange-100 text-orange-700">Нестандарт</Badge> :
-              <span className="text-[#9CA3AF] text-sm font-medium">—</span>
+              <span className="text-sm font-medium text-slate-400">Не определён</span>
             }</div>
           </div>
 
-          <div className="flex flex-col">
-            <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Общий вес</span>
-            <span className="text-[#1B3A6B] font-medium text-base">{Number(machine.total_weight || 0).toFixed(2)} т</span>
-          </div>
-          
-          <div className="flex flex-col">
-            <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Товаров</span>
-            <span className="text-[#1B3A6B] font-medium text-base">{machine.item_count || 0} шт</span>
+          <div className="bg-white p-4 sm:p-5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Вес и товары</span>
+            <span className="mt-1 block font-bold tabular-nums text-slate-900">{Number(machine.total_weight || 0).toFixed(2)} т</span>
+            <span className="mt-0.5 block text-xs text-slate-500">{machine.item_count || 0} позиций</span>
           </div>
 
-          {desiredShipping && (
-            <div className="flex flex-col">
-              <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Желаемая отгрузка</span>
-              <span className={`font-medium text-base ${desiredShipping.tone === 'overdue' ? 'text-[#DC2626]' : desiredShipping.tone === 'soon' ? 'text-[#D97706]' : 'text-[#1B3A6B]'}`}>
-                {desiredShipping.date} ({desiredShipping.tone === 'overdue' ? `⚠ ${desiredShipping.label}` : desiredShipping.label})
+          <div className="bg-white p-4 sm:p-5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Стоимость</span>
+            <span className="mt-1 block text-lg font-bold tabular-nums text-emerald-700">€{Number(machine.total_cost || 0).toLocaleString()}</span>
+            <span className="mt-0.5 block text-xs text-slate-500">
+              {machine.created_by_user?.full_name || 'Неизвестно'} · {createdDate}
+            </span>
+            {desiredShipping && (
+              <span className={cn(
+                'mt-2 block text-xs font-medium',
+                desiredShipping.tone === 'overdue' ? 'text-red-700' : desiredShipping.tone === 'soon' ? 'text-amber-700' : 'text-slate-500'
+              )}>
+                Отгрузка: {desiredShipping.date} · {desiredShipping.label}
               </span>
-            </div>
-          )}
-
-          <div className="flex flex-col">
-            <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Стоимость</span>
-            <span className="text-[#16A34A] font-semibold text-base">€{Number(machine.total_cost || 0).toLocaleString()}</span>
-          </div>
-
-          <div className="hidden md:block w-px bg-[#F8F9FA] mx-2" />
-
-          <div className="flex flex-col">
-            <span className="text-[#9CA3AF] text-xs uppercase font-medium mb-1">Добавлен</span>
-            <div className="text-[#1B3A6B] flex items-center h-full">
-              <span>{machine.created_by_user?.full_name || 'Неизвестно'}</span>
-              <span className="text-[#9CA3AF] mx-2">•</span>
-              <span className="text-[#6B7280]">{createdDate}</span>
+            )}
             </div>
           </div>
-        </div>
       </div>
 
       <MachineStatusProgress status={machine.status} />
@@ -345,50 +350,49 @@ export function MachineDetail({
 
       <MachineTasksPanel tasks={tasks} />
 
-      {/* Tabs Layout */}
-      <Tabs defaultValue="items" className="w-full mt-8">
-        <TabsList className="bg-white border-b border-[#E8ECF0] w-full justify-start rounded-none h-12 p-0 overflow-x-auto">
+      <Tabs defaultValue="items" className="mt-6 w-full">
+        <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
           <TabsTrigger 
             value="items" 
-            className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-blue-500 data-[state=active]:text-[#1B3A6B] rounded-none px-6 text-[#6B7280] h-full text-base font-medium"
+            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
           >
             Товары
           </TabsTrigger>
           <TabsTrigger 
             value="production" 
-            className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-blue-500 data-[state=active]:text-[#1B3A6B] rounded-none px-6 text-[#6B7280] h-full text-base font-medium"
+            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
           >
             Производство
           </TabsTrigger>
           <TabsTrigger 
             value="supply" 
-            className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-blue-500 data-[state=active]:text-[#1B3A6B] rounded-none px-6 text-[#6B7280] h-full text-base font-medium"
+            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
           >
             Снабжение
           </TabsTrigger>
           <TabsTrigger 
             value="expenses" 
-            className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-blue-500 data-[state=active]:text-[#1B3A6B] rounded-none px-6 text-[#6B7280] h-full text-base font-medium"
+            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
           >
             Расходы
           </TabsTrigger>
           <TabsTrigger 
             value="packing" 
-            className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-blue-500 data-[state=active]:text-[#1B3A6B] rounded-none px-6 text-[#6B7280] h-full text-base font-medium"
+            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
           >
             Packing list
           </TabsTrigger>
           {showInvoiceTab && (
             <TabsTrigger 
               value="invoice" 
-              className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-blue-500 data-[state=active]:text-[#1B3A6B] rounded-none px-6 text-[#6B7280] h-full text-base font-medium"
+              className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
             >
               Инвойс
             </TabsTrigger>
           )}
         </TabsList>
 
-        <div className="mt-6">
+        <div className="mt-4">
           <TabsContent value="items" className="outline-none">
             <ItemsTab machine={machine} tasks={tasks} nestingStates={nestingStates} canManageNesting={canManageNesting} />
           </TabsContent>

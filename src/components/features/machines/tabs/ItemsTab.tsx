@@ -59,7 +59,8 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
     const showActions = canEdit || canNest
 
     return (
-      <div className="rounded-md border border-[#E8ECF0] bg-white overflow-hidden">
+      <>
+      <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white md:block">
         <Table>
           <TableHeader className="bg-[#F8F9FA]">
             <TableRow className="border-[#E8ECF0]">
@@ -125,15 +126,80 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
           <span className="font-medium text-[#1B3A6B]">€{totalCost.toLocaleString()}</span>
         </div>
       </div>
+      <div className="grid gap-3 md:hidden">
+        {items.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+            {emptyLabel}
+          </div>
+        ) : items.map((item, idx) => {
+          const itemCost = Number(item.price) * Number(item.quantity)
+          return (
+            <article key={item.id || idx} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Позиция {idx + 1}</div>
+                  <div className="mt-1 break-words font-semibold text-slate-900">{item.product_name}</div>
+                  <div className="mt-1 text-sm text-slate-500">Чертёж: {item.drawing_number}</div>
+                </div>
+                {showActions && (
+                  <div className="flex shrink-0 gap-1">
+                    {canNest && (
+                      <NestingActionButtons
+                        machineId={machine.id}
+                        item={item}
+                        state={nestingStateByItemId.get(item.id)}
+                        disabledReason={getNestingDisabledReason(machine, item, nestingStateByItemId.get(item.id), drawingsConfirmed)}
+                      />
+                    )}
+                    {canEdit && (
+                      <Button variant="outline" size="icon-lg" onClick={() => setIsEditOpen(true)} aria-label="Редактировать позицию">
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-400">Вес единицы</div>
+                  <div className="mt-1 font-semibold tabular-nums text-slate-800">{Number(item.weight).toFixed(2)} кг</div>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-400">Количество</div>
+                  <div className="mt-1 font-semibold tabular-nums text-slate-800">{item.quantity} шт</div>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-400">Цена единицы</div>
+                  <div className="mt-1 font-semibold tabular-nums text-slate-800">€{Number(item.price).toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg bg-emerald-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-emerald-600">Стоимость</div>
+                  <div className="mt-1 font-bold tabular-nums text-emerald-700">€{itemCost.toLocaleString()}</div>
+                </div>
+              </div>
+              <div className="mt-3">{getCoatingBadge(item.coating, item.ral_number)}</div>
+            </article>
+          )
+        })}
+        <div className="flex flex-wrap justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+          <span>{items.length} поз.</span>
+          <span>{(totalWeight / 1000).toFixed(2)} т</span>
+          <span className="font-semibold text-blue-950">€{totalCost.toLocaleString()}</span>
+        </div>
+      </div>
+      </>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-[#1B3A6B]">Товары машины</h2>
+    <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">Товары машины</h2>
+          <p className="mt-1 text-sm text-slate-500">Продукция и образцы, входящие в состав машины</p>
+        </div>
         {canEdit && (
-          <Button onClick={() => setIsEditOpen(true)} className="bg-[#1B3A6B] hover:bg-[#152D54] text-white">
+          <Button onClick={() => setIsEditOpen(true)} className="min-h-11 bg-blue-900 text-white hover:bg-blue-800">
             <Plus className="w-4 h-4 mr-2" />
             Добавить / Редактировать
           </Button>
@@ -150,7 +216,7 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
         {renderTable(samples, 'Нет добавленных образцов')}
       </section>
 
-      <div className="bg-[#F8F9FA] p-4 rounded-lg flex flex-wrap gap-6 items-center justify-between border border-[#E8ECF0]">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
         <div className="text-sm text-[#374151]">
           <span className="text-[#6B7280]">Всего позиций:</span> <span className="font-medium">{goods.length + samples.length}</span>
         </div>

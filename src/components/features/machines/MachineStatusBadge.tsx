@@ -57,16 +57,54 @@ export function MachineStatusProgress({ status }: { status: MachineStatus }) {
   if (currentIndex < 0) return null
 
   return (
-    <div className="rounded-xl border border-[#E8ECF0] bg-white p-4">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-[#1B3A6B]">Прогресс статуса</div>
-          <div className="text-xs text-[#6B7280]">Автоматическая цепочка движения машины</div>
+          <div className="text-sm font-semibold text-slate-950">Прогресс машины</div>
+          <div className="mt-0.5 text-xs text-slate-500">Текущий этап коммерческого и производственного цикла</div>
         </div>
         <MachineStatusBadge status={status} />
       </div>
-      <div className="overflow-x-auto pb-1">
-        <div className="flex min-w-[760px] items-start">
+
+      <div className="mt-5 space-y-0 sm:hidden">
+        {MACHINE_STATUS_ORDER.map((item, index) => {
+          const done = index < currentIndex
+          const active = index === currentIndex
+          return (
+            <div key={item} className="grid grid-cols-[36px_1fr] gap-3">
+              <div className="flex flex-col items-center">
+                <div
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-semibold',
+                    done && 'border-emerald-500 bg-emerald-500 text-white',
+                    active && 'border-blue-800 bg-blue-800 text-white ring-4 ring-blue-100',
+                    !done && !active && 'border-slate-300 bg-white text-slate-400'
+                  )}
+                >
+                  {index + 1}
+                </div>
+                {index < MACHINE_STATUS_ORDER.length - 1 && (
+                  <div className={cn('min-h-7 w-0.5 flex-1', index < currentIndex ? 'bg-emerald-500' : 'bg-slate-200')} />
+                )}
+              </div>
+              <div className="pb-5 pt-1">
+                <div className={cn(
+                  'text-sm',
+                  done && 'font-medium text-emerald-700',
+                  active && 'font-semibold text-blue-950',
+                  !done && !active && 'text-slate-400'
+                )}>
+                  {MACHINE_STATUS_LABELS[item]}
+                </div>
+                {active && <div className="mt-1 text-xs text-slate-500">Текущий статус машины</div>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="hidden overflow-x-auto pb-1 sm:block">
+        <div className="flex min-w-[760px] items-start px-1">
           {MACHINE_STATUS_ORDER.map((item, index) => {
             const done = index < currentIndex
             const active = index === currentIndex
@@ -75,10 +113,10 @@ export function MachineStatusProgress({ status }: { status: MachineStatus }) {
                 <div className="flex min-w-0 flex-1 flex-col items-center gap-2 text-center">
                   <div
                     className={cn(
-                      'flex h-7 w-7 items-center justify-center rounded-full border-2 text-xs font-semibold',
+                      'flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-semibold',
                       done && 'border-emerald-500 bg-emerald-500 text-white',
-                      active && 'border-[#1B3A6B] bg-[#1B3A6B] text-white',
-                      !done && !active && 'border-[#CBD5E1] bg-white text-[#9CA3AF]'
+                      active && 'border-blue-800 bg-blue-800 text-white ring-4 ring-blue-100',
+                      !done && !active && 'border-slate-300 bg-white text-slate-400'
                     )}
                   >
                     {index + 1}
@@ -87,8 +125,8 @@ export function MachineStatusProgress({ status }: { status: MachineStatus }) {
                     className={cn(
                       'max-w-[110px] text-xs leading-tight',
                       done && 'text-emerald-700',
-                      active && 'font-semibold text-[#1B3A6B]',
-                      !done && !active && 'text-[#9CA3AF]'
+                      active && 'font-semibold text-blue-950',
+                      !done && !active && 'text-slate-400'
                     )}
                   >
                     {MACHINE_STATUS_LABELS[item]}
@@ -97,8 +135,8 @@ export function MachineStatusProgress({ status }: { status: MachineStatus }) {
                 {index < MACHINE_STATUS_ORDER.length - 1 && (
                   <div
                     className={cn(
-                      'mt-3 h-0.5 flex-1',
-                      index < currentIndex ? 'bg-emerald-500' : 'bg-[#E8ECF0]'
+                      'mt-4 h-0.5 flex-1',
+                      index < currentIndex ? 'bg-emerald-500' : 'bg-slate-200'
                     )}
                   />
                 )}

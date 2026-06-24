@@ -146,7 +146,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
                 desiredShipping.tone === 'soon' && "text-[#D97706]",
                 desiredShipping.tone === 'normal' && "text-[#6B7280]"
               )}>
-                {desiredShipping.tone === 'overdue' ? `⚠ ${desiredShipping.label}` : desiredShipping.label}
+                  {desiredShipping.label}
               </div>
             )}
           </div>

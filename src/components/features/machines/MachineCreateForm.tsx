@@ -273,18 +273,18 @@ export function MachineCreateForm({
   }
 
   return (
-    <Card className="max-w-4xl bg-white border-[#E8ECF0] mx-auto">
-      <CardHeader>
-        <CardTitle className="text-[#1B3A6B] text-xl">Создание машины</CardTitle>
-        <CardDescription className="text-[#6B7280]">
-          Машина состоит из товаров и формирует производственные этапы автоматически. 
+    <Card className="mx-auto max-w-7xl overflow-hidden border-slate-200 bg-transparent shadow-none">
+      <CardHeader className="border-b border-slate-200 bg-white px-4 py-5 sm:px-6">
+        <CardTitle className="text-xl text-slate-950">Создание машины</CardTitle>
+        <CardDescription className="max-w-3xl text-slate-500">
+          Заполните коммерческие и производственные данные. Товары автоматически сформируют последующие этапы работы.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="bg-slate-50/70 p-3 sm:p-5">
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-            
-            <div className="grid gap-4 md:grid-cols-2 max-w-2xl">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+            <div className="min-w-0 space-y-5">
+            <div className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-2 sm:p-5">
               <FormField
                 control={form.control}
                 name="client_id"
@@ -304,7 +304,7 @@ export function MachineCreateForm({
                       }}
                     >
                       <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
+                        <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
                           <SelectValue placeholder="Выберите компанию">
                             {() => selectedClient?.name || 'Выберите компанию'}
                           </SelectValue>
@@ -335,7 +335,7 @@ export function MachineCreateForm({
                   <FormItem>
                     <FormLabel className="text-[#374151]">Название машины *</FormLabel>
                     <FormControl>
-                      <Input placeholder="Например: ТН-1400" {...field} className="bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]" />
+                      <Input placeholder="Например: ТН-1400" {...field} className="h-11 border-slate-200 bg-slate-50 text-base text-slate-900 sm:text-sm" />
                     </FormControl>
                     <FormMessage className="text-[#DC2626]" />
                   </FormItem>
@@ -350,7 +350,7 @@ export function MachineCreateForm({
                     <FormLabel className="text-[#374151]">Месяц производства *</FormLabel>
                     <Select value={field.value || ''} onValueChange={field.onChange}>
                       <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
+                        <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
                           <SelectValue placeholder="Выберите месяц">
                             {() => productionMonthOptions.find((option) => option.value === field.value)?.label || 'Выберите месяц'}
                           </SelectValue>
@@ -377,7 +377,7 @@ export function MachineCreateForm({
                     <FormLabel className="text-[#374151]">Завод *</FormLabel>
                     <Select value={field.value || ''} onValueChange={field.onChange}>
                       <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
+                        <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
                           <SelectValue placeholder="Выберите завод">
                             {() => factories.find((factory) => factory.id === field.value)?.name || 'Выберите завод'}
                           </SelectValue>
@@ -408,7 +408,7 @@ export function MachineCreateForm({
                       disabled={!selectedFactoryId}
                     >
                       <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
+                        <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
                           <SelectValue placeholder={selectedFactoryId ? 'Выберите цех' : 'Сначала выберите завод'}>
                             {() => workshopOptions.find((option) => option.value === field.value)?.label || (selectedFactoryId ? 'Выберите цех' : 'Сначала выберите завод')}
                           </SelectValue>
@@ -431,7 +431,7 @@ export function MachineCreateForm({
                 control={form.control}
                 name="is_confirmed"
                 render={({ field }) => (
-                  <FormItem className="flex h-full flex-row items-center justify-between rounded-md border border-[#E8ECF0] bg-[#F8F9FA] px-3 py-2">
+                  <FormItem className="flex min-h-16 flex-row items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                     <div>
                       <FormLabel className="text-[#374151]">Подтверждена</FormLabel>
                       <p className="text-xs text-[#6B7280]">
@@ -454,7 +454,7 @@ export function MachineCreateForm({
               control={form.control}
               name="desired_shipping_date"
               render={({ field }) => (
-                <FormItem className="max-w-xs">
+                <FormItem className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:max-w-sm">
                   <FormLabel className="text-[#374151]">Желаемая дата отгрузки</FormLabel>
                   <FormControl>
                     <DatePicker
@@ -471,7 +471,7 @@ export function MachineCreateForm({
             />
 
             {/* ТОВАРЫ */}
-            <div className="space-y-4">
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div className="border-b pb-2">
                 <h3 className="text-lg font-semibold text-[#1B3A6B]">Товары</h3>
                 <p className="text-sm text-[#6B7280]">Необязательно. Машину можно создать пустой и заполнить позже.</p>
@@ -481,7 +481,7 @@ export function MachineCreateForm({
                 const totalWeight = toFiniteNumber(watchedItems?.[index]?.weight) * toFiniteNumber(watchedItems?.[index]?.quantity)
                 
                 return (
-                  <Card key={field.id} className="p-4 bg-[#F8F9FA] border-[#E8ECF0] relative">
+                  <Card key={field.id} className="relative border-slate-200 bg-slate-50 p-4 shadow-none">
                     <div className="absolute top-2 right-2">
                       <Button 
                         type="button" 
@@ -642,7 +642,7 @@ export function MachineCreateForm({
             </div>
 
             {/* SAMPLES */}
-            <div className="space-y-4 pt-4 border-t border-[#E8ECF0]">
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div>
                 <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Образцы</h3>
                 <p className="mt-2 text-sm text-[#6B7280]">
@@ -800,7 +800,7 @@ export function MachineCreateForm({
             </div>
 
             {/* РАСХОДЫ */}
-            <div className="space-y-4 pt-4 border-t border-[#E8ECF0]">
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Дополнительные расходы</h3>
               <div className="flex gap-4 items-start rounded-md border border-[#E8ECF0] bg-[#F8F9FA] p-3">
                 <div className="flex-1">
@@ -877,40 +877,53 @@ export function MachineCreateForm({
               </Button>
             </div>
 
-            {/* ИТОГОВАЯ ПАНЕЛЬ */}
-            <div className="bg-[#1B3A6B]/5 p-4 rounded-lg flex flex-wrap gap-8 items-center border border-[#1B3A6B]/10">
-              <div>
-                <p className="text-sm text-gray-500">Общий вес</p>
-                <p className="text-xl font-semibold text-[#1B3A6B]">{totals.totalWeight.toFixed(2)} т</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Стоимость товаров</p>
-                <p className="text-xl font-semibold text-[#1B3A6B]">€{totals.itemsCost.toLocaleString()}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Образцы</p>
-                <p className="text-xl font-semibold text-[#1B3A6B]">€{totals.samplesCost.toLocaleString()}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Доп. расходы</p>
-                <p className="text-xl font-semibold text-[#1B3A6B]">€{totals.expensesCost.toLocaleString()}</p>
-              </div>
-              <div className="ml-auto text-right">
-                <p className="text-sm text-[#16A34A] font-medium">ИТОГО</p>
-                <p className="text-2xl font-bold text-[#16A34A]">€{totals.totalCost.toLocaleString()}</p>
-              </div>
             </div>
+            <aside className="sticky bottom-0 z-20 space-y-3 xl:top-4 xl:bottom-auto">
+              <div className="rounded-2xl border border-blue-900/10 bg-gradient-to-br from-blue-950 to-blue-800 p-5 text-white shadow-[0_18px_50px_rgba(30,64,175,0.22)]">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-200">Итоги машины</div>
+                <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-1">
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="text-xs text-blue-200">Общий вес</div>
+                    <div className="mt-1 text-lg font-semibold tabular-nums">{totals.totalWeight.toFixed(2)} т</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="text-xs text-blue-200">Товары</div>
+                    <div className="mt-1 text-lg font-semibold tabular-nums">€{totals.itemsCost.toLocaleString()}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="text-xs text-blue-200">Образцы</div>
+                    <div className="mt-1 text-lg font-semibold tabular-nums">€{totals.samplesCost.toLocaleString()}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="text-xs text-blue-200">Доп. расходы</div>
+                    <div className="mt-1 text-lg font-semibold tabular-nums">€{totals.expensesCost.toLocaleString()}</div>
+                  </div>
+                </div>
+                <div className="mt-4 border-t border-white/15 pt-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-emerald-200">Итого</div>
+                  <div className="mt-1 text-3xl font-bold tabular-nums text-emerald-300">€{totals.totalCost.toLocaleString()}</div>
+                </div>
+              </div>
 
-            <div className="flex w-full justify-end gap-4 pt-6">
-              <Link href={ROUTES.SALES_PLAN}>
-                <Button type="button" variant="outline" disabled={isSubmitting}>
+              <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-lg xl:grid-cols-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  render={<Link href={ROUTES.SALES_PLAN} />}
+                  disabled={isSubmitting}
+                  className="min-h-11 border-slate-200"
+                >
                   Отмена
                 </Button>
-              </Link>
-              <LoadingButton type="submit" loading={isSubmitting} className="bg-[#1B3A6B] hover:bg-[#152D54] text-white">
-                Создать машину
-              </LoadingButton>
-            </div>
+                <LoadingButton
+                  type="submit"
+                  loading={isSubmitting}
+                  className="min-h-11 bg-blue-900 text-white hover:bg-blue-800"
+                >
+                  Создать машину
+                </LoadingButton>
+              </div>
+            </aside>
           </form>
         </Form>
       </CardContent>

@@ -37,9 +37,9 @@ export default async function SalesPlanPage({
 
   if (error) {
     return (
-      <div className="space-y-4">
-        <h1 className="text-2xl font-bold text-[#1B3A6B]">План продаж</h1>
-        <p className="text-[#DC2626]">Ошибка загрузки данных: {error}</p>
+      <div className="rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
+        <h1 className="text-2xl font-bold text-slate-950">План продаж</h1>
+        <p className="mt-2 text-red-700">Ошибка загрузки данных: {error}</p>
       </div>
     )
   }
@@ -53,10 +53,17 @@ export default async function SalesPlanPage({
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-[#1B3A6B]">План продаж</h1>
-        <p className="mt-1 text-sm text-[#6B7280]">Здесь отображаются все машины в системе</p>
+    <div className="space-y-5">
+      <div className="relative overflow-hidden rounded-2xl border border-blue-900/10 bg-gradient-to-br from-blue-950 via-blue-900 to-blue-800 px-5 py-6 text-white shadow-[0_20px_60px_rgba(30,64,175,0.18)] sm:px-6">
+        <div className="absolute -right-12 -top-16 h-48 w-48 rounded-full border border-white/10 bg-white/5" />
+        <div className="absolute -bottom-20 right-24 h-44 w-44 rounded-full border border-white/10" />
+        <div className="relative">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-200">Sales operations</div>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">План продаж</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">
+            Единый рабочий список машин: коммерческий контекст, производство, снабжение и финансовое состояние.
+          </p>
+        </div>
       </div>
 
       <MachineTable
@@ -65,6 +72,7 @@ export default async function SalesPlanPage({
         canViewInvoice={INVOICE_VISIBLE_ROLES.includes(user.role)}
         isDirector={['financial_director', 'commercial_director', 'planning_director'].includes(user.role)}
         factories={factoriesData || []}
+        factoryFilter={factoryFilter}
         resultLimit={SALES_PLAN_MACHINE_LIMIT}
         productionMonthFilter={productionMonthFilter}
         productionMonthOptions={productionMonthOptions}

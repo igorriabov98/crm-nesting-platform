@@ -447,18 +447,18 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-5xl bg-white border-[#E8ECF0] text-[#1B3A6B] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Редактирование {machine.name}</DialogTitle>
-          <DialogDescription className="text-[#6B7280]">
+      <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto border-slate-200 bg-slate-50 p-0 text-slate-900">
+        <DialogHeader className="sticky top-0 z-30 border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
+          <DialogTitle className="text-xl text-slate-950">Редактирование {machine.name}</DialogTitle>
+          <DialogDescription className="text-slate-500">
             Внесите изменения в товары и дополнительные расходы машины.
           </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 pt-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 px-4 pb-4 sm:px-6 sm:pb-6">
             
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3 sm:p-5">
               <FormField
                 control={form.control}
                 name="name"
@@ -481,8 +481,12 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                     <FormLabel className="text-[#374151]">Месяц производства</FormLabel>
                     <Select value={field.value || 'none'} onValueChange={(value) => field.onChange(value === 'none' ? null : value)}>
                       <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-                          <SelectValue placeholder="Без месяца" />
+                        <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
+                          <SelectValue placeholder="Без месяца">
+                            {() => field.value
+                              ? visibleProductionMonthOptions.find((option) => option.value === field.value)?.label || 'Без месяца'
+                              : 'Без месяца'}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -507,8 +511,10 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                     <FormLabel className="text-[#374151]">Завод</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value || "none"}>
                       <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-                          <SelectValue placeholder="Без завода" />
+                        <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
+                          <SelectValue placeholder="Без завода">
+                            {() => factories.find((factory) => factory.id === field.value)?.name || 'Без завода'}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -535,8 +541,11 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                       disabled={!selectedFactoryId || selectedFactoryId === 'none'}
                     >
                       <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-                          <SelectValue placeholder={selectedFactoryId && selectedFactoryId !== 'none' ? 'Выберите цех' : 'Сначала выберите завод'} />
+                        <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
+                          <SelectValue placeholder={selectedFactoryId && selectedFactoryId !== 'none' ? 'Выберите цех' : 'Сначала выберите завод'}>
+                            {() => workshopOptions.find((option) => option.value === field.value)?.label
+                              || (selectedFactoryId && selectedFactoryId !== 'none' ? 'Выберите цех' : 'Сначала выберите завод')}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -592,8 +601,14 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                     <FormLabel className="text-[#374151]">Тип материала</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value || 'undefined'}>
                       <FormControl>
-                        <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
-                          <SelectValue placeholder="Выберите материал" />
+                        <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
+                          <SelectValue placeholder="Выберите материал">
+                            {() => field.value === 'standard'
+                              ? 'Стандартный (чёрный металл)'
+                              : field.value === 'non_standard'
+                                ? 'Нестандартный (нержавейка)'
+                                : 'Не определён'}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -608,8 +623,8 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
               />
             </div>
 
-            <div className="space-y-4 rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-4">
-              <h3 className="text-lg font-semibold text-[#1B3A6B]">Данные спецификации</h3>
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+              <h3 className="text-lg font-semibold text-slate-950">Данные спецификации</h3>
               <div className="grid gap-4 md:grid-cols-2">
                 <FormField
                   control={form.control}
@@ -682,7 +697,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
             />
 
             {/* ТОВАРЫ */}
-            <div className="space-y-4">
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Товары</h3>
               {itemFields.map((field, index) => {
                 const coatingValue = watchedItems?.[index]?.coating || 'none'
@@ -832,7 +847,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
             </div>
 
             {/* SAMPLES */}
-            <div className="space-y-4 pt-4 border-t border-[#E8ECF0]">
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div>
                 <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Образцы</h3>
                 <p className="mt-2 text-sm text-[#6B7280]">Образцы учитываются в общем весе, стоимости и требованиях к покрытию.</p>
@@ -969,7 +984,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
             </div>
 
             {/* РАСХОДЫ */}
-            <div className="space-y-4 pt-4 border-t border-[#E8ECF0]">
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Дополнительные расходы</h3>
               <div className="flex gap-4 items-start rounded-md border border-[#E8ECF0] bg-[#F8F9FA] p-3">
                 <div className="flex-1">
@@ -1041,36 +1056,36 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
             </div>
 
             {/* ИТОГОВАЯ ПАНЕЛЬ */}
-            <div className="bg-[#F8F9FA] p-4 rounded-lg flex flex-wrap gap-6 items-center justify-between border border-[#E8ECF0]">
+            <div className="flex flex-wrap items-center justify-between gap-6 rounded-2xl border border-blue-900/10 bg-gradient-to-br from-blue-950 to-blue-800 p-4 text-white shadow-lg">
               <div className="flex gap-6">
                 <div>
-                  <p className="text-xs text-gray-500">Общий вес</p>
-                  <p className="text-lg font-semibold text-[#1B3A6B]">{totals.totalWeight.toFixed(2)} т</p>
+                  <p className="text-xs text-blue-200">Общий вес</p>
+                  <p className="text-lg font-semibold">{totals.totalWeight.toFixed(2)} т</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Товары</p>
-                  <p className="text-lg font-semibold text-[#1B3A6B]">€{totals.itemsCost.toLocaleString()}</p>
+                  <p className="text-xs text-blue-200">Товары</p>
+                  <p className="text-lg font-semibold">€{totals.itemsCost.toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Образцы</p>
-                  <p className="text-lg font-semibold text-[#1B3A6B]">€{totals.samplesCost.toLocaleString()}</p>
+                  <p className="text-xs text-blue-200">Образцы</p>
+                  <p className="text-lg font-semibold">€{totals.samplesCost.toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Расходы</p>
-                  <p className="text-lg font-semibold text-[#1B3A6B]">€{totals.expensesCost.toLocaleString()}</p>
+                  <p className="text-xs text-blue-200">Расходы</p>
+                  <p className="text-lg font-semibold">€{totals.expensesCost.toLocaleString()}</p>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-sm text-[#16A34A] font-medium">ИТОГО</p>
-                <p className="text-2xl font-bold text-[#16A34A]">€{totals.totalCost.toLocaleString()}</p>
+                <p className="text-sm font-medium text-emerald-200">ИТОГО</p>
+                <p className="text-2xl font-bold text-emerald-300">€{totals.totalCost.toLocaleString()}</p>
               </div>
             </div>
 
-            <div className="flex w-full sm:justify-end gap-3 pt-4 border-t border-[#E8ECF0]">
-              <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+            <div className="sticky bottom-0 z-30 -mx-4 flex w-auto justify-end gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+              <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting} className="min-h-10">
                 Отмена
               </Button>
-              <Button type="submit" disabled={isSubmitting} className="bg-[#1B3A6B] hover:bg-[#152D54] text-white">
+              <Button type="submit" disabled={isSubmitting} className="min-h-10 bg-blue-900 text-white hover:bg-blue-800">
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Сохранить изменения
               </Button>
