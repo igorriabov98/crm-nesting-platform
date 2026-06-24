@@ -26,6 +26,10 @@ type NotificationItem = {
   consumable_request_id: string | null
 }
 
+function isConsumableNotification(type: string) {
+  return type.startsWith('consumable_request_')
+}
+
 export function NotificationList({ initialData }: { initialData: NotificationItem[] }) {
   const router = useRouter()
   const { user } = useUser()
@@ -197,16 +201,17 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
                   {items.map((notification) => {
                     const config = NOTIFICATION_TYPES[notification.type as NotificationType] || DEFAULT_NOTIFICATION_ICON
                     const Icon = config.icon
+                    const isConsumable = isConsumableNotification(notification.type)
 
                     return (
                       <div
                         key={notification.id}
                         className={cn(
                           'flex items-start gap-4 p-4 transition-colors hover:bg-[#FAFBFC] sm:p-5',
-                          !notification.is_read ? 'bg-white' : 'bg-white/40'
+                          !notification.is_read ? (isConsumable ? 'bg-amber-50/40' : 'bg-white') : 'bg-white/40'
                         )}
                       >
-                        <div className={cn('mt-1 flex-shrink-0 rounded-xl p-3', config.bg, config.color)}>
+                        <div className={cn('mt-1 flex-shrink-0 rounded-xl p-3', isConsumable ? 'bg-slate-950 text-amber-300' : cn(config.bg, config.color))}>
                           <Icon className="h-5 w-5" />
                         </div>
 
@@ -223,6 +228,11 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
                           <p className={cn('text-sm', notification.is_read ? 'text-[#9CA3AF]' : 'text-[#374151]')}>
                             {notification.message}
                           </p>
+                          {isConsumable && (
+                            <span className="mt-3 inline-flex rounded-full border border-amber-300 bg-slate-950 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-300">
+                              Расходники
+                            </span>
+                          )}
 
                           {(notification.related_machine_id || notification.consumable_request_id || !notification.is_read) && (
                             <div className="mt-4 flex items-center gap-3">
@@ -231,7 +241,10 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
                                   size="sm"
                                   variant="secondary"
                                   loading={readingId === notification.id}
-                                  className="bg-[#F8F9FA] text-[#2563EB] hover:bg-[#E8ECF0]"
+                                  className={cn(
+                                    'bg-[#F8F9FA] text-[#2563EB] hover:bg-[#E8ECF0]',
+                                    isConsumable && 'bg-slate-950 text-amber-300 hover:bg-slate-800'
+                                  )}
                                   onClick={() => handleRead(notification)}
                                 >
                                   {notification.related_machine_id ? 'Перейти к машине' : 'Открыть заявку'}

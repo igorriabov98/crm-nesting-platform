@@ -199,6 +199,16 @@ function getTaskTarget(task: TaskWithRelations) {
   return null
 }
 
+function isConsumableTask(taskType: TaskType) {
+  return taskType === 'consumable_request_review' || taskType === 'consumable_request_shortage'
+}
+
+function getTaskTypeBadgeClass(taskType: TaskType) {
+  return isConsumableTask(taskType)
+    ? 'border-amber-300 bg-slate-950 text-amber-300 shadow-sm'
+    : 'border-slate-200 bg-slate-50 text-slate-700'
+}
+
 function getStatusIcon(status: TaskStatus, overdue: boolean) {
   if (status === 'completed') return CheckCircle2
   if (status === 'cancelled') return XCircle
@@ -893,7 +903,7 @@ export function TaskCards({
                     </TableCell>
                     <TableCell className="whitespace-normal px-3 py-3 align-top">
                       <div className="flex flex-col items-start gap-2">
-                        <Badge variant="outline" className="h-6 rounded-full border-slate-200 bg-slate-50 px-2.5 text-slate-700">
+                        <Badge variant="outline" className={cn('h-6 rounded-full px-2.5', getTaskTypeBadgeClass(task.task_type))}>
                           {TASK_TYPE_LABELS[task.task_type]}
                         </Badge>
                         {renderStatusBadge(task, overdue)}
@@ -981,7 +991,7 @@ export function TaskCards({
               <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_180px]">
                 <div className="min-w-0 space-y-3 pl-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline" className="h-6 rounded-full border-slate-200 bg-slate-50 px-2.5 text-slate-700">
+                    <Badge variant="outline" className={cn('h-6 rounded-full px-2.5', getTaskTypeBadgeClass(task.task_type))}>
                       {TASK_TYPE_LABELS[task.task_type]}
                     </Badge>
                     {renderStatusBadge(task, overdue)}

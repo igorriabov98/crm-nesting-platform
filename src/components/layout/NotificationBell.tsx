@@ -33,6 +33,10 @@ interface HeaderNotification {
   } | null
 }
 
+function isConsumableNotification(type: string) {
+  return type.startsWith('consumable_request_')
+}
+
 export function NotificationBell({ userId }: NotificationBellProps) {
   const router = useRouter()
   const pathname = usePathname()
@@ -213,14 +217,15 @@ export function NotificationBell({ userId }: NotificationBellProps) {
               {notifications.map((notif) => {
                 const config = NOTIFICATION_TYPES[notif.type as NotificationType] || DEFAULT_NOTIFICATION_ICON
                 const Icon = config.icon
+                const isConsumable = isConsumableNotification(notif.type)
 
                 return (
                   <button
                     key={notif.id}
                     onClick={() => handleNotificationClick(notif)}
-                    className={`w-full text-left p-4 hover:bg-[#F8F9FA]/50 transition-colors flex items-start gap-4 ${!notif.is_read ? 'bg-[#2563EB]/5' : ''}`}
+                    className={`w-full text-left p-4 hover:bg-[#F8F9FA]/50 transition-colors flex items-start gap-4 ${!notif.is_read ? (isConsumable ? 'bg-amber-50/50' : 'bg-[#2563EB]/5') : ''}`}
                   >
-                    <div className={`mt-0.5 p-2 rounded-full flex-shrink-0 ${config.bg} ${config.color}`}>
+                    <div className={`mt-0.5 p-2 rounded-full flex-shrink-0 ${isConsumable ? 'bg-slate-950 text-amber-300' : `${config.bg} ${config.color}`}`}>
                       <Icon className="w-4 h-4" />
                     </div>
                     <div className="flex-1 space-y-1 overflow-hidden">
@@ -235,6 +240,11 @@ export function NotificationBell({ userId }: NotificationBellProps) {
                       <p className={`text-xs line-clamp-2 ${notif.is_read ? 'text-[#9CA3AF]' : 'text-[#6B7280]'}`}>
                         {notif.message}
                       </p>
+                      {isConsumable && (
+                        <p className="inline-flex rounded-full border border-amber-300 bg-slate-950 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-300">
+                          Расходники
+                        </p>
+                      )}
                       {notif.machine?.name && (
                         <p className="text-[10px] text-[#2563EB]/80 font-medium pt-1">
                           Машина: {notif.machine.name}

@@ -1,7 +1,7 @@
 // Корневой layout приложения
 import { Suspense } from 'react'
 import type { Metadata } from 'next'
-import { Inter, Geist_Mono } from 'next/font/google'
+import { Fira_Code, Fira_Sans, Geist_Mono, Inter } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import { TopProgressBar } from '@/components/features/layout/TopProgressBar'
 import './globals.css'
@@ -17,6 +17,18 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
 })
 
+const firaSans = Fira_Sans({
+  variable: '--font-industrial-sans',
+  subsets: ['latin', 'cyrillic'],
+  weight: ['300', '400', '500', '600', '700'],
+})
+
+const firaCode = Fira_Code({
+  variable: '--font-industrial-mono',
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+})
+
 export const metadata: Metadata = {
   title: 'CRM Завода',
   description: 'Система управления производством металлоконструкций',
@@ -30,7 +42,7 @@ export default function RootLayout({
   validateEnv()
   return (
     <html lang="ru" suppressHydrationWarning>
-      <body className={`${inter.variable} ${geistMono.variable} antialiased`} suppressHydrationWarning>
+      <body className={`${inter.variable} ${geistMono.variable} ${firaSans.variable} ${firaCode.variable} antialiased`} suppressHydrationWarning>
         <Suspense fallback={null}>
           <TopProgressBar />
         </Suspense>

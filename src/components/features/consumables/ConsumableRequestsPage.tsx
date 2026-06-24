@@ -13,7 +13,6 @@ import {
   Truck,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -27,8 +26,16 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  IndustrialMetricCard,
+  IndustrialSearchPicker,
+  IndustrialSelectText,
+  IndustrialStatusBadge,
+  industrial,
+  type IndustrialPickerOption,
+} from '@/components/features/consumables/IndustrialConsumablesUI'
 import {
   cancelConsumableRequest,
   closeConsumableRequestRemainder,
@@ -43,6 +50,7 @@ import {
 } from '@/lib/actions/consumables'
 import { createClient } from '@/lib/supabase/client'
 import { ROUTES } from '@/lib/constants/routes'
+import { cn } from '@/lib/utils'
 import type {
   ConsumablePriority,
   ConsumableRequest,
@@ -71,19 +79,29 @@ const STATUS_LABELS: Record<ConsumableRequestStatus, string> = {
   cancelled: 'Отменено',
 }
 
-const STATUS_STYLES: Record<ConsumableRequestStatus, string> = {
-  draft: 'border-slate-200 bg-slate-50 text-slate-700',
-  new: 'border-blue-200 bg-blue-50 text-blue-700',
-  invoice_taken: 'border-violet-200 bg-violet-50 text-violet-700',
-  delivery: 'border-amber-200 bg-amber-50 text-amber-800',
-  received: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  received_partial: 'border-cyan-200 bg-cyan-50 text-cyan-800',
-  cancelled: 'border-red-200 bg-red-50 text-red-700',
-}
-
 const PRIORITY_LABELS: Record<ConsumablePriority, string> = {
   standard: 'Стандартная',
   high: 'Высокая',
+}
+
+const PRIORITY_FULL_LABELS: Record<ConsumablePriority, string> = {
+  standard: 'Стандартная · срок 7 дней',
+  high: 'Высокая · срок 4 дня',
+}
+
+const DELIVERY_LABELS: Record<'nova_poshta' | 'other', string> = {
+  nova_poshta: 'Новая почта',
+  other: 'Другой перевозчик',
+}
+
+const STATUS_TONES: Record<ConsumableRequestStatus, 'default' | 'warning' | 'success' | 'critical' | 'info' | 'premium'> = {
+  draft: 'default',
+  new: 'info',
+  invoice_taken: 'premium',
+  delivery: 'warning',
+  received: 'success',
+  received_partial: 'success',
+  cancelled: 'critical',
 }
 
 function qty(value: number | string, unit?: string) {
@@ -115,11 +133,34 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
   const [carrierEta, setCarrierEta] = useState('')
   const [receiptRequest, setReceiptRequest] = useState<ConsumableRequest | null>(null)
   const [receiptQuantity, setReceiptQuantity] = useState('')
+  const [cancelRequest, setCancelRequest] = useState<ConsumableRequest | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [remainderRequest, setRemainderRequest] = useState<ConsumableRequest | null>(null)
+  const [remainderReason, setRemainderReason] = useState('')
   const [details, setDetails] = useState<ConsumableRequest | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
 
   const canSupply = ['supply_manager', 'procurement_head', 'financial_director', 'commercial_director', 'planning_director'].includes(role)
   const canProduction = ['production_manager', 'financial_director', 'commercial_director', 'planning_director'].includes(role)
+
+  const factoryOptions = useMemo<IndustrialPickerOption[]>(() => [
+    ...(mode === 'supply' ? [{ value: 'all', label: 'Все заводы', description: 'Берегово и Ужгород' }] : []),
+    ...factories.map((factory) => ({ value: factory.id, label: factory.name, description: 'Завод' })),
+  ], [factories, mode])
+
+  const stockOptions = useMemo<IndustrialPickerOption[]>(() => stock.map((item) => ({
+    value: item.consumable_id,
+    label: item.name || 'Расходник не найден',
+    description: `${item.article} · ${item.category_name}`,
+    badge: `остаток ${qty(item.current_quantity, item.unit)}`,
+    search: `${item.name} ${item.article} ${item.characteristics} ${item.category_name}`,
+  })), [stock])
+
+  const selectedFactoryLabel = factoryOptions.find((option) => option.value === selectedFactoryId)?.label
+    || (selectedFactoryId === 'all' ? 'Все заводы' : 'Завод не найден')
+  const selectedStatusLabel = statusFilter === 'all' ? 'Все статусы' : STATUS_LABELS[statusFilter]
+  const selectedPriorityLabel = PRIORITY_FULL_LABELS[draftPriority]
+  const selectedDeliveryLabel = DELIVERY_LABELS[deliveryMethod]
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -238,6 +279,30 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
     refresh()
   }
 
+  async function saveCancel() {
+    if (!cancelRequest) return
+    const reason = cancelRequest.status === 'new' ? cancelReason.trim() : ''
+    if (cancelRequest.status === 'new' && reason.length < 3) {
+      toast.error('Укажите причину отмены')
+      return
+    }
+    await runAction(() => cancelConsumableRequest(cancelRequest.id, reason), 'Заявка отменена')
+    setCancelRequest(null)
+    setCancelReason('')
+  }
+
+  async function saveCloseRemainder() {
+    if (!remainderRequest) return
+    const reason = remainderReason.trim()
+    if (reason.length < 3) {
+      toast.error('Укажите причину закрытия остатка')
+      return
+    }
+    await runAction(() => closeConsumableRequestRemainder(remainderRequest.id, reason), 'Остаток заявки закрыт')
+    setRemainderRequest(null)
+    setRemainderReason('')
+  }
+
   async function refreshTracking(requestId: string) {
     const supabase = createClient()
     const { error } = await supabase.functions.invoke('consumable-tracking', { body: { requestId } })
@@ -248,14 +313,16 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
   }
 
   return (
-    <div className="space-y-5">
-      <section className="rounded-xl border border-[#E8ECF0] bg-white p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className={industrial.shell}>
+      <section className={industrial.hero}>
+        <div className={industrial.heroGlow} />
+        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[#1B3A6B]">
+            <div className={industrial.eyebrow}>{mode === 'supply' ? 'Supply operations' : 'Production needs'}</div>
+            <h1 className={industrial.title}>
               {mode === 'supply' ? 'Заявки производства' : 'Заявки на расходники'}
             </h1>
-            <p className="mt-1 text-sm text-[#6B7280]">
+            <p className={industrial.description}>
               {mode === 'supply'
                 ? 'Обработка заявок Берегово и Ужгорода, доставка и контроль недопоставок.'
                 : 'Создание заявок, контроль сроков и подтверждение фактического получения.'}
@@ -264,7 +331,9 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
           <div className="flex flex-col gap-2 sm:flex-row">
             {factories.length > 1 && (
               <Select value={selectedFactoryId} onValueChange={switchFactory}>
-                <SelectTrigger className="min-w-48"><SelectValue /></SelectTrigger>
+                <SelectTrigger className={industrial.selectTrigger}>
+                  <IndustrialSelectText>{selectedFactoryLabel}</IndustrialSelectText>
+                </SelectTrigger>
                 <SelectContent>
                   {mode === 'supply' && <SelectItem value="all">Все заводы</SelectItem>}
                   {factories.map((factory) => <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>)}
@@ -272,23 +341,25 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
               </Select>
             )}
             {mode === 'production' && (
-              <Button onClick={openNewDraft} disabled={stock.length === 0}><Plus className="mr-2 h-4 w-4" />Новая заявка</Button>
+              <Button className={industrial.primary} onClick={openNewDraft} disabled={stock.length === 0}><Plus className="mr-2 h-4 w-4" />Новая заявка</Button>
             )}
           </div>
         </div>
       </section>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Metric label="Открытые" value={requests.filter((request) => ['new', 'invoice_taken', 'delivery'].includes(request.status)).length} icon={<Clock3 className="h-5 w-5" />} />
-        <Metric label="В доставке" value={requests.filter((request) => request.status === 'delivery').length} icon={<Truck className="h-5 w-5" />} />
-        <Metric label="Получено" value={requests.filter((request) => ['received', 'received_partial'].includes(request.status)).length} icon={<PackageCheck className="h-5 w-5" />} />
+        <IndustrialMetricCard label="Открытые" value={requests.filter((request) => ['new', 'invoice_taken', 'delivery'].includes(request.status)).length} icon={<Clock3 className="h-5 w-5" />} />
+        <IndustrialMetricCard label="В доставке" value={requests.filter((request) => request.status === 'delivery').length} icon={<Truck className="h-5 w-5" />} tone="warning" />
+        <IndustrialMetricCard label="Получено" value={requests.filter((request) => ['received', 'received_partial'].includes(request.status)).length} icon={<PackageCheck className="h-5 w-5" />} tone="success" />
       </div>
 
-      <Card className="bg-white">
+      <Card className={industrial.panel}>
         <CardContent className="flex flex-col gap-3 p-4 sm:flex-row">
-          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Поиск по названию, артикулу или ТТН" className="sm:max-w-sm" />
+          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Поиск по названию, артикулу или ТТН" className={cn('sm:max-w-sm', industrial.input)} />
           <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as typeof statusFilter)}>
-            <SelectTrigger className="sm:w-52"><SelectValue /></SelectTrigger>
+            <SelectTrigger className={cn('sm:w-52', industrial.selectTrigger)}>
+              <IndustrialSelectText>{selectedStatusLabel}</IndustrialSelectText>
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Все статусы</SelectItem>
               {Object.entries(STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
@@ -298,27 +369,27 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
       </Card>
 
       {filtered.length === 0 ? (
-        <Card className="bg-white"><CardContent className="py-16 text-center text-sm text-[#6B7280]">Заявок по выбранным фильтрам нет.</CardContent></Card>
+        <Card className={industrial.panel}><CardContent className="py-16 text-center text-sm text-slate-500">Заявок по выбранным фильтрам нет.</CardContent></Card>
       ) : (
         <div className="grid gap-3 xl:grid-cols-2">
           {filtered.map((request) => {
             const remaining = Number(request.requested_quantity) - Number(request.received_quantity)
             const progress = Math.round((Number(request.received_quantity) / Number(request.requested_quantity)) * 100)
             return (
-              <Card key={request.id} className="bg-white">
+              <Card key={request.id} className={cn('overflow-hidden', industrial.panel)}>
                 <CardContent className="space-y-4 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
-                      <button type="button" onClick={() => openDetails(request.id)} className="text-left text-base font-semibold text-[#1B3A6B] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]">
-                        {request.consumable?.name || 'Расходник'}
+                      <button type="button" onClick={() => openDetails(request.id)} className="text-left text-base font-semibold text-slate-950 transition hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40">
+                        {request.consumable?.name || 'Расходник не найден'}
                       </button>
-                      <div className="mt-1 text-xs text-[#6B7280]">
-                        {request.factory?.name} · {request.consumable?.article} · {request.consumable?.category?.name}
+                      <div className="mt-1 text-xs text-slate-500">
+                        {request.factory?.name || 'Завод не найден'} · <span className={industrial.mono}>{request.consumable?.article || 'без артикула'}</span> · {request.consumable?.category?.name || 'Категория не найдена'}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Badge className={STATUS_STYLES[request.status]}>{STATUS_LABELS[request.status]}</Badge>
-                      <Badge className={request.priority === 'high' ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-slate-50 text-slate-700'}>{PRIORITY_LABELS[request.priority]}</Badge>
+                      <IndustrialStatusBadge tone={STATUS_TONES[request.status]}>{STATUS_LABELS[request.status]}</IndustrialStatusBadge>
+                      <IndustrialStatusBadge tone={request.priority === 'high' ? 'critical' : 'default'}>{PRIORITY_LABELS[request.priority]}</IndustrialStatusBadge>
                     </div>
                   </div>
 
@@ -330,39 +401,37 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
                   </div>
 
                   {Number(request.received_quantity) > 0 && (
-                    <div className="space-y-1"><div className="flex justify-between text-xs text-[#6B7280]"><span>Получение</span><span>{progress}% · осталось {qty(remaining, request.consumable?.unit)}</span></div><Progress value={progress} /></div>
+                    <div className="space-y-1"><div className="flex justify-between text-xs text-slate-500"><span>Получение</span><span className={industrial.mono}>{progress}% · осталось {qty(remaining, request.consumable?.unit)}</span></div><Progress value={progress} /></div>
                   )}
 
                   {request.status === 'delivery' && (
-                    <div className="rounded-lg border border-amber-100 bg-amber-50/60 p-3 text-sm">
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-sm shadow-inner">
                       {request.delivery_method === 'nova_poshta' ? (
-                        <><div className="font-medium text-amber-900">Новая почта · {request.nova_poshta_ttn}</div><div className="mt-1 text-amber-800">{request.tracking_status || 'Ожидается обновление статуса'}{request.tracking_estimated_delivery_date && ` · ориентировочно ${new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}`}</div>{request.tracking_error && <div className="mt-1 text-red-700">{request.tracking_error}</div>}</>
+                        <><div className="font-semibold text-amber-950">Новая почта · <span className={industrial.mono}>{request.nova_poshta_ttn}</span></div><div className="mt-1 text-amber-800">{request.tracking_status || 'Ожидается обновление статуса'}{request.tracking_estimated_delivery_date && ` · ориентировочно ${new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}`}</div>{request.tracking_error && <div className="mt-1 text-red-700">{request.tracking_error}</div>}</>
                       ) : (
-                        <><div className="font-medium text-amber-900">{request.carrier_name}</div><div className="mt-1 text-amber-800">Ожидается {request.carrier_eta ? new Date(`${request.carrier_eta}T00:00:00`).toLocaleDateString('ru-RU') : '—'}</div></>
+                        <><div className="font-semibold text-amber-950">{request.carrier_name}</div><div className="mt-1 text-amber-800">Ожидается {request.carrier_eta ? new Date(`${request.carrier_eta}T00:00:00`).toLocaleDateString('ru-RU') : '—'}</div></>
                       )}
                     </div>
                   )}
 
-                  <div className="flex flex-wrap gap-2 border-t border-[#E8ECF0] pt-3">
-                    <Button variant="outline" size="sm" onClick={() => openDetails(request.id)} disabled={detailsLoading}><ExternalLink className="mr-1 h-4 w-4" />Подробнее</Button>
+                  <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-3">
+                    <Button className={industrial.action} variant="outline" size="sm" onClick={() => openDetails(request.id)} disabled={detailsLoading}><ExternalLink className="mr-1 h-4 w-4" />Подробнее</Button>
                     {mode === 'production' && request.status === 'draft' && (
-                      <><Button variant="outline" size="sm" onClick={() => openEditDraft(request)}>Изменить</Button><Button size="sm" onClick={() => runAction(() => submitConsumableRequest(request.id, request.priority), 'Заявка отправлена')}><Send className="mr-1 h-4 w-4" />Отправить</Button></>
+                      <><Button className={industrial.action} variant="outline" size="sm" onClick={() => openEditDraft(request)}>Изменить</Button><Button className={industrial.primary} size="sm" onClick={() => runAction(() => submitConsumableRequest(request.id, request.priority), 'Заявка отправлена')}><Send className="mr-1 h-4 w-4" />Отправить</Button></>
                     )}
                     {mode === 'production' && ['draft', 'new'].includes(request.status) && (
-                      <Button variant="outline" size="sm" onClick={() => {
-                        const reason = request.status === 'new' ? window.prompt('Причина отмены заявки') || '' : ''
-                        if (request.status === 'new' && !reason) return
-                        void runAction(() => cancelConsumableRequest(request.id, reason), 'Заявка отменена')
+                      <Button className={industrial.danger} variant="outline" size="sm" onClick={() => {
+                        setCancelRequest(request)
+                        setCancelReason('')
                       }}>Отменить</Button>
                     )}
-                    {canSupply && request.status === 'new' && <Button size="sm" onClick={() => runAction(() => takeConsumableInvoice(request.id), 'Статус обновлен')}>Взять счёт</Button>}
-                    {canSupply && request.status === 'invoice_taken' && <Button size="sm" onClick={() => { setDeliveryRequest(request); setDeliveryMethod('nova_poshta'); setTtn(''); setCarrierName(''); setCarrierEta('') }}><Truck className="mr-1 h-4 w-4" />Доставка</Button>}
-                    {canProduction && request.status === 'delivery' && <Button size="sm" onClick={() => { setReceiptRequest(request); setReceiptQuantity(String(remaining)) }}><PackageOpen className="mr-1 h-4 w-4" />Получить</Button>}
+                    {canSupply && request.status === 'new' && <Button className={industrial.primary} size="sm" onClick={() => runAction(() => takeConsumableInvoice(request.id), 'Статус обновлен')}>Взять счёт</Button>}
+                    {canSupply && request.status === 'invoice_taken' && <Button className={industrial.primary} size="sm" onClick={() => { setDeliveryRequest(request); setDeliveryMethod('nova_poshta'); setTtn(''); setCarrierName(''); setCarrierEta('') }}><Truck className="mr-1 h-4 w-4" />Доставка</Button>}
+                    {canProduction && request.status === 'delivery' && <Button className={industrial.primary} size="sm" onClick={() => { setReceiptRequest(request); setReceiptQuantity(String(remaining)) }}><PackageOpen className="mr-1 h-4 w-4" />Получить</Button>}
                     {canProduction && request.status === 'delivery' && Number(request.received_quantity) > 0 && (
-                      <Button variant="outline" size="sm" onClick={() => {
-                        const reason = window.prompt('Почему оставшееся количество больше не требуется?') || ''
-                        if (reason.trim().length < 3) return
-                        void runAction(() => closeConsumableRequestRemainder(request.id, reason), 'Остаток заявки закрыт')
+                      <Button className={industrial.action} variant="outline" size="sm" onClick={() => {
+                        setRemainderRequest(request)
+                        setRemainderReason('')
                       }}>Закрыть остаток</Button>
                     )}
                   </div>
@@ -374,55 +443,104 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
       )}
 
       <Dialog open={draftOpen} onOpenChange={setDraftOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="border-slate-200 bg-white sm:max-w-lg">
           <DialogHeader><DialogTitle>{editingDraft ? 'Изменить черновик' : 'Новая заявка'}</DialogTitle><DialogDescription>Дата и срок будут зафиксированы автоматически при отправке.</DialogDescription></DialogHeader>
           <div className="space-y-4">
             <Field label="Расходник *">
-              <Select
+              <IndustrialSearchPicker
                 disabled={Boolean(editingDraft)}
                 value={draftConsumableId}
-                onValueChange={(value) => {
-                  if (value) setDraftConsumableId(value)
-                }}
-              >
-                <SelectTrigger><SelectValue placeholder="Выберите расходник" /></SelectTrigger>
-                <SelectContent>{stock.map((item) => <SelectItem key={item.consumable_id} value={item.consumable_id}>{item.name} · остаток {qty(item.current_quantity, item.unit)}</SelectItem>)}</SelectContent>
-              </Select>
+                options={stockOptions}
+                placeholder="Выберите расходник"
+                searchPlaceholder="Поиск по названию, артикулу или категории"
+                emptyText="Расходник не найден"
+                onValueChange={setDraftConsumableId}
+              />
             </Field>
-            <Field label="Количество *"><Input type="number" min="0.001" step="0.001" value={draftQuantity} onChange={(event) => setDraftQuantity(event.target.value)} /></Field>
+            <Field label="Количество *"><Input className={cn(industrial.input, industrial.mono)} type="number" min="0.001" step="0.001" value={draftQuantity} onChange={(event) => setDraftQuantity(event.target.value)} /></Field>
             <Field label="Степень реакции *">
               <Select value={draftPriority} onValueChange={(value) => setDraftPriority(value as ConsumablePriority)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className={industrial.selectTrigger}>
+                  <IndustrialSelectText>{selectedPriorityLabel}</IndustrialSelectText>
+                </SelectTrigger>
                 <SelectContent><SelectItem value="standard">Стандартная · срок 7 дней</SelectItem><SelectItem value="high">Высокая · срок 4 дня</SelectItem></SelectContent>
               </Select>
             </Field>
-            <Field label="Комментарий"><Textarea value={draftNotes} onChange={(event) => setDraftNotes(event.target.value)} /></Field>
+            <Field label="Комментарий"><Textarea className="border-slate-300 bg-white text-slate-950 placeholder:text-slate-400 focus-visible:ring-amber-500/30" value={draftNotes} onChange={(event) => setDraftNotes(event.target.value)} /></Field>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setDraftOpen(false)}>Отмена</Button><Button onClick={saveDraft}>Сохранить черновик</Button></DialogFooter>
+          <DialogFooter><Button className={industrial.action} variant="outline" onClick={() => setDraftOpen(false)}>Отмена</Button><Button className={industrial.primary} onClick={saveDraft}>Сохранить черновик</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={Boolean(deliveryRequest)} onOpenChange={(open) => !open && setDeliveryRequest(null)}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="border-slate-200 bg-white sm:max-w-lg">
           <DialogHeader><DialogTitle>Начать доставку</DialogTitle><DialogDescription>{deliveryRequest?.consumable?.name}</DialogDescription></DialogHeader>
           <div className="space-y-4">
-            <Field label="Способ доставки *"><Select value={deliveryMethod} onValueChange={(value) => setDeliveryMethod(value as typeof deliveryMethod)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="nova_poshta">Новая почта</SelectItem><SelectItem value="other">Другой перевозчик</SelectItem></SelectContent></Select></Field>
-            {deliveryMethod === 'nova_poshta' ? <Field label="ТТН Новой почты *"><Input inputMode="numeric" maxLength={14} value={ttn} onChange={(event) => setTtn(event.target.value.replace(/\D/g, ''))} /></Field> : <><Field label="Перевозчик / способ *"><Input value={carrierName} onChange={(event) => setCarrierName(event.target.value)} /></Field><Field label="Ожидаемая дата *"><Input type="date" value={carrierEta} onChange={(event) => setCarrierEta(event.target.value)} /></Field></>}
+            <Field label="Способ доставки *"><Select value={deliveryMethod} onValueChange={(value) => setDeliveryMethod(value as typeof deliveryMethod)}><SelectTrigger className={industrial.selectTrigger}><IndustrialSelectText>{selectedDeliveryLabel}</IndustrialSelectText></SelectTrigger><SelectContent><SelectItem value="nova_poshta">Новая почта</SelectItem><SelectItem value="other">Другой перевозчик</SelectItem></SelectContent></Select></Field>
+            {deliveryMethod === 'nova_poshta' ? <Field label="ТТН Новой почты *"><Input className={cn(industrial.input, industrial.mono)} inputMode="numeric" maxLength={14} value={ttn} onChange={(event) => setTtn(event.target.value.replace(/\D/g, ''))} /></Field> : <><Field label="Перевозчик / способ *"><Input className={industrial.input} value={carrierName} onChange={(event) => setCarrierName(event.target.value)} /></Field><Field label="Ожидаемая дата *"><Input className={industrial.input} type="date" value={carrierEta} onChange={(event) => setCarrierEta(event.target.value)} /></Field></>}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setDeliveryRequest(null)}>Отмена</Button><Button onClick={saveDelivery}>Сохранить</Button></DialogFooter>
+          <DialogFooter><Button className={industrial.action} variant="outline" onClick={() => setDeliveryRequest(null)}>Отмена</Button><Button className={industrial.primary} onClick={saveDelivery}>Сохранить</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={Boolean(receiptRequest)} onOpenChange={(open) => !open && setReceiptRequest(null)}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="border-slate-200 bg-white sm:max-w-lg">
           <DialogHeader><DialogTitle>Подтвердить получение</DialogTitle><DialogDescription>Остаток увеличится на фактически полученное количество.</DialogDescription></DialogHeader>
-          <Field label={`Получено, ${receiptRequest?.consumable?.unit || ''} *`}><Input type="number" min="0.001" step="0.001" max={receiptRequest ? Number(receiptRequest.requested_quantity) - Number(receiptRequest.received_quantity) : undefined} value={receiptQuantity} onChange={(event) => setReceiptQuantity(event.target.value)} /></Field>
-          <DialogFooter><Button variant="outline" onClick={() => setReceiptRequest(null)}>Отмена</Button><Button onClick={saveReceipt}>Подтвердить</Button></DialogFooter>
+          <Field label={`Получено, ${receiptRequest?.consumable?.unit || ''} *`}><Input className={cn(industrial.input, industrial.mono)} type="number" min="0.001" step="0.001" max={receiptRequest ? Number(receiptRequest.requested_quantity) - Number(receiptRequest.received_quantity) : undefined} value={receiptQuantity} onChange={(event) => setReceiptQuantity(event.target.value)} /></Field>
+          <DialogFooter><Button className={industrial.action} variant="outline" onClick={() => setReceiptRequest(null)}>Отмена</Button><Button className={industrial.primary} onClick={saveReceipt}>Подтвердить</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(cancelRequest)} onOpenChange={(open) => {
+        if (!open) {
+          setCancelRequest(null)
+          setCancelReason('')
+        }
+      }}>
+        <DialogContent className="border-slate-200 bg-white sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Отменить заявку</DialogTitle>
+            <DialogDescription>
+              {cancelRequest?.status === 'new'
+                ? 'Для отправленной заявки укажите причину отмены.'
+                : 'Черновик будет отменен без влияния на остатки.'}
+            </DialogDescription>
+          </DialogHeader>
+          {cancelRequest?.status === 'new' && (
+            <Field label="Причина отмены *">
+              <Textarea className="border-slate-300 bg-white text-slate-950 placeholder:text-slate-400 focus-visible:ring-amber-500/30" value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Например: расходник больше не требуется" />
+            </Field>
+          )}
+          <DialogFooter>
+            <Button className={industrial.action} variant="outline" onClick={() => setCancelRequest(null)}>Назад</Button>
+            <Button className={industrial.danger} variant="outline" onClick={saveCancel} disabled={cancelRequest?.status === 'new' && cancelReason.trim().length < 3}>Отменить заявку</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(remainderRequest)} onOpenChange={(open) => {
+        if (!open) {
+          setRemainderRequest(null)
+          setRemainderReason('')
+        }
+      }}>
+        <DialogContent className="border-slate-200 bg-white sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Закрыть недопоставленный остаток</DialogTitle>
+            <DialogDescription>Заявка будет отображаться как полученная частично. Причина обязательна.</DialogDescription>
+          </DialogHeader>
+          <Field label="Причина закрытия остатка *">
+            <Textarea className="border-slate-300 bg-white text-slate-950 placeholder:text-slate-400 focus-visible:ring-amber-500/30" value={remainderReason} onChange={(event) => setRemainderReason(event.target.value)} placeholder="Например: остаток заменён другой поставкой" />
+          </Field>
+          <DialogFooter>
+            <Button className={industrial.action} variant="outline" onClick={() => setRemainderRequest(null)}>Назад</Button>
+            <Button className={industrial.primary} onClick={saveCloseRemainder} disabled={remainderReason.trim().length < 3}>Закрыть остаток</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={Boolean(details)} onOpenChange={(open) => !open && setDetails(null)}>
-        <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[92dvh] overflow-y-auto border-slate-200 bg-white sm:max-w-2xl">
           {details && <RequestDetails request={details} canSupply={canSupply} onRefreshTracking={async (requestId) => {
             await refreshTracking(requestId)
           }} onUpdateEta={async (date) => {
@@ -443,16 +561,12 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
   )
 }
 
-function Metric({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
-  return <Card className="bg-white"><CardContent className="flex items-center gap-3 p-4"><div className="rounded-lg bg-[#1B3A6B]/10 p-2 text-[#1B3A6B]">{icon}</div><div><div className="text-2xl font-semibold tabular-nums text-[#1B3A6B]">{value}</div><div className="text-xs text-[#6B7280]">{label}</div></div></CardContent></Card>
-}
-
 function Info({ label, value }: { label: string; value: string }) {
-  return <div><div className="text-xs text-[#6B7280]">{label}</div><div className="mt-0.5 font-medium tabular-nums text-[#374151]">{value}</div></div>
+  return <div><div className="text-xs font-medium uppercase tracking-[0.12em] text-slate-500">{label}</div><div className={cn('mt-1 font-medium tabular-nums text-slate-900', industrial.mono)}>{value}</div></div>
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="space-y-2"><Label>{label}</Label>{children}</div>
+  return <div className="space-y-2"><Label className={industrial.label}>{label}</Label>{children}</div>
 }
 
 function RequestDetails({
@@ -470,34 +584,34 @@ function RequestDetails({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{request.consumable?.name}</DialogTitle>
-        <DialogDescription>{request.factory?.name} · {request.consumable?.article} · {request.consumable?.characteristics}</DialogDescription>
+        <DialogTitle className="text-slate-950">{request.consumable?.name || 'Расходник не найден'}</DialogTitle>
+        <DialogDescription>{request.factory?.name || 'Завод не найден'} · {request.consumable?.article || 'без артикула'} · {request.consumable?.characteristics || 'характеристика не указана'}</DialogDescription>
       </DialogHeader>
-      <div className="grid grid-cols-2 gap-3 rounded-lg border border-[#E8ECF0] p-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:grid-cols-4">
         <Info label="Статус" value={STATUS_LABELS[request.status]} />
         <Info label="Приоритет" value={PRIORITY_LABELS[request.priority]} />
         <Info label="Запрошено" value={qty(request.requested_quantity, request.consumable?.unit)} />
         <Info label="Получено" value={qty(request.received_quantity, request.consumable?.unit)} />
       </div>
       {request.status === 'delivery' && request.delivery_method === 'nova_poshta' && (
-        <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <div className="flex items-start justify-between gap-3"><div><div className="font-medium text-amber-950">Новая почта · {request.nova_poshta_ttn}</div><div className="mt-1 text-sm text-amber-900">{request.tracking_status || 'Статус еще не получен'}</div></div><Button variant="outline" size="sm" onClick={() => onRefreshTracking(request.id)}><RefreshCcw className="mr-1 h-4 w-4" />Обновить</Button></div>
+        <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-inner">
+          <div className="flex items-start justify-between gap-3"><div><div className="font-semibold text-amber-950">Новая почта · <span className={industrial.mono}>{request.nova_poshta_ttn}</span></div><div className="mt-1 text-sm text-amber-900">{request.tracking_status || 'Статус еще не получен'}</div></div><Button className={industrial.action} variant="outline" size="sm" onClick={() => onRefreshTracking(request.id)}><RefreshCcw className="mr-1 h-4 w-4" />Обновить</Button></div>
           {request.tracking_estimated_delivery_date && <div className="text-sm text-amber-900">Ориентировочная доставка: {new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}</div>}
           {request.tracking_last_checked_at && <div className="text-xs text-amber-800">Проверено: {new Date(request.tracking_last_checked_at).toLocaleString('ru-RU')}</div>}
           {request.tracking_error && <div className="text-sm text-red-700">{request.tracking_error}</div>}
         </div>
       )}
       {request.status === 'delivery' && request.delivery_method === 'other' && (
-        <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <div className="font-medium text-amber-950">{request.carrier_name}</div>
-          <div className="flex flex-col gap-2 sm:flex-row"><Input type="date" value={eta} onChange={(event) => setEta(event.target.value)} disabled={!canSupply} />{canSupply && <Button variant="outline" onClick={() => onUpdateEta(eta)}>Обновить дату</Button>}</div>
+        <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-inner">
+          <div className="font-semibold text-amber-950">{request.carrier_name}</div>
+          <div className="flex flex-col gap-2 sm:flex-row"><Input className={industrial.input} type="date" value={eta} onChange={(event) => setEta(event.target.value)} disabled={!canSupply} />{canSupply && <Button className={industrial.action} variant="outline" onClick={() => onUpdateEta(eta)}>Обновить дату</Button>}</div>
         </div>
       )}
       {request.receipts && request.receipts.length > 0 && (
-        <div className="space-y-2"><h3 className="font-semibold text-[#1B3A6B]">Получения</h3>{request.receipts.map((receipt) => <div key={receipt.id} className="flex justify-between rounded-lg border border-[#E8ECF0] p-3 text-sm"><span>{new Date(receipt.received_at).toLocaleString('ru-RU')} · {receipt.receiver?.full_name || 'Пользователь'}</span><span className="font-medium">{qty(receipt.quantity, request.consumable?.unit)}</span></div>)}</div>
+        <div className="space-y-2"><h3 className="font-semibold text-slate-950">Получения</h3>{request.receipts.map((receipt) => <div key={receipt.id} className="flex justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm shadow-sm"><span className="text-slate-600">{new Date(receipt.received_at).toLocaleString('ru-RU')} · {receipt.receiver?.full_name || 'Пользователь'}</span><span className={cn('font-semibold text-slate-950', industrial.mono)}>{qty(receipt.quantity, request.consumable?.unit)}</span></div>)}</div>
       )}
       {request.events && request.events.length > 0 && (
-        <div className="space-y-2"><h3 className="font-semibold text-[#1B3A6B]">История заявки</h3>{request.events.slice().sort((a, b) => b.created_at.localeCompare(a.created_at)).map((event) => <div key={event.id} className="rounded-lg border border-[#E8ECF0] p-3 text-sm"><div className="flex items-center justify-between gap-3"><span className="font-medium text-[#374151]">{event.event_type === 'submitted' ? 'Заявка отправлена' : event.event_type === 'status_changed' ? 'Статус изменен' : event.event_type === 'receipt' ? 'Получение' : event.event_type === 'remainder_closed' ? 'Остаток закрыт' : event.event_type === 'carrier_eta_changed' ? 'Дата доставки изменена' : 'Заявка отменена'}</span><span className="text-xs text-[#6B7280]">{new Date(event.created_at).toLocaleString('ru-RU')}</span></div>{event.author?.full_name && <div className="mt-1 text-xs text-[#6B7280]">{event.author.full_name}</div>}</div>)}</div>
+        <div className="space-y-2"><h3 className="font-semibold text-slate-950">История заявки</h3>{request.events.slice().sort((a, b) => b.created_at.localeCompare(a.created_at)).map((event) => <div key={event.id} className="rounded-xl border border-slate-200 bg-white p-3 text-sm shadow-sm"><div className="flex items-center justify-between gap-3"><span className="font-medium text-slate-800">{event.event_type === 'submitted' ? 'Заявка отправлена' : event.event_type === 'status_changed' ? 'Статус изменен' : event.event_type === 'receipt' ? 'Получение' : event.event_type === 'remainder_closed' ? 'Остаток закрыт' : event.event_type === 'carrier_eta_changed' ? 'Дата доставки изменена' : 'Заявка отменена'}</span><span className="text-xs text-slate-500">{new Date(event.created_at).toLocaleString('ru-RU')}</span></div>{event.author?.full_name && <div className="mt-1 text-xs text-slate-500">{event.author.full_name}</div>}</div>)}</div>
       )}
       <DialogFooter showCloseButton />
     </>
