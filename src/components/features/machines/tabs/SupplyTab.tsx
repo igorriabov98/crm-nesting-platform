@@ -8,7 +8,7 @@ import { InlineEdit } from '@/components/features/shared/InlineEdit'
 import { useRole } from '@/lib/hooks/useRole'
 import { differenceInDays, isPast, format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { Trash2, Plus, Loader2 } from 'lucide-react'
+import { Loader2, PackagePlus, Plus, Trash2, Truck } from 'lucide-react'
 import {
   createSupplyItem,
   updateSupplyItem,
@@ -83,27 +83,41 @@ export function SupplyTab({ machine }: SupplyTabProps) {
   }
 
   return (
-    <div className="mt-4 space-y-4">
-      {/* Сводка */}
-      <div className="flex items-center justify-between p-4 bg-white border border-[#E8ECF0] rounded-md">
-        <div className="w-1/2">
-          <p className="text-sm text-[#374151] mb-2">
-            Получено <span className="font-bold text-[#1B3A6B]">{receivedCount}</span> из <span className="font-bold text-[#1B3A6B]">{totalCount}</span> позиций
-          </p>
-          <Progress value={percent} className="h-2 bg-[#F8F9FA]" indicatorClassName="bg-[#1B3A6B]" />
+    <div className="space-y-4">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-100 bg-cyan-50 text-cyan-700">
+            <Truck className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-slate-950">Снабжение</h2>
+            <p className="mt-1 text-sm text-slate-500">Контроль заказа, сроков и подтверждения поставки.</p>
+          </div>
         </div>
         {canCreate && (
-          <Button onClick={handleAdd} disabled={isCreating} className="bg-[#1B3A6B] hover:bg-[#152D54] text-white">
-            {isCreating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
+          <Button onClick={handleAdd} disabled={isCreating} className="min-h-11 bg-blue-950 text-white hover:bg-blue-900">
+            {isCreating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
             Добавить позицию
           </Button>
         )}
       </div>
 
-      {/* Таблица позиций */}
-      <div className="overflow-x-auto rounded-md border border-[#E8ECF0]">
-        <table className="w-full text-sm text-left">
-          <thead className="bg-[#F8F9FA] text-[#6B7280] text-xs uppercase">
+      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-slate-700">
+            Получено <span className="font-bold tabular-nums text-blue-950">{receivedCount}</span> из <span className="font-bold tabular-nums text-blue-950">{totalCount}</span> позиций
+          </p>
+          <Progress value={percent} className="mt-3 h-2.5 bg-slate-100" indicatorClassName="bg-blue-950" />
+        </div>
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-left sm:text-right">
+          <span className="block text-xs font-semibold uppercase tracking-wide text-emerald-700">Готовность</span>
+          <span className="mt-0.5 block text-xl font-bold tabular-nums text-emerald-800">{percent}%</span>
+        </div>
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm lg:block">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-3 py-3 w-8">#</th>
               <th className="px-3 py-3 min-w-[200px]">Номенклатура</th>
@@ -279,6 +293,117 @@ export function SupplyTab({ machine }: SupplyTabProps) {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="space-y-3 lg:hidden">
+        {items.length === 0 ? (
+          <div className="flex min-h-52 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center shadow-sm">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-500">
+              <PackagePlus className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <h3 className="mt-3 font-semibold text-slate-950">Позиции снабжения не добавлены</h3>
+            <p className="mt-1 max-w-sm text-sm leading-6 text-slate-500">Добавьте первую позицию, чтобы контролировать заказ и сроки поставки.</p>
+          </div>
+        ) : (
+          items.map((item: SupplyItem, idx: number) => {
+            const canEditTech = isDirector || isTechnologist
+            const canEditSupply = isDirector || isSupplyManager
+            const canEditEng = isDirector || isEngineer
+
+            return (
+              <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Позиция {idx + 1}</span>
+                    <div className="mt-1 break-words text-base font-semibold text-slate-950">
+                      <InlineEdit
+                        type="text"
+                        value={item.nomenclature}
+                        editable={canEditTech}
+                        onSave={(value) => handleUpdate(item.id, 'nomenclature', value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    {!canEditSupply ? getStatusBadge(item.status) : (
+                      <InlineEdit
+                        type="select"
+                        value={item.status}
+                        options={statusOptions}
+                        editable
+                        onSave={(value) => handleUpdate(item.id, 'status', value)}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4 text-sm">
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <span className="block text-xs font-medium text-slate-500">Количество</span>
+                    <div className="mt-1 font-semibold text-slate-900">
+                      <InlineEdit type="number" value={item.quantity} editable={canEditTech} onSave={(value) => handleUpdate(item.id, 'quantity', value)} />
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      <InlineEdit type="text" value={item.unit} editable={canEditTech} onSave={(value) => handleUpdate(item.id, 'unit', value)} />
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <span className="block text-xs font-medium text-slate-500">Цена за единицу</span>
+                    <div className="mt-1 font-semibold tabular-nums text-slate-900">
+                      €<InlineEdit type="number" value={item.price_per_unit} editable={canEditSupply} onSave={(value) => handleUpdate(item.id, 'price_per_unit', value)} />
+                    </div>
+                  </div>
+                </div>
+
+                <dl className="mt-4 space-y-3 text-sm">
+                  <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-3">
+                    <dt className="text-slate-500">Поставщик</dt>
+                    <dd className="min-w-0 font-medium text-slate-900"><InlineEdit type="text" value={item.supplier} editable={canEditSupply} onSave={(value) => handleUpdate(item.id, 'supplier', value)} /></dd>
+                  </div>
+                  <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-3">
+                    <dt className="text-slate-500">План поставки</dt>
+                    <dd className="font-medium text-slate-900"><InlineEdit type="date" value={item.planned_delivery_date} editable={canEditSupply} onSave={(value) => handleUpdate(item.id, 'planned_delivery_date', value)} /></dd>
+                  </div>
+                  <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-3">
+                    <dt className="text-slate-500">Дедлайн Т</dt>
+                    <dd className="font-medium text-slate-900">{renderDeadline(item.technologist_deadline)}</dd>
+                  </div>
+                  <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-3">
+                    <dt className="text-slate-500">Дедлайн И</dt>
+                    <dd className="font-medium text-slate-900">{renderDeadline(item.engineer_deadline)}</dd>
+                  </div>
+                </dl>
+
+                <div className="mt-4 border-t border-slate-100 pt-4">
+                  <span className="block text-xs font-medium text-slate-500">Комментарий</span>
+                  <div className="mt-1 text-sm text-slate-700"><InlineEdit type="text" value={item.comment} editable={canEditSupply} onSave={(value) => handleUpdate(item.id, 'comment', value)} /></div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <Checkbox checked={item.engineer_confirmation} disabled={!canEditEng} onCheckedChange={(checked) => handleUpdate(item.id, 'engineer_confirmation', checked === true)} />
+                    Подтверждено инженером
+                  </label>
+                  <AlertDialog>
+                    <AlertDialogTrigger className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600 transition-colors hover:bg-red-100" aria-label="Удалить позицию">
+                      <Trash2 className="h-4 w-4" />
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Удалить позицию?</AlertDialogTitle>
+                        <AlertDialogDescription>Позиция снабжения будет безвозвратно удалена из машины.</AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Отмена</AlertDialogCancel>
+                        <AlertDialogAction className="bg-red-600 text-white hover:bg-red-700" onClick={() => handleDelete(item.id)}>Удалить</AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              </article>
+            )
+          })
+        )}
       </div>
     </div>
   )

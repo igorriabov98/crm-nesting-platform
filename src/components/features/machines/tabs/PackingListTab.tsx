@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useMemo, useState, useTransition } from 'react'
-import { Plus, Save, Trash2 } from 'lucide-react'
+import { PackageCheck, Plus, Save, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
@@ -204,33 +204,38 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-[#1B3A6B]">Packing list</h2>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-violet-100 bg-violet-50 text-violet-700">
+            <PackageCheck className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <h2 className="text-lg font-semibold text-slate-950">Packing list</h2>
+        </div>
         {canEdit && (
-          <Button onClick={save} disabled={isPending} className="bg-[#1B3A6B] text-white hover:bg-[#152D54]">
+          <Button onClick={save} disabled={isPending} className="min-h-11 bg-blue-950 text-white hover:bg-blue-900">
             <Save className="mr-2 h-4 w-4" />
             Сохранить
           </Button>
         )}
       </div>
 
-      <div className="grid gap-4 rounded-lg border border-[#E8ECF0] bg-white p-4 md:grid-cols-2">
-        <div className="rounded-md bg-[#F8F9FA] p-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-medium uppercase text-[#6B7280]">Net weight, kg</div>
           <div className="mt-1 text-lg font-semibold text-[#1B3A6B]">{formatWeight(calculated.netWeight)}</div>
         </div>
-        <div className="rounded-md bg-[#F8F9FA] p-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-medium uppercase text-[#6B7280]">Gross weight, kg (+5%)</div>
           <div className="mt-1 text-lg font-semibold text-[#1B3A6B]">{formatWeight(calculated.grossWeight)}</div>
         </div>
-        <div className="rounded-md bg-[#F8F9FA] p-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-medium uppercase text-[#6B7280]">TOTAL EN</div>
           <div className="mt-1 text-sm font-medium text-[#374151]">
             TOTAL: {calculated.totalPlaces} places:{calculated.summaryEn}
           </div>
         </div>
-        <div className="rounded-md bg-[#F8F9FA] p-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-medium uppercase text-[#6B7280]">ВСЬОГО UA</div>
           <div className="mt-1 text-sm font-medium text-[#374151]">
             ВСЬОГО: {calculated.totalPlaces} місць:{calculated.summaryUa}
@@ -238,7 +243,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
         </div>
       </div>
 
-      <div className="rounded-md border border-[#E8ECF0] bg-white">
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
         <Table>
           <TableHeader className="bg-[#F8F9FA]">
             <TableRow>
@@ -327,7 +332,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
         </Button>
       )}
 
-      <div className="rounded-md border border-[#E8ECF0] bg-white">
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
         <Table>
           <TableHeader className="bg-[#F8F9FA]">
             <TableRow>

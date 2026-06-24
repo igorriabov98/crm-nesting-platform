@@ -4,7 +4,7 @@ import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, Edit, Factory, MoreHorizontal, Trash2 } from 'lucide-react'
+import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, ClipboardList, Edit, Factory, FileText, MoreHorizontal, Package, Trash2, Truck, WalletCards } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -351,42 +351,48 @@ export function MachineDetail({
       <MachineTasksPanel tasks={tasks} />
 
       <Tabs defaultValue="items" className="mt-6 w-full">
-        <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+        <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <TabsTrigger 
             value="items" 
-            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
+            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
           >
+            <Package className="h-4 w-4" aria-hidden="true" />
             Товары
           </TabsTrigger>
           <TabsTrigger 
             value="production" 
-            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
+            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
           >
+            <Factory className="h-4 w-4" aria-hidden="true" />
             Производство
           </TabsTrigger>
           <TabsTrigger 
             value="supply" 
-            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
+            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
           >
+            <Truck className="h-4 w-4" aria-hidden="true" />
             Снабжение
           </TabsTrigger>
           <TabsTrigger 
             value="expenses" 
-            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
+            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
           >
+            <WalletCards className="h-4 w-4" aria-hidden="true" />
             Расходы
           </TabsTrigger>
           <TabsTrigger 
             value="packing" 
-            className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
+            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
           >
+            <ClipboardList className="h-4 w-4" aria-hidden="true" />
             Packing list
           </TabsTrigger>
           {showInvoiceTab && (
             <TabsTrigger 
               value="invoice" 
-              className="min-h-11 shrink-0 rounded-xl px-4 text-sm font-medium text-slate-500 data-[state=active]:bg-blue-900 data-[state=active]:text-white"
+              className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
             >
+              <FileText className="h-4 w-4" aria-hidden="true" />
               Инвойс
             </TabsTrigger>
           )}

@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Info, AlertTriangle } from 'lucide-react'
+import { AlertTriangle, FileText, Info } from 'lucide-react'
 import { useRole } from '@/lib/hooks/useRole'
 import { recordInvoicePayment, updateInvoiceStatus } from '@/lib/actions/invoices'
 import { format, differenceInDays, isPast } from 'date-fns'
@@ -64,8 +64,8 @@ export function InvoiceTab({ machine }: InvoiceTabProps) {
 
   if (!invoice) {
     return (
-      <div className="mt-8 max-w-lg p-6 bg-white border border-[#E8ECF0] rounded-lg">
-        <div className="flex items-start">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <div className="flex items-start gap-4">
           <Info className="w-5 h-5 text-[#2563EB] mr-4 mt-0.5" />
           <div>
             <h4 className="text-[#1B3A6B] font-medium mb-1">Инвойс ещё не создан</h4>
@@ -101,9 +101,10 @@ export function InvoiceTab({ machine }: InvoiceTabProps) {
   }
 
   return (
-    <div className="mt-8 max-w-lg bg-white border border-[#E8ECF0] rounded-lg overflow-hidden">
-      <div className="px-6 py-4 border-b border-[#E8ECF0] bg-[#F8F9FA]">
-        <h3 className="text-lg font-medium text-[#1B3A6B] flex justify-between items-center">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 sm:px-6">
+        <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-950">
+          <FileText className="h-5 w-5 text-blue-800" aria-hidden="true" />
           Инвойс
           {isOverdue && (
             <Badge className="bg-red-900 text-red-100 border border-red-800">
