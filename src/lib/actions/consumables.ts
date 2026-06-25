@@ -281,6 +281,7 @@ export async function getConsumableRequestsPageData(
     .limit(500)
 
   if (selectedFactoryId !== 'all') requestQuery = requestQuery.eq('factory_id', selectedFactoryId)
+  if (mode === 'supply') requestQuery = requestQuery.neq('status', 'draft')
 
   let stockQuery = admin
     .from('consumable_stock_overview')
@@ -344,7 +345,11 @@ export async function getConsumableRequestDetails(requestId: string) {
     .maybeSingle()
 
   if (error || !data) throw new Error(error?.message || 'Заявка не найдена')
-  return data as ConsumableRequest
+  const request = data as ConsumableRequest
+  if (request.status === 'draft' && !canManageProductionConsumables(role, isCrmAdmin)) {
+    throw new Error('Черновик еще не оформлен производством')
+  }
+  return request
 }
 
 export async function createConsumableCategory(input: {

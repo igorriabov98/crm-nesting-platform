@@ -90,6 +90,11 @@ const PRIORITY_FULL_LABELS: Record<ConsumablePriority, string> = {
   high: 'Высокая · срок 4 дня',
 }
 
+const PRIORITY_DEADLINE_DAYS: Record<ConsumablePriority, number> = {
+  standard: 7,
+  high: 4,
+}
+
 const DELIVERY_LABELS: Record<'nova_poshta' | 'other', string> = {
   nova_poshta: 'Новая почта',
   other: 'Другой перевозчик',
@@ -108,6 +113,30 @@ const STATUS_TONES: Record<ConsumableRequestStatus, 'default' | 'warning' | 'suc
 function qty(value: number | string, unit?: string) {
   const text = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(value || 0))
   return unit ? `${text} ${unit}` : text
+}
+
+function getKyivDateString() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Kyiv',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const year = parts.find((part) => part.type === 'year')?.value || '1970'
+  const month = parts.find((part) => part.type === 'month')?.value || '01'
+  const day = parts.find((part) => part.type === 'day')?.value || '01'
+  return `${year}-${month}-${day}`
+}
+
+function addCalendarDays(dateString: string, days: number) {
+  const [year, month, day] = dateString.split('-').map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day + days))
+  return date.toISOString().slice(0, 10)
+}
+
+function formatDateString(dateString: string) {
+  const [year, month, day] = dateString.split('-')
+  return `${day}.${month}.${year}`
 }
 
 function staleTracking(value: string | null) {
@@ -162,6 +191,8 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
   const selectedStatusLabel = statusFilter === 'all' ? 'Все статусы' : STATUS_LABELS[statusFilter]
   const selectedPriorityLabel = PRIORITY_FULL_LABELS[draftPriority]
   const selectedDeliveryLabel = DELIVERY_LABELS[deliveryMethod]
+  const draftRequestDatePreview = getKyivDateString()
+  const draftNeedByDatePreview = addCalendarDays(draftRequestDatePreview, PRIORITY_DEADLINE_DAYS[draftPriority])
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -372,41 +403,56 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
       {filtered.length === 0 ? (
         <Card className={industrial.panel}><CardContent className="py-16 text-center text-sm text-slate-500">Заявок по выбранным фильтрам нет.</CardContent></Card>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
+        <Card className={cn('overflow-hidden', industrial.panel)}>
+          <CardContent className="p-0">
+            <div className="hidden grid-cols-[minmax(220px,1.3fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(180px,auto)] gap-4 border-b border-slate-200 bg-slate-50/90 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 lg:grid">
+              <div>Расходник</div>
+              <div>Количество</div>
+              <div>Сроки / доставка</div>
+              <div className="text-right">Действия</div>
+            </div>
+            <div className="divide-y divide-slate-100">
           {filtered.map((request) => {
             const remaining = Number(request.requested_quantity) - Number(request.received_quantity)
             const progress = Math.round((Number(request.received_quantity) / Number(request.requested_quantity)) * 100)
             return (
-              <Card key={request.id} className={cn('overflow-hidden', industrial.panel)}>
-                <CardContent className="space-y-4 p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <button type="button" onClick={() => openDetails(request.id)} className="text-left text-base font-semibold text-slate-950 transition hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30">
-                        {request.consumable?.name || 'Расходник не найден'}
-                      </button>
-                      <div className="mt-1 text-xs text-slate-500">
-                        {request.factory?.name || 'Завод не найден'} · <span className={industrial.mono}>{request.consumable?.article || 'без артикула'}</span> · {request.consumable?.category?.name || 'Категория не найдена'}
-                      </div>
+              <div key={request.id} className="p-4 transition-colors hover:bg-slate-50/80">
+                <div className="grid gap-4 lg:grid-cols-[minmax(220px,1.3fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(180px,auto)] lg:items-start">
+                  <div className="min-w-0">
+                    <button type="button" onClick={() => openDetails(request.id)} className="text-left text-base font-semibold text-slate-950 transition hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30">
+                      {request.consumable?.name || 'Расходник не найден'}
+                    </button>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {request.factory?.name || 'Завод не найден'} · <span className={industrial.mono}>{request.consumable?.article || 'без артикула'}</span> · {request.consumable?.category?.name || 'Категория не найдена'}
                     </div>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="mt-3 flex flex-wrap gap-2">
                       <IndustrialStatusBadge tone={STATUS_TONES[request.status]}>{STATUS_LABELS[request.status]}</IndustrialStatusBadge>
                       <IndustrialStatusBadge tone={request.priority === 'high' ? 'critical' : 'default'}>{PRIORITY_LABELS[request.priority]}</IndustrialStatusBadge>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-3 text-sm sm:max-w-sm lg:grid-cols-1 lg:gap-2">
                     <Info label="Запрошено" value={qty(request.requested_quantity, request.consumable?.unit)} />
                     <Info label="Получено" value={qty(request.received_quantity, request.consumable?.unit)} />
-                    <Info label="Дата заявки" value={request.request_date ? new Date(`${request.request_date}T00:00:00`).toLocaleDateString('ru-RU') : 'Черновик'} />
-                    <Info label="Нужно до" value={request.need_by_date ? new Date(`${request.need_by_date}T00:00:00`).toLocaleDateString('ru-RU') : '—'} />
+                    {Number(request.received_quantity) > 0 && (
+                      <div className="col-span-2 space-y-1 lg:col-span-1">
+                        <div className="flex justify-between text-xs text-slate-500">
+                          <span>Получение</span>
+                          <span className={industrial.mono}>{progress}% · осталось {qty(remaining, request.consumable?.unit)}</span>
+                        </div>
+                        <Progress value={progress} />
+                      </div>
+                    )}
                   </div>
 
-                  {Number(request.received_quantity) > 0 && (
-                    <div className="space-y-1"><div className="flex justify-between text-xs text-slate-500"><span>Получение</span><span className={industrial.mono}>{progress}% · осталось {qty(remaining, request.consumable?.unit)}</span></div><Progress value={progress} /></div>
-                  )}
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                    <Info label="Дата заявки" value={request.request_date ? new Date(`${request.request_date}T00:00:00`).toLocaleDateString('ru-RU') : 'Черновик'} />
+                    <Info label="Нужно до" value={request.need_by_date ? new Date(`${request.need_by_date}T00:00:00`).toLocaleDateString('ru-RU') : '—'} />
+                    </div>
 
                   {request.status === 'delivery' && (
-                    <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-sm shadow-inner">
+                      <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-sm shadow-inner">
                       {request.delivery_method === 'nova_poshta' ? (
                         <><div className="font-semibold text-blue-950">Новая почта · <span className={industrial.mono}>{request.nova_poshta_ttn}</span></div><div className="mt-1 text-blue-800">{request.tracking_status || 'Ожидается обновление статуса'}{request.tracking_estimated_delivery_date && ` · ориентировочно ${new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}`}</div>{request.tracking_error && <div className="mt-1 text-red-700">{request.tracking_error}</div>}</>
                       ) : (
@@ -414,8 +460,9 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
                       )}
                     </div>
                   )}
+                  </div>
 
-                  <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-3">
+                  <div className="flex flex-wrap gap-2 lg:justify-end">
                     <Button className={industrial.action} variant="outline" size="sm" onClick={() => openDetails(request.id)} disabled={detailsLoading}><ExternalLink className="mr-1 h-4 w-4" />Подробнее</Button>
                     {mode === 'production' && request.status === 'draft' && (
                       <><Button className={industrial.action} variant="outline" size="sm" onClick={() => openEditDraft(request)}>Изменить</Button><Button className={industrial.primary} size="sm" onClick={() => runAction(() => submitConsumableRequest(request.id, request.priority), 'Заявка отправлена')}><Send className="mr-1 h-4 w-4" />Отправить</Button></>
@@ -436,11 +483,13 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
                       }}>Закрыть остаток</Button>
                     )}
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             )
           })}
-        </div>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <Dialog open={draftOpen} onOpenChange={setDraftOpen}>
@@ -467,6 +516,16 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
                 <SelectContent><SelectItem value="standard">Стандартная · срок 7 дней</SelectItem><SelectItem value="high">Высокая · срок 4 дня</SelectItem></SelectContent>
               </Select>
             </Field>
+            <div className="rounded-2xl border border-blue-200 bg-blue-50/80 p-3 text-sm text-blue-900">
+              <div className="font-semibold text-blue-950">Если оформить заявку сейчас</div>
+              <div className="mt-1">
+                Дата заявки: <span className={industrial.mono}>{formatDateString(draftRequestDatePreview)}</span> · привезти до:{' '}
+                <span className={industrial.mono}>{formatDateString(draftNeedByDatePreview)}</span>
+              </div>
+              <div className="mt-1 text-xs text-blue-700">
+                Срок пересчитывается автоматически по выбранной степени реакции.
+              </div>
+            </div>
             <Field label="Комментарий"><Textarea className="border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus-visible:border-[#1B3A6B] focus-visible:ring-[#1B3A6B]/10" value={draftNotes} onChange={(event) => setDraftNotes(event.target.value)} /></Field>
           </div>
           <DialogFooter><Button className={industrial.action} variant="outline" onClick={() => setDraftOpen(false)}>Отмена</Button><Button className={industrial.primary} onClick={saveDraft}>Сохранить черновик</Button></DialogFooter>
