@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
+  Barcode,
+  CalendarDays,
   Clock3,
   ExternalLink,
   PackageCheck,
@@ -447,19 +449,11 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
 
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-3 text-sm">
-                    <Info label="Дата заявки" value={request.request_date ? new Date(`${request.request_date}T00:00:00`).toLocaleDateString('ru-RU') : 'Черновик'} />
-                    <Info label="Нужно до" value={request.need_by_date ? new Date(`${request.need_by_date}T00:00:00`).toLocaleDateString('ru-RU') : '—'} />
+                      <Info label="Дата заявки" value={request.request_date ? new Date(`${request.request_date}T00:00:00`).toLocaleDateString('ru-RU') : 'Черновик'} />
+                      <Info label="Нужно до" value={request.need_by_date ? new Date(`${request.need_by_date}T00:00:00`).toLocaleDateString('ru-RU') : '—'} />
                     </div>
 
-                  {request.status === 'delivery' && (
-                      <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-sm shadow-inner">
-                      {request.delivery_method === 'nova_poshta' ? (
-                        <><div className="font-semibold text-blue-950">Новая почта · <span className={industrial.mono}>{request.nova_poshta_ttn}</span></div><div className="mt-1 text-blue-800">{request.tracking_status || 'Ожидается обновление статуса'}{request.tracking_estimated_delivery_date && ` · ориентировочно ${new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}`}</div>{request.tracking_error && <div className="mt-1 text-red-700">{request.tracking_error}</div>}</>
-                      ) : (
-                        <><div className="font-semibold text-blue-950">{request.carrier_name}</div><div className="mt-1 text-blue-800">Ожидается {request.carrier_eta ? new Date(`${request.carrier_eta}T00:00:00`).toLocaleDateString('ru-RU') : '—'}</div></>
-                      )}
-                    </div>
-                  )}
+                    {request.status === 'delivery' && <DeliveryPreview request={request} />}
                   </div>
 
                   <div className="flex flex-wrap gap-2 lg:justify-end">
@@ -625,6 +619,101 @@ function Info({ label, value }: { label: string; value: string }) {
   return <div><div className="text-xs font-medium uppercase tracking-[0.12em] text-slate-500">{label}</div><div className={cn('mt-1 font-medium tabular-nums text-slate-900', industrial.mono)}>{value}</div></div>
 }
 
+function deliveryDateLabel(value: string | null | undefined) {
+  return value ? new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU') : 'Дата уточняется'
+}
+
+function DeliveryPreview({ request }: { request: ConsumableRequest }) {
+  const isNovaPoshta = request.delivery_method === 'nova_poshta'
+  const trackingStatus = isNovaPoshta
+    ? request.tracking_status || 'Ожидается обновление статуса'
+    : request.carrier_eta
+      ? `Ожидается ${deliveryDateLabel(request.carrier_eta)}`
+      : 'Дата доставки уточняется'
+  const deliveryDate = isNovaPoshta ? request.tracking_estimated_delivery_date : request.carrier_eta
+
+  return (
+    <div className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-3 text-sm shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 gap-2.5">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#1B3A6B] text-white shadow-sm">
+            <Truck className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold text-blue-950">
+              <span>{isNovaPoshta ? 'Новая почта' : request.carrier_name || 'Перевозчик'}</span>
+              {isNovaPoshta && request.nova_poshta_ttn && (
+                <span className={cn('inline-flex items-center gap-1 rounded-full border border-blue-200 bg-white px-2 py-0.5 text-xs text-blue-800', industrial.mono)}>
+                  <Barcode className="h-3 w-3" />
+                  {request.nova_poshta_ttn}
+                </span>
+              )}
+            </div>
+            <div className={cn('mt-1 leading-5', request.tracking_error ? 'text-red-700' : 'text-slate-600')}>
+              {request.tracking_error || trackingStatus}
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-blue-200 bg-white px-3 py-2 sm:min-w-40">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Ориентир доставки</div>
+          <div className={cn('mt-1 flex items-center gap-1.5 font-semibold text-[#1B3A6B]', industrial.mono)}>
+            <CalendarDays className="h-4 w-4 shrink-0" />
+            {deliveryDateLabel(deliveryDate)}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NovaPoshtaDetails({
+  request,
+  onRefreshTracking,
+}: {
+  request: ConsumableRequest
+  onRefreshTracking: (requestId: string) => Promise<void>
+}) {
+  return (
+    <div className="space-y-3 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 shadow-inner">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#1B3A6B] text-white shadow-sm">
+            <Truck className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-semibold text-blue-950">Новая почта</div>
+            <div className={cn('mt-1 inline-flex items-center gap-1 rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs text-blue-800', industrial.mono)}>
+              <Barcode className="h-3.5 w-3.5" />
+              {request.nova_poshta_ttn || 'ТТН не указан'}
+            </div>
+          </div>
+        </div>
+        <Button className={industrial.action} variant="outline" size="sm" onClick={() => onRefreshTracking(request.id)}>
+          <RefreshCcw className="mr-1 h-4 w-4" />Обновить
+        </Button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-[1fr_220px]">
+        <div className="rounded-xl border border-blue-100 bg-white/80 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Статус Новой почты</div>
+          <div className={cn('mt-1 text-sm leading-5', request.tracking_error ? 'text-red-700' : 'text-blue-950')}>
+            {request.tracking_error || request.tracking_status || 'Статус еще не получен'}
+          </div>
+          {request.tracking_last_checked_at && (
+            <div className="mt-2 text-xs text-slate-500">Проверено: {new Date(request.tracking_last_checked_at).toLocaleString('ru-RU')}</div>
+          )}
+        </div>
+        <div className="rounded-xl border border-blue-200 bg-white p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Ориентир доставки</div>
+          <div className={cn('mt-2 flex items-center gap-2 text-lg font-semibold text-[#1B3A6B]', industrial.mono)}>
+            <CalendarDays className="h-5 w-5" />
+            {deliveryDateLabel(request.tracking_estimated_delivery_date)}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="space-y-2"><Label className={industrial.label}>{label}</Label>{children}</div>
 }
@@ -654,12 +743,7 @@ function RequestDetails({
         <Info label="Получено" value={qty(request.received_quantity, request.consumable?.unit)} />
       </div>
       {request.status === 'delivery' && request.delivery_method === 'nova_poshta' && (
-        <div className="space-y-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-inner">
-          <div className="flex items-start justify-between gap-3"><div><div className="font-semibold text-blue-950">Новая почта · <span className={industrial.mono}>{request.nova_poshta_ttn}</span></div><div className="mt-1 text-sm text-blue-900">{request.tracking_status || 'Статус еще не получен'}</div></div><Button className={industrial.action} variant="outline" size="sm" onClick={() => onRefreshTracking(request.id)}><RefreshCcw className="mr-1 h-4 w-4" />Обновить</Button></div>
-          {request.tracking_estimated_delivery_date && <div className="text-sm text-blue-900">Ориентировочная доставка: {new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}</div>}
-          {request.tracking_last_checked_at && <div className="text-xs text-blue-800">Проверено: {new Date(request.tracking_last_checked_at).toLocaleString('ru-RU')}</div>}
-          {request.tracking_error && <div className="text-sm text-red-700">{request.tracking_error}</div>}
-        </div>
+        <NovaPoshtaDetails request={request} onRefreshTracking={onRefreshTracking} />
       )}
       {request.status === 'delivery' && request.delivery_method === 'other' && (
         <div className="space-y-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-inner">
