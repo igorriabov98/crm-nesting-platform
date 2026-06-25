@@ -122,6 +122,7 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
   const [operationQuantity, setOperationQuantity] = useState('')
   const [operationComment, setOperationComment] = useState('')
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
+  const [consumptionCategoryId, setConsumptionCategoryId] = useState<string | null>(null)
 
   const activeCategories = useMemo(() => categories.filter((category) => category.is_active), [categories])
   const activeStock = useMemo(() => stock.filter((item) => item.is_active), [stock])
@@ -133,6 +134,19 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
     () => selectedCategory ? activeStock.filter((item) => item.category_id === selectedCategory.id) : activeStock,
     [activeStock, selectedCategory],
   )
+  const consumptionCategory = useMemo(
+    () => activeCategories.find((category) => category.id === consumptionCategoryId) || null,
+    [activeCategories, consumptionCategoryId],
+  )
+  const consumptionStock = useMemo(
+    () => consumptionCategory ? activeStock.filter((item) => item.category_id === consumptionCategory.id) : [],
+    [activeStock, consumptionCategory],
+  )
+  const stockCountByCategory = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const item of activeStock) map.set(item.category_id, (map.get(item.category_id) || 0) + 1)
+    return map
+  }, [activeStock])
   const lowStock = activeStock.filter((item) => item.is_below_minimum)
   const factoryOptions = useMemo(
     () => factories.map((factory) => ({ value: factory.id, label: factory.name })),
@@ -401,21 +415,56 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
         <TabsContent value="consumption" className="mt-4 space-y-4">
           <Card className={industrial.panel}>
             <CardHeader><CardTitle className="text-lg text-slate-950">Списать расходник</CardTitle></CardHeader>
-            <CardContent>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {activeStock.map((item) => (
-                  <button
-                    key={item.consumable_id}
-                    type="button"
-                    onClick={() => openOperation(item, 'consumption')}
-                    className="min-h-24 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30"
-                  >
-                    <div className="font-semibold text-slate-950">{item.name}</div>
-                    <div className={cn('mt-1 text-xs text-slate-500', industrial.mono)}>{item.article}</div>
-                    <div className="mt-2 text-sm text-slate-600">Доступно: {quantity(item.current_quantity, item.unit)}</div>
-                  </button>
-                ))}
-              </div>
+            <CardContent className="space-y-4">
+              {!consumptionCategory ? (
+                <>
+                  <p className="text-sm text-slate-500">Выберите категорию, затем расходник для списания.</p>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {activeCategories.map((category) => (
+                      <button
+                        key={category.id}
+                        type="button"
+                        onClick={() => setConsumptionCategoryId(category.id)}
+                        className="min-h-24 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                      >
+                        <div className="font-semibold text-slate-950">{category.name}</div>
+                        {category.description && <div className="mt-1 text-xs text-slate-500">{category.description}</div>}
+                        <div className={cn('mt-3 text-sm font-semibold text-[#1B3A6B]', industrial.mono)}>
+                          {stockCountByCategory.get(category.id) || 0} поз.
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  {activeCategories.length === 0 && <EmptyText text="Категории еще не созданы." />}
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm text-slate-500">Категория</p>
+                      <h3 className="text-lg font-semibold text-slate-950">{consumptionCategory.name}</h3>
+                    </div>
+                    <Button className={industrial.action} variant="outline" onClick={() => setConsumptionCategoryId(null)}>
+                      К категориям
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {consumptionStock.map((item) => (
+                      <button
+                        key={item.consumable_id}
+                        type="button"
+                        onClick={() => openOperation(item, 'consumption')}
+                        className="min-h-24 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30"
+                      >
+                        <div className="font-semibold text-slate-950">{item.name}</div>
+                        <div className={cn('mt-1 text-xs text-slate-500', industrial.mono)}>{item.article}</div>
+                        <div className="mt-2 text-sm text-slate-600">Доступно: {quantity(item.current_quantity, item.unit)}</div>
+                      </button>
+                    ))}
+                  </div>
+                  {consumptionStock.length === 0 && <EmptyText text={`В категории «${consumptionCategory.name}» нет активных расходников.`} />}
+                </>
+              )}
             </CardContent>
           </Card>
           <MovementHistory movements={movements} />
