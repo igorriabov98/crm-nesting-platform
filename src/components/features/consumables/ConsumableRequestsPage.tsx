@@ -112,6 +112,12 @@ const STATUS_TONES: Record<ConsumableRequestStatus, 'default' | 'warning' | 'suc
   cancelled: 'critical',
 }
 
+const HISTORY_STATUSES: ConsumableRequestStatus[] = ['received', 'received_partial', 'cancelled']
+
+function isHistoryRequest(status: ConsumableRequestStatus) {
+  return HISTORY_STATUSES.includes(status)
+}
+
 function qty(value: number | string, unit?: string) {
   const text = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(value || 0))
   return unit ? `${text} ${unit}` : text
@@ -209,6 +215,24 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
       ].some((value) => value?.toLowerCase().includes(term))
     })
   }, [requests, search, statusFilter])
+  const activeRequests = filtered.filter((request) => !isHistoryRequest(request.status))
+  const historyRequests = filtered.filter((request) => isHistoryRequest(request.status))
+  const requestSections = [
+    {
+      key: 'active',
+      title: 'Активные',
+      description: 'Черновики, новые заявки, взятые счета и доставка.',
+      empty: 'Активных заявок по выбранным фильтрам нет.',
+      items: activeRequests,
+    },
+    {
+      key: 'history',
+      title: 'История',
+      description: 'Полученные, частично полученные и отменённые заявки.',
+      empty: 'Истории по выбранным фильтрам нет.',
+      items: historyRequests,
+    },
+  ]
 
   useEffect(() => {
     const requestId = searchParams.get('request')
@@ -382,9 +406,9 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
       </section>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <IndustrialMetricCard label="Открытые" value={requests.filter((request) => ['new', 'invoice_taken', 'delivery'].includes(request.status)).length} icon={<Clock3 className="h-5 w-5" />} />
+        <IndustrialMetricCard label="Активные" value={requests.filter((request) => !isHistoryRequest(request.status)).length} icon={<Clock3 className="h-5 w-5" />} />
         <IndustrialMetricCard label="В доставке" value={requests.filter((request) => request.status === 'delivery').length} icon={<Truck className="h-5 w-5" />} tone="warning" />
-        <IndustrialMetricCard label="Получено" value={requests.filter((request) => ['received', 'received_partial'].includes(request.status)).length} icon={<PackageCheck className="h-5 w-5" />} tone="success" />
+        <IndustrialMetricCard label="История" value={requests.filter((request) => isHistoryRequest(request.status)).length} icon={<PackageCheck className="h-5 w-5" />} tone="success" />
       </div>
 
       <Card className={industrial.panel}>
@@ -405,85 +429,104 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
       {filtered.length === 0 ? (
         <Card className={industrial.panel}><CardContent className="py-16 text-center text-sm text-slate-500">Заявок по выбранным фильтрам нет.</CardContent></Card>
       ) : (
-        <Card className={cn('overflow-hidden', industrial.panel)}>
-          <CardContent className="p-0">
-            <div className="hidden grid-cols-[minmax(220px,1.3fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(180px,auto)] gap-4 border-b border-slate-200 bg-slate-50/90 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 lg:grid">
-              <div>Расходник</div>
-              <div>Количество</div>
-              <div>Сроки / доставка</div>
-              <div className="text-right">Действия</div>
-            </div>
-            <div className="divide-y divide-slate-100">
-          {filtered.map((request) => {
-            const remaining = Number(request.requested_quantity) - Number(request.received_quantity)
-            const progress = Math.round((Number(request.received_quantity) / Number(request.requested_quantity)) * 100)
-            return (
-              <div key={request.id} className="p-4 transition-colors hover:bg-slate-50/80">
-                <div className="grid gap-4 lg:grid-cols-[minmax(220px,1.3fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(180px,auto)] lg:items-start">
-                  <div className="min-w-0">
-                    <button type="button" onClick={() => openDetails(request.id)} className="text-left text-base font-semibold text-slate-950 transition hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30">
-                      {request.consumable?.name || 'Расходник не найден'}
-                    </button>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {request.factory?.name || 'Завод не найден'} · <span className={industrial.mono}>{request.consumable?.article || 'без артикула'}</span> · {request.consumable?.category?.name || 'Категория не найдена'}
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <IndustrialStatusBadge tone={STATUS_TONES[request.status]}>{STATUS_LABELS[request.status]}</IndustrialStatusBadge>
-                      <IndustrialStatusBadge tone={request.priority === 'high' ? 'critical' : 'default'}>{PRIORITY_LABELS[request.priority]}</IndustrialStatusBadge>
-                    </div>
+        <div className="space-y-4">
+          {requestSections.map((section) => (
+            <Card key={section.key} className={cn('overflow-hidden', industrial.panel)}>
+              <CardContent className="p-0">
+                <div className="flex flex-col gap-2 border-b border-slate-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950">{section.title}</h2>
+                    <p className="mt-1 text-sm text-slate-500">{section.description}</p>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-3 text-sm sm:max-w-sm lg:grid-cols-1 lg:gap-2">
-                    <Info label="Запрошено" value={qty(request.requested_quantity, request.consumable?.unit)} />
-                    <Info label="Получено" value={qty(request.received_quantity, request.consumable?.unit)} />
-                    {Number(request.received_quantity) > 0 && (
-                      <div className="col-span-2 space-y-1 lg:col-span-1">
-                        <div className="flex justify-between text-xs text-slate-500">
-                          <span>Получение</span>
-                          <span className={industrial.mono}>{progress}% · осталось {qty(remaining, request.consumable?.unit)}</span>
-                        </div>
-                        <Progress value={progress} />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <Info label="Дата заявки" value={request.request_date ? new Date(`${request.request_date}T00:00:00`).toLocaleDateString('ru-RU') : 'Черновик'} />
-                      <Info label="Нужно до" value={request.need_by_date ? new Date(`${request.need_by_date}T00:00:00`).toLocaleDateString('ru-RU') : '—'} />
-                    </div>
-
-                    {request.status === 'delivery' && <DeliveryPreview request={request} />}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 lg:justify-end">
-                    <Button className={industrial.action} variant="outline" size="sm" onClick={() => openDetails(request.id)} disabled={detailsLoading}><ExternalLink className="mr-1 h-4 w-4" />Подробнее</Button>
-                    {mode === 'production' && request.status === 'draft' && (
-                      <><Button className={industrial.action} variant="outline" size="sm" onClick={() => openEditDraft(request)}>Изменить</Button><Button className={industrial.primary} size="sm" onClick={() => runAction(() => submitConsumableRequest(request.id, request.priority), 'Заявка отправлена')}><Send className="mr-1 h-4 w-4" />Отправить</Button></>
-                    )}
-                    {mode === 'production' && ['draft', 'new'].includes(request.status) && (
-                      <Button className={industrial.danger} variant="outline" size="sm" onClick={() => {
-                        setCancelRequest(request)
-                        setCancelReason('')
-                      }}>Отменить</Button>
-                    )}
-                    {canSupply && request.status === 'new' && <Button className={industrial.primary} size="sm" onClick={() => runAction(() => takeConsumableInvoice(request.id), 'Статус обновлен')}>Взять счёт</Button>}
-                    {canSupply && request.status === 'invoice_taken' && <Button className={industrial.primary} size="sm" onClick={() => { setDeliveryRequest(request); setDeliveryMethod('nova_poshta'); setTtn(''); setCarrierName(''); setCarrierEta('') }}><Truck className="mr-1 h-4 w-4" />Доставка</Button>}
-                    {canProduction && request.status === 'delivery' && <Button className={industrial.primary} size="sm" onClick={() => { setReceiptRequest(request); setReceiptQuantity(String(remaining)) }}><PackageOpen className="mr-1 h-4 w-4" />Получить</Button>}
-                    {canProduction && request.status === 'delivery' && Number(request.received_quantity) > 0 && (
-                      <Button className={industrial.action} variant="outline" size="sm" onClick={() => {
-                        setRemainderRequest(request)
-                        setRemainderReason('')
-                      }}>Закрыть остаток</Button>
-                    )}
-                  </div>
+                  <span className={cn('inline-flex w-fit items-center rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-semibold text-[#1B3A6B]', industrial.mono)}>
+                    {section.items.length}
+                  </span>
                 </div>
-              </div>
-            )
-          })}
-            </div>
-          </CardContent>
-        </Card>
+                {section.items.length === 0 ? (
+                  <div className="px-4 py-10 text-center text-sm text-slate-500">{section.empty}</div>
+                ) : (
+                  <>
+                    <div className="hidden grid-cols-[minmax(220px,1.3fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(180px,auto)] gap-4 border-b border-slate-200 bg-slate-50/90 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 lg:grid">
+                      <div>Расходник</div>
+                      <div>Количество</div>
+                      <div>Сроки / доставка</div>
+                      <div className="text-right">Действия</div>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {section.items.map((request) => {
+                        const remaining = Number(request.requested_quantity) - Number(request.received_quantity)
+                        const progress = Math.round((Number(request.received_quantity) / Number(request.requested_quantity)) * 100)
+                        return (
+                          <div key={request.id} className="p-4 transition-colors hover:bg-slate-50/80">
+                            <div className="grid gap-4 lg:grid-cols-[minmax(220px,1.3fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(180px,auto)] lg:items-start">
+                              <div className="min-w-0">
+                                <button type="button" onClick={() => openDetails(request.id)} className="text-left text-base font-semibold text-slate-950 transition hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30">
+                                  {request.consumable?.name || 'Расходник не найден'}
+                                </button>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {request.factory?.name || 'Завод не найден'} · <span className={industrial.mono}>{request.consumable?.article || 'без артикула'}</span> · {request.consumable?.category?.name || 'Категория не найдена'}
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <IndustrialStatusBadge tone={STATUS_TONES[request.status]}>{STATUS_LABELS[request.status]}</IndustrialStatusBadge>
+                                  <IndustrialStatusBadge tone={request.priority === 'high' ? 'critical' : 'default'}>{PRIORITY_LABELS[request.priority]}</IndustrialStatusBadge>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3 text-sm sm:max-w-sm lg:grid-cols-1 lg:gap-2">
+                                <Info label="Запрошено" value={qty(request.requested_quantity, request.consumable?.unit)} />
+                                <Info label="Получено" value={qty(request.received_quantity, request.consumable?.unit)} />
+                                {Number(request.received_quantity) > 0 && (
+                                  <div className="col-span-2 space-y-1 lg:col-span-1">
+                                    <div className="flex justify-between text-xs text-slate-500">
+                                      <span>Получение</span>
+                                      <span className={industrial.mono}>{progress}% · осталось {qty(remaining, request.consumable?.unit)}</span>
+                                    </div>
+                                    <Progress value={progress} />
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="space-y-3">
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                  <Info label="Дата заявки" value={request.request_date ? new Date(`${request.request_date}T00:00:00`).toLocaleDateString('ru-RU') : 'Черновик'} />
+                                  <Info label="Нужно до" value={request.need_by_date ? new Date(`${request.need_by_date}T00:00:00`).toLocaleDateString('ru-RU') : '—'} />
+                                </div>
+
+                                {request.status === 'delivery' && <DeliveryPreview request={request} />}
+                              </div>
+
+                              <div className="flex flex-wrap gap-2 lg:justify-end">
+                                <Button className={industrial.action} variant="outline" size="sm" onClick={() => openDetails(request.id)} disabled={detailsLoading}><ExternalLink className="mr-1 h-4 w-4" />Подробнее</Button>
+                                {mode === 'production' && request.status === 'draft' && (
+                                  <><Button className={industrial.action} variant="outline" size="sm" onClick={() => openEditDraft(request)}>Изменить</Button><Button className={industrial.primary} size="sm" onClick={() => runAction(() => submitConsumableRequest(request.id, request.priority), 'Заявка отправлена')}><Send className="mr-1 h-4 w-4" />Отправить</Button></>
+                                )}
+                                {mode === 'production' && ['draft', 'new'].includes(request.status) && (
+                                  <Button className={industrial.danger} variant="outline" size="sm" onClick={() => {
+                                    setCancelRequest(request)
+                                    setCancelReason('')
+                                  }}>Отменить</Button>
+                                )}
+                                {canSupply && request.status === 'new' && <Button className={industrial.primary} size="sm" onClick={() => runAction(() => takeConsumableInvoice(request.id), 'Статус обновлен')}>Взять счёт</Button>}
+                                {canSupply && request.status === 'invoice_taken' && <Button className={industrial.primary} size="sm" onClick={() => { setDeliveryRequest(request); setDeliveryMethod('nova_poshta'); setTtn(''); setCarrierName(''); setCarrierEta('') }}><Truck className="mr-1 h-4 w-4" />Доставка</Button>}
+                                {canProduction && request.status === 'delivery' && <Button className={industrial.primary} size="sm" onClick={() => { setReceiptRequest(request); setReceiptQuantity(String(remaining)) }}><PackageOpen className="mr-1 h-4 w-4" />Получить</Button>}
+                                {canProduction && request.status === 'delivery' && Number(request.received_quantity) > 0 && (
+                                  <Button className={industrial.action} variant="outline" size="sm" onClick={() => {
+                                    setRemainderRequest(request)
+                                    setRemainderReason('')
+                                  }}>Закрыть остаток</Button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       )}
 
       <Dialog open={draftOpen} onOpenChange={setDraftOpen}>
