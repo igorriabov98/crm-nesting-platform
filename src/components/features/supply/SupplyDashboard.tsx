@@ -116,7 +116,7 @@ export function SupplyDashboard({
         </div>
       </Link>
 
-      {stockCheckRequestCards.length > 0 && <SupplyRequestCardSection title="На проверке склада" cards={stockCheckRequestCards} />}
+      {stockCheckRequestCards.length > 0 && <SupplyRequestCardSection title="Бронь делового отхода" cards={stockCheckRequestCards} />}
       {activeRequestCards.length > 0 && <SupplyRequestCardSection title="Заявки, переданные в снабжение" cards={activeRequestCards} />}
 
       {noFactoryMachines.length > 0 && (

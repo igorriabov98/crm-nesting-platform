@@ -136,6 +136,8 @@ type ReservationRow = {
   reserved_secondary_quantity: number | null
 }
 
+type ReservationStockSource = 'business_scrap' | 'regular_stock'
+
 const REQUEST_TABLES: RequestItemTable[] = [
   'request_sheet_metal',
   // @deprecated — round_tube excluded from new UI
@@ -346,6 +348,30 @@ function getRawAvailableQuantity(item: InventoryRow) {
   return Number(item.available_quantity || 0)
 }
 
+function getReservationStockSource(request: Pick<TechnologistRequest, 'status'>): ReservationStockSource | null {
+  if (request.status === 'pending_stock_check' || request.status === 'stock_checked') return 'business_scrap'
+  if (request.status === 'submitted_to_supply' || request.status === 'completed') return 'regular_stock'
+  return null
+}
+
+function assertReservationAllowedForRequest(request: Pick<TechnologistRequest, 'status'>) {
+  const source = getReservationStockSource(request)
+  if (!source) throw new Error('Заявка не находится на этапе бронирования склада')
+  return source
+}
+
+function inventoryMatchesReservationSource(item: Pick<InventoryRow, 'is_business_scrap'>, source: ReservationStockSource) {
+  return source === 'business_scrap'
+    ? Boolean(item.is_business_scrap)
+    : !Boolean(item.is_business_scrap)
+}
+
+function getReservationSourceError(source: ReservationStockSource) {
+  return source === 'business_scrap'
+    ? 'На этапе проверки технолог может бронировать только деловой отход'
+    : 'Снабжение может бронировать только обычный склад'
+}
+
 function describeStockItem(table: RequestItemTable, variant?: MaterialVariant | null) {
   if (!variant) return null
   const parts: string[] = []
@@ -484,10 +510,12 @@ function withStock<T extends { id: string; material_id: string | null; material_
   materialInventoryMap: Map<string, InventoryRow[]>,
   reservationMap: Map<string, ReservationRow>,
   steelTypeMap: Map<string, string>,
+  reservationSource: ReservationStockSource,
 ) {
   return rows.map((row) => {
     const rowRecord = row as Record<string, unknown>
     const stockItems = findStockItems(table, row, rowRecord, inventoryGroupMap, materialInventoryMap)
+      .filter((item) => inventoryMatchesReservationSource(item, reservationSource))
     const materialItems = row.material_id ? materialInventoryMap.get(row.material_id) || [] : []
     const inventory = row.material_id
       ? inventoryMap.get(stockKey(row.material_id, row.material_variant_id, null)) ||
@@ -636,10 +664,12 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
       for (const variant of (variantsData || []) as MaterialVariant[]) variantMap.set(variant.id, variant)
       for (const row of inventoryRows) row.variant = row.material_variant_id ? variantMap.get(row.material_variant_id) || null : null
     }
-    const inventoryMap = new Map(inventoryRows.map((row) => [stockKey(row.material_id, row.material_variant_id, row.piece_length_mm), row]))
+    const reservationSource = assertReservationAllowedForRequest(request)
+    const visibleInventoryRows = inventoryRows.filter((row) => inventoryMatchesReservationSource(row, reservationSource))
+    const inventoryMap = new Map(visibleInventoryRows.map((row) => [stockKey(row.material_id, row.material_variant_id, row.piece_length_mm), row]))
     const inventoryGroupMap = new Map<string, InventoryRow[]>()
     const materialInventoryMap = new Map<string, InventoryRow[]>()
-    for (const row of inventoryRows) {
+    for (const row of visibleInventoryRows) {
       const groupKey = stockGroupKey(row.material_id, row.material_variant_id)
       inventoryGroupMap.set(groupKey, [...(inventoryGroupMap.get(groupKey) || []), row])
       materialInventoryMap.set(row.material_id, [...(materialInventoryMap.get(row.material_id) || []), row])
@@ -657,16 +687,16 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
         current_role: role,
         request,
         sections: {
-          sheetMetal: withStock('request_sheet_metal', sheetMetal, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap),
+          sheetMetal: withStock('request_sheet_metal', sheetMetal, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
           // @deprecated — round_tube excluded from new UI
-          roundTube: withStock('request_round_tube', roundTube, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap),
-          circles: withStock('request_circle', circles, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap),
-          pipes: withStock('request_pipe', pipes, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap),
-          knives: withStock('request_knives', knives, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap),
-          components: withStock('request_components', components, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap),
-          paint: withStock('request_paint', paint, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap),
-          meshItems: withStock('request_mesh', meshItems, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap),
-          chainCords: withStock('request_chain_cord', chainCords, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap),
+          roundTube: withStock('request_round_tube', roundTube, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+          circles: withStock('request_circle', circles, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+          pipes: withStock('request_pipe', pipes, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+          knives: withStock('request_knives', knives, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+          components: withStock('request_components', components, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+          paint: withStock('request_paint', paint, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+          meshItems: withStock('request_mesh', meshItems, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+          chainCords: withStock('request_chain_cord', chainCords, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
         },
         summary: {
           sheetMetal: summarize(sheetMetal, 'request_sheet_metal', 'шт'),
@@ -691,6 +721,7 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
 export async function reserveItemFromStock(data: {
   request_item_table: RequestItemTable
   request_item_id: string
+  inventory_id: string
   material_id: string
   material_variant_id?: string | null
   piece_length_mm?: number | null
@@ -702,11 +733,34 @@ export async function reserveItemFromStock(data: {
     if (!REQUEST_TABLES.includes(data.request_item_table)) throw new Error('ÐÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ð°Ñ Ñ‚Ð°Ð±Ð»Ð¸Ñ†Ð° Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸')
     const requestId = await getRequestIdForItem(db, data.request_item_table, data.request_item_id)
     const request = await getRequestMeta(db, requestId)
+    const reservationSource = assertReservationAllowedForRequest(request)
     const { data: rowData, error } = await db.from(data.request_item_table).select('*').eq('id', data.request_item_id).single()
     if (error || !rowData) throw new Error(error?.message || 'ÐŸÐ¾Ð·Ð¸Ñ†Ð¸Ñ Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
 
     const row = rowData as Record<string, unknown>
-    const selectedVariantId = data.material_variant_id ?? null
+    const { data: selectedInventoryData, error: selectedInventoryError } = await db
+      .from('inventory')
+      .select('id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at')
+      .eq('id', data.inventory_id)
+      .maybeSingle()
+    if (selectedInventoryError) throw new Error(selectedInventoryError.message || 'Не удалось проверить выбранный складской остаток')
+    const selectedInventory = selectedInventoryData as InventoryRow | null
+    if (!selectedInventory?.id || selectedInventory.deleted_at) throw new Error('Выбранный складской остаток не найден')
+    if ((selectedInventory.business_scrap_state || 'available') === 'future') throw new Error('Будущий деловой отход нельзя бронировать в этой заявке')
+    if (!inventoryMatchesReservationSource(selectedInventory, reservationSource)) {
+      throw new Error(getReservationSourceError(reservationSource))
+    }
+    if (selectedInventory.material_id !== data.material_id || selectedInventory.material_id !== row.material_id) {
+      throw new Error('Выбранный складской остаток не относится к материалу позиции заявки')
+    }
+    if ((data.material_variant_id ?? null) !== (selectedInventory.material_variant_id ?? null)) {
+      throw new Error('Выбранная характеристика не соответствует складской строке')
+    }
+    if ((data.piece_length_mm ?? null) !== (selectedInventory.piece_length_mm ?? null)) {
+      throw new Error('Выбранная длина складского куска не соответствует складской строке')
+    }
+
+    const selectedVariantId = selectedInventory.material_variant_id ?? null
     if (selectedVariantId) {
       const { data: selectedVariantData, error: selectedVariantError } = await db
         .from('material_variants')
@@ -726,18 +780,23 @@ export async function reserveItemFromStock(data: {
     const maxQuantity = Math.max(needed - reserved, 0)
     const quantity = Math.min(Number(data.quantity || 0), maxQuantity)
     if (quantity <= 0) throw new Error('ÐÐµÑ‡ÐµÐ³Ð¾ Ð±Ñ€Ð¾Ð½Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ')
+    const available = getReservableQuantity(data.request_item_table, row, selectedInventory)
+    if (available <= 0) throw new Error('В выбранной складской строке нет доступного остатка')
+    if (quantity > available) throw new Error(`Недостаточно на выбранной складской строке. Доступно: ${available} ${selectedInventory.unit}`)
 
     const secondaryQuantity = data.request_item_table === 'request_round_tube'
       ? getRoundSecondaryReserve(quantity, row)
       : null
 
     const result = await reserveForMachine({
+      inventory_id: selectedInventory.id,
       material_id: data.material_id,
       material_variant_id: selectedVariantId,
-      piece_length_mm: data.piece_length_mm ?? null,
+      piece_length_mm: selectedInventory.piece_length_mm ?? null,
       machine_id: request.machine_id,
       quantity,
       secondary_quantity: secondaryQuantity,
+      use_cut_reservation: isCutReservationTable(data.request_item_table, row),
       request_item_table: data.request_item_table,
       request_item_id: data.request_item_id,
     })
@@ -790,7 +849,7 @@ export async function reserveAllAvailable(requestId: string) {
       const reserved = getReservedForRow(table, row)
       const remaining = Math.max(needed - reserved, 0)
       const reservableStockItems = row.stock_items.filter((item) => Number(item.available_quantity || 0) > 0)
-      if (reservableStockItems.length > 1) {
+      if (reservableStockItems.length !== 1) {
         skippedCount += 1
         return
       }
@@ -803,6 +862,7 @@ export async function reserveAllAvailable(requestId: string) {
       const result = await reserveItemFromStock({
         request_item_table: table,
         request_item_id: row.id,
+        inventory_id: reservableStockItems[0].id,
         material_id: row.material_id,
         material_variant_id: reservableStockItems.length === 1
           ? reservableStockItems[0].material_variant_id

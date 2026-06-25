@@ -103,7 +103,7 @@ export function SupplyRequestPage({ data }: Props) {
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={reserveAll} disabled={isPending} className="bg-[#1B3A6B] text-white hover:bg-[#254B87]">
               <Pin className="mr-2 h-4 w-4" />
-              Забронировать всё что есть
+              {isStockCheckMode ? 'Бронь делового отхода' : 'Забронировать склад'}
             </Button>
             {canCompleteReservation && (
               <Button type="button" onClick={completeReservation} disabled={isPending} className="bg-emerald-700 text-white hover:bg-emerald-800">
@@ -117,7 +117,7 @@ export function SupplyRequestPage({ data }: Props) {
         </div>
         {isStockCheckMode && (
           <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Заявка на проверке склада. Забронируйте доступные остатки и нажмите &quot;Бронь завершена&quot;, чтобы передать незакрытый остаток в снабжение.
+            Заявка на проверке делового отхода. Забронируйте только доступный деловой отход и нажмите &quot;Бронь завершена&quot;, чтобы передать незакрытый остаток в снабжение.
           </p>
         )}
       </section>

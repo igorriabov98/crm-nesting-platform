@@ -357,6 +357,7 @@ export async function addReceipt(data: {
 }
 
 export async function reserveForMachine(data: {
+  inventory_id?: string | null
   material_id: string
   material_variant_id?: string | null
   piece_length_mm?: number | null
@@ -365,20 +366,32 @@ export async function reserveForMachine(data: {
   request_item_table: string
   request_item_id: string
   secondary_quantity?: number | null
+  use_cut_reservation?: boolean
 }): Promise<ActionResult> {
   try {
     const { db, userId } = await requireAccess('manage')
-    const { error } = await db.rpc('fn_reserve_inventory_for_machine', {
-      p_material_id: data.material_id,
-      p_machine_id: data.machine_id,
-      p_quantity: Number(data.quantity),
-      p_request_item_table: data.request_item_table,
-      p_request_item_id: data.request_item_id,
-      p_reserved_by: userId,
-      p_secondary_quantity: data.secondary_quantity ?? null,
-      p_material_variant_id: data.material_variant_id ?? null,
-      p_piece_length_mm: data.piece_length_mm ?? null,
-    })
+    const { error } = data.inventory_id
+      ? await db.rpc('fn_reserve_inventory_row_for_machine', {
+          p_inventory_id: data.inventory_id,
+          p_machine_id: data.machine_id,
+          p_quantity: Number(data.quantity),
+          p_request_item_table: data.request_item_table,
+          p_request_item_id: data.request_item_id,
+          p_reserved_by: userId,
+          p_secondary_quantity: data.secondary_quantity ?? null,
+          p_is_cut_reservation: data.use_cut_reservation ?? null,
+        })
+      : await db.rpc('fn_reserve_inventory_for_machine', {
+          p_material_id: data.material_id,
+          p_machine_id: data.machine_id,
+          p_quantity: Number(data.quantity),
+          p_request_item_table: data.request_item_table,
+          p_request_item_id: data.request_item_id,
+          p_reserved_by: userId,
+          p_secondary_quantity: data.secondary_quantity ?? null,
+          p_material_variant_id: data.material_variant_id ?? null,
+          p_piece_length_mm: data.piece_length_mm ?? null,
+        })
     if (error) throw new Error(error.message || 'Не удалось забронировать материал')
     revalidateOrderAndMachine(data.machine_id, data.material_id)
     return { success: true }

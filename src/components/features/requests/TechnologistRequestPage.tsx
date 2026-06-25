@@ -88,7 +88,7 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
     try {
       const result = await submitRequest(data.request.id)
       if (!result.success) throw new Error(result.error || 'Не удалось оформить заявку')
-      toast.success('Заявка оформлена. Проверьте склад и завершите бронь.')
+      toast.success('Заявка оформлена. Забронируйте деловой отход и завершите бронь.')
       setStatus('pending_stock_check')
       openStockCheck()
     } catch (error) {
@@ -109,7 +109,7 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-[#1B3A6B]">Заявка на материалы: {machine.name}</h1>
-            <p className="mt-1 text-sm text-slate-500">Состав материалов, остатки склада и позиции к заказу.</p>
+            <p className="mt-1 text-sm text-slate-500">Состав материалов, деловой отход и позиции к заказу.</p>
           </div>
           <RequestStatusBadge status={status} />
         </div>
@@ -170,7 +170,7 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
         {(status === 'draft' || status === 'pending_stock_check' || status === 'stock_checked') && canEdit && (
           <Button type="button" onClick={handleSubmitRequest} disabled={isSubmitting}>
             <Send className="mr-2 h-4 w-4" />
-            {status === 'draft' ? 'Заявка оформлена' : 'Перейти к проверке склада'}
+            {status === 'draft' ? 'Заявка оформлена' : 'Перейти к брони делового отхода'}
           </Button>
         )}
       </div>
