@@ -4,16 +4,27 @@ import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Archive,
-  ArrowDownToLine,
   Boxes,
   ClipboardMinus,
   FolderPlus,
   PackagePlus,
   Pencil,
   RefreshCcw,
+  Trash2,
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -61,6 +72,7 @@ type Props = {
   categories: ConsumableCategory[]
   stock: ConsumableStockRow[]
   movements: ConsumableMovement[]
+  canAdjustStock: boolean
 }
 
 type ItemForm = {
@@ -96,7 +108,7 @@ function quantity(value: number | string, unit?: string) {
   return unit ? `${formatted} ${unit}` : formatted
 }
 
-export function ConsumablesWorkspace({ factories, selectedFactoryId, categories, stock, movements }: Props) {
+export function ConsumablesWorkspace({ factories, selectedFactoryId, categories, stock, movements, canAdjustStock }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [categoryOpen, setCategoryOpen] = useState(false)
@@ -109,9 +121,18 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
   const [operation, setOperation] = useState<'manual_receipt' | 'consumption' | 'adjustment'>('manual_receipt')
   const [operationQuantity, setOperationQuantity] = useState('')
   const [operationComment, setOperationComment] = useState('')
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
 
   const activeCategories = useMemo(() => categories.filter((category) => category.is_active), [categories])
   const activeStock = useMemo(() => stock.filter((item) => item.is_active), [stock])
+  const selectedCategory = useMemo(
+    () => activeCategories.find((category) => category.id === selectedCategoryId) || null,
+    [activeCategories, selectedCategoryId],
+  )
+  const catalogStock = useMemo(
+    () => selectedCategory ? activeStock.filter((item) => item.category_id === selectedCategory.id) : activeStock,
+    [activeStock, selectedCategory],
+  )
   const lowStock = activeStock.filter((item) => item.is_below_minimum)
   const factoryOptions = useMemo(
     () => factories.map((factory) => ({ value: factory.id, label: factory.name })),
@@ -222,6 +243,14 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
     setOperationComment('')
   }
 
+  async function deleteCategory(category: ConsumableCategory) {
+    const result = await archiveConsumableCategory(category.id)
+    if (!result.success) return toast.error(result.error)
+    toast.success('Категория удалена')
+    if (selectedCategoryId === category.id) setSelectedCategoryId(null)
+    refresh()
+  }
+
   return (
     <div className={industrial.shell}>
       <section className={industrial.hero}>
@@ -264,7 +293,7 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
       </div>
 
       <Tabs defaultValue="catalog">
-        <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+        <TabsList className="h-auto w-full justify-start overflow-x-auto overflow-y-hidden rounded-2xl border border-slate-200 bg-white p-1 shadow-sm [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <TabsTrigger value="catalog" className="min-h-10 px-4 data-[state=active]:bg-[#1B3A6B] data-[state=active]:text-white">Каталог</TabsTrigger>
           <TabsTrigger value="stock" className="min-h-10 px-4 data-[state=active]:bg-[#1B3A6B] data-[state=active]:text-white">Остатки</TabsTrigger>
           <TabsTrigger value="consumption" className="min-h-10 px-4 data-[state=active]:bg-[#1B3A6B] data-[state=active]:text-white">Расход</TabsTrigger>
@@ -273,33 +302,88 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
         <TabsContent value="catalog" className="mt-4 space-y-4">
           <Card className={industrial.panel}>
             <CardHeader><CardTitle className="text-lg text-slate-950">Категории</CardTitle></CardHeader>
-            <CardContent className="flex flex-wrap gap-2">
-              {categories.length === 0 && <EmptyText text="Категории еще не созданы." />}
-              {categories.map((category) => (
-                <div key={category.id} className="flex min-h-11 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3">
-                  <span className={category.is_active ? 'text-slate-800' : 'text-slate-400 line-through'}>{category.name}</span>
-                  {category.is_active && (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Архивировать категорию ${category.name}`}
-                      onClick={async () => {
-                        const result = await archiveConsumableCategory(category.id)
-                        if (!result.success) return toast.error(result.error)
-                        toast.success('Категория архивирована')
-                        refresh()
-                      }}
-                    >
-                      <Archive className="h-4 w-4" />
-                    </Button>
-                  )}
+            <CardContent className="space-y-3">
+              {activeCategories.length === 0 && <EmptyText text="Категории еще не созданы." />}
+              {activeCategories.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    aria-pressed={!selectedCategory}
+                    onClick={() => setSelectedCategoryId(null)}
+                    className={cn(
+                      'min-h-11 rounded-full border px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/25',
+                      !selectedCategory
+                        ? 'border-[#1B3A6B] bg-blue-50 text-[#1B3A6B]'
+                        : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-[#1B3A6B]',
+                    )}
+                  >
+                    Все категории
+                  </button>
+                  {activeCategories.map((category) => {
+                    const selected = selectedCategory?.id === category.id
+
+                    return (
+                      <div
+                        key={category.id}
+                        className={cn(
+                          'flex min-h-11 items-center gap-1 rounded-full border bg-slate-50 pl-4 pr-1 transition-colors',
+                          selected
+                            ? 'border-[#1B3A6B] bg-blue-50 text-[#1B3A6B] ring-1 ring-blue-100'
+                            : 'border-slate-200 text-slate-800 hover:border-blue-200 hover:bg-blue-50/60',
+                        )}
+                      >
+                        <button
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => setSelectedCategoryId(category.id)}
+                          className="min-h-11 min-w-0 rounded-full pr-1 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/25"
+                        >
+                          <span className="block truncate">{category.name}</span>
+                        </button>
+                        <AlertDialog>
+                          <AlertDialogTrigger
+                            type="button"
+                            aria-label={`Удалить категорию ${category.name}`}
+                            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-red-50 hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600/25"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </AlertDialogTrigger>
+                          <AlertDialogContent className="border-[#E8ECF0] bg-white text-[#1B3A6B]">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Удалить категорию «{category.name}»?</AlertDialogTitle>
+                              <AlertDialogDescription className="text-[#6B7280]">
+                                Категория и активные расходники этой категории будут скрыты из каталога. История операций и заявки останутся в CRM.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="border-[#E8ECF0] bg-[#F8F9FA] text-[#1B3A6B] hover:bg-[#E8ECF0]">
+                                Отмена
+                              </AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-red-600 text-white hover:bg-red-700"
+                                onClick={() => deleteCategory(category)}
+                              >
+                                Удалить
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
+              )}
+              {selectedCategory && (
+                <p className="text-sm text-slate-500">
+                  Показаны расходники категории <span className="font-medium text-[#1B3A6B]">«{selectedCategory.name}»</span>.
+                </p>
+              )}
             </CardContent>
           </Card>
           <StockTable
-            rows={stock}
+            rows={catalogStock}
             mode="catalog"
+            emptyText={selectedCategory ? `В категории «${selectedCategory.name}» нет активных расходников.` : 'Расходники еще не созданы.'}
             onEdit={openEditItem}
             onArchive={async (item) => {
               const result = await archiveConsumable(item.consumable_id)
@@ -311,7 +395,7 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
         </TabsContent>
 
         <TabsContent value="stock" className="mt-4">
-          <StockTable rows={activeStock} mode="stock" onOperation={openOperation} />
+          <StockTable rows={activeStock} mode="stock" canAdjustStock={canAdjustStock} onOperation={openOperation} />
         </TabsContent>
 
         <TabsContent value="consumption" className="mt-4 space-y-4">
@@ -434,14 +518,18 @@ function StockTable({
   onEdit,
   onArchive,
   onOperation,
+  canAdjustStock = false,
+  emptyText = 'Расходники еще не созданы.',
 }: {
   rows: ConsumableStockRow[]
   mode: 'catalog' | 'stock'
   onEdit?: (item: ConsumableStockRow) => void
   onArchive?: (item: ConsumableStockRow) => void
   onOperation?: (item: ConsumableStockRow, operation: 'manual_receipt' | 'consumption' | 'adjustment') => void
+  canAdjustStock?: boolean
+  emptyText?: string
 }) {
-  if (rows.length === 0) return <Card className={industrial.panel}><CardContent><EmptyText text="Расходники еще не созданы." /></CardContent></Card>
+  if (rows.length === 0) return <Card className={industrial.panel}><CardContent><EmptyText text={emptyText} /></CardContent></Card>
 
   return (
     <Card className={cn('overflow-hidden', industrial.panel)}>
@@ -469,8 +557,15 @@ function StockTable({
                       </>
                     ) : (
                       <>
-                        <Button className={industrial.action} variant="outline" size="sm" onClick={() => onOperation?.(item, 'manual_receipt')}><ArrowDownToLine className="mr-1 h-4 w-4" />Приход</Button>
-                        <Button className={industrial.action} variant="outline" size="sm" onClick={() => onOperation?.(item, 'adjustment')}><RefreshCcw className="mr-1 h-4 w-4" />Сверка</Button>
+                        {canAdjustStock ? (
+                          <Button className={industrial.action} variant="outline" size="sm" onClick={() => onOperation?.(item, 'adjustment')}>
+                            <RefreshCcw className="mr-1 h-4 w-4" />Сверка
+                          </Button>
+                        ) : (
+                          <span className="inline-flex min-h-7 items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 text-xs font-medium text-slate-500">
+                            Сверка ограничена
+                          </span>
+                        )}
                       </>
                     )}
                   </div>
@@ -489,7 +584,13 @@ function StockTable({
               {mode === 'catalog' ? (
                 <><Button className={industrial.action} variant="outline" size="sm" onClick={() => onEdit?.(item)}>Изменить</Button><Button className={industrial.danger} variant="outline" size="sm" onClick={() => onArchive?.(item)}>Архив</Button></>
               ) : (
-                <><Button className={industrial.action} variant="outline" size="sm" onClick={() => onOperation?.(item, 'manual_receipt')}>Приход</Button><Button className={industrial.action} variant="outline" size="sm" onClick={() => onOperation?.(item, 'adjustment')}>Сверка</Button></>
+                canAdjustStock ? (
+                  <Button className={industrial.action} variant="outline" size="sm" onClick={() => onOperation?.(item, 'adjustment')}>Сверка</Button>
+                ) : (
+                  <span className="inline-flex min-h-7 items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 text-xs font-medium text-slate-500">
+                    Сверка ограничена
+                  </span>
+                )
               )}
             </div>
           </div>

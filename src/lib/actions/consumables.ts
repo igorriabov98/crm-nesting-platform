@@ -30,6 +30,7 @@ const DIRECTORS: UserRole[] = ['financial_director', 'commercial_director', 'pla
 const SUPPLY_ROLES: UserRole[] = ['supply_manager', 'procurement_head', ...DIRECTORS]
 const PRODUCTION_ROLES: UserRole[] = ['production_manager', ...DIRECTORS]
 const CRM_ADMIN_POSITION_NAME = 'Администратор CRM'
+const PLANNING_DEPARTMENT_KEYWORD = 'планирован'
 type AdminClient = SupabaseClient
 
 type ActionResult<T = undefined> = {
@@ -59,6 +60,42 @@ function isCrmAdminUser(user: Pick<CurrentUser, 'department_memberships'>) {
   return Boolean(
     user.department_memberships?.some((membership) => membership.position?.name === CRM_ADMIN_POSITION_NAME),
   )
+}
+
+function normalizeText(value: string | null | undefined) {
+  return (value || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function isIgorRiabov(user: Pick<CurrentUser, 'full_name' | 'email'>) {
+  const fullName = normalizeText(user.full_name)
+  const email = normalizeText(user.email)
+  return (
+    fullName === 'игорь рябов'
+    || fullName === 'игор рябов'
+    || fullName === 'igor riabov'
+    || fullName === 'ihor riabov'
+    || email.includes('igorriabov')
+  )
+}
+
+function isPlanningDepartmentHead(user: Pick<CurrentUser, 'department_memberships'>) {
+  return Boolean(
+    user.department_memberships?.some((membership) => (
+      membership.is_department_head
+      && (
+        normalizeText(membership.department?.name).includes(PLANNING_DEPARTMENT_KEYWORD)
+        || normalizeText(membership.position?.name).includes(PLANNING_DEPARTMENT_KEYWORD)
+      )
+    )),
+  )
+}
+
+function canAdjustConsumableStock(user: CurrentUser, role: UserRole, isCrmAdmin: boolean) {
+  return role === 'planning_director' || isPlanningDepartmentHead(user) || (isCrmAdmin && isIgorRiabov(user))
 }
 
 function canManageProductionConsumables(role: UserRole, isCrmAdmin: boolean) {
@@ -150,7 +187,7 @@ async function getVisibleFactoriesForRole(
 }
 
 export async function getConsumablesWorkspaceData(factoryId?: string | null) {
-  const { role, factoryId: userFactoryId, isCrmAdmin, admin } = await getContext()
+  const { role, factoryId: userFactoryId, isCrmAdmin, user, admin } = await getContext()
   assertCatalogRole(role, isCrmAdmin)
   const factories = await getVisibleFactoriesForRole(role, userFactoryId, true, isCrmAdmin)
   const selectedFactoryId = factories.some((factory) => factory.id === factoryId)
@@ -158,7 +195,7 @@ export async function getConsumablesWorkspaceData(factoryId?: string | null) {
     : factories[0]?.id
 
   if (!selectedFactoryId) {
-    return { factories, selectedFactoryId: null, categories: [], stock: [], movements: [] }
+    return { factories, selectedFactoryId: null, categories: [], stock: [], movements: [], canAdjustStock: false }
   }
   assertFactoryAccess(role, userFactoryId, selectedFactoryId, 'catalog', isCrmAdmin)
 
@@ -197,6 +234,7 @@ export async function getConsumablesWorkspaceData(factoryId?: string | null) {
     categories: (categoriesResult.data || []) as ConsumableCategory[],
     stock: (stockResult.data || []) as ConsumableStockRow[],
     movements: (movementsResult.data || []) as ConsumableMovement[],
+    canAdjustStock: canAdjustConsumableStock(user, role, isCrmAdmin),
   }
 }
 
@@ -350,16 +388,18 @@ export async function archiveConsumableCategory(categoryId: string): Promise<Act
     if (categoryError || !category) throw new Error(categoryError?.message || 'Категория не найдена')
     assertFactoryAccess(role, factoryId, category.factory_id, 'catalog', isCrmAdmin)
 
-    const { count } = await admin
+    const updatedAt = new Date().toISOString()
+    const { error: itemsError } = await admin
       .from('consumables')
-      .select('id', { count: 'exact', head: true })
+      .update({ is_active: false, updated_at: updatedAt })
+      .eq('factory_id', category.factory_id)
       .eq('category_id', categoryId)
       .eq('is_active', true)
-    if ((count || 0) > 0) throw new Error('Сначала архивируйте активные расходники этой категории')
+    if (itemsError) throw itemsError
 
     const { error } = await admin
       .from('consumable_categories')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .update({ is_active: false, updated_at: updatedAt })
       .eq('id', categoryId)
     if (error) throw error
     revalidateConsumables()
@@ -471,10 +511,16 @@ export async function recordConsumableStockOperation(
 ): Promise<ActionResult<{ balance: number }>> {
   try {
     const parsed = consumableStockOperationSchema.parse(input)
-    const { role, factoryId, isCrmAdmin, admin, client } = await getContext()
+    const { role, factoryId, isCrmAdmin, user, admin, client } = await getContext()
     assertCatalogRole(role, isCrmAdmin)
     const itemFactoryId = await getFactoryIdForConsumable(admin, parsed.consumableId)
     assertFactoryAccess(role, factoryId, itemFactoryId, 'catalog', isCrmAdmin)
+    if (parsed.operation === 'manual_receipt') {
+      throw new Error('Ручной приход отключен. Приход расходников фиксируется только через получение заявки.')
+    }
+    if (parsed.operation === 'adjustment' && !canAdjustConsumableStock(user, role, isCrmAdmin)) {
+      throw new Error('Сверка остатков доступна только Игорю Рябову (Администратор CRM) и начальнику отдела планирования.')
+    }
 
     const { data, error } = await client.rpc('record_consumable_stock_operation', {
       p_consumable_id: parsed.consumableId,
