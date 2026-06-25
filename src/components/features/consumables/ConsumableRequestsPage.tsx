@@ -625,6 +625,7 @@ function deliveryDateLabel(value: string | null | undefined) {
 
 function DeliveryPreview({ request }: { request: ConsumableRequest }) {
   const isNovaPoshta = request.delivery_method === 'nova_poshta'
+  const carrierLabel = isNovaPoshta ? 'Новая почта' : request.carrier_name || 'Перевозчик'
   const trackingStatus = isNovaPoshta
     ? request.tracking_status || 'Ожидается обновление статуса'
     : request.carrier_eta
@@ -633,34 +634,26 @@ function DeliveryPreview({ request }: { request: ConsumableRequest }) {
   const deliveryDate = isNovaPoshta ? request.tracking_estimated_delivery_date : request.carrier_eta
 
   return (
-    <div className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-3 text-sm shadow-sm">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 gap-2.5">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#1B3A6B] text-white shadow-sm">
-            <Truck className="h-4 w-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold text-blue-950">
-              <span>{isNovaPoshta ? 'Новая почта' : request.carrier_name || 'Перевозчик'}</span>
-              {isNovaPoshta && request.nova_poshta_ttn && (
-                <span className={cn('inline-flex items-center gap-1 rounded-full border border-blue-200 bg-white px-2 py-0.5 text-xs text-blue-800', industrial.mono)}>
-                  <Barcode className="h-3 w-3" />
-                  {request.nova_poshta_ttn}
-                </span>
-              )}
-            </div>
-            <div className={cn('mt-1 leading-5', request.tracking_error ? 'text-red-700' : 'text-slate-600')}>
-              {request.tracking_error || trackingStatus}
-            </div>
-          </div>
-        </div>
-        <div className="rounded-xl border border-blue-200 bg-white px-3 py-2 sm:min-w-40">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Ориентир доставки</div>
-          <div className={cn('mt-1 flex items-center gap-1.5 font-semibold text-[#1B3A6B]', industrial.mono)}>
-            <CalendarDays className="h-4 w-4 shrink-0" />
-            {deliveryDateLabel(deliveryDate)}
-          </div>
-        </div>
+    <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2 text-xs shadow-none">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="inline-flex min-w-0 items-center gap-1.5 font-semibold text-[#1B3A6B]">
+          <Truck className="h-4 w-4 shrink-0" />
+          <span className="truncate">{carrierLabel}</span>
+        </span>
+        {isNovaPoshta && request.nova_poshta_ttn && (
+          <span className={cn('inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-blue-200 bg-white px-2 py-0.5 font-semibold text-blue-800 shadow-sm', industrial.mono)}>
+            <Barcode className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{request.nova_poshta_ttn}</span>
+          </span>
+        )}
+        <span className={cn('inline-flex items-center gap-1 rounded-full border border-blue-200 bg-white px-2 py-0.5 font-semibold text-[#1B3A6B] shadow-sm', industrial.mono)}>
+          <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+          <span className="whitespace-nowrap">Ориентир: {deliveryDateLabel(deliveryDate)}</span>
+        </span>
+      </div>
+      <div className={cn('mt-1.5 line-clamp-2 break-words text-[13px] leading-5 [overflow-wrap:anywhere]', request.tracking_error ? 'text-red-700' : 'text-slate-600')}>
+        <span className="font-medium text-slate-700">Статус: </span>
+        {request.tracking_error || trackingStatus}
       </div>
     </div>
   )
