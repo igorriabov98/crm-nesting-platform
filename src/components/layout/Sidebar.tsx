@@ -27,6 +27,7 @@ import {
   FileText,
   Building2,
   ShieldCheck,
+  PackagePlus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -67,6 +68,7 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   consumables: Warehouse,
   orders: ShoppingCart,
   inventory: Warehouse,
+  receiving: PackagePlus,
   suppliers: Truck,
   materials: Boxes,
   nesting: Shapes,
@@ -84,7 +86,7 @@ function toNavItem(resource: PermissionResource): NavItem | null {
     href: resource.defaultHref,
     label: resource.key === 'admin_settings' ? 'Все настройки' : resource.label,
     icon: iconMap[resource.sidebar.icon],
-    exact: resource.key === 'production',
+    exact: resource.key === 'production' || resource.key === 'inventory',
   }
 }
 
@@ -103,6 +105,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const [isFinanceMenuOpen, setIsFinanceMenuOpen] = useState(false)
   const [isProductionMenuOpen, setIsProductionMenuOpen] = useState(false)
   const [isSupplyMenuOpen, setIsSupplyMenuOpen] = useState(false)
+  const [isInventoryMenuOpen, setIsInventoryMenuOpen] = useState(false)
   const [isMeetingsMenuOpen, setIsMeetingsMenuOpen] = useState(false)
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false)
 
@@ -117,6 +120,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const workflowItems = sectionItems(user, permissions, 'workflow')
   const productionItems = sectionItems(user, permissions, 'production')
   const supplyItems = sectionItems(user, permissions, 'supply')
+  const inventoryItems = sectionItems(user, permissions, 'inventory')
   const meetingItems = sectionItems(user, permissions, 'meetings')
   const toolsItems = sectionItems(user, permissions, 'tools')
   const settingsItems = sectionItems(user, permissions, 'settings')
@@ -137,6 +141,8 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const isProductionExpanded = !collapsed && (isProductionMenuOpen || isProductionActive)
   const isSupplyActive = supplyItems.some(isActiveItem)
   const isSupplyExpanded = !collapsed && (isSupplyMenuOpen || isSupplyActive)
+  const isInventoryActive = inventoryItems.some(isActiveItem)
+  const isInventoryExpanded = !collapsed && (isInventoryMenuOpen || isInventoryActive)
   const isMeetingsActive = meetingItems.some(isActiveItem)
   const isMeetingsExpanded = !collapsed && (isMeetingsMenuOpen || isMeetingsActive)
   const isSettingsActive = settingsItems.some(isActiveItem)
@@ -305,6 +311,16 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
           isExpanded: isSupplyExpanded,
           toggle: () => setIsSupplyMenuOpen((current) => !current),
           icon: Package,
+        })}
+
+        {renderMenu({
+          items: inventoryItems,
+          label: 'Склад',
+          collapsedTitle: 'Склад',
+          isActive: isInventoryActive,
+          isExpanded: isInventoryExpanded,
+          toggle: () => setIsInventoryMenuOpen((current) => !current),
+          icon: Warehouse,
         })}
 
         {renderMenu({

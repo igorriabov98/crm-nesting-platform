@@ -66,6 +66,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   product_project_sales_review: 'Согласование изделия',
   consumable_request_review: 'Заявка на расходники',
   consumable_request_shortage: 'Недопоставка расходника',
+  supply_material_receipt_shortage: 'Недовес материала',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {
@@ -203,10 +204,14 @@ function isConsumableTask(taskType: TaskType) {
   return taskType === 'consumable_request_review' || taskType === 'consumable_request_shortage'
 }
 
+function isSupplyReceiptTask(taskType: TaskType) {
+  return taskType === 'supply_material_receipt_shortage'
+}
+
 function getTaskTypeBadgeClass(taskType: TaskType) {
-  return isConsumableTask(taskType)
-    ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
-    : 'border-slate-200 bg-slate-50 text-slate-700'
+  if (isConsumableTask(taskType)) return 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
+  if (isSupplyReceiptTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
+  return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
 function getStatusIcon(status: TaskStatus, overdue: boolean) {

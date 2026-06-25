@@ -22,6 +22,7 @@ export type ResourceKey =
   | 'supply_consumable_requests'
   | 'supply_orders'
   | 'inventory'
+  | 'inventory_receiving'
   | 'suppliers'
   | 'materials'
   | 'nesting'
@@ -37,7 +38,7 @@ export type ResourceKey =
   | 'company_settings'
   | 'access_settings'
 
-export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'production' | 'supply' | 'meetings' | 'tools' | 'settings'
+export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'production' | 'supply' | 'inventory' | 'meetings' | 'tools' | 'settings'
 
 export type SidebarIconKey =
   | 'dashboard'
@@ -54,6 +55,7 @@ export type SidebarIconKey =
   | 'consumables'
   | 'orders'
   | 'inventory'
+  | 'receiving'
   | 'suppliers'
   | 'materials'
   | 'nesting'
@@ -122,6 +124,7 @@ const PRODUCT_ROLES = ['sales_manager', 'engineer', ...DIRECTORS] as const satis
 const FINANCE_VIEW_ROLES = ['supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
 const FINANCE_MANAGE_ROLES = ['financial_director', 'planning_director', 'supply_manager'] as const satisfies readonly UserRole[]
 const SUPPLY_AND_DIRECTORS = ['supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
+const INVENTORY_RECEIVING_ROLES = ['supply_manager', 'procurement_head', 'engineer', 'technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
 const REQUEST_VIEW_ROLES = ['engineer', 'technologist', 'supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
 const REQUEST_MANAGE_ROLES = ['technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
 const SUPPLY_MANAGE_ROLES = ['engineer', 'technologist', 'supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
@@ -317,12 +320,22 @@ export const PERMISSION_RESOURCES = [
   {
     key: 'inventory',
     label: 'Склад',
-    group: 'Снабжение',
+    group: 'Склад',
     defaultHref: ROUTES.INVENTORY,
     defaultViewRoles: SUPPLY_AND_DIRECTORS,
     defaultManageRoles: SUPPLY_AND_DIRECTORS,
     routes: [{ path: ROUTES.INVENTORY, match: 'prefix', operation: 'view' }],
-    sidebar: { section: 'supply', icon: 'inventory', order: 20 },
+    sidebar: { section: 'inventory', icon: 'inventory', order: 10 },
+  },
+  {
+    key: 'inventory_receiving',
+    label: 'Прием материала',
+    group: 'Склад',
+    defaultHref: ROUTES.INVENTORY_RECEIVING,
+    defaultViewRoles: INVENTORY_RECEIVING_ROLES,
+    defaultManageRoles: INVENTORY_RECEIVING_ROLES,
+    routes: [{ path: ROUTES.INVENTORY_RECEIVING, match: 'prefix', operation: 'view', priority: 100 }],
+    sidebar: { section: 'inventory', icon: 'receiving', order: 20 },
   },
   {
     key: 'suppliers',

@@ -1,6 +1,5 @@
 import { 
   Bell, 
-  MessageSquare, 
   AlertTriangle, 
   CheckCircle,
   Clock, 
@@ -101,6 +100,12 @@ export const NOTIFICATION_TYPES = {
     color: 'text-cyan-700',
     bg: 'bg-cyan-50',
     label: 'Частичное получение'
+  },
+  material_receipt_variance: {
+    icon: AlertTriangle,
+    color: 'text-amber-700',
+    bg: 'bg-amber-50',
+    label: 'Расхождение приемки'
   },
 } as const
 

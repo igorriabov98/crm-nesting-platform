@@ -5,6 +5,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { MaterialCategory, OrderItemStatus } from '@/lib/types'
+import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -36,7 +37,7 @@ export type SupplyFinancePaymentInput = {
 type RequestRow = {
   id: string
   machine_id: string
-  machines: { id: string; name: string; planned_material_date: string | null; is_archived: boolean | null } | null
+  machines: { id: string; name: string; factory_id: string | null; planned_material_date: string | null; is_archived: boolean | null } | null
 }
 
 type RequestItemRow = Record<string, unknown> & {
@@ -130,6 +131,109 @@ export type SupplyOrderStockItem = {
   secondary_unit: string | null
 }
 
+export type SupplyOrderAggregateCharacteristic = {
+  label: string
+  value: string
+}
+
+export type SupplyOrderAggregateSourceItem = {
+  table: string
+  id: string
+  request_id: string
+  machine_id: string
+  machine_name: string
+  quantity: number
+  unit: string
+  order_status: Extract<OrderItemStatus, 'pending' | 'ordered'>
+  supply_delivery_date: string | null
+}
+
+export type SupplyOrderAggregateFactory = {
+  factory_id: string | null
+  factory_name: string
+  quantity: number
+  requested_quantity: number
+  reserved_quantity: number
+  weight_kg: number | null
+  item_count: number
+  machine_count: number
+  pending_count: number
+  ordered_count: number
+  production_date: string | null
+  supply_delivery_date: string | null
+  has_mixed_supply_delivery_dates: boolean
+  items: SupplyOrderAggregateSourceItem[]
+}
+
+export type SupplyOrderAggregate = {
+  id: string
+  planned_material_date: string | null
+  category: MaterialCategory
+  item_name: string
+  unit: string
+  material_id: string | null
+  material_variant_id: string | null
+  characteristics: SupplyOrderAggregateCharacteristic[]
+  quantity: number
+  requested_quantity: number
+  reserved_quantity: number
+  weight_kg: number | null
+  item_count: number
+  machine_count: number
+  pending_count: number
+  ordered_count: number
+  factories: SupplyOrderAggregateFactory[]
+}
+
+export type MaterialReceivingFactory = {
+  id: string
+  name: string
+}
+
+export type MaterialReceivingItem = {
+  key: string
+  schedule_id: string | null
+  table: string
+  id: string
+  request_id: string
+  machine_id: string
+  machine_name: string
+  factory_id: string | null
+  factory_name: string
+  delivery_date: string
+  planned_quantity: number
+  unit: string
+  supplier_id: string | null
+  supplier_name: string | null
+  category: MaterialCategory
+  item_name: string
+  material_id: string | null
+  material_variant_id: string | null
+  characteristics: SupplyOrderAggregateCharacteristic[]
+  weight_kg: number | null
+  is_virtual_schedule: boolean
+}
+
+export type MaterialReceivingDateGroup = {
+  date: string
+  is_initially_open: boolean
+  items: MaterialReceivingItem[]
+}
+
+export type MaterialReceivingPageData = {
+  factories: MaterialReceivingFactory[]
+  activeFactoryId: string | null
+  groups: MaterialReceivingDateGroup[]
+}
+
+type SupplyOrderAggregateInputItem = RawOrderItem & {
+  raw: RequestItemRow
+  machine_id: string
+  machine_name: string
+  factory_id: string | null
+  planned_material_date: string | null
+}
+
 const ORDER_TABLES = [
   'request_sheet_metal',
   // @deprecated — round_tube excluded from new UI
@@ -145,6 +249,11 @@ const ORDER_TABLES = [
 
 async function requireAccess(operation: PermissionOperation = 'view') {
   const { supabase, userId } = await requirePermission('supply_orders', operation)
+  return { db: supabase as unknown as RpcDb, userId }
+}
+
+async function requireReceivingAccess(operation: PermissionOperation = 'view') {
+  const { supabase, userId } = await requirePermission('inventory_receiving', operation)
   return { db: supabase as unknown as RpcDb, userId }
 }
 
@@ -336,6 +445,131 @@ function secondaryReservedQuantity(table: string, row: RequestItemRow) {
   return null
 }
 
+const AGGREGATE_ORDER_STATUSES = new Set<OrderItemStatus>(['pending', 'ordered'])
+
+const IDENTITY_FIELDS: Record<string, Array<[label: string, field: string]>> = {
+  request_sheet_metal: [
+    ['Материал', 'material_name'],
+    ['Марка', 'material_grade'],
+    ['Тип стали', 'steel_type_id'],
+    ['Толщина', 'thickness_mm'],
+    ['Размер листа', 'sheet_size'],
+  ],
+  request_round_tube: [
+    ['Материал', 'material_name'],
+    ['Штук/длина', 'piece_count'],
+  ],
+  request_circle: [
+    ['Марка', 'steel_grade'],
+    ['Тип стали', 'steel_type_id'],
+    ['Диаметр', 'diameter_mm'],
+    ['Калиброванный', 'is_calibrated'],
+  ],
+  request_pipe: [
+    ['Тип трубы', 'pipe_type'],
+    ['Тип стали', 'steel_type_id'],
+    ['Размер', 'size'],
+    ['Стенка', 'wall_thickness_mm'],
+    ['Диаметр', 'diameter_mm'],
+  ],
+  request_knives: [
+    ['Тип ножа', 'knife_type'],
+    ['Марка', 'steel_grade'],
+    ['Тип стали', 'steel_type_id'],
+    ['Длина', 'length_mm'],
+    ['Ширина', 'width_mm'],
+    ['Высота', 'height_mm'],
+  ],
+  request_components: [
+    ['Компонент', 'component_name'],
+    ['Спецификация', 'specification'],
+    ['Диаметр', 'diameter_mm'],
+    ['Ед.', 'unit'],
+  ],
+  request_paint: [
+    ['Тип краски', 'paint_type'],
+    ['RAL', 'ral_code'],
+    ['Финиш', 'finish'],
+  ],
+  request_mesh: [
+    ['Описание', 'description'],
+    ['Длина', 'length_mm'],
+    ['Ширина', 'width_mm'],
+  ],
+  request_chain_cord: [
+    ['Тип', 'item_type'],
+    ['Параметры', 'parameters'],
+  ],
+}
+
+const DISPLAY_FIELDS: Record<string, Array<[label: string, field: string]>> = Object.fromEntries(
+  Object.entries(IDENTITY_FIELDS).map(([table, fields]) => [
+    table,
+    fields.filter(([, field]) => field !== 'steel_type_id'),
+  ])
+)
+
+function normalizeCharacteristicValue(value: unknown) {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'boolean') return value ? 'да' : 'нет'
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null
+  const text = String(value).trim()
+  return text.length ? text : null
+}
+
+function getCharacteristicParts(table: string, row: RequestItemRow, displayOnly = false) {
+  const fields = (displayOnly ? DISPLAY_FIELDS : IDENTITY_FIELDS)[table] || []
+  return fields.flatMap(([label, field]) => {
+    const value = normalizeCharacteristicValue(row[field])
+    return value ? [{ label, value }] : []
+  })
+}
+
+function getAggregateIdentityKey(table: string, row: RequestItemRow, item: RawOrderItem) {
+  const base = [
+    table,
+    item.category,
+    item.material_id || item.item_name,
+    item.unit,
+  ]
+
+  if (item.material_variant_id) {
+    return [...base, `variant:${item.material_variant_id}`].join('|')
+  }
+
+  const characteristics = getCharacteristicParts(table, row)
+    .map((part) => `${part.label}:${part.value}`)
+
+  return [...base, ...characteristics].join('|')
+}
+
+function getAggregateCharacteristics(table: string, row: RequestItemRow, item: RawOrderItem): SupplyOrderAggregateCharacteristic[] {
+  const characteristics = getCharacteristicParts(table, row, true)
+  return characteristics.length ? characteristics : [{ label: 'Позиция', value: item.item_name }]
+}
+
+function plannedDateKey(value: string | null) {
+  return value || 'no_planned_date'
+}
+
+function factoryKey(value: string | null) {
+  return value || 'no_factory'
+}
+
+function effectiveSupplyDeliveryDate(item: Pick<RawOrderItem, 'custom_delivery_date'>, plannedDate: string | null) {
+  return item.custom_delivery_date || plannedDate || null
+}
+
+function assertDateOrNull(value: string | null) {
+  if (value === null) return null
+  const normalized = value.trim()
+  if (!normalized) return null
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) throw new Error('Некорректная дата поставки')
+  const date = new Date(`${normalized}T00:00:00`)
+  if (Number.isNaN(date.getTime())) throw new Error('Некорректная дата поставки')
+  return normalized
+}
+
 function validateReceiptFields(item: RawOrderItem) {
   if (item.category === 'knives') {
     if (!item.selected_piece_length_mm) throw new Error(`Для ножа "${item.item_name}" не указана длина складской позиции`)
@@ -402,7 +636,7 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
 
   const { data: requestsData, error } = await db
     .from('technologist_requests')
-    .select('id, machine_id, status, submitted_at, machines!inner(id, name, planned_material_date, is_archived)')
+    .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)')
     .in('id', requestIds)
   if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
   const requests = (requestsData || []) as RequestRow[]
@@ -471,7 +705,7 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
 
     const { data: requestsData, error, count } = await db
       .from('technologist_requests')
-      .select('id, machine_id, status, submitted_at, machines!inner(id, name, planned_material_date, is_archived)', { count: 'exact' })
+      .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)', { count: 'exact' })
       .in('status', ['submitted_to_supply', 'completed'])
       .eq('machines.is_archived', false)
       .order('submitted_at', { ascending: false })
@@ -668,6 +902,634 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
     }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заказы', pagination: null }
+  }
+}
+
+async function loadAggregateRequests(db: LooseDb) {
+  const batchSize = 1000
+  const requests: RequestRow[] = []
+
+  for (let from = 0; ; from += batchSize) {
+    const { data, error } = await db
+      .from('technologist_requests')
+      .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)')
+      .in('status', ['submitted_to_supply', 'completed'])
+      .eq('machines.is_archived', false)
+      .order('submitted_at', { ascending: false })
+      .range(from, from + batchSize - 1)
+
+    if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
+
+    const rows = (data || []) as RequestRow[]
+    requests.push(...rows)
+    if (rows.length < batchSize) break
+  }
+
+  return requests
+}
+
+async function loadAggregateInputItems(db: LooseDb): Promise<SupplyOrderAggregateInputItem[]> {
+  const requests = await loadAggregateRequests(db)
+  const requestIds = requests.map((request) => request.id)
+  const requestMap = new Map(requests.map((request) => [request.id, request]))
+
+  const [sheet, round, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
+    loadRows(db, 'request_sheet_metal', requestIds),
+    // @deprecated — round_tube excluded from new UI
+    loadRows(db, 'request_round_tube', requestIds),
+    loadRows(db, 'request_circle', requestIds),
+    loadRows(db, 'request_pipe', requestIds),
+    loadRows(db, 'request_knives', requestIds),
+    loadRows(db, 'request_components', requestIds),
+    loadRows(db, 'request_paint', requestIds),
+    loadRows(db, 'request_mesh', requestIds),
+    loadRows(db, 'request_chain_cord', requestIds),
+  ])
+
+  const makeItem = (
+    table: string,
+    category: MaterialCategory,
+    row: RequestItemRow,
+    name: unknown,
+    supplierId: string | null = null
+  ): SupplyOrderAggregateInputItem | null => {
+    const request = requestMap.get(row.request_id)
+    const machine = request?.machines
+    if (!request || !machine || machine.is_archived) return null
+
+    const orderStatus = (row.order_status || 'pending') as OrderItemStatus
+    if (!AGGREGATE_ORDER_STATUSES.has(orderStatus)) return null
+
+    const requested = requestedQuantity(table, row)
+    const reserved = reservedQuantity(table, row)
+    const toOrder = Math.max(requested - reserved, 0)
+    if (toOrder <= 0) return null
+
+    return {
+      table,
+      category,
+      id: row.id,
+      request_id: row.request_id,
+      item_name: itemName(row, name),
+      requested_quantity: requested,
+      reserved_quantity: reserved,
+      secondary_requested_quantity: secondaryRequestedQuantity(table, row),
+      secondary_reserved_quantity: secondaryReservedQuantity(table, row),
+      to_order: toOrder,
+      unit: primaryUnit(table, row),
+      supplier_id: supplierId,
+      material_id: row.material_id || null,
+      material_variant_id: row.material_variant_id || null,
+      custom_delivery_date: row.custom_delivery_date || null,
+      order_status: orderStatus,
+      calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
+      selected_piece_length_mm: selectedPieceLength(table, row),
+      raw: row,
+      machine_id: machine.id || request.machine_id,
+      machine_name: machine.name || 'Машина',
+      factory_id: machine.factory_id || null,
+      planned_material_date: machine.planned_material_date || null,
+    }
+  }
+
+  return [
+    ...sheet.map((row) => makeItem('request_sheet_metal', 'sheet_metal', row, row.material_name, supplierForRow(row))),
+    // @deprecated — round_tube excluded from new UI
+    ...round.map((row) => makeItem('request_round_tube', 'round_tube', row, row.material_name, supplierForRow(row))),
+    ...circles.map((row) => makeItem('request_circle', 'circle', row, row.steel_grade, supplierForRow(row))),
+    ...pipes.map((row) => makeItem('request_pipe', 'pipe', row, row.size, supplierForRow(row))),
+    ...knives.map((row) => makeItem('request_knives', 'knives', row, row.knife_type, supplierForRow(row))),
+    ...components.map((row) => makeItem('request_components', 'components', row, row.component_name, supplierForRow(row))),
+    ...paint.map((row) => makeItem('request_paint', 'paint', row, row.paint_type || row.ral_code, supplierForRow(row))),
+    ...meshItems.map((row) => makeItem('request_mesh', 'mesh', row, row.description, supplierForRow(row))),
+    ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
+  ].filter((item): item is SupplyOrderAggregateInputItem => Boolean(item))
+}
+
+async function loadFactoryNameMap(db: LooseDb, factoryIds: string[]) {
+  if (factoryIds.length === 0) return new Map<string, string>()
+
+  const { data, error } = await db
+    .from('factories')
+    .select('id, name')
+    .in('id', factoryIds)
+
+  if (error) throw new Error(error.message || 'Не удалось загрузить заводы')
+
+  return new Map(((data || []) as { id: string; name: string }[]).map((factory) => [factory.id, factory.name]))
+}
+
+function addNullableWeight(current: number | null, value: number | null) {
+  if (!value || !Number.isFinite(value)) return current
+  return (current || 0) + value
+}
+
+export async function getSupplyOrderAggregates() {
+  try {
+    const { db } = await requireAccess()
+    const items = await loadAggregateInputItems(db)
+    const factoryIds = Array.from(new Set(items.map((item) => item.factory_id).filter(Boolean))) as string[]
+    const factoryNameMap = await loadFactoryNameMap(db, factoryIds)
+
+    type MutableFactory = {
+      factory_id: string | null
+      factory_name: string
+      quantity: number
+      requested_quantity: number
+      reserved_quantity: number
+      weight_kg: number | null
+      item_count: number
+      pending_count: number
+      ordered_count: number
+      production_date: string | null
+      machineIds: Set<string>
+      supplyDates: Set<string>
+      items: SupplyOrderAggregateSourceItem[]
+    }
+
+    type MutableAggregate = {
+      id: string
+      planned_material_date: string | null
+      category: MaterialCategory
+      item_name: string
+      unit: string
+      material_id: string | null
+      material_variant_id: string | null
+      characteristics: SupplyOrderAggregateCharacteristic[]
+      quantity: number
+      requested_quantity: number
+      reserved_quantity: number
+      weight_kg: number | null
+      item_count: number
+      pending_count: number
+      ordered_count: number
+      machineIds: Set<string>
+      factories: Map<string, MutableFactory>
+    }
+
+    const aggregates = new Map<string, MutableAggregate>()
+
+    for (const item of items) {
+      const materialKey = getAggregateIdentityKey(item.table, item.raw, item)
+      const dateKey = plannedDateKey(item.planned_material_date)
+      const aggregateKey = `${dateKey}|${materialKey}`
+      const existing = aggregates.get(aggregateKey)
+      const aggregate = existing || {
+        id: aggregateKey,
+        planned_material_date: item.planned_material_date,
+        category: item.category,
+        item_name: item.item_name,
+        unit: item.unit,
+        material_id: item.material_id,
+        material_variant_id: item.material_variant_id,
+        characteristics: getAggregateCharacteristics(item.table, item.raw, item),
+        quantity: 0,
+        requested_quantity: 0,
+        reserved_quantity: 0,
+        weight_kg: null,
+        item_count: 0,
+        pending_count: 0,
+        ordered_count: 0,
+        machineIds: new Set<string>(),
+        factories: new Map<string, MutableFactory>(),
+      }
+
+      aggregate.quantity += item.to_order
+      aggregate.requested_quantity += item.requested_quantity
+      aggregate.reserved_quantity += item.reserved_quantity
+      aggregate.weight_kg = addNullableWeight(aggregate.weight_kg, item.calculated_weight_kg)
+      aggregate.item_count += 1
+      aggregate.pending_count += item.order_status === 'pending' ? 1 : 0
+      aggregate.ordered_count += item.order_status === 'ordered' ? 1 : 0
+      aggregate.machineIds.add(item.machine_id)
+
+      const currentFactoryKey = factoryKey(item.factory_id)
+      const existingFactory = aggregate.factories.get(currentFactoryKey)
+      const factory = existingFactory || {
+        factory_id: item.factory_id,
+        factory_name: item.factory_id ? factoryNameMap.get(item.factory_id) || 'Завод' : 'Без завода',
+        quantity: 0,
+        requested_quantity: 0,
+        reserved_quantity: 0,
+        weight_kg: null,
+        item_count: 0,
+        pending_count: 0,
+        ordered_count: 0,
+        production_date: item.planned_material_date,
+        machineIds: new Set<string>(),
+        supplyDates: new Set<string>(),
+        items: [],
+      }
+
+      const supplyDeliveryDate = effectiveSupplyDeliveryDate(item, item.planned_material_date)
+      factory.quantity += item.to_order
+      factory.requested_quantity += item.requested_quantity
+      factory.reserved_quantity += item.reserved_quantity
+      factory.weight_kg = addNullableWeight(factory.weight_kg, item.calculated_weight_kg)
+      factory.item_count += 1
+      factory.pending_count += item.order_status === 'pending' ? 1 : 0
+      factory.ordered_count += item.order_status === 'ordered' ? 1 : 0
+      factory.machineIds.add(item.machine_id)
+      factory.supplyDates.add(supplyDeliveryDate || 'no_supply_date')
+      factory.items.push({
+        table: item.table,
+        id: item.id,
+        request_id: item.request_id,
+        machine_id: item.machine_id,
+        machine_name: item.machine_name,
+        quantity: item.to_order,
+        unit: item.unit,
+        order_status: item.order_status as Extract<OrderItemStatus, 'pending' | 'ordered'>,
+        supply_delivery_date: supplyDeliveryDate,
+      })
+
+      aggregate.factories.set(currentFactoryKey, factory)
+      aggregates.set(aggregateKey, aggregate)
+    }
+
+    const data: SupplyOrderAggregate[] = Array.from(aggregates.values())
+      .map((aggregate) => ({
+        id: aggregate.id,
+        planned_material_date: aggregate.planned_material_date,
+        category: aggregate.category,
+        item_name: aggregate.item_name,
+        unit: aggregate.unit,
+        material_id: aggregate.material_id,
+        material_variant_id: aggregate.material_variant_id,
+        characteristics: aggregate.characteristics,
+        quantity: aggregate.quantity,
+        requested_quantity: aggregate.requested_quantity,
+        reserved_quantity: aggregate.reserved_quantity,
+        weight_kg: aggregate.weight_kg,
+        item_count: aggregate.item_count,
+        machine_count: aggregate.machineIds.size,
+        pending_count: aggregate.pending_count,
+        ordered_count: aggregate.ordered_count,
+        factories: Array.from(aggregate.factories.values())
+          .map((factory) => {
+            const supplyDates = Array.from(factory.supplyDates)
+            const hasMixedDates = supplyDates.length > 1
+            const [singleDate] = supplyDates
+            return {
+              factory_id: factory.factory_id,
+              factory_name: factory.factory_name,
+              quantity: factory.quantity,
+              requested_quantity: factory.requested_quantity,
+              reserved_quantity: factory.reserved_quantity,
+              weight_kg: factory.weight_kg,
+              item_count: factory.item_count,
+              machine_count: factory.machineIds.size,
+              pending_count: factory.pending_count,
+              ordered_count: factory.ordered_count,
+              production_date: factory.production_date,
+              supply_delivery_date: hasMixedDates || singleDate === 'no_supply_date' ? null : singleDate,
+              has_mixed_supply_delivery_dates: hasMixedDates,
+              items: factory.items.sort((a, b) => a.machine_name.localeCompare(b.machine_name, 'ru')),
+            }
+          })
+          .sort((a, b) => a.factory_name.localeCompare(b.factory_name, 'ru')),
+      }))
+      .sort((a, b) => {
+        if (!a.planned_material_date && b.planned_material_date) return 1
+        if (a.planned_material_date && !b.planned_material_date) return -1
+        const byDate = (a.planned_material_date || '').localeCompare(b.planned_material_date || '')
+        if (byDate !== 0) return byDate
+        return a.item_name.localeCompare(b.item_name, 'ru')
+      })
+
+    return { data, error: null }
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить агрегаты заказов' }
+  }
+}
+
+type ReceivingScheduleRow = SupplyOrderDeliverySchedule & {
+  request_item_table: string
+  request_item_id: string
+}
+
+const RECEIVING_TIME_ZONE = 'Europe/Chisinau'
+
+function getTodayIsoDate(timeZone = RECEIVING_TIME_ZONE) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const get = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${get('year')}-${get('month')}-${get('day')}`
+}
+
+function itemKey(item: Pick<RawOrderItem, 'table' | 'id'>) {
+  return `${item.table}:${item.id}`
+}
+
+async function loadSupplierNameMap(db: LooseDb, supplierIds: string[]) {
+  const uniqueIds = Array.from(new Set(supplierIds.filter(Boolean)))
+  if (uniqueIds.length === 0) return new Map<string, string>()
+
+  const { data, error } = await db
+    .from('suppliers')
+    .select('id, name')
+    .in('id', uniqueIds)
+
+  if (error) throw new Error(error.message || 'Не удалось загрузить поставщиков')
+
+  return new Map(((data || []) as { id: string; name: string }[]).map((supplier) => [supplier.id, supplier.name]))
+}
+
+async function loadReceivingSchedules(db: LooseDb, items: SupplyOrderAggregateInputItem[]) {
+  const itemIds = Array.from(new Set(items.map((item) => item.id)))
+  if (itemIds.length === 0) return []
+
+  const { data, error } = await db
+    .from('supply_order_delivery_schedules')
+    .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, delivered_at, received_by, created_at, updated_at')
+    .in('request_item_id', itemIds)
+    .order('delivery_date', { ascending: true })
+
+  if (error) throw new Error(error.message || 'Не удалось загрузить график поставок')
+
+  const validKeys = new Set(items.map(itemKey))
+  return ((data || []) as ReceivingScheduleRow[])
+    .filter((schedule) => validKeys.has(`${schedule.request_item_table}:${schedule.request_item_id}`))
+}
+
+function makeReceivingItem(
+  item: SupplyOrderAggregateInputItem,
+  factoryName: string,
+  supplierNameMap: Map<string, string>,
+  schedule: ReceivingScheduleRow | null,
+  deliveryDate: string,
+  plannedQuantity: number,
+): MaterialReceivingItem {
+  const supplierId = schedule?.supplier_id || item.supplier_id
+  return {
+    key: schedule?.id || `${item.table}:${item.id}:${deliveryDate}`,
+    schedule_id: schedule?.id || null,
+    table: item.table,
+    id: item.id,
+    request_id: item.request_id,
+    machine_id: item.machine_id,
+    machine_name: item.machine_name,
+    factory_id: item.factory_id,
+    factory_name: factoryName,
+    delivery_date: deliveryDate,
+    planned_quantity: plannedQuantity,
+    unit: schedule?.unit || item.unit,
+    supplier_id: supplierId || null,
+    supplier_name: supplierId ? supplierNameMap.get(supplierId) || 'Поставщик' : null,
+    category: item.category,
+    item_name: item.item_name,
+    material_id: item.material_id,
+    material_variant_id: item.material_variant_id,
+    characteristics: getAggregateCharacteristics(item.table, item.raw, item),
+    weight_kg: item.calculated_weight_kg,
+    is_virtual_schedule: !schedule,
+  }
+}
+
+export async function getMaterialReceivingPageData(factoryFilter?: string | null): Promise<{
+  data: MaterialReceivingPageData | null
+  error: string | null
+}> {
+  try {
+    const { db } = await requireReceivingAccess()
+    const { data: factoriesData, error: factoriesError } = await db
+      .from('factories')
+      .select('id, name')
+      .order('name', { ascending: true })
+
+    if (factoriesError) throw new Error(factoriesError.message || 'Не удалось загрузить заводы')
+
+    const factories = (factoriesData || []) as MaterialReceivingFactory[]
+    const activeFactoryId = factories.some((factory) => factory.id === factoryFilter)
+      ? factoryFilter || null
+      : factories[0]?.id || null
+
+    if (!activeFactoryId) {
+      return { data: { factories, activeFactoryId: null, groups: [] }, error: null }
+    }
+
+    const today = getTodayIsoDate()
+    const allItems = await loadAggregateInputItems(db)
+    const items = allItems.filter((item) => (
+      item.order_status === 'ordered'
+      && item.factory_id === activeFactoryId
+    ))
+    const factoryNameMap = await loadFactoryNameMap(db, [activeFactoryId])
+    const schedules = await loadReceivingSchedules(db, items)
+    const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
+
+    for (const schedule of schedules) {
+      const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+      schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+    }
+
+    const supplierIds = [
+      ...items.map((item) => item.supplier_id).filter(Boolean),
+      ...schedules.map((schedule) => schedule.supplier_id).filter(Boolean),
+    ] as string[]
+    const supplierNameMap = await loadSupplierNameMap(db, supplierIds)
+    const receivingItems: MaterialReceivingItem[] = []
+
+    for (const item of items) {
+      const factoryName = item.factory_id ? factoryNameMap.get(item.factory_id) || 'Завод' : 'Без завода'
+      const itemSchedules = (schedulesByItem.get(itemKey(item)) || [])
+        .filter((schedule) => schedule.status !== 'delivered')
+
+      if (itemSchedules.length > 0) {
+        for (const schedule of itemSchedules) {
+          if (schedule.delivery_date < today) continue
+          receivingItems.push(makeReceivingItem(
+            item,
+            factoryName,
+            supplierNameMap,
+            schedule,
+            schedule.delivery_date,
+            Number(schedule.quantity || 0),
+          ))
+        }
+        continue
+      }
+
+      const deliveryDate = effectiveSupplyDeliveryDate(item, item.planned_material_date)
+      if (!deliveryDate || deliveryDate < today) continue
+      receivingItems.push(makeReceivingItem(
+        item,
+        factoryName,
+        supplierNameMap,
+        null,
+        deliveryDate,
+        item.to_order,
+      ))
+    }
+
+    const byDate = new Map<string, MaterialReceivingItem[]>()
+    for (const item of receivingItems) {
+      byDate.set(item.delivery_date, [...(byDate.get(item.delivery_date) || []), item])
+    }
+
+    const groups = Array.from(byDate.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, rows], index) => ({
+        date,
+        is_initially_open: index === 0,
+        items: rows.sort((a, b) => {
+          const byCategory = a.category.localeCompare(b.category)
+          if (byCategory !== 0) return byCategory
+          const byMaterial = a.item_name.localeCompare(b.item_name, 'ru')
+          if (byMaterial !== 0) return byMaterial
+          return a.machine_name.localeCompare(b.machine_name, 'ru')
+        }),
+      }))
+
+    return { data: { factories, activeFactoryId, groups }, error: null }
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить прием материала' }
+  }
+}
+
+export async function receiveMaterialDelivery(input: {
+  schedule_id?: string | null
+  table?: string
+  id?: string
+  delivery_date?: string
+  planned_quantity?: number
+  received_quantity: number
+}) {
+  try {
+    const { db, userId } = await requireReceivingAccess('manage')
+    const receivedQuantity = Number(input.received_quantity)
+    if (!Number.isFinite(receivedQuantity) || receivedQuantity <= 0) {
+      throw new Error('Введите фактическое количество прихода')
+    }
+
+    let scheduleId = input.schedule_id || null
+    let createdScheduleId: string | null = null
+    let affectedItems = new Map<string, string[]>()
+
+    if (!scheduleId) {
+      const table = input.table || ''
+      const id = input.id || ''
+      assertOrderTable(table)
+      const deliveryDate = assertDateOrNull(input.delivery_date || null)
+      if (!deliveryDate) throw new Error('Не указана дата поставки')
+
+      const orderItem = await loadOneOrderItem(db, table, id)
+      if (orderItem.order_status !== 'ordered') {
+        throw new Error('Поставку можно принять только после отметки позиции "Заказано"')
+      }
+      if (!orderItem.material_id) throw new Error(`Позиция "${orderItem.item_name}" не привязана к материалу`)
+      if (!orderItem.supplier_id) throw new Error(`Назначьте поставщика для позиции "${orderItem.item_name}"`)
+      validateReceiptFields(orderItem)
+
+      const plannedQuantity = Number(input.planned_quantity || orderItem.to_order)
+      if (!Number.isFinite(plannedQuantity) || plannedQuantity <= 0) {
+        throw new Error('Плановое количество поставки должно быть больше 0')
+      }
+      await assertScheduleTotalFits(db, orderItem, plannedQuantity)
+
+      const { data: insertedSchedule, error: insertError } = await db
+        .from('supply_order_delivery_schedules')
+        .insert({
+          request_item_table: table,
+          request_item_id: id,
+          delivery_date: deliveryDate,
+          quantity: plannedQuantity,
+          unit: orderItem.unit,
+          supplier_id: orderItem.supplier_id,
+          created_by: userId,
+          updated_by: userId,
+        })
+        .select('id')
+        .single()
+
+      if (insertError) throw new Error(insertError.message || 'Не удалось создать строку графика поставки')
+      scheduleId = (insertedSchedule as { id?: string } | null)?.id || null
+      if (!scheduleId) throw new Error('Не удалось определить созданную поставку')
+      createdScheduleId = scheduleId
+      affectedItems = new Map([[table, [id]]])
+    } else {
+      const { data: scheduleData, error: scheduleError } = await db
+        .from('supply_order_delivery_schedules')
+        .select('request_item_table, request_item_id')
+        .eq('id', scheduleId)
+        .maybeSingle()
+
+      if (scheduleError) throw new Error(scheduleError.message || 'Не удалось загрузить поставку')
+      const schedule = scheduleData as { request_item_table?: string; request_item_id?: string } | null
+      if (!schedule?.request_item_table || !schedule.request_item_id) throw new Error('Поставка не найдена')
+      affectedItems = new Map([[schedule.request_item_table, [schedule.request_item_id]]])
+    }
+
+    const machineIds = await getAffectedMachineIds(db, affectedItems)
+    const { error } = await db.rpc('fn_receive_supply_order_schedule', {
+      p_schedule_id: scheduleId,
+      p_performed_by: userId,
+      p_received_quantity: receivedQuantity,
+    })
+
+    if (error) {
+      if (createdScheduleId) {
+        try {
+          await db.from('supply_order_delivery_schedules').delete().eq('id', createdScheduleId)
+        } catch {
+          // The original RPC error is more important for the user-facing result.
+        }
+      }
+      throw new Error(error.message || 'Не удалось принять поставку на склад')
+    }
+
+    try {
+      await dispatchPendingTelegramDeliveries({ limit: 100 })
+    } catch {
+      // Telegram delivery is best-effort; CRM notifications and tasks are already persisted.
+    }
+
+    revalidatePath(ROUTES.INVENTORY)
+    revalidatePath(ROUTES.INVENTORY_RECEIVING)
+    revalidatePath(ROUTES.SUPPLY)
+    revalidatePath(ROUTES.SUPPLY_ORDERS)
+    revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(ROUTES.TASKS)
+    revalidatePath(ROUTES.NOTIFICATIONS)
+    revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
+    for (const machineId of machineIds) {
+      revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+      revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}/request`)
+    }
+
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось принять поставку на склад' }
+  }
+}
+
+export async function updateAggregateSupplyDeliveryDate(
+  items: { table: string; id: string }[],
+  deliveryDate: string | null
+) {
+  try {
+    const { db } = await requireAccess('manage')
+    const normalizedDate = assertDateOrNull(deliveryDate)
+    const groupedItems = groupItemsByTable(items)
+    if (groupedItems.size === 0) throw new Error('Нет позиций для обновления')
+
+    await Promise.all(Array.from(groupedItems.entries()).map(async ([table, ids]) => {
+      const { error } = await db
+        .from(table)
+        .update({ custom_delivery_date: normalizedDate })
+        .in('id', ids)
+
+      if (error) throw new Error(error.message || 'Не удалось обновить дату снабжения')
+    }))
+
+    revalidatePath(ROUTES.SUPPLY_ORDERS)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось обновить дату снабжения' }
   }
 }
 
@@ -895,17 +1757,40 @@ export async function updateOrderDeliverySchedule(
   }
 }
 
-export async function receiveOrderDeliverySchedule(scheduleId: string) {
+export async function receiveOrderDeliverySchedule(scheduleId: string, receivedQuantity?: number) {
   try {
     const { db, userId } = await requireAccess('manage')
+    let actualQuantity = Number(receivedQuantity || 0)
+    if (!Number.isFinite(actualQuantity) || actualQuantity <= 0) {
+      const { data: scheduleData, error: scheduleError } = await db
+        .from('supply_order_delivery_schedules')
+        .select('quantity')
+        .eq('id', scheduleId)
+        .maybeSingle()
+      if (scheduleError) throw new Error(scheduleError.message || 'Не удалось загрузить поставку')
+      actualQuantity = Number((scheduleData as { quantity?: number } | null)?.quantity || 0)
+    }
+    if (!Number.isFinite(actualQuantity) || actualQuantity <= 0) throw new Error('Введите фактическое количество прихода')
+
     const { error } = await db.rpc('fn_receive_supply_order_schedule', {
       p_schedule_id: scheduleId,
       p_performed_by: userId,
+      p_received_quantity: actualQuantity,
     })
     if (error) throw new Error(error.message || 'Не удалось принять поставку на склад')
+    try {
+      await dispatchPendingTelegramDeliveries({ limit: 100 })
+    } catch {
+      // Telegram delivery is best-effort; CRM notifications and tasks are already persisted.
+    }
+    revalidatePath(ROUTES.INVENTORY)
+    revalidatePath(ROUTES.INVENTORY_RECEIVING)
     revalidatePath(ROUTES.SUPPLY)
     revalidatePath(ROUTES.SUPPLY_ORDERS)
     revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(ROUTES.TASKS)
+    revalidatePath(ROUTES.NOTIFICATIONS)
+    revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось принять поставку на склад' }

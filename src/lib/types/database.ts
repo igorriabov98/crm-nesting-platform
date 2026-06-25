@@ -2334,6 +2334,7 @@ export type Database = {
           related_meeting_id: string | null
           product_project_id: string | null
           consumable_request_id: string | null
+          supply_order_schedule_id: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -2353,6 +2354,7 @@ export type Database = {
           related_meeting_id?: string | null
           product_project_id?: string | null
           consumable_request_id?: string | null
+          supply_order_schedule_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -2372,6 +2374,7 @@ export type Database = {
           related_meeting_id?: string | null
           product_project_id?: string | null
           consumable_request_id?: string | null
+          supply_order_schedule_id?: string | null
           assigned_to?: string
           task_type?: Database['public']['Enums']['task_type']
           title?: string
@@ -3199,7 +3202,7 @@ export type Database = {
       pipe_subtype: 'square' | 'rectangular' | 'round' | 'wire'
       chain_cord_subtype: 'chain' | 'cord'
       task_delegation_status: 'pending' | 'accepted' | 'declined' | 'cancelled'
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'
