@@ -63,6 +63,7 @@ import type {
 type Props = {
   mode: 'production' | 'supply'
   role: UserRole
+  isCrmAdmin?: boolean
   factories: FactorySummary[]
   selectedFactoryId: string
   requests: ConsumableRequest[]
@@ -114,7 +115,7 @@ function staleTracking(value: string | null) {
   return Date.now() - new Date(value).getTime() > 15 * 60 * 1000
 }
 
-export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryId, requests, stock }: Props) {
+export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factories, selectedFactoryId, requests, stock }: Props) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [isPending, startTransition] = useTransition()
@@ -140,8 +141,8 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
   const [details, setDetails] = useState<ConsumableRequest | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
 
-  const canSupply = ['supply_manager', 'procurement_head', 'financial_director', 'commercial_director', 'planning_director'].includes(role)
-  const canProduction = ['production_manager', 'financial_director', 'commercial_director', 'planning_director'].includes(role)
+  const canSupply = isCrmAdmin || ['supply_manager', 'procurement_head', 'financial_director', 'commercial_director', 'planning_director'].includes(role)
+  const canProduction = isCrmAdmin || ['production_manager', 'financial_director', 'commercial_director', 'planning_director'].includes(role)
 
   const factoryOptions = useMemo<IndustrialPickerOption[]>(() => [
     ...(mode === 'supply' ? [{ value: 'all', label: 'Все заводы', description: 'Берегово и Ужгород' }] : []),
