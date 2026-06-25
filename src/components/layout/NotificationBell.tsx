@@ -223,9 +223,9 @@ export function NotificationBell({ userId }: NotificationBellProps) {
                   <button
                     key={notif.id}
                     onClick={() => handleNotificationClick(notif)}
-                    className={`w-full text-left p-4 hover:bg-[#F8F9FA]/50 transition-colors flex items-start gap-4 ${!notif.is_read ? (isConsumable ? 'bg-amber-50/50' : 'bg-[#2563EB]/5') : ''}`}
+                    className={`w-full text-left p-4 hover:bg-[#F8F9FA]/50 transition-colors flex items-start gap-4 ${!notif.is_read ? (isConsumable ? 'bg-blue-50/40' : 'bg-[#2563EB]/5') : ''}`}
                   >
-                    <div className={`mt-0.5 p-2 rounded-full flex-shrink-0 ${isConsumable ? 'bg-slate-950 text-amber-300' : `${config.bg} ${config.color}`}`}>
+                    <div className={`mt-0.5 p-2 rounded-full flex-shrink-0 ${isConsumable ? 'bg-blue-50 text-blue-700' : `${config.bg} ${config.color}`}`}>
                       <Icon className="w-4 h-4" />
                     </div>
                     <div className="flex-1 space-y-1 overflow-hidden">
@@ -241,7 +241,7 @@ export function NotificationBell({ userId }: NotificationBellProps) {
                         {notif.message}
                       </p>
                       {isConsumable && (
-                        <p className="inline-flex rounded-full border border-amber-300 bg-slate-950 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-300">
+                        <p className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-700">
                           Расходники
                         </p>
                       )}

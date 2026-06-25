@@ -50,7 +50,6 @@ interface NavItem {
   label: string
   icon: React.ElementType
   exact?: boolean
-  industrial?: boolean
 }
 
 const iconMap: Record<SidebarIconKey, React.ElementType> = {
@@ -86,7 +85,6 @@ function toNavItem(resource: PermissionResource): NavItem | null {
     label: resource.key === 'admin_settings' ? 'Все настройки' : resource.label,
     icon: iconMap[resource.sidebar.icon],
     exact: resource.key === 'production',
-    industrial: ['consumable_requests', 'consumables', 'supply_consumable_requests'].includes(resource.key),
   }
 }
 
@@ -147,15 +145,6 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   function renderNavItem(item: NavItem, nested = false) {
     const Icon = item.icon
     const isActive = isActiveItem(item)
-    const activeClass = item.industrial
-      ? 'bg-slate-950 text-amber-300 font-semibold shadow-sm'
-      : 'bg-[#1B3A6B] text-white font-medium'
-    const inactiveClass = item.industrial
-      ? 'text-slate-600 hover:bg-amber-50 hover:text-slate-950 font-medium'
-      : 'text-[#6B7280] hover:bg-[#F4F6F9] hover:text-[#1B3A6B] font-medium'
-    const iconClass = item.industrial
-      ? (isActive ? 'text-amber-300' : 'text-amber-600 group-hover:text-slate-950')
-      : (isActive ? 'text-white' : 'text-[#9CA3AF] group-hover:text-[#1B3A6B]')
 
     return (
       <Link
@@ -166,10 +155,12 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
         className={cn(
           'group flex items-center rounded-lg transition-all',
           collapsed ? 'justify-center px-0 py-2.5' : nested ? 'gap-2 px-3 py-2 pl-5 text-sm' : 'gap-3 px-3 py-2.5',
-          isActive ? activeClass : inactiveClass
+          isActive
+            ? 'bg-[#1B3A6B] text-white font-medium'
+            : 'text-[#6B7280] hover:bg-[#F4F6F9] hover:text-[#1B3A6B] font-medium'
         )}
       >
-        <Icon className={cn(nested ? 'h-4 w-4 shrink-0' : 'h-5 w-5 shrink-0', iconClass)} />
+        <Icon className={cn(nested ? 'h-4 w-4 shrink-0' : 'h-5 w-5 shrink-0', isActive ? 'text-white' : 'text-[#9CA3AF] group-hover:text-[#1B3A6B]')} />
         {!collapsed && (
           <>
             <span className="flex-1 truncate">{item.label}</span>

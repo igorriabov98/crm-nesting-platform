@@ -265,9 +265,9 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
 
       <Tabs defaultValue="catalog">
         <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
-          <TabsTrigger value="catalog" className="min-h-10 px-4 data-[state=active]:bg-slate-950 data-[state=active]:text-amber-300">Каталог</TabsTrigger>
-          <TabsTrigger value="stock" className="min-h-10 px-4 data-[state=active]:bg-slate-950 data-[state=active]:text-amber-300">Остатки</TabsTrigger>
-          <TabsTrigger value="consumption" className="min-h-10 px-4 data-[state=active]:bg-slate-950 data-[state=active]:text-amber-300">Расход</TabsTrigger>
+          <TabsTrigger value="catalog" className="min-h-10 px-4 data-[state=active]:bg-[#1B3A6B] data-[state=active]:text-white">Каталог</TabsTrigger>
+          <TabsTrigger value="stock" className="min-h-10 px-4 data-[state=active]:bg-[#1B3A6B] data-[state=active]:text-white">Остатки</TabsTrigger>
+          <TabsTrigger value="consumption" className="min-h-10 px-4 data-[state=active]:bg-[#1B3A6B] data-[state=active]:text-white">Расход</TabsTrigger>
         </TabsList>
 
         <TabsContent value="catalog" className="mt-4 space-y-4">
@@ -324,7 +324,7 @@ export function ConsumablesWorkspace({ factories, selectedFactoryId, categories,
                     key={item.consumable_id}
                     type="button"
                     onClick={() => openOperation(item, 'consumption')}
-                    className="min-h-24 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-amber-300 hover:bg-amber-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    className="min-h-24 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30"
                   >
                     <div className="font-semibold text-slate-950">{item.name}</div>
                     <div className={cn('mt-1 text-xs text-slate-500', industrial.mono)}>{item.article}</div>
@@ -464,7 +464,7 @@ function StockTable({
                   <div className="flex justify-end gap-1">
                     {mode === 'catalog' ? (
                       <>
-                        {item.is_active && <Button className="text-slate-600 hover:bg-amber-50 hover:text-amber-700" variant="ghost" size="icon-sm" aria-label={`Редактировать ${item.name}`} onClick={() => onEdit?.(item)}><Pencil className="h-4 w-4" /></Button>}
+                        {item.is_active && <Button className="text-slate-600 hover:bg-blue-50 hover:text-blue-700" variant="ghost" size="icon-sm" aria-label={`Редактировать ${item.name}`} onClick={() => onEdit?.(item)}><Pencil className="h-4 w-4" /></Button>}
                         {item.is_active && <Button className="text-slate-600 hover:bg-red-50 hover:text-red-700" variant="ghost" size="icon-sm" aria-label={`Архивировать ${item.name}`} onClick={() => onArchive?.(item)}><Archive className="h-4 w-4" /></Button>}
                       </>
                     ) : (

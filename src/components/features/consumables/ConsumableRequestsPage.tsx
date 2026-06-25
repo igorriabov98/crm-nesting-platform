@@ -380,7 +380,7 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
                 <CardContent className="space-y-4 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
-                      <button type="button" onClick={() => openDetails(request.id)} className="text-left text-base font-semibold text-slate-950 transition hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40">
+                      <button type="button" onClick={() => openDetails(request.id)} className="text-left text-base font-semibold text-slate-950 transition hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30">
                         {request.consumable?.name || 'Расходник не найден'}
                       </button>
                       <div className="mt-1 text-xs text-slate-500">
@@ -405,11 +405,11 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
                   )}
 
                   {request.status === 'delivery' && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-sm shadow-inner">
+                    <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-sm shadow-inner">
                       {request.delivery_method === 'nova_poshta' ? (
-                        <><div className="font-semibold text-amber-950">Новая почта · <span className={industrial.mono}>{request.nova_poshta_ttn}</span></div><div className="mt-1 text-amber-800">{request.tracking_status || 'Ожидается обновление статуса'}{request.tracking_estimated_delivery_date && ` · ориентировочно ${new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}`}</div>{request.tracking_error && <div className="mt-1 text-red-700">{request.tracking_error}</div>}</>
+                        <><div className="font-semibold text-blue-950">Новая почта · <span className={industrial.mono}>{request.nova_poshta_ttn}</span></div><div className="mt-1 text-blue-800">{request.tracking_status || 'Ожидается обновление статуса'}{request.tracking_estimated_delivery_date && ` · ориентировочно ${new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}`}</div>{request.tracking_error && <div className="mt-1 text-red-700">{request.tracking_error}</div>}</>
                       ) : (
-                        <><div className="font-semibold text-amber-950">{request.carrier_name}</div><div className="mt-1 text-amber-800">Ожидается {request.carrier_eta ? new Date(`${request.carrier_eta}T00:00:00`).toLocaleDateString('ru-RU') : '—'}</div></>
+                        <><div className="font-semibold text-blue-950">{request.carrier_name}</div><div className="mt-1 text-blue-800">Ожидается {request.carrier_eta ? new Date(`${request.carrier_eta}T00:00:00`).toLocaleDateString('ru-RU') : '—'}</div></>
                       )}
                     </div>
                   )}
@@ -466,7 +466,7 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
                 <SelectContent><SelectItem value="standard">Стандартная · срок 7 дней</SelectItem><SelectItem value="high">Высокая · срок 4 дня</SelectItem></SelectContent>
               </Select>
             </Field>
-            <Field label="Комментарий"><Textarea className="border-slate-300 bg-white text-slate-950 placeholder:text-slate-400 focus-visible:ring-amber-500/30" value={draftNotes} onChange={(event) => setDraftNotes(event.target.value)} /></Field>
+            <Field label="Комментарий"><Textarea className="border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus-visible:border-[#1B3A6B] focus-visible:ring-[#1B3A6B]/10" value={draftNotes} onChange={(event) => setDraftNotes(event.target.value)} /></Field>
           </div>
           <DialogFooter><Button className={industrial.action} variant="outline" onClick={() => setDraftOpen(false)}>Отмена</Button><Button className={industrial.primary} onClick={saveDraft}>Сохранить черновик</Button></DialogFooter>
         </DialogContent>
@@ -508,7 +508,7 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
           </DialogHeader>
           {cancelRequest?.status === 'new' && (
             <Field label="Причина отмены *">
-              <Textarea className="border-slate-300 bg-white text-slate-950 placeholder:text-slate-400 focus-visible:ring-amber-500/30" value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Например: расходник больше не требуется" />
+              <Textarea className="border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus-visible:border-[#1B3A6B] focus-visible:ring-[#1B3A6B]/10" value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Например: расходник больше не требуется" />
             </Field>
           )}
           <DialogFooter>
@@ -530,7 +530,7 @@ export function ConsumableRequestsPage({ mode, role, factories, selectedFactoryI
             <DialogDescription>Заявка будет отображаться как полученная частично. Причина обязательна.</DialogDescription>
           </DialogHeader>
           <Field label="Причина закрытия остатка *">
-            <Textarea className="border-slate-300 bg-white text-slate-950 placeholder:text-slate-400 focus-visible:ring-amber-500/30" value={remainderReason} onChange={(event) => setRemainderReason(event.target.value)} placeholder="Например: остаток заменён другой поставкой" />
+            <Textarea className="border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus-visible:border-[#1B3A6B] focus-visible:ring-[#1B3A6B]/10" value={remainderReason} onChange={(event) => setRemainderReason(event.target.value)} placeholder="Например: остаток заменён другой поставкой" />
           </Field>
           <DialogFooter>
             <Button className={industrial.action} variant="outline" onClick={() => setRemainderRequest(null)}>Назад</Button>
@@ -594,16 +594,16 @@ function RequestDetails({
         <Info label="Получено" value={qty(request.received_quantity, request.consumable?.unit)} />
       </div>
       {request.status === 'delivery' && request.delivery_method === 'nova_poshta' && (
-        <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-inner">
-          <div className="flex items-start justify-between gap-3"><div><div className="font-semibold text-amber-950">Новая почта · <span className={industrial.mono}>{request.nova_poshta_ttn}</span></div><div className="mt-1 text-sm text-amber-900">{request.tracking_status || 'Статус еще не получен'}</div></div><Button className={industrial.action} variant="outline" size="sm" onClick={() => onRefreshTracking(request.id)}><RefreshCcw className="mr-1 h-4 w-4" />Обновить</Button></div>
-          {request.tracking_estimated_delivery_date && <div className="text-sm text-amber-900">Ориентировочная доставка: {new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}</div>}
-          {request.tracking_last_checked_at && <div className="text-xs text-amber-800">Проверено: {new Date(request.tracking_last_checked_at).toLocaleString('ru-RU')}</div>}
+        <div className="space-y-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-inner">
+          <div className="flex items-start justify-between gap-3"><div><div className="font-semibold text-blue-950">Новая почта · <span className={industrial.mono}>{request.nova_poshta_ttn}</span></div><div className="mt-1 text-sm text-blue-900">{request.tracking_status || 'Статус еще не получен'}</div></div><Button className={industrial.action} variant="outline" size="sm" onClick={() => onRefreshTracking(request.id)}><RefreshCcw className="mr-1 h-4 w-4" />Обновить</Button></div>
+          {request.tracking_estimated_delivery_date && <div className="text-sm text-blue-900">Ориентировочная доставка: {new Date(`${request.tracking_estimated_delivery_date}T00:00:00`).toLocaleDateString('ru-RU')}</div>}
+          {request.tracking_last_checked_at && <div className="text-xs text-blue-800">Проверено: {new Date(request.tracking_last_checked_at).toLocaleString('ru-RU')}</div>}
           {request.tracking_error && <div className="text-sm text-red-700">{request.tracking_error}</div>}
         </div>
       )}
       {request.status === 'delivery' && request.delivery_method === 'other' && (
-        <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-inner">
-          <div className="font-semibold text-amber-950">{request.carrier_name}</div>
+        <div className="space-y-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-inner">
+          <div className="font-semibold text-blue-950">{request.carrier_name}</div>
           <div className="flex flex-col gap-2 sm:flex-row"><Input className={industrial.input} type="date" value={eta} onChange={(event) => setEta(event.target.value)} disabled={!canSupply} />{canSupply && <Button className={industrial.action} variant="outline" onClick={() => onUpdateEta(eta)}>Обновить дату</Button>}</div>
         </div>
       )}

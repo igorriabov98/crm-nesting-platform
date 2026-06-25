@@ -17,26 +17,26 @@ import { cn } from '@/lib/utils'
 export const industrial = {
   shell: 'space-y-5 [font-family:var(--font-industrial-sans),var(--font-sans)] text-slate-950',
   hero:
-    'relative overflow-hidden rounded-2xl border border-slate-800/70 bg-[linear-gradient(135deg,#0f172a_0%,#1e293b_55%,#334155_100%)] p-5 text-white shadow-[0_18px_55px_rgba(15,23,42,0.22)]',
-  heroGlow: 'pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-amber-400/20 blur-3xl',
-  eyebrow: 'text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-amber-300',
-  title: 'mt-2 text-2xl font-semibold tracking-tight text-white sm:text-3xl',
-  description: 'mt-2 max-w-3xl text-sm leading-6 text-slate-300',
-  panel: 'rounded-2xl border border-slate-200 bg-white shadow-[0_12px_36px_rgba(15,23,42,0.07)]',
-  panelMuted: 'rounded-2xl border border-slate-200 bg-slate-50/80 shadow-[0_10px_26px_rgba(15,23,42,0.05)]',
+    'relative overflow-hidden rounded-2xl border border-blue-900/10 bg-gradient-to-br from-blue-950 via-blue-900 to-blue-800 p-5 text-white shadow-[0_20px_60px_rgba(30,64,175,0.18)]',
+  heroGlow: 'pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full border border-white/10 bg-white/5',
+  eyebrow: 'text-xs font-semibold uppercase tracking-[0.18em] text-blue-200',
+  title: 'mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl',
+  description: 'mt-2 max-w-3xl text-sm leading-6 text-blue-100',
+  panel: 'rounded-2xl border border-slate-200 bg-white shadow-[0_16px_50px_rgba(15,23,42,0.06)]',
+  panelMuted: 'rounded-2xl border border-slate-200 bg-slate-50/70 shadow-[0_10px_30px_rgba(15,23,42,0.04)]',
   selectTrigger:
-    'h-10 min-w-48 justify-between border-slate-300 bg-white text-slate-900 shadow-sm hover:border-slate-400 hover:bg-slate-50 focus-visible:ring-amber-500/30',
+    'h-10 min-w-48 justify-between border-slate-200 bg-white text-slate-700 shadow-sm hover:border-blue-200 hover:bg-blue-50/40 focus-visible:border-[#1B3A6B] focus-visible:ring-[#1B3A6B]/20',
   input:
-    'h-10 border-slate-300 bg-white text-slate-950 placeholder:text-slate-400 focus-visible:ring-amber-500/30',
+    'h-10 border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus-visible:border-[#1B3A6B] focus-visible:ring-[#1B3A6B]/10',
   label: 'text-xs font-semibold uppercase tracking-[0.12em] text-slate-500',
-  tableHead: 'bg-slate-950 text-xs uppercase tracking-[0.12em] text-slate-200',
+  tableHead: 'bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur',
   mono: '[font-family:var(--font-industrial-mono),var(--font-geist-mono),monospace]',
   action:
-    'border-slate-300 bg-white text-slate-800 hover:border-amber-300 hover:bg-amber-50 hover:text-slate-950',
+    'border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-800',
   primary:
-    'border-amber-500 bg-amber-500 text-slate-950 hover:bg-amber-400 focus-visible:ring-amber-500/40',
+    'border-[#1B3A6B] bg-[#1B3A6B] text-white hover:bg-[#152D54] focus-visible:ring-[#1B3A6B]/30',
   danger:
-    'border-red-200 bg-red-50 text-red-700 hover:border-red-300 hover:bg-red-100',
+    'border-red-200 bg-red-50 text-[#DC2626] hover:border-red-300 hover:bg-red-100',
 }
 
 export type IndustrialPickerOption = {
@@ -88,8 +88,8 @@ export function IndustrialMetricCard({
     critical: 'border-red-200 bg-red-50 text-red-700',
   }[tone]
   const iconClass = {
-    default: 'bg-slate-950 text-amber-300',
-    warning: 'bg-amber-500 text-slate-950',
+    default: 'bg-[#1B3A6B] text-white',
+    warning: 'bg-amber-50 text-amber-700',
     success: 'bg-emerald-600 text-white',
     critical: 'bg-red-600 text-white',
   }[tone]
@@ -120,7 +120,7 @@ export function IndustrialStatusBadge({
     success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     critical: 'border-red-200 bg-red-50 text-red-700',
     info: 'border-blue-200 bg-blue-50 text-blue-700',
-    premium: 'border-amber-300 bg-slate-950 text-amber-300',
+    premium: 'border-blue-200 bg-blue-50 text-blue-700',
   }[tone]
 
   return (
@@ -210,7 +210,7 @@ export function IndustrialSearchPicker({
                       </div>
                     )}
                   </div>
-                  <Check className={cn('mt-0.5 size-4 shrink-0 text-amber-600', value === option.value ? 'opacity-100' : 'opacity-0')} />
+                  <Check className={cn('mt-0.5 size-4 shrink-0 text-blue-700', value === option.value ? 'opacity-100' : 'opacity-0')} />
                 </CommandItem>
               ))}
             </CommandGroup>

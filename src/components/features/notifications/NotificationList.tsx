@@ -208,10 +208,10 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
                         key={notification.id}
                         className={cn(
                           'flex items-start gap-4 p-4 transition-colors hover:bg-[#FAFBFC] sm:p-5',
-                          !notification.is_read ? (isConsumable ? 'bg-amber-50/40' : 'bg-white') : 'bg-white/40'
+                          !notification.is_read ? (isConsumable ? 'bg-blue-50/40' : 'bg-white') : 'bg-white/40'
                         )}
                       >
-                        <div className={cn('mt-1 flex-shrink-0 rounded-xl p-3', isConsumable ? 'bg-slate-950 text-amber-300' : cn(config.bg, config.color))}>
+                        <div className={cn('mt-1 flex-shrink-0 rounded-xl p-3', isConsumable ? 'bg-blue-50 text-blue-700' : cn(config.bg, config.color))}>
                           <Icon className="h-5 w-5" />
                         </div>
 
@@ -229,7 +229,7 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
                             {notification.message}
                           </p>
                           {isConsumable && (
-                            <span className="mt-3 inline-flex rounded-full border border-amber-300 bg-slate-950 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-300">
+                            <span className="mt-3 inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-700">
                               Расходники
                             </span>
                           )}
@@ -243,7 +243,7 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
                                   loading={readingId === notification.id}
                                   className={cn(
                                     'bg-[#F8F9FA] text-[#2563EB] hover:bg-[#E8ECF0]',
-                                    isConsumable && 'bg-slate-950 text-amber-300 hover:bg-slate-800'
+                                    isConsumable && 'bg-blue-50 text-blue-700 hover:bg-blue-100'
                                   )}
                                   onClick={() => handleRead(notification)}
                                 >

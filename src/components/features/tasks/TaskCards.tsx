@@ -205,7 +205,7 @@ function isConsumableTask(taskType: TaskType) {
 
 function getTaskTypeBadgeClass(taskType: TaskType) {
   return isConsumableTask(taskType)
-    ? 'border-amber-300 bg-slate-950 text-amber-300 shadow-sm'
+    ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
     : 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
