@@ -90,7 +90,7 @@ export function MaterialReceivingPage({ data }: Props) {
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-[#1B3A6B]">Прием материала</h1>
           <p className="mt-1 text-sm text-[#6B7280]">
-            Будущие поставки снабжения по датам и заводу. Факт прихода сразу попадает на склад.
+            Плановые поставки снабжения по датам и заводу. Факт прихода сразу попадает на склад.
           </p>
         </div>
 
@@ -122,7 +122,7 @@ export function MaterialReceivingPage({ data }: Props) {
 
       {data.groups.length === 0 ? (
         <div className="rounded-xl border border-[#E8ECF0] bg-white p-10 text-center text-[#6B7280]">
-          Нет будущих поставок к приемке по выбранному заводу.
+          Нет поставок к приемке по выбранному заводу.
         </div>
       ) : (
         data.groups.map((group) => {
@@ -162,7 +162,9 @@ export function MaterialReceivingPage({ data }: Props) {
                     <tbody className="divide-y divide-[#E8ECF0]">
                       {group.items.map((item) => {
                         const draft = drafts[item.key] || ''
-                        const variance = getVariance(item.planned_quantity, Number(draft.replace(',', '.')))
+                        const actualQuantity = Number(draft.replace(',', '.'))
+                        const variance = getVariance(item.planned_quantity, actualQuantity)
+                        const actualWeight = weightForQuantity(item, actualQuantity)
                         return (
                           <tr key={item.key} className="align-top">
                             <td className="px-4 py-3">
@@ -196,7 +198,7 @@ export function MaterialReceivingPage({ data }: Props) {
                             <td className="px-4 py-3 text-[#374151]">{item.supplier_name || 'Не назначен'}</td>
                             <td className="px-4 py-3 font-medium text-[#111827] tabular-nums">
                               {formatAmount(item.planned_quantity)} {item.unit}
-                              {item.weight_kg !== null && <div className="text-xs font-normal text-[#64748B]">Вес: {formatAmount(item.weight_kg)} кг</div>}
+                              {item.weight_kg !== null && <div className="text-xs font-normal text-[#64748B]">Вес план: {formatAmount(item.weight_kg)} кг</div>}
                             </td>
                             <td className="px-4 py-3">
                               <label className="sr-only" htmlFor={`receive-${item.key}`}>Фактически пришло</label>
@@ -210,9 +212,12 @@ export function MaterialReceivingPage({ data }: Props) {
                                 disabled={isPending && pendingKey === item.key}
                                 className="h-10 w-36 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm tabular-nums outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
                               />
+                              {actualWeight !== null && (
+                                <div className="mt-1 text-xs text-[#64748B]">Вес факт: {formatAmount(actualWeight)} кг</div>
+                              )}
                             </td>
                             <td className="px-4 py-3">
-                              <VarianceBadge variance={variance} unit={item.unit} planned={item.planned_quantity} actual={Number(draft.replace(',', '.'))} />
+                              <VarianceBadge variance={variance} unit={item.unit} planned={item.planned_quantity} actual={actualQuantity} />
                             </td>
                             <td className="px-4 py-3 text-right">
                               <Button
@@ -257,6 +262,13 @@ function getVariance(planned: number, actual: number): Variance {
   if (actual >= planned * 1.3) return 'over_limit'
   if (actual > planned) return 'over_ok'
   return 'exact'
+}
+
+function weightForQuantity(item: MaterialReceivingItem, quantity: number) {
+  if (item.weight_kg === null) return null
+  if (!Number.isFinite(item.planned_quantity) || item.planned_quantity <= 0) return null
+  if (!Number.isFinite(quantity) || quantity <= 0) return null
+  return (item.weight_kg * quantity) / item.planned_quantity
 }
 
 function VarianceBadge({ variance, unit, planned, actual }: { variance: Variance; unit: string; planned: number; actual: number }) {

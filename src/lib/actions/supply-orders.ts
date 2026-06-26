@@ -1388,19 +1388,6 @@ type ReceivingScheduleRow = SupplyOrderDeliverySchedule & {
   request_item_id: string
 }
 
-const RECEIVING_TIME_ZONE = 'Europe/Chisinau'
-
-function getTodayIsoDate(timeZone = RECEIVING_TIME_ZONE) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date())
-  const get = (type: string) => parts.find((part) => part.type === type)?.value || ''
-  return `${get('year')}-${get('month')}-${get('day')}`
-}
-
 function itemKey(item: Pick<RawOrderItem, 'table' | 'id'>) {
   return `${item.table}:${item.id}`
 }
@@ -1465,7 +1452,7 @@ function makeReceivingItem(
     material_id: item.material_id,
     material_variant_id: item.material_variant_id,
     characteristics: getAggregateCharacteristics(item.table, item.raw, item),
-    weight_kg: item.calculated_weight_kg,
+    weight_kg: proportionalWeight(item.calculated_weight_kg, item.to_order, plannedQuantity),
     is_virtual_schedule: !schedule,
   }
 }
@@ -1492,7 +1479,6 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
       return { data: { factories, activeFactoryId: null, groups: [] }, error: null }
     }
 
-    const today = getTodayIsoDate()
     const allItems = await loadAggregateInputItems(db)
     const items = allItems.filter((item) => (
       item.order_status === 'ordered'
@@ -1521,7 +1507,6 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
 
       if (itemSchedules.length > 0) {
         for (const schedule of itemSchedules) {
-          if (schedule.delivery_date < today) continue
           receivingItems.push(makeReceivingItem(
             item,
             factoryName,
@@ -1535,7 +1520,7 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
       }
 
       const deliveryDate = effectiveSupplyDeliveryDate(item, item.planned_material_date)
-      if (!deliveryDate || deliveryDate < today) continue
+      if (!deliveryDate) continue
       receivingItems.push(makeReceivingItem(
         item,
         factoryName,
@@ -1722,6 +1707,9 @@ function revalidateSupplyOrderPaths(machineIds: string[] = []) {
   revalidatePath(ROUTES.PRODUCTION)
   revalidatePath(ROUTES.GANTT)
   revalidatePath(ROUTES.SALES_PLAN)
+  revalidatePath(ROUTES.TASKS)
+  revalidatePath(ROUTES.NOTIFICATIONS)
+  revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
   for (const machineId of machineIds) {
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}/request`)
@@ -1765,6 +1753,13 @@ function roundScheduleQuantity(value: number) {
   return Math.round(value * 1_000_000) / 1_000_000
 }
 
+function proportionalWeight(totalWeight: number | null, totalQuantity: number, quantity: number) {
+  if (totalWeight === null) return null
+  if (!Number.isFinite(totalQuantity) || totalQuantity <= 0) return totalWeight
+  if (!Number.isFinite(quantity) || quantity <= 0) return null
+  return (totalWeight * quantity) / totalQuantity
+}
+
 export async function saveAggregateDeliverySchedule(
   items: { table: string; id: string }[],
   schedules: SupplyOrderAggregateScheduleInput[]
@@ -1779,6 +1774,10 @@ export async function saveAggregateDeliverySchedule(
     if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
     if (selectedItems.some((item) => item.order_status === 'delivered')) {
       throw new Error('Нельзя менять график уже доставленных позиций')
+    }
+    for (const item of selectedItems) {
+      if (!item.material_id) throw new Error(`Позиция "${item.item_name}" не привязана к материалу`)
+      if (item.to_order <= 0) throw new Error(`Позиция "${item.item_name}" полностью закрыта складом и не требует закупки`)
     }
 
     const existingSchedules = await loadReceivingSchedules(db, selectedItems)
@@ -1812,6 +1811,7 @@ export async function saveAggregateDeliverySchedule(
     }
 
     const insertRows: Record<string, unknown>[] = []
+    const supplierIdsByItemKey = new Map<string, Set<string>>()
     for (const schedule of normalizedSchedules) {
       let allocated = 0
       remainingItems.forEach((entry, index) => {
@@ -1821,13 +1821,19 @@ export async function saveAggregateDeliverySchedule(
           : roundScheduleQuantity((schedule.quantity * entry.remaining) / totalRemaining)
         allocated += quantity
         if (quantity <= 0) return
+        const resolvedSupplierId = schedule.supplier_id || entry.item.supplier_id
+        if (!resolvedSupplierId) {
+          throw new Error(`Выберите поставщика в графике поставки или назначьте поставщика для позиции "${entry.item.item_name}"`)
+        }
+        const key = itemKey(entry.item)
+        supplierIdsByItemKey.set(key, new Set([...(supplierIdsByItemKey.get(key) || []), resolvedSupplierId]))
         insertRows.push({
           request_item_table: entry.item.table,
           request_item_id: entry.item.id,
           delivery_date: schedule.delivery_date,
           quantity,
           unit: entry.item.unit,
-          supplier_id: schedule.supplier_id || entry.item.supplier_id || null,
+          supplier_id: resolvedSupplierId,
           created_by: userId,
           updated_by: userId,
         })
@@ -1846,6 +1852,22 @@ export async function saveAggregateDeliverySchedule(
         .in('id', plannedScheduleIds)
       if (error) throw new Error(error.message || 'Не удалось заменить старый график поставки')
     }
+
+    const orderedAt = new Date().toISOString()
+    await Promise.all(selectedItems
+      .filter((item) => item.order_status === 'pending')
+      .map(async (item) => {
+        const supplierIds = supplierIdsByItemKey.get(itemKey(item))
+        const values: Record<string, unknown> = {
+          order_status: 'ordered',
+          ordered_at: orderedAt,
+        }
+        if (supplierIds?.size === 1) {
+          values.supplier_id = Array.from(supplierIds)[0]
+        }
+        const { error } = await db.from(item.table).update(values).eq('id', item.id)
+        if (error) throw new Error(error.message || 'Не удалось отметить позиции заказанными')
+      }))
 
     const machineIds = await getAffectedMachineIds(db, groupedItems)
     revalidateSupplyOrderPaths(machineIds)

@@ -274,6 +274,7 @@ function FactoryDeliveryEditor({
     ? Boolean(dateValue)
     : dateValue !== initialDate
   const missingSuppliers = factory.items.some((item) => item.order_status === 'pending' && !item.supplier_id)
+  const missingScheduleSuppliers = factory.items.some((item) => !item.supplier_id)
   const financeGroups = useMemo(() => makeFinanceGroups(factory), [factory])
   const financePayments = makeFinancePayments(financeGroups, financeDrafts)
   const financeInvalid = financeOpen && (
@@ -345,7 +346,7 @@ function FactoryDeliveryEditor({
         toast.error(result.error || 'Не удалось сохранить график поставки')
         return
       }
-      toast.success('График поставки сохранен')
+      toast.success('График поставки сохранен, материал отмечен как заказанный')
       setSplitOpen(false)
       router.refresh()
     })
@@ -375,6 +376,7 @@ function FactoryDeliveryEditor({
 
   const scheduleInvalid = scheduleDrafts.length === 0 ||
     scheduleDrafts.some((draft) => !draft.delivery_date || parseQuantity(draft.quantity) <= 0) ||
+    (missingScheduleSuppliers && scheduleDrafts.some((draft) => !draft.supplier_id)) ||
     plannedTotal > remainingQuantity + 0.000001
 
   return (
@@ -573,6 +575,7 @@ function FactoryDeliveryEditor({
                 План {formatAmount(plannedTotal)} из {formatAmount(remainingQuantity)} {aggregate.unit}
                 {factory.weight_kg !== null && ` · ${formatWeightForQuantity(plannedTotal, factory)}`}
               </div>
+              <div className="text-xs text-[#64748B]">Сохранение графика сразу отмечает материал как заказанный.</div>
             </div>
             <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={addDraft}>
               <Plus className="h-3.5 w-3.5" />
@@ -584,34 +587,34 @@ function FactoryDeliveryEditor({
             {scheduleDrafts.map((draft, index) => {
               const quantity = parseQuantity(draft.quantity)
               return (
-                <div key={draft.id} className="grid gap-2 rounded-md border border-[#E8ECF0] p-2 md:grid-cols-[140px_140px_1fr_auto] md:items-center">
-                  <label className="grid gap-1 text-xs font-medium text-[#475569]">
+                <div key={draft.id} className="grid gap-3 rounded-md border border-[#E8ECF0] p-3 sm:grid-cols-2 lg:grid-cols-[minmax(150px,180px)_minmax(150px,180px)_minmax(260px,1fr)_44px] lg:items-start">
+                  <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
                     Дата
                     <input
                       type="date"
                       value={draft.delivery_date}
                       disabled={isPending}
                       onChange={(event) => updateDraft(index, { delivery_date: event.target.value })}
-                      className="h-9 rounded-md border border-[#CBD5E1] px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="h-9 w-full rounded-md border border-[#CBD5E1] px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
                     />
                   </label>
-                  <label className="grid gap-1 text-xs font-medium text-[#475569]">
+                  <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
                     Количество, {aggregate.unit}
                     <input
                       value={draft.quantity}
                       disabled={isPending}
                       inputMode="decimal"
                       onChange={(event) => updateDraft(index, { quantity: event.target.value })}
-                      className="h-9 rounded-md border border-[#CBD5E1] px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="h-9 w-full rounded-md border border-[#CBD5E1] px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
                     />
                   </label>
-                  <label className="grid gap-1 text-xs font-medium text-[#475569]">
+                  <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569] sm:col-span-2 lg:col-span-1">
                     Поставщик для этой даты
                     <select
                       value={draft.supplier_id}
                       disabled={isPending}
                       onChange={(event) => updateDraft(index, { supplier_id: event.target.value })}
-                      className="h-9 rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="h-9 w-full rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <option value="">По позициям</option>
                       {suppliers.map((supplier) => (
@@ -626,6 +629,7 @@ function FactoryDeliveryEditor({
                     type="button"
                     variant="ghost"
                     size="icon-sm"
+                    className="self-end justify-self-start lg:justify-self-end"
                     disabled={isPending || scheduleDrafts.length <= 1}
                     onClick={() => removeDraft(index)}
                     aria-label="Удалить дату поставки"
@@ -642,10 +646,15 @@ function FactoryDeliveryEditor({
               Сумма графика превышает остаток после принятых поставок.
             </div>
           )}
+          {missingScheduleSuppliers && scheduleDrafts.some((draft) => !draft.supplier_id) && (
+            <div className="mt-2 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-[#B45309]">
+              Для строк «По позициям» у всех позиций должен быть поставщик. Укажите поставщика в строке графика или в позиции.
+            </div>
+          )}
 
           <div className="mt-3 flex flex-wrap gap-2">
             <Button type="button" size="sm" disabled={isPending || scheduleInvalid} onClick={saveSchedule}>
-              Сохранить график
+              Сохранить график и отметить заказано
             </Button>
             <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => setSplitOpen(false)}>
               Отмена
