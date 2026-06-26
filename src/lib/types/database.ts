@@ -114,6 +114,8 @@ export type Database = {
           signature_image_path: string | null
           stamp_image_path: string | null
           supply_consumables_department_id: string | null
+          auto_task_technologist_user_id: string | null
+          auto_task_engineer_user_id: string | null
           created_at: string
           updated_at: string
         }
@@ -136,6 +138,8 @@ export type Database = {
           signature_image_path?: string | null
           stamp_image_path?: string | null
           supply_consumables_department_id?: string | null
+          auto_task_technologist_user_id?: string | null
+          auto_task_engineer_user_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -158,6 +162,8 @@ export type Database = {
           signature_image_path?: string | null
           stamp_image_path?: string | null
           supply_consumables_department_id?: string | null
+          auto_task_technologist_user_id?: string | null
+          auto_task_engineer_user_id?: string | null
           created_at?: string
           updated_at?: string
         }

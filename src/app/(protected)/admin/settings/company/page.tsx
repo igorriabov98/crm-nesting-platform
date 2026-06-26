@@ -3,6 +3,7 @@ import { CompanySettingsPage } from '@/components/features/settings/CompanySetti
 import { getCompanySettings } from '@/lib/actions/company-settings'
 import { requirePermission } from '@/lib/permissions/server'
 import type { CurrentUserContext } from '@/lib/auth/current-user'
+import type { UserRole } from '@/lib/types'
 import { AlertTriangle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
@@ -34,6 +35,10 @@ function getErrorMessage(error: unknown) {
       .join(' ')
   }
   return ''
+}
+
+function relationOne<T>(value: T | T[] | null | undefined) {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null
 }
 
 function CompanySettingsUnavailable({ error }: { error: unknown }) {
@@ -79,17 +84,39 @@ export default async function CompanySettingsRoute() {
     return <AccessDenied />
   }
 
-  const [settings, departmentsResult] = await Promise.all([
+  const [settings, departmentsResult, usersResult, departmentMembersResult] = await Promise.all([
     getCompanySettings().catch((error) => ({ error })),
     supabase
       .from('departments')
       .select('id, name')
       .eq('is_active', true)
       .order('name'),
+    supabase
+      .from('users')
+      .select('id, full_name, role')
+      .eq('is_active', true)
+      .order('full_name'),
+    supabase
+      .from('department_members')
+      .select('user_id, department:department_id(name)'),
   ])
   if ('error' in settings) {
     return <CompanySettingsUnavailable error={settings.error} />
   }
+
+  const departmentNamesByUser = new Map<string, string[]>()
+  for (const row of (departmentMembersResult.data || []) as Array<{ user_id: string; department: { name: string } | { name: string }[] | null }>) {
+    const department = relationOne(row.department)
+    if (!department?.name) continue
+    const names = departmentNamesByUser.get(row.user_id) || []
+    names.push(department.name)
+    departmentNamesByUser.set(row.user_id, names)
+  }
+
+  const autoTaskUsers = ((usersResult.data || []) as Array<{ id: string; full_name: string; role: UserRole }>).map((user) => ({
+    ...user,
+    department_names: departmentNamesByUser.get(user.id) || [],
+  }))
 
   const [signatureImageUrl, stampImageUrl] = await Promise.all([
     createSignedImageUrl(supabase, settings.signature_image_path),
@@ -104,6 +131,7 @@ export default async function CompanySettingsRoute() {
         stamp: stampImageUrl,
       }}
       departments={(departmentsResult.data || []) as Array<{ id: string; name: string }>}
+      autoTaskUsers={autoTaskUsers}
     />
   )
 }

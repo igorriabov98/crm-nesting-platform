@@ -201,6 +201,8 @@ export const companySettingsSchema = z.object({
   signature_image_path: z.string().optional().nullable(),
   stamp_image_path: z.string().optional().nullable(),
   supply_consumables_department_id: z.string().uuid().optional().nullable(),
+  auto_task_technologist_user_id: z.string().uuid().optional().nullable(),
+  auto_task_engineer_user_id: z.string().uuid().optional().nullable(),
 })
 
 export const promoteProductVersionSchema = z.object({

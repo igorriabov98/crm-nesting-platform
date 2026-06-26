@@ -26,6 +26,7 @@ type LooseQuery = PromiseLike<LooseDbResult> & {
 }
 type LooseDb = {
   from: (table: string) => LooseQuery
+  rpc: (fn: string, args?: unknown) => Promise<LooseDbResult>
 }
 
 function dbFrom(supabase: unknown): LooseDb {
@@ -111,6 +112,8 @@ export async function updateCompanySettings(data: UpdateCompanySettingsData): Pr
       intermediary_bank_name: normalizeText(parsed.intermediary_bank_name),
       intermediary_bank_swift: normalizeText(parsed.intermediary_bank_swift),
       supply_consumables_department_id: parsed.supply_consumables_department_id || null,
+      auto_task_technologist_user_id: parsed.auto_task_technologist_user_id || null,
+      auto_task_engineer_user_id: parsed.auto_task_engineer_user_id || null,
       updated_at: new Date().toISOString(),
     }
 
@@ -120,7 +123,11 @@ export async function updateCompanySettings(data: UpdateCompanySettingsData): Pr
 
     if (error) throw error
 
+    const { error: resyncError } = await db.rpc('fn_resync_auto_task_assignees')
+    if (resyncError) throw resyncError
+
     revalidatePath(ROUTES.ADMIN_COMPANY_SETTINGS)
+    revalidatePath(ROUTES.TASKS)
     return { success: true, error: null }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }

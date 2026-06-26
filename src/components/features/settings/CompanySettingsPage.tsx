@@ -8,7 +8,8 @@ import { useForm, type FieldPath, type Resolver, type UseFormReturn } from 'reac
 import { toast } from 'sonner'
 import { updateCompanySettings, uploadCompanyImage } from '@/lib/actions/company-settings'
 import { companySettingsSchema, type UpdateCompanySettingsData } from '@/lib/types/schemas'
-import type { CompanySettings } from '@/lib/types'
+import { ROLES } from '@/lib/constants/roles'
+import type { CompanySettings, UserRole } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
@@ -18,6 +19,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 type ImageType = 'signature' | 'stamp'
+const EMPTY_SELECT_VALUE = '__none__'
+
+type AutoTaskUserOption = {
+  id: string
+  full_name: string
+  role: UserRole
+  department_names: string[]
+}
 
 type CompanySettingsPageProps = {
   settings: CompanySettings
@@ -26,6 +35,7 @@ type CompanySettingsPageProps = {
     stamp: string | null
   }
   departments: Array<{ id: string; name: string }>
+  autoTaskUsers: AutoTaskUserOption[]
 }
 
 function defaultValues(settings: CompanySettings): UpdateCompanySettingsData {
@@ -47,6 +57,8 @@ function defaultValues(settings: CompanySettings): UpdateCompanySettingsData {
     signature_image_path: settings.signature_image_path,
     stamp_image_path: settings.stamp_image_path,
     supply_consumables_department_id: settings.supply_consumables_department_id,
+    auto_task_technologist_user_id: settings.auto_task_technologist_user_id,
+    auto_task_engineer_user_id: settings.auto_task_engineer_user_id,
   }
 }
 
@@ -57,7 +69,13 @@ function isPngOrJpg(file: File) {
     || /\.(png|jpe?g)$/.test(name)
 }
 
-export function CompanySettingsPage({ settings, imageUrls, departments }: CompanySettingsPageProps) {
+function userMeta(user: AutoTaskUserOption) {
+  const roleLabel = ROLES[user.role]?.label || user.role
+  const departments = user.department_names.join(', ')
+  return departments ? `${roleLabel} · ${departments}` : roleLabel
+}
+
+export function CompanySettingsPage({ settings, imageUrls, departments, autoTaskUsers }: CompanySettingsPageProps) {
   const router = useRouter()
   const signatureInputRef = useRef<HTMLInputElement>(null)
   const stampInputRef = useRef<HTMLInputElement>(null)
@@ -203,6 +221,35 @@ export function CompanySettingsPage({ settings, imageUrls, departments }: Compan
 
           <Card className="bg-white">
             <CardHeader>
+              <CardTitle className="text-lg text-[#1B3A6B]">Автоматические задачи</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 md:grid-cols-2">
+                <AutoTaskUserSelect
+                  form={form}
+                  name="auto_task_technologist_user_id"
+                  label="Ответственный технолог"
+                  placeholder="Выберите технолога"
+                  users={autoTaskUsers}
+                  helperText="Получает автоматические задачи на подготовку заявки для снабжения."
+                />
+                <AutoTaskUserSelect
+                  form={form}
+                  name="auto_task_engineer_user_id"
+                  label="Ответственный инженер"
+                  placeholder="Выберите инженера"
+                  users={autoTaskUsers}
+                  helperText="Получает автоматические задачи на подтверждение чертежей."
+                />
+              </div>
+              <p className="mt-3 text-xs text-[#6B7280]">
+                Если ответственный не выбран или пользователь неактивен, CRM использует старый резервный поиск по роли.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white">
+            <CardHeader>
               <CardTitle className="text-lg text-[#1B3A6B]">Банковские реквизиты</CardTitle>
             </CardHeader>
             <CardContent>
@@ -265,6 +312,54 @@ export function CompanySettingsPage({ settings, imageUrls, departments }: Compan
         </form>
       </Form>
     </div>
+  )
+}
+
+function AutoTaskUserSelect({
+  form,
+  name,
+  label,
+  placeholder,
+  users,
+  helperText,
+}: {
+  form: UseFormReturn<UpdateCompanySettingsData>
+  name: FieldPath<UpdateCompanySettingsData>
+  label: string
+  placeholder: string
+  users: AutoTaskUserOption[]
+  helperText: string
+}) {
+  return (
+    <FormField
+      control={form.control}
+      name={name}
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{label}</FormLabel>
+          <Select
+            value={(field.value as string | null | undefined) || EMPTY_SELECT_VALUE}
+            onValueChange={(value) => field.onChange(value === EMPTY_SELECT_VALUE ? null : value)}
+          >
+            <FormControl>
+              <SelectTrigger className="min-h-11 w-full">
+                <SelectValue placeholder={placeholder} />
+              </SelectTrigger>
+            </FormControl>
+            <SelectContent>
+              <SelectItem value={EMPTY_SELECT_VALUE}>Не выбран</SelectItem>
+              {users.map((user) => (
+                <SelectItem key={user.id} value={user.id} className="py-2">
+                  {user.full_name} · {userMeta(user)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-[#6B7280]">{helperText}</p>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
   )
 }
 
