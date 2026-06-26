@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { SupplyOrdersPage } from '@/components/features/supply-orders/SupplyOrdersPage'
 import { SupplyOrderSummaryPage } from '@/components/features/supply-orders/SupplyOrderSummaryPage'
-import { getSupplyOrderAggregates, getSupplyOrders } from '@/lib/actions/supply-orders'
+import { getSupplyOrderAggregates, getSupplyOrderFactories, getSupplyOrders } from '@/lib/actions/supply-orders'
 import { getSuppliers } from '@/lib/actions/suppliers'
 import { ROUTES } from '@/lib/constants/routes'
 
@@ -12,7 +12,7 @@ export const metadata = {
 export default async function SupplyOrdersRoute({
   searchParams,
 }: {
-  searchParams?: Promise<{ page?: string; view?: string }>
+  searchParams?: Promise<{ page?: string; view?: string; factory?: string }>
 }) {
   const resolvedSearchParams = await searchParams
   const page = Math.max(0, Number(resolvedSearchParams?.page || 1) - 1)
@@ -50,7 +50,7 @@ export default async function SupplyOrdersRoute({
       </div>
 
       {activeView === 'summary'
-        ? <SummaryView />
+        ? <SummaryView requestedFactoryId={resolvedSearchParams?.factory || null} />
         : <DetailsView page={page} />}
     </div>
   )
@@ -65,14 +65,38 @@ function viewLinkClass(isActive: boolean) {
   ].join(' ')
 }
 
-async function SummaryView() {
-  const { data: aggregates, error } = await getSupplyOrderAggregates()
+async function SummaryView({ requestedFactoryId }: { requestedFactoryId: string | null }) {
+  const { data: factories, error: factoriesError } = await getSupplyOrderFactories()
+
+  if (factoriesError) {
+    return <div className="rounded-lg bg-red-500/10 p-4 text-sm text-[#DC2626]">{factoriesError}</div>
+  }
+
+  const availableFactories = factories || []
+  const requestedFactory = availableFactories.find((factory) => factory.id === requestedFactoryId)
+  const defaultFactory = availableFactories.find((factory) => {
+    const name = factory.name.toLowerCase()
+    return name.includes('берег') || name.includes('bereg')
+  }) || availableFactories[0] || null
+  const activeFactoryId = requestedFactory?.id || defaultFactory?.id || null
+
+  const [{ data: aggregates, error }, { data: suppliers }] = await Promise.all([
+    getSupplyOrderAggregates(activeFactoryId),
+    getSuppliers({ active_only: true }),
+  ])
 
   if (error) {
     return <div className="rounded-lg bg-red-500/10 p-4 text-sm text-[#DC2626]">{error}</div>
   }
 
-  return <SupplyOrderSummaryPage aggregates={aggregates || []} />
+  return (
+    <SupplyOrderSummaryPage
+      aggregates={aggregates || []}
+      factories={availableFactories}
+      activeFactoryId={activeFactoryId}
+      suppliers={suppliers || []}
+    />
+  )
 }
 
 async function DetailsView({ page }: { page: number }) {

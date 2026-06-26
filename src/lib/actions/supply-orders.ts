@@ -144,8 +144,23 @@ export type SupplyOrderAggregateSourceItem = {
   machine_name: string
   quantity: number
   unit: string
+  supplier_id: string | null
+  supplier_name: string | null
+  weight_kg: number | null
   order_status: Extract<OrderItemStatus, 'pending' | 'ordered'>
   supply_delivery_date: string | null
+  planned_schedule_quantity: number
+  delivered_schedule_quantity: number
+  unscheduled_quantity: number
+  delivery_schedules: SupplyOrderDeliverySchedule[]
+}
+
+export type SupplyOrderAggregateSupplier = {
+  id: string | null
+  name: string
+  item_count: number
+  pending_count: number
+  ordered_count: number
 }
 
 export type SupplyOrderAggregateFactory = {
@@ -159,9 +174,15 @@ export type SupplyOrderAggregateFactory = {
   machine_count: number
   pending_count: number
   ordered_count: number
+  planned_schedule_quantity: number
+  delivered_schedule_quantity: number
+  unscheduled_quantity: number
+  delivery_schedule_count: number
+  has_delivery_schedules: boolean
   production_date: string | null
   supply_delivery_date: string | null
   has_mixed_supply_delivery_dates: boolean
+  suppliers: SupplyOrderAggregateSupplier[]
   items: SupplyOrderAggregateSourceItem[]
 }
 
@@ -182,7 +203,16 @@ export type SupplyOrderAggregate = {
   machine_count: number
   pending_count: number
   ordered_count: number
+  planned_schedule_quantity: number
+  delivered_schedule_quantity: number
+  unscheduled_quantity: number
   factories: SupplyOrderAggregateFactory[]
+}
+
+export type SupplyOrderAggregateScheduleInput = {
+  delivery_date: string
+  quantity: number
+  supplier_id?: string | null
 }
 
 export type MaterialReceivingFactory = {
@@ -905,18 +935,21 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
   }
 }
 
-async function loadAggregateRequests(db: LooseDb) {
+async function loadAggregateRequests(db: LooseDb, factoryId?: string | null) {
   const batchSize = 1000
   const requests: RequestRow[] = []
 
   for (let from = 0; ; from += batchSize) {
-    const { data, error } = await db
+    let query = db
       .from('technologist_requests')
       .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)')
       .in('status', ['submitted_to_supply', 'completed'])
       .eq('machines.is_archived', false)
       .order('submitted_at', { ascending: false })
       .range(from, from + batchSize - 1)
+    if (factoryId) query = query.eq('machines.factory_id', factoryId)
+
+    const { data, error } = await query
 
     if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
 
@@ -928,10 +961,11 @@ async function loadAggregateRequests(db: LooseDb) {
   return requests
 }
 
-async function loadAggregateInputItems(db: LooseDb): Promise<SupplyOrderAggregateInputItem[]> {
-  const requests = await loadAggregateRequests(db)
+async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): Promise<SupplyOrderAggregateInputItem[]> {
+  const requests = await loadAggregateRequests(db, factoryId)
   const requestIds = requests.map((request) => request.id)
   const requestMap = new Map(requests.map((request) => [request.id, request]))
+  if (requestIds.length === 0) return []
 
   const [sheet, round, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
     loadRows(db, 'request_sheet_metal', requestIds),
@@ -992,7 +1026,7 @@ async function loadAggregateInputItems(db: LooseDb): Promise<SupplyOrderAggregat
     }
   }
 
-  return [
+  const rawItems = [
     ...sheet.map((row) => makeItem('request_sheet_metal', 'sheet_metal', row, row.material_name, supplierForRow(row))),
     // @deprecated — round_tube excluded from new UI
     ...round.map((row) => makeItem('request_round_tube', 'round_tube', row, row.material_name, supplierForRow(row))),
@@ -1004,6 +1038,18 @@ async function loadAggregateInputItems(db: LooseDb): Promise<SupplyOrderAggregat
     ...meshItems.map((row) => makeItem('request_mesh', 'mesh', row, row.description, supplierForRow(row))),
     ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
   ].filter((item): item is SupplyOrderAggregateInputItem => Boolean(item))
+
+  const materialIds = Array.from(new Set(rawItems.map((item) => item.material_id).filter(Boolean))) as string[]
+  const materialsRes = materialIds.length
+    ? await db.from('materials').select('id, default_supplier_id').in('id', materialIds)
+    : { data: [], error: null }
+  if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
+  const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
+
+  return rawItems.map((item) => ({
+    ...item,
+    supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
+  }))
 }
 
 async function loadFactoryNameMap(db: LooseDb, factoryIds: string[]) {
@@ -1024,10 +1070,87 @@ function addNullableWeight(current: number | null, value: number | null) {
   return (current || 0) + value
 }
 
-export async function getSupplyOrderAggregates() {
+export async function getSupplyOrderFactories(): Promise<{
+  data: MaterialReceivingFactory[] | null
+  error: string | null
+}> {
   try {
     const { db } = await requireAccess()
-    const items = await loadAggregateInputItems(db)
+    const { data, error } = await db
+      .from('factories')
+      .select('id, name')
+      .order('name', { ascending: true })
+    if (error) throw new Error(error.message || 'Не удалось загрузить заводы')
+    return { data: (data || []) as MaterialReceivingFactory[], error: null }
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заводы' }
+  }
+}
+
+function schedulePlannedQuantity(schedule: SupplyOrderDeliverySchedule) {
+  return Number(schedule.quantity || 0)
+}
+
+function scheduleDeliveredQuantity(schedule: SupplyOrderDeliverySchedule) {
+  return Number(schedule.received_quantity ?? schedule.quantity ?? 0)
+}
+
+function toScheduleDto(
+  schedule: ReceivingScheduleRow,
+  supplierNameMap: Map<string, string>,
+): SupplyOrderDeliverySchedule {
+  return {
+    id: schedule.id,
+    delivery_date: schedule.delivery_date,
+    quantity: Number(schedule.quantity || 0),
+    unit: schedule.unit,
+    supplier_id: schedule.supplier_id,
+    supplier_name: schedule.supplier_id ? supplierNameMap.get(schedule.supplier_id) || 'Поставщик' : null,
+    change_reason: schedule.change_reason,
+    status: schedule.status || 'planned',
+    received_quantity: schedule.received_quantity === null || schedule.received_quantity === undefined ? null : Number(schedule.received_quantity),
+    delivered_at: schedule.delivered_at,
+    received_by: schedule.received_by,
+    created_at: schedule.created_at,
+    updated_at: schedule.updated_at,
+  }
+}
+
+function addSupplierSummary(
+  map: Map<string, SupplyOrderAggregateSupplier>,
+  item: SupplyOrderAggregateInputItem,
+  supplierNameMap: Map<string, string>,
+) {
+  const key = item.supplier_id || 'none'
+  const current = map.get(key) || {
+    id: item.supplier_id,
+    name: item.supplier_id ? supplierNameMap.get(item.supplier_id) || 'Поставщик' : 'Без поставщика',
+    item_count: 0,
+    pending_count: 0,
+    ordered_count: 0,
+  }
+  current.item_count += 1
+  current.pending_count += item.order_status === 'pending' ? 1 : 0
+  current.ordered_count += item.order_status === 'ordered' ? 1 : 0
+  map.set(key, current)
+}
+
+export async function getSupplyOrderAggregates(factoryId?: string | null) {
+  try {
+    const { db } = await requireAccess()
+    const items = await loadAggregateInputItems(db, factoryId)
+    const schedules = await loadReceivingSchedules(db, items)
+    const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
+
+    for (const schedule of schedules) {
+      const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+      schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+    }
+
+    const supplierNameMap = await loadSupplierNameMap(db, [
+      ...items.map((item) => item.supplier_id).filter(Boolean),
+      ...schedules.map((schedule) => schedule.supplier_id).filter(Boolean),
+    ] as string[])
     const factoryIds = Array.from(new Set(items.map((item) => item.factory_id).filter(Boolean))) as string[]
     const factoryNameMap = await loadFactoryNameMap(db, factoryIds)
 
@@ -1041,9 +1164,14 @@ export async function getSupplyOrderAggregates() {
       item_count: number
       pending_count: number
       ordered_count: number
+      planned_schedule_quantity: number
+      delivered_schedule_quantity: number
+      unscheduled_quantity: number
+      delivery_schedule_count: number
       production_date: string | null
       machineIds: Set<string>
       supplyDates: Set<string>
+      suppliers: Map<string, SupplyOrderAggregateSupplier>
       items: SupplyOrderAggregateSourceItem[]
     }
 
@@ -1063,6 +1191,9 @@ export async function getSupplyOrderAggregates() {
       item_count: number
       pending_count: number
       ordered_count: number
+      planned_schedule_quantity: number
+      delivered_schedule_quantity: number
+      unscheduled_quantity: number
       machineIds: Set<string>
       factories: Map<string, MutableFactory>
     }
@@ -1072,7 +1203,19 @@ export async function getSupplyOrderAggregates() {
     for (const item of items) {
       const materialKey = getAggregateIdentityKey(item.table, item.raw, item)
       const dateKey = plannedDateKey(item.planned_material_date)
-      const aggregateKey = `${dateKey}|${materialKey}`
+      const aggregateKey = `${factoryKey(item.factory_id)}|${dateKey}|${materialKey}`
+      const itemSchedules = (schedulesByItem.get(`${item.table}:${item.id}`) || [])
+        .map((schedule) => toScheduleDto(schedule, supplierNameMap))
+      const plannedScheduleQuantity = itemSchedules
+        .filter((schedule) => schedule.status === 'planned')
+        .reduce((sum, schedule) => sum + schedulePlannedQuantity(schedule), 0)
+      const deliveredScheduleQuantity = itemSchedules
+        .filter((schedule) => schedule.status === 'delivered')
+        .reduce((sum, schedule) => sum + scheduleDeliveredQuantity(schedule), 0)
+      const unscheduledQuantity = Math.max(item.to_order - plannedScheduleQuantity - deliveredScheduleQuantity, 0)
+      const supplyDeliveryDates = itemSchedules.length > 0
+        ? itemSchedules.map((schedule) => schedule.delivery_date)
+        : [effectiveSupplyDeliveryDate(item, item.planned_material_date)]
       const existing = aggregates.get(aggregateKey)
       const aggregate = existing || {
         id: aggregateKey,
@@ -1090,6 +1233,9 @@ export async function getSupplyOrderAggregates() {
         item_count: 0,
         pending_count: 0,
         ordered_count: 0,
+        planned_schedule_quantity: 0,
+        delivered_schedule_quantity: 0,
+        unscheduled_quantity: 0,
         machineIds: new Set<string>(),
         factories: new Map<string, MutableFactory>(),
       }
@@ -1101,6 +1247,9 @@ export async function getSupplyOrderAggregates() {
       aggregate.item_count += 1
       aggregate.pending_count += item.order_status === 'pending' ? 1 : 0
       aggregate.ordered_count += item.order_status === 'ordered' ? 1 : 0
+      aggregate.planned_schedule_quantity += plannedScheduleQuantity
+      aggregate.delivered_schedule_quantity += deliveredScheduleQuantity
+      aggregate.unscheduled_quantity += unscheduledQuantity
       aggregate.machineIds.add(item.machine_id)
 
       const currentFactoryKey = factoryKey(item.factory_id)
@@ -1115,13 +1264,17 @@ export async function getSupplyOrderAggregates() {
         item_count: 0,
         pending_count: 0,
         ordered_count: 0,
+        planned_schedule_quantity: 0,
+        delivered_schedule_quantity: 0,
+        unscheduled_quantity: 0,
+        delivery_schedule_count: 0,
         production_date: item.planned_material_date,
         machineIds: new Set<string>(),
         supplyDates: new Set<string>(),
+        suppliers: new Map<string, SupplyOrderAggregateSupplier>(),
         items: [],
       }
 
-      const supplyDeliveryDate = effectiveSupplyDeliveryDate(item, item.planned_material_date)
       factory.quantity += item.to_order
       factory.requested_quantity += item.requested_quantity
       factory.reserved_quantity += item.reserved_quantity
@@ -1129,8 +1282,15 @@ export async function getSupplyOrderAggregates() {
       factory.item_count += 1
       factory.pending_count += item.order_status === 'pending' ? 1 : 0
       factory.ordered_count += item.order_status === 'ordered' ? 1 : 0
+      factory.planned_schedule_quantity += plannedScheduleQuantity
+      factory.delivered_schedule_quantity += deliveredScheduleQuantity
+      factory.unscheduled_quantity += unscheduledQuantity
+      factory.delivery_schedule_count += itemSchedules.length
       factory.machineIds.add(item.machine_id)
-      factory.supplyDates.add(supplyDeliveryDate || 'no_supply_date')
+      addSupplierSummary(factory.suppliers, item, supplierNameMap)
+      for (const supplyDeliveryDate of supplyDeliveryDates) {
+        factory.supplyDates.add(supplyDeliveryDate || 'no_supply_date')
+      }
       factory.items.push({
         table: item.table,
         id: item.id,
@@ -1139,8 +1299,15 @@ export async function getSupplyOrderAggregates() {
         machine_name: item.machine_name,
         quantity: item.to_order,
         unit: item.unit,
+        supplier_id: item.supplier_id,
+        supplier_name: item.supplier_id ? supplierNameMap.get(item.supplier_id) || 'Поставщик' : null,
+        weight_kg: item.calculated_weight_kg,
         order_status: item.order_status as Extract<OrderItemStatus, 'pending' | 'ordered'>,
-        supply_delivery_date: supplyDeliveryDate,
+        supply_delivery_date: supplyDeliveryDates[0] || null,
+        planned_schedule_quantity: plannedScheduleQuantity,
+        delivered_schedule_quantity: deliveredScheduleQuantity,
+        unscheduled_quantity: unscheduledQuantity,
+        delivery_schedules: itemSchedules,
       })
 
       aggregate.factories.set(currentFactoryKey, factory)
@@ -1165,6 +1332,9 @@ export async function getSupplyOrderAggregates() {
         machine_count: aggregate.machineIds.size,
         pending_count: aggregate.pending_count,
         ordered_count: aggregate.ordered_count,
+        planned_schedule_quantity: aggregate.planned_schedule_quantity,
+        delivered_schedule_quantity: aggregate.delivered_schedule_quantity,
+        unscheduled_quantity: aggregate.unscheduled_quantity,
         factories: Array.from(aggregate.factories.values())
           .map((factory) => {
             const supplyDates = Array.from(factory.supplyDates)
@@ -1181,9 +1351,15 @@ export async function getSupplyOrderAggregates() {
               machine_count: factory.machineIds.size,
               pending_count: factory.pending_count,
               ordered_count: factory.ordered_count,
+              planned_schedule_quantity: factory.planned_schedule_quantity,
+              delivered_schedule_quantity: factory.delivered_schedule_quantity,
+              unscheduled_quantity: factory.unscheduled_quantity,
+              delivery_schedule_count: factory.delivery_schedule_count,
+              has_delivery_schedules: factory.delivery_schedule_count > 0,
               production_date: factory.production_date,
               supply_delivery_date: hasMixedDates || singleDate === 'no_supply_date' ? null : singleDate,
               has_mixed_supply_delivery_dates: hasMixedDates,
+              suppliers: Array.from(factory.suppliers.values()).sort((a, b) => a.name.localeCompare(b.name, 'ru')),
               items: factory.items.sort((a, b) => a.machine_name.localeCompare(b.machine_name, 'ru')),
             }
           })
@@ -1239,7 +1415,7 @@ async function loadSupplierNameMap(db: LooseDb, supplierIds: string[]) {
   return new Map(((data || []) as { id: string; name: string }[]).map((supplier) => [supplier.id, supplier.name]))
 }
 
-async function loadReceivingSchedules(db: LooseDb, items: SupplyOrderAggregateInputItem[]) {
+async function loadReceivingSchedules(db: LooseDb, items: Array<Pick<RawOrderItem, 'table' | 'id'>>) {
   const itemIds = Array.from(new Set(items.map((item) => item.id)))
   if (itemIds.length === 0) return []
 
@@ -1526,10 +1702,152 @@ export async function updateAggregateSupplyDeliveryDate(
       if (error) throw new Error(error.message || 'Не удалось обновить дату снабжения')
     }))
 
-    revalidatePath(ROUTES.SUPPLY_ORDERS)
+    const machineIds = await getAffectedMachineIds(db, groupedItems)
+    revalidateSupplyOrderPaths(machineIds)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось обновить дату снабжения' }
+  }
+}
+
+function revalidateSupplyOrderPaths(machineIds: string[] = []) {
+  revalidatePath(ROUTES.SUPPLY)
+  revalidatePath(ROUTES.SUPPLY_ORDERS)
+  revalidatePath(ROUTES.INVENTORY)
+  revalidatePath(ROUTES.INVENTORY_RECEIVING)
+  revalidatePath(ROUTES.PRODUCTION)
+  revalidatePath(ROUTES.GANTT)
+  revalidatePath(ROUTES.SALES_PLAN)
+  for (const machineId of machineIds) {
+    revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+    revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}/request`)
+  }
+}
+
+async function getScheduleAffectedMachineIds(db: LooseDb, scheduleIds: string[]) {
+  if (scheduleIds.length === 0) return []
+
+  const { data, error } = await db
+    .from('supply_order_delivery_schedules')
+    .select('request_item_table, request_item_id')
+    .in('id', scheduleIds)
+
+  if (error) throw new Error(error.message || 'Не удалось определить машины графика поставки')
+
+  const groupedItems = new Map<string, string[]>()
+  for (const row of (data || []) as { request_item_table: string; request_item_id: string }[]) {
+    if (!ORDER_TABLES.includes(row.request_item_table) || !row.request_item_id) continue
+    groupedItems.set(row.request_item_table, [...(groupedItems.get(row.request_item_table) || []), row.request_item_id])
+  }
+
+  return getAffectedMachineIds(db, groupedItems)
+}
+
+function normalizeScheduleInputs(schedules: SupplyOrderAggregateScheduleInput[]) {
+  return schedules.map((schedule) => {
+    const deliveryDate = assertDateOrNull(schedule.delivery_date)
+    const quantity = Number(schedule.quantity)
+    if (!deliveryDate) throw new Error('Укажите дату поставки')
+    if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Количество поставки должно быть больше 0')
+    return {
+      delivery_date: deliveryDate,
+      quantity,
+      supplier_id: schedule.supplier_id || null,
+    }
+  })
+}
+
+function roundScheduleQuantity(value: number) {
+  return Math.round(value * 1_000_000) / 1_000_000
+}
+
+export async function saveAggregateDeliverySchedule(
+  items: { table: string; id: string }[],
+  schedules: SupplyOrderAggregateScheduleInput[]
+) {
+  try {
+    const { db, userId } = await requireAccess('manage')
+    const groupedItems = groupItemsByTable(items)
+    if (groupedItems.size === 0) throw new Error('Нет позиций для графика поставки')
+
+    const normalizedSchedules = normalizeScheduleInputs(schedules)
+    const selectedItems = await loadSelectedOrderItems(db, groupedItems)
+    if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
+    if (selectedItems.some((item) => item.order_status === 'delivered')) {
+      throw new Error('Нельзя менять график уже доставленных позиций')
+    }
+
+    const existingSchedules = await loadReceivingSchedules(db, selectedItems)
+    const existingDeliveredByItem = new Map<string, number>()
+    const plannedScheduleIds = existingSchedules
+      .filter((schedule) => schedule.status === 'planned')
+      .map((schedule) => schedule.id)
+
+    for (const schedule of existingSchedules) {
+      if (schedule.status !== 'delivered') continue
+      const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+      existingDeliveredByItem.set(key, (existingDeliveredByItem.get(key) || 0) + Number(schedule.received_quantity ?? schedule.quantity ?? 0))
+    }
+
+    const remainingItems = selectedItems
+      .map((item) => {
+        const delivered = existingDeliveredByItem.get(`${item.table}:${item.id}`) || 0
+        return {
+          item,
+          remaining: Math.max(item.to_order - delivered, 0),
+        }
+      })
+      .filter((entry) => entry.remaining > 0)
+
+    const totalRemaining = remainingItems.reduce((sum, entry) => sum + entry.remaining, 0)
+    const totalScheduled = normalizedSchedules.reduce((sum, schedule) => sum + schedule.quantity, 0)
+    if (normalizedSchedules.length === 0 || totalScheduled <= 0) throw new Error('Добавьте хотя бы одну дату поставки')
+    if (totalRemaining <= 0) throw new Error('Вся потребность уже закрыта принятыми поставками')
+    if (totalScheduled > totalRemaining + 0.000001) {
+      throw new Error(`Сумма графика не должна превышать остаток ${roundScheduleQuantity(totalRemaining)} ${remainingItems[0]?.item.unit || ''}`)
+    }
+
+    const insertRows: Record<string, unknown>[] = []
+    for (const schedule of normalizedSchedules) {
+      let allocated = 0
+      remainingItems.forEach((entry, index) => {
+        const isLast = index === remainingItems.length - 1
+        const quantity = isLast
+          ? roundScheduleQuantity(schedule.quantity - allocated)
+          : roundScheduleQuantity((schedule.quantity * entry.remaining) / totalRemaining)
+        allocated += quantity
+        if (quantity <= 0) return
+        insertRows.push({
+          request_item_table: entry.item.table,
+          request_item_id: entry.item.id,
+          delivery_date: schedule.delivery_date,
+          quantity,
+          unit: entry.item.unit,
+          supplier_id: schedule.supplier_id || entry.item.supplier_id || null,
+          created_by: userId,
+          updated_by: userId,
+        })
+      })
+    }
+
+    if (insertRows.length > 0) {
+      const { error } = await db.from('supply_order_delivery_schedules').insert(insertRows)
+      if (error) throw new Error(error.message || 'Не удалось сохранить график поставки')
+    }
+
+    if (plannedScheduleIds.length > 0) {
+      const { error } = await db
+        .from('supply_order_delivery_schedules')
+        .delete()
+        .in('id', plannedScheduleIds)
+      if (error) throw new Error(error.message || 'Не удалось заменить старый график поставки')
+    }
+
+    const machineIds = await getAffectedMachineIds(db, groupedItems)
+    revalidateSupplyOrderPaths(machineIds)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось сохранить график поставки' }
   }
 }
 
@@ -1651,14 +1969,10 @@ export async function markOrderStatus(
       }))
       await createSupplyFinancePayments(db, userId, selectedItems, payments)
     }
-    revalidatePath(ROUTES.SUPPLY)
-    revalidatePath(ROUTES.SUPPLY_FINANCE)
-    revalidatePath(ROUTES.SUPPLY_ORDERS)
-    revalidatePath(ROUTES.FINANCE_CALENDAR)
-    revalidatePath(ROUTES.SALES_PLAN)
-    for (const machineId of machineIds) {
-      revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
-      revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}/request`)
+    revalidateSupplyOrderPaths(machineIds)
+    if (status === 'ordered') {
+      revalidatePath(ROUTES.SUPPLY_FINANCE)
+      revalidatePath(ROUTES.FINANCE_CALENDAR)
     }
     return { success: true }
   } catch (error) {
@@ -1726,7 +2040,8 @@ export async function addOrderDeliverySchedule(
       updated_by: userId,
     })
     if (error) throw new Error(error.message || 'Не удалось добавить дату поставки')
-    revalidatePath(ROUTES.SUPPLY_ORDERS)
+    const machineIds = await getAffectedMachineIds(db, groupItemsByTable([item]))
+    revalidateSupplyOrderPaths(machineIds)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось добавить дату поставки' }
@@ -1739,6 +2054,7 @@ export async function updateOrderDeliverySchedule(
 ) {
   try {
     const { db, userId } = await requireAccess('manage')
+    const machineIds = await getScheduleAffectedMachineIds(db, [scheduleId])
     validateScheduleInput(data)
     const reason = (data.change_reason || '').trim()
     const { error } = await db.rpc('fn_update_supply_order_schedule', {
@@ -1750,7 +2066,7 @@ export async function updateOrderDeliverySchedule(
       p_changed_by: userId,
     })
     if (error) throw new Error(error.message || 'Не удалось обновить дату поставки')
-    revalidatePath(ROUTES.SUPPLY_ORDERS)
+    revalidateSupplyOrderPaths(machineIds)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось обновить дату поставки' }
@@ -1760,6 +2076,7 @@ export async function updateOrderDeliverySchedule(
 export async function receiveOrderDeliverySchedule(scheduleId: string, receivedQuantity?: number) {
   try {
     const { db, userId } = await requireAccess('manage')
+    const machineIds = await getScheduleAffectedMachineIds(db, [scheduleId])
     let actualQuantity = Number(receivedQuantity || 0)
     if (!Number.isFinite(actualQuantity) || actualQuantity <= 0) {
       const { data: scheduleData, error: scheduleError } = await db
@@ -1783,11 +2100,7 @@ export async function receiveOrderDeliverySchedule(scheduleId: string, receivedQ
     } catch {
       // Telegram delivery is best-effort; CRM notifications and tasks are already persisted.
     }
-    revalidatePath(ROUTES.INVENTORY)
-    revalidatePath(ROUTES.INVENTORY_RECEIVING)
-    revalidatePath(ROUTES.SUPPLY)
-    revalidatePath(ROUTES.SUPPLY_ORDERS)
-    revalidatePath(ROUTES.SALES_PLAN)
+    revalidateSupplyOrderPaths(machineIds)
     revalidatePath(ROUTES.TASKS)
     revalidatePath(ROUTES.NOTIFICATIONS)
     revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
@@ -1800,11 +2113,12 @@ export async function receiveOrderDeliverySchedule(scheduleId: string, receivedQ
 export async function deleteOrderDeliverySchedule(scheduleId: string) {
   try {
     const { db } = await requireAccess('manage')
+    const machineIds = await getScheduleAffectedMachineIds(db, [scheduleId])
     const { error } = await db.rpc('fn_delete_supply_order_schedule', {
       p_schedule_id: scheduleId,
     })
     if (error) throw new Error(error.message || 'Не удалось удалить дату поставки')
-    revalidatePath(ROUTES.SUPPLY_ORDERS)
+    revalidateSupplyOrderPaths(machineIds)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось удалить дату поставки' }

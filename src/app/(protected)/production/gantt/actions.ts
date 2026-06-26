@@ -32,12 +32,14 @@ export interface GanttMaterialItem {
   id: string
   nomenclature: string
   planned_delivery_date: string | null
+  actual_delivery_date: string | null
   supply_status: string
   unit: string | null
   quantity: number | null
   supplier: string | null
   price_per_unit: number | null
   comment: string | null
+  source?: 'legacy_supply' | 'supply_order'
 }
 
 export interface GanttMachine {
@@ -126,6 +128,67 @@ type ProfileScope = {
   role: string | null
 }
 
+type GanttDbResult = { data: unknown; error: { message?: string } | null }
+type LooseGanttQuery = PromiseLike<GanttDbResult> & {
+  select: (columns?: string) => LooseGanttQuery
+  eq: (column: string, value: unknown) => LooseGanttQuery
+  in: (column: string, values: unknown[]) => LooseGanttQuery
+}
+type LooseGanttDb = { from: (table: string) => LooseGanttQuery }
+
+type GanttRequestRow = {
+  id: string
+  machine_id: string
+}
+
+type GanttRequestItemRow = Record<string, unknown> & {
+  id: string
+  request_id: string
+  materials?: { id: string; name: string } | null
+  supplier_id?: string | null
+  custom_delivery_date?: string | null
+  order_status?: string | null
+  calculated_weight_kg?: number | null
+}
+
+type GanttSupplyOrderItem = {
+  table: string
+  id: string
+  request_id: string
+  machine_id: string
+  nomenclature: string
+  quantity: number
+  unit: string
+  supplier_id: string | null
+  planned_delivery_date: string | null
+  order_status: string
+}
+
+type GanttScheduleRow = {
+  id: string
+  request_item_table: string
+  request_item_id: string
+  delivery_date: string
+  quantity: number | null
+  unit: string | null
+  supplier_id: string | null
+  status: 'planned' | 'delivered' | string
+  received_quantity: number | null
+  delivered_at: string | null
+}
+
+const GANTT_ORDER_TABLES = [
+  'request_sheet_metal',
+  'request_round_tube',
+  'request_circle',
+  'request_pipe',
+  'request_knives',
+  'request_components',
+  'request_paint',
+  'request_mesh',
+  'request_chain_cord',
+]
+
 function isPlannedStage(stage: SelectedGanttStage): stage is PlannedGanttStage {
   return !stage.is_skipped && Boolean(stage.date_start)
 }
@@ -160,6 +223,211 @@ function applyProductionManagerFactoryScope<T>(query: T, factoryId: string | nul
   const scopedQuery = query as { or: (filters: string) => T; is: (column: string, value: unknown) => T }
   if (!factoryId) return scopedQuery.is('factory_id', null)
   return scopedQuery.or(`factory_id.eq.${factoryId},factory_id.is.null`)
+}
+
+function ganttItemName(row: GanttRequestItemRow, fallback: unknown) {
+  return row.materials?.name || String(fallback || 'Материал')
+}
+
+function ganttRequestedQuantity(table: string, row: GanttRequestItemRow) {
+  if (table === 'request_sheet_metal') return Number(row.remainder_qty || row.to_order_kg || 0)
+  if (table === 'request_round_tube') return Number(row.order_kg || 0)
+  if (table === 'request_circle') return Number(row.remainder_mm || 0)
+  if (table === 'request_pipe') return row.pipe_type === 'wire' ? Number(row.remainder_kg || 0) : Number(row.remainder_length_mm || 0)
+  if (table === 'request_knives') {
+    const meters = Number(row.remainder_meters || 0)
+    return meters > 0 ? meters * 1000 : Number(row.to_order_mm || 0)
+  }
+  if (table === 'request_components') return Math.max(Number(row.quantity_needed || 0) - Number(row.stock_remainder || 0), 0)
+  if (table === 'request_mesh') return Number(row.remainder_qty || 0)
+  if (table === 'request_chain_cord') return Number(row.remainder_meters || 0) * 1000
+  return Number(row.remainder_kg || row.to_order_kg || 0)
+}
+
+function ganttReservedQuantity(table: string, row: GanttRequestItemRow) {
+  if (table === 'request_sheet_metal') return Number(row.reserved_from_stock_kg || 0)
+  if (table === 'request_round_tube') return Number(row.reserved_from_stock_kg || 0)
+  if (table === 'request_circle') return Number(row.reserved_from_stock_mm || 0)
+  if (table === 'request_pipe') return row.pipe_type === 'wire' ? Number(row.reserved_from_stock_kg || 0) : Number(row.reserved_from_stock_length_mm || 0)
+  if (table === 'request_knives') return Number(row.reserved_from_stock_mm || 0)
+  if (table === 'request_components') return Number(row.reserved_from_stock || 0)
+  if (table === 'request_mesh') return Number(row.reserved_from_stock_qty || 0)
+  if (table === 'request_chain_cord') return Number(row.reserved_from_stock_meters || 0) * 1000
+  return Number(row.reserved_from_stock_kg || 0)
+}
+
+function ganttPrimaryUnit(table: string, row: GanttRequestItemRow) {
+  if (table === 'request_sheet_metal') return 'шт'
+  if (table === 'request_round_tube') return 'кг'
+  if (table === 'request_circle') return 'мм'
+  if (table === 'request_pipe') return row.pipe_type === 'wire' ? 'кг' : 'мм'
+  if (table === 'request_knives') return 'мм'
+  if (table === 'request_components') return String(row.unit || 'шт')
+  if (table === 'request_mesh') return 'шт'
+  if (table === 'request_chain_cord') return 'мм'
+  return 'кг'
+}
+
+function ganttNameFallback(table: string, row: GanttRequestItemRow) {
+  if (table === 'request_sheet_metal') return row.material_name
+  if (table === 'request_round_tube') return row.material_name
+  if (table === 'request_circle') return row.steel_grade
+  if (table === 'request_pipe') return row.size
+  if (table === 'request_knives') return row.knife_type
+  if (table === 'request_components') return row.component_name
+  if (table === 'request_paint') return row.paint_type || row.ral_code
+  if (table === 'request_mesh') return row.description
+  if (table === 'request_chain_cord') return row.parameters
+  return row.material_name
+}
+
+async function loadGanttRequestRows(db: LooseGanttDb, table: string, requestIds: string[]) {
+  if (requestIds.length === 0) return []
+  const { data, error } = await db
+    .from(table)
+    .select('*, materials(id, name)')
+    .in('request_id', requestIds)
+  if (error) throw new Error(error.message || 'Не удалось загрузить материалы для Gantt')
+  return (data || []) as GanttRequestItemRow[]
+}
+
+async function loadGanttSchedules(db: LooseGanttDb, items: GanttSupplyOrderItem[]) {
+  const byTable = new Map<string, string[]>()
+  for (const item of items) {
+    byTable.set(item.table, [...(byTable.get(item.table) || []), item.id])
+  }
+
+  const rows = await Promise.all(Array.from(byTable.entries()).map(async ([table, ids]) => {
+    const { data, error } = await db
+      .from('supply_order_delivery_schedules')
+      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, received_quantity, delivered_at')
+      .eq('request_item_table', table)
+      .in('request_item_id', ids)
+    if (error) throw new Error(error.message || 'Не удалось загрузить график поставок для Gantt')
+    return (data || []) as GanttScheduleRow[]
+  }))
+
+  return rows.flat()
+}
+
+async function loadGanttSupplierNames(db: LooseGanttDb, supplierIds: string[]) {
+  const uniqueIds = Array.from(new Set(supplierIds.filter(Boolean)))
+  if (uniqueIds.length === 0) return new Map<string, string>()
+
+  const { data, error } = await db
+    .from('suppliers')
+    .select('id, name')
+    .in('id', uniqueIds)
+
+  if (error) throw new Error(error.message || 'Не удалось загрузить поставщиков для Gantt')
+  return new Map(((data || []) as { id: string; name: string }[]).map((supplier) => [supplier.id, supplier.name]))
+}
+
+async function loadSupplyOrderMaterialMarkers(db: LooseGanttDb, machines: SelectedGanttMachine[]) {
+  const machineIds = machines.map((machine) => machine.id).filter(Boolean)
+  const machineDateMap = new Map(machines.map((machine) => [machine.id, machine.planned_material_date || null]))
+  const result = new Map<string, GanttMaterialItem[]>()
+  if (machineIds.length === 0) return result
+
+  const { data: requestsData, error: requestsError } = await db
+    .from('technologist_requests')
+    .select('id, machine_id')
+    .in('machine_id', machineIds)
+    .in('status', ['submitted_to_supply', 'completed'])
+
+  if (requestsError) throw new Error(requestsError.message || 'Не удалось загрузить заявки для Gantt')
+
+  const requests = (requestsData || []) as GanttRequestRow[]
+  const requestIds = requests.map((request) => request.id)
+  if (requestIds.length === 0) return result
+
+  const requestMachineMap = new Map(requests.map((request) => [request.id, request.machine_id]))
+  const rowSets = await Promise.all(GANTT_ORDER_TABLES.map(async (table) => ({
+    table,
+    rows: await loadGanttRequestRows(db, table, requestIds),
+  })))
+
+  const items: GanttSupplyOrderItem[] = []
+  for (const { table, rows } of rowSets) {
+    for (const row of rows) {
+      const machineId = requestMachineMap.get(row.request_id)
+      if (!machineId) continue
+      const requested = ganttRequestedQuantity(table, row)
+      const reserved = ganttReservedQuantity(table, row)
+      const quantity = Math.max(requested - reserved, 0)
+      const orderStatus = row.order_status || 'pending'
+      items.push({
+        table,
+        id: row.id,
+        request_id: row.request_id,
+        machine_id: machineId,
+        nomenclature: ganttItemName(row, ganttNameFallback(table, row)),
+        quantity,
+        unit: ganttPrimaryUnit(table, row),
+        supplier_id: row.supplier_id || null,
+        planned_delivery_date: row.custom_delivery_date || machineDateMap.get(machineId) || null,
+        order_status: orderStatus,
+      })
+    }
+  }
+
+  if (items.length === 0) return result
+
+  const schedules = await loadGanttSchedules(db, items)
+  const schedulesByItem = new Map<string, GanttScheduleRow[]>()
+  for (const schedule of schedules) {
+    const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+    schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+  }
+
+  const supplierNames = await loadGanttSupplierNames(db, [
+    ...items.map((item) => item.supplier_id),
+    ...schedules.map((schedule) => schedule.supplier_id),
+  ].filter(Boolean) as string[])
+
+  for (const item of items) {
+    const itemSchedules = schedulesByItem.get(`${item.table}:${item.id}`) || []
+    if (itemSchedules.length > 0) {
+      for (const schedule of itemSchedules) {
+        const isDelivered = schedule.status === 'delivered'
+        const marker: GanttMaterialItem = {
+          id: `supply-order-schedule:${schedule.id}`,
+          nomenclature: item.nomenclature,
+          planned_delivery_date: schedule.delivery_date,
+          actual_delivery_date: isDelivered ? (schedule.delivered_at?.slice(0, 10) || schedule.delivery_date) : null,
+          supply_status: isDelivered ? 'received' : (item.order_status === 'ordered' ? 'ordered' : 'not_ordered'),
+          unit: schedule.unit || item.unit,
+          quantity: Number(isDelivered ? (schedule.received_quantity ?? schedule.quantity ?? 0) : (schedule.quantity ?? 0)),
+          supplier: schedule.supplier_id ? supplierNames.get(schedule.supplier_id) || 'Поставщик' : (item.supplier_id ? supplierNames.get(item.supplier_id) || 'Поставщик' : null),
+          price_per_unit: null,
+          comment: 'График снабжения',
+          source: 'supply_order',
+        }
+        result.set(item.machine_id, [...(result.get(item.machine_id) || []), marker])
+      }
+      continue
+    }
+
+    if (!['pending', 'ordered'].includes(item.order_status) || item.quantity <= 0 || !item.planned_delivery_date) continue
+    result.set(item.machine_id, [
+      ...(result.get(item.machine_id) || []),
+      {
+        id: `supply-order:${item.table}:${item.id}`,
+        nomenclature: item.nomenclature,
+        planned_delivery_date: item.planned_delivery_date,
+        actual_delivery_date: null,
+        supply_status: item.order_status === 'ordered' ? 'ordered' : 'not_ordered',
+        unit: item.unit,
+        quantity: item.quantity,
+        supplier: item.supplier_id ? supplierNames.get(item.supplier_id) || 'Поставщик' : null,
+        price_per_unit: null,
+        comment: 'Позиция снабжения',
+        source: 'supply_order',
+      },
+    ])
+  }
+
+  return result
 }
 
 export async function getGanttData(
@@ -255,10 +523,12 @@ export async function getGanttData(
   let minDate: Date | null = null
   let maxDate: Date | null = null
   const today = new Date()
+  const selectedMachines = (machines as SelectedGanttMachine[] | null) || []
+  const supplyOrderMaterialMap = await loadSupplyOrderMaterialMarkers(supabase as unknown as LooseGanttDb, selectedMachines)
 
   const result: GanttMachine[] = []
 
-  for (const m of (machines as SelectedGanttMachine[] | null) || []) {
+  for (const m of selectedMachines) {
     // Filter by search
     if (filters?.search) {
       const q = filters.search.toLowerCase()
@@ -317,17 +587,29 @@ export async function getGanttData(
     })
 
     // Supply deadlines
-    const material_items: GanttMaterialItem[] = (m.supply_items || []).map((si) => ({
+    const legacyMaterialItems: GanttMaterialItem[] = (m.supply_items || []).map((si) => ({
       id: si.id,
       nomenclature: si.nomenclature || '',
       planned_delivery_date: si.planned_delivery_date,
+      actual_delivery_date: si.status === 'received' ? si.planned_delivery_date : null,
       supply_status: si.status || 'not_ordered',
       unit: si.unit,
       quantity: si.quantity,
       supplier: si.supplier,
       price_per_unit: si.price_per_unit,
       comment: si.comment,
+      source: 'legacy_supply',
     }))
+    const material_items: GanttMaterialItem[] = legacyMaterialItems.concat(supplyOrderMaterialMap.get(m.id) || [])
+
+    material_items.forEach((item) => {
+      ;[item.planned_delivery_date, item.actual_delivery_date].forEach((dateValue) => {
+        if (!dateValue) return
+        const markerDate = new Date(dateValue)
+        if (!minDate || markerDate < minDate) minDate = markerDate
+        if (!maxDate || markerDate > maxDate) maxDate = markerDate
+      })
+    })
 
     const supply_deadlines: GanttSupplyItem[] = (m.supply_items || [])
       .filter((si): si is SelectedSupplyItem & { planned_delivery_date: string } => Boolean(si.planned_delivery_date))
@@ -344,7 +626,7 @@ export async function getGanttData(
         }
       })
 
-    if (ganttStages.length === 0 && supply_deadlines.length === 0) continue
+    if (ganttStages.length === 0 && supply_deadlines.length === 0 && material_items.length === 0) continue
     
     const coatings = Array.from(new Set((m.machine_items || []).map((i) => i.coating).filter((coating): coating is string => Boolean(coating))))
     result.push({

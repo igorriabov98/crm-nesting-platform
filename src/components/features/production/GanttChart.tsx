@@ -17,7 +17,7 @@ import { formatDesiredShippingDate } from '@/lib/utils/desired-shipping'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { cn } from '@/lib/utils'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
-import type { GanttData } from '@/app/(protected)/production/gantt/actions'
+import type { GanttData, GanttMaterialItem } from '@/app/(protected)/production/gantt/actions'
 import {
   GANTT_LEFT_WIDTH,
   GANTT_MACHINE_COL_WIDTH,
@@ -80,6 +80,8 @@ function findEarliestDate(data: GanttData) {
   const dates = data.machines.flatMap((machine) => [
     ...machine.stages.map((stage) => stage.date_start).filter(Boolean),
     ...machine.supply_deadlines.map((item) => item.planned_delivery_date).filter(Boolean),
+    ...machine.material_items.map((item) => item.planned_delivery_date).filter(Boolean),
+    ...machine.material_items.map((item) => item.actual_delivery_date).filter(Boolean),
     machine.desired_shipping_date,
     machine.planned_material_date,
     machine.actual_material_date,
@@ -95,6 +97,8 @@ function findLatestDate(data: GanttData) {
   const dates = data.machines.flatMap((machine) => [
     ...machine.stages.map((stage) => stage.date_end || stage.date_start).filter(Boolean),
     ...machine.supply_deadlines.map((item) => item.planned_delivery_date).filter(Boolean),
+    ...machine.material_items.map((item) => item.planned_delivery_date).filter(Boolean),
+    ...machine.material_items.map((item) => item.actual_delivery_date).filter(Boolean),
     machine.desired_shipping_date,
     machine.planned_material_date,
     machine.actual_material_date,
@@ -112,6 +116,21 @@ function dateOffset(date: string | null | undefined, rangeStart: Date, dayWidth:
 
 function dateOnlyKey(date: string | null | undefined) {
   return date ? date.slice(0, 10) : null
+}
+
+function groupMaterialItemsByDate(
+  items: GanttMaterialItem[],
+  getDate: (item: GanttMaterialItem) => string | null | undefined
+) {
+  const groups = new Map<string, GanttMaterialItem[]>()
+  for (const item of items) {
+    const key = dateOnlyKey(getDate(item))
+    if (!key) continue
+    groups.set(key, [...(groups.get(key) || []), item])
+  }
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, groupedItems]) => ({ date, items: groupedItems }))
 }
 
 function productionMonthLabel(date: string | null | undefined) {
@@ -173,21 +192,30 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
     ? differenceInCalendarDays(new Date(row.machine.desired_shipping_date), rangeStart) * dayWidth
     : null
   const deadlineLabel = formatDesiredShippingDate(row.machine.desired_shipping_date)
-  const plannedMaterialOffset = dateOffset(row.machine.planned_material_date, rangeStart, dayWidth)
-  const actualMaterialOffset = dateOffset(row.machine.actual_material_date, rangeStart, dayWidth)
   const actualShippingOffset = dateOffset(row.machine.actual_shipping_date, rangeStart, dayWidth)
-  const plannedMaterialLabel = formatDesiredShippingDate(row.machine.planned_material_date)
-  const actualMaterialLabel = formatDesiredShippingDate(row.machine.actual_material_date)
   const actualShippingLabel = formatDesiredShippingDate(row.machine.actual_shipping_date)
   const isStripedMachine = row.machineIndex % 2 === 1
   const queueLabel = productionQueueLabel(row.machine.production_workshop, row.machine.production_queue_number)
   const monthLabel = productionMonthLabel(row.machine.production_month)
   const shippingMarkerTop = Math.max(4, GANTT_ROW_HEIGHT - GANTT_SHIPPING_MARKER_HEIGHT - 8)
-  const plannedMaterialDay = dateOnlyKey(row.machine.planned_material_date)
-  const plannedMaterialItems = plannedMaterialDay
-    ? row.machine.material_items.filter((item) => dateOnlyKey(item.planned_delivery_date) === plannedMaterialDay)
-    : []
-  const actualMaterialItems = row.machine.material_items.filter((item) => item.supply_status === 'received')
+  const plannedMaterialGroups = groupMaterialItemsByDate(
+    row.machine.material_items,
+    (item) => item.planned_delivery_date
+  )
+  const actualMaterialGroups = groupMaterialItemsByDate(
+    row.machine.material_items,
+    (item) => item.actual_delivery_date || (item.supply_status === 'received' ? item.planned_delivery_date : null)
+  )
+  const plannedGroups = plannedMaterialGroups.length > 0
+    ? plannedMaterialGroups
+    : row.machine.planned_material_date
+      ? [{ date: row.machine.planned_material_date, items: [] }]
+      : []
+  const actualGroups = actualMaterialGroups.length > 0
+    ? actualMaterialGroups
+    : row.machine.actual_material_date
+      ? [{ date: row.machine.actual_material_date, items: row.machine.material_items.filter((item) => item.supply_status === 'received') }]
+      : []
 
   return (
     <div
@@ -275,30 +303,42 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
             title={deadlineLabel ? `Желаемая отгрузка: ${deadlineLabel}` : undefined}
           />
         )}
-        {row.groupStart && row.machine.planned_material_date && plannedMaterialOffset !== null && plannedMaterialOffset + dayWidth / 2 >= 0 && plannedMaterialOffset + dayWidth / 2 <= totalWidth && (
-          <GanttMaterialMarker
-            type="planned"
-            date={row.machine.planned_material_date}
-            items={plannedMaterialItems}
-            rangeStart={rangeStart}
-            unitWidth={dayWidth}
-            machineId={row.machine.id}
-            machineName={row.machine.name}
-            title={plannedMaterialLabel ? `План. поставка материала: ${plannedMaterialLabel}` : undefined}
-          />
-        )}
-        {row.groupStart && row.machine.actual_material_date && actualMaterialOffset !== null && actualMaterialOffset + dayWidth / 2 >= 0 && actualMaterialOffset + dayWidth / 2 <= totalWidth && (
-          <GanttMaterialMarker
-            type="actual"
-            date={row.machine.actual_material_date}
-            items={actualMaterialItems}
-            rangeStart={rangeStart}
-            unitWidth={dayWidth}
-            machineId={row.machine.id}
-            machineName={row.machine.name}
-            title={actualMaterialLabel ? `Факт. поставка материала: ${actualMaterialLabel}` : undefined}
-          />
-        )}
+        {row.groupStart && plannedGroups.map((group) => {
+          const offset = dateOffset(group.date, rangeStart, dayWidth)
+          if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
+          const label = formatDesiredShippingDate(group.date)
+          return (
+            <GanttMaterialMarker
+              key={`planned:${group.date}`}
+              type="planned"
+              date={group.date}
+              items={group.items}
+              rangeStart={rangeStart}
+              unitWidth={dayWidth}
+              machineId={row.machine.id}
+              machineName={row.machine.name}
+              title={label ? `План. поставка материала: ${label}` : undefined}
+            />
+          )
+        })}
+        {row.groupStart && actualGroups.map((group) => {
+          const offset = dateOffset(group.date, rangeStart, dayWidth)
+          if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
+          const label = formatDesiredShippingDate(group.date)
+          return (
+            <GanttMaterialMarker
+              key={`actual:${group.date}`}
+              type="actual"
+              date={group.date}
+              items={group.items}
+              rangeStart={rangeStart}
+              unitWidth={dayWidth}
+              machineId={row.machine.id}
+              machineName={row.machine.name}
+              title={label ? `Факт. поставка материала: ${label}` : undefined}
+            />
+          )
+        })}
         {row.groupEnd && actualShippingOffset !== null && actualShippingOffset >= 0 && actualShippingOffset <= totalWidth && (
           <div
             className="absolute z-20 h-0 w-0 -translate-x-1/2 border-l-transparent border-r-transparent border-t-[#DC2626] drop-shadow-sm"
@@ -412,6 +452,15 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
           type: 'supply',
           machine,
           items: machine.supply_deadlines,
+        })
+      }
+
+      if (rows.length === 0 && machine.material_items.length > 0) {
+        rows.push({
+          id: `${machine.id}:materials`,
+          type: 'supply',
+          machine,
+          items: [],
         })
       }
 

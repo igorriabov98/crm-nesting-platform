@@ -29,6 +29,8 @@ interface GanttMaterialMarkerProps {
 const statusLabel: Record<string, string> = {
   received: 'Получено',
   ordered: 'Заказано',
+  pending: 'Не заказано',
+  planned: 'План',
   not_ordered: 'Не заказано',
 }
 
