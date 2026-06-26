@@ -56,6 +56,7 @@ type CuttingStageRow = {
   id: string
   machine_id: string
   date_start: string | null
+  machines?: { factory_id: string | null } | null
 }
 
 type CandidateStageRow = {
@@ -240,7 +241,7 @@ async function loadCuttingContext(db: LooseDb, machineIds: string[]) {
   if (machineIds.length === 0) return null
   const { data, error } = await db
     .from('production_stages')
-    .select('id, machine_id, date_start')
+    .select('id, machine_id, date_start, machines!inner(factory_id)')
     .eq('stage_type', 'cutting')
     .in('machine_id', machineIds)
 
@@ -253,6 +254,7 @@ async function loadCuttingContext(db: LooseDb, machineIds: string[]) {
     date: latest.date_start as string,
     stageId: latest.id,
     machineId: latest.machine_id,
+    factoryId: latest.machines?.factory_id || null,
   }
 }
 
@@ -582,6 +584,7 @@ export async function finalizeFutureFill(input: {
 
     const cutting = await loadCuttingContext(db, context.originalMachineIds)
     if (!cutting?.date) throw new Error('У исходной машины не указана дата начала заготовки')
+    if (!cutting.factoryId) throw new Error('У исходной машины не указан завод для будущего делового остатка')
 
     const { data: existingScrapData } = await db
       .from('inventory')
@@ -601,6 +604,7 @@ export async function finalizeFutureFill(input: {
       })
 
       futureScrapRows.push({
+        factory_id: cutting.factoryId,
         material_id: resolved.materialId,
         material_variant_id: resolved.materialVariantId,
         total_quantity: 1,
@@ -626,11 +630,12 @@ export async function finalizeFutureFill(input: {
       const insertResult = await db
         .from('inventory')
         .insert(futureScrapRows)
-        .select('id, material_id, material_variant_id')
+        .select('id, factory_id, material_id, material_variant_id')
       if (insertResult.error) throw new Error(insertResult.error.message || 'Не удалось записать будущий деловой остаток')
-      const inventoryRows = (insertResult.data || []) as Array<{ id: string; material_id: string; material_variant_id: string | null }>
+      const inventoryRows = (insertResult.data || []) as Array<{ id: string; factory_id: string; material_id: string; material_variant_id: string | null }>
       insertedScrapRows = inventoryRows.length
       const transactions = inventoryRows.map((row) => ({
+        factory_id: row.factory_id,
         inventory_id: row.id,
         material_id: row.material_id,
         material_variant_id: row.material_variant_id,

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { History, PackagePlus, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { Factory, History, PackagePlus, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -18,7 +18,7 @@ import {
   defaultMaterialNameForCategory,
 } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
-import { addReceipt, adjustInventory, deleteInventoryItem, type InventoryWithMaterial } from '@/lib/actions/inventory'
+import { addReceipt, adjustInventory, deleteInventoryItem, type InventoryFactory, type InventoryWithMaterial } from '@/lib/actions/inventory'
 import { createMaterial, recordMaterialUsage, type MaterialWithSupplier } from '@/lib/actions/materials'
 import type { MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
 import type { SteelType } from '@/lib/types/database'
@@ -29,6 +29,8 @@ const MaterialSearch = dynamic(() => import('@/components/features/requests/Mate
 
 type Props = {
   items: InventoryWithMaterial[]
+  factories: InventoryFactory[]
+  activeFactoryId: string | null
   suppliers: Supplier[]
   steelTypes: SteelType[]
   resultLimit?: number
@@ -65,7 +67,7 @@ function formatInventoryDateTime(value: string) {
   }).format(new Date(value))
 }
 
-export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Props) {
+export function InventoryPage({ items, factories, activeFactoryId, suppliers, steelTypes, resultLimit }: Props) {
   const router = useRouter()
   const rows = items
   const [search, setSearch] = useState('')
@@ -99,6 +101,8 @@ export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Pro
   const showSheetMetalColumns = category === 'sheet_metal'
   const showCircleColumns = category === 'circle'
   const showPipeColumns = category === 'pipe'
+  const activeFactory = factories.find((factory) => factory.id === activeFactoryId) || null
+  const historyFactoryQuery = activeFactoryId ? `?factory=${encodeURIComponent(activeFactoryId)}` : ''
 
   const mainStockCount = useMemo(() => rows.filter((row) => !row.is_business_scrap).length, [rows])
   const businessScrapCount = useMemo(() => rows.filter((row) => row.is_business_scrap && (row.business_scrap_state || 'available') !== 'future').length, [rows])
@@ -194,6 +198,7 @@ export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Pro
   }
 
   const submitReceipt = () => {
+    if (!activeFactoryId) return toast.error('Выберите завод склада')
     if (!receiptMaterial) return toast.error('Выберите материал')
     if (!receiptSupplierId) return toast.error('Выберите поставщика')
     if (receiptCategory === 'pipe' && !receiptVariant?.pipe_type) {
@@ -289,6 +294,7 @@ export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Pro
       }
 
       const result = await addReceipt({
+        factory_id: activeFactoryId,
         material_id: receiptMaterial.id,
         material_variant_id: materialVariantId,
         quantity,
@@ -355,6 +361,23 @@ export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Pro
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-[#E8ECF0] bg-white p-4">
+        <div className="mb-4 flex flex-col gap-3 border-b border-[#E8ECF0] pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-sm font-medium text-[#1B3A6B]">
+            <Factory className="h-4 w-4" />
+            Склад завода{activeFactory ? `: ${activeFactory.name}` : ''}
+          </div>
+          <div className="inline-flex w-fit rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-1">
+            {factories.map((factory) => (
+              <Link
+                key={factory.id}
+                href={`${ROUTES.INVENTORY}?factory=${factory.id}`}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${factory.id === activeFactoryId ? 'bg-white text-[#1B3A6B] shadow-sm' : 'text-[#6B7280] hover:text-[#1B3A6B]'}`}
+              >
+                {factory.name}
+              </Link>
+            ))}
+          </div>
+        </div>
         <div className="mb-4 inline-flex rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-1">
           <button
             type="button"
@@ -633,7 +656,7 @@ export function InventoryPage({ items, suppliers, steelTypes, resultLimit }: Pro
                         <SlidersHorizontal className="mr-1 h-4 w-4" />
                         Корректировка
                       </Button>
-                      <Link href={`${ROUTES.INVENTORY}/${row.material_id}/history`}>
+                      <Link href={`${ROUTES.INVENTORY}/${row.material_id}/history${historyFactoryQuery}`}>
                         <Button type="button" size="sm" variant="ghost">
                           <History className="mr-1 h-4 w-4" />
                           История

@@ -1898,6 +1898,7 @@ export type Database = {
       material_variants: {
         Row: {
           id: string
+          factory_id: string
           material_id: string
           category: Database['public']['Enums']['material_category']
           steel_type_id: string | null
@@ -1934,6 +1935,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          factory_id: string
           material_id: string
           category: Database['public']['Enums']['material_category']
           steel_type_id?: string | null
@@ -1970,6 +1972,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          factory_id?: string
           material_id?: string
           category?: Database['public']['Enums']['material_category']
           steel_type_id?: string | null
@@ -2102,6 +2105,7 @@ export type Database = {
       inventory_transactions: {
         Row: {
           id: string
+          factory_id: string | null
           inventory_id: string
           material_id: string
           material_variant_id: string | null
@@ -2118,6 +2122,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          factory_id?: string | null
           inventory_id: string
           material_id: string
           material_variant_id?: string | null
@@ -2134,6 +2139,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          factory_id?: string | null
           inventory_id?: string
           material_id?: string
           material_variant_id?: string | null
@@ -3355,6 +3361,7 @@ export type Database = {
           p_supplier_id?: string | null
           p_material_variant_id?: string | null
           p_piece_length_mm?: number | null
+          p_factory_id?: string | null
         }
         Returns: string
       }

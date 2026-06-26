@@ -6,7 +6,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { PermissionOperation } from '@/lib/permissions/resources'
-import type { Inventory, InventoryReservation, InventoryTransaction, InventoryTransactionType, Material, MaterialCategory, MaterialVariant } from '@/lib/types'
+import type { Factory, Inventory, InventoryReservation, InventoryTransaction, InventoryTransactionType, Material, MaterialCategory, MaterialVariant } from '@/lib/types'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -30,7 +30,7 @@ type LooseDb = {
 }
 
 type ActionResult<T = unknown> = { success: boolean; error?: string; data?: T }
-const INVENTORY_LIST_COLUMNS = 'id, material_id, material_variant_id, total_quantity, reserved_quantity, available_quantity, unit, total_secondary_quantity, reserved_secondary_quantity, available_secondary_quantity, secondary_unit, calculated_weight_kg, piece_length_mm, is_business_scrap, business_scrap_state, available_from_date, available_from_stage_id, source_inventory_id, source_reservation_id, source_machine_id, source_piece_length_mm, source_nesting_project_id, source_nesting_sheet_id, source_remnant_geom, deleted_at, deleted_by, delete_comment, last_updated_by, created_at, updated_at'
+const INVENTORY_LIST_COLUMNS = 'id, factory_id, material_id, material_variant_id, total_quantity, reserved_quantity, available_quantity, unit, total_secondary_quantity, reserved_secondary_quantity, available_secondary_quantity, secondary_unit, calculated_weight_kg, piece_length_mm, is_business_scrap, business_scrap_state, available_from_date, available_from_stage_id, source_inventory_id, source_reservation_id, source_machine_id, source_piece_length_mm, source_nesting_project_id, source_nesting_sheet_id, source_remnant_geom, deleted_at, deleted_by, delete_comment, last_updated_by, created_at, updated_at'
 const INVENTORY_LIST_COLUMNS_WITHOUT_SOURCE_MACHINE = INVENTORY_LIST_COLUMNS.replace(', source_machine_id', '')
 const MATERIAL_VARIANT_COLUMNS = 'id, material_id, category, steel_type_id, material_grade, thickness_mm, sheet_size, weight_per_unit_kg, length_m, weight_per_m_kg, piece_description, knife_dimensions, knife_material, standard_length_mm, specification, default_unit, ral_code, finish, default_waste_percent, diameter_mm, is_calibrated, pipe_type, wall_thickness_mm, width_mm, height_mm, mesh_description, mesh_length_mm, mesh_width_mm, chain_cord_type, chain_cord_parameters, unit_weight_kg, times_used, last_used_at, created_at'
 
@@ -99,6 +99,8 @@ export type InventoryWithMaterial = Inventory & {
   supplier_name: string | null
   source_machine_name: string | null
 }
+
+export type InventoryFactory = Pick<Factory, 'id' | 'name'>
 
 export type InventoryTransactionWithRelations = InventoryTransaction & {
   material_name?: string | null
@@ -223,7 +225,7 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
   })
 }
 
-export async function getInventory(filters: { category?: MaterialCategory; search?: string; only_available?: boolean } = {}) {
+export async function getInventory(filters: { factory_id?: string | null; category?: MaterialCategory; search?: string; only_available?: boolean } = {}) {
   try {
     const { db } = await requireAccess()
     try {
@@ -236,6 +238,7 @@ export async function getInventory(filters: { category?: MaterialCategory; searc
       .select(INVENTORY_LIST_COLUMNS)
       .order('updated_at', { ascending: false })
       .limit(INVENTORY_LIST_LIMIT)
+    if (filters.factory_id) query = query.eq('factory_id', filters.factory_id)
     if (filters.only_available) query = query.gt('available_quantity', 0)
     let { data, error } = await query
     if (error && error.message?.includes('source_machine_id')) {
@@ -244,6 +247,7 @@ export async function getInventory(filters: { category?: MaterialCategory; searc
         .select(INVENTORY_LIST_COLUMNS_WITHOUT_SOURCE_MACHINE)
         .order('updated_at', { ascending: false })
         .limit(INVENTORY_LIST_LIMIT)
+      if (filters.factory_id) fallbackQuery = fallbackQuery.eq('factory_id', filters.factory_id)
       if (filters.only_available) fallbackQuery = fallbackQuery.gt('available_quantity', 0)
       const fallbackResult = await fallbackQuery
       data = fallbackResult.data
@@ -265,10 +269,28 @@ export async function getInventory(filters: { category?: MaterialCategory; searc
   }
 }
 
-export async function getStockForMaterial(materialId: string) {
+export async function getInventoryFactories(): Promise<{ data: InventoryFactory[] | null; error: string | null }> {
   try {
     const { db } = await requireAccess()
-    const { data, error } = await db.from('inventory').select(INVENTORY_LIST_COLUMNS).eq('material_id', materialId).maybeSingle()
+    const { data, error } = await db
+      .from('factories')
+      .select('id, name')
+      .order('name', { ascending: true })
+
+    if (error) throw new Error(error.message || 'Не удалось загрузить заводы')
+
+    return { data: (data || []) as InventoryFactory[], error: null }
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заводы' }
+  }
+}
+
+export async function getStockForMaterial(materialId: string, factoryId?: string | null) {
+  try {
+    const { db } = await requireAccess()
+    let query = db.from('inventory').select(INVENTORY_LIST_COLUMNS).eq('material_id', materialId)
+    if (factoryId) query = query.eq('factory_id', factoryId)
+    const { data, error } = await query.maybeSingle()
     if (error) throw new Error(error.message || 'Не удалось загрузить остаток')
     if (!data) {
       return { data: { total: 0, reserved: 0, available: 0, unit: 'кг', reservations: [] }, error: null }
@@ -308,6 +330,7 @@ export async function getStockForMaterial(materialId: string) {
 }
 
 export async function addReceipt(data: {
+  factory_id: string
   material_id: string
   material_variant_id?: string | null
   quantity: number
@@ -320,7 +343,9 @@ export async function addReceipt(data: {
 }): Promise<ActionResult> {
   try {
     const { db, userId } = await requireAccess('manage')
+    if (!data.factory_id) throw new Error('Выберите завод склада')
     const { error } = await db.rpc('fn_add_inventory_receipt', {
+      p_factory_id: data.factory_id,
       p_material_id: data.material_id,
       p_quantity: Number(data.quantity),
       p_unit: data.unit || 'кг',
@@ -337,6 +362,7 @@ export async function addReceipt(data: {
       let verifyQuery = db
         .from('inventory')
         .select('id')
+        .eq('factory_id', data.factory_id)
         .eq('material_id', data.material_id)
         .eq('material_variant_id', data.material_variant_id)
       verifyQuery = data.piece_length_mm === null || data.piece_length_mm === undefined
@@ -523,6 +549,7 @@ export async function deleteInventoryItem(inventoryId: string): Promise<ActionRe
 }
 
 export async function getTransactions(filters: {
+  factory_id?: string | null
   material_id?: string
   machine_id?: string
   type?: InventoryTransactionType
@@ -539,9 +566,10 @@ export async function getTransactions(filters: {
     const to = from + pageSize - 1
     let query = db
       .from('inventory_transactions')
-      .select('id, inventory_id, material_id, material_variant_id, transaction_type, quantity, secondary_quantity, machine_id, request_item_table, request_item_id, performed_by, supplier_id, comment, created_at', { count: 'exact' })
+      .select('id, factory_id, inventory_id, material_id, material_variant_id, transaction_type, quantity, secondary_quantity, machine_id, request_item_table, request_item_id, performed_by, supplier_id, comment, created_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to)
+    if (filters.factory_id) query = query.eq('factory_id', filters.factory_id)
     if (filters.material_id) query = query.eq('material_id', filters.material_id)
     if (filters.machine_id) query = query.eq('machine_id', filters.machine_id)
     if (filters.type) query = query.eq('transaction_type', filters.type)

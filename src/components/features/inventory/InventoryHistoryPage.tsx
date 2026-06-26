@@ -14,6 +14,7 @@ type Props = {
   page: number
   pageSize: number
   total: number
+  factoryId?: string | null
 }
 
 const TYPE_CLASSES = {
@@ -24,10 +25,15 @@ const TYPE_CLASSES = {
   adjustment: 'border-slate-200 bg-slate-100 text-slate-700',
 } as const
 
-export function InventoryHistoryPage({ rows, materialId, page, pageSize, total }: Props) {
+export function InventoryHistoryPage({ rows, materialId, page, pageSize, total, factoryId }: Props) {
   const pageCount = Math.max(1, Math.ceil(total / pageSize))
   const currentFrom = total === 0 ? 0 : page * pageSize + 1
   const currentTo = Math.min(total, (page + 1) * pageSize)
+  const pageHref = (nextPage: number) => {
+    const params = new URLSearchParams({ page: String(nextPage) })
+    if (factoryId) params.set('factory', factoryId)
+    return `/inventory/${materialId}/history?${params.toString()}`
+  }
 
   return (
     <div className="space-y-3">
@@ -37,13 +43,13 @@ export function InventoryHistoryPage({ rows, materialId, page, pageSize, total }
         </span>
         <div className="flex gap-2">
           <Link
-            href={`/inventory/${materialId}/history?page=${page}`}
+            href={pageHref(page)}
             className={page <= 0 ? 'pointer-events-none rounded-md border border-[#E8ECF0] px-3 py-1.5 font-medium text-[#1B3A6B] opacity-50' : 'rounded-md border border-[#E8ECF0] px-3 py-1.5 font-medium text-[#1B3A6B]'}
           >
             Назад
           </Link>
           <Link
-            href={`/inventory/${materialId}/history?page=${page + 2}`}
+            href={pageHref(page + 2)}
             className={page + 1 >= pageCount ? 'pointer-events-none rounded-md border border-[#E8ECF0] px-3 py-1.5 font-medium text-[#1B3A6B] opacity-50' : 'rounded-md border border-[#E8ECF0] px-3 py-1.5 font-medium text-[#1B3A6B]'}
           >
             Вперёд

@@ -44,7 +44,7 @@ type RequestItemTable =
   | 'request_chain_cord'
 
 type RequestWithRelations = TechnologistRequest & {
-  machine: Pick<Machine, 'id' | 'name' | 'planned_material_date' | 'created_at' | 'is_archived'>
+  machine: Pick<Machine, 'id' | 'name' | 'factory_id' | 'planned_material_date' | 'created_at' | 'is_archived'>
   technologist_name: string | null
 }
 
@@ -64,6 +64,7 @@ export type SupplyRequestRow<T> = T & {
 
 export type SupplyStockItem = {
   id: string
+  factory_id: string
   material_variant_id: string | null
   piece_length_mm: number | null
   is_business_scrap: boolean
@@ -113,6 +114,7 @@ export type SupplyRequestPayload = {
 
 type InventoryRow = {
   id?: string
+  factory_id: string
   material_id: string
   material_variant_id: string | null
   total_quantity: number
@@ -445,7 +447,7 @@ async function getRequestMeta(db: LooseDb, requestId: string) {
   const request = data as TechnologistRequest
 
   const [{ data: machineData, error: machineError }, { data: userData }] = await Promise.all([
-    db.from('machines').select('id, name, planned_material_date, created_at, is_archived').eq('id', request.machine_id).single(),
+    db.from('machines').select('id, name, factory_id, planned_material_date, created_at, is_archived').eq('id', request.machine_id).single(),
     request.created_by ? db.from('users').select('full_name').eq('id', request.created_by).maybeSingle() : Promise.resolve({ data: null, error: null } as DbResult),
   ])
   if (machineError || !machineData) throw new Error(machineError?.message || 'ÐœÐ°ÑˆÐ¸Ð½Ð° Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
@@ -453,7 +455,7 @@ async function getRequestMeta(db: LooseDb, requestId: string) {
 
   return {
     ...request,
-    machine: machineData as Pick<Machine, 'id' | 'name' | 'planned_material_date' | 'created_at' | 'is_archived'>,
+    machine: machineData as Pick<Machine, 'id' | 'name' | 'factory_id' | 'planned_material_date' | 'created_at' | 'is_archived'>,
     technologist_name: (userData as { full_name?: string } | null)?.full_name || null,
   } satisfies RequestWithRelations
 }
@@ -545,6 +547,7 @@ function withStock<T extends { id: string; material_id: string | null; material_
       secondary_stock_unit: inventory?.secondary_unit ?? null,
       stock_items: stockItems.map((item) => ({
         id: item.id || stockKey(item.material_id, item.material_variant_id, item.piece_length_mm),
+        factory_id: item.factory_id,
         material_variant_id: item.material_variant_id,
         piece_length_mm: item.piece_length_mm,
         is_business_scrap: Boolean(item.is_business_scrap),
@@ -637,8 +640,8 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
     ])) as string[]
 
     const [inventoryRes, reservationsRes, steelTypesRes] = await Promise.all([
-      materialIds.length
-        ? db.from('inventory').select('id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds)
+      materialIds.length && request.machine.factory_id
+        ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds).eq('factory_id', request.machine.factory_id)
         : Promise.resolve({ data: [], error: null } as DbResult),
       itemIds.length
         ? db.from('inventory_reservations').select('id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity').in('request_item_id', itemIds)
@@ -740,12 +743,15 @@ export async function reserveItemFromStock(data: {
     const row = rowData as Record<string, unknown>
     const { data: selectedInventoryData, error: selectedInventoryError } = await db
       .from('inventory')
-      .select('id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at')
+      .select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at')
       .eq('id', data.inventory_id)
       .maybeSingle()
     if (selectedInventoryError) throw new Error(selectedInventoryError.message || 'Не удалось проверить выбранный складской остаток')
     const selectedInventory = selectedInventoryData as InventoryRow | null
     if (!selectedInventory?.id || selectedInventory.deleted_at) throw new Error('Выбранный складской остаток не найден')
+    if (!request.machine.factory_id || selectedInventory.factory_id !== request.machine.factory_id) {
+      throw new Error('Выбранный складской остаток относится к другому заводу')
+    }
     if ((selectedInventory.business_scrap_state || 'available') === 'future') throw new Error('Будущий деловой отход нельзя бронировать в этой заявке')
     if (!inventoryMatchesReservationSource(selectedInventory, reservationSource)) {
       throw new Error(getReservationSourceError(reservationSource))

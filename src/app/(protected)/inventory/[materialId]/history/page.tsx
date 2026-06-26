@@ -12,12 +12,14 @@ export default async function InventoryHistoryRoute({
   searchParams,
 }: {
   params: Promise<{ materialId: string }>
-  searchParams?: Promise<{ page?: string }>
+  searchParams?: Promise<{ page?: string; factory?: string }>
 }) {
   const { materialId } = await params
   const resolvedSearchParams = await searchParams
   const page = Math.max(0, Number(resolvedSearchParams?.page || 1) - 1)
-  const { data, error, pagination } = await getTransactions({ material_id: materialId, page, pageSize: 50 })
+  const factoryId = resolvedSearchParams?.factory || null
+  const inventoryHref = factoryId ? `${ROUTES.INVENTORY}?factory=${encodeURIComponent(factoryId)}` : ROUTES.INVENTORY
+  const { data, error, pagination } = await getTransactions({ material_id: materialId, factory_id: factoryId, page, pageSize: 50 })
 
   return (
     <div className="space-y-6">
@@ -26,7 +28,7 @@ export default async function InventoryHistoryRoute({
           <h1 className="text-2xl font-bold text-[#1B3A6B]">История движения склада</h1>
           <p className="mt-1 text-sm text-[#6B7280]">Приходы, бронирования, снятия брони и корректировки.</p>
         </div>
-        <Link href={ROUTES.INVENTORY} className="text-sm font-medium text-[#1B3A6B] hover:underline">Вернуться на склад</Link>
+        <Link href={inventoryHref} className="text-sm font-medium text-[#1B3A6B] hover:underline">Вернуться на склад</Link>
       </div>
       {error ? (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">{error}</div>
@@ -37,6 +39,7 @@ export default async function InventoryHistoryRoute({
           page={pagination?.page || page}
           pageSize={pagination?.pageSize || 50}
           total={pagination?.total || 0}
+          factoryId={factoryId}
         />
       )}
     </div>

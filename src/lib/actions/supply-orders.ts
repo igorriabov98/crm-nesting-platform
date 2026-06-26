@@ -122,6 +122,7 @@ export type SupplyOrderItem = {
 
 export type SupplyOrderStockItem = {
   id: string
+  factory_id: string
   piece_length_mm: number | null
   total_quantity: number
   available_quantity: number
@@ -786,22 +787,23 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
       ...item,
       supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
     }))
+    const stockFactoryIds = Array.from(new Set(rawItems.map((item) => requestMap.get(item.request_id)?.machines?.factory_id).filter(Boolean))) as string[]
     const [inventoryRes, reservationsRes, schedulesRes] = await Promise.all([
-      materialIds.length ? db.from('inventory').select('id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm').in('material_id', materialIds) : Promise.resolve({ data: [], error: null } as DbResult),
+      materialIds.length && stockFactoryIds.length ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm').in('material_id', materialIds).in('factory_id', stockFactoryIds) : Promise.resolve({ data: [], error: null } as DbResult),
       db.from('inventory_reservations').select('id, request_item_table, request_item_id').in('request_item_id', rawItems.map((item) => item.id)),
       rawItems.length ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, delivered_at, received_by, created_at, updated_at').in('request_item_id', rawItems.map((item) => item.id)).order('delivery_date', { ascending: true }) : Promise.resolve({ data: [], error: null } as DbResult),
     ])
     if (inventoryRes.error) throw new Error(inventoryRes.error.message || 'Не удалось загрузить остатки склада')
     if (reservationsRes.error) throw new Error(reservationsRes.error.message || 'Не удалось загрузить бронирования')
     if (schedulesRes.error) throw new Error(schedulesRes.error.message || 'Не удалось загрузить график поставок')
-    const stockRows = (inventoryRes.data || []) as { id: string; material_id: string; material_variant_id: string | null; total_quantity: number; available_quantity: number; unit: string; total_secondary_quantity: number | null; available_secondary_quantity: number | null; secondary_unit: string | null; piece_length_mm: number | null }[]
-    const stockMap = new Map(stockRows.map((item) => [`${item.material_id}:${item.material_variant_id || 'legacy'}:${item.piece_length_mm ?? 'null'}`, item]))
+    const stockRows = (inventoryRes.data || []) as { id: string; factory_id: string; material_id: string; material_variant_id: string | null; total_quantity: number; available_quantity: number; unit: string; total_secondary_quantity: number | null; available_secondary_quantity: number | null; secondary_unit: string | null; piece_length_mm: number | null }[]
+    const stockMap = new Map(stockRows.map((item) => [`${factoryKey(item.factory_id)}:${item.material_id}:${item.material_variant_id || 'legacy'}:${item.piece_length_mm ?? 'null'}`, item]))
     const stockGroupMap = new Map<string, typeof stockRows>()
     const materialStockMap = new Map<string, typeof stockRows>()
     for (const item of stockRows) {
-      const groupKey = `${item.material_id}:${item.material_variant_id || 'legacy'}`
+      const groupKey = `${factoryKey(item.factory_id)}:${item.material_id}:${item.material_variant_id || 'legacy'}`
       stockGroupMap.set(groupKey, [...(stockGroupMap.get(groupKey) || []), item])
-      materialStockMap.set(item.material_id, [...(materialStockMap.get(item.material_id) || []), item])
+      materialStockMap.set(`${factoryKey(item.factory_id)}:${item.material_id}`, [...(materialStockMap.get(`${factoryKey(item.factory_id)}:${item.material_id}`) || []), item])
     }
     for (const rows of stockGroupMap.values()) {
       rows.sort((a, b) => Number(a.piece_length_mm ?? 0) - Number(b.piece_length_mm ?? 0))
@@ -836,23 +838,24 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
       const machine = request?.machines
       const planned = machine?.planned_material_date || null
       const needsExactVariant = item.category === 'pipe' || item.category === 'knives'
+      const itemFactoryKey = factoryKey(machine?.factory_id || null)
       const stockItems = item.material_id
         ? needsExactVariant
           ? item.material_variant_id
-            ? stockGroupMap.get(`${item.material_id}:${item.material_variant_id}`) || []
+            ? stockGroupMap.get(`${itemFactoryKey}:${item.material_id}:${item.material_variant_id}`) || []
             : []
-          : stockGroupMap.get(`${item.material_id}:${item.material_variant_id || 'legacy'}`) ||
-            stockGroupMap.get(`${item.material_id}:legacy`) ||
-            materialStockMap.get(item.material_id) ||
+          : stockGroupMap.get(`${itemFactoryKey}:${item.material_id}:${item.material_variant_id || 'legacy'}`) ||
+            stockGroupMap.get(`${itemFactoryKey}:${item.material_id}:legacy`) ||
+            materialStockMap.get(`${itemFactoryKey}:${item.material_id}`) ||
             []
         : []
       const stockItem = item.material_id
         ? needsExactVariant
           ? item.material_variant_id
-            ? stockMap.get(`${item.material_id}:${item.material_variant_id}:null`) || stockItems[0] || null
+            ? stockMap.get(`${itemFactoryKey}:${item.material_id}:${item.material_variant_id}:null`) || stockItems[0] || null
             : null
-          : stockMap.get(`${item.material_id}:${item.material_variant_id || 'legacy'}:null`) ||
-            stockMap.get(`${item.material_id}:legacy:null`) ||
+          : stockMap.get(`${itemFactoryKey}:${item.material_id}:${item.material_variant_id || 'legacy'}:null`) ||
+            stockMap.get(`${itemFactoryKey}:${item.material_id}:legacy:null`) ||
             stockItems[0] ||
             null
         : null
@@ -890,6 +893,7 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
         stock_unit: stockItem?.unit ?? null,
         stock_items: stockItems.map((row) => ({
           id: row.id,
+          factory_id: row.factory_id,
           piece_length_mm: row.piece_length_mm,
           total_quantity: row.total_quantity,
           available_quantity: row.available_quantity,
