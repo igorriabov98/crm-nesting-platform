@@ -1175,6 +1175,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       production_date: string | null
       machineIds: Set<string>
       supplyDates: Set<string>
+      deliveryScheduleDates: Set<string>
       suppliers: Map<string, SupplyOrderAggregateSupplier>
       items: SupplyOrderAggregateSourceItem[]
     }
@@ -1275,6 +1276,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         production_date: item.planned_material_date,
         machineIds: new Set<string>(),
         supplyDates: new Set<string>(),
+        deliveryScheduleDates: new Set<string>(),
         suppliers: new Map<string, SupplyOrderAggregateSupplier>(),
         items: [],
       }
@@ -1289,11 +1291,13 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       factory.planned_schedule_quantity += plannedScheduleQuantity
       factory.delivered_schedule_quantity += deliveredScheduleQuantity
       factory.unscheduled_quantity += unscheduledQuantity
-      factory.delivery_schedule_count += itemSchedules.length
       factory.machineIds.add(item.machine_id)
       addSupplierSummary(factory.suppliers, item, supplierNameMap)
       for (const supplyDeliveryDate of supplyDeliveryDates) {
         factory.supplyDates.add(supplyDeliveryDate || 'no_supply_date')
+      }
+      for (const schedule of itemSchedules) {
+        factory.deliveryScheduleDates.add(schedule.delivery_date)
       }
       factory.items.push({
         table: item.table,
@@ -1358,8 +1362,8 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
               planned_schedule_quantity: factory.planned_schedule_quantity,
               delivered_schedule_quantity: factory.delivered_schedule_quantity,
               unscheduled_quantity: factory.unscheduled_quantity,
-              delivery_schedule_count: factory.delivery_schedule_count,
-              has_delivery_schedules: factory.delivery_schedule_count > 0,
+              delivery_schedule_count: factory.deliveryScheduleDates.size,
+              has_delivery_schedules: factory.deliveryScheduleDates.size > 0,
               production_date: factory.production_date,
               supply_delivery_date: hasMixedDates || singleDate === 'no_supply_date' ? null : singleDate,
               has_mixed_supply_delivery_dates: hasMixedDates,
@@ -1753,6 +1757,16 @@ function roundScheduleQuantity(value: number) {
   return Math.round(value * 1_000_000) / 1_000_000
 }
 
+function scheduleSupplierIdsByItem(schedules: ReceivingScheduleRow[]) {
+  const map = new Map<string, Set<string>>()
+  for (const schedule of schedules) {
+    if (schedule.status !== 'planned' || !schedule.supplier_id) continue
+    const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+    map.set(key, new Set([...(map.get(key) || []), schedule.supplier_id]))
+  }
+  return map
+}
+
 function proportionalWeight(totalWeight: number | null, totalQuantity: number, quantity: number) {
   if (totalWeight === null) return null
   if (!Number.isFinite(totalQuantity) || totalQuantity <= 0) return totalWeight
@@ -1877,6 +1891,36 @@ export async function saveAggregateDeliverySchedule(
   }
 }
 
+export async function clearAggregateDeliverySchedule(items: { table: string; id: string }[]) {
+  try {
+    const { db } = await requireAccess('manage')
+    const groupedItems = groupItemsByTable(items)
+    if (groupedItems.size === 0) throw new Error('Нет позиций для сброса графика поставки')
+
+    const selectedItems = await loadSelectedOrderItems(db, groupedItems)
+    if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
+
+    const existingSchedules = await loadReceivingSchedules(db, selectedItems)
+    const plannedScheduleIds = existingSchedules
+      .filter((schedule) => schedule.status === 'planned')
+      .map((schedule) => schedule.id)
+
+    if (plannedScheduleIds.length > 0) {
+      const { error } = await db
+        .from('supply_order_delivery_schedules')
+        .delete()
+        .in('id', plannedScheduleIds)
+      if (error) throw new Error(error.message || 'Не удалось сбросить плановые даты поставки')
+    }
+
+    const machineIds = await getAffectedMachineIds(db, groupedItems)
+    revalidateSupplyOrderPaths(machineIds)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось сбросить график поставки' }
+  }
+}
+
 async function createSupplyFinancePayments(
   db: RpcDb,
   userId: string,
@@ -1962,11 +2006,17 @@ export async function markOrderStatus(
     const now = new Date().toISOString()
     const selectedItems = await loadSelectedOrderItems(db, groupedItems)
     if (selectedItems.length === 0) throw new Error('Выберите позиции')
+    const scheduleSuppliersByItem = status === 'ordered'
+      ? scheduleSupplierIdsByItem(await loadReceivingSchedules(db, selectedItems))
+      : new Map<string, Set<string>>()
 
     for (const item of selectedItems) {
+      const scheduleSupplierIds = scheduleSuppliersByItem.get(itemKey(item)) || new Set<string>()
       if (!item.material_id) throw new Error(`Позиция "${item.item_name}" не привязана к материалу`)
       if (item.to_order <= 0) throw new Error(`Позиция "${item.item_name}" полностью закрыта складом и не требует закупки`)
-      if (!item.supplier_id) throw new Error(`Назначьте поставщика для позиции "${item.item_name}"`)
+      if (!item.supplier_id && (status !== 'ordered' || payments.length > 0 || scheduleSupplierIds.size === 0)) {
+        throw new Error(`Назначьте поставщика для позиции "${item.item_name}" или укажите поставщика в графике поставки`)
+      }
       if (status === 'ordered' && item.order_status !== 'pending') {
         throw new Error(`Позицию "${item.item_name}" можно отметить заказанной только из статуса "Не заказано"`)
       }
@@ -1989,7 +2039,12 @@ export async function markOrderStatus(
       if (error) throw new Error(error.message || 'Не удалось принять позиции на склад')
     } else {
       await Promise.all(selectedItems.map(async (item) => {
-        const values: Record<string, unknown> = { order_status: status, ordered_at: now, supplier_id: item.supplier_id }
+        const scheduleSupplierIds = scheduleSuppliersByItem.get(itemKey(item)) || new Set<string>()
+        const values: Record<string, unknown> = { order_status: status, ordered_at: now }
+        const singleScheduleSupplierId = scheduleSupplierIds.size === 1 ? Array.from(scheduleSupplierIds)[0] : null
+        if (item.supplier_id || singleScheduleSupplierId) {
+          values.supplier_id = item.supplier_id || singleScheduleSupplierId
+        }
         const { error } = await db.from(item.table).update(values).eq('id', item.id)
         if (error) throw new Error(error.message || 'Не удалось обновить статус позиции')
       }))

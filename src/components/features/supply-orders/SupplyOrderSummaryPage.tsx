@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
 import {
+  clearAggregateDeliverySchedule,
   markOrderPlaced,
   markOrderPlacedWithFinance,
   saveAggregateDeliverySchedule,
@@ -273,8 +274,15 @@ function FactoryDeliveryEditor({
   const canSaveDate = factory.has_mixed_supply_delivery_dates
     ? Boolean(dateValue)
     : dateValue !== initialDate
-  const missingSuppliers = factory.items.some((item) => item.order_status === 'pending' && !item.supplier_id)
+  const itemHasScheduleSupplier = (item: SupplyOrderAggregateSourceItem) => item.delivery_schedules.some((schedule) => (
+    schedule.status === 'planned' && Boolean(schedule.supplier_id)
+  ))
+  const pendingItemsNeedSupplier = factory.items.some((item) => (
+    item.order_status === 'pending' && !item.supplier_id && !itemHasScheduleSupplier(item)
+  ))
+  const missingFinanceSuppliers = factory.items.some((item) => item.order_status === 'pending' && !item.supplier_id)
   const missingScheduleSuppliers = factory.items.some((item) => !item.supplier_id)
+  const hasPlannedSchedules = factory.items.some((item) => item.delivery_schedules.some((schedule) => schedule.status === 'planned'))
   const financeGroups = useMemo(() => makeFinanceGroups(factory), [factory])
   const financePayments = makeFinancePayments(financeGroups, financeDrafts)
   const financeInvalid = financeOpen && (
@@ -372,6 +380,22 @@ function FactoryDeliveryEditor({
 
   const removeDraft = (index: number) => {
     setScheduleDrafts((current) => current.filter((_, draftIndex) => draftIndex !== index))
+  }
+
+  const clearSchedule = () => {
+    if (!hasPlannedSchedules) return
+    if (!window.confirm('Сбросить все плановые даты графика? Принятые поставки останутся заблокированными.')) return
+
+    startTransition(async () => {
+      const result = await clearAggregateDeliverySchedule(itemKeys)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось сбросить график поставки')
+        return
+      }
+      toast.success('Плановые даты графика сброшены')
+      setSplitOpen(false)
+      router.refresh()
+    })
   }
 
   const scheduleInvalid = scheduleDrafts.length === 0 ||
@@ -477,9 +501,9 @@ function FactoryDeliveryEditor({
             type="button"
             variant="outline"
             size="sm"
-            disabled={isPending || pendingItemKeys.length === 0 || missingSuppliers}
+            disabled={isPending || pendingItemKeys.length === 0 || pendingItemsNeedSupplier}
             onClick={() => markOrdered(false)}
-            title={missingSuppliers ? 'Сначала назначьте поставщика в детальном списке' : undefined}
+            title={pendingItemsNeedSupplier ? 'Укажите поставщика в позиции или в графике поставки' : undefined}
           >
             <Check className="h-3.5 w-3.5" />
             Отметить заказано
@@ -488,9 +512,9 @@ function FactoryDeliveryEditor({
             type="button"
             variant="ghost"
             size="sm"
-            disabled={isPending || pendingItemKeys.length === 0 || missingSuppliers}
+            disabled={isPending || pendingItemKeys.length === 0 || missingFinanceSuppliers}
             onClick={openFinance}
-            title={missingSuppliers ? 'Сначала назначьте поставщика в детальном списке' : undefined}
+            title={missingFinanceSuppliers ? 'Для платежа поставщик должен быть назначен в позиции' : undefined}
           >
             <CreditCard className="h-3.5 w-3.5" />
             С платежом
@@ -502,8 +526,19 @@ function FactoryDeliveryEditor({
             disabled={isPending || remainingQuantity <= 0}
             onClick={openSplit}
           >
-            Разбить поставку
+            {factory.has_delivery_schedules ? 'Редактировать график' : 'Разбить поставку'}
           </Button>
+          {hasPlannedSchedules && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={isPending}
+              onClick={clearSchedule}
+            >
+              Сбросить даты
+            </Button>
+          )}
         </div>
       </div>
 
@@ -656,6 +691,11 @@ function FactoryDeliveryEditor({
             <Button type="button" size="sm" disabled={isPending || scheduleInvalid} onClick={saveSchedule}>
               Сохранить график и отметить заказано
             </Button>
+            {hasPlannedSchedules && (
+              <Button type="button" variant="ghost" size="sm" disabled={isPending} onClick={clearSchedule}>
+                Сбросить плановые даты
+              </Button>
+            )}
             <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => setSplitOpen(false)}>
               Отмена
             </Button>
@@ -840,8 +880,36 @@ function makeFinancePayments(
 }
 
 function supplierSummary(factory: SupplyOrderAggregateFactory) {
-  if (factory.suppliers.length === 0) return 'нет'
-  return factory.suppliers.map((supplier) => `${supplier.name} (${supplier.item_count})`).join(', ')
+  const suppliers = new Map<string, { name: string; count: number }>()
+  let missingCount = 0
+
+  for (const item of factory.items) {
+    const scheduleSuppliers = new Map(item.delivery_schedules
+      .filter((schedule) => schedule.supplier_id)
+      .map((schedule) => [schedule.supplier_id as string, schedule.supplier_name || 'Поставщик']))
+
+    if (item.supplier_id) {
+      suppliers.set(item.supplier_id, {
+        name: item.supplier_name || 'Поставщик',
+        count: (suppliers.get(item.supplier_id)?.count || 0) + 1,
+      })
+    } else if (scheduleSuppliers.size > 0) {
+      for (const [supplierId, supplierName] of scheduleSuppliers) {
+        suppliers.set(supplierId, {
+          name: supplierName,
+          count: (suppliers.get(supplierId)?.count || 0) + 1,
+        })
+      }
+    } else {
+      missingCount += 1
+    }
+  }
+
+  const parts = Array.from(suppliers.values())
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+    .map((supplier) => `${supplier.name} (${supplier.count})`)
+  if (missingCount > 0) parts.push(`Без поставщика (${missingCount})`)
+  return parts.length > 0 ? parts.join(', ') : 'нет'
 }
 
 function parseQuantity(value: string) {
