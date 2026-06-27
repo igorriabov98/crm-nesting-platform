@@ -2039,7 +2039,7 @@ export async function markOrderStatus(
       if (!effectiveSupplierId && (status !== 'ordered' || payments.length > 0 || scheduleSupplierIds.size === 0)) {
         throw new Error(`Назначьте поставщика для позиции "${item.item_name}" или укажите поставщика в графике поставки`)
       }
-      if (status === 'ordered' && item.order_status !== 'pending') {
+      if (status === 'ordered' && item.order_status !== 'pending' && !(placement && item.order_status === 'ordered')) {
         throw new Error(`Позицию "${item.item_name}" можно отметить заказанной только из статуса "Не заказано"`)
       }
       if (status === 'delivered' && item.order_status !== 'ordered') {

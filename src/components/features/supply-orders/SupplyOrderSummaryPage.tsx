@@ -280,6 +280,11 @@ function FactoryDeliveryEditor({
   const pendingItemKeys = useMemo(() => factory.items
     .filter((item) => item.order_status === 'pending')
     .map((item) => ({ table: item.table, id: item.id })), [factory.items])
+  const orderPlacementItemKeys = useMemo(() => factory.items
+    .filter((item) => item.order_status === 'pending' || (
+      item.order_status === 'ordered' && (!item.supplier_id || !item.supply_delivery_date)
+    ))
+    .map((item) => ({ table: item.table, id: item.id })), [factory.items])
   const initialDate = factory.has_mixed_supply_delivery_dates ? '' : factory.supply_delivery_date || ''
   const deliveredGroups = useMemo(() => makeDeliveredScheduleGroups(factory), [factory])
   const plannedTotal = scheduleDrafts.reduce((sum, draft) => sum + parseQuantity(draft.quantity), 0)
@@ -325,11 +330,12 @@ function FactoryDeliveryEditor({
   }
 
   const markOrdered = (withFinance: boolean, placement?: SupplyOrderPlacementInput) => {
-    if (pendingItemKeys.length === 0) return
+    const targetItemKeys = placement ? orderPlacementItemKeys : pendingItemKeys
+    if (targetItemKeys.length === 0) return
     startTransition(async () => {
       const result = withFinance
         ? await markOrderPlacedWithFinance(pendingItemKeys, financePayments)
-        : await markOrderPlaced(pendingItemKeys, placement)
+        : await markOrderPlaced(targetItemKeys, placement)
       if (!result.success) {
         toast.error(result.error || 'Не удалось отметить материал заказанным')
         return
@@ -343,7 +349,7 @@ function FactoryDeliveryEditor({
   }
 
   const openOrderPlacement = () => {
-    if (pendingItemKeys.length === 0) return
+    if (orderPlacementItemKeys.length === 0) return
     setOrderPlacementDraft(makeInitialOrderPlacementDraft(factory))
     setOrderPlacementOpen(true)
   }
@@ -533,7 +539,7 @@ function FactoryDeliveryEditor({
             type="button"
             variant="outline"
             size="sm"
-            disabled={isPending || pendingItemKeys.length === 0}
+            disabled={isPending || orderPlacementItemKeys.length === 0}
             onClick={openOrderPlacement}
           >
             <Check className="h-3.5 w-3.5" />
@@ -923,12 +929,12 @@ function dateCountLabel(count: number) {
 }
 
 function makeInitialOrderPlacementDraft(factory: SupplyOrderAggregateFactory): OrderPlacementDraft {
-  const pendingSupplierIds = uniqueSortedValues(factory.items
-    .filter((item) => item.order_status === 'pending')
+  const supplierIds = uniqueSortedValues(factory.items
+    .filter((item) => item.order_status === 'pending' || item.order_status === 'ordered')
     .map((item) => item.supplier_id))
 
   return {
-    supplierId: pendingSupplierIds.length === 1 ? pendingSupplierIds[0] : '',
+    supplierId: supplierIds.length === 1 ? supplierIds[0] : '',
     supplyDeliveryDate: factory.supply_delivery_date || factory.production_date || todayIsoDate(),
   }
 }
