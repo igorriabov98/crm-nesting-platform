@@ -22,6 +22,7 @@ export type ResourceKey =
   | 'supply_consumable_requests'
   | 'supply_orders'
   | 'inventory'
+  | 'inventory_history'
   | 'inventory_receiving'
   | 'suppliers'
   | 'materials'
@@ -55,6 +56,7 @@ export type SidebarIconKey =
   | 'consumables'
   | 'orders'
   | 'inventory'
+  | 'history'
   | 'receiving'
   | 'suppliers'
   | 'materials'
@@ -328,6 +330,16 @@ export const PERMISSION_RESOURCES = [
     sidebar: { section: 'inventory', icon: 'inventory', order: 10 },
   },
   {
+    key: 'inventory_history',
+    label: 'История склада',
+    group: 'Склад',
+    defaultHref: ROUTES.INVENTORY_HISTORY,
+    defaultViewRoles: SUPPLY_AND_DIRECTORS,
+    defaultManageRoles: SUPPLY_AND_DIRECTORS,
+    routes: [{ path: ROUTES.INVENTORY_HISTORY, match: 'prefix', operation: 'view', priority: 110 }],
+    sidebar: { section: 'inventory', icon: 'history', order: 20 },
+  },
+  {
     key: 'inventory_receiving',
     label: 'Прием материала',
     group: 'Склад',
@@ -335,7 +347,7 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: INVENTORY_RECEIVING_ROLES,
     defaultManageRoles: INVENTORY_RECEIVING_ROLES,
     routes: [{ path: ROUTES.INVENTORY_RECEIVING, match: 'prefix', operation: 'view', priority: 100 }],
-    sidebar: { section: 'inventory', icon: 'receiving', order: 20 },
+    sidebar: { section: 'inventory', icon: 'receiving', order: 30 },
   },
   {
     key: 'suppliers',

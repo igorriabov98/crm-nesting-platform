@@ -28,6 +28,7 @@ import {
   Building2,
   ShieldCheck,
   PackagePlus,
+  History,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -68,6 +69,7 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   consumables: Warehouse,
   orders: ShoppingCart,
   inventory: Warehouse,
+  history: History,
   receiving: PackagePlus,
   suppliers: Truck,
   materials: Boxes,

@@ -113,6 +113,45 @@ export type InventoryTransactionWithRelations = InventoryTransaction & {
   user_name?: string | null
 }
 
+export type InventoryWarehouseHistoryCategorySummary = {
+  category: MaterialCategory
+  currentWeightKg: number
+  previousWeightKg: number
+  deltaWeightKg: number
+  deltaPercent: number | null
+  transactionCount: number
+  receiptWeightKg: number
+  reserveWeightKg: number
+  unreserveWeightKg: number
+  writeOffWeightKg: number
+  adjustmentWeightKg: number
+}
+
+export type InventoryWarehouseHistoryTrendPoint = {
+  date: string
+  weightKg: number
+  deltaWeightKg: number
+}
+
+export type InventoryWarehouseHistoryOverview = {
+  period: {
+    from: string
+    to: string
+  }
+  currentWeightKg: number
+  previousWeightKg: number
+  deltaWeightKg: number
+  deltaPercent: number | null
+  transactionCount: number
+  receiptWeightKg: number
+  reserveWeightKg: number
+  unreserveWeightKg: number
+  writeOffWeightKg: number
+  adjustmentWeightKg: number
+  categories: InventoryWarehouseHistoryCategorySummary[]
+  trend: InventoryWarehouseHistoryTrendPoint[]
+}
+
 async function requireAccess(operation: PermissionOperation = 'view') {
   const { supabase, userId, role } = await requirePermission('inventory', operation)
   return { db: supabase as unknown as LooseDb, userId, role }
@@ -548,6 +587,174 @@ export async function deleteInventoryItem(inventoryId: string): Promise<ActionRe
   }
 }
 
+type InventoryHistoryStockRow = Pick<Inventory, 'id' | 'material_id' | 'total_quantity' | 'unit' | 'calculated_weight_kg' | 'business_scrap_state'>
+type InventoryHistoryTransactionRow = Pick<InventoryTransaction, 'id' | 'inventory_id' | 'material_id' | 'transaction_type' | 'quantity' | 'created_at'>
+
+export async function getWarehouseHistoryOverview(filters: {
+  factory_id?: string | null
+  from_date?: string
+  to_date?: string
+} = {}) {
+  try {
+    const { db } = await requireAccess()
+    const period = normalizeHistoryPeriod(filters.from_date, filters.to_date)
+
+    let currentQuery = db
+      .from('inventory')
+      .select('id, material_id, total_quantity, unit, calculated_weight_kg, business_scrap_state')
+      .is('deleted_at', null)
+    if (filters.factory_id) currentQuery = currentQuery.eq('factory_id', filters.factory_id)
+
+    let transactionQuery = db
+      .from('inventory_transactions')
+      .select('id, factory_id, inventory_id, material_id, transaction_type, quantity, created_at')
+      .gte('created_at', period.fromIso)
+      .lte('created_at', period.toIso)
+      .order('created_at', { ascending: true })
+    if (filters.factory_id) transactionQuery = transactionQuery.eq('factory_id', filters.factory_id)
+
+    const [currentResult, transactionResult] = await Promise.all([currentQuery, transactionQuery])
+    if (currentResult.error) throw new Error(currentResult.error.message || 'Не удалось загрузить текущие остатки склада')
+    if (transactionResult.error) throw new Error(transactionResult.error.message || 'Не удалось загрузить историю склада')
+
+    const currentRows = ((currentResult.data || []) as InventoryHistoryStockRow[])
+      .filter((row) => (row.business_scrap_state || 'available') !== 'future')
+    const transactionRows = (transactionResult.data || []) as InventoryHistoryTransactionRow[]
+    const transactionInventoryIds = Array.from(new Set(transactionRows.map((row) => row.inventory_id).filter(Boolean)))
+    const transactionStockMap = new Map<string, InventoryHistoryStockRow>()
+
+    if (transactionInventoryIds.length) {
+      const { data, error } = await db
+        .from('inventory')
+        .select('id, material_id, total_quantity, unit, calculated_weight_kg, business_scrap_state')
+        .in('id', transactionInventoryIds)
+      if (error) throw new Error(error.message || 'Не удалось загрузить веса движений склада')
+      for (const row of (data || []) as InventoryHistoryStockRow[]) transactionStockMap.set(row.id, row)
+    }
+
+    const materialIds = Array.from(new Set([
+      ...currentRows.map((row) => row.material_id),
+      ...transactionRows.map((row) => row.material_id),
+      ...Array.from(transactionStockMap.values()).map((row) => row.material_id),
+    ].filter(Boolean)))
+    const materialCategoryMap = new Map<string, MaterialCategory>()
+    if (materialIds.length) {
+      const { data, error } = await db.from('materials').select('id, category').in('id', materialIds)
+      if (error) throw new Error(error.message || 'Не удалось загрузить категории материалов')
+      for (const item of (data || []) as Array<{ id: string; category: MaterialCategory }>) {
+        materialCategoryMap.set(item.id, item.category)
+      }
+    }
+
+    const categories = new Map<MaterialCategory, InventoryWarehouseHistoryCategorySummary>()
+    const ensureCategory = (category: MaterialCategory) => {
+      const existing = categories.get(category)
+      if (existing) return existing
+      const created: InventoryWarehouseHistoryCategorySummary = {
+        category,
+        currentWeightKg: 0,
+        previousWeightKg: 0,
+        deltaWeightKg: 0,
+        deltaPercent: null,
+        transactionCount: 0,
+        receiptWeightKg: 0,
+        reserveWeightKg: 0,
+        unreserveWeightKg: 0,
+        writeOffWeightKg: 0,
+        adjustmentWeightKg: 0,
+      }
+      categories.set(category, created)
+      return created
+    }
+
+    let currentWeightKg = 0
+    for (const row of currentRows) {
+      const category = materialCategoryMap.get(row.material_id) || 'other'
+      const weight = normalizeWeight(row.calculated_weight_kg)
+      currentWeightKg += weight
+      ensureCategory(category).currentWeightKg += weight
+    }
+
+    let deltaWeightKg = 0
+    let receiptWeightKg = 0
+    let reserveWeightKg = 0
+    let unreserveWeightKg = 0
+    let writeOffWeightKg = 0
+    let adjustmentWeightKg = 0
+    const dailyDelta = new Map<string, number>()
+
+    for (const row of transactionRows) {
+      const stock = transactionStockMap.get(row.inventory_id)
+      const category = materialCategoryMap.get(row.material_id) || materialCategoryMap.get(stock?.material_id || '') || 'other'
+      const summary = ensureCategory(category)
+      const movementWeight = estimateTransactionWeight(row, stock)
+      const totalDelta = totalStockDeltaWeight(row, movementWeight)
+
+      summary.transactionCount += 1
+      if (row.transaction_type === 'receipt') {
+        receiptWeightKg += movementWeight
+        summary.receiptWeightKg += movementWeight
+      } else if (row.transaction_type === 'reserve') {
+        reserveWeightKg += movementWeight
+        summary.reserveWeightKg += movementWeight
+      } else if (row.transaction_type === 'unreserve') {
+        unreserveWeightKg += movementWeight
+        summary.unreserveWeightKg += movementWeight
+      } else if (row.transaction_type === 'write_off') {
+        writeOffWeightKg += movementWeight
+        summary.writeOffWeightKg += movementWeight
+      } else if (row.transaction_type === 'adjustment') {
+        adjustmentWeightKg += totalDelta
+        summary.adjustmentWeightKg += totalDelta
+      }
+
+      if (totalDelta !== 0) {
+        deltaWeightKg += totalDelta
+        summary.deltaWeightKg += totalDelta
+        const day = dayKey(row.created_at)
+        dailyDelta.set(day, (dailyDelta.get(day) || 0) + totalDelta)
+      }
+    }
+
+    const previousWeightKg = currentWeightKg - deltaWeightKg
+    const trend = buildWeightTrend(period.from, period.to, previousWeightKg, dailyDelta)
+    const sortedCategories = Array.from(categories.values())
+      .map((summary) => {
+        const previousWeight = summary.currentWeightKg - summary.deltaWeightKg
+        return {
+          ...summary,
+          previousWeightKg: previousWeight,
+          deltaPercent: percentDelta(summary.deltaWeightKg, previousWeight),
+        }
+      })
+      .sort((left, right) => Math.abs(right.currentWeightKg) - Math.abs(left.currentWeightKg))
+
+    return {
+      data: {
+        period: { from: period.from, to: period.to },
+        currentWeightKg,
+        previousWeightKg,
+        deltaWeightKg,
+        deltaPercent: percentDelta(deltaWeightKg, previousWeightKg),
+        transactionCount: transactionRows.length,
+        receiptWeightKg,
+        reserveWeightKg,
+        unreserveWeightKg,
+        writeOffWeightKg,
+        adjustmentWeightKg,
+        categories: sortedCategories,
+        trend,
+      } satisfies InventoryWarehouseHistoryOverview,
+      error: null,
+    }
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Не удалось загрузить историю склада',
+    }
+  }
+}
+
 export async function getTransactions(filters: {
   factory_id?: string | null
   material_id?: string
@@ -607,6 +814,98 @@ export async function getAvailableStockForMaterials(materialIds: string[]) {
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить остатки' }
   }
+}
+
+function normalizeHistoryPeriod(fromDate?: string, toDate?: string) {
+  const today = new Date()
+  const fallbackTo = dateOnly(today)
+  const fallbackFrom = dateOnly(addDays(today, -29))
+  const from = safeDateOnly(fromDate) || fallbackFrom
+  const to = safeDateOnly(toDate) || fallbackTo
+  const orderedFrom = from <= to ? from : to
+  const orderedTo = from <= to ? to : from
+
+  return {
+    from: orderedFrom,
+    to: orderedTo,
+    fromIso: `${orderedFrom}T00:00:00.000Z`,
+    toIso: `${orderedTo}T23:59:59.999Z`,
+  }
+}
+
+function safeDateOnly(value?: string) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  if (Number.isNaN(parsed.getTime())) return null
+  return value
+}
+
+function dateOnly(value: Date) {
+  return value.toISOString().slice(0, 10)
+}
+
+function addDays(value: Date, days: number) {
+  const next = new Date(value)
+  next.setUTCDate(next.getUTCDate() + days)
+  return next
+}
+
+function normalizeWeight(value: number | null | undefined) {
+  const parsed = Number(value || 0)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+function estimateTransactionWeight(row: InventoryHistoryTransactionRow, stock?: InventoryHistoryStockRow) {
+  const quantity = Math.abs(Number(row.quantity || 0))
+  if (!Number.isFinite(quantity) || quantity <= 0) return 0
+  if (stock?.unit === 'кг') return quantity
+
+  const totalQuantity = Math.abs(Number(stock?.total_quantity || 0))
+  const totalWeight = normalizeWeight(stock?.calculated_weight_kg)
+  if (totalQuantity <= 0 || totalWeight <= 0) return 0
+  return quantity * (totalWeight / totalQuantity)
+}
+
+function totalStockDeltaWeight(row: InventoryHistoryTransactionRow, movementWeight: number) {
+  if (row.transaction_type === 'receipt') return movementWeight
+  if (row.transaction_type === 'write_off') return -movementWeight
+  if (row.transaction_type === 'adjustment') return signedDirection(row.quantity) * movementWeight
+  return 0
+}
+
+function signedDirection(value: number) {
+  if (value > 0) return 1
+  if (value < 0) return -1
+  return 0
+}
+
+function dayKey(value: string) {
+  return new Date(value).toISOString().slice(0, 10)
+}
+
+function buildWeightTrend(from: string, to: string, previousWeightKg: number, dailyDelta: Map<string, number>) {
+  const trend: InventoryWarehouseHistoryTrendPoint[] = []
+  const start = new Date(`${from}T00:00:00.000Z`)
+  const end = new Date(`${to}T00:00:00.000Z`)
+  let cursor = start
+  let runningWeight = previousWeightKg
+  let guard = 0
+
+  while (cursor <= end && guard < 370) {
+    const date = dateOnly(cursor)
+    const delta = dailyDelta.get(date) || 0
+    runningWeight += delta
+    trend.push({ date, deltaWeightKg: delta, weightKg: Math.max(0, runningWeight) })
+    cursor = addDays(cursor, 1)
+    guard += 1
+  }
+
+  return trend
+}
+
+function percentDelta(delta: number, base: number) {
+  if (!Number.isFinite(base) || Math.abs(base) < 0.001) return null
+  return (delta / Math.abs(base)) * 100
 }
 
 async function archiveConsumedBusinessScrap(
@@ -704,6 +1003,7 @@ async function hydrateTransactions(db: LooseDb, rows: InventoryTransaction[]): P
 
 function revalidateInventory(materialId?: string | null) {
   revalidatePath(ROUTES.INVENTORY)
+  revalidatePath(ROUTES.INVENTORY_HISTORY)
   revalidatePath(ROUTES.SUPPLY_ORDERS)
   if (materialId) revalidatePath(`${ROUTES.INVENTORY}/${materialId}/history`)
 }
