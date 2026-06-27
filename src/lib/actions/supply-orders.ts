@@ -820,23 +820,24 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
       ...meshItems.map((row) => makeItem('request_mesh', 'mesh', row, row.description, supplierForRow(row))),
       ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
     ]
+    const orderableRawItems = rawItems.filter((item) => item.to_order > 0)
 
-    const materialIds = Array.from(new Set(rawItems.map((item) => item.material_id).filter(Boolean))) as string[]
+    const materialIds = Array.from(new Set(orderableRawItems.map((item) => item.material_id).filter(Boolean))) as string[]
     const materialsRes = materialIds.length
       ? await db.from('materials').select('id, default_supplier_id').in('id', materialIds)
       : { data: [], error: null }
     if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
     const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
 
-    const rawItemsWithSuppliers = rawItems.map((item) => ({
+    const rawItemsWithSuppliers = orderableRawItems.map((item) => ({
       ...item,
       supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
     }))
-    const stockFactoryIds = Array.from(new Set(rawItems.map((item) => requestMap.get(item.request_id)?.machines?.factory_id).filter(Boolean))) as string[]
+    const stockFactoryIds = Array.from(new Set(orderableRawItems.map((item) => requestMap.get(item.request_id)?.machines?.factory_id).filter(Boolean))) as string[]
     const [inventoryRes, reservationsRes, schedulesRes] = await Promise.all([
       materialIds.length && stockFactoryIds.length ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm').in('material_id', materialIds).in('factory_id', stockFactoryIds) : Promise.resolve({ data: [], error: null } as DbResult),
-      db.from('inventory_reservations').select('id, request_item_table, request_item_id').in('request_item_id', rawItems.map((item) => item.id)),
-      rawItems.length ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, delivered_at, received_by, created_at, updated_at').in('request_item_id', rawItems.map((item) => item.id)).order('delivery_date', { ascending: true }) : Promise.resolve({ data: [], error: null } as DbResult),
+      orderableRawItems.length ? db.from('inventory_reservations').select('id, request_item_table, request_item_id').in('request_item_id', orderableRawItems.map((item) => item.id)) : Promise.resolve({ data: [], error: null } as DbResult),
+      orderableRawItems.length ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, delivered_at, received_by, created_at, updated_at').in('request_item_id', orderableRawItems.map((item) => item.id)).order('delivery_date', { ascending: true }) : Promise.resolve({ data: [], error: null } as DbResult),
     ])
     if (inventoryRes.error) throw new Error(inventoryRes.error.message || 'Не удалось загрузить остатки склада')
     if (reservationsRes.error) throw new Error(reservationsRes.error.message || 'Не удалось загрузить бронирования')
@@ -858,7 +859,7 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
     }
     const reservationMap = new Map(((reservationsRes.data || []) as { id: string; request_item_table: string; request_item_id: string }[]).map((item) => [`${item.request_item_table}:${item.request_item_id}`, item.id]))
     const scheduleRows = ((schedulesRes.data || []) as Array<SupplyOrderDeliverySchedule & { request_item_table: string; request_item_id: string }>)
-      .filter((row) => rawItems.some((item) => item.table === row.request_item_table && item.id === row.request_item_id))
+      .filter((row) => orderableRawItems.some((item) => item.table === row.request_item_table && item.id === row.request_item_id))
     const scheduleMap = new Map<string, typeof scheduleRows>()
     for (const schedule of scheduleRows) {
       const key = `${schedule.request_item_table}:${schedule.request_item_id}`
