@@ -34,6 +34,11 @@ export type SupplyFinancePaymentInput = {
   itemKeys: string[]
 }
 
+export type SupplyOrderPlacementInput = {
+  supplierId: string
+  supplyDeliveryDate: string
+}
+
 type RequestRow = {
   id: string
   machine_id: string
@@ -599,6 +604,15 @@ function assertDateOrNull(value: string | null) {
   const date = new Date(`${normalized}T00:00:00`)
   if (Number.isNaN(date.getTime())) throw new Error('Некорректная дата поставки')
   return normalized
+}
+
+function normalizeOrderPlacement(input?: SupplyOrderPlacementInput) {
+  if (!input) return null
+  const supplierId = input.supplierId.trim()
+  if (!supplierId) throw new Error('Укажите поставщика')
+  const supplyDeliveryDate = assertDateOrNull(input.supplyDeliveryDate)
+  if (!supplyDeliveryDate) throw new Error('Укажите мат.план снабжения')
+  return { supplierId, supplyDeliveryDate }
 }
 
 function validateReceiptFields(item: RawOrderItem) {
@@ -1998,13 +2012,18 @@ async function createSupplyFinancePayments(
 export async function markOrderStatus(
   items: { table: string; id: string }[],
   status: Extract<OrderItemStatus, 'ordered' | 'delivered'>,
-  payments: SupplyFinancePaymentInput[] = []
+  payments: SupplyFinancePaymentInput[] = [],
+  placementInput?: SupplyOrderPlacementInput
 ) {
   try {
     const { db, userId } = await requireAccess('manage')
     const groupedItems = groupItemsByTable(items)
     if (groupedItems.size === 0) return { success: true }
     const now = new Date().toISOString()
+    const placement = status === 'ordered' ? normalizeOrderPlacement(placementInput) : null
+    if (placement && payments.length > 0) {
+      throw new Error('Платежи создаются только для позиций с уже назначенным поставщиком')
+    }
     const selectedItems = await loadSelectedOrderItems(db, groupedItems)
     if (selectedItems.length === 0) throw new Error('Выберите позиции')
     const scheduleSuppliersByItem = status === 'ordered'
@@ -2013,9 +2032,11 @@ export async function markOrderStatus(
 
     for (const item of selectedItems) {
       const scheduleSupplierIds = scheduleSuppliersByItem.get(itemKey(item)) || new Set<string>()
+      const singleScheduleSupplierId = scheduleSupplierIds.size === 1 ? Array.from(scheduleSupplierIds)[0] : null
+      const effectiveSupplierId = item.supplier_id || singleScheduleSupplierId || placement?.supplierId || null
       if (!item.material_id) throw new Error(`Позиция "${item.item_name}" не привязана к материалу`)
       if (item.to_order <= 0) throw new Error(`Позиция "${item.item_name}" полностью закрыта складом и не требует закупки`)
-      if (!item.supplier_id && (status !== 'ordered' || payments.length > 0 || scheduleSupplierIds.size === 0)) {
+      if (!effectiveSupplierId && (status !== 'ordered' || payments.length > 0 || scheduleSupplierIds.size === 0)) {
         throw new Error(`Назначьте поставщика для позиции "${item.item_name}" или укажите поставщика в графике поставки`)
       }
       if (status === 'ordered' && item.order_status !== 'pending') {
@@ -2043,8 +2064,12 @@ export async function markOrderStatus(
         const scheduleSupplierIds = scheduleSuppliersByItem.get(itemKey(item)) || new Set<string>()
         const values: Record<string, unknown> = { order_status: status, ordered_at: now }
         const singleScheduleSupplierId = scheduleSupplierIds.size === 1 ? Array.from(scheduleSupplierIds)[0] : null
-        if (item.supplier_id || singleScheduleSupplierId) {
-          values.supplier_id = item.supplier_id || singleScheduleSupplierId
+        const nextSupplierId = item.supplier_id || singleScheduleSupplierId || placement?.supplierId || null
+        if (nextSupplierId) {
+          values.supplier_id = nextSupplierId
+        }
+        if (placement) {
+          values.custom_delivery_date = placement.supplyDeliveryDate
         }
         const { error } = await db.from(item.table).update(values).eq('id', item.id)
         if (error) throw new Error(error.message || 'Не удалось обновить статус позиции')
@@ -2062,8 +2087,8 @@ export async function markOrderStatus(
   }
 }
 
-export async function markOrderPlaced(items: { table: string; id: string }[]) {
-  return markOrderStatus(items, 'ordered')
+export async function markOrderPlaced(items: { table: string; id: string }[], placement?: SupplyOrderPlacementInput) {
+  return markOrderStatus(items, 'ordered', [], placement)
 }
 
 export async function markOrderPlacedWithFinance(items: { table: string; id: string }[], payments: SupplyFinancePaymentInput[]) {

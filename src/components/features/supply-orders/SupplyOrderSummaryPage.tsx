@@ -19,6 +19,14 @@ import {
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
 import {
@@ -29,6 +37,7 @@ import {
   updateAggregateSupplyDeliveryDate,
   type MaterialReceivingFactory,
   type SupplyFinancePaymentInput,
+  type SupplyOrderPlacementInput,
   type SupplyOrderAggregate,
   type SupplyOrderAggregateFactory,
   type SupplyOrderAggregateScheduleInput,
@@ -64,6 +73,8 @@ type FinanceDraft = {
   currency: 'UAH' | 'EUR'
   plannedDate: string
 }
+
+type OrderPlacementDraft = SupplyOrderPlacementInput
 
 export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId, suppliers }: SupplyOrderSummaryPageProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -263,6 +274,8 @@ function FactoryDeliveryEditor({
   const [scheduleDrafts, setScheduleDrafts] = useState<ScheduleDraft[]>(() => makeInitialScheduleDrafts(factory))
   const [financeOpen, setFinanceOpen] = useState(false)
   const [financeDrafts, setFinanceDrafts] = useState<Record<string, FinanceDraft>>({})
+  const [orderPlacementOpen, setOrderPlacementOpen] = useState(false)
+  const [orderPlacementDraft, setOrderPlacementDraft] = useState<OrderPlacementDraft>(() => makeInitialOrderPlacementDraft(factory))
   const itemKeys = useMemo(() => factory.items.map((item) => ({ table: item.table, id: item.id })), [factory.items])
   const pendingItemKeys = useMemo(() => factory.items
     .filter((item) => item.order_status === 'pending')
@@ -274,12 +287,6 @@ function FactoryDeliveryEditor({
   const canSaveDate = factory.has_mixed_supply_delivery_dates
     ? Boolean(dateValue)
     : dateValue !== initialDate
-  const itemHasScheduleSupplier = (item: SupplyOrderAggregateSourceItem) => item.delivery_schedules.some((schedule) => (
-    schedule.status === 'planned' && Boolean(schedule.supplier_id)
-  ))
-  const pendingItemsNeedSupplier = factory.items.some((item) => (
-    item.order_status === 'pending' && !item.supplier_id && !itemHasScheduleSupplier(item)
-  ))
   const missingFinanceSuppliers = factory.items.some((item) => item.order_status === 'pending' && !item.supplier_id)
   const missingScheduleSuppliers = factory.items.some((item) => !item.supplier_id)
   const hasPlannedSchedules = factory.items.some((item) => item.delivery_schedules.some((schedule) => schedule.status === 'planned'))
@@ -289,6 +296,7 @@ function FactoryDeliveryEditor({
     financeGroups.length === 0 ||
     financePayments.some((payment) => !payment.plannedDate || !Number.isFinite(payment.amount) || payment.amount <= 0)
   )
+  const orderPlacementInvalid = !orderPlacementDraft.supplierId || !orderPlacementDraft.supplyDeliveryDate
 
   useEffect(() => {
     setDateValue(initialDate)
@@ -297,6 +305,12 @@ function FactoryDeliveryEditor({
   useEffect(() => {
     setScheduleDrafts(makeInitialScheduleDrafts(factory))
   }, [factory])
+
+  useEffect(() => {
+    if (!orderPlacementOpen) {
+      setOrderPlacementDraft(makeInitialOrderPlacementDraft(factory))
+    }
+  }, [factory, orderPlacementOpen])
 
   const saveDate = (nextDate: string | null) => {
     startTransition(async () => {
@@ -310,21 +324,33 @@ function FactoryDeliveryEditor({
     })
   }
 
-  const markOrdered = (withFinance: boolean) => {
+  const markOrdered = (withFinance: boolean, placement?: SupplyOrderPlacementInput) => {
     if (pendingItemKeys.length === 0) return
     startTransition(async () => {
       const result = withFinance
         ? await markOrderPlacedWithFinance(pendingItemKeys, financePayments)
-        : await markOrderPlaced(pendingItemKeys)
+        : await markOrderPlaced(pendingItemKeys, placement)
       if (!result.success) {
         toast.error(result.error || 'Не удалось отметить материал заказанным')
         return
       }
       toast.success(withFinance ? 'Материал заказан, платежи созданы' : 'Материал отмечен как заказанный')
+      setOrderPlacementOpen(false)
       setFinanceOpen(false)
       setFinanceDrafts({})
       router.refresh()
     })
+  }
+
+  const openOrderPlacement = () => {
+    if (pendingItemKeys.length === 0) return
+    setOrderPlacementDraft(makeInitialOrderPlacementDraft(factory))
+    setOrderPlacementOpen(true)
+  }
+
+  const submitOrderPlacement = () => {
+    if (orderPlacementInvalid) return
+    markOrdered(false, orderPlacementDraft)
   }
 
   const openFinance = () => {
@@ -507,9 +533,8 @@ function FactoryDeliveryEditor({
             type="button"
             variant="outline"
             size="sm"
-            disabled={isPending || pendingItemKeys.length === 0 || pendingItemsNeedSupplier}
-            onClick={() => markOrdered(false)}
-            title={pendingItemsNeedSupplier ? 'Укажите поставщика в позиции или в графике поставки' : undefined}
+            disabled={isPending || pendingItemKeys.length === 0}
+            onClick={openOrderPlacement}
           >
             <Check className="h-3.5 w-3.5" />
             Отметить заказано
@@ -547,6 +572,74 @@ function FactoryDeliveryEditor({
           )}
         </div>
       </div>
+
+      <Dialog open={orderPlacementOpen} onOpenChange={setOrderPlacementOpen}>
+        <DialogContent className="bg-white text-[#111827] sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-[#1B3A6B]">Отметить заказано</DialogTitle>
+            <DialogDescription>
+              Укажите поставщика и дату мат.плана снабжения для выбранных позиций.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              submitOrderPlacement()
+            }}
+          >
+            <label className="grid gap-1 text-sm font-medium text-[#475569]">
+              Поставщик
+              <select
+                value={orderPlacementDraft.supplierId}
+                disabled={isPending}
+                onChange={(event) => setOrderPlacementDraft((current) => ({
+                  ...current,
+                  supplierId: event.target.value,
+                }))}
+                className="h-10 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm text-[#111827] outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="">Выберите поставщика</option>
+                {suppliers.map((supplier) => (
+                  <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-[#475569]">
+              Мат.план снабжения
+              <input
+                type="date"
+                value={orderPlacementDraft.supplyDeliveryDate}
+                disabled={isPending}
+                onChange={(event) => setOrderPlacementDraft((current) => ({
+                  ...current,
+                  supplyDeliveryDate: event.target.value,
+                }))}
+                className="h-10 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm text-[#111827] outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </label>
+            {orderPlacementInvalid && (
+              <div className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-[#B45309]">
+                Укажите поставщика и мат.план снабжения.
+              </div>
+            )}
+            <DialogFooter className="gap-2 bg-white">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isPending}
+                onClick={() => setOrderPlacementOpen(false)}
+              >
+                Отмена
+              </Button>
+              <Button type="submit" disabled={isPending || orderPlacementInvalid}>
+                <Check className="h-3.5 w-3.5" />
+                Подтвердить заказ
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {financeOpen && (
         <div className="mt-3 rounded-md border border-[#E8ECF0] bg-white p-3">
@@ -814,6 +907,10 @@ function uniqueSortedDates(dates: Array<string | null | undefined>) {
   return Array.from(new Set(dates.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b))
 }
 
+function uniqueSortedValues(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b))
+}
+
 function dateCountLabel(count: number) {
   const remainder10 = count % 10
   const remainder100 = count % 100
@@ -823,6 +920,17 @@ function dateCountLabel(count: number) {
       ? 'даты'
       : 'дат'
   return `${count} ${word}`
+}
+
+function makeInitialOrderPlacementDraft(factory: SupplyOrderAggregateFactory): OrderPlacementDraft {
+  const pendingSupplierIds = uniqueSortedValues(factory.items
+    .filter((item) => item.order_status === 'pending')
+    .map((item) => item.supplier_id))
+
+  return {
+    supplierId: pendingSupplierIds.length === 1 ? pendingSupplierIds[0] : '',
+    supplyDeliveryDate: factory.supply_delivery_date || factory.production_date || todayIsoDate(),
+  }
 }
 
 function makeInitialScheduleDrafts(factory: SupplyOrderAggregateFactory): ScheduleDraft[] {
