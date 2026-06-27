@@ -154,6 +154,8 @@ function MachineLink({ item }: { item: SupplyOrderHistoryItem }) {
 }
 
 function MaterialSummary({ item }: { item: SupplyOrderHistoryItem }) {
+  const characteristics = item.characteristics.filter((part) => !(part.label === 'Позиция' && part.value === item.item_name))
+
   return (
     <div className="min-w-0">
       <div className="font-medium text-slate-950">{item.item_name}</div>
@@ -163,6 +165,16 @@ function MaterialSummary({ item }: { item: SupplyOrderHistoryItem }) {
         </Badge>
         {item.weight_kg ? <span className="tabular-nums">{formatAmount(item.weight_kg)} кг</span> : null}
       </div>
+      {characteristics.length > 0 ? (
+        <dl className="mt-2 flex flex-wrap gap-1.5">
+          {characteristics.map((part) => (
+            <div key={`${part.label}:${part.value}`} className="inline-flex max-w-full items-center gap-1 rounded-md bg-slate-50 px-2 py-1 text-xs leading-5 text-slate-700 ring-1 ring-inset ring-slate-200">
+              <dt className="shrink-0 text-slate-500">{part.label}:</dt>
+              <dd className="min-w-0 break-words font-medium text-slate-900">{part.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
     </div>
   )
 }

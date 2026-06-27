@@ -151,6 +151,7 @@ export type SupplyOrderHistoryItem = {
   request_id: string
   category: MaterialCategory
   item_name: string
+  characteristics: SupplyOrderAggregateCharacteristic[]
   supplier_name: string | null
   planned_material_date: string | null
   planned_delivery_date: string | null
@@ -993,6 +994,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
     const to = from + safePageSize
 
     type HistoryInputItem = RawOrderItem & {
+      raw: RequestItemRow
       machine_id: string
       machine_name: string
       planned_material_date: string | null
@@ -1054,6 +1056,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
         delivered_at: row.delivered_at || null,
         calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
         selected_piece_length_mm: selectedPieceLength(table, row),
+        raw: row,
         machine_id: machine.id || request.machine_id,
         machine_name: machine.name || 'Машина',
         planned_material_date: machine.planned_material_date || null,
@@ -1131,6 +1134,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
           request_id: item.request_id,
           category: item.category,
           item_name: item.item_name,
+          characteristics: getAggregateCharacteristics(item.table, item.raw, item),
           supplier_name: supplierId ? supplierMap.get(supplierId) || 'Поставщик' : null,
           planned_material_date: item.planned_material_date,
           planned_delivery_date: schedule.delivery_date,
@@ -1161,6 +1165,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
           request_id: item.request_id,
           category: item.category,
           item_name: item.item_name,
+          characteristics: getAggregateCharacteristics(item.table, item.raw, item),
           supplier_name: item.supplier_id ? supplierMap.get(item.supplier_id) || 'Поставщик' : null,
           planned_material_date: item.planned_material_date,
           planned_delivery_date: item.custom_delivery_date || isoDate(target),
