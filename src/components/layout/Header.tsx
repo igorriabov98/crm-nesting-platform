@@ -35,6 +35,7 @@ const PAGE_TITLES: Record<string, string> = {
   [ROUTES.PRODUCT_PROJECTS_NEW]: 'Новый проект изделия',
   [ROUTES.PRODUCTION]: 'Производство',
   [ROUTES.GANTT]: 'Гант-график',
+  [ROUTES.PRODUCTION_FACT]: 'Факт производства',
   [ROUTES.SUPPLY]: 'Снабжение',
   [ROUTES.INVOICES]: 'Инвойсы',
   [ROUTES.FINANCE_CALENDAR]: 'Финансовый план',

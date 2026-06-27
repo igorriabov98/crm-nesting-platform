@@ -1371,6 +1371,126 @@ export type Database = {
           updated_at?: string
         }
       }
+      production_fact_sections: {
+        Row: {
+          id: string
+          factory_id: string
+          parent_id: string | null
+          name: string
+          sort_order: number
+          is_active: boolean
+          archived_at: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          factory_id: string
+          parent_id?: string | null
+          name: string
+          sort_order?: number
+          is_active?: boolean
+          archived_at?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          factory_id?: string
+          parent_id?: string | null
+          name?: string
+          sort_order?: number
+          is_active?: boolean
+          archived_at?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      production_machine_facts: {
+        Row: {
+          id: string
+          factory_id: string
+          fact_date: string
+          shift: Database['public']['Enums']['production_fact_shift']
+          machine_id: string
+          section_id: string
+          comment: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          factory_id: string
+          fact_date: string
+          shift: Database['public']['Enums']['production_fact_shift']
+          machine_id: string
+          section_id: string
+          comment?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          factory_id?: string
+          fact_date?: string
+          shift?: Database['public']['Enums']['production_fact_shift']
+          machine_id?: string
+          section_id?: string
+          comment?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      production_tonnage_facts: {
+        Row: {
+          id: string
+          factory_id: string
+          fact_date: string
+          section_id: string
+          tonnage: number
+          comment: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          factory_id: string
+          fact_date: string
+          section_id: string
+          tonnage?: number
+          comment?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          factory_id?: string
+          fact_date?: string
+          section_id?: string
+          tonnage?: number
+          comment?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       supply_items: {
         Row: {
           id: string
@@ -3196,6 +3316,7 @@ export type Database = {
       supply_status: 'received' | 'ordered' | 'not_ordered'
       invoice_status: 'paid' | 'not_paid' | 'overdue'
       payment_terms_type: 'invoice_days' | 'delivery_days' | 'prepayment_full'
+      production_fact_shift: 'day' | 'night'
       machine_status:
         | 'created'
         | 'under_review'

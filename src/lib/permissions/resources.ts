@@ -16,6 +16,7 @@ export type ResourceKey =
   | 'supply_finance'
   | 'tasks'
   | 'production'
+  | 'production_fact'
   | 'consumable_requests'
   | 'consumables'
   | 'supply'
@@ -267,6 +268,16 @@ export const PERMISSION_RESOURCES = [
     sidebar: { section: 'production', icon: 'production', order: 10 },
   },
   {
+    key: 'production_fact',
+    label: 'Факт производства',
+    group: 'Производство',
+    defaultHref: ROUTES.PRODUCTION_FACT,
+    defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
+    defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
+    routes: [{ path: ROUTES.PRODUCTION_FACT, match: 'prefix', operation: 'view', priority: 100 }],
+    sidebar: { section: 'production', icon: 'history', order: 20 },
+  },
+  {
     key: 'consumable_requests',
     label: 'Заявки на расходники',
     group: 'Производство',
@@ -274,7 +285,7 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
     defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
     routes: [{ path: ROUTES.PRODUCTION_CONSUMABLE_REQUESTS, match: 'prefix', operation: 'view', priority: 90 }],
-    sidebar: { section: 'production', icon: 'consumableRequests', order: 20 },
+    sidebar: { section: 'production', icon: 'consumableRequests', order: 30 },
   },
   {
     key: 'consumables',
@@ -284,7 +295,7 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
     defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
     routes: [{ path: ROUTES.PRODUCTION_CONSUMABLES, match: 'prefix', operation: 'view', priority: 90 }],
-    sidebar: { section: 'production', icon: 'consumables', order: 30 },
+    sidebar: { section: 'production', icon: 'consumables', order: 40 },
   },
   {
     key: 'supply',

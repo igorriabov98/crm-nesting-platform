@@ -1,0 +1,939 @@
+'use server'
+
+import { revalidatePath } from 'next/cache'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { ROUTES } from '@/lib/constants/routes'
+import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
+import type {
+  Factory,
+  MachineWithTotals,
+  ProductionFactSection,
+  ProductionFactShift,
+  ProductionMachineFact,
+  ProductionTonnageFact,
+  UserRole,
+} from '@/lib/types'
+import type { Database } from '@/lib/types/database'
+
+type AdminClient = SupabaseClient<Database>
+
+type UserNameRow = Pick<Database['public']['Tables']['users']['Row'], 'id' | 'full_name' | 'email'>
+type MachineOptionRow = Pick<
+  MachineWithTotals,
+  'id' | 'name' | 'factory_id' | 'production_month' | 'production_queue_number' | 'total_weight' | 'status'
+>
+type InvoicePaymentRow = {
+  machine_id: string | null
+  status: string | null
+  amount: number | null
+  paid_amount: number | null
+}
+type DbError = { message?: string; details?: string; hint?: string; code?: string }
+type LooseDbResult = { data: unknown; error: DbError | null }
+type LooseQuery = PromiseLike<LooseDbResult> & {
+  select: (columns?: string) => LooseQuery
+  eq: (column: string, value: unknown) => LooseQuery
+  in: (column: string, values: unknown[]) => LooseQuery
+  order: (column: string, options?: { ascending?: boolean }) => LooseQuery
+  insert: (values: unknown) => LooseQuery
+  update: (values: unknown) => LooseQuery
+  delete: () => LooseQuery
+  single: () => Promise<LooseDbResult>
+  maybeSingle: () => Promise<LooseDbResult>
+}
+type LooseDb = {
+  from: (table: string) => LooseQuery
+}
+
+export type ProductionFactFactoryOption = Pick<Factory, 'id' | 'name'>
+
+export type ProductionFactMonthOption = {
+  value: string
+  label: string
+}
+
+export type ProductionFactMachineOption = {
+  id: string
+  name: string
+  production_month: string | null
+  production_queue_number: number | null
+  total_weight: number
+  status: string | null
+}
+
+export type ProductionFactMachineFactRow = ProductionMachineFact & {
+  machine: ProductionFactMachineOption | null
+  section: ProductionFactSection | null
+  parentSection: ProductionFactSection | null
+  createdByName: string | null
+  updatedByName: string | null
+  canEdit: boolean
+}
+
+export type ProductionFactTonnageFactRow = ProductionTonnageFact & {
+  section: ProductionFactSection | null
+  parentSection: ProductionFactSection | null
+  previousTonnage: number
+  deltaTonnage: number
+  createdByName: string | null
+  updatedByName: string | null
+  canEdit: boolean
+}
+
+export type ProductionFactWorkspaceData = {
+  factories: ProductionFactFactoryOption[]
+  selectedFactoryId: string | null
+  selectedDate: string
+  productionMonth: string
+  productionMonthOptions: ProductionFactMonthOption[]
+  sections: ProductionFactSection[]
+  machineOptions: ProductionFactMachineOption[]
+  machineFacts: ProductionFactMachineFactRow[]
+  tonnageFacts: ProductionFactTonnageFactRow[]
+  previousTonnageBySection: Record<string, number>
+  canEditSelectedDate: boolean
+  isDirector: boolean
+  stats: {
+    machineFactCount: number
+    uniqueMachineCount: number
+    dayShiftCount: number
+    nightShiftCount: number
+    totalTonnage: number
+    previousTotalTonnage: number
+    tonnageDelta: number
+  }
+}
+
+export type ProductionFactActionResult<T = undefined> = {
+  success: boolean
+  data?: T
+  error: string | null
+}
+
+const DIRECTORS: UserRole[] = ['financial_director', 'commercial_director', 'planning_director']
+const PRODUCTION_FACT_ROLES: UserRole[] = ['production_manager', ...DIRECTORS]
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const CHISINAU_TIME_ZONE = 'Europe/Chisinau'
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object') {
+    const dbError = error as { message?: string; details?: string; hint?: string; code?: string }
+    if (dbError.code === '23505') return 'Такая запись уже существует'
+    return [dbError.message, dbError.details, dbError.hint].filter(Boolean).join(' ')
+  }
+  return String(error || 'Неизвестная ошибка')
+}
+
+function looseDb(admin: AdminClient): LooseDb {
+  return admin as unknown as LooseDb
+}
+
+function isDirector(role: UserRole) {
+  return DIRECTORS.includes(role)
+}
+
+function assertProductionFactRole(role: UserRole) {
+  if (!PRODUCTION_FACT_ROLES.includes(role)) {
+    throw new Error('Недостаточно прав для факта производства')
+  }
+}
+
+function assertFactoryAccess(role: UserRole, userFactoryId: string | null, factoryId: string) {
+  if (isDirector(role)) return
+  if (role === 'production_manager' && userFactoryId === factoryId) return
+  throw new Error('Недостаточно прав для выбранного завода')
+}
+
+function chisinauDateOnly(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CHISINAU_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function dateOnly(value: string | null | undefined, fallback = chisinauDateOnly()) {
+  return value && DATE_RE.test(value) ? value : fallback
+}
+
+function monthStartFromDate(value: string) {
+  const normalizedDate = dateOnly(value)
+  return `${normalizedDate.slice(0, 7)}-01`
+}
+
+function addDays(value: string, days: number) {
+  const date = new Date(`${dateOnly(value)}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+function addMonths(value: string, months: number) {
+  const month = normalizeProductionMonthValue(value) || monthStartFromDate(chisinauDateOnly())
+  const date = new Date(`${month}T00:00:00Z`)
+  date.setUTCMonth(date.getUTCMonth() + months)
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`
+}
+
+function canEditFactDate(role: UserRole, factDate: string) {
+  if (isDirector(role)) return true
+  const cutoff = addDays(chisinauDateOnly(), -7)
+  return dateOnly(factDate) >= cutoff
+}
+
+function assertCanEditFactDate(role: UserRole, factDate: string) {
+  if (!canEditFactDate(role, factDate)) {
+    throw new Error('Дата старше 7 дней: запись доступна только для просмотра')
+  }
+}
+
+function normalizeText(value: string | null | undefined) {
+  return (value || '').replace(/\s+/g, ' ').trim()
+}
+
+function normalizeNullableText(value: string | null | undefined) {
+  const normalized = normalizeText(value)
+  return normalized.length > 0 ? normalized : null
+}
+
+function isInvoiceFullyPaid(invoice: InvoicePaymentRow) {
+  if (invoice.status === 'paid') return true
+  const amount = Number(invoice.amount || 0)
+  const paid = Number(invoice.paid_amount || 0)
+  return amount > 0 && paid >= amount
+}
+
+function toMachineOption(machine: MachineOptionRow): ProductionFactMachineOption {
+  return {
+    id: machine.id,
+    name: machine.name,
+    production_month: machine.production_month,
+    production_queue_number: machine.production_queue_number,
+    total_weight: Number(machine.total_weight || 0),
+    status: machine.status || null,
+  }
+}
+
+function userDisplayName(user: UserNameRow | undefined) {
+  if (!user) return null
+  return user.full_name || user.email || null
+}
+
+async function getContext() {
+  const context = await getCurrentUserContext()
+  assertProductionFactRole(context.role)
+  return {
+    ...context,
+    admin: createAdminClient() as AdminClient,
+  }
+}
+
+async function getVisibleFactories(admin: AdminClient, role: UserRole, userFactoryId: string | null) {
+  let query = admin.from('factories').select('id, name').order('name')
+  if (role === 'production_manager') {
+    query = query.eq('id', userFactoryId || '00000000-0000-0000-0000-000000000000')
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return ((data || []) as ProductionFactFactoryOption[])
+}
+
+async function getFactorySections(admin: AdminClient, factoryId: string) {
+  const { data, error } = await looseDb(admin)
+    .from('production_fact_sections')
+    .select('*')
+    .eq('factory_id', factoryId)
+    .order('parent_id', { ascending: true })
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true })
+
+  if (error) throw error
+  return (data || []) as ProductionFactSection[]
+}
+
+async function getProductionMonthOptions(admin: AdminClient, factoryId: string, selectedMonth: string) {
+  const values = new Set<string>()
+  const currentMonth = monthStartFromDate(chisinauDateOnly())
+  for (let offset = -6; offset <= 6; offset += 1) values.add(addMonths(currentMonth, offset))
+  values.add(selectedMonth)
+
+  const { data } = await admin
+    .from('machines')
+    .select('production_month')
+    .eq('factory_id', factoryId)
+    .eq('is_archived', false)
+    .not('production_month', 'is', null)
+    .order('production_month', { ascending: false })
+    .limit(36)
+
+  for (const row of (data || []) as Array<{ production_month: string | null }>) {
+    const normalized = normalizeProductionMonthValue(row.production_month)
+    if (normalized) values.add(normalized)
+  }
+
+  return Array.from(values)
+    .sort((a, b) => b.localeCompare(a))
+    .map((value) => ({ value, label: formatProductionMonth(value) }))
+}
+
+async function getActiveMachineOptions(admin: AdminClient, factoryId: string, productionMonth: string) {
+  const { data, error } = await admin
+    .from('machines_with_totals')
+    .select('id, name, factory_id, production_month, production_queue_number, total_weight, status, is_archived')
+    .eq('factory_id', factoryId)
+    .eq('production_month', productionMonth)
+    .eq('is_archived', false)
+    .order('production_queue_number', { ascending: true })
+    .order('name', { ascending: true })
+
+  if (error) throw error
+  const rows = ((data || []) as Array<MachineOptionRow & { is_archived?: boolean | null }>)
+    .filter((machine) => machine.factory_id === factoryId && machine.is_archived !== true)
+
+  const machineIds = rows.map((machine) => machine.id)
+  const fullyPaidMachineIds = new Set<string>()
+
+  if (machineIds.length > 0) {
+    const { data: invoices, error: invoicesError } = await admin
+      .from('invoices')
+      .select('machine_id, status, amount, paid_amount')
+      .in('machine_id', machineIds)
+
+    if (invoicesError) throw invoicesError
+    for (const invoice of (invoices || []) as InvoicePaymentRow[]) {
+      if (invoice.machine_id && isInvoiceFullyPaid(invoice)) fullyPaidMachineIds.add(invoice.machine_id)
+    }
+  }
+
+  return rows
+    .filter((machine) => !fullyPaidMachineIds.has(machine.id))
+    .map(toMachineOption)
+}
+
+async function getMachinesByIds(admin: AdminClient, machineIds: string[]) {
+  if (machineIds.length === 0) return new Map<string, ProductionFactMachineOption>()
+  const { data, error } = await admin
+    .from('machines_with_totals')
+    .select('id, name, factory_id, production_month, production_queue_number, total_weight, status')
+    .in('id', machineIds)
+
+  if (error) throw error
+  return new Map(((data || []) as MachineOptionRow[]).map((machine) => [machine.id, toMachineOption(machine)]))
+}
+
+async function getUsersByIds(admin: AdminClient, userIds: string[]) {
+  if (userIds.length === 0) return new Map<string, UserNameRow>()
+  const { data, error } = await admin
+    .from('users')
+    .select('id, full_name, email')
+    .in('id', userIds)
+
+  if (error) throw error
+  return new Map(((data || []) as UserNameRow[]).map((user) => [user.id, user]))
+}
+
+async function getMachineFacts(admin: AdminClient, factoryId: string, factDate: string) {
+  const { data, error } = await looseDb(admin)
+    .from('production_machine_facts')
+    .select('*')
+    .eq('factory_id', factoryId)
+    .eq('fact_date', factDate)
+    .order('created_at', { ascending: true })
+
+  if (error) throw error
+  return (data || []) as ProductionMachineFact[]
+}
+
+async function getTonnageFacts(admin: AdminClient, factoryId: string, factDate: string) {
+  const { data, error } = await looseDb(admin)
+    .from('production_tonnage_facts')
+    .select('*')
+    .eq('factory_id', factoryId)
+    .eq('fact_date', factDate)
+    .order('created_at', { ascending: true })
+
+  if (error) throw error
+  return (data || []) as ProductionTonnageFact[]
+}
+
+async function assertActiveSubsection(
+  admin: AdminClient,
+  factoryId: string,
+  sectionId: string,
+  options: { allowArchivedSectionId?: string | null } = {},
+) {
+  const { data, error } = await looseDb(admin)
+    .from('production_fact_sections')
+    .select('*')
+    .eq('id', sectionId)
+    .maybeSingle()
+
+  if (error || !data) throw new Error(error?.message || 'Подучасток не найден')
+
+  const section = data as ProductionFactSection
+  if (section.factory_id !== factoryId || !section.parent_id) {
+    throw new Error('Факт можно вводить только по подучастку выбранного завода')
+  }
+
+  if (section.id !== options.allowArchivedSectionId && (!section.is_active || section.archived_at)) {
+    throw new Error('Архивный подучасток нельзя выбрать для новой записи')
+  }
+
+  const { data: parentRaw, error: parentError } = await looseDb(admin)
+    .from('production_fact_sections')
+    .select('id, is_active, archived_at')
+    .eq('id', section.parent_id)
+    .maybeSingle()
+
+  const parent = parentRaw as Pick<ProductionFactSection, 'id' | 'is_active' | 'archived_at'> | null
+  if (parentError || !parent) throw new Error(parentError?.message || 'Родительский участок не найден')
+  if (section.id !== options.allowArchivedSectionId && (!parent.is_active || parent.archived_at)) {
+    throw new Error('Архивный участок нельзя выбрать для новой записи')
+  }
+
+  return section
+}
+
+async function assertFactoryMachine(admin: AdminClient, factoryId: string, machineId: string) {
+  const { data, error } = await looseDb(admin)
+    .from('machines')
+    .select('id, factory_id, is_archived')
+    .eq('id', machineId)
+    .maybeSingle()
+
+  const machine = data as { id: string; factory_id: string | null; is_archived: boolean } | null
+  if (error || !machine) throw new Error(error?.message || 'Машина не найдена')
+  if (machine.factory_id !== factoryId) throw new Error('Машина относится к другому заводу')
+  return machine
+}
+
+function revalidateProductionFact() {
+  revalidatePath(ROUTES.PRODUCTION_FACT)
+}
+
+export async function getProductionFactWorkspaceData(input: {
+  factoryId?: string | null
+  date?: string | null
+  productionMonth?: string | null
+} = {}): Promise<ProductionFactWorkspaceData> {
+  const { admin, role, factoryId: userFactoryId } = await getContext()
+  const factories = await getVisibleFactories(admin, role, userFactoryId)
+  const selectedFactoryId = factories.some((factory) => factory.id === input.factoryId)
+    ? input.factoryId!
+    : factories[0]?.id || null
+
+  const selectedDate = dateOnly(input.date)
+  const productionMonth = normalizeProductionMonthValue(input.productionMonth) || monthStartFromDate(chisinauDateOnly())
+
+  if (!selectedFactoryId) {
+    return {
+      factories,
+      selectedFactoryId: null,
+      selectedDate,
+      productionMonth,
+      productionMonthOptions: [],
+      sections: [],
+      machineOptions: [],
+      machineFacts: [],
+      tonnageFacts: [],
+      previousTonnageBySection: {},
+      canEditSelectedDate: false,
+      isDirector: isDirector(role),
+      stats: {
+        machineFactCount: 0,
+        uniqueMachineCount: 0,
+        dayShiftCount: 0,
+        nightShiftCount: 0,
+        totalTonnage: 0,
+        previousTotalTonnage: 0,
+        tonnageDelta: 0,
+      },
+    }
+  }
+
+  assertFactoryAccess(role, userFactoryId, selectedFactoryId)
+
+  const previousDate = addDays(selectedDate, -1)
+  const [
+    sections,
+    machineOptions,
+    machineFacts,
+    tonnageFacts,
+    previousTonnageFacts,
+    productionMonthOptions,
+  ] = await Promise.all([
+    getFactorySections(admin, selectedFactoryId),
+    getActiveMachineOptions(admin, selectedFactoryId, productionMonth),
+    getMachineFacts(admin, selectedFactoryId, selectedDate),
+    getTonnageFacts(admin, selectedFactoryId, selectedDate),
+    getTonnageFacts(admin, selectedFactoryId, previousDate),
+    getProductionMonthOptions(admin, selectedFactoryId, productionMonth),
+  ])
+
+  const sectionById = new Map(sections.map((section) => [section.id, section]))
+  const machineIds = Array.from(new Set([
+    ...machineOptions.map((machine) => machine.id),
+    ...machineFacts.map((fact) => fact.machine_id),
+  ]))
+  const userIds = Array.from(new Set([
+    ...machineFacts.flatMap((fact) => [fact.created_by, fact.updated_by]),
+    ...tonnageFacts.flatMap((fact) => [fact.created_by, fact.updated_by]),
+  ].filter(Boolean))) as string[]
+
+  const [machinesById, usersById] = await Promise.all([
+    getMachinesByIds(admin, machineIds),
+    getUsersByIds(admin, userIds),
+  ])
+
+  const previousTonnageBySection = previousTonnageFacts.reduce<Record<string, number>>((acc, fact) => {
+    acc[fact.section_id] = Number(fact.tonnage || 0)
+    return acc
+  }, {})
+
+  const machineFactRows = machineFacts.map((fact): ProductionFactMachineFactRow => {
+    const section = sectionById.get(fact.section_id) || null
+    const parentSection = section?.parent_id ? sectionById.get(section.parent_id) || null : null
+    return {
+      ...fact,
+      machine: machinesById.get(fact.machine_id) || null,
+      section,
+      parentSection,
+      createdByName: userDisplayName(fact.created_by ? usersById.get(fact.created_by) : undefined),
+      updatedByName: userDisplayName(fact.updated_by ? usersById.get(fact.updated_by) : undefined),
+      canEdit: canEditFactDate(role, fact.fact_date),
+    }
+  })
+
+  const tonnageFactRows = tonnageFacts.map((fact): ProductionFactTonnageFactRow => {
+    const section = sectionById.get(fact.section_id) || null
+    const parentSection = section?.parent_id ? sectionById.get(section.parent_id) || null : null
+    const previousTonnage = previousTonnageBySection[fact.section_id] || 0
+    const tonnage = Number(fact.tonnage || 0)
+    return {
+      ...fact,
+      section,
+      parentSection,
+      tonnage,
+      previousTonnage,
+      deltaTonnage: tonnage - previousTonnage,
+      createdByName: userDisplayName(fact.created_by ? usersById.get(fact.created_by) : undefined),
+      updatedByName: userDisplayName(fact.updated_by ? usersById.get(fact.updated_by) : undefined),
+      canEdit: canEditFactDate(role, fact.fact_date),
+    }
+  })
+
+  const totalTonnage = tonnageFactRows.reduce((sum, fact) => sum + Number(fact.tonnage || 0), 0)
+  const previousTotalTonnage = previousTonnageFacts.reduce((sum, fact) => sum + Number(fact.tonnage || 0), 0)
+
+  return {
+    factories,
+    selectedFactoryId,
+    selectedDate,
+    productionMonth,
+    productionMonthOptions,
+    sections,
+    machineOptions,
+    machineFacts: machineFactRows,
+    tonnageFacts: tonnageFactRows,
+    previousTonnageBySection,
+    canEditSelectedDate: canEditFactDate(role, selectedDate),
+    isDirector: isDirector(role),
+    stats: {
+      machineFactCount: machineFacts.length,
+      uniqueMachineCount: new Set(machineFacts.map((fact) => fact.machine_id)).size,
+      dayShiftCount: machineFacts.filter((fact) => fact.shift === 'day').length,
+      nightShiftCount: machineFacts.filter((fact) => fact.shift === 'night').length,
+      totalTonnage,
+      previousTotalTonnage,
+      tonnageDelta: totalTonnage - previousTotalTonnage,
+    },
+  }
+}
+
+export async function createProductionFactSection(input: {
+  factory_id: string
+  parent_id?: string | null
+  name: string
+  sort_order?: number | null
+}): Promise<ProductionFactActionResult<{ id: string }>> {
+  try {
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    const name = normalizeText(input.name)
+    if (!name) throw new Error('Укажите название участка')
+
+    if (input.parent_id) {
+      const { data: parentRaw, error: parentError } = await looseDb(admin)
+        .from('production_fact_sections')
+        .select('id, factory_id, parent_id, is_active, archived_at')
+        .eq('id', input.parent_id)
+        .maybeSingle()
+
+      const parent = parentRaw as Pick<ProductionFactSection, 'id' | 'factory_id' | 'parent_id' | 'is_active' | 'archived_at'> | null
+      if (parentError || !parent) throw new Error(parentError?.message || 'Участок не найден')
+      if (parent.factory_id !== input.factory_id || parent.parent_id) throw new Error('Подучасток можно создать только внутри участка этого завода')
+      if (!parent.is_active || parent.archived_at) throw new Error('Нельзя добавить подучасток в архивный участок')
+    }
+
+    const { data, error } = await looseDb(admin)
+      .from('production_fact_sections')
+      .insert({
+        factory_id: input.factory_id,
+        parent_id: input.parent_id || null,
+        name,
+        sort_order: Number.isFinite(Number(input.sort_order)) ? Number(input.sort_order) : 100,
+        created_by: userId,
+        updated_by: userId,
+      })
+      .select('id')
+      .single()
+
+    if (error) throw error
+    const inserted = data as { id: string }
+    revalidateProductionFact()
+    return { success: true, data: { id: inserted.id }, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function updateProductionFactSection(input: {
+  id: string
+  name: string
+  sort_order?: number | null
+}): Promise<ProductionFactActionResult> {
+  try {
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { data: sectionRaw, error: sectionError } = await looseDb(admin)
+      .from('production_fact_sections')
+      .select('*')
+      .eq('id', input.id)
+      .maybeSingle()
+
+    const section = sectionRaw as ProductionFactSection | null
+    if (sectionError || !section) throw new Error(sectionError?.message || 'Участок не найден')
+    assertFactoryAccess(role, userFactoryId, section.factory_id)
+
+    const name = normalizeText(input.name)
+    if (!name) throw new Error('Укажите название участка')
+
+    const { error } = await looseDb(admin)
+      .from('production_fact_sections')
+      .update({
+        name,
+        sort_order: Number.isFinite(Number(input.sort_order)) ? Number(input.sort_order) : section.sort_order,
+        updated_by: userId,
+      })
+      .eq('id', input.id)
+
+    if (error) throw error
+    revalidateProductionFact()
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function archiveProductionFactSection(id: string): Promise<ProductionFactActionResult> {
+  try {
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { data: sectionRaw, error: sectionError } = await looseDb(admin)
+      .from('production_fact_sections')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+
+    const section = sectionRaw as ProductionFactSection | null
+    if (sectionError || !section) throw new Error(sectionError?.message || 'Участок не найден')
+    assertFactoryAccess(role, userFactoryId, section.factory_id)
+
+    const idsToArchive = [section.id]
+    if (!section.parent_id) {
+      const { data: children, error: childrenError } = await looseDb(admin)
+        .from('production_fact_sections')
+        .select('id')
+        .eq('parent_id', section.id)
+
+      if (childrenError) throw childrenError
+      idsToArchive.push(...((children || []) as Array<{ id: string }>).map((child) => child.id))
+    }
+
+    const { error } = await looseDb(admin)
+      .from('production_fact_sections')
+      .update({
+        is_active: false,
+        archived_at: new Date().toISOString(),
+        updated_by: userId,
+      })
+      .in('id', idsToArchive)
+
+    if (error) throw error
+    revalidateProductionFact()
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function saveProductionMachineFact(input: {
+  id?: string | null
+  factory_id: string
+  fact_date: string
+  machine_id: string
+  section_id: string
+  shift: ProductionFactShift
+  comment?: string | null
+}): Promise<ProductionFactActionResult<{ id: string }>> {
+  try {
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const factDate = dateOnly(input.fact_date)
+    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    assertCanEditFactDate(role, factDate)
+    if (input.shift !== 'day' && input.shift !== 'night') throw new Error('Некорректная смена')
+
+    let existing: ProductionMachineFact | null = null
+    if (input.id) {
+      const { data, error } = await looseDb(admin)
+        .from('production_machine_facts')
+        .select('*')
+        .eq('id', input.id)
+        .maybeSingle()
+
+      if (error || !data) throw new Error(error?.message || 'Запись факта не найдена')
+      existing = data as ProductionMachineFact
+      assertFactoryAccess(role, userFactoryId, existing.factory_id)
+      assertCanEditFactDate(role, existing.fact_date)
+    }
+
+    await assertFactoryMachine(admin, input.factory_id, input.machine_id)
+    await assertActiveSubsection(admin, input.factory_id, input.section_id, {
+      allowArchivedSectionId: existing?.section_id === input.section_id ? input.section_id : null,
+    })
+
+    const payload = {
+      factory_id: input.factory_id,
+      fact_date: factDate,
+      machine_id: input.machine_id,
+      section_id: input.section_id,
+      shift: input.shift,
+      comment: normalizeNullableText(input.comment),
+      updated_by: userId,
+    }
+
+    if (existing) {
+      const { data, error } = await looseDb(admin)
+        .from('production_machine_facts')
+        .update(payload)
+        .eq('id', existing.id)
+        .select('id')
+        .single()
+
+      if (error) throw error
+      const updated = data as { id: string }
+      revalidateProductionFact()
+      return { success: true, data: { id: updated.id }, error: null }
+    }
+
+    const { data, error } = await looseDb(admin)
+      .from('production_machine_facts')
+      .insert({ ...payload, created_by: userId })
+      .select('id')
+      .single()
+
+    if (error) throw error
+    const inserted = data as { id: string }
+    revalidateProductionFact()
+    return { success: true, data: { id: inserted.id }, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function deleteProductionMachineFact(id: string): Promise<ProductionFactActionResult> {
+  try {
+    const { admin, role, factoryId: userFactoryId } = await getContext()
+    const { data: factRaw, error: factError } = await looseDb(admin)
+      .from('production_machine_facts')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+
+    const fact = factRaw as ProductionMachineFact | null
+    if (factError || !fact) throw new Error(factError?.message || 'Запись факта не найдена')
+    assertFactoryAccess(role, userFactoryId, fact.factory_id)
+    assertCanEditFactDate(role, fact.fact_date)
+
+    const { error } = await looseDb(admin).from('production_machine_facts').delete().eq('id', id)
+    if (error) throw error
+    revalidateProductionFact()
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function copyProductionMachineFactsFromPreviousDay(input: {
+  factory_id: string
+  fact_date: string
+}): Promise<ProductionFactActionResult<{ inserted: number; skipped: number }>> {
+  try {
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const targetDate = dateOnly(input.fact_date)
+    const sourceDate = addDays(targetDate, -1)
+    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    assertCanEditFactDate(role, targetDate)
+
+    const [sourceFacts, targetFacts, sections] = await Promise.all([
+      getMachineFacts(admin, input.factory_id, sourceDate),
+      getMachineFacts(admin, input.factory_id, targetDate),
+      getFactorySections(admin, input.factory_id),
+    ])
+
+    const activeSections = new Set(
+      sections
+        .filter((section) => section.parent_id && section.is_active && !section.archived_at)
+        .filter((section) => {
+          const parent = sections.find((candidate) => candidate.id === section.parent_id)
+          return Boolean(parent?.is_active && !parent.archived_at)
+        })
+        .map((section) => section.id),
+    )
+    const targetKeys = new Set(targetFacts.map((fact) => `${fact.shift}:${fact.machine_id}:${fact.section_id}`))
+    const payload = sourceFacts
+      .filter((fact) => activeSections.has(fact.section_id))
+      .filter((fact) => !targetKeys.has(`${fact.shift}:${fact.machine_id}:${fact.section_id}`))
+      .map((fact) => ({
+        factory_id: input.factory_id,
+        fact_date: targetDate,
+        shift: fact.shift,
+        machine_id: fact.machine_id,
+        section_id: fact.section_id,
+        comment: fact.comment,
+        created_by: userId,
+        updated_by: userId,
+      }))
+
+    if (payload.length === 0) {
+      return { success: true, data: { inserted: 0, skipped: sourceFacts.length }, error: null }
+    }
+
+    const { error } = await looseDb(admin).from('production_machine_facts').insert(payload)
+    if (error) throw error
+    revalidateProductionFact()
+    return { success: true, data: { inserted: payload.length, skipped: sourceFacts.length - payload.length }, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function saveProductionTonnageFact(input: {
+  id?: string | null
+  factory_id: string
+  fact_date: string
+  section_id: string
+  tonnage: number
+  comment?: string | null
+}): Promise<ProductionFactActionResult<{ id: string }>> {
+  try {
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const factDate = dateOnly(input.fact_date)
+    const tonnage = Number(input.tonnage)
+    if (!Number.isFinite(tonnage) || tonnage < 0) throw new Error('Тоннаж должен быть числом от 0')
+    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    assertCanEditFactDate(role, factDate)
+
+    let existing: ProductionTonnageFact | null = null
+    if (input.id) {
+      const { data, error } = await looseDb(admin)
+        .from('production_tonnage_facts')
+        .select('*')
+        .eq('id', input.id)
+        .maybeSingle()
+
+      if (error || !data) throw new Error(error?.message || 'Запись тоннажа не найдена')
+      existing = data as ProductionTonnageFact
+      assertFactoryAccess(role, userFactoryId, existing.factory_id)
+      assertCanEditFactDate(role, existing.fact_date)
+    } else {
+      const { data, error } = await looseDb(admin)
+        .from('production_tonnage_facts')
+        .select('*')
+        .eq('factory_id', input.factory_id)
+        .eq('fact_date', factDate)
+        .eq('section_id', input.section_id)
+        .maybeSingle()
+
+      if (error) throw error
+      existing = (data || null) as ProductionTonnageFact | null
+    }
+
+    await assertActiveSubsection(admin, input.factory_id, input.section_id, {
+      allowArchivedSectionId: existing?.section_id === input.section_id ? input.section_id : null,
+    })
+
+    const payload = {
+      factory_id: input.factory_id,
+      fact_date: factDate,
+      section_id: input.section_id,
+      tonnage,
+      comment: normalizeNullableText(input.comment),
+      updated_by: userId,
+    }
+
+    if (existing) {
+      const { data, error } = await looseDb(admin)
+        .from('production_tonnage_facts')
+        .update(payload)
+        .eq('id', existing.id)
+        .select('id')
+        .single()
+
+      if (error) throw error
+      const updated = data as { id: string }
+      revalidateProductionFact()
+      return { success: true, data: { id: updated.id }, error: null }
+    }
+
+    const { data, error } = await looseDb(admin)
+      .from('production_tonnage_facts')
+      .insert({ ...payload, created_by: userId })
+      .select('id')
+      .single()
+
+    if (error) throw error
+    const inserted = data as { id: string }
+    revalidateProductionFact()
+    return { success: true, data: { id: inserted.id }, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function deleteProductionTonnageFact(id: string): Promise<ProductionFactActionResult> {
+  try {
+    const { admin, role, factoryId: userFactoryId } = await getContext()
+    const { data: factRaw, error: factError } = await looseDb(admin)
+      .from('production_tonnage_facts')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+
+    const fact = factRaw as ProductionTonnageFact | null
+    if (factError || !fact) throw new Error(factError?.message || 'Запись тоннажа не найдена')
+    assertFactoryAccess(role, userFactoryId, fact.factory_id)
+    assertCanEditFactDate(role, fact.fact_date)
+
+    const { error } = await looseDb(admin).from('production_tonnage_facts').delete().eq('id', id)
+    if (error) throw error
+    revalidateProductionFact()
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}

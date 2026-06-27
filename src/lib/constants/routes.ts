@@ -26,6 +26,7 @@ export const ROUTES = {
   TASKS:          '/tasks',
   PRODUCTION:     '/production',
   GANTT:          '/production/gantt',
+  PRODUCTION_FACT: '/production/fact',
   PRODUCTION_CONSUMABLE_REQUESTS: '/production/consumable-requests',
   PRODUCTION_CONSUMABLES: '/production/consumables',
   NESTING:        '/nesting',
