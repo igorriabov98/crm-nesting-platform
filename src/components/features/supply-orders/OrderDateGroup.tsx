@@ -13,9 +13,10 @@ type OrderDateGroupProps = {
  suppliers: SupplierWithRelations[]
  selected: Set<string>
  onToggle: (item: SupplyOrderItem) => void
+ readOnly?: boolean
 }
 
-export function OrderDateGroup({ dateKey, groups, suppliers, selected, onToggle }: OrderDateGroupProps) {
+export function OrderDateGroup({ dateKey, groups, suppliers, selected, onToggle, readOnly = false }: OrderDateGroupProps) {
  const noSupplier = dateKey === 'no_supplier'
  const noDate = dateKey === 'no_date'
  const title = noSupplier
@@ -39,6 +40,7 @@ export function OrderDateGroup({ dateKey, groups, suppliers, selected, onToggle 
       suppliers={suppliers}
       selected={selected}
       onToggle={onToggle}
+      readOnly={readOnly}
      />
     ))}
    </div>

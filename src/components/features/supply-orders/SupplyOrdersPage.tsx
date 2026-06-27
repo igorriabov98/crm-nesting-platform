@@ -9,6 +9,7 @@ import { OrderDateGroup } from './OrderDateGroup'
 import { OrderFilters, type OrderFiltersState } from './OrderFilters'
 import { markOrderDelivered, markOrderPlacedWithFinance, type SupplyFinancePaymentInput, type SupplyOrderItem } from '@/lib/actions/supply-orders'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
+import type { OrderItemStatus } from '@/lib/types'
 
 type SupplyOrdersPageProps = {
  items: SupplyOrderItem[]
@@ -16,9 +17,23 @@ type SupplyOrdersPageProps = {
  page: number
  pageSize: number
  total: number
+ initialStatus?: OrderFiltersState['status']
+ lockedStatus?: OrderItemStatus
+ showActions?: boolean
+ emptyMessage?: string
 }
 
-export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: SupplyOrdersPageProps) {
+export function SupplyOrdersPage({
+ items,
+ suppliers,
+ page,
+ pageSize,
+ total,
+ initialStatus = 'pending',
+ lockedStatus,
+ showActions = true,
+ emptyMessage,
+}: SupplyOrdersPageProps) {
  const router = useRouter()
  const [selected, setSelected] = useState<Set<string>>(new Set())
  const [isPending, startTransition] = useTransition()
@@ -28,7 +43,7 @@ export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: Su
   period: 'all',
   supplier: 'all',
   category: 'all',
-  status: 'pending',
+  status: lockedStatus || initialStatus,
  })
 
  const filteredItems = useMemo(() => {
@@ -38,7 +53,8 @@ export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: Su
   const nextWeek = { start: nextWeekStart, end: endOfWeek(nextWeekStart, { weekStartsOn: 1 }) }
 
   return items.filter((item) => {
-   if (filters.status !== 'all' && item.order_status !== filters.status) return false
+   const statusFilter = lockedStatus || filters.status
+   if (statusFilter !== 'all' && item.order_status !== statusFilter) return false
    if (filters.supplier !== 'all' && item.supplier_id !== filters.supplier) return false
    if (filters.category !== 'all' && item.category !== filters.category) return false
    if (filters.period !== 'all') {
@@ -49,7 +65,7 @@ export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: Su
    }
    return true
   })
- }, [filters, items])
+ }, [filters, items, lockedStatus])
 
  const grouped = useMemo(() => {
   const byDate = new Map<string, Map<string, { supplierName: string; items: SupplyOrderItem[] }>>()
@@ -82,7 +98,7 @@ export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: Su
  }, [filteredItems])
 
  const toggle = (item: SupplyOrderItem) => {
-  if (item.to_order <= 0) return
+  if (!showActions || item.to_order <= 0) return
   const key = `${item.table}:${item.id}`
   setSelected((prev) => {
    const next = new Set(prev)
@@ -92,21 +108,18 @@ export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: Su
   })
  }
 
- const selectedItems = () => {
-  const selectedKeys = selected
-  return items
-   .filter((item) => selectedKeys.has(`${item.table}:${item.id}`) && item.to_order > 0)
-   .map((item) => ({ table: item.table, id: item.id }))
- }
-
- const selectedOrderItems = () => {
+ const selectedOrderItems = useMemo(() => {
   const selectedKeys = selected
   return items.filter((item) => selectedKeys.has(`${item.table}:${item.id}`) && item.to_order > 0)
+ }, [items, selected])
+
+ const selectedItems = () => {
+  return selectedOrderItems.map((item) => ({ table: item.table, id: item.id }))
  }
 
  const financeGroups = useMemo(() => {
   const groups = new Map<string, { supplierId: string; supplierName: string; plannedDate: string; itemKeys: string[]; items: SupplyOrderItem[] }>()
-  for (const item of selectedOrderItems()) {
+  for (const item of selectedOrderItems) {
    if (!item.supplier_id) continue
    const plannedDate = item.target_delivery_date || new Date().toISOString().slice(0, 10)
    const key = `${item.supplier_id}:${plannedDate}`
@@ -122,7 +135,7 @@ export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: Su
    groups.set(key, current)
   }
   return Array.from(groups.entries()).map(([key, group]) => ({ key, ...group }))
- }, [items, selected])
+ }, [selectedOrderItems])
 
  const makeFinancePayments = (): SupplyFinancePaymentInput[] => financeGroups.map((group) => {
   const draft = financeDrafts[group.key]
@@ -176,19 +189,22 @@ export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: Su
  return (
   <div className="space-y-5">
    <OrderFilters
-    value={filters}
-    suppliers={suppliers.map((supplier) => ({ id: supplier.id, name: supplier.name }))}
-    onChange={setFilters}
+   value={filters}
+   suppliers={suppliers.map((supplier) => ({ id: supplier.id, name: supplier.name }))}
+   onChange={setFilters}
+   statusDisabled={Boolean(lockedStatus)}
    />
 
-   <OrderActions
-    selectedCount={selected.size}
-    isPending={isPending}
-    onMarkOrdered={openFinanceStep}
-    onMarkDelivered={() => runAction('delivered')}
-   />
+   {showActions && (
+    <OrderActions
+     selectedCount={selected.size}
+     isPending={isPending}
+     onMarkOrdered={openFinanceStep}
+     onMarkDelivered={() => runAction('delivered')}
+    />
+   )}
 
-   {showFinanceStep && (
+   {showActions && showFinanceStep && (
     <section className="rounded-xl border border-[#E8ECF0] bg-white p-4">
      <div className="mb-3 font-semibold text-[#1B3A6B]">Плановые платежи по заказу</div>
      <div className="space-y-3">
@@ -271,11 +287,12 @@ export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: Su
 
    {grouped.length === 0 ? (
     <div className="rounded-xl border border-[#E8ECF0] bg-white p-10 text-center text-[#9CA3AF]">
-     {items.length === 0
+     {emptyMessage ||
+      (items.length === 0
       ? 'На этой странице нет позиций к заказу.'
       : hasActiveFilters
         ? 'Позиций к заказу по выбранным фильтрам нет.'
-        : 'Позиций к заказу нет.'}
+        : 'Позиций к заказу нет.')}
     </div>
    ) : (
     grouped.map((group) => (
@@ -286,6 +303,7 @@ export function SupplyOrdersPage({ items, suppliers, page, pageSize, total }: Su
       suppliers={suppliers}
             selected={selected}
             onToggle={toggle}
+      readOnly={!showActions}
      />
     ))
    )}

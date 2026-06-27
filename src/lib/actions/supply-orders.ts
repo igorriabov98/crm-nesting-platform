@@ -1647,6 +1647,7 @@ export async function receiveMaterialDelivery(input: {
       affectedItems = new Map([[schedule.request_item_table, [schedule.request_item_id]]])
     }
 
+    const affectedOrderItems = await loadSelectedOrderItems(db, affectedItems)
     const machineIds = await getAffectedMachineIds(db, affectedItems)
     const { error } = await db.rpc('fn_receive_supply_order_schedule', {
       p_schedule_id: scheduleId,
@@ -1673,6 +1674,7 @@ export async function receiveMaterialDelivery(input: {
 
     revalidatePath(ROUTES.INVENTORY)
     revalidatePath(ROUTES.INVENTORY_RECEIVING)
+    revalidateInventoryHistoryPaths(affectedOrderItems)
     revalidatePath(ROUTES.SUPPLY)
     revalidatePath(ROUTES.SUPPLY_ORDERS)
     revalidatePath(ROUTES.SALES_PLAN)
@@ -1734,8 +1736,16 @@ function revalidateSupplyOrderPaths(machineIds: string[] = []) {
   }
 }
 
-async function getScheduleAffectedMachineIds(db: LooseDb, scheduleIds: string[]) {
-  if (scheduleIds.length === 0) return []
+function revalidateInventoryHistoryPaths(items: Array<Pick<RawOrderItem, 'material_id'>>) {
+  const materialIds = Array.from(new Set(items.map((item) => item.material_id).filter(Boolean))) as string[]
+  for (const materialId of materialIds) {
+    revalidatePath(`${ROUTES.INVENTORY}/${materialId}/history`)
+  }
+}
+
+async function getScheduleAffectedItems(db: LooseDb, scheduleIds: string[]) {
+  const groupedItems = new Map<string, string[]>()
+  if (scheduleIds.length === 0) return groupedItems
 
   const { data, error } = await db
     .from('supply_order_delivery_schedules')
@@ -1744,12 +1754,17 @@ async function getScheduleAffectedMachineIds(db: LooseDb, scheduleIds: string[])
 
   if (error) throw new Error(error.message || 'Не удалось определить машины графика поставки')
 
-  const groupedItems = new Map<string, string[]>()
   for (const row of (data || []) as { request_item_table: string; request_item_id: string }[]) {
     if (!ORDER_TABLES.includes(row.request_item_table) || !row.request_item_id) continue
     groupedItems.set(row.request_item_table, [...(groupedItems.get(row.request_item_table) || []), row.request_item_id])
   }
 
+  return groupedItems
+}
+
+async function getScheduleAffectedMachineIds(db: LooseDb, scheduleIds: string[]) {
+  const groupedItems = await getScheduleAffectedItems(db, scheduleIds)
+  if (groupedItems.size === 0) return []
   return getAffectedMachineIds(db, groupedItems)
 }
 
@@ -2077,6 +2092,9 @@ export async function markOrderStatus(
       await createSupplyFinancePayments(db, userId, selectedItems, payments)
     }
     revalidateSupplyOrderPaths(machineIds)
+    if (status === 'delivered') {
+      revalidateInventoryHistoryPaths(selectedItems)
+    }
     if (status === 'ordered') {
       revalidatePath(ROUTES.SUPPLY_FINANCE)
       revalidatePath(ROUTES.FINANCE_CALENDAR)
@@ -2183,7 +2201,9 @@ export async function updateOrderDeliverySchedule(
 export async function receiveOrderDeliverySchedule(scheduleId: string, receivedQuantity?: number) {
   try {
     const { db, userId } = await requireAccess('manage')
-    const machineIds = await getScheduleAffectedMachineIds(db, [scheduleId])
+    const affectedItems = await getScheduleAffectedItems(db, [scheduleId])
+    const machineIds = await getAffectedMachineIds(db, affectedItems)
+    const affectedOrderItems = await loadSelectedOrderItems(db, affectedItems)
     let actualQuantity = Number(receivedQuantity || 0)
     if (!Number.isFinite(actualQuantity) || actualQuantity <= 0) {
       const { data: scheduleData, error: scheduleError } = await db
@@ -2208,6 +2228,7 @@ export async function receiveOrderDeliverySchedule(scheduleId: string, receivedQ
       // Telegram delivery is best-effort; CRM notifications and tasks are already persisted.
     }
     revalidateSupplyOrderPaths(machineIds)
+    revalidateInventoryHistoryPaths(affectedOrderItems)
     revalidatePath(ROUTES.TASKS)
     revalidatePath(ROUTES.NOTIFICATIONS)
     revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)

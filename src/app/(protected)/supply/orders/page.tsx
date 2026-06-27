@@ -16,7 +16,11 @@ export default async function SupplyOrdersRoute({
 }) {
   const resolvedSearchParams = await searchParams
   const page = Math.max(0, Number(resolvedSearchParams?.page || 1) - 1)
-  const activeView = resolvedSearchParams?.view === 'summary' ? 'summary' : 'details'
+  const activeView = resolvedSearchParams?.view === 'summary'
+    ? 'summary'
+    : resolvedSearchParams?.view === 'history'
+      ? 'history'
+      : 'details'
 
   return (
     <div className="space-y-6">
@@ -47,10 +51,19 @@ export default async function SupplyOrdersRoute({
         >
           Итоги по дню
         </Link>
+        <Link
+          href={`${ROUTES.SUPPLY_ORDERS}?view=history`}
+          className={viewLinkClass(activeView === 'history')}
+          aria-current={activeView === 'history' ? 'page' : undefined}
+        >
+          История
+        </Link>
       </div>
 
       {activeView === 'summary'
         ? <SummaryView requestedFactoryId={resolvedSearchParams?.factory || null} />
+        : activeView === 'history'
+          ? <HistoryView page={page} />
         : <DetailsView page={page} />}
     </div>
   )
@@ -95,6 +108,31 @@ async function SummaryView({ requestedFactoryId }: { requestedFactoryId: string 
       factories={availableFactories}
       activeFactoryId={activeFactoryId}
       suppliers={suppliers || []}
+    />
+  )
+}
+
+async function HistoryView({ page }: { page: number }) {
+  const [{ data: orders, error, pagination }, { data: suppliers }] = await Promise.all([
+    getSupplyOrders(page, 50),
+    getSuppliers({ active_only: true }),
+  ])
+
+  if (error) {
+    return <div className="rounded-lg bg-red-500/10 p-4 text-sm text-[#DC2626]">{error}</div>
+  }
+
+  return (
+    <SupplyOrdersPage
+      items={orders || []}
+      suppliers={suppliers || []}
+      page={pagination?.page || page}
+      pageSize={pagination?.pageSize || 50}
+      total={pagination?.total || 0}
+      initialStatus="delivered"
+      lockedStatus="delivered"
+      showActions={false}
+      emptyMessage="В истории пока нет принятых поставок."
     />
   )
 }

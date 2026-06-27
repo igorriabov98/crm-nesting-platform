@@ -18,6 +18,7 @@ type OrderFiltersProps = {
  value: OrderFiltersState
  suppliers: SupplierOption[]
  onChange: (value: OrderFiltersState) => void
+ statusDisabled?: boolean
 }
 
 const periodLabels: Record<OrderPeriodFilter, string> = {
@@ -26,7 +27,7 @@ const periodLabels: Record<OrderPeriodFilter, string> = {
  all: 'Все',
 }
 
-export function OrderFilters({ value, suppliers, onChange }: OrderFiltersProps) {
+export function OrderFilters({ value, suppliers, onChange, statusDisabled = false }: OrderFiltersProps) {
  return (
   <div className="grid gap-3 rounded-xl border border-[#E8ECF0] bg-white p-4 md:grid-cols-4">
    <FilterSelect
@@ -55,10 +56,11 @@ export function OrderFilters({ value, suppliers, onChange }: OrderFiltersProps) 
     items={[['all', 'Все категории'], ...MATERIAL_CATEGORIES.map((category) => [category, MATERIAL_CATEGORY_LABELS[category]] as [string, string])]}
    />
    <FilterSelect
-    label="Статус"
-    value={value.status}
-    display={value.status === 'all' ? 'Все статусы' : ORDER_STATUS_LABELS[value.status]}
-    onValueChange={(status) => onChange({ ...value, status: status as OrderItemStatus | 'all' })}
+   label="Статус"
+   value={value.status}
+   display={value.status === 'all' ? 'Все статусы' : ORDER_STATUS_LABELS[value.status]}
+   disabled={statusDisabled}
+   onValueChange={(status) => onChange({ ...value, status: status as OrderItemStatus | 'all' })}
     items={[
      ['pending', ORDER_STATUS_LABELS.pending],
      ['ordered', ORDER_STATUS_LABELS.ordered],
@@ -75,18 +77,20 @@ function FilterSelect({
  value,
  display,
  items,
+ disabled = false,
  onValueChange,
 }: {
  label: string
  value: string
  display: string
  items: [string, string][]
+ disabled?: boolean
  onValueChange: (value: string) => void
 }) {
  return (
   <label className="grid gap-1.5 text-sm font-medium text-[#374151]">
    {label}
-   <Select value={value} onValueChange={(nextValue) => onValueChange(nextValue || '')}>
+   <Select value={value} disabled={disabled} onValueChange={(nextValue) => onValueChange(nextValue || '')}>
     <SelectTrigger className="w-full border-[#E8ECF0] bg-white">
      <SelectValue>{display}</SelectValue>
     </SelectTrigger>

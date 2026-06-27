@@ -15,9 +15,10 @@ type SupplierGroupProps = {
  suppliers: SupplierWithRelations[]
  selected: Set<string>
  onToggle: (item: SupplyOrderItem) => void
+ readOnly?: boolean
 }
 
-export function SupplierGroup({ supplierName, items, suppliers, selected, onToggle }: SupplierGroupProps) {
+export function SupplierGroup({ supplierName, items, suppliers, selected, onToggle, readOnly = false }: SupplierGroupProps) {
  const total = items.reduce((sum, item) => sum + item.to_order, 0)
  const unit = items.every((item) => item.unit === items[0]?.unit) ? items[0]?.unit : 'ед.'
 
@@ -39,6 +40,7 @@ export function SupplierGroup({ supplierName, items, suppliers, selected, onTogg
      suppliers={suppliers}
      checked={selected.has(`${item.table}:${item.id}`)}
      onToggle={() => onToggle(item)}
+     readOnly={readOnly}
     />
    ))}
   </div>
