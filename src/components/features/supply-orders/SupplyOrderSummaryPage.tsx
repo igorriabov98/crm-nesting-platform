@@ -402,6 +402,7 @@ function FactoryDeliveryEditor({
     scheduleDrafts.some((draft) => !draft.delivery_date || parseQuantity(draft.quantity) <= 0) ||
     (missingScheduleSuppliers && scheduleDrafts.some((draft) => !draft.supplier_id)) ||
     plannedTotal > remainingQuantity + 0.000001
+  const supplyPlanDateInfo = makeSupplyPlanDateInfo(factory)
 
   return (
     <div className="rounded-lg border border-[#E8ECF0] bg-[#FBFCFE] p-3">
@@ -416,8 +417,13 @@ function FactoryDeliveryEditor({
         </div>
       </div>
 
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <InfoBox label="Мат.план" value={factory.production_date ? formatDate(factory.production_date) : 'Нет даты'} />
+        <InfoBox
+          label="Мат.план снабжения"
+          value={supplyPlanDateInfo.value}
+          hint={supplyPlanDateInfo.hint}
+        />
         <InfoBox
           label="График поставки"
           value={factory.has_delivery_schedules ? `${factory.delivery_schedule_count} дат` : 'Не разбит'}
@@ -433,7 +439,7 @@ function FactoryDeliveryEditor({
       {!factory.has_delivery_schedules && (
         <div className="mt-2 grid gap-2 md:grid-cols-[1fr_auto] md:items-end">
           <label className="grid gap-1 text-xs font-medium text-[#475569]">
-            Дата снабжения
+            Мат.план снабжения
             <input
               type="date"
               value={dateValue}
@@ -452,7 +458,7 @@ function FactoryDeliveryEditor({
               size="sm"
               disabled={isPending || !canSaveDate}
               onClick={() => saveDate(dateValue || null)}
-              aria-label={`Сохранить дату снабжения для ${factory.factory_name}`}
+              aria-label={`Сохранить мат.план снабжения для ${factory.factory_name}`}
             >
               <Save className="h-3.5 w-3.5" />
               Сохранить
@@ -463,8 +469,8 @@ function FactoryDeliveryEditor({
               size="icon-sm"
               disabled={isPending}
               onClick={() => saveDate(null)}
-              aria-label={`Сбросить дату снабжения для ${factory.factory_name}`}
-              title="Сбросить к Мат.план"
+              aria-label={`Сбросить мат.план снабжения для ${factory.factory_name}`}
+              title="Сбросить к Мат.план производства"
             >
               <RotateCcw className="h-3.5 w-3.5" />
             </Button>
@@ -474,7 +480,7 @@ function FactoryDeliveryEditor({
 
       {factory.has_delivery_schedules && (
         <div className="mt-2 rounded-md border border-[#DBEAFE] bg-[#EFF6FF] px-2 py-1.5 text-xs text-[#1E40AF]">
-          Дата снабжения управляется графиком split-поставок. Плановые строки можно заменить через «Разбить поставку».
+          Мат.план снабжения управляется графиком split-поставок. Плановые строки можно заменить через «Разбить поставку».
         </div>
       )}
 
@@ -770,6 +776,53 @@ function InfoBox({ label, value, hint }: { label: string; value: string; hint?: 
       {hint && <div className="mt-0.5 text-[11px] text-[#64748B]">{hint}</div>}
     </div>
   )
+}
+
+function makeSupplyPlanDateInfo(factory: SupplyOrderAggregateFactory) {
+  const hasAnySchedule = factory.items.some((item) => item.delivery_schedules.length > 0)
+  const scheduledDates = uniqueSortedDates(factory.items.flatMap((item) => (
+    item.delivery_schedules
+      .filter((schedule) => schedule.status === 'planned')
+      .map((schedule) => schedule.delivery_date)
+  )))
+  const fallbackDates = hasAnySchedule ? [] : uniqueSortedDates(factory.items.map((item) => item.supply_delivery_date))
+  const dates = scheduledDates.length > 0 ? scheduledDates : fallbackDates
+
+  if (dates.length === 0) {
+    return { value: 'Не указано', hint: null }
+  }
+
+  if (dates.length === 1) {
+    const [date] = dates
+    return {
+      value: formatDate(date),
+      hint: scheduledDates.length > 0
+        ? 'Из графика поставки'
+        : factory.production_date === date
+          ? 'По Мат.план производства'
+          : 'Указано снабжением',
+    }
+  }
+
+  return {
+    value: dateCountLabel(dates.length),
+    hint: dates.map(formatDate).join('; '),
+  }
+}
+
+function uniqueSortedDates(dates: Array<string | null | undefined>) {
+  return Array.from(new Set(dates.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b))
+}
+
+function dateCountLabel(count: number) {
+  const remainder10 = count % 10
+  const remainder100 = count % 100
+  const word = remainder10 === 1 && remainder100 !== 11
+    ? 'дата'
+    : remainder10 >= 2 && remainder10 <= 4 && (remainder100 < 12 || remainder100 > 14)
+      ? 'даты'
+      : 'дат'
+  return `${count} ${word}`
 }
 
 function makeInitialScheduleDrafts(factory: SupplyOrderAggregateFactory): ScheduleDraft[] {
