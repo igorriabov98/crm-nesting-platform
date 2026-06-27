@@ -54,6 +54,7 @@ type RequestItemRow = Record<string, unknown> & {
   material_variant_id?: string | null
   custom_delivery_date?: string | null
   order_status?: OrderItemStatus
+  delivered_at?: string | null
   calculated_weight_kg?: number | null
 }
 
@@ -74,6 +75,7 @@ type RawOrderItem = {
   material_variant_id: string | null
   custom_delivery_date: string | null
   order_status: OrderItemStatus
+  delivered_at: string | null
   calculated_weight_kg: number | null
   selected_piece_length_mm: number | null
 }
@@ -116,6 +118,7 @@ export type SupplyOrderItem = {
   is_custom_delivery_date: boolean
   request_id: string
   order_status: OrderItemStatus
+  delivered_at: string | null
   stock_available: number | null
   stock_unit: string | null
   stock_items: SupplyOrderStockItem[]
@@ -135,6 +138,26 @@ export type SupplyOrderStockItem = {
   total_secondary_quantity: number | null
   available_secondary_quantity: number | null
   secondary_unit: string | null
+}
+
+export type SupplyOrderHistoryItem = {
+  id: string
+  source: 'item' | 'schedule'
+  table: string
+  item_id: string
+  schedule_id: string | null
+  machine_id: string
+  machine_name: string
+  request_id: string
+  category: MaterialCategory
+  item_name: string
+  supplier_name: string | null
+  planned_material_date: string | null
+  planned_delivery_date: string | null
+  accepted_at: string | null
+  quantity: number
+  unit: string
+  weight_kg: number | null
 }
 
 export type SupplyOrderAggregateCharacteristic = {
@@ -308,6 +331,12 @@ function getTargetDeliveryDate(plannedMaterialDate: Date, deliveryDays: number[]
 
 function isoDate(date: Date | null) {
   return date ? date.toISOString().slice(0, 10) : null
+}
+
+function dateValue(value: string | null | undefined) {
+  if (!value) return 0
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : 0
 }
 
 async function getNbuEurRate() {
@@ -709,6 +738,7 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
       material_variant_id: row.material_variant_id || null,
       custom_delivery_date: row.custom_delivery_date || null,
       order_status: (row.order_status || 'pending') as OrderItemStatus,
+      delivered_at: row.delivered_at || null,
       calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
       selected_piece_length_mm: selectedPieceLength(table, row),
     }
@@ -775,7 +805,7 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
     const makeItem = (table: string, category: MaterialCategory, row: RequestItemRow, name: unknown, supplierId: string | null = null): RawOrderItem => {
       const requested = requestedQuantity(table, row)
       const reserved = reservedQuantity(table, row)
-      return { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row) }
+      return { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row) }
     }
     const rawItems: RawOrderItem[] = [
       ...sheet.map((row) => makeItem('request_sheet_metal', 'sheet_metal', row, row.material_name, supplierForRow(row))),
@@ -899,6 +929,7 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
         is_custom_delivery_date: !!item.custom_delivery_date || deliverySchedules.length > 0,
         request_id: item.request_id,
         order_status: item.order_status || 'pending',
+        delivered_at: item.delivered_at,
         requested_quantity: item.requested_quantity,
         reserved_quantity: item.reserved_quantity,
         secondary_requested_quantity: item.secondary_requested_quantity,
@@ -950,6 +981,219 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
     }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заказы', pagination: null }
+  }
+}
+
+export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
+  try {
+    const { db } = await requireAccess()
+    const safePage = Math.max(0, Number.isFinite(page) ? Math.floor(page) : 0)
+    const safePageSize = Math.min(100, Math.max(1, Number.isFinite(pageSize) ? Math.floor(pageSize) : 50))
+    const from = safePage * safePageSize
+    const to = from + safePageSize
+
+    type HistoryInputItem = RawOrderItem & {
+      machine_id: string
+      machine_name: string
+      planned_material_date: string | null
+    }
+
+    const { data: requestsData, error } = await db
+      .from('technologist_requests')
+      .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)')
+      .in('status', ['submitted_to_supply', 'completed'])
+      .eq('machines.is_archived', false)
+      .order('submitted_at', { ascending: false })
+
+    if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
+
+    const requests = (requestsData || []) as RequestRow[]
+    const requestIds = requests.map((request) => request.id)
+    const requestMap = new Map(requests.map((request) => [request.id, request]))
+    if (requestIds.length === 0) {
+      return { data: [], error: null, pagination: { page: safePage, pageSize: safePageSize, total: 0, from: 0, to: 0 } }
+    }
+
+    const [sheet, round, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
+      loadRows(db, 'request_sheet_metal', requestIds),
+      // @deprecated — round_tube excluded from new UI
+      loadRows(db, 'request_round_tube', requestIds),
+      loadRows(db, 'request_circle', requestIds),
+      loadRows(db, 'request_pipe', requestIds),
+      loadRows(db, 'request_knives', requestIds),
+      loadRows(db, 'request_components', requestIds),
+      loadRows(db, 'request_paint', requestIds),
+      loadRows(db, 'request_mesh', requestIds),
+      loadRows(db, 'request_chain_cord', requestIds),
+    ])
+
+    const makeItem = (table: string, category: MaterialCategory, row: RequestItemRow, name: unknown, supplierId: string | null = null): HistoryInputItem | null => {
+      const request = requestMap.get(row.request_id)
+      const machine = request?.machines
+      if (!request || !machine || machine.is_archived) return null
+      const requested = requestedQuantity(table, row)
+      const reserved = reservedQuantity(table, row)
+
+      return {
+        table,
+        category,
+        id: row.id,
+        request_id: row.request_id,
+        item_name: itemName(row, name),
+        requested_quantity: requested,
+        reserved_quantity: reserved,
+        secondary_requested_quantity: secondaryRequestedQuantity(table, row),
+        secondary_reserved_quantity: secondaryReservedQuantity(table, row),
+        to_order: Math.max(requested - reserved, 0),
+        unit: primaryUnit(table, row),
+        supplier_id: supplierId,
+        material_id: row.material_id || null,
+        material_variant_id: row.material_variant_id || null,
+        custom_delivery_date: row.custom_delivery_date || null,
+        order_status: (row.order_status || 'pending') as OrderItemStatus,
+        delivered_at: row.delivered_at || null,
+        calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
+        selected_piece_length_mm: selectedPieceLength(table, row),
+        machine_id: machine.id || request.machine_id,
+        machine_name: machine.name || 'Машина',
+        planned_material_date: machine.planned_material_date || null,
+      }
+    }
+
+    const rawItems = [
+      ...sheet.map((row) => makeItem('request_sheet_metal', 'sheet_metal', row, row.material_name, supplierForRow(row))),
+      // @deprecated — round_tube excluded from new UI
+      ...round.map((row) => makeItem('request_round_tube', 'round_tube', row, row.material_name, supplierForRow(row))),
+      ...circles.map((row) => makeItem('request_circle', 'circle', row, row.steel_grade, supplierForRow(row))),
+      ...pipes.map((row) => makeItem('request_pipe', 'pipe', row, row.size, supplierForRow(row))),
+      ...knives.map((row) => makeItem('request_knives', 'knives', row, row.knife_type, supplierForRow(row))),
+      ...components.map((row) => makeItem('request_components', 'components', row, row.component_name, supplierForRow(row))),
+      ...paint.map((row) => makeItem('request_paint', 'paint', row, row.paint_type || row.ral_code, supplierForRow(row))),
+      ...meshItems.map((row) => makeItem('request_mesh', 'mesh', row, row.description, supplierForRow(row))),
+      ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
+    ].filter((item): item is HistoryInputItem => Boolean(item))
+
+    const materialIds = Array.from(new Set(rawItems.map((item) => item.material_id).filter(Boolean))) as string[]
+    const [materialsRes, schedulesRes] = await Promise.all([
+      materialIds.length
+        ? db.from('materials').select('id, default_supplier_id').in('id', materialIds)
+        : Promise.resolve({ data: [], error: null } as DbResult),
+      rawItems.length
+        ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, delivered_at, received_by, created_at, updated_at').in('request_item_id', rawItems.map((item) => item.id)).order('delivery_date', { ascending: false })
+        : Promise.resolve({ data: [], error: null } as DbResult),
+    ])
+    if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
+    if (schedulesRes.error) throw new Error(schedulesRes.error.message || 'Не удалось загрузить график поставок')
+
+    const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
+    const items = rawItems.map((item) => ({
+      ...item,
+      supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
+    }))
+    const scheduleRows = ((schedulesRes.data || []) as Array<SupplyOrderDeliverySchedule & { request_item_table: string; request_item_id: string }>)
+      .filter((row) => rawItems.some((item) => item.table === row.request_item_table && item.id === row.request_item_id))
+    const schedulesByItem = new Map<string, typeof scheduleRows>()
+    for (const schedule of scheduleRows) {
+      const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+      schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+    }
+
+    const supplierIds = Array.from(new Set([
+      ...items.map((item) => item.supplier_id).filter(Boolean),
+      ...scheduleRows.map((schedule) => schedule.supplier_id).filter(Boolean),
+    ])) as string[]
+    const [deliveryDays, suppliersRes] = await Promise.all([
+      getDeliveryDays(db, supplierIds),
+      supplierIds.length
+        ? db.from('suppliers').select('id, name, delivery_lead_days').in('id', supplierIds)
+        : Promise.resolve({ data: [], error: null } as DbResult),
+    ])
+    if (suppliersRes.error) throw new Error(suppliersRes.error.message || 'Не удалось загрузить поставщиков')
+    const suppliers = (suppliersRes.data || []) as { id: string; name: string; delivery_lead_days: number }[]
+    const supplierMap = new Map(suppliers.map((supplier) => [supplier.id, supplier.name]))
+    const leadMap = new Map(suppliers.map((supplier) => [supplier.id, supplier.delivery_lead_days || 0]))
+
+    const history: SupplyOrderHistoryItem[] = []
+    for (const item of items) {
+      const schedules = schedulesByItem.get(`${item.table}:${item.id}`) || []
+      const deliveredSchedules = schedules.filter((schedule) => schedule.status === 'delivered')
+
+      for (const schedule of deliveredSchedules) {
+        const supplierId = schedule.supplier_id || item.supplier_id
+        history.push({
+          id: `schedule:${schedule.id}`,
+          source: 'schedule',
+          table: item.table,
+          item_id: item.id,
+          schedule_id: schedule.id,
+          machine_id: item.machine_id,
+          machine_name: item.machine_name,
+          request_id: item.request_id,
+          category: item.category,
+          item_name: item.item_name,
+          supplier_name: supplierId ? supplierMap.get(supplierId) || 'Поставщик' : null,
+          planned_material_date: item.planned_material_date,
+          planned_delivery_date: schedule.delivery_date,
+          accepted_at: schedule.delivered_at,
+          quantity: Number(schedule.received_quantity ?? schedule.quantity ?? 0),
+          unit: schedule.unit || item.unit,
+          weight_kg: item.calculated_weight_kg,
+        })
+      }
+
+      if (deliveredSchedules.length === 0 && item.order_status === 'delivered') {
+        const target = item.planned_material_date
+          ? getTargetDeliveryDate(
+            new Date(item.planned_material_date),
+            item.supplier_id ? (deliveryDays.get(item.supplier_id) || []) : [],
+            item.supplier_id ? (leadMap.get(item.supplier_id) || 0) : 0,
+            item.custom_delivery_date,
+          )
+          : null
+        history.push({
+          id: `item:${item.table}:${item.id}`,
+          source: 'item',
+          table: item.table,
+          item_id: item.id,
+          schedule_id: null,
+          machine_id: item.machine_id,
+          machine_name: item.machine_name,
+          request_id: item.request_id,
+          category: item.category,
+          item_name: item.item_name,
+          supplier_name: item.supplier_id ? supplierMap.get(item.supplier_id) || 'Поставщик' : null,
+          planned_material_date: item.planned_material_date,
+          planned_delivery_date: item.custom_delivery_date || isoDate(target),
+          accepted_at: item.delivered_at,
+          quantity: item.to_order,
+          unit: item.unit,
+          weight_kg: item.calculated_weight_kg,
+        })
+      }
+    }
+
+    history.sort((a, b) => {
+      const accepted = dateValue(b.accepted_at) - dateValue(a.accepted_at)
+      if (accepted !== 0) return accepted
+      const planned = dateValue(b.planned_delivery_date) - dateValue(a.planned_delivery_date)
+      if (planned !== 0) return planned
+      return a.machine_name.localeCompare(b.machine_name, 'ru')
+    })
+
+    const pageItems = history.slice(from, to)
+    return {
+      data: pageItems,
+      error: null,
+      pagination: {
+        page: safePage,
+        pageSize: safePageSize,
+        total: history.length,
+        from,
+        to: Math.min(to, history.length),
+      },
+    }
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить историю поставок', pagination: null }
   }
 }
 
@@ -1034,6 +1278,7 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
       material_variant_id: row.material_variant_id || null,
       custom_delivery_date: row.custom_delivery_date || null,
       order_status: orderStatus,
+      delivered_at: row.delivered_at || null,
       calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
       selected_piece_length_mm: selectedPieceLength(table, row),
       raw: row,

@@ -1,7 +1,8 @@
 import Link from 'next/link'
+import { SupplyOrderHistoryPage } from '@/components/features/supply-orders/SupplyOrderHistoryPage'
 import { SupplyOrdersPage } from '@/components/features/supply-orders/SupplyOrdersPage'
 import { SupplyOrderSummaryPage } from '@/components/features/supply-orders/SupplyOrderSummaryPage'
-import { getSupplyOrderAggregates, getSupplyOrderFactories, getSupplyOrders } from '@/lib/actions/supply-orders'
+import { getSupplyOrderAggregates, getSupplyOrderFactories, getSupplyOrderHistory, getSupplyOrders } from '@/lib/actions/supply-orders'
 import { getSuppliers } from '@/lib/actions/suppliers'
 import { ROUTES } from '@/lib/constants/routes'
 
@@ -113,26 +114,18 @@ async function SummaryView({ requestedFactoryId }: { requestedFactoryId: string 
 }
 
 async function HistoryView({ page }: { page: number }) {
-  const [{ data: orders, error, pagination }, { data: suppliers }] = await Promise.all([
-    getSupplyOrders(page, 50),
-    getSuppliers({ active_only: true }),
-  ])
+  const { data: history, error, pagination } = await getSupplyOrderHistory(page, 50)
 
   if (error) {
     return <div className="rounded-lg bg-red-500/10 p-4 text-sm text-[#DC2626]">{error}</div>
   }
 
   return (
-    <SupplyOrdersPage
-      items={orders || []}
-      suppliers={suppliers || []}
+    <SupplyOrderHistoryPage
+      items={history || []}
       page={pagination?.page || page}
       pageSize={pagination?.pageSize || 50}
       total={pagination?.total || 0}
-      initialStatus="delivered"
-      lockedStatus="delivered"
-      showActions={false}
-      emptyMessage="В истории пока нет принятых поставок."
     />
   )
 }
