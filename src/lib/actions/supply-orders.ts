@@ -1767,6 +1767,15 @@ function scheduleSupplierIdsByItem(schedules: ReceivingScheduleRow[]) {
   return map
 }
 
+async function deletePlannedDeliverySchedules(db: RpcDb, scheduleIds: string[]) {
+  for (const scheduleId of scheduleIds) {
+    const { error } = await db.rpc('fn_delete_supply_order_schedule', {
+      p_schedule_id: scheduleId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось сбросить плановые даты поставки')
+  }
+}
+
 function proportionalWeight(totalWeight: number | null, totalQuantity: number, quantity: number) {
   if (totalWeight === null) return null
   if (!Number.isFinite(totalQuantity) || totalQuantity <= 0) return totalWeight
@@ -1860,11 +1869,7 @@ export async function saveAggregateDeliverySchedule(
     }
 
     if (plannedScheduleIds.length > 0) {
-      const { error } = await db
-        .from('supply_order_delivery_schedules')
-        .delete()
-        .in('id', plannedScheduleIds)
-      if (error) throw new Error(error.message || 'Не удалось заменить старый график поставки')
+      await deletePlannedDeliverySchedules(db, plannedScheduleIds)
     }
 
     const orderedAt = new Date().toISOString()
@@ -1906,11 +1911,7 @@ export async function clearAggregateDeliverySchedule(items: { table: string; id:
       .map((schedule) => schedule.id)
 
     if (plannedScheduleIds.length > 0) {
-      const { error } = await db
-        .from('supply_order_delivery_schedules')
-        .delete()
-        .in('id', plannedScheduleIds)
-      if (error) throw new Error(error.message || 'Не удалось сбросить плановые даты поставки')
+      await deletePlannedDeliverySchedules(db, plannedScheduleIds)
     }
 
     const machineIds = await getAffectedMachineIds(db, groupedItems)
