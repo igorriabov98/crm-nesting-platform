@@ -24,7 +24,6 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Table,
   TableBody,
@@ -867,73 +866,64 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                     <span>Машины</span>
                                     <span className="text-xs font-normal text-[#64748B]">{selectedMachineCount} выбрано</span>
                                   </div>
-                                  <Popover
-                                    open={machineDropdownSectionId === section.id}
-                                    onOpenChange={(open) => {
-                                      if (!canEditRow || machineOptions.length === 0) return
-                                      if (open) {
+                                  <div className="relative">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      disabled={!canEditRow || machineOptions.length === 0}
+                                      aria-expanded={machineDropdownSectionId === section.id}
+                                      aria-haspopup="listbox"
+                                      aria-label={`Выбрать машины для ${section.name}`}
+                                      className={cn(
+                                        'h-9 w-full justify-between bg-white px-3 text-left font-normal text-[#1B3A6B] hover:bg-[#F8FAFC]',
+                                        selectedMachineCount === 0 && 'text-[#94A3B8]',
+                                      )}
+                                      onClick={() => {
+                                        if (machineDropdownSectionId === section.id) {
+                                          setMachineDropdownSectionId(null)
+                                          return
+                                        }
                                         updateMachineDraftForSection(section, group.parent, {})
                                         setMachineDropdownSectionId(section.id)
-                                      } else if (machineDropdownSectionId === section.id) {
-                                        setMachineDropdownSectionId(null)
-                                      }
-                                    }}
-                                  >
-                                    <PopoverTrigger
-                                      render={
-                                        <Button
-                                          type="button"
-                                          variant="outline"
-                                          disabled={!canEditRow || machineOptions.length === 0}
-                                          aria-label={`Выбрать машины для ${section.name}`}
-                                          className={cn(
-                                            'h-9 w-full justify-between bg-white px-3 text-left font-normal text-[#1B3A6B] hover:bg-[#F8FAFC]',
-                                            selectedMachineCount === 0 && 'text-[#94A3B8]',
-                                          )}
-                                        />
-                                      }
+                                      }}
                                     >
                                       <span className="min-w-0 flex-1 truncate">{selectedMachineText}</span>
                                       <ChevronDown className="ml-2 size-4 shrink-0 text-[#64748B]" />
-                                    </PopoverTrigger>
-                                    <PopoverContent align="start" className="w-(--anchor-width) min-w-72 max-w-[calc(100vw-2rem)] border-[#E2E8F0] bg-white p-1 shadow-lg">
-                                      {machineOptions.length === 0 ? (
-                                        <div className="px-2 py-2 text-sm text-[#94A3B8]">Нет машин</div>
-                                      ) : (
-                                        <div className="max-h-64 overflow-y-auto">
-                                          {machineOptions.map((machine) => {
-                                            const checked = selectedMachineIds.includes(machine.id)
-                                            return (
-                                              <button
-                                                key={machine.id}
-                                                type="button"
-                                                role="checkbox"
-                                                aria-checked={checked}
+                                    </Button>
+                                    {machineDropdownSectionId === section.id ? (
+                                      <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-[#E2E8F0] bg-white p-1 shadow-lg" role="group" aria-label={`Машины для ${section.name}`}>
+                                        {machineOptions.map((machine) => {
+                                          const checked = selectedMachineIds.includes(machine.id)
+                                          return (
+                                            <button
+                                              key={machine.id}
+                                              type="button"
+                                              role="checkbox"
+                                              aria-checked={checked}
+                                              className={cn(
+                                                'flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF]',
+                                                checked && 'bg-[#EFF6FF] text-[#12315F]',
+                                              )}
+                                              onClick={() => toggleMachineForSection(section, group.parent, machine.id, !checked)}
+                                            >
+                                              <span
                                                 className={cn(
-                                                  'flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF]',
-                                                  checked && 'bg-[#EFF6FF] text-[#12315F]',
+                                                  'flex size-4 shrink-0 items-center justify-center rounded border border-[#CBD5E1] bg-white text-white transition-colors',
+                                                  checked && 'border-[#1E40AF] bg-[#1E40AF]',
                                                 )}
-                                                onClick={() => toggleMachineForSection(section, group.parent, machine.id, !checked)}
+                                                aria-hidden="true"
                                               >
-                                                <span
-                                                  className={cn(
-                                                    'flex size-4 shrink-0 items-center justify-center rounded border border-[#CBD5E1] bg-white text-white transition-colors',
-                                                    checked && 'border-[#1E40AF] bg-[#1E40AF]',
-                                                  )}
-                                                  aria-hidden="true"
-                                                >
-                                                  {checked ? <Check className="size-3" /> : null}
-                                                </span>
-                                                <span className="min-w-0 flex-1 truncate">
-                                                  {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
-                                                </span>
-                                              </button>
-                                            )
-                                          })}
-                                        </div>
-                                      )}
-                                    </PopoverContent>
-                                  </Popover>
+                                                {checked ? <Check className="size-3" /> : null}
+                                              </span>
+                                              <span className="min-w-0 flex-1 truncate">
+                                                {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
+                                              </span>
+                                            </button>
+                                          )
+                                        })}
+                                      </div>
+                                    ) : null}
+                                  </div>
                                 </div>
 
                                 <label className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
