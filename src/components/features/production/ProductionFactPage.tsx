@@ -644,7 +644,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
       </div>
 
       {activeTab === 'machines' ? (
-        <div className="grid gap-4 2xl:grid-cols-[270px_minmax(0,1fr)_360px]">
+        <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)] 2xl:grid-cols-[270px_minmax(0,1fr)_360px]">
           <aside className="rounded-lg border border-[#DBEAFE] bg-white p-3 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -658,7 +658,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                 Выбранная дата вне месяца. Нажмите день ниже, чтобы открыть ввод за этот день.
               </div>
             ) : null}
-            <div className="mt-3 grid gap-2 sm:grid-cols-4 lg:grid-cols-7 2xl:grid-cols-1">
+            <div className="mt-3 grid gap-2 sm:grid-cols-4 lg:grid-cols-1">
               {monthDays.map((day) => {
                 const isSelected = day === data.selectedDate
                 const isToday = day === todayDate
@@ -825,7 +825,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
             </div>
           </section>
 
-          <div>
+          <div className="lg:col-span-2 2xl:col-span-1">
             <SectionManager
               parentSections={parentSections}
               childSectionsByParent={childSectionsByParent}
