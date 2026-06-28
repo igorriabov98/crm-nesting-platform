@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   Archive,
   CalendarDays,
+  Check,
   CheckCircle2,
   ClipboardCheck,
   Copy,
@@ -833,25 +834,31 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                     ) : machineOptions.map((machine) => {
                                       const checked = isActiveEditor && machineForm.machine_ids.includes(machine.id)
                                       return (
-                                        <label
+                                        <button
                                           key={machine.id}
+                                          type="button"
+                                          role="checkbox"
+                                          aria-checked={checked}
                                           className={cn(
-                                            'flex min-h-8 cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC]',
+                                            'flex min-h-8 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF] disabled:cursor-not-allowed disabled:opacity-60',
                                             checked && 'bg-[#EFF6FF] text-[#12315F]',
-                                            !canEditRow && 'cursor-not-allowed',
                                           )}
+                                          onClick={() => toggleMachineForSection(section, group.parent, machine.id, !checked)}
+                                          disabled={!canEditRow}
                                         >
-                                          <input
-                                            type="checkbox"
-                                            className="size-4 rounded border-[#CBD5E1] text-[#1E40AF] focus-visible:ring-[#1E40AF]"
-                                            checked={checked}
-                                            onChange={(event) => toggleMachineForSection(section, group.parent, machine.id, event.target.checked)}
-                                            disabled={!canEditRow}
-                                          />
+                                          <span
+                                            className={cn(
+                                              'flex size-4 shrink-0 items-center justify-center rounded border border-[#CBD5E1] bg-white text-white transition-colors',
+                                              checked && 'border-[#1E40AF] bg-[#1E40AF]',
+                                            )}
+                                            aria-hidden="true"
+                                          >
+                                            {checked ? <Check className="size-3" /> : null}
+                                          </span>
                                           <span className="min-w-0 flex-1 truncate">
                                             {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
                                           </span>
-                                        </label>
+                                        </button>
                                       )
                                     })}
                                   </div>
