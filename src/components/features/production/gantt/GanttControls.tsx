@@ -41,6 +41,7 @@ interface GanttControlsProps {
   onFiltersChange: (f: GanttFilters) => void
   productionMonthOptions?: GanttMonthOption[]
   showStageFilters?: boolean
+  stageOptions?: StageType[]
 }
 
 export function GanttControls({
@@ -53,15 +54,17 @@ export function GanttControls({
   onFiltersChange,
   productionMonthOptions = [],
   showStageFilters = true,
+  stageOptions = STAGE_ORDER,
 }: GanttControlsProps) {
   const setF = (partial: Partial<GanttFilters>) => onFiltersChange({ ...filters, ...partial })
-  const selectedStageCount = filters.visibleStages.length
+  const availableStageSet = new Set(stageOptions)
+  const selectedStageCount = filters.visibleStages.filter((stage) => availableStageSet.has(stage)).length
 
   const toggleStage = (stage: StageType, checked: boolean) => {
     const current = new Set(filters.visibleStages)
     if (checked) current.add(stage)
     else current.delete(stage)
-    setF({ visibleStages: STAGE_ORDER.filter((st) => current.has(st)) })
+    setF({ visibleStages: stageOptions.filter((st) => current.has(st)) })
   }
 
   return (
@@ -171,12 +174,12 @@ export function GanttControls({
       {showStageFilters && <div className="flex flex-wrap items-center gap-2 border-t border-[#E8ECF0] pt-3">
         <DropdownMenu>
           <DropdownMenuTrigger className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-[#D7DEE8] bg-white px-3 text-sm font-medium text-[#1B3A6B] transition-colors hover:bg-[#F8F9FA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] sm:min-h-10">
-            Этапы: {selectedStageCount}/{STAGE_ORDER.length}
+            Этапы: {selectedStageCount}/{stageOptions.length}
             <ChevronDown className="h-4 w-4 text-[#6B7280]" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-72 border-[#D7DEE8] bg-white">
             <div className="px-2 py-1.5 text-xs font-medium uppercase text-[#6B7280]">Этапы производства</div>
-            {STAGE_ORDER.map((stage) => (
+            {stageOptions.map((stage) => (
               <DropdownMenuCheckboxItem
                 key={stage}
                 checked={filters.visibleStages.includes(stage)}
@@ -188,7 +191,7 @@ export function GanttControls({
             ))}
             <DropdownMenuSeparator />
             <div className="grid grid-cols-2 gap-2 p-2">
-              <Button variant="outline" size="sm" className="min-h-9 px-2 text-xs" onClick={() => setF({ visibleStages: [...STAGE_ORDER] })}>
+              <Button variant="outline" size="sm" className="min-h-9 px-2 text-xs" onClick={() => setF({ visibleStages: [...stageOptions] })}>
                 Показать все
               </Button>
               <Button variant="outline" size="sm" className="min-h-9 px-2 text-xs" onClick={() => setF({ visibleStages: [] })}>
@@ -197,7 +200,7 @@ export function GanttControls({
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        {selectedStageCount < STAGE_ORDER.length && (
+        {selectedStageCount < stageOptions.length && (
           <span className="rounded-md bg-[#EEF2FF] px-2.5 py-1 text-xs font-medium text-[#1B3A6B]">
             Активно: {selectedStageCount}
           </span>

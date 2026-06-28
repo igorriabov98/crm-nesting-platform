@@ -18,6 +18,7 @@ interface GanttBarProps {
   machineId: string
   isConfirmed?: boolean
   onSelect?: () => void
+  planOnly?: boolean
 }
 
 type TooltipPosition = {
@@ -34,7 +35,16 @@ function hexToRgba(hex: string, alpha: number) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`
 }
 
-export const GanttBar = React.memo(function GanttBar({ stage, rangeStart, scale, unitWidth, machineId, isConfirmed = true, onSelect }: GanttBarProps) {
+export const GanttBar = React.memo(function GanttBar({
+  stage,
+  rangeStart,
+  scale,
+  unitWidth,
+  machineId,
+  isConfirmed = true,
+  onSelect,
+  planOnly = false,
+}: GanttBarProps) {
   const [showTooltip, setShowTooltip] = useState(false)
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null)
   const barRef = useRef<HTMLDivElement>(null)
@@ -86,7 +96,8 @@ export const GanttBar = React.memo(function GanttBar({ stage, rangeStart, scale,
   const endDate = new Date(stage.date_end)
   const { left, width } = barGeometry(startDate, endDate, rangeStart, scale, unitWidth)
   const color = getGanttStageColor(stage.stage_type)
-  const isPlanned = stage.status === 'not_planned'
+  const visibleStatus = planOnly ? 'not_planned' : stage.status
+  const isPlanned = visibleStatus === 'not_planned'
   const showLabel = width > 70
 
   let nightLeft = 0
@@ -133,7 +144,7 @@ export const GanttBar = React.memo(function GanttBar({ stage, rangeStart, scale,
       }}
       role={onSelect ? 'button' : undefined}
       tabIndex={onSelect ? 0 : undefined}
-      data-stage-status={stage.status}
+      data-stage-status={visibleStatus}
       data-stage-type={stage.stage_type}
     >
       <div
@@ -141,7 +152,7 @@ export const GanttBar = React.memo(function GanttBar({ stage, rangeStart, scale,
           "absolute left-0 right-0 overflow-hidden rounded-none transition-[filter,box-shadow] hover:brightness-105",
           usesExpandedHitArea ? "top-1/2 h-[18px] -translate-y-1/2" : "inset-0",
           isPlanned ? "border-2 border-dashed" : "shadow-sm",
-          stage.status === 'overdue' && "ring-2 ring-red-500"
+          visibleStatus === 'overdue' && "ring-2 ring-red-500"
         )}
         style={{
           borderColor: isPlanned ? color : undefined,
@@ -213,9 +224,9 @@ export const GanttBar = React.memo(function GanttBar({ stage, rangeStart, scale,
           <p className="text-[#6B7280]">Конец: <span className="text-[#1B3A6B]">{formatDate(endDate)}</span></p>
           <p className="text-[#6B7280]">Длительность: <span className="text-[#1B3A6B]">{durationDays} дн.</span></p>
           {isPlanned && <p className="mt-1 text-[#6B7280]">Запланировано</p>}
-          {stage.status === 'active' && <p className="mt-1 text-[#2563EB]">В работе</p>}
-          {stage.status === 'completed' && <p className="mt-1 text-[#16A34A]">Завершен</p>}
-          {stage.status === 'overdue' && (
+          {visibleStatus === 'active' && <p className="mt-1 text-[#2563EB]">В работе</p>}
+          {visibleStatus === 'completed' && <p className="mt-1 text-[#16A34A]">Завершен</p>}
+          {visibleStatus === 'overdue' && (
             <p className="mt-1 font-medium text-[#DC2626]">
               {stage.delay_days > 0 ? `Просрочено вручную на ${stage.delay_days} дн.` : 'Просрочено вручную'}
             </p>

@@ -20,13 +20,15 @@ interface ProductionWorkspaceProps {
   productionData: ProductionRow[]
 }
 
+const PRODUCTION_PLAN_STAGE_ORDER = STAGE_ORDER.filter((stage) => stage !== 'actual_shipping')
+
 const defaultGanttFilters: GanttFilters = {
   search: '',
   workshop: '',
   confirmation: '',
   productionMonth: '',
   showSupply: false,
-  visibleStages: [...STAGE_ORDER],
+  visibleStages: [...PRODUCTION_PLAN_STAGE_ORDER],
 }
 
 export function ProductionWorkspace({

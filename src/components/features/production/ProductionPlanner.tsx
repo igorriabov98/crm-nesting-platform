@@ -42,7 +42,7 @@ import type {
   GanttStage,
   GanttSupplyItem,
 } from '@/app/(protected)/production/gantt/actions'
-import type { ProductionRow, StageStatus } from '@/app/(protected)/production/actions'
+import type { ProductionRow } from '@/app/(protected)/production/actions'
 import type { StageType } from '@/lib/types'
 
 interface ProductionPlannerProps {
@@ -81,7 +81,7 @@ type WeldingLoadMachine = {
   dailyTons: number
 }
 
-type MachineDateField = 'planned_material_date' | 'actual_material_date' | 'actual_shipping_date'
+type MachineDateField = 'planned_material_date'
 type ProductionStage = ProductionRow['stages'][number]
 type ActionResult = { success?: boolean; error?: string | null }
 
@@ -99,6 +99,7 @@ const RANGE_EDGE_PX = 240
 const RANGE_EXTEND_DAYS = 30
 const RANGE_CHECK_DEBOUNCE_MS = 180
 const scale: GanttScale = 'day'
+const PRODUCTION_PLAN_STAGE_ORDER: StageType[] = STAGE_ORDER.filter((stage) => stage !== 'actual_shipping')
 
 const defaultFilters: GanttFilters = {
   search: '',
@@ -106,7 +107,7 @@ const defaultFilters: GanttFilters = {
   confirmation: '',
   productionMonth: '',
   showSupply: false,
-  visibleStages: [...STAGE_ORDER],
+  visibleStages: [...PRODUCTION_PLAN_STAGE_ORDER],
 }
 
 const workshopOptions = [
@@ -114,34 +115,19 @@ const workshopOptions = [
   { value: '2', label: 'Цех 2' },
 ]
 
-const stageStatusLabel: Record<StageStatus, string> = {
-  not_planned: 'Не запланирован',
-  active: 'В работе',
-  completed: 'Завершен',
-  overdue: 'Просрочен',
-  skipped: 'Пропущен',
-}
-
-const stageStatusClass: Record<StageStatus, string> = {
-  not_planned: 'border-slate-200 bg-slate-50 text-slate-600',
-  active: 'border-blue-200 bg-blue-50 text-blue-700',
-  completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  overdue: 'border-red-200 bg-red-50 text-red-700',
-  skipped: 'border-slate-200 bg-slate-50 text-slate-400',
-}
-
 function clampDayWidth(value: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value))
 }
 
 function findEarliestDate(data: GanttData) {
   const dates = data.machines.flatMap((machine) => [
-    ...machine.stages.map((stage) => stage.date_start).filter(Boolean),
+    ...machine.stages
+      .filter((stage) => stage.stage_type !== 'actual_shipping')
+      .map((stage) => stage.date_start)
+      .filter(Boolean),
     ...machine.supply_deadlines.map((item) => item.planned_delivery_date).filter(Boolean),
     machine.desired_shipping_date,
     machine.planned_material_date,
-    machine.actual_material_date,
-    machine.actual_shipping_date,
     machine.delivery_to_client_date,
   ]).filter((date): date is string => Boolean(date))
 
@@ -151,12 +137,13 @@ function findEarliestDate(data: GanttData) {
 
 function findLatestDate(data: GanttData) {
   const dates = data.machines.flatMap((machine) => [
-    ...machine.stages.map((stage) => stage.date_end || stage.date_start).filter(Boolean),
+    ...machine.stages
+      .filter((stage) => stage.stage_type !== 'actual_shipping')
+      .map((stage) => stage.date_end || stage.date_start)
+      .filter(Boolean),
     ...machine.supply_deadlines.map((item) => item.planned_delivery_date).filter(Boolean),
     machine.desired_shipping_date,
     machine.planned_material_date,
-    machine.actual_material_date,
-    machine.actual_shipping_date,
     machine.delivery_to_client_date,
   ]).filter((date): date is string => Boolean(date))
 
@@ -203,7 +190,7 @@ function productionMonthLabel(date: string | null | undefined) {
 }
 
 function hasScheduledStage(row: ProductionRow) {
-  return row.stages.some((stage) => !stage.is_skipped && Boolean(stage.date_start))
+  return row.stages.some((stage) => PRODUCTION_PLAN_STAGE_ORDER.includes(stage.stage_type) && !stage.is_skipped && Boolean(stage.date_start))
 }
 
 function compareProductionMachines(
@@ -443,17 +430,12 @@ function PlannerVirtualRow({
   const machine = row.machine
   const deadlineOffset = dateOffset(machine.desired_shipping_date, rangeStart, dayWidth)
   const plannedMaterialOffset = dateOffset(machine.planned_material_date, rangeStart, dayWidth)
-  const actualMaterialOffset = dateOffset(machine.actual_material_date, rangeStart, dayWidth)
-  const actualShippingOffset = dateOffset(machine.actual_shipping_date, rangeStart, dayWidth)
   const deadlineLabel = formatDesiredShippingDate(machine.desired_shipping_date)
   const plannedMaterialLabel = formatDesiredShippingDate(machine.planned_material_date)
-  const actualMaterialLabel = formatDesiredShippingDate(machine.actual_material_date)
-  const actualShippingLabel = formatDesiredShippingDate(machine.actual_shipping_date)
   const plannedMaterialDay = dateOnlyKey(machine.planned_material_date)
   const plannedMaterialItems = plannedMaterialDay
     ? machine.material_items.filter((item) => dateOnlyKey(item.planned_delivery_date) === plannedMaterialDay)
     : []
-  const actualMaterialItems = machine.material_items.filter((item) => item.supply_status === 'received')
   const queueLabel = productionQueueLabel(machine.production_workshop, machine.production_queue_number)
   const monthLabel = productionMonthLabel(machine.production_month)
   const stageLanes = buildStageLanes(row.visibleStages, rangeStart, dayWidth)
@@ -501,7 +483,7 @@ function PlannerVirtualRow({
           <span className="mt-1 flex w-full min-w-0 items-center gap-1 text-[11px] text-slate-500">
             <PackageCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
             <span className="truncate">
-              Мат: {formatDateValue(machine.planned_material_date, true)} / {formatDateValue(machine.actual_material_date, true)}
+              Мат.план: {formatDateValue(machine.planned_material_date, true)}
             </span>
           </span>
         </button>
@@ -540,33 +522,6 @@ function PlannerVirtualRow({
           />
         )}
 
-        {machine.actual_material_date && actualMaterialOffset !== null && actualMaterialOffset + dayWidth / 2 >= 0 && actualMaterialOffset + dayWidth / 2 <= totalWidth && (
-          <GanttMaterialMarker
-            type="actual"
-            date={machine.actual_material_date}
-            items={actualMaterialItems}
-            rangeStart={rangeStart}
-            unitWidth={dayWidth}
-            machineId={machine.id}
-            machineName={machine.name}
-            title={actualMaterialLabel ? `Факт. поставка материала: ${actualMaterialLabel}` : undefined}
-          />
-        )}
-
-        {actualShippingOffset !== null && actualShippingOffset >= 0 && actualShippingOffset <= totalWidth && (
-          <div
-            className="absolute z-20 h-0 w-0 -translate-x-1/2 border-l-transparent border-r-transparent border-t-red-600 drop-shadow-sm"
-            style={{
-              left: actualShippingOffset,
-              top: PLANNER_ROW_HEIGHT - 15,
-              borderLeftWidth: 6,
-              borderRightWidth: 6,
-              borderTopWidth: 10,
-            }}
-            title={actualShippingLabel ? `Факт. отгрузка с завода: ${actualShippingLabel}` : undefined}
-          />
-        )}
-
         {stageLanes.map(({ stage, lane }) => (
           <div
             key={stage.id}
@@ -585,6 +540,7 @@ function PlannerVirtualRow({
               machineId={machine.id}
               isConfirmed={machine.is_confirmed}
               onSelect={() => onSelect(machine.id)}
+              planOnly
             />
           </div>
         ))}
@@ -693,7 +649,7 @@ function UnscheduledMachinesPanel({
                 <span className="flex min-w-0 items-center gap-1 text-xs text-slate-600">
                   <PackageCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
                   <span className="truncate">
-                    Мат: {formatDateValue(machine.planned_material_date, true)} / {formatDateValue(machine.actual_material_date, true)}
+                    Мат.план: {formatDateValue(machine.planned_material_date, true)}
                   </span>
                 </span>
 
@@ -732,7 +688,7 @@ function StageEditor({
   onClearDates: (stage: ProductionStage) => Promise<ActionResult | void>
 }) {
   const meta = STAGES[stage.stage_type]
-  const isShippingDateOnly = stage.stage_type === 'shipping' || stage.stage_type === 'actual_shipping'
+  const isShippingDateOnly = stage.stage_type === 'shipping'
   const isSkipped = stage.is_skipped
   const editable = canEdit && !isSkipped
   const isClearing = clearingStageId === stage.id
@@ -747,14 +703,6 @@ function StageEditor({
             <span className="truncate text-sm font-semibold text-slate-900">{meta.label}</span>
           </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-semibold', stageStatusClass[stage.status])}>
-              {stageStatusLabel[stage.status]}
-            </span>
-            {stage.manual_overdue && (
-              <span className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
-                ручная просрочка
-              </span>
-            )}
             {stage.is_night_shift && (
               <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
                 ночь
@@ -764,22 +712,6 @@ function StageEditor({
         </div>
 
         <div className="flex shrink-0 gap-1.5">
-          <button
-            type="button"
-            disabled={!editable}
-            title={stage.manual_overdue ? 'Снять ручную просрочку' : 'Отметить ручную просрочку'}
-            aria-label={stage.manual_overdue ? 'Снять ручную просрочку' : 'Отметить ручную просрочку'}
-            onClick={() => onStageUpdate(stage.id, 'manual_overdue', !stage.manual_overdue)}
-            className={cn(
-              'inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600',
-              stage.manual_overdue
-                ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100'
-                : 'border-slate-200 bg-white text-slate-500 hover:border-red-300 hover:text-red-700',
-              !editable && 'cursor-not-allowed opacity-40'
-            )}
-          >
-            !
-          </button>
           <button
             type="button"
             disabled={!editable || isClearing || !hasDates}
@@ -885,14 +817,10 @@ function ProductionMachineInspector({
 }) {
   const [open, setOpen] = useState(defaultOpen)
 
-  useEffect(() => {
-    if (machine) setOpen(defaultOpen)
-  }, [defaultOpen, machine?.id])
-
   const deadline = getDesiredShippingInfo(productionRow?.machine.desired_shipping_date || machine?.desired_shipping_date || null)
   const sortedStages = useMemo(() => {
     if (!productionRow) return []
-    return [...productionRow.stages].sort(
+    return productionRow.stages.filter((stage) => PRODUCTION_PLAN_STAGE_ORDER.includes(stage.stage_type)).sort(
       (a, b) => STAGE_ORDER.indexOf(a.stage_type) - STAGE_ORDER.indexOf(b.stage_type)
     )
   }, [productionRow])
@@ -945,18 +873,6 @@ function ProductionMachineInspector({
           editable={canEdit}
           onSave={(value) => onMachineDateUpdate(machine.id, 'planned_material_date', value)}
         />
-        <DateField
-          label="Материал факт"
-          value={productionRow?.machine.actual_material_date || machine.actual_material_date}
-          editable={canEdit}
-          onSave={(value) => onMachineDateUpdate(machine.id, 'actual_material_date', value)}
-        />
-        <DateField
-          label="Факт отгрузки"
-          value={productionRow?.machine.actual_shipping_date || machine.actual_shipping_date}
-          editable={canEdit}
-          onSave={(value) => onMachineDateUpdate(machine.id, 'actual_shipping_date', value)}
-        />
       </div>
 
       {deadline && (
@@ -974,7 +890,7 @@ function ProductionMachineInspector({
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-slate-900">Этапы</h3>
-          <span className="text-xs text-slate-500">{sortedStages.length}/{STAGE_ORDER.length}</span>
+          <span className="text-xs text-slate-500">{sortedStages.length}/{PRODUCTION_PLAN_STAGE_ORDER.length}</span>
         </div>
         {productionRow ? (
           <div className="space-y-2">
@@ -1128,7 +1044,7 @@ export function ProductionPlanner({
   const plannerRows = useMemo<PlannerRow[]>(() => {
     const selectedWorkshop = filters.workshop ? parseInt(filters.workshop) : null
     const selectedProductionMonth = normalizeProductionMonthValue(filters.productionMonth)
-    const visibleStages = new Set(filters.visibleStages)
+    const visibleStages = new Set(filters.visibleStages.filter((stage) => PRODUCTION_PLAN_STAGE_ORDER.includes(stage)))
     const query = filters.search.trim().toLowerCase()
     const rows: PlannerRow[] = []
 
@@ -1209,7 +1125,6 @@ export function ProductionPlanner({
   ), [ganttMachineById, selectedMachineId, unscheduledRows])
   const selectedProductionRow = selectedMachineId ? productionByMachineId.get(selectedMachineId) : undefined
 
-  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: plannerRows.length,
     getScrollElement: () => scrollRef.current,
@@ -1537,6 +1452,7 @@ export function ProductionPlanner({
           filters={filters}
           onFiltersChange={setFilters}
           productionMonthOptions={productionMonthOptions}
+          stageOptions={PRODUCTION_PLAN_STAGE_ORDER}
         />
 
         <UnscheduledMachinesPanel
@@ -1673,6 +1589,7 @@ export function ProductionPlanner({
 
         <div className="xl:hidden">
           <ProductionMachineInspector
+            key={selectedMachine?.id ?? 'mobile-empty'}
             machine={selectedMachine}
             productionRow={selectedProductionRow}
             canEdit={canEdit}
@@ -1767,13 +1684,14 @@ export function ProductionPlanner({
           )}
         </section>
 
-        <GanttLegend defaultOpen={false} />
+        <GanttLegend defaultOpen={false} stages={PRODUCTION_PLAN_STAGE_ORDER} />
       </div>
 
       {desktopInspectorOpen && (
         <div className="hidden xl:block">
           <div className="sticky top-4">
             <ProductionMachineInspector
+              key={selectedMachine?.id ?? 'desktop-empty'}
               machine={selectedMachine}
               productionRow={selectedProductionRow}
               canEdit={canEdit}
