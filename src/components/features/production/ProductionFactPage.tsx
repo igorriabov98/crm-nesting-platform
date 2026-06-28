@@ -56,7 +56,7 @@ type ProductionFactPageProps = {
 
 type MachineFormState = {
   id: string | null
-  machine_id: string
+  machine_ids: string[]
   parent_section_id: string
   section_id: string
   shift: ProductionFactShift
@@ -80,7 +80,7 @@ const selectClassName = 'flex h-9 w-full rounded-md border border-input bg-white
 
 const emptyMachineForm: MachineFormState = {
   id: null,
-  machine_id: '',
+  machine_ids: [],
   parent_section_id: '',
   section_id: '',
   shift: 'day',
@@ -266,6 +266,11 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
     return Array.from(map.values())
   }, [data.machineFacts, data.machineOptions])
 
+  const machineOptionById = useMemo(
+    () => new Map(machineOptions.map((machine) => [machine.id, machine])),
+    [machineOptions],
+  )
+
   const monthDays = useMemo(() => createMonthDays(data.productionMonth), [data.productionMonth])
   const todayDate = useMemo(() => getClientToday(), [])
   const selectedDateInProductionMonth = data.selectedDate.slice(0, 7) === data.productionMonth.slice(0, 7)
@@ -390,18 +395,42 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
   function updateMachineDraftForSection(
     section: ProductionFactSection,
     parent: ProductionFactSection | null,
-    updates: Partial<Pick<MachineFormState, 'machine_id' | 'shift' | 'comment'>>,
+    updates: Partial<Pick<MachineFormState, 'machine_ids' | 'shift' | 'comment'>>,
   ) {
     setMachineForm((current) => {
       const sameSection = current.section_id === section.id
       return {
         id: sameSection ? current.id : null,
-        machine_id: sameSection ? current.machine_id : '',
+        machine_ids: sameSection ? current.machine_ids : [],
         parent_section_id: parent?.id || section.parent_id || '',
         section_id: section.id,
         shift: sameSection ? current.shift : 'day',
         comment: sameSection ? current.comment : '',
         ...updates,
+      }
+    })
+  }
+
+  function toggleMachineForSection(
+    section: ProductionFactSection,
+    parent: ProductionFactSection | null,
+    machineId: string,
+    checked: boolean,
+  ) {
+    setMachineForm((current) => {
+      const sameSection = current.section_id === section.id
+      const currentIds = sameSection ? current.machine_ids : []
+      const machineIds = checked
+        ? Array.from(new Set([...currentIds, machineId]))
+        : currentIds.filter((id) => id !== machineId)
+
+      return {
+        id: sameSection ? current.id : null,
+        machine_ids: machineIds,
+        parent_section_id: parent?.id || section.parent_id || '',
+        section_id: section.id,
+        shift: sameSection ? current.shift : 'day',
+        comment: sameSection ? current.comment : '',
       }
     })
   }
@@ -417,24 +446,48 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
           section_id: section.id,
         }
 
-    if (!form.machine_id || !parentSectionId || !section.id) {
+    const machineIds = Array.from(new Set(form.machine_ids)).filter(Boolean)
+    if (machineIds.length === 0 || !parentSectionId || !section.id) {
       toast.error('Выберите машину, участок и подучасток')
       return
     }
 
-    runAction(
-      () => saveProductionMachineFact({
-        id: form.id,
-        factory_id: data.selectedFactoryId!,
-        fact_date: data.selectedDate,
-        machine_id: form.machine_id,
-        section_id: section.id,
-        shift: form.shift,
-        comment: form.comment,
-      }),
-      form.id ? 'Факт обновлен' : 'Факт добавлен',
-      () => setMachineForm(emptyMachineForm),
-    )
+    const duplicateFacts = (machineFactsBySection.get(section.id) || [])
+      .filter((fact) => fact.shift === form.shift && fact.id !== form.id && machineIds.includes(fact.machine_id))
+
+    if (duplicateFacts.length > 0) {
+      const names = duplicateFacts
+        .map((fact) => fact.machine?.name || machineOptionById.get(fact.machine_id)?.name)
+        .filter(Boolean)
+        .join(', ')
+      toast.error(names ? `Уже добавлены в эту смену: ${names}` : 'Одна из машин уже добавлена в эту смену')
+      return
+    }
+
+    startTransition(async () => {
+      for (const [index, machineId] of machineIds.entries()) {
+        const result = await saveProductionMachineFact({
+          id: index === 0 ? form.id : null,
+          factory_id: data.selectedFactoryId!,
+          fact_date: data.selectedDate,
+          machine_id: machineId,
+          section_id: section.id,
+          shift: form.shift,
+          comment: form.comment,
+        })
+
+        if (!result.success) {
+          toast.error(result.error || 'Не удалось сохранить')
+          return
+        }
+      }
+
+      toast.success(form.id
+        ? (machineIds.length > 1 ? `Сохранено записей: ${machineIds.length}` : 'Факт обновлен')
+        : `Добавлено записей: ${machineIds.length}`)
+      setMachineForm(emptyMachineForm)
+      router.refresh()
+    })
   }
 
   function handleCopyYesterday() {
@@ -504,7 +557,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
   function handleEditMachineFact(fact: ProductionFactMachineFactRow) {
     setMachineForm({
       id: fact.id,
-      machine_id: fact.machine_id,
+      machine_ids: [fact.machine_id],
       parent_section_id: fact.parentSection?.id || fact.section?.parent_id || '',
       section_id: fact.section_id,
       shift: fact.shift,
@@ -721,6 +774,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                           const facts = machineFactsBySection.get(section.id) || []
                           const isActiveEditor = machineForm.section_id === section.id
                           const canEditRow = data.canEditSelectedDate && Boolean(data.selectedFactoryId)
+                          const selectedMachineCount = isActiveEditor ? machineForm.machine_ids.length : 0
                           return (
                             <div
                               key={section.id}
@@ -762,23 +816,46 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                               </div>
 
                               <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(180px,1fr)_120px] xl:grid-cols-[minmax(180px,1fr)_120px_minmax(160px,1fr)_auto] xl:items-end">
-                                <label className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
-                                  <span>Машина</span>
-                                  <select
-                                    className={selectClassName}
-                                    value={isActiveEditor ? machineForm.machine_id : ''}
-                                    onChange={(event) => updateMachineDraftForSection(section, group.parent, { machine_id: event.target.value })}
-                                    disabled={!canEditRow || machineOptions.length === 0}
-                                    aria-label={`Машина для ${section.name}`}
+                                <div className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span>Машины</span>
+                                    <span className="text-xs font-normal text-[#64748B]">{selectedMachineCount} выбрано</span>
+                                  </div>
+                                  <div
+                                    className={cn(
+                                      'max-h-32 overflow-y-auto rounded-md border border-input bg-white p-1 shadow-sm',
+                                      (!canEditRow || machineOptions.length === 0) && 'opacity-50',
+                                    )}
+                                    aria-label={`Машины для ${section.name}`}
                                   >
-                                    <option value="">Выбрать</option>
-                                    {machineOptions.map((machine) => (
-                                      <option key={machine.id} value={machine.id}>
-                                        {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
+                                    {machineOptions.length === 0 ? (
+                                      <div className="px-2 py-2 text-sm text-[#94A3B8]">Нет машин</div>
+                                    ) : machineOptions.map((machine) => {
+                                      const checked = isActiveEditor && machineForm.machine_ids.includes(machine.id)
+                                      return (
+                                        <label
+                                          key={machine.id}
+                                          className={cn(
+                                            'flex min-h-8 cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC]',
+                                            checked && 'bg-[#EFF6FF] text-[#12315F]',
+                                            !canEditRow && 'cursor-not-allowed',
+                                          )}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            className="size-4 rounded border-[#CBD5E1] text-[#1E40AF] focus-visible:ring-[#1E40AF]"
+                                            checked={checked}
+                                            onChange={(event) => toggleMachineForSection(section, group.parent, machine.id, event.target.checked)}
+                                            disabled={!canEditRow}
+                                          />
+                                          <span className="min-w-0 flex-1 truncate">
+                                            {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
+                                          </span>
+                                        </label>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
 
                                 <label className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
                                   <span>Смена</span>
@@ -805,9 +882,11 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                 </label>
 
                                 <div className="flex flex-wrap gap-2 md:col-span-2 xl:col-span-1 xl:flex-nowrap xl:justify-end">
-                                  <Button type="button" className="min-w-28" onClick={() => handleMachineSave(section, group.parent)} disabled={isPending || !canEditRow}>
+                                  <Button type="button" className="min-w-28" onClick={() => handleMachineSave(section, group.parent)} disabled={isPending || !canEditRow || selectedMachineCount === 0}>
                                     <Save className="size-4" />
-                                    {isActiveEditor && machineForm.id ? 'Обновить' : 'Добавить'}
+                                    {isActiveEditor && machineForm.id
+                                      ? (selectedMachineCount > 1 ? `Сохранить ${selectedMachineCount}` : 'Обновить')
+                                      : (selectedMachineCount > 1 ? `Добавить ${selectedMachineCount}` : 'Добавить')}
                                   </Button>
                                   {isActiveEditor ? (
                                     <Button type="button" variant="outline" onClick={() => setMachineForm(emptyMachineForm)}>
