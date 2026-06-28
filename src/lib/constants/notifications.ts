@@ -6,7 +6,8 @@ import {
   Truck, 
   Package, 
   Plus, 
-  Receipt 
+  Receipt,
+  MessageSquare
 } from 'lucide-react'
 
 export const NOTIFICATION_TYPES = {
@@ -70,6 +71,12 @@ export const NOTIFICATION_TYPES = {
     color: 'text-purple-500',
     bg: 'bg-purple-500/10',
     label: 'Инвойс создан'
+  },
+  machine_chat_message: {
+    icon: MessageSquare,
+    color: 'text-blue-600',
+    bg: 'bg-blue-50',
+    label: 'Сообщение в чате машины'
   },
   consumable_request_new: {
     icon: Package,

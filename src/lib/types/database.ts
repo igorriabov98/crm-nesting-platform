@@ -459,6 +459,87 @@ export type Database = {
           updated_at?: string
         }
       }
+      machine_updates: {
+        Row: {
+          id: string
+          machine_id: string
+          body: string
+          created_by: string
+          updated_by: string | null
+          deleted_by: string | null
+          deleted_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          machine_id: string
+          body: string
+          created_by: string
+          updated_by?: string | null
+          deleted_by?: string | null
+          deleted_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          machine_id?: string
+          body?: string
+          created_by?: string
+          updated_by?: string | null
+          deleted_by?: string | null
+          deleted_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      machine_chat_messages: {
+        Row: {
+          id: string
+          machine_id: string
+          body: string
+          created_by: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          machine_id: string
+          body: string
+          created_by: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          machine_id?: string
+          body?: string
+          created_by?: string
+          created_at?: string
+        }
+      }
+      machine_chat_mentions: {
+        Row: {
+          id: string
+          message_id: string
+          machine_id: string
+          user_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          message_id: string
+          machine_id: string
+          user_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          message_id?: string
+          machine_id?: string
+          user_id?: string
+          created_at?: string
+        }
+      }
       machine_items: {
         Row: {
           id: string

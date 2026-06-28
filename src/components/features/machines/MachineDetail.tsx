@@ -29,6 +29,7 @@ import { SupplyTab } from './tabs/SupplyTab'
 import { InvoiceTab } from './tabs/InvoiceTab'
 import { MachineTasksPanel } from './MachineTasksPanel'
 import { MachineRequestPanel } from './MachineRequestPanel'
+import { MachineActivityPanel } from './MachineActivityPanel'
 import { MachineStatusBadge, MachineStatusProgress } from './MachineStatusBadge'
 
 import { MachineEditDialog } from './MachineEditDialog'
@@ -44,6 +45,7 @@ import type { FactorySummary, MachineDetails, UserRole } from '@/lib/types'
 import type { TaskWithRelations } from '@/lib/actions/tasks'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 import type { MachineItemNestingState } from '@/lib/actions/machine-item-nesting'
+import type { MachineActivityPayload } from '@/lib/actions/machine-activity'
 import { ROUTES } from '@/lib/constants/routes'
 import { updateMachineConfirmation } from '@/app/(protected)/sales-plan/actions'
 import { cn } from '@/lib/utils'
@@ -54,6 +56,7 @@ interface MachineDetailProps {
   tasks?: TaskWithRelations[]
   requestData?: TechnologistRequestPayload | null
   nestingStates?: MachineItemNestingState[]
+  activity: MachineActivityPayload
   canManageTechnologistRequests?: boolean
   canViewSupplyRequest?: boolean
   canManageNesting?: boolean
@@ -100,6 +103,7 @@ export function MachineDetail({
   tasks = [],
   requestData = null,
   nestingStates = [],
+  activity,
   canManageTechnologistRequests = false,
   canViewSupplyRequest = false,
   canManageNesting = false,
@@ -349,6 +353,8 @@ export function MachineDetail({
       />
 
       <MachineTasksPanel tasks={tasks} />
+
+      <MachineActivityPanel machineId={machine.id} activity={activity} />
 
       <Tabs defaultValue="items" className="mt-6 w-full">
         <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
