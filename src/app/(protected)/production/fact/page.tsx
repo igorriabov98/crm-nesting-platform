@@ -26,7 +26,7 @@ export default async function ProductionFactRoute({
   try {
     const data = await getProductionFactWorkspaceData({
       factoryId: params?.factory,
-      date: params?.date,
+      date: params?.date || params?.productionMonth,
       productionMonth: params?.productionMonth,
     })
 
