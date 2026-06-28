@@ -867,15 +867,14 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                     <span className="text-xs font-normal text-[#64748B]">{selectedMachineCount} выбрано</span>
                                   </div>
                                   <div className="relative">
-                                    <Button
+                                    <button
                                       type="button"
-                                      variant="outline"
                                       disabled={!canEditRow || machineOptions.length === 0}
                                       aria-expanded={machineDropdownSectionId === section.id}
                                       aria-haspopup="listbox"
                                       aria-label={`Выбрать машины для ${section.name}`}
                                       className={cn(
-                                        'h-9 w-full justify-between bg-white px-3 text-left font-normal text-[#1B3A6B] hover:bg-[#F8FAFC]',
+                                        'inline-flex h-9 w-full items-center justify-between rounded-lg border border-input bg-white px-3 text-left text-sm font-normal text-[#1B3A6B] shadow-sm transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF] disabled:cursor-not-allowed disabled:opacity-50',
                                         selectedMachineCount === 0 && 'text-[#94A3B8]',
                                       )}
                                       onClick={() => {
@@ -889,7 +888,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                     >
                                       <span className="min-w-0 flex-1 truncate">{selectedMachineText}</span>
                                       <ChevronDown className="ml-2 size-4 shrink-0 text-[#64748B]" />
-                                    </Button>
+                                    </button>
                                     {machineDropdownSectionId === section.id ? (
                                       <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-[#E2E8F0] bg-white p-1 shadow-lg" role="group" aria-label={`Машины для ${section.name}`}>
                                         {machineOptions.map((machine) => {
