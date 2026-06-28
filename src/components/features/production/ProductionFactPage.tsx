@@ -235,6 +235,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
   const searchParams = useSearchParams()
   const [isPending, startTransition] = useTransition()
   const [machineForm, setMachineForm] = useState<MachineFormState>(emptyMachineForm)
+  const [machineDropdownSectionId, setMachineDropdownSectionId] = useState<string | null>(null)
   const [sectionName, setSectionName] = useState('')
   const [sectionOrder, setSectionOrder] = useState('100')
   const [subsectionName, setSubsectionName] = useState('')
@@ -527,6 +528,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
         ? (machineIds.length > 1 ? `Сохранено записей: ${machineIds.length}` : 'Факт обновлен')
         : `Добавлено записей: ${machineIds.length}`)
       setMachineForm(emptyMachineForm)
+      setMachineDropdownSectionId(null)
       router.refresh()
     })
   }
@@ -604,6 +606,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
       shift: fact.shift,
       comment: fact.comment || '',
     })
+    setMachineDropdownSectionId(fact.section_id)
   }
 
   function handleDeleteMachineFact(id: string) {
@@ -864,7 +867,18 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                     <span>Машины</span>
                                     <span className="text-xs font-normal text-[#64748B]">{selectedMachineCount} выбрано</span>
                                   </div>
-                                  <Popover>
+                                  <Popover
+                                    open={machineDropdownSectionId === section.id}
+                                    onOpenChange={(open) => {
+                                      if (!canEditRow || machineOptions.length === 0) return
+                                      if (open) {
+                                        updateMachineDraftForSection(section, group.parent, {})
+                                        setMachineDropdownSectionId(section.id)
+                                      } else if (machineDropdownSectionId === section.id) {
+                                        setMachineDropdownSectionId(null)
+                                      }
+                                    }}
+                                  >
                                     <PopoverTrigger
                                       render={
                                         <Button
@@ -876,12 +890,12 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                             'h-9 w-full justify-between bg-white px-3 text-left font-normal text-[#1B3A6B] hover:bg-[#F8FAFC]',
                                             selectedMachineCount === 0 && 'text-[#94A3B8]',
                                           )}
-                                        >
-                                          <span className="min-w-0 flex-1 truncate">{selectedMachineText}</span>
-                                          <ChevronDown className="ml-2 size-4 shrink-0 text-[#64748B]" />
-                                        </Button>
+                                        />
                                       }
-                                    />
+                                    >
+                                      <span className="min-w-0 flex-1 truncate">{selectedMachineText}</span>
+                                      <ChevronDown className="ml-2 size-4 shrink-0 text-[#64748B]" />
+                                    </PopoverTrigger>
                                     <PopoverContent align="start" className="w-(--anchor-width) min-w-72 max-w-[calc(100vw-2rem)] border-[#E2E8F0] bg-white p-1 shadow-lg">
                                       {machineOptions.length === 0 ? (
                                         <div className="px-2 py-2 text-sm text-[#94A3B8]">Нет машин</div>
@@ -954,7 +968,10 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                       : (selectedMachineCount > 1 ? `Добавить ${selectedMachineCount}` : 'Добавить')}
                                   </Button>
                                   {isActiveEditor ? (
-                                    <Button type="button" variant="outline" onClick={() => setMachineForm(emptyMachineForm)}>
+                                    <Button type="button" variant="outline" onClick={() => {
+                                      setMachineForm(emptyMachineForm)
+                                      setMachineDropdownSectionId(null)
+                                    }}>
                                       Сброс
                                     </Button>
                                   ) : null}
