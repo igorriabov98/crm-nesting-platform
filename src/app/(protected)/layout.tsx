@@ -20,12 +20,12 @@ export default async function ProtectedLayout({
   const canAccessCurrentPath = await canCurrentUserAccessPath(permissions, pathname)
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#F4F6F9]">
+    <div className="fixed inset-0 flex overflow-hidden bg-[#F4F6F9]">
       <Sidebar user={currentUser} permissions={permissions} />
 
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header user={currentUser} permissions={permissions} />
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">
           {canAccessCurrentPath ? children : <AccessDenied />}
         </main>
       </div>
