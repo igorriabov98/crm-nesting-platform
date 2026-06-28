@@ -47,6 +47,7 @@ type FlatGanttRow = GanttGroupRow & {
   groupEnd: boolean
   groupRowCount: number
   machineIndex: number
+  productionMarkerRow: boolean
 }
 
 type WeldingLoadRow = {
@@ -267,8 +268,8 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
           </>
         ) : (
           <>
-            <span className="shrink-0 rounded-sm bg-[#70AD47]" style={{ width: GANTT_STAGE_DOT_SIZE, height: GANTT_STAGE_DOT_SIZE }} />
-            <span className="truncate">Материал СТ</span>
+            <span className="shrink-0 rounded-sm bg-[#16A34A]" style={{ width: GANTT_STAGE_DOT_SIZE, height: GANTT_STAGE_DOT_SIZE }} />
+            <span className="truncate" title="Материалы / снабжение">Снабжение</span>
           </>
         )}
       </div>
@@ -303,7 +304,7 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
             title={deadlineLabel ? `Желаемая отгрузка: ${deadlineLabel}` : undefined}
           />
         )}
-        {row.groupStart && plannedGroups.map((group) => {
+        {row.type === 'supply' && plannedGroups.map((group) => {
           const offset = dateOffset(group.date, rangeStart, dayWidth)
           if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
           const label = formatDesiredShippingDate(group.date)
@@ -321,7 +322,7 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
             />
           )
         })}
-        {row.groupStart && actualGroups.map((group) => {
+        {row.type === 'supply' && actualGroups.map((group) => {
           const offset = dateOffset(group.date, rangeStart, dayWidth)
           if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
           const label = formatDesiredShippingDate(group.date)
@@ -339,7 +340,7 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
             />
           )
         })}
-        {row.groupEnd && actualShippingOffset !== null && actualShippingOffset >= 0 && actualShippingOffset <= totalWidth && (
+        {row.productionMarkerRow && actualShippingOffset !== null && actualShippingOffset >= 0 && actualShippingOffset <= totalWidth && (
           <div
             className="absolute z-20 h-0 w-0 -translate-x-1/2 border-l-transparent border-r-transparent border-t-[#DC2626] drop-shadow-sm"
             style={{
@@ -446,23 +447,25 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
           stage,
         }))
 
-      if (filters.showSupply && machine.supply_deadlines.length > 0) {
+      const supplyItems = filters.showSupply ? machine.supply_deadlines : []
+      const hasMaterialTimeline =
+        machine.material_items.length > 0 ||
+        Boolean(machine.planned_material_date) ||
+        Boolean(machine.actual_material_date)
+
+      if (hasMaterialTimeline || supplyItems.length > 0) {
         rows.push({
           id: `${machine.id}:supply`,
           type: 'supply',
           machine,
-          items: machine.supply_deadlines,
+          items: supplyItems,
         })
       }
 
-      if (rows.length === 0 && machine.material_items.length > 0) {
-        rows.push({
-          id: `${machine.id}:materials`,
-          type: 'supply',
-          machine,
-          items: [],
-        })
-      }
+      const lastStageRowIndex = rows.reduce((lastIndex, row, index) => (
+        row.type === 'stage' ? index : lastIndex
+      ), -1)
+      const productionMarkerRowIndex = lastStageRowIndex >= 0 ? lastStageRowIndex : rows.length - 1
 
       rows.forEach((row, index) => {
         result.push({
@@ -471,6 +474,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
           groupEnd: index === rows.length - 1,
           groupRowCount: rows.length,
           machineIndex,
+          productionMarkerRow: index === productionMarkerRowIndex,
         })
       })
     }
