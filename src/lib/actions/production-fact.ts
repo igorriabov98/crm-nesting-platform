@@ -362,7 +362,35 @@ async function getTonnageFacts(admin: AdminClient, factoryId: string, factDate: 
   return (data || []) as ProductionTonnageFact[]
 }
 
-async function assertActiveSubsection(
+function getActiveFactSectionIds(sections: ProductionFactSection[]) {
+  const activeParents = sections
+    .filter((section) => !section.parent_id && section.is_active && !section.archived_at)
+    .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ru'))
+  const activeChildrenByParent = new Map<string, ProductionFactSection[]>()
+
+  for (const section of sections) {
+    if (!section.parent_id || !section.is_active || section.archived_at) continue
+    const parent = sections.find((candidate) => candidate.id === section.parent_id)
+    if (!parent?.is_active || parent.archived_at) continue
+    const list = activeChildrenByParent.get(section.parent_id) || []
+    list.push(section)
+    activeChildrenByParent.set(section.parent_id, list)
+  }
+
+  const ids = new Set<string>()
+  for (const parent of activeParents) {
+    const children = activeChildrenByParent.get(parent.id) || []
+    if (children.length > 0) {
+      for (const child of children) ids.add(child.id)
+    } else {
+      ids.add(parent.id)
+    }
+  }
+
+  return ids
+}
+
+async function assertActiveFactSection(
   admin: AdminClient,
   factoryId: string,
   sectionId: string,
@@ -374,27 +402,44 @@ async function assertActiveSubsection(
     .eq('id', sectionId)
     .maybeSingle()
 
-  if (error || !data) throw new Error(error?.message || 'Подучасток не найден')
+  if (error || !data) throw new Error(error?.message || 'Участок не найден')
 
   const section = data as ProductionFactSection
-  if (section.factory_id !== factoryId || !section.parent_id) {
-    throw new Error('Факт можно вводить только по подучастку выбранного завода')
+  const isExistingSection = section.id === options.allowArchivedSectionId
+  if (section.factory_id !== factoryId) {
+    throw new Error('Факт можно вводить только по участку выбранного завода')
   }
 
-  if (section.id !== options.allowArchivedSectionId && (!section.is_active || section.archived_at)) {
-    throw new Error('Архивный подучасток нельзя выбрать для новой записи')
+  if (!isExistingSection && (!section.is_active || section.archived_at)) {
+    throw new Error('Архивный участок нельзя выбрать для новой записи')
   }
 
-  const { data: parentRaw, error: parentError } = await looseDb(admin)
+  if (section.parent_id) {
+    const { data: parentRaw, error: parentError } = await looseDb(admin)
+      .from('production_fact_sections')
+      .select('id, is_active, archived_at')
+      .eq('id', section.parent_id)
+      .maybeSingle()
+
+    const parent = parentRaw as Pick<ProductionFactSection, 'id' | 'is_active' | 'archived_at'> | null
+    if (parentError || !parent) throw new Error(parentError?.message || 'Родительский участок не найден')
+    if (!isExistingSection && (!parent.is_active || parent.archived_at)) {
+      throw new Error('Архивный участок нельзя выбрать для новой записи')
+    }
+
+    return section
+  }
+
+  const { data: childRaw, error: childError } = await looseDb(admin)
     .from('production_fact_sections')
     .select('id, is_active, archived_at')
-    .eq('id', section.parent_id)
-    .maybeSingle()
+    .eq('parent_id', section.id)
 
-  const parent = parentRaw as Pick<ProductionFactSection, 'id' | 'is_active' | 'archived_at'> | null
-  if (parentError || !parent) throw new Error(parentError?.message || 'Родительский участок не найден')
-  if (section.id !== options.allowArchivedSectionId && (!parent.is_active || parent.archived_at)) {
-    throw new Error('Архивный участок нельзя выбрать для новой записи')
+  if (childError) throw childError
+  const activeChildren = ((childRaw || []) as Pick<ProductionFactSection, 'id' | 'is_active' | 'archived_at'>[])
+    .filter((child) => child.is_active && !child.archived_at)
+  if (!isExistingSection && activeChildren.length > 0) {
+    throw new Error('Факт по участку можно вводить только если у него нет активных подучастков')
   }
 
   return section
@@ -498,7 +543,7 @@ export async function getProductionFactWorkspaceData(input: {
 
   const machineFactRows = machineFacts.map((fact): ProductionFactMachineFactRow => {
     const section = sectionById.get(fact.section_id) || null
-    const parentSection = section?.parent_id ? sectionById.get(section.parent_id) || null : null
+    const parentSection = section ? (section.parent_id ? sectionById.get(section.parent_id) || null : section) : null
     return {
       ...fact,
       machine: machinesById.get(fact.machine_id) || null,
@@ -512,7 +557,7 @@ export async function getProductionFactWorkspaceData(input: {
 
   const tonnageFactRows = tonnageFacts.map((fact): ProductionFactTonnageFactRow => {
     const section = sectionById.get(fact.section_id) || null
-    const parentSection = section?.parent_id ? sectionById.get(section.parent_id) || null : null
+    const parentSection = section ? (section.parent_id ? sectionById.get(section.parent_id) || null : section) : null
     const previousTonnage = previousTonnageBySection[fact.section_id] || 0
     const tonnage = Number(fact.tonnage || 0)
     return {
@@ -712,7 +757,7 @@ export async function saveProductionMachineFact(input: {
     }
 
     await assertFactoryMachine(admin, input.factory_id, input.machine_id)
-    await assertActiveSubsection(admin, input.factory_id, input.section_id, {
+    await assertActiveFactSection(admin, input.factory_id, input.section_id, {
       allowArchivedSectionId: existing?.section_id === input.section_id ? input.section_id : null,
     })
 
@@ -795,15 +840,7 @@ export async function copyProductionMachineFactsFromPreviousDay(input: {
       getFactorySections(admin, input.factory_id),
     ])
 
-    const activeSections = new Set(
-      sections
-        .filter((section) => section.parent_id && section.is_active && !section.archived_at)
-        .filter((section) => {
-          const parent = sections.find((candidate) => candidate.id === section.parent_id)
-          return Boolean(parent?.is_active && !parent.archived_at)
-        })
-        .map((section) => section.id),
-    )
+    const activeSections = getActiveFactSectionIds(sections)
     const targetKeys = new Set(targetFacts.map((fact) => `${fact.shift}:${fact.machine_id}:${fact.section_id}`))
     const payload = sourceFacts
       .filter((fact) => activeSections.has(fact.section_id))
@@ -873,7 +910,7 @@ export async function saveProductionTonnageFact(input: {
       existing = (data || null) as ProductionTonnageFact | null
     }
 
-    await assertActiveSubsection(admin, input.factory_id, input.section_id, {
+    await assertActiveFactSection(admin, input.factory_id, input.section_id, {
       allowArchivedSectionId: existing?.section_id === input.section_id ? input.section_id : null,
     })
 

@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   Copy,
   Factory,
@@ -23,6 +24,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Table,
   TableBody,
@@ -155,7 +157,7 @@ function shiftLabel(shift: ProductionFactShift) {
 function createInitialTonnageDrafts(data: ProductionFactWorkspaceData) {
   const drafts: Record<string, { tonnage: string; comment: string }> = {}
   for (const section of data.sections) {
-    if (section.parent_id) drafts[section.id] = { tonnage: '', comment: '' }
+    drafts[section.id] = { tonnage: '', comment: '' }
   }
   for (const fact of data.tonnageFacts) {
     drafts[fact.section_id] = {
@@ -172,12 +174,36 @@ function isActiveSection(section: ProductionFactSection | null | undefined) {
 
 function SectionPath({ parent, section }: { parent: ProductionFactSection | null; section: ProductionFactSection | null }) {
   if (!section) return <span className="text-[#94A3B8]">Без участка</span>
+  const showParent = parent && parent.id !== section.id
   return (
     <span className="inline-flex min-w-0 flex-col">
       <span className="truncate font-medium text-[#111827]">{section.name}</span>
-      {parent ? <span className="truncate text-xs text-[#64748B]">{parent.name}</span> : null}
+      {showParent ? <span className="truncate text-xs text-[#64748B]">{parent.name}</span> : null}
     </span>
   )
+}
+
+function sectionEntryTitle(section: ProductionFactSection) {
+  return section.parent_id ? section.name : 'Весь участок'
+}
+
+function sectionEntrySubtitle(section: ProductionFactSection, parent: ProductionFactSection | null) {
+  if (section.parent_id) return parent?.name || 'Участок не выбран'
+  return 'Без подучастков'
+}
+
+function groupEntryCountLabel(sections: ProductionFactSection[]) {
+  if (sections.length === 1 && !sections[0]?.parent_id) return 'ввод по участку'
+  return `${sections.length} подучастков`
+}
+
+function machineSelectionLabel(options: ProductionFactMachineOption[], selectedIds: string[]) {
+  if (selectedIds.length === 0) return 'Выбрать машины'
+  const names = selectedIds
+    .map((id) => options.find((machine) => machine.id === id)?.name)
+    .filter(Boolean)
+  if (names.length === 1) return names[0] || 'Выбрано: 1'
+  return `Выбрано: ${selectedIds.length}`
 }
 
 function KpiCard({
@@ -247,16 +273,30 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
     return map
   }, [data.sections])
 
-  const activeSubsections = useMemo(
-    () => data.sections
-      .filter((section) => section.parent_id && isActiveSection(section) && isActiveSection(parentById.get(section.parent_id)))
-      .sort((a, b) => {
-        const parentA = parentById.get(a.parent_id || '')?.sort_order || 0
-        const parentB = parentById.get(b.parent_id || '')?.sort_order || 0
-        return parentA - parentB || a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ru')
-      }),
-    [data.sections, parentById],
-  )
+  const activeChildSectionsByParent = useMemo(() => {
+    const map = new Map<string, ProductionFactSection[]>()
+    for (const section of data.sections) {
+      if (!section.parent_id || !isActiveSection(section) || !isActiveSection(parentById.get(section.parent_id))) continue
+      const list = map.get(section.parent_id) || []
+      list.push(section)
+      map.set(section.parent_id, list)
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ru'))
+    }
+    return map
+  }, [data.sections, parentById])
+
+  const activeFactSections = useMemo(() => {
+    const sections: ProductionFactSection[] = []
+    for (const parent of parentSections) {
+      if (!isActiveSection(parent)) continue
+      const children = activeChildSectionsByParent.get(parent.id) || []
+      if (children.length > 0) sections.push(...children)
+      else sections.push(parent)
+    }
+    return sections
+  }, [activeChildSectionsByParent, parentSections])
 
   const machineOptions = useMemo(() => {
     const map = new Map<string, ProductionFactMachineOption>()
@@ -288,10 +328,10 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
 
   const machineEntryGroups = useMemo<MachineEntryGroup[]>(() => {
     const sectionMap = new Map<string, { section: ProductionFactSection; parent: ProductionFactSection | null }>()
-    for (const section of activeSubsections) {
+    for (const section of activeFactSections) {
       sectionMap.set(section.id, {
         section,
-        parent: parentById.get(section.parent_id || '') || null,
+        parent: section.parent_id ? parentById.get(section.parent_id) || null : section,
       })
     }
     for (const fact of data.machineFacts) {
@@ -299,7 +339,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
       if (!section) continue
       sectionMap.set(section.id, {
         section,
-        parent: fact.parentSection || parentById.get(section.parent_id || '') || null,
+        parent: fact.parentSection || (section.parent_id ? parentById.get(section.parent_id) || null : section),
       })
     }
 
@@ -321,18 +361,18 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
         if (a.parent && !b.parent) return -1
         return (a.parent?.sort_order || 0) - (b.parent?.sort_order || 0) || (a.parent?.name || '').localeCompare(b.parent?.name || '', 'ru')
       })
-  }, [activeSubsections, data.machineFacts, parentById, sectionsById])
+  }, [activeFactSections, data.machineFacts, parentById, sectionsById])
 
   const tonnageRows = useMemo<TonnageRow[]>(() => {
-    const activeIds = new Set(activeSubsections.map((section) => section.id))
+    const activeIds = new Set(activeFactSections.map((section) => section.id))
     const factsBySection = new Map(data.tonnageFacts.map((fact) => [fact.section_id, fact]))
-    const rows = activeSubsections.map((section) => {
+    const rows = activeFactSections.map((section) => {
       const fact = factsBySection.get(section.id) || null
       const previousTonnage = fact?.previousTonnage ?? data.previousTonnageBySection[section.id] ?? 0
       const currentTonnage = Number(fact?.tonnage || 0)
       return {
         section,
-        parentSection: parentById.get(section.parent_id || '') || null,
+        parentSection: section.parent_id ? parentById.get(section.parent_id) || null : section,
         fact,
         previousTonnage,
         deltaTonnage: currentTonnage - previousTonnage,
@@ -345,14 +385,14 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
       if (!section) continue
       rows.push({
         section,
-        parentSection: fact.parentSection || parentById.get(section.parent_id || '') || null,
+        parentSection: fact.parentSection || (section.parent_id ? parentById.get(section.parent_id) || null : section),
         fact,
         previousTonnage: fact.previousTonnage,
         deltaTonnage: fact.deltaTonnage,
       })
     }
     return rows
-  }, [activeSubsections, data.previousTonnageBySection, data.tonnageFacts, parentById, sectionsById])
+  }, [activeFactSections, data.previousTonnageBySection, data.tonnageFacts, parentById, sectionsById])
 
   const tonnageTotalsByParent = useMemo(() => {
     const map = new Map<string, { parent: ProductionFactSection | null; current: number; previous: number }>()
@@ -448,8 +488,8 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
         }
 
     const machineIds = Array.from(new Set(form.machine_ids)).filter(Boolean)
-    if (machineIds.length === 0 || !parentSectionId || !section.id) {
-      toast.error('Выберите машину, участок и подучасток')
+    if (machineIds.length === 0 || !section.id) {
+      toast.error('Выберите машину и участок')
       return
     }
 
@@ -559,7 +599,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
     setMachineForm({
       id: fact.id,
       machine_ids: [fact.machine_id],
-      parent_section_id: fact.parentSection?.id || fact.section?.parent_id || '',
+      parent_section_id: fact.parentSection?.id || fact.section?.parent_id || fact.section_id,
       section_id: fact.section_id,
       shift: fact.shift,
       comment: fact.comment || '',
@@ -749,7 +789,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                     {formatDateLong(data.selectedDate)}
                   </div>
                   <div className="mt-1 text-xs text-[#64748B]">
-                    {machineOptions.length} машин в месяце · {activeSubsections.length} активных подучастков · {data.machineFacts.length} записей за день
+                    {machineOptions.length} машин в месяце · {activeFactSections.length} строк ввода · {data.machineFacts.length} записей за день
                   </div>
                 </div>
                 <Button type="button" variant="outline" onClick={handleCopyYesterday} disabled={isPending || !data.canEditSelectedDate || !data.selectedFactoryId}>
@@ -760,7 +800,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
 
               {machineEntryGroups.length === 0 ? (
                 <div className="px-4 py-10 text-center text-sm text-[#64748B]">
-                  Нет активных подучастков для ввода факта.
+                  Нет активных участков для ввода факта.
                 </div>
               ) : (
                 <div className="divide-y divide-[#E2E8F0]">
@@ -768,14 +808,16 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                     <div key={group.parent?.id || 'without-section'}>
                       <div className="flex flex-wrap items-center justify-between gap-2 bg-[#F8FAFC] px-4 py-2">
                         <div className="text-sm font-semibold text-[#12315F]">{group.parent?.name || 'Без участка'}</div>
-                        <div className="text-xs text-[#64748B]">{group.sections.length} подучастков</div>
+                        <div className="text-xs text-[#64748B]">{groupEntryCountLabel(group.sections)}</div>
                       </div>
                       <div className="divide-y divide-[#E2E8F0]">
                         {group.sections.map((section) => {
                           const facts = machineFactsBySection.get(section.id) || []
                           const isActiveEditor = machineForm.section_id === section.id
                           const canEditRow = data.canEditSelectedDate && Boolean(data.selectedFactoryId)
-                          const selectedMachineCount = isActiveEditor ? machineForm.machine_ids.length : 0
+                          const selectedMachineIds = isActiveEditor ? machineForm.machine_ids : []
+                          const selectedMachineCount = selectedMachineIds.length
+                          const selectedMachineText = machineSelectionLabel(machineOptions, selectedMachineIds)
                           return (
                             <div
                               key={section.id}
@@ -785,9 +827,9 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                               )}
                             >
                               <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold text-[#111827]">{section.name}</div>
+                                <div className="truncate text-sm font-semibold text-[#111827]">{sectionEntryTitle(section)}</div>
                                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#64748B]">
-                                  <span>{group.parent?.name || 'Участок не выбран'}</span>
+                                  <span>{sectionEntrySubtitle(section, group.parent)}</span>
                                   {!isActiveSection(section) ? <Badge variant="outline">Архив</Badge> : null}
                                 </div>
                               </div>
@@ -822,46 +864,62 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                     <span>Машины</span>
                                     <span className="text-xs font-normal text-[#64748B]">{selectedMachineCount} выбрано</span>
                                   </div>
-                                  <div
-                                    className={cn(
-                                      'max-h-32 overflow-y-auto rounded-md border border-input bg-white p-1 shadow-sm',
-                                      (!canEditRow || machineOptions.length === 0) && 'opacity-50',
-                                    )}
-                                    aria-label={`Машины для ${section.name}`}
-                                  >
-                                    {machineOptions.length === 0 ? (
-                                      <div className="px-2 py-2 text-sm text-[#94A3B8]">Нет машин</div>
-                                    ) : machineOptions.map((machine) => {
-                                      const checked = isActiveEditor && machineForm.machine_ids.includes(machine.id)
-                                      return (
-                                        <button
-                                          key={machine.id}
+                                  <Popover>
+                                    <PopoverTrigger
+                                      render={
+                                        <Button
                                           type="button"
-                                          role="checkbox"
-                                          aria-checked={checked}
+                                          variant="outline"
+                                          disabled={!canEditRow || machineOptions.length === 0}
+                                          aria-label={`Выбрать машины для ${section.name}`}
                                           className={cn(
-                                            'flex min-h-8 w-full items-center gap-2 rounded px-2 py-1 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF] disabled:cursor-not-allowed disabled:opacity-60',
-                                            checked && 'bg-[#EFF6FF] text-[#12315F]',
+                                            'h-9 w-full justify-between bg-white px-3 text-left font-normal text-[#1B3A6B] hover:bg-[#F8FAFC]',
+                                            selectedMachineCount === 0 && 'text-[#94A3B8]',
                                           )}
-                                          onClick={() => toggleMachineForSection(section, group.parent, machine.id, !checked)}
-                                          disabled={!canEditRow}
                                         >
-                                          <span
-                                            className={cn(
-                                              'flex size-4 shrink-0 items-center justify-center rounded border border-[#CBD5E1] bg-white text-white transition-colors',
-                                              checked && 'border-[#1E40AF] bg-[#1E40AF]',
-                                            )}
-                                            aria-hidden="true"
-                                          >
-                                            {checked ? <Check className="size-3" /> : null}
-                                          </span>
-                                          <span className="min-w-0 flex-1 truncate">
-                                            {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
-                                          </span>
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
+                                          <span className="min-w-0 flex-1 truncate">{selectedMachineText}</span>
+                                          <ChevronDown className="ml-2 size-4 shrink-0 text-[#64748B]" />
+                                        </Button>
+                                      }
+                                    />
+                                    <PopoverContent align="start" className="w-(--anchor-width) min-w-72 max-w-[calc(100vw-2rem)] border-[#E2E8F0] bg-white p-1 shadow-lg">
+                                      {machineOptions.length === 0 ? (
+                                        <div className="px-2 py-2 text-sm text-[#94A3B8]">Нет машин</div>
+                                      ) : (
+                                        <div className="max-h-64 overflow-y-auto">
+                                          {machineOptions.map((machine) => {
+                                            const checked = selectedMachineIds.includes(machine.id)
+                                            return (
+                                              <button
+                                                key={machine.id}
+                                                type="button"
+                                                role="checkbox"
+                                                aria-checked={checked}
+                                                className={cn(
+                                                  'flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF]',
+                                                  checked && 'bg-[#EFF6FF] text-[#12315F]',
+                                                )}
+                                                onClick={() => toggleMachineForSection(section, group.parent, machine.id, !checked)}
+                                              >
+                                                <span
+                                                  className={cn(
+                                                    'flex size-4 shrink-0 items-center justify-center rounded border border-[#CBD5E1] bg-white text-white transition-colors',
+                                                    checked && 'border-[#1E40AF] bg-[#1E40AF]',
+                                                  )}
+                                                  aria-hidden="true"
+                                                >
+                                                  {checked ? <Check className="size-3" /> : null}
+                                                </span>
+                                                <span className="min-w-0 flex-1 truncate">
+                                                  {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
+                                                </span>
+                                              </button>
+                                            )
+                                          })}
+                                        </div>
+                                      )}
+                                    </PopoverContent>
+                                  </Popover>
                                 </div>
 
                                 <label className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
@@ -970,7 +1028,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
               <TableBody>
                 {tonnageRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="py-10 text-center text-[#64748B]">Нет подучастков для ввода тоннажа</TableCell>
+                    <TableCell colSpan={7} className="py-10 text-center text-[#64748B]">Нет участков для ввода тоннажа</TableCell>
                   </TableRow>
                 ) : tonnageRows.map((row) => {
                   const draft = tonnageDrafts[row.section.id] || { tonnage: '', comment: '' }
