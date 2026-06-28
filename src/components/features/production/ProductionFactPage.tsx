@@ -725,7 +725,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                             <div
                               key={section.id}
                               className={cn(
-                                'grid gap-3 px-4 py-3 transition-colors xl:grid-cols-[minmax(170px,0.9fr)_minmax(220px,1.1fr)_minmax(210px,1fr)_120px_minmax(170px,1fr)_auto] xl:items-end',
+                                'grid gap-3 px-4 py-3 transition-colors xl:grid-cols-[minmax(150px,0.7fr)_minmax(180px,0.8fr)_minmax(0,2.2fr)] xl:items-start',
                                 isActiveEditor ? 'bg-[#EFF6FF]' : 'bg-white hover:bg-[#F8FAFC]',
                               )}
                             >
@@ -761,58 +761,60 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                                 )}
                               </div>
 
-                              <label className="space-y-1 text-sm font-medium text-[#334155]">
-                                <span>Машина</span>
-                                <select
-                                  className={selectClassName}
-                                  value={isActiveEditor ? machineForm.machine_id : ''}
-                                  onChange={(event) => updateMachineDraftForSection(section, group.parent, { machine_id: event.target.value })}
-                                  disabled={!canEditRow || machineOptions.length === 0}
-                                  aria-label={`Машина для ${section.name}`}
-                                >
-                                  <option value="">Выбрать</option>
-                                  {machineOptions.map((machine) => (
-                                    <option key={machine.id} value={machine.id}>
-                                      {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
+                              <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(180px,1fr)_120px] xl:grid-cols-[minmax(180px,1fr)_120px_minmax(160px,1fr)_auto] xl:items-end">
+                                <label className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
+                                  <span>Машина</span>
+                                  <select
+                                    className={selectClassName}
+                                    value={isActiveEditor ? machineForm.machine_id : ''}
+                                    onChange={(event) => updateMachineDraftForSection(section, group.parent, { machine_id: event.target.value })}
+                                    disabled={!canEditRow || machineOptions.length === 0}
+                                    aria-label={`Машина для ${section.name}`}
+                                  >
+                                    <option value="">Выбрать</option>
+                                    {machineOptions.map((machine) => (
+                                      <option key={machine.id} value={machine.id}>
+                                        {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
 
-                              <label className="space-y-1 text-sm font-medium text-[#334155]">
-                                <span>Смена</span>
-                                <select
-                                  className={selectClassName}
-                                  value={isActiveEditor ? machineForm.shift : 'day'}
-                                  onChange={(event) => updateMachineDraftForSection(section, group.parent, { shift: event.target.value as ProductionFactShift })}
-                                  disabled={!canEditRow}
-                                  aria-label={`Смена для ${section.name}`}
-                                >
-                                  <option value="day">День</option>
-                                  <option value="night">Ночь</option>
-                                </select>
-                              </label>
+                                <label className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
+                                  <span>Смена</span>
+                                  <select
+                                    className={selectClassName}
+                                    value={isActiveEditor ? machineForm.shift : 'day'}
+                                    onChange={(event) => updateMachineDraftForSection(section, group.parent, { shift: event.target.value as ProductionFactShift })}
+                                    disabled={!canEditRow}
+                                    aria-label={`Смена для ${section.name}`}
+                                  >
+                                    <option value="day">День</option>
+                                    <option value="night">Ночь</option>
+                                  </select>
+                                </label>
 
-                              <label className="space-y-1 text-sm font-medium text-[#334155]">
-                                <span>Комментарий</span>
-                                <Input
-                                  value={isActiveEditor ? machineForm.comment : ''}
-                                  onChange={(event) => updateMachineDraftForSection(section, group.parent, { comment: event.target.value })}
-                                  disabled={!canEditRow}
-                                  aria-label={`Комментарий для ${section.name}`}
-                                />
-                              </label>
+                                <label className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
+                                  <span>Комментарий</span>
+                                  <Input
+                                    value={isActiveEditor ? machineForm.comment : ''}
+                                    onChange={(event) => updateMachineDraftForSection(section, group.parent, { comment: event.target.value })}
+                                    disabled={!canEditRow}
+                                    aria-label={`Комментарий для ${section.name}`}
+                                  />
+                                </label>
 
-                              <div className="flex gap-2">
-                                <Button type="button" onClick={() => handleMachineSave(section, group.parent)} disabled={isPending || !canEditRow}>
-                                  <Save className="size-4" />
-                                  {isActiveEditor && machineForm.id ? 'Обновить' : 'Добавить'}
-                                </Button>
-                                {isActiveEditor ? (
-                                  <Button type="button" variant="outline" onClick={() => setMachineForm(emptyMachineForm)}>
-                                    Сброс
+                                <div className="flex flex-wrap gap-2 md:col-span-2 xl:col-span-1 xl:flex-nowrap xl:justify-end">
+                                  <Button type="button" className="min-w-28" onClick={() => handleMachineSave(section, group.parent)} disabled={isPending || !canEditRow}>
+                                    <Save className="size-4" />
+                                    {isActiveEditor && machineForm.id ? 'Обновить' : 'Добавить'}
                                   </Button>
-                                ) : null}
+                                  {isActiveEditor ? (
+                                    <Button type="button" variant="outline" onClick={() => setMachineForm(emptyMachineForm)}>
+                                      Сброс
+                                    </Button>
+                                  ) : null}
+                                </div>
                               </div>
                             </div>
                           )
