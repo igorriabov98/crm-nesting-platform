@@ -658,7 +658,7 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
                 Выбранная дата вне месяца. Нажмите день ниже, чтобы открыть ввод за этот день.
               </div>
             ) : null}
-            <div className="mt-3 grid gap-2 sm:grid-cols-4 lg:grid-cols-1">
+            <div className="mt-3 grid max-h-[360px] gap-2 overflow-y-auto overscroll-contain pr-1 sm:grid-cols-4 lg:max-h-[420px] lg:grid-cols-1">
               {monthDays.map((day) => {
                 const isSelected = day === data.selectedDate
                 const isToday = day === todayDate
