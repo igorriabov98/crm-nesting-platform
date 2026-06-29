@@ -142,6 +142,7 @@ export const machinePackingGroupSchema = z.object({
 
 export const machinePackingSettingsSchema = z.object({
   delivery_basis_type: z.enum(MACHINE_DELIVERY_BASIS_VALUES),
+  packing_boxes_count: z.coerce.number().int().min(0).max(999).default(0),
   groups: z.array(machinePackingGroupSchema).default([]),
 })
 

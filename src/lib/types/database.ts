@@ -407,6 +407,7 @@ export type Database = {
           specification_date: string | null
           delivery_basis_type: 'own_delivery' | 'partner_truck' | null
           freight_cost: number | null
+          packing_boxes_count: number
           packing_gross_weight_kg: number | null
           packing_net_weight_kg: number | null
           packing_summary_en: string | null
@@ -444,6 +445,7 @@ export type Database = {
           specification_date?: string | null
           delivery_basis_type?: 'own_delivery' | 'partner_truck' | null
           freight_cost?: number | null
+          packing_boxes_count?: number
           packing_gross_weight_kg?: number | null
           packing_net_weight_kg?: number | null
           packing_summary_en?: string | null
@@ -481,6 +483,7 @@ export type Database = {
           specification_date?: string | null
           delivery_basis_type?: 'own_delivery' | 'partner_truck' | null
           freight_cost?: number | null
+          packing_boxes_count?: number
           packing_gross_weight_kg?: number | null
           packing_net_weight_kg?: number | null
           packing_summary_en?: string | null

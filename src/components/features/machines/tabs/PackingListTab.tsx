@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/table'
 import { updateMachinePackingSettings } from '@/app/(protected)/sales-plan/actions'
 import { MACHINE_DELIVERY_BASIS_OPTIONS, MACHINE_DELIVERY_BASIS_VALUES, type MachineDeliveryBasisType } from '@/lib/constants/machine-delivery-basis'
+import { documentGrossWeight, documentLineNetWeight, packingSummaryFromGroups, totalPackingPlaces } from '@/lib/packing-summary'
 import { cn } from '@/lib/utils'
 import type { MachineDetails } from '@/lib/types'
 
@@ -94,36 +95,6 @@ function formatWeight(value: number) {
   return safeValue.toFixed(3).replace(/\.?0+$/, '')
 }
 
-function pluralizeEn(type: string, count: number) {
-  if (!type) return count === 1 ? 'place' : 'places'
-  if (count === 1 || type.endsWith('s')) return type
-  if (type.endsWith('y')) return `${type.slice(0, -1)}ies`
-  return `${type}s`
-}
-
-function joinSummaryParts(parts: string[], conjunction: string) {
-  if (parts.length <= 1) return parts.join('')
-  return `${parts.slice(0, -1).join(', ')} ${conjunction} ${parts[parts.length - 1]}`
-}
-
-function packingSummaryFromGroups(groups: ParsedDraftGroup[], language: 'en' | 'ua') {
-  const totals = new Map<string, number>()
-  for (const group of groups) {
-    if (!Number.isFinite(group.places) || group.places <= 0) continue
-    const type = language === 'en'
-      ? group.packing_type_en
-      : group.packing_type_ua || group.packing_type_en
-    if (!type) continue
-    totals.set(type, (totals.get(type) || 0) + group.places)
-  }
-
-  const parts = Array.from(totals.entries()).map(([type, count]) => (
-    language === 'en' ? `${count} ${pluralizeEn(type, count)}` : `${count} ${type}`
-  ))
-
-  return joinSummaryParts(parts, language === 'en' ? 'and' : 'та')
-}
-
 function groupGoodsByHsCode(items: MachineGoodsItem[]): GoodsGroup[] {
   const groups: GoodsGroup[] = []
 
@@ -174,18 +145,20 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
   const [deliveryBasisType, setDeliveryBasisType] = useState<MachineDeliveryBasisType | ''>(
     () => machine.delivery_basis_type || '',
   )
+  const [boxesCount, setBoxesCount] = useState(() => String(machine.packing_boxes_count || 0))
   const calculated = useMemo(() => {
     const netWeight = goods.reduce(
-      (sum, item) => sum + Number(item.weight || 0) * Number(item.quantity || 0),
+      (sum, item) => sum + documentLineNetWeight(Number(item.weight || 0), Number(item.quantity || 0)),
       0,
     )
-    const grossWeight = netWeight * 1.05
+    const grossWeight = documentGrossWeight(netWeight)
     const parsedGroups = parseDraftGroups(groups).filter(
       (group) => group.packing_type_en && Number.isFinite(group.places) && group.places > 0,
     )
-    const totalPlaces = parsedGroups.reduce((sum, group) => sum + group.places, 0)
-    const summaryEn = packingSummaryFromGroups(parsedGroups, 'en') || '-'
-    const summaryUa = packingSummaryFromGroups(parsedGroups, 'ua') || summaryEn
+    const safeBoxesCount = Math.max(0, Math.trunc(Number(boxesCount) || 0))
+    const totalPlaces = totalPackingPlaces(parsedGroups)
+    const summaryEn = packingSummaryFromGroups(parsedGroups, 'en', safeBoxesCount) || '-'
+    const summaryUa = packingSummaryFromGroups(parsedGroups, 'ua', safeBoxesCount) || summaryEn
 
     return {
       netWeight,
@@ -194,7 +167,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
       summaryEn,
       summaryUa,
     }
-  }, [goods, groups])
+  }, [boxesCount, goods, groups])
 
   const updateGroup = (index: number, patch: Partial<DraftGroup>) => {
     setGroups((current) => current.map((group, groupIndex) => groupIndex === index ? { ...group, ...patch } : group))
@@ -228,6 +201,11 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
     }
 
     const parsedGroups = parseDraftGroups(groups)
+    const parsedBoxesCount = Number(boxesCount)
+    if (!Number.isInteger(parsedBoxesCount) || parsedBoxesCount < 0 || parsedBoxesCount > 999) {
+      toast.error('Количество коробок должно быть от 0 до 999')
+      return
+    }
 
     for (const group of parsedGroups) {
       if (!Number.isInteger(group.start_item_number) || group.start_item_number < 1) {
@@ -255,6 +233,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
     startTransition(async () => {
       const result = await updateMachinePackingSettings(machine.id, {
         delivery_basis_type: deliveryBasisType,
+        packing_boxes_count: parsedBoxesCount,
         groups: parsedGroups,
       })
 
@@ -318,13 +297,29 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
         </div>
       </div>
 
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <label htmlFor="packing-boxes-count" className="mb-2 block text-sm font-semibold text-slate-950">
+          Количество коробок
+        </label>
+        <Input
+          id="packing-boxes-count"
+          value={boxesCount}
+          onChange={(event) => setBoxesCount(event.target.value)}
+          disabled={!canEdit || isPending}
+          inputMode="numeric"
+          min={0}
+          max={999}
+          className="max-w-xs"
+        />
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-medium uppercase text-[#6B7280]">Net weight, kg</div>
+          <div className="text-xs font-medium uppercase text-[#6B7280]">Net weight, kg (+5%)</div>
           <div className="mt-1 text-lg font-semibold text-[#1B3A6B]">{formatWeight(calculated.netWeight)}</div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-medium uppercase text-[#6B7280]">Gross weight, kg (+5%)</div>
+          <div className="text-xs font-medium uppercase text-[#6B7280]">Gross weight, kg (+200)</div>
           <div className="mt-1 text-lg font-semibold text-[#1B3A6B]">{formatWeight(calculated.grossWeight)}</div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -437,7 +432,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
               <TableHead className="w-14 text-center text-[#6B7280]">№</TableHead>
               <TableHead className="text-[#6B7280]">Товар</TableHead>
               <TableHead className="w-28 text-center text-[#6B7280]">Q-ty</TableHead>
-              <TableHead className="w-32 text-right text-[#6B7280]">Net, kg</TableHead>
+              <TableHead className="w-32 text-right text-[#6B7280]">Net, kg (+5%)</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -456,7 +451,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
                       <div className="text-sm text-[#6B7280]">{item.product_name_uk || item.product_name}</div>
                     </TableCell>
                     <TableCell className="text-center">{item.quantity}</TableCell>
-                    <TableCell className="text-right">{(Number(item.weight) * Number(item.quantity)).toLocaleString()}</TableCell>
+                    <TableCell className="text-right">{formatWeight(documentLineNetWeight(Number(item.weight || 0), Number(item.quantity || 0)))}</TableCell>
                   </TableRow>
                 ))}
               </React.Fragment>

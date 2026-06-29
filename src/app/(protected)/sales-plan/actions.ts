@@ -1013,6 +1013,7 @@ export async function updateMachinePackingSettings(machineId: string, data: Mach
       .from('machines')
       .update({
         delivery_basis_type: parsed.delivery_basis_type,
+        packing_boxes_count: parsed.packing_boxes_count,
       } satisfies MachineUpdate)
       .eq('id', parsedMachineId)
 

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { getMachineDeliveryBasisOption } from '@/lib/constants/machine-delivery-basis'
+import { documentGrossWeight, documentLineNetWeight, documentUnitWeight, totalPackingPlaces } from '@/lib/packing-summary'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import type { Database } from '@/lib/types/database'
@@ -13,6 +14,7 @@ type MachineRow = Pick<
   | 'specification_number'
   | 'specification_date'
   | 'delivery_basis_type'
+  | 'packing_boxes_count'
 >
 type ContractRow = Pick<Database['public']['Tables']['contracts']['Row'], 'number' | 'date'>
 type ClientRow = Pick<
@@ -119,6 +121,7 @@ export type DocumentData = {
     name: string
     specification_number: string
     specification_date: string
+    packing_boxes_count: number
   }
   contract: {
     number: string
@@ -263,6 +266,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       specification_number,
       specification_date,
       delivery_basis_type,
+      packing_boxes_count,
       client:clients(
         name,
         address,
@@ -357,8 +361,9 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
   const items: DocumentItem[] = goodsRows.map((item) => {
     const quantity = toNumber(item.quantity)
     const price = toNumber(item.price)
-    const weight = toNumber(item.weight)
-    const netWeight = weight * quantity
+    const sourceWeight = toNumber(item.weight)
+    const weight = documentUnitWeight(sourceWeight)
+    const netWeight = documentLineNetWeight(sourceWeight, quantity)
 
     return {
       sort_order: item.sort_order || 0,
@@ -407,7 +412,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
   const goodsTotal = items.reduce((sum, item) => sum + item.total, 0)
   const expensesTotal = expenses.reduce((sum, expense) => sum + expense.amount, 0)
   const totalNetWeight = items.reduce((sum, item) => sum + item.net_weight, 0)
-  const totalPlaces = packingGroups.reduce((sum, group) => sum + group.places, 0)
+  const totalPlaces = totalPackingPlaces(packingGroups)
   const [signatureUrl, stampUrl, clientSignatureUrl, clientStampUrl] = await Promise.all([
     createSignedImageUrl(adminSupabase, company.signature_image_path),
     createSignedImageUrl(adminSupabase, company.stamp_image_path),
@@ -421,6 +426,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       name: clean(machine.name),
       specification_number: clean(machine.specification_number),
       specification_date: clean(machine.specification_date),
+      packing_boxes_count: Math.max(0, Math.trunc(toNumber(machine.packing_boxes_count))),
     },
     contract: firstOrNull(machine.contract)
       ? {
@@ -464,7 +470,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       expenses_total: expensesTotal,
       grand_total: goodsTotal + expensesTotal,
       total_net_weight: totalNetWeight,
-      total_gross_weight: totalNetWeight * 1.05,
+      total_gross_weight: documentGrossWeight(totalNetWeight),
       total_places: totalPlaces,
     },
     signatureUrl,

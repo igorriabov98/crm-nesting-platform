@@ -1,6 +1,7 @@
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
 import type { ReactNode } from 'react'
 import type { DocumentData, DocumentItem, DocumentPackingGroup } from '@/lib/actions/document-generation'
+import { documentGrossWeight, packingSummaryFromGroups, totalPackingPlaces } from '@/lib/packing-summary'
 import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
 import { formatDate, formatQuantity, formatWeight, groupItemsByHsCode } from './format'
@@ -13,12 +14,12 @@ const TOP_RIGHT_WIDTH = TABLE_WIDTH - TOP_LEFT_WIDTH
 const ITEM_ROW_HEIGHT = 22.6
 const COLS = {
   no: 28,
-  item: 224.8,
+  item: 219.1,
   measurement: 49,
   quantity: 34,
   netWeight: 42.7,
-  packingType: 53,
-  places: 59.3,
+  packingType: 68,
+  places: 50,
 }
 const LEFT_TABLE_WIDTH = COLS.no + COLS.item + COLS.measurement + COLS.quantity + COLS.netWeight
 
@@ -77,10 +78,13 @@ const styles = StyleSheet.create({
     minHeight: 56,
   },
   topText: {
+    width: '100%',
     fontSize: 5.7,
     lineHeight: 1.12,
+    textAlign: 'center',
   },
   topTextBold: {
+    width: '100%',
     fontSize: 5.7,
     lineHeight: 1.12,
     fontWeight: 'bold',
@@ -91,7 +95,7 @@ const styles = StyleSheet.create({
   deliveryPart: {
     flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
+    alignItems: 'stretch',
     paddingLeft: 3,
     paddingRight: 3,
   },
@@ -135,21 +139,23 @@ const styles = StyleSheet.create({
   },
   centerCell: {
     justifyContent: 'center',
-    alignItems: 'center',
+    alignItems: 'stretch',
     textAlign: 'center',
   },
   headerCell: {
     justifyContent: 'center',
-    alignItems: 'center',
+    alignItems: 'stretch',
     textAlign: 'center',
   },
   headerText: {
+    width: '100%',
     fontSize: 5.6,
     fontWeight: 'bold',
     lineHeight: 1.08,
     textAlign: 'center',
   },
   hsText: {
+    width: '100%',
     fontSize: 6.3,
     fontWeight: 'bold',
     textAlign: 'center',
@@ -167,17 +173,20 @@ const styles = StyleSheet.create({
     lineHeight: 1.08,
   },
   valueText: {
+    width: '100%',
     fontSize: 5.7,
     lineHeight: 1.08,
     textAlign: 'center',
   },
   valueTextBold: {
+    width: '100%',
     fontSize: 5.7,
     lineHeight: 1.08,
     textAlign: 'center',
     fontWeight: 'bold',
   },
   packingText: {
+    width: '100%',
     fontSize: 5.6,
     lineHeight: 1.08,
     textAlign: 'center',
@@ -305,36 +314,6 @@ function addressLines(
   ]
 }
 
-function pluralizeEn(type: string, count: number) {
-  if (!type) return count === 1 ? 'place' : 'places'
-  if (count === 1 || type.endsWith('s')) return type
-  if (type.endsWith('y')) return `${type.slice(0, -1)}ies`
-  return `${type}s`
-}
-
-function joinSummaryParts(parts: string[], conjunction: string) {
-  if (parts.length <= 1) return parts.join('')
-  return `${parts.slice(0, -1).join(', ')} ${conjunction} ${parts[parts.length - 1]}`
-}
-
-function packingSummaryFromGroups(groups: DocumentPackingGroup[], language: 'en' | 'ua') {
-  const totals = new Map<string, number>()
-  for (const group of groups) {
-    const type = language === 'en'
-      ? group.packing_type_en
-      : group.packing_type_ua || group.packing_type_en
-    if (!type) continue
-    totals.set(type, (totals.get(type) || 0) + group.places)
-  }
-
-  const parts = Array.from(totals.entries()).map(([type, count]) => {
-    if (language === 'en') return `${count} ${pluralizeEn(type, count)}`
-    return `${count} ${type}`
-  })
-
-  return joinSummaryParts(parts, language === 'en' ? 'and' : 'та')
-}
-
 function findPackingGroup(itemNumber: number, groups: DocumentPackingGroup[]) {
   return groups.find((group) => itemNumber >= group.start_item_number && itemNumber <= group.end_item_number) || null
 }
@@ -456,11 +435,11 @@ export function PackingListDocument({ data }: { data: DocumentData }) {
   const deliveryBasisEn = data.company.delivery_basis_en
   const deliveryBasisUa = data.company.delivery_basis_ua
   const packingGroups = data.packingGroups
-  const totalPlaces = packingGroups.reduce((sum, group) => sum + group.places, 0)
-  const summaryEn = packingSummaryFromGroups(packingGroups, 'en') || '-'
-  const summaryUa = packingSummaryFromGroups(packingGroups, 'ua') || summaryEn
+  const totalPlaces = totalPackingPlaces(packingGroups)
+  const summaryEn = packingSummaryFromGroups(packingGroups, 'en', data.machine.packing_boxes_count) || '-'
+  const summaryUa = packingSummaryFromGroups(packingGroups, 'ua', data.machine.packing_boxes_count) || summaryEn
   const netWeight = data.items.reduce((sum, item) => sum + item.net_weight, 0)
-  const grossWeight = netWeight * 1.05
+  const grossWeight = documentGrossWeight(netWeight)
   const sellerName = formatSellerName(data.company.name_en) || data.company.name_en
   const sellerLines = addressLines(data.company.address_en)
   const buyerLines = addressLines(data.client.address, {
