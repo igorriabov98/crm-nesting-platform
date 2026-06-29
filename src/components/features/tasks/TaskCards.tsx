@@ -38,7 +38,11 @@ import {
   declineTaskDelegation,
   delegateTask,
   getDelegationCandidates,
+  getProductionCuttingRollbackPreview,
+  applyProductionCuttingRollbackTask,
+  keepProductionCuttingRollbackTask,
   updateTaskStatus,
+  type CuttingRollbackPreview,
   type TaskDelegationCandidate,
   type TaskWithRelations,
 } from '@/lib/actions/tasks'
@@ -67,6 +71,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   consumable_request_review: 'Заявка на расходники',
   consumable_request_shortage: 'Недопоставка расходника',
   supply_material_receipt_shortage: 'Недовес материала',
+  production_cutting_rollback_review: 'Откат заготовки',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {
@@ -208,9 +213,14 @@ function isSupplyReceiptTask(taskType: TaskType) {
   return taskType === 'supply_material_receipt_shortage'
 }
 
+function isCuttingRollbackTask(taskType: TaskType) {
+  return taskType === 'production_cutting_rollback_review'
+}
+
 function getTaskTypeBadgeClass(taskType: TaskType) {
   if (isConsumableTask(taskType)) return 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
   if (isSupplyReceiptTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
+  if (isCuttingRollbackTask(taskType)) return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
@@ -256,6 +266,10 @@ export function TaskCards({
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [reasonTask, setReasonTask] = useState<TaskWithRelations | null>(null)
   const [deliverablesTask, setDeliverablesTask] = useState<TaskWithRelations | null>(null)
+  const [cuttingRollbackTask, setCuttingRollbackTask] = useState<TaskWithRelations | null>(null)
+  const [cuttingRollbackPreview, setCuttingRollbackPreview] = useState<CuttingRollbackPreview | null>(null)
+  const [cuttingRollbackComment, setCuttingRollbackComment] = useState('')
+  const [cuttingRollbackLoading, setCuttingRollbackLoading] = useState(false)
   const [delegationTask, setDelegationTask] = useState<TaskWithRelations | null>(null)
   const [declineTask, setDeclineTask] = useState<TaskWithRelations | null>(null)
   const [delegationCandidates, setDelegationCandidates] = useState<TaskDelegationCandidate[]>([])
@@ -288,6 +302,59 @@ export function TaskCards({
       router.refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось обновить задачу')
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  const openCuttingRollbackDialog = async (task: TaskWithRelations) => {
+    setCuttingRollbackTask(task)
+    setCuttingRollbackPreview(null)
+    setCuttingRollbackComment('')
+    setCuttingRollbackLoading(true)
+    try {
+      const result = await getProductionCuttingRollbackPreview(task.id)
+      if (!result.success || !result.data) throw new Error(result.error || 'Не удалось загрузить preview отката')
+      setCuttingRollbackPreview(result.data)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось загрузить preview отката')
+      setCuttingRollbackTask(null)
+    } finally {
+      setCuttingRollbackLoading(false)
+    }
+  }
+
+  const handleApplyCuttingRollback = async () => {
+    if (!cuttingRollbackTask) return
+    setUpdatingId(cuttingRollbackTask.id)
+    try {
+      const result = await applyProductionCuttingRollbackTask(cuttingRollbackTask.id, cuttingRollbackComment)
+      if (!result.success) throw new Error(result.error || 'Не удалось выполнить откат')
+      toast.success('Откат выполнен')
+      setCuttingRollbackTask(null)
+      setCuttingRollbackPreview(null)
+      setCuttingRollbackComment('')
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось выполнить откат')
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  const handleKeepCuttingRollback = async () => {
+    if (!cuttingRollbackTask) return
+    setUpdatingId(cuttingRollbackTask.id)
+    try {
+      const result = await keepProductionCuttingRollbackTask(cuttingRollbackTask.id, cuttingRollbackComment)
+      if (!result.success) throw new Error(result.error || 'Не удалось закрыть задачу')
+      toast.success('Задача закрыта без отката')
+      setCuttingRollbackTask(null)
+      setCuttingRollbackPreview(null)
+      setCuttingRollbackComment('')
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось закрыть задачу')
     } finally {
       setUpdatingId(null)
     }
@@ -572,13 +639,19 @@ export function TaskCards({
 
     return (
       <div className={groupClass}>
-        <Button
-          size="sm"
-          variant={task.status === 'pending' ? 'outline' : 'default'}
-          onClick={() => handleStatusChange(task.id, nextStatus)}
-          disabled={updatingId === task.id}
-          className={buttonClass}
-        >
+          <Button
+            size="sm"
+            variant={task.status === 'pending' ? 'outline' : 'default'}
+            onClick={() => {
+              if (nextStatus === 'in_progress' && isCuttingRollbackTask(task.task_type)) {
+                openCuttingRollbackDialog(task)
+                return
+              }
+              handleStatusChange(task.id, nextStatus)
+            }}
+            disabled={updatingId === task.id}
+            className={buttonClass}
+          >
           {actionLabel}
         </Button>
         {task.task_type === 'technologist_request' && (
@@ -832,6 +905,125 @@ export function TaskCards({
     </Dialog>
   )
 
+  const cuttingRollbackDialog = (
+    <Dialog open={!!cuttingRollbackTask} onOpenChange={(open) => {
+      if (!open) {
+        setCuttingRollbackTask(null)
+        setCuttingRollbackPreview(null)
+        setCuttingRollbackComment('')
+      }
+    }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Откат факта заготовки</DialogTitle>
+          <DialogDescription>
+            Проверьте, что изменится при автоматическом откате списания склада и делового отхода.
+          </DialogDescription>
+        </DialogHeader>
+
+        {cuttingRollbackLoading ? (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
+            Загружаю preview отката...
+          </div>
+        ) : cuttingRollbackPreview ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="text-xs font-medium text-slate-500">Сейчас</div>
+                <div className="mt-1 text-sm font-semibold text-slate-950">
+                  Заготовка: {formatTaskDate(cuttingRollbackPreview.stage.currentDateStart)}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="text-xs font-medium text-slate-500">После отката</div>
+                <div className="mt-1 text-sm font-semibold text-slate-950">
+                  Заготовка: {formatTaskDate(cuttingRollbackPreview.stage.afterDateStart)}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="text-xs font-medium text-slate-500">События</div>
+                <div className="mt-1 text-lg font-semibold text-slate-950">{cuttingRollbackPreview.eventCount}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="text-xs font-medium text-slate-500">Брони</div>
+                <div className="mt-1 text-lg font-semibold text-slate-950">
+                  {cuttingRollbackPreview.reservations.count}
+                </div>
+                <div className="text-xs text-slate-500">{cuttingRollbackPreview.reservations.quantity.toLocaleString('ru-RU')} ед.</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="text-xs font-medium text-slate-500">Деловой отход</div>
+                <div className="mt-1 text-lg font-semibold text-slate-950">{cuttingRollbackPreview.scrap.count}</div>
+              </div>
+            </div>
+
+            {cuttingRollbackPreview.blockers.length > 0 ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <div className="font-medium">Откат заблокирован</div>
+                <ul className="mt-1 list-disc space-y-1 pl-4">
+                  {cuttingRollbackPreview.blockers.map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                Автоматический откат доступен.
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="cutting_rollback_comment">Комментарий</Label>
+              <Textarea
+                id="cutting_rollback_comment"
+                value={cuttingRollbackComment}
+                onChange={(event) => setCuttingRollbackComment(event.target.value)}
+                placeholder="Коротко укажите причину решения."
+                rows={3}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setCuttingRollbackTask(null)
+              setCuttingRollbackPreview(null)
+              setCuttingRollbackComment('')
+            }}
+            disabled={!!updatingId}
+            className="min-h-11"
+          >
+            Закрыть
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleKeepCuttingRollback}
+            disabled={!cuttingRollbackPreview || !!updatingId || cuttingRollbackLoading}
+            className="min-h-11"
+          >
+            Оставить как есть
+          </Button>
+          <Button
+            type="button"
+            onClick={handleApplyCuttingRollback}
+            disabled={!cuttingRollbackPreview?.canRollback || !!updatingId || cuttingRollbackLoading}
+            className="min-h-11"
+          >
+            Откатить автоматически
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+
   if (layout === 'list') {
     return (
       <>
@@ -966,6 +1158,7 @@ export function TaskCards({
         {delegationDialog}
         {declineDialog}
         {deliverablesDialog}
+        {cuttingRollbackDialog}
       </>
     )
   }
@@ -1082,6 +1275,7 @@ export function TaskCards({
       {delegationDialog}
       {declineDialog}
       {deliverablesDialog}
+      {cuttingRollbackDialog}
     </>
   )
 }

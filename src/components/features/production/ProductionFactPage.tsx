@@ -78,7 +78,13 @@ type TonnageRow = {
   deltaTonnage: number
 }
 
+type SectionStageSelectValue = '' | 'cutting'
+
 const selectClassName = 'flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50'
+const sectionStageOptions: Array<{ value: SectionStageSelectValue; label: string }> = [
+  { value: '', label: 'Нет' },
+  { value: 'cutting', label: 'Заготовка' },
+]
 
 const emptyMachineForm: MachineFormState = {
   id: null,
@@ -171,6 +177,14 @@ function isActiveSection(section: ProductionFactSection | null | undefined) {
   return Boolean(section?.is_active && !section.archived_at)
 }
 
+function getSectionStageValue(section: ProductionFactSection | null | undefined): SectionStageSelectValue {
+  return section?.production_stage_type === 'cutting' ? 'cutting' : ''
+}
+
+function isEffectiveCuttingSection(section: ProductionFactSection, parent?: ProductionFactSection | null) {
+  return section.production_stage_type === 'cutting' || parent?.production_stage_type === 'cutting'
+}
+
 function SectionPath({ parent, section }: { parent: ProductionFactSection | null; section: ProductionFactSection | null }) {
   if (!section) return <span className="text-[#94A3B8]">Без участка</span>
   const showParent = parent && parent.id !== section.id
@@ -237,9 +251,11 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
   const [machineDropdownSectionId, setMachineDropdownSectionId] = useState<string | null>(null)
   const [sectionName, setSectionName] = useState('')
   const [sectionOrder, setSectionOrder] = useState('100')
+  const [sectionStageType, setSectionStageType] = useState<SectionStageSelectValue>('')
   const [subsectionName, setSubsectionName] = useState('')
   const [subsectionParentId, setSubsectionParentId] = useState('')
   const [subsectionOrder, setSubsectionOrder] = useState('100')
+  const [subsectionStageType, setSubsectionStageType] = useState<SectionStageSelectValue>('')
   const [tonnageDrafts, setTonnageDrafts] = useState(() => createInitialTonnageDrafts(data))
 
   const parentSections = useMemo(
@@ -556,11 +572,13 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
         factory_id: data.selectedFactoryId!,
         name: sectionName,
         sort_order: Number(sectionOrder || 100),
+        production_stage_type: sectionStageType || null,
       }),
       'Участок создан',
     )
     setSectionName('')
     setSectionOrder('100')
+    setSectionStageType('')
   }
 
   function handleAddSubsection(event: FormEvent<HTMLFormElement>) {
@@ -575,11 +593,13 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
         parent_id: subsectionParentId,
         name: subsectionName,
         sort_order: Number(subsectionOrder || 100),
+        production_stage_type: subsectionStageType || null,
       }),
       'Подучасток создан',
     )
     setSubsectionName('')
     setSubsectionOrder('100')
+    setSubsectionStageType('')
   }
 
   function handleRenameSection(section: ProductionFactSection) {
@@ -588,6 +608,18 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
     runAction(
       () => updateProductionFactSection({ id: section.id, name, sort_order: section.sort_order }),
       'Название обновлено',
+    )
+  }
+
+  function handleSectionStageChange(section: ProductionFactSection, value: SectionStageSelectValue) {
+    runAction(
+      () => updateProductionFactSection({
+        id: section.id,
+        name: section.name,
+        sort_order: section.sort_order,
+        production_stage_type: value || null,
+      }),
+      'Связанный этап обновлен',
     )
   }
 
@@ -985,16 +1017,21 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
               isPending={isPending}
               sectionName={sectionName}
               sectionOrder={sectionOrder}
+              sectionStageType={sectionStageType}
               subsectionName={subsectionName}
               subsectionParentId={subsectionParentId}
               subsectionOrder={subsectionOrder}
+              subsectionStageType={subsectionStageType}
               onSectionNameChange={setSectionName}
               onSectionOrderChange={setSectionOrder}
+              onSectionStageTypeChange={setSectionStageType}
               onSubsectionNameChange={setSubsectionName}
               onSubsectionParentChange={setSubsectionParentId}
               onSubsectionOrderChange={setSubsectionOrder}
+              onSubsectionStageTypeChange={setSubsectionStageType}
               onAddSection={handleAddSection}
               onAddSubsection={handleAddSubsection}
+              onStageTypeChange={handleSectionStageChange}
               onRename={handleRenameSection}
               onArchive={handleArchiveSection}
             />
@@ -1110,16 +1147,21 @@ function SectionManager({
   isPending,
   sectionName,
   sectionOrder,
+  sectionStageType,
   subsectionName,
   subsectionParentId,
   subsectionOrder,
+  subsectionStageType,
   onSectionNameChange,
   onSectionOrderChange,
+  onSectionStageTypeChange,
   onSubsectionNameChange,
   onSubsectionParentChange,
   onSubsectionOrderChange,
+  onSubsectionStageTypeChange,
   onAddSection,
   onAddSubsection,
+  onStageTypeChange,
   onRename,
   onArchive,
 }: {
@@ -1129,16 +1171,21 @@ function SectionManager({
   isPending: boolean
   sectionName: string
   sectionOrder: string
+  sectionStageType: SectionStageSelectValue
   subsectionName: string
   subsectionParentId: string
   subsectionOrder: string
+  subsectionStageType: SectionStageSelectValue
   onSectionNameChange: (value: string) => void
   onSectionOrderChange: (value: string) => void
+  onSectionStageTypeChange: (value: SectionStageSelectValue) => void
   onSubsectionNameChange: (value: string) => void
   onSubsectionParentChange: (value: string) => void
   onSubsectionOrderChange: (value: string) => void
+  onSubsectionStageTypeChange: (value: SectionStageSelectValue) => void
   onAddSection: (event: FormEvent<HTMLFormElement>) => void
   onAddSubsection: (event: FormEvent<HTMLFormElement>) => void
+  onStageTypeChange: (section: ProductionFactSection, value: SectionStageSelectValue) => void
   onRename: (section: ProductionFactSection) => void
   onArchive: (section: ProductionFactSection) => void
 }) {
@@ -1159,6 +1206,14 @@ function SectionManager({
           <Input placeholder="Участок" value={sectionName} onChange={(event) => onSectionNameChange(event.target.value)} disabled={!canEdit || isPending} />
           <Input type="number" value={sectionOrder} onChange={(event) => onSectionOrderChange(event.target.value)} disabled={!canEdit || isPending} />
         </div>
+        <label className="space-y-1 text-xs font-medium text-[#475569]">
+          <span>Связанный этап</span>
+          <select className={selectClassName} value={sectionStageType} onChange={(event) => onSectionStageTypeChange(event.target.value as SectionStageSelectValue)} disabled={!canEdit || isPending}>
+            {sectionStageOptions.map((option) => (
+              <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
         <Button type="submit" variant="outline" size="sm" className="w-full" disabled={!canEdit || isPending || !sectionName.trim()}>
           <Plus className="size-4" />
           Участок
@@ -1176,6 +1231,14 @@ function SectionManager({
           <Input placeholder="Подучасток" value={subsectionName} onChange={(event) => onSubsectionNameChange(event.target.value)} disabled={!canEdit || isPending} />
           <Input type="number" value={subsectionOrder} onChange={(event) => onSubsectionOrderChange(event.target.value)} disabled={!canEdit || isPending} />
         </div>
+        <label className="space-y-1 text-xs font-medium text-[#475569]">
+          <span>Связанный этап</span>
+          <select className={selectClassName} value={subsectionStageType} onChange={(event) => onSubsectionStageTypeChange(event.target.value as SectionStageSelectValue)} disabled={!canEdit || isPending}>
+            {sectionStageOptions.map((option) => (
+              <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
         <Button type="submit" variant="outline" size="sm" className="w-full" disabled={!canEdit || isPending || !subsectionName.trim() || !subsectionParentId}>
           <Plus className="size-4" />
           Подучасток
@@ -1187,11 +1250,15 @@ function SectionManager({
           <div className="rounded-lg border border-dashed border-[#CBD5E1] p-4 text-sm text-[#64748B]">Участков пока нет</div>
         ) : parentSections.map((section) => {
           const children = childSectionsByParent.get(section.id) || []
+          const sectionIsCutting = isEffectiveCuttingSection(section)
           return (
             <div key={section.id} className={cn('rounded-lg border p-3', isActiveSection(section) ? 'border-[#E2E8F0]' : 'border-[#E2E8F0] bg-[#F8FAFC] opacity-75')}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="truncate font-medium text-[#111827]">{section.name}</div>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="truncate font-medium text-[#111827]">{section.name}</span>
+                    {sectionIsCutting ? <Badge variant="outline" className="border-[#DBEAFE] text-[#1E40AF]">Заготовка</Badge> : null}
+                  </div>
                   <div className="text-xs text-[#64748B]">Порядок {section.sort_order}</div>
                 </div>
                 <div className="flex gap-1">
@@ -1205,10 +1272,41 @@ function SectionManager({
                   </Button>
                 </div>
               </div>
+              <label className="mt-2 block space-y-1 text-xs font-medium text-[#475569]">
+                <span>Связанный этап</span>
+                <select
+                  className={selectClassName}
+                  value={getSectionStageValue(section)}
+                  onChange={(event) => onStageTypeChange(section, event.target.value as SectionStageSelectValue)}
+                  disabled={!canEdit || isPending || !isActiveSection(section)}
+                >
+                  {sectionStageOptions.map((option) => (
+                    <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
               <div className="mt-2 space-y-1">
-                {children.map((child) => (
-                  <div key={child.id} className={cn('flex items-center justify-between gap-2 rounded-md px-2 py-1 text-sm', isActiveSection(child) ? 'bg-[#F8FAFC]' : 'bg-[#F1F5F9] text-[#64748B]')}>
-                    <span className="truncate">{child.name}</span>
+                {children.map((child) => {
+                  const childIsCutting = isEffectiveCuttingSection(child, section)
+                  const inheritedCutting = child.production_stage_type !== 'cutting' && section.production_stage_type === 'cutting'
+                  return (
+                  <div key={child.id} className={cn('grid gap-2 rounded-md px-2 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_130px_auto]', isActiveSection(child) ? 'bg-[#F8FAFC]' : 'bg-[#F1F5F9] text-[#64748B]')}>
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="truncate">{child.name}</span>
+                        {childIsCutting ? <Badge variant="outline" className="border-[#DBEAFE] text-[#1E40AF]">{inheritedCutting ? 'Заготовка от участка' : 'Заготовка'}</Badge> : null}
+                      </div>
+                    </div>
+                    <select
+                      className={selectClassName}
+                      value={getSectionStageValue(child)}
+                      onChange={(event) => onStageTypeChange(child, event.target.value as SectionStageSelectValue)}
+                      disabled={!canEdit || isPending || !isActiveSection(child)}
+                    >
+                      {sectionStageOptions.map((option) => (
+                        <option key={option.value || 'none'} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
                     <div className="flex items-center gap-1">
                       {!isActiveSection(child) ? <Badge variant="outline">Архив</Badge> : null}
                       <Button type="button" variant="ghost" size="icon-xs" onClick={() => onRename(child)} disabled={!canEdit || isPending || !isActiveSection(child)}>
@@ -1221,7 +1319,8 @@ function SectionManager({
                       </Button>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )

@@ -25,6 +25,7 @@ type DbResult = { data: unknown; error: { message?: string } | null }
 type LooseQuery = PromiseLike<DbResult> & {
   select: (columns?: string) => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
+  is: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
   maybeSingle: () => Promise<DbResult>
@@ -131,11 +132,12 @@ type InventoryRow = {
 }
 
 type ReservationRow = {
-  id: string
+  id: string | null
   request_item_table: string
   request_item_id: string
   reserved_quantity: number
   reserved_secondary_quantity: number | null
+  consumed_at: string | null
 }
 
 type ReservationStockSource = 'business_scrap' | 'regular_stock'
@@ -484,6 +486,7 @@ async function getReservationIdsForItem(db: LooseDb, table: string, id: string) 
     .select('id')
     .eq('request_item_table', table)
     .eq('request_item_id', id)
+    .is('consumed_at', null)
     .order('created_at', { ascending: false })
   if (error) throw new Error(error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð±Ñ€Ð¾Ð½ÑŒ')
   return ((data || []) as { id?: string }[]).map((row) => row.id).filter((id): id is string => Boolean(id))
@@ -495,9 +498,10 @@ function buildReservationMap(rows: ReservationRow[]) {
     const key = reservationKey(row.request_item_table, row.request_item_id)
     const current = map.get(key)
     if (!current) {
-      map.set(key, { ...row })
+      map.set(key, { ...row, id: row.consumed_at ? null : row.id })
       continue
     }
+    if (!current.id && !row.consumed_at) current.id = row.id
     current.reserved_quantity = Number(current.reserved_quantity || 0) + Number(row.reserved_quantity || 0)
     current.reserved_secondary_quantity = Number(current.reserved_secondary_quantity || 0) + Number(row.reserved_secondary_quantity || 0)
   }
@@ -644,7 +648,7 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
         ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds).eq('factory_id', request.machine.factory_id)
         : Promise.resolve({ data: [], error: null } as DbResult),
       itemIds.length
-        ? db.from('inventory_reservations').select('id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity').in('request_item_id', itemIds)
+        ? db.from('inventory_reservations').select('id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity, consumed_at').in('request_item_id', itemIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       steelTypeIds.length
         ? db.from('steel_types').select('id, name').in('id', steelTypeIds)

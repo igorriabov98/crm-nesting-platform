@@ -339,6 +339,7 @@ export async function getStockForMaterial(materialId: string, factoryId?: string
       .from('inventory_reservations')
       .select('id, machine_id, reserved_quantity, created_at')
       .eq('inventory_id', inventory.id)
+      .is('consumed_at', null)
       .order('created_at', { ascending: false })
     if (reservationsError) throw new Error(reservationsError.message || 'Не удалось загрузить бронирования')
     const reservations = (reservationsData || []) as Pick<InventoryReservation, 'id' | 'machine_id' | 'reserved_quantity' | 'created_at'>[]
@@ -498,10 +499,11 @@ export async function unreserveFromMachine(reservationId: string): Promise<Actio
     const { db, userId } = await requireAccess('manage')
     const { data: reservationData } = await db
       .from('inventory_reservations')
-      .select('material_id, machine_id, business_scrap_inventory_id, business_scrap_quantity')
+      .select('material_id, machine_id, business_scrap_inventory_id, business_scrap_quantity, consumed_at')
       .eq('id', reservationId)
       .maybeSingle()
-    const reservation = reservationData as Pick<InventoryReservation, 'material_id' | 'machine_id' | 'business_scrap_inventory_id' | 'business_scrap_quantity'> | null
+    const reservation = reservationData as Pick<InventoryReservation, 'material_id' | 'machine_id' | 'business_scrap_inventory_id' | 'business_scrap_quantity' | 'consumed_at'> | null
+    if (reservation?.consumed_at) throw new Error('Бронь уже списана по факту заготовки')
     const { error } = await db.rpc('fn_unreserve_inventory_reservation', {
       p_reservation_id: reservationId,
       p_performed_by: userId,
@@ -524,6 +526,7 @@ export async function unreserveRequestItem(table: string, id: string): Promise<A
       .select('id, business_scrap_inventory_id, business_scrap_quantity')
       .eq('request_item_table', table)
       .eq('request_item_id', id)
+      .is('consumed_at', null)
     const reservations = (data || []) as Pick<InventoryReservation, 'id' | 'business_scrap_inventory_id' | 'business_scrap_quantity'>[]
     for (const reservation of reservations) {
       const { error } = await db.rpc('fn_unreserve_inventory_reservation', {

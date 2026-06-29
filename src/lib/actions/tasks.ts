@@ -84,11 +84,31 @@ export type TaskDelegationCandidate = {
   position_level: number | null
 }
 
+export type CuttingRollbackPreview = {
+  canRollback: boolean
+  blockers: string[]
+  eventCount: number
+  stage: {
+    currentDateStart: string | null
+    afterDateStart: string | null
+  }
+  reservations: {
+    count: number
+    quantity: number
+  }
+  scrap: {
+    count: number
+    reservedCount: number
+    deletedCount: number
+  }
+}
+
 const DIRECTOR_ROLES: UserRole[] = [
   'financial_director',
   'commercial_director',
   'planning_director',
 ]
+const CUTTING_ROLLBACK_TASK_TYPE = 'production_cutting_rollback_review' as const
 
 async function getCurrentUser() {
   const { supabase, userId, user, role, factoryId } = await getCurrentUserContext()
@@ -285,6 +305,77 @@ class TaskBusinessError extends Error {
     this.code = code
     this.projectId = projectId
   }
+}
+
+function normalizeCuttingRollbackPreview(value: unknown): CuttingRollbackPreview {
+  const record = (value || {}) as Record<string, unknown>
+  const stage = (record.stage || {}) as Record<string, unknown>
+  const reservations = (record.reservations || {}) as Record<string, unknown>
+  const scrap = (record.scrap || {}) as Record<string, unknown>
+  return {
+    canRollback: Boolean(record.canRollback),
+    blockers: Array.isArray(record.blockers) ? record.blockers.map(String) : [],
+    eventCount: Number(record.eventCount || 0),
+    stage: {
+      currentDateStart: typeof stage.currentDateStart === 'string' ? stage.currentDateStart : null,
+      afterDateStart: typeof stage.afterDateStart === 'string' ? stage.afterDateStart : null,
+    },
+    reservations: {
+      count: Number(reservations.count || 0),
+      quantity: Number(reservations.quantity || 0),
+    },
+    scrap: {
+      count: Number(scrap.count || 0),
+      reservedCount: Number(scrap.reservedCount || 0),
+      deletedCount: Number(scrap.deletedCount || 0),
+    },
+  }
+}
+
+async function getCuttingRollbackTaskForUser(db: LooseSupabaseClient, taskId: string, userId: string, role: UserRole, factoryId: string | null) {
+  const { data: task, error } = await db
+    .from('tasks')
+    .select('id, assigned_to, machine_id, task_type, status, machine:machines(id, name, factory_id)')
+    .eq('id', taskId)
+    .single()
+
+  if (error || !task) throw new Error('Задача не найдена')
+  const taskRow = task as unknown as {
+    id: string
+    assigned_to: string
+    machine_id: string | null
+    task_type: TaskType
+    status: TaskStatus
+    machine: { id: string; name: string | null; factory_id: string | null } | null
+  }
+
+  if (taskRow.task_type !== CUTTING_ROLLBACK_TASK_TYPE) throw new Error('Это не задача отката заготовки')
+  if (!taskRow.machine_id) throw new Error('Задача не привязана к машине')
+
+  const canUpdate = taskRow.assigned_to === userId || DIRECTOR_ROLES.includes(role)
+  if (!canUpdate) throw new Error('Недостаточно прав для изменения задачи')
+  if (
+    role === 'production_manager' &&
+    (!taskRow.machine || (taskRow.machine.factory_id !== null && taskRow.machine.factory_id !== factoryId))
+  ) {
+    throw new Error('Задача относится к машине другого завода')
+  }
+
+  const pendingDelegation = await getPendingDelegationForTask(getAdminTaskDb(), taskId)
+  if (pendingDelegation) {
+    throw new Error('Задача ожидает принятия после делегирования. Сначала отмените делегирование или дождитесь ответа сотрудника.')
+  }
+
+  return taskRow
+}
+
+function revalidateCuttingRollbackTaskPaths(machineId: string | null) {
+  revalidatePath(ROUTES.TASKS)
+  revalidatePath(ROUTES.PRODUCTION)
+  revalidatePath(ROUTES.GANTT)
+  revalidatePath(ROUTES.PRODUCTION_FACT)
+  revalidatePath(ROUTES.INVENTORY)
+  if (machineId) revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
 }
 
 function datePlusDays(days: number) {
@@ -975,6 +1066,16 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       throw new Error('Задача ожидает принятия после делегирования. Сначала отмените делегирование или дождитесь ответа сотрудника.')
     }
 
+    if (
+      taskRow.task_type === CUTTING_ROLLBACK_TASK_TYPE &&
+      (status === 'in_progress' || status === 'completed')
+    ) {
+      throw new TaskBusinessError(
+        'Откройте preview отката и выберите действие в модальном окне.',
+        'CUTTING_ROLLBACK_PREVIEW_REQUIRED',
+      )
+    }
+
     if (status === 'completed' && taskRow.task_type === 'technologist_request') {
       const hasSubmittedRequest = await hasSubmittedTechnologistRequest(db, taskRow.machine_id)
       if (!hasSubmittedRequest) {
@@ -1060,6 +1161,75 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       error: error instanceof Error ? error.message : 'Не удалось обновить задачу',
       code: error instanceof TaskBusinessError ? error.code : undefined,
       projectId: error instanceof TaskBusinessError ? error.projectId : undefined,
+    }
+  }
+}
+
+export async function getProductionCuttingRollbackPreview(taskId: string) {
+  try {
+    const { supabase, userId, role, factoryId } = await getCurrentUser()
+    const db = supabase as unknown as LooseSupabaseClient
+    const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
+
+    const { data, error } = await db.rpc('fn_get_production_cutting_rollback_preview', {
+      p_machine_id: task.machine_id,
+    })
+
+    if (error) throw new Error(error.message || 'Не удалось загрузить preview отката')
+    return { success: true, data: normalizeCuttingRollbackPreview(data), error: null }
+  } catch (error) {
+    return {
+      success: false,
+      data: null,
+      error: error instanceof Error ? error.message : 'Не удалось загрузить preview отката',
+    }
+  }
+}
+
+export async function applyProductionCuttingRollbackTask(taskId: string, comment?: string | null) {
+  try {
+    const { supabase, userId, role, factoryId } = await getCurrentUser()
+    const db = supabase as unknown as LooseSupabaseClient
+    const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
+
+    const { error } = await db.rpc('fn_apply_production_cutting_rollback', {
+      p_machine_id: task.machine_id,
+      p_task_id: task.id,
+      p_performed_by: userId,
+      p_comment: comment || null,
+    })
+
+    if (error) throw new Error(error.message || 'Не удалось выполнить автоматический откат')
+    revalidateCuttingRollbackTaskPaths(task.machine_id)
+    return { success: true, error: null }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Не удалось выполнить автоматический откат',
+    }
+  }
+}
+
+export async function keepProductionCuttingRollbackTask(taskId: string, comment?: string | null) {
+  try {
+    const { supabase, userId, role, factoryId } = await getCurrentUser()
+    const db = supabase as unknown as LooseSupabaseClient
+    const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
+
+    const { error } = await db.rpc('fn_keep_production_cutting_rollback', {
+      p_machine_id: task.machine_id,
+      p_task_id: task.id,
+      p_performed_by: userId,
+      p_comment: comment || null,
+    })
+
+    if (error) throw new Error(error.message || 'Не удалось закрыть задачу без отката')
+    revalidateCuttingRollbackTaskPaths(task.machine_id)
+    return { success: true, error: null }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Не удалось закрыть задачу без отката',
     }
   }
 }

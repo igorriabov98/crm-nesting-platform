@@ -1500,6 +1500,7 @@ export type Database = {
           parent_id: string | null
           name: string
           sort_order: number
+          production_stage_type: Database['public']['Enums']['stage_type'] | null
           is_active: boolean
           archived_at: string | null
           created_by: string | null
@@ -1513,6 +1514,7 @@ export type Database = {
           parent_id?: string | null
           name: string
           sort_order?: number
+          production_stage_type?: Database['public']['Enums']['stage_type'] | null
           is_active?: boolean
           archived_at?: string | null
           created_by?: string | null
@@ -1526,6 +1528,7 @@ export type Database = {
           parent_id?: string | null
           name?: string
           sort_order?: number
+          production_stage_type?: Database['public']['Enums']['stage_type'] | null
           is_active?: boolean
           archived_at?: string | null
           created_by?: string | null
@@ -1573,6 +1576,138 @@ export type Database = {
           updated_by?: string | null
           created_at?: string
           updated_at?: string
+        }
+      }
+      production_fact_cutting_events: {
+        Row: {
+          id: string
+          machine_id: string
+          factory_id: string | null
+          fact_id: string | null
+          section_id: string | null
+          fact_date: string
+          stage_id: string | null
+          previous_stage_date_start: string | null
+          applied_stage_date_start: string | null
+          status: 'applied' | 'rolled_back' | 'kept' | 'blocked'
+          rollback_task_id: string | null
+          created_by: string | null
+          created_at: string
+          rolled_back_by: string | null
+          rolled_back_at: string | null
+          rollback_comment: string | null
+          kept_by: string | null
+          kept_at: string | null
+          keep_comment: string | null
+        }
+        Insert: {
+          id?: string
+          machine_id: string
+          factory_id?: string | null
+          fact_id?: string | null
+          section_id?: string | null
+          fact_date: string
+          stage_id?: string | null
+          previous_stage_date_start?: string | null
+          applied_stage_date_start?: string | null
+          status?: 'applied' | 'rolled_back' | 'kept' | 'blocked'
+          rollback_task_id?: string | null
+          created_by?: string | null
+          created_at?: string
+          rolled_back_by?: string | null
+          rolled_back_at?: string | null
+          rollback_comment?: string | null
+          kept_by?: string | null
+          kept_at?: string | null
+          keep_comment?: string | null
+        }
+        Update: {
+          id?: string
+          machine_id?: string
+          factory_id?: string | null
+          fact_id?: string | null
+          section_id?: string | null
+          fact_date?: string
+          stage_id?: string | null
+          previous_stage_date_start?: string | null
+          applied_stage_date_start?: string | null
+          status?: 'applied' | 'rolled_back' | 'kept' | 'blocked'
+          rollback_task_id?: string | null
+          created_by?: string | null
+          created_at?: string
+          rolled_back_by?: string | null
+          rolled_back_at?: string | null
+          rollback_comment?: string | null
+          kept_by?: string | null
+          kept_at?: string | null
+          keep_comment?: string | null
+        }
+      }
+      production_fact_cutting_event_reservations: {
+        Row: {
+          id: string
+          event_id: string
+          reservation_id: string | null
+          inventory_id: string
+          material_id: string
+          material_variant_id: string | null
+          request_item_table: string
+          request_item_id: string
+          reserved_quantity: number
+          reserved_secondary_quantity: number | null
+          is_cut_reservation: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          event_id: string
+          reservation_id?: string | null
+          inventory_id: string
+          material_id: string
+          material_variant_id?: string | null
+          request_item_table: string
+          request_item_id: string
+          reserved_quantity: number
+          reserved_secondary_quantity?: number | null
+          is_cut_reservation?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          event_id?: string
+          reservation_id?: string | null
+          inventory_id?: string
+          material_id?: string
+          material_variant_id?: string | null
+          request_item_table?: string
+          request_item_id?: string
+          reserved_quantity?: number
+          reserved_secondary_quantity?: number | null
+          is_cut_reservation?: boolean
+          created_at?: string
+        }
+      }
+      production_fact_cutting_event_scrap_promotions: {
+        Row: {
+          id: string
+          event_id: string
+          inventory_id: string
+          previous_business_scrap_state: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          event_id: string
+          inventory_id: string
+          previous_business_scrap_state?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          event_id?: string
+          inventory_id?: string
+          previous_business_scrap_state?: string
+          created_at?: string
         }
       }
       production_tonnage_facts: {
@@ -2414,6 +2549,9 @@ export type Database = {
           business_scrap_inventory_id: string | null
           business_scrap_quantity: number | null
           is_cut_reservation: boolean
+          consumed_at: string | null
+          consumed_by: string | null
+          consumed_cutting_event_id: string | null
           reserved_by: string
           created_at: string
         }
@@ -2433,6 +2571,9 @@ export type Database = {
           business_scrap_inventory_id?: string | null
           business_scrap_quantity?: number | null
           is_cut_reservation?: boolean
+          consumed_at?: string | null
+          consumed_by?: string | null
+          consumed_cutting_event_id?: string | null
           reserved_by: string
           created_at?: string
         }
@@ -2452,6 +2593,9 @@ export type Database = {
           business_scrap_inventory_id?: string | null
           business_scrap_quantity?: number | null
           is_cut_reservation?: boolean
+          consumed_at?: string | null
+          consumed_by?: string | null
+          consumed_cutting_event_id?: string | null
           reserved_by?: string
           created_at?: string
         }
@@ -3457,7 +3601,7 @@ export type Database = {
       pipe_subtype: 'square' | 'rectangular' | 'round' | 'wire'
       chain_cord_subtype: 'chain' | 'cord'
       task_delegation_status: 'pending' | 'accepted' | 'declined' | 'cancelled'
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'
@@ -3637,6 +3781,37 @@ export type Database = {
           p_comment?: string | null
         }
         Returns: void
+      }
+      fn_apply_production_fact_cutting: {
+        Args: {
+          p_fact_id: string
+          p_performed_by: string
+        }
+        Returns: string | null
+      }
+      fn_get_production_cutting_rollback_preview: {
+        Args: {
+          p_machine_id: string
+        }
+        Returns: Json
+      }
+      fn_apply_production_cutting_rollback: {
+        Args: {
+          p_machine_id: string
+          p_task_id: string | null
+          p_performed_by: string
+          p_comment?: string | null
+        }
+        Returns: Json
+      }
+      fn_keep_production_cutting_rollback: {
+        Args: {
+          p_machine_id: string
+          p_task_id: string | null
+          p_performed_by: string
+          p_comment?: string | null
+        }
+        Returns: Json
       }
       get_user_role: {
         Args: Record<string, never>
