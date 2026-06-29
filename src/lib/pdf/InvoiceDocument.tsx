@@ -219,6 +219,17 @@ function formatSellerName(name: string) {
   return baseName ? `«${baseName}» LLC` : ''
 }
 
+function formatLegalEntityName(name: string) {
+  const baseName = name
+    .trim()
+    .replace(/\s+LLC\.?$/i, '')
+    .replace(/^[\"«]+/, '')
+    .replace(/[\"»]+$/, '')
+    .trim()
+
+  return baseName ? `${baseName} LLC` : name.trim()
+}
+
 function buyerAddressLines(address: string, clientName: string) {
   let value = address.trim()
   if (!value) return []
@@ -385,7 +396,7 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
 
           <View style={styles.bankCell}>
             <Text style={styles.topBlockText}>Bank details/Банківські реквізити:</Text>
-            <Text style={styles.topBlockText}>Legal entity: {data.company.name_en}</Text>
+            <Text style={styles.topBlockText}>Legal entity: {formatLegalEntityName(data.company.name_en)}</Text>
             <Text style={styles.topBlockText}>Enterprise code: {data.company.enterprise_code}</Text>
             <Text style={styles.topBlockText}>Currency of account: EUR</Text>
             <Text style={styles.topBlockText}>IBAN: {data.company.iban}</Text>
