@@ -469,12 +469,8 @@ function SpecificationItemsTable({
 }
 
 function Footer({ data }: { data: DocumentData }) {
-  const deliveryBasisEn = data.company.delivery_basis_en || 'Delivery Basis: DAP'
-  const deliveryBasisUa = data.company.delivery_basis_ua || 'Базис постачання: DAP'
-  const deliveryLocationEn = data.client.delivery_basis_location_en || data.client.country_city || ''
-  const deliveryLocationUa = data.client.delivery_basis_location_ua || deliveryLocationEn
-  const deliveryTextEn = deliveryLocationEn ? `${deliveryBasisEn} - ${deliveryLocationEn}` : deliveryBasisEn
-  const deliveryTextUa = deliveryLocationUa ? `${deliveryBasisUa} - ${deliveryLocationUa}` : deliveryBasisUa
+  const deliveryTextEn = data.company.delivery_basis_en
+  const deliveryTextUa = data.company.delivery_basis_ua
 
   return (
     <View style={styles.footer} wrap={false}>

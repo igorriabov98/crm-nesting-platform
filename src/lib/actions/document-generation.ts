@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { getMachineDeliveryBasisOption } from '@/lib/constants/machine-delivery-basis'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import type { Database } from '@/lib/types/database'
@@ -11,6 +12,7 @@ type MachineRow = Pick<
   | 'name'
   | 'specification_number'
   | 'specification_date'
+  | 'delivery_basis_type'
 >
 type ContractRow = Pick<Database['public']['Tables']['contracts']['Row'], 'number' | 'date'>
 type ClientRow = Pick<
@@ -260,6 +262,7 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       name,
       specification_number,
       specification_date,
+      delivery_basis_type,
       client:clients(
         name,
         address,
@@ -308,6 +311,11 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
   const machine = machineData as MachineDocumentRow
   const client = firstOrNull(machine.client)
   if (!client) throw new Error('У заказа не указан клиент')
+
+  const machineDeliveryBasis = getMachineDeliveryBasisOption(machine.delivery_basis_type)
+  if (!machineDeliveryBasis) {
+    throw new Error('Выберите базис доставки в настройках машины')
+  }
 
   const goodsRows = (machine.machine_items || [])
     .filter((item) => !item.is_sample)
@@ -441,8 +449,8 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
       swift: companyValue(company, 'swift'),
       bank_name: companyValue(company, 'bank_name'),
       bank_address: companyValue(company, 'bank_address'),
-      delivery_basis_en: companyValue(company, 'delivery_basis_en'),
-      delivery_basis_ua: companyValue(company, 'delivery_basis_ua'),
+      delivery_basis_en: machineDeliveryBasis.deliveryBasisEn,
+      delivery_basis_ua: machineDeliveryBasis.deliveryBasisUa,
       intermediary_bank_name: companyValue(company, 'intermediary_bank_name'),
       intermediary_bank_swift: companyValue(company, 'intermediary_bank_swift'),
       signature_image_path: company.signature_image_path,

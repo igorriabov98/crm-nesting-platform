@@ -133,6 +133,7 @@ export function MachineDetail({
   const documentMissingFields = [
     !machine.specification_number?.trim() && 'Укажите номер инвойса / спецификации',
     !machine.specification_date && 'Укажите дату документов',
+    !machine.delivery_basis_type && 'Выберите базис доставки в настройках машины',
     documentGoodsCount === 0 && 'Добавьте товарные позиции',
   ].filter((field): field is string => Boolean(field))
 
@@ -391,7 +392,7 @@ export function MachineDetail({
             className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
           >
             <ClipboardList className="h-4 w-4" aria-hidden="true" />
-            Packing list
+            Настройки машины
           </TabsTrigger>
           {showInvoiceTab && (
             <TabsTrigger 

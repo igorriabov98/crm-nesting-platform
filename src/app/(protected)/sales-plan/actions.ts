@@ -1009,6 +1009,15 @@ export async function updateMachinePackingSettings(machineId: string, data: Mach
       }
     }
 
+    const { error: machineUpdateError } = await db
+      .from('machines')
+      .update({
+        delivery_basis_type: parsed.delivery_basis_type,
+      } satisfies MachineUpdate)
+      .eq('id', parsedMachineId)
+
+    if (machineUpdateError) throw machineUpdateError
+
     const { error: deleteError } = await db
       .from('machine_packing_groups')
       .delete()

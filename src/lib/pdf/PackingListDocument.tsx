@@ -305,14 +305,6 @@ function addressLines(
   ]
 }
 
-function deliveryBasisLine(prefix: string, location: string) {
-  const cleanPrefix = prefix.trim()
-  const cleanLocation = location.trim()
-  if (!cleanPrefix) return cleanLocation
-  if (!cleanLocation) return cleanPrefix
-  return `${cleanPrefix} - ${cleanLocation}`
-}
-
 function pluralizeEn(type: string, count: number) {
   if (!type) return count === 1 ? 'place' : 'places'
   if (count === 1 || type.endsWith('s')) return type
@@ -401,8 +393,14 @@ function ItemRow({ item, number }: NumberedItem) {
 
 function ItemsTable({ data, packingGroups }: { data: DocumentData; packingGroups: DocumentPackingGroup[] }) {
   const itemNumbers = new Map<DocumentItem, number>()
-  data.items.forEach((item, index) => itemNumbers.set(item, index + 1))
   const groupedItems = groupItemsByHsCode(data.items)
+  let currentNumber = 1
+  for (const group of groupedItems) {
+    for (const item of group.items) {
+      itemNumbers.set(item, currentNumber)
+      currentNumber += 1
+    }
+  }
 
   return (
     <View style={styles.table}>
@@ -455,10 +453,8 @@ export function PackingListDocument({ data }: { data: DocumentData }) {
   const date = formatDate(data.machine.specification_date)
   const contractNumber = data.contract?.number || ''
   const contractDate = formatDate(data.contract?.date)
-  const deliveryLocationEn = data.client.delivery_basis_location_en || data.client.country_city || ''
-  const deliveryLocationUa = data.client.delivery_basis_location_ua || data.client.delivery_basis_location_en || data.client.country_city || ''
-  const deliveryBasisEn = deliveryBasisLine(data.company.delivery_basis_en, deliveryLocationEn)
-  const deliveryBasisUa = deliveryBasisLine(data.company.delivery_basis_ua, deliveryLocationUa)
+  const deliveryBasisEn = data.company.delivery_basis_en
+  const deliveryBasisUa = data.company.delivery_basis_ua
   const packingGroups = data.packingGroups
   const totalPlaces = packingGroups.reduce((sum, group) => sum + group.places, 0)
   const summaryEn = packingSummaryFromGroups(packingGroups, 'en') || '-'

@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useMemo, useState, useTransition } from 'react'
-import { PackageCheck, Plus, Save, Trash2 } from 'lucide-react'
+import { PackageCheck, Plus, Save, Trash2, Truck } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
@@ -16,6 +16,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { updateMachinePackingSettings } from '@/app/(protected)/sales-plan/actions'
+import { MACHINE_DELIVERY_BASIS_OPTIONS, MACHINE_DELIVERY_BASIS_VALUES, type MachineDeliveryBasisType } from '@/lib/constants/machine-delivery-basis'
+import { cn } from '@/lib/utils'
 import type { MachineDetails } from '@/lib/types'
 
 type DraftGroup = {
@@ -34,6 +36,21 @@ type ParsedDraftGroup = {
   packing_type_en: string
   packing_type_ua: string | null
   places: number
+}
+
+type MachineGoodsItem = NonNullable<MachineDetails['machine_items']>[number]
+
+type GoodsGroup = {
+  uktzed: string
+  items: MachineGoodsItem[]
+}
+
+type PreviewGoodsGroup = {
+  uktzed: string
+  items: Array<{
+    item: MachineGoodsItem
+    number: number
+  }>
 }
 
 interface PackingListTabProps {
@@ -107,14 +124,56 @@ function packingSummaryFromGroups(groups: ParsedDraftGroup[], language: 'en' | '
   return joinSummaryParts(parts, language === 'en' ? 'and' : 'та')
 }
 
+function groupGoodsByHsCode(items: MachineGoodsItem[]): GoodsGroup[] {
+  const groups: GoodsGroup[] = []
+
+  for (const item of items) {
+    const uktzed = item.product_uktzed || '-'
+    const current = groups.find((group) => group.uktzed === uktzed)
+    if (current) {
+      current.items.push(item)
+    } else {
+      groups.push({ uktzed, items: [item] })
+    }
+  }
+
+  return groups
+}
+
 export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const goods = useMemo(
-    () => [...(machine.machine_items || [])].filter((item) => !item.is_sample).sort((a, b) => a.sort_order - b.sort_order),
+  const goodsGroups = useMemo(
+    () => groupGoodsByHsCode(
+      [...(machine.machine_items || [])]
+        .filter((item) => !item.is_sample)
+        .sort((a, b) => a.sort_order - b.sort_order),
+    ),
     [machine.machine_items],
   )
+  const goods = useMemo(() => goodsGroups.flatMap((group) => group.items), [goodsGroups])
+  const previewGoodsGroups = useMemo<PreviewGoodsGroup[]>(() => {
+    return goodsGroups.reduce<{ groups: PreviewGoodsGroup[]; nextNumber: number }>(
+      (acc, group) => ({
+        groups: [
+          ...acc.groups,
+          {
+            uktzed: group.uktzed,
+            items: group.items.map((item, index) => ({
+              item,
+              number: acc.nextNumber + index,
+            })),
+          },
+        ],
+        nextNumber: acc.nextNumber + group.items.length,
+      }),
+      { groups: [], nextNumber: 1 },
+    ).groups
+  }, [goodsGroups])
   const [groups, setGroups] = useState<DraftGroup[]>(() => initialGroups(machine))
+  const [deliveryBasisType, setDeliveryBasisType] = useState<MachineDeliveryBasisType | ''>(
+    () => machine.delivery_basis_type || '',
+  )
   const calculated = useMemo(() => {
     const netWeight = goods.reduce(
       (sum, item) => sum + Number(item.weight || 0) * Number(item.quantity || 0),
@@ -163,6 +222,11 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
   }
 
   const save = () => {
+    if (!deliveryBasisType) {
+      toast.error('Выберите базис доставки')
+      return
+    }
+
     const parsedGroups = parseDraftGroups(groups)
 
     for (const group of parsedGroups) {
@@ -190,15 +254,16 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
 
     startTransition(async () => {
       const result = await updateMachinePackingSettings(machine.id, {
+        delivery_basis_type: deliveryBasisType,
         groups: parsedGroups,
       })
 
       if (!result.success) {
-        toast.error(result.error || 'Не удалось сохранить упаковочный лист')
+        toast.error(result.error || 'Не удалось сохранить настройки машины')
         return
       }
 
-      toast.success('Данные packing list сохранены')
+      toast.success('Настройки машины сохранены')
       router.refresh()
     })
   }
@@ -210,7 +275,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-violet-100 bg-violet-50 text-violet-700">
             <PackageCheck className="h-5 w-5" aria-hidden="true" />
           </div>
-          <h2 className="text-lg font-semibold text-slate-950">Packing list</h2>
+          <h2 className="text-lg font-semibold text-slate-950">Настройки машины</h2>
         </div>
         {canEdit && (
           <Button onClick={save} disabled={isPending} className="min-h-11 bg-blue-950 text-white hover:bg-blue-900">
@@ -218,6 +283,39 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
             Сохранить
           </Button>
         )}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-950">
+          <Truck className="h-4 w-4 text-blue-950" aria-hidden="true" />
+          Базис доставки
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          {MACHINE_DELIVERY_BASIS_VALUES.map((value) => {
+            const option = MACHINE_DELIVERY_BASIS_OPTIONS[value]
+            const active = deliveryBasisType === value
+
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                disabled={!canEdit || isPending}
+                onClick={() => setDeliveryBasisType(value)}
+                className={cn(
+                  'min-h-28 rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-not-allowed disabled:opacity-70',
+                  active
+                    ? 'border-blue-950 bg-blue-50 text-blue-950 shadow-sm'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50/60',
+                )}
+              >
+                <span className="block text-sm font-semibold">{option.label}</span>
+                <span className="mt-2 block text-sm font-medium">{option.deliveryBasisEn}</span>
+                <span className="mt-1 block text-sm">{option.deliveryBasisUa}</span>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -343,16 +441,25 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {goods.map((item, index) => (
-              <TableRow key={item.id}>
-                <TableCell className="text-center text-[#6B7280]">{index + 1}</TableCell>
-                <TableCell>
-                  <div className="font-medium text-[#111827]">{item.product_name_en || item.product_name}</div>
-                  <div className="text-sm text-[#6B7280]">{item.product_name_uk || item.product_name}</div>
-                </TableCell>
-                <TableCell className="text-center">{item.quantity}</TableCell>
-                <TableCell className="text-right">{(Number(item.weight) * Number(item.quantity)).toLocaleString()}</TableCell>
-              </TableRow>
+            {previewGoodsGroups.map((group) => (
+              <React.Fragment key={group.uktzed}>
+                <TableRow className="bg-slate-50">
+                  <TableCell colSpan={4} className="text-center text-xs font-semibold uppercase text-[#6B7280]">
+                    HS code (код УКТЗЕД) {group.uktzed}
+                  </TableCell>
+                </TableRow>
+                {group.items.map(({ item, number }) => (
+                  <TableRow key={item.id}>
+                    <TableCell className="text-center text-[#6B7280]">{number}</TableCell>
+                    <TableCell>
+                      <div className="font-medium text-[#111827]">{item.product_name_en || item.product_name}</div>
+                      <div className="text-sm text-[#6B7280]">{item.product_name_uk || item.product_name}</div>
+                    </TableCell>
+                    <TableCell className="text-center">{item.quantity}</TableCell>
+                    <TableCell className="text-right">{(Number(item.weight) * Number(item.quantity)).toLocaleString()}</TableCell>
+                  </TableRow>
+                ))}
+              </React.Fragment>
             ))}
           </TableBody>
         </Table>

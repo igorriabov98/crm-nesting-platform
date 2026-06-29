@@ -256,14 +256,6 @@ function buyerAddressLines(address: string, clientName: string) {
   return [value]
 }
 
-function deliveryBasisLine(prefix: string, location: string) {
-  const cleanPrefix = prefix.trim()
-  const cleanLocation = location.trim()
-  if (!cleanPrefix) return cleanLocation
-  if (!cleanLocation) return cleanPrefix
-  return `${cleanPrefix} - ${cleanLocation}`
-}
-
 function rowNumberFor(groups: ReturnType<typeof groupItemsByHsCode>, groupIndex: number, itemIndex: number) {
   return groups
     .slice(0, groupIndex)
@@ -347,10 +339,8 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
   const date = formatDate(data.machine.specification_date)
   const contractNumber = data.contract?.number || ''
   const contractDate = formatDate(data.contract?.date)
-  const deliveryLocationEn = data.client.delivery_basis_location_en || data.client.country_city || ''
-  const deliveryLocationUa = data.client.delivery_basis_location_ua || data.client.delivery_basis_location_en || data.client.country_city || ''
-  const deliveryBasisEn = deliveryBasisLine(data.company.delivery_basis_en, deliveryLocationEn)
-  const deliveryBasisUa = deliveryBasisLine(data.company.delivery_basis_ua, deliveryLocationUa)
+  const deliveryBasisEn = data.company.delivery_basis_en
+  const deliveryBasisUa = data.company.delivery_basis_ua
 
   return (
     <Document>

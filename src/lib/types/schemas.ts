@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MACHINE_DELIVERY_BASIS_VALUES } from '@/lib/constants/machine-delivery-basis'
 
 const roles = [
   'financial_director',
@@ -140,6 +141,7 @@ export const machinePackingGroupSchema = z.object({
 })
 
 export const machinePackingSettingsSchema = z.object({
+  delivery_basis_type: z.enum(MACHINE_DELIVERY_BASIS_VALUES),
   groups: z.array(machinePackingGroupSchema).default([]),
 })
 
