@@ -85,6 +85,7 @@ export type ProductOption = Pick<Product,
 export type ProductProjectSampleOption = ProductOption & {
   project_id: string
   version_id: string
+  client_id: string | null
   title: string
 }
 
@@ -434,12 +435,12 @@ export async function getProductProjectSampleOptions() {
     const { db } = await requireProductAccess('product_projects')
     const { data: projectsData, error: projectsError } = await db
       .from('product_projects')
-      .select('id, title, status, approved_version_id')
+      .select('id, title, client_id, status, approved_version_id')
       .eq('status', 'approved')
       .order('updated_at', { ascending: false })
     if (projectsError) throw projectsError
 
-    const projects = ((projectsData || []) as Array<Pick<ProductProject, 'id' | 'title' | 'status' | 'approved_version_id'>>)
+    const projects = ((projectsData || []) as Array<Pick<ProductProject, 'id' | 'title' | 'client_id' | 'status' | 'approved_version_id'>>)
       .filter((project) => Boolean(project.approved_version_id))
     if (projects.length === 0) return { data: [] as ProductProjectSampleOption[], error: null }
 
@@ -480,6 +481,7 @@ export async function getProductProjectSampleOptions() {
         id: project.id,
         project_id: project.id,
         version_id: version.id,
+        client_id: project.client_id,
         title: project.title,
         name_uk: version.name_uk,
         name_en: version.name_en,

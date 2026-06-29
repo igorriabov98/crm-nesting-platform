@@ -14,6 +14,8 @@ import { paymentTermsLabel } from './ClientFormFields'
 import { ClientContactsSection } from './ClientContactsSection'
 import { ClientContractsSection } from './ClientContractsSection'
 import { ClientEditDialog } from './ClientEditDialog'
+import { ClientProductPricesTable } from '@/components/features/client-prices/ClientProductPricesTable'
+import type { ClientPriceProductRow } from '@/lib/client-prices/types'
 import type { Client, ClientContact, Contract, MachineDetails } from '@/lib/types'
 
 type ClientImageType = 'signature' | 'stamp'
@@ -45,7 +47,15 @@ function isPngOrJpg(file: File) {
     || /\.(png|jpe?g)$/.test(name)
 }
 
-export function ClientDetail({ client, contractsError }: { client: ClientDetailData; contractsError?: string | null }) {
+export function ClientDetail({
+  client,
+  contractsError,
+  clientPrices,
+}: {
+  client: ClientDetailData
+  contractsError?: string | null
+  clientPrices?: { rows: ClientPriceProductRow[]; canManage: boolean } | null
+}) {
   const router = useRouter()
   const [isEditOpen, setIsEditOpen] = useState(false)
   const signatureInputRef = useRef<HTMLInputElement>(null)
@@ -207,6 +217,16 @@ export function ClientDetail({ client, contractsError }: { client: ClientDetailD
       <ClientContractsSection clientId={client.id} contracts={contracts} machines={machines} error={contractsError} />
 
       <ClientContactsSection clientId={client.id} contacts={contacts} />
+
+      {clientPrices && (
+        <ClientProductPricesTable
+          clientId={client.id}
+          rows={clientPrices.rows}
+          canManage={clientPrices.canManage}
+          title="Цены клиента"
+          description="Прайс этого клиента по активным изделиям и покрытиям."
+        />
+      )}
 
       <div className="grid gap-4 md:grid-cols-3">
         <div className="rounded-xl border border-[#E8ECF0] bg-white p-5">

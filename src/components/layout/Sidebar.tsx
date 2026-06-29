@@ -29,6 +29,7 @@ import {
   ShieldCheck,
   PackagePlus,
   History,
+  Tags,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -57,6 +58,7 @@ interface NavItem {
 const iconMap: Record<SidebarIconKey, React.ElementType> = {
   dashboard: LayoutDashboard,
   salesPlan: ClipboardList,
+  prices: Tags,
   products: Boxes,
   projects: ClipboardList,
   clients: Users,

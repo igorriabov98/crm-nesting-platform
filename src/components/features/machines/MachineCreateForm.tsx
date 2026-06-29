@@ -11,7 +11,9 @@ import { ROUTES } from '@/lib/constants/routes'
 import { COATINGS } from '@/lib/constants/coatings'
 import { createMachineSchema, type CreateMachineInput } from '@/lib/types/schemas'
 import { createMachine } from '@/app/(protected)/sales-plan/actions'
+import { getOrderClientProductPrices } from '@/lib/actions/client-product-prices'
 import type { ProductOption, ProductProjectSampleOption } from '@/lib/actions/products'
+import type { OrderClientPriceLookup } from '@/lib/client-prices/types'
 import type { Client, CoatingType, FactorySummary } from '@/lib/types'
 import { ClientCreateDialog } from '@/components/features/clients/ClientCreateDialog'
 import { paymentTermsLabel } from '@/components/features/clients/ClientFormFields'
@@ -81,6 +83,8 @@ export function MachineCreateForm({
   const [clients, setClients] = useState(initialClients)
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false)
   const [transportAmount, setTransportAmount] = useState<number | undefined>(undefined)
+  const [clientPriceLookup, setClientPriceLookup] = useState<OrderClientPriceLookup>({})
+  const [isLoadingClientPrices, setIsLoadingClientPrices] = useState(false)
   
   const form = useForm<CreateMachineInput>({
     resolver: zodResolver(createMachineSchema) as unknown as Resolver<CreateMachineInput>,
@@ -141,6 +145,11 @@ export function MachineCreateForm({
     [clients, selectedClientId],
   )
 
+  const availableProjectSamples = useMemo(
+    () => projectSamples.filter((sample) => sample.client_id === selectedClientId),
+    [projectSamples, selectedClientId],
+  )
+
   const selectedFactoryId = useWatch({
     control: form.control,
     name: 'factory_id',
@@ -156,6 +165,54 @@ export function MachineCreateForm({
     [factories, selectedFactoryId],
   )
   const productionMonthOptions = useMemo(() => getProductionMonthOptions(), [])
+
+  useEffect(() => {
+    if (!selectedClientId || products.length === 0) {
+      setClientPriceLookup({})
+      return
+    }
+
+    let cancelled = false
+    setIsLoadingClientPrices(true)
+    getOrderClientProductPrices(selectedClientId, products.map((product) => product.id))
+      .then((result) => {
+        if (cancelled) return
+        setClientPriceLookup(result.data || {})
+        if (result.error) toast.error(result.error)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingClientPrices(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [products, selectedClientId])
+
+  useEffect(() => {
+    const items = form.getValues('items') || []
+    items.forEach((item, index) => {
+      if (!item.product_id) return
+      const coating = (item.coating || 'none') as CoatingType
+      const price = clientPriceLookup[item.product_id]?.[coating]
+      setRowValue('items', index, 'price', typeof price === 'number' ? price : 0)
+    })
+  }, [clientPriceLookup, form, selectedClientId])
+
+  useEffect(() => {
+    const samples = form.getValues('samples') || []
+    samples.forEach((sample, index) => {
+      if (!sample.product_project_id) return
+      const stillAvailable = availableProjectSamples.some((option) => option.project_id === sample.product_project_id)
+      if (stillAvailable) return
+      setRowValue('samples', index, 'product_project_id', null)
+      setRowValue('samples', index, 'product_project_version_id', null)
+      setRowValue('samples', index, 'drawing_number', '')
+      setRowValue('samples', index, 'product_name', '')
+      setRowValue('samples', index, 'weight', 0)
+      setRowValue('samples', index, 'price', 0)
+    })
+  }, [availableProjectSamples, form])
 
   useEffect(() => {
     if (!selectedFactoryId) {
@@ -208,9 +265,31 @@ export function MachineCreateForm({
     form.setValue(rowPath(name, index, field), value as never)
   }
 
+  function getClientPrice(productId: string | null | undefined, coating: CoatingType | null | undefined) {
+    if (!productId || !coating) return null
+    const price = clientPriceLookup[productId]?.[coating]
+    return typeof price === 'number' ? price : null
+  }
+
+  function hasClientPrice(productId: string | null | undefined, coating: CoatingType | null | undefined) {
+    return getClientPrice(productId, coating) !== null
+  }
+
+  function applyClientPriceToItem(index: number, productId: string | null | undefined, coating: CoatingType, resetMissing = true) {
+    if (!productId) return
+    const price = getClientPrice(productId, coating)
+    if (price !== null) {
+      setRowValue('items', index, 'price', price)
+      return
+    }
+    if (resetMissing) setRowValue('items', index, 'price', 0)
+  }
+
   function applyProductToRow(name: 'items' | 'samples', index: number, productId: string) {
     const product = products.find((item) => item.id === productId)
     if (!product) return
+    const currentCoating = (form.getValues(rowPath(name, index, 'coating')) || 'none') as CoatingType
+    const clientPrice = name === 'items' ? getClientPrice(product.id, currentCoating) : null
     setRowValue(name, index, 'product_id', product.id)
     setRowValue(name, index, 'product_project_id', null)
     setRowValue(name, index, 'product_project_version_id', null)
@@ -222,11 +301,11 @@ export function MachineCreateForm({
     setRowValue(name, index, 'product_drawing_number', product.drawing_number)
     setRowValue(name, index, 'product_characteristics', product.characteristics)
     setRowValue(name, index, 'weight', Number(product.unit_weight_kg))
-    setRowValue(name, index, 'price', Number(product.base_price_eur))
+    setRowValue(name, index, 'price', clientPrice ?? (name === 'items' ? 0 : Number(product.base_price_eur)))
   }
 
   function applyProjectSampleToRow(index: number, projectId: string) {
-    const sample = projectSamples.find((item) => item.project_id === projectId)
+    const sample = availableProjectSamples.find((item) => item.project_id === projectId)
     if (!sample) return
     setRowValue('samples', index, 'product_id', null)
     setRowValue('samples', index, 'product_project_id', sample.project_id)
@@ -478,6 +557,8 @@ export function MachineCreateForm({
               </div>
               {itemFields.map((field, index) => {
                 const coatingValue = watchedItems?.[index]?.coating || 'none'
+                const productId = watchedItems?.[index]?.product_id || null
+                const priceLocked = hasClientPrice(productId, coatingValue)
                 const totalWeight = toFiniteNumber(watchedItems?.[index]?.weight) * toFiniteNumber(watchedItems?.[index]?.quantity)
                 
                 return (
@@ -538,7 +619,14 @@ export function MachineCreateForm({
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="text-xs">Покрытие *</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value || ''}>
+                            <Select
+                              onValueChange={(value) => {
+                                const coating = value as CoatingType
+                                field.onChange(coating)
+                                applyClientPriceToItem(index, productId, coating)
+                              }}
+                              value={field.value || ''}
+                            >
                               <FormControl>
                                 <SelectTrigger className="h-8 text-sm bg-white">
                                   <SelectValue placeholder="Выберите покрытие">
@@ -593,8 +681,25 @@ export function MachineCreateForm({
                         name={`items.${index}.price`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className="text-xs">Цена ед. (€) *</FormLabel>
-                            <FormControl><Input type="number" step="0.01" {...field} value={toNumberInputValue(field.value)} disabled className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                            <div className="flex items-center gap-2">
+                              <FormLabel className="text-xs">Цена ед. (€) *</FormLabel>
+                              {productId && (
+                                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${priceLocked ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                                  {isLoadingClientPrices ? 'Проверка цены' : priceLocked ? 'Цена клиента' : 'Новая цена'}
+                                </span>
+                              )}
+                            </div>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                {...field}
+                                value={toNumberInputValue(field.value)}
+                                disabled={priceLocked}
+                                onChange={(event) => field.onChange(parseNumberInput(event.target.value))}
+                                className={`h-8 text-sm ${priceLocked ? 'bg-slate-50 text-[#6B7280]' : 'bg-white text-slate-950'}`}
+                              />
+                            </FormControl>
                             <FormMessage className="text-[10px] text-[#DC2626]" />
                           </FormItem>
                         )}
@@ -675,12 +780,14 @@ export function MachineCreateForm({
                             <FormLabel className="text-xs">Проект изделия для образца *</FormLabel>
                             <FormControl>
                               <ProductOptionCombobox
-                                products={projectSamples}
+                                products={availableProjectSamples}
                                 value={field.value}
+                                disabled={!selectedClientId}
                                 placeholder="Выберите утвержденный проект"
                                 onChange={(value) => applyProjectSampleToRow(index, value)}
                               />
                             </FormControl>
+                            {!selectedClientId && <p className="text-xs text-[#6B7280]">Сначала выберите клиента.</p>}
                             <FormMessage className="text-[10px] text-[#DC2626]" />
                           </FormItem>
                         )}

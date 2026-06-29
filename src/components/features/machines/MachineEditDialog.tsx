@@ -7,15 +7,17 @@ import { Trash2, Plus, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { updateMachineSchema, type UpdateMachineInput } from '@/lib/types/schemas'
 import { updateMachine } from '@/app/(protected)/sales-plan/actions'
+import { getOrderClientProductPrices } from '@/lib/actions/client-product-prices'
 import { getNextSpecificationNumber } from '@/lib/actions/contracts'
 import { getProductOptions, getProductProjectSampleOptions, type ProductOption, type ProductProjectSampleOption } from '@/lib/actions/products'
 import { COATINGS } from '@/lib/constants/coatings'
 import { getFactoryWorkshopOptionsById, productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { formatProductionMonth, getProductionMonthOptions } from '@/lib/utils/production-months'
 import { ContractSelectField } from '@/components/features/contracts/ContractSelectField'
-import type { FactorySummary, MachineDetails, MachineExpense, MachineItem, MachineListItem } from '@/lib/types'
+import type { CoatingType, FactorySummary, MachineDetails, MachineExpense, MachineItem, MachineListItem } from '@/lib/types'
 import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 import { ProductOptionCombobox } from '@/components/features/machines/ProductOptionCombobox'
+import type { OrderClientPriceLookup } from '@/lib/client-prices/types'
 
 import {
   Dialog,
@@ -97,6 +99,8 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
   const [products, setProducts] = useState<ProductOption[]>([])
   const [projectSamples, setProjectSamples] = useState<ProductProjectSampleOption[]>([])
   const [catalogLoaded, setCatalogLoaded] = useState(false)
+  const [clientPriceLookup, setClientPriceLookup] = useState<OrderClientPriceLookup>({})
+  const [isLoadingClientPrices, setIsLoadingClientPrices] = useState(false)
 
   // Подготавливаем дефолтные значения из машины
   const allDefaultItems = machine.machine_items || []
@@ -124,6 +128,10 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     specification_date?: string | null
   }
   const selectedClientId = machine.client_id || null
+  const availableProjectSamples = useMemo(
+    () => projectSamples.filter((sample) => sample.client_id === selectedClientId),
+    [projectSamples, selectedClientId],
+  )
 
   const form = useForm<MachineFormInput>({
     resolver: zodResolver(updateMachineSchema) as unknown as Resolver<MachineFormInput>,
@@ -267,6 +275,39 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
   }, [catalogLoaded, isOpen])
 
   useEffect(() => {
+    if (!isOpen || !selectedClientId || products.length === 0) {
+      setClientPriceLookup({})
+      return
+    }
+
+    let cancelled = false
+    setIsLoadingClientPrices(true)
+    getOrderClientProductPrices(selectedClientId, products.map((product) => product.id))
+      .then((result) => {
+        if (cancelled) return
+        setClientPriceLookup(result.data || {})
+        if (result.error) toast.error(result.error)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingClientPrices(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, products, selectedClientId])
+
+  useEffect(() => {
+    const items = form.getValues('items') || []
+    items.forEach((item, index) => {
+      if (item.id || !item.product_id) return
+      const coating = (item.coating || 'none') as CoatingType
+      const price = clientPriceLookup[item.product_id]?.[coating]
+      setRowValue('items', index, 'price', typeof price === 'number' ? price : 0)
+    })
+  }, [clientPriceLookup, form])
+
+  useEffect(() => {
     if (!selectedClientId) return
     if (form.getFieldState('specification_number').isDirty || form.getValues('specification_number')) return
 
@@ -333,9 +374,31 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     form.setValue(rowPath(name, index, field), value as never)
   }
 
+  function getClientPrice(productId: string | null | undefined, coating: CoatingType | null | undefined) {
+    if (!productId || !coating) return null
+    const price = clientPriceLookup[productId]?.[coating]
+    return typeof price === 'number' ? price : null
+  }
+
+  function hasClientPrice(productId: string | null | undefined, coating: CoatingType | null | undefined) {
+    return getClientPrice(productId, coating) !== null
+  }
+
+  function applyClientPriceToItem(index: number, productId: string | null | undefined, coating: CoatingType, resetMissing = true) {
+    if (!productId) return
+    const price = getClientPrice(productId, coating)
+    if (price !== null) {
+      setRowValue('items', index, 'price', price)
+      return
+    }
+    if (resetMissing) setRowValue('items', index, 'price', 0)
+  }
+
   function applyProductToRow(name: 'items' | 'samples', index: number, productId: string) {
     const product = products.find((item) => item.id === productId)
     if (!product) return
+    const currentCoating = (form.getValues(rowPath(name, index, 'coating')) || 'none') as CoatingType
+    const clientPrice = name === 'items' ? getClientPrice(product.id, currentCoating) : null
     setRowValue(name, index, 'product_id', product.id)
     setRowValue(name, index, 'product_project_id', null)
     setRowValue(name, index, 'product_project_version_id', null)
@@ -347,11 +410,11 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     setRowValue(name, index, 'product_drawing_number', product.drawing_number)
     setRowValue(name, index, 'product_characteristics', product.characteristics)
     setRowValue(name, index, 'weight', Number(product.unit_weight_kg))
-    setRowValue(name, index, 'price', Number(product.base_price_eur))
+    setRowValue(name, index, 'price', clientPrice ?? (name === 'items' ? 0 : Number(product.base_price_eur)))
   }
 
   function applyProjectSampleToRow(index: number, projectId: string) {
-    const sample = projectSamples.find((item) => item.project_id === projectId)
+    const sample = availableProjectSamples.find((item) => item.project_id === projectId)
     if (!sample) return
     setRowValue('samples', index, 'product_id', null)
     setRowValue('samples', index, 'product_project_id', sample.project_id)
@@ -701,6 +764,8 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
               <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Товары</h3>
               {itemFields.map((field, index) => {
                 const coatingValue = watchedItems?.[index]?.coating || 'none'
+                const productId = watchedItems?.[index]?.product_id || null
+                const priceLocked = hasClientPrice(productId, coatingValue)
                 const totalWeight = toFiniteNumber(watchedItems?.[index]?.weight) * toFiniteNumber(watchedItems?.[index]?.quantity)
                 return (
                   <div key={field.id} className="p-4 bg-[#F8F9FA] border border-[#E8ECF0] rounded-md relative shadow-sm">
@@ -759,7 +824,14 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="text-xs text-[#374151]">Покрытие *</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value || ''}>
+                            <Select
+                              onValueChange={(value) => {
+                                const coating = value as CoatingType
+                                field.onChange(coating)
+                                applyClientPriceToItem(index, productId, coating)
+                              }}
+                              value={field.value || ''}
+                            >
                               <FormControl>
                                 <SelectTrigger className="h-8 text-sm bg-white">
                                   <SelectValue />
@@ -808,8 +880,24 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                         name={`items.${index}.price`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className="text-xs text-[#374151]">Цена ед. (€) *</FormLabel>
-                            <FormControl><Input type="number" step="0.01" {...field} disabled={Boolean(watchedItems?.[index]?.product_id)} onChange={e => field.onChange(parseFloat(e.target.value))} className="h-8 text-sm bg-white text-[#6B7280]" /></FormControl>
+                            <div className="flex items-center gap-2">
+                              <FormLabel className="text-xs text-[#374151]">Цена ед. (€) *</FormLabel>
+                              {productId && (
+                                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${priceLocked ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                                  {isLoadingClientPrices ? 'Проверка цены' : priceLocked ? 'Цена клиента' : 'Новая цена'}
+                                </span>
+                              )}
+                            </div>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                {...field}
+                                disabled={priceLocked}
+                                onChange={(event) => field.onChange(parseNumberInput(event.target.value))}
+                                className={`h-8 text-sm ${priceLocked ? 'bg-slate-50 text-[#6B7280]' : 'bg-white text-slate-950'}`}
+                              />
+                            </FormControl>
                             <FormMessage className="text-[10px]" />
                           </FormItem>
                         )}
@@ -889,13 +977,14 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                                 <FormLabel className="text-xs text-[#374151]">Проект изделия для образца</FormLabel>
                                 <FormControl>
                                   <ProductOptionCombobox
-                                    products={projectSamples}
+                                    products={availableProjectSamples}
                                     value={field.value}
-                                    disabled={locked}
+                                    disabled={locked || !selectedClientId}
                                     placeholder="Выберите утвержденный проект"
                                     onChange={(value) => applyProjectSampleToRow(index, value)}
                                   />
                                 </FormControl>
+                                {!selectedClientId && <p className="text-xs text-[#6B7280]">Сначала выберите клиента.</p>}
                                 {locked && <p className="text-xs text-[#6B7280]">Проект в существующей строке заблокирован.</p>}
                                 <FormMessage className="text-[10px]" />
                               </FormItem>

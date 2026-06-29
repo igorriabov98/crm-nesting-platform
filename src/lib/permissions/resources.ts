@@ -6,6 +6,7 @@ export type PermissionOperation = 'view' | 'manage'
 export type ResourceKey =
   | 'dashboard'
   | 'sales_plan'
+  | 'client_prices'
   | 'technologist_requests'
   | 'products'
   | 'product_projects'
@@ -45,6 +46,7 @@ export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'pro
 export type SidebarIconKey =
   | 'dashboard'
   | 'salesPlan'
+  | 'prices'
   | 'products'
   | 'projects'
   | 'clients'
@@ -159,6 +161,16 @@ export const PERMISSION_RESOURCES = [
       { path: ROUTES.SALES_PLAN, match: 'exact', operation: 'view' },
     ],
     sidebar: { section: 'sales', icon: 'salesPlan', order: 10 },
+  },
+  {
+    key: 'client_prices',
+    label: 'Цены',
+    group: 'Sales',
+    defaultHref: ROUTES.SALES_PLAN_PRICES,
+    defaultViewRoles: DIRECTORS,
+    defaultManageRoles: DIRECTORS,
+    routes: [{ path: ROUTES.SALES_PLAN_PRICES, match: 'prefix', operation: 'view', priority: 120 }],
+    sidebar: { section: 'sales', icon: 'prices', order: 15 },
   },
   {
     key: 'technologist_requests',

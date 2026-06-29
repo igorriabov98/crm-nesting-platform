@@ -233,6 +233,41 @@ export type Database = {
           updated_at?: string
         }
       }
+      client_product_prices: {
+        Row: {
+          id: string
+          client_id: string
+          product_id: string
+          coating: Database['public']['Enums']['coating_type']
+          price_eur: number
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          client_id: string
+          product_id: string
+          coating: Database['public']['Enums']['coating_type']
+          price_eur: number
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          client_id?: string
+          product_id?: string
+          coating?: Database['public']['Enums']['coating_type']
+          price_eur?: number
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       client_contacts: {
         Row: {
           id: string

@@ -13,6 +13,7 @@ export type MachineChatMessage = Database['public']['Tables']['machine_chat_mess
 export type MachineChatMention = Database['public']['Tables']['machine_chat_mentions']['Row']
 export type Client = Database['public']['Tables']['clients']['Row']
 export type ClientContact = Database['public']['Tables']['client_contacts']['Row']
+export type ClientProductPrice = Database['public']['Tables']['client_product_prices']['Row']
 export type Contract = Database['public']['Tables']['contracts']['Row']
 export type ProductionStage = Database['public']['Tables']['production_stages']['Row']
 export type ProductionFactSection = Database['public']['Tables']['production_fact_sections']['Row']

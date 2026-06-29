@@ -29,6 +29,7 @@ const PAGE_TITLES: Record<string, string> = {
   [ROUTES.DASHBOARD]: 'Дашборд',
   [ROUTES.SALES_PLAN]: 'План продаж',
   [ROUTES.SALES_PLAN + '/new']: 'Новая машина',
+  [ROUTES.SALES_PLAN_PRICES]: 'Цены клиентов',
   [ROUTES.PRODUCTS]: 'База продукции',
   [ROUTES.PRODUCTS_NEW]: 'Новый продукт',
   [ROUTES.PRODUCT_PROJECTS]: 'Проекты изделий',

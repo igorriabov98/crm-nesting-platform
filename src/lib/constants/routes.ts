@@ -16,6 +16,7 @@ export const ROUTES = {
   ADMIN_COMPANY_SETTINGS:'/admin/settings/company',
   SALES_PLAN:          '/sales-plan',
   SALES_PLAN_NEW:      '/sales-plan/new',
+  SALES_PLAN_PRICES:   '/sales-plan/prices',
   PRODUCTS:       '/products',
   PRODUCTS_NEW:   '/products/new',
   PRODUCT_PROJECTS:     '/product-projects',
