@@ -31,10 +31,10 @@ function pluralizeEn(type: string, count: number) {
 }
 
 function boxLabel(count: number, language: 'en' | 'ua') {
-  if (language === 'en') return count === 1 ? `${count} box` : `${count} boxes`
-  if (count % 10 === 1 && count % 100 !== 11) return `${count} коробка`
-  if ([2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100)) return `${count} коробки`
-  return `${count} коробок`
+  if (language === 'en') return count === 1 ? `${count} cardboard box` : `${count} cardboard boxes`
+  if (count % 10 === 1 && count % 100 !== 11) return `${count} картонна коробка`
+  if ([2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100)) return `${count} картонні коробки`
+  return `${count} картонних коробок`
 }
 
 function joinSummaryParts(parts: string[], conjunction: string) {
