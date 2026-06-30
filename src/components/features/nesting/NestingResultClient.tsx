@@ -9,13 +9,14 @@ import { Separator } from '@/components/ui/separator'
 import { DxfDownloadButtons } from '@/components/features/nesting/DxfDownloadButtons'
 import { FutureFillPanel } from '@/components/features/nesting/FutureFillPanel'
 import { NestingCanvas } from '@/components/features/nesting/NestingCanvas'
+import { RemnantSelectionPanel } from '@/components/features/nesting/RemnantSelectionPanel'
 import { ResultStatsCards } from '@/components/features/nesting/ResultStatsCards'
 import { SheetInfoPanel } from '@/components/features/nesting/SheetInfoPanel'
 import { SheetTabs } from '@/components/features/nesting/SheetTabs'
 import { StatusBadge } from '@/components/features/nesting/StatusBadge'
 import { UnplacedPartsList } from '@/components/features/nesting/UnplacedPartsList'
 import type { NestingProject, NestingResult } from '@/lib/nesting/api'
-import type { FutureFillContext } from '@/lib/actions/nesting-future-fill'
+import type { FutureFillContext, FutureFillRemnant } from '@/lib/actions/nesting-future-fill'
 
 export function NestingResultClient({
   project,
@@ -26,15 +27,30 @@ export function NestingResultClient({
   result: NestingResult
   futureFillContext: FutureFillContext | null
 }) {
+  const [currentResult, setCurrentResult] = useState(result)
   const [activeSheetIndex, setActiveSheetIndex] = useState(0)
   const [hoveredPart, setHoveredPart] = useState<string | null>(null)
   const [selectedPart, setSelectedPart] = useState<string | null>(null)
-  const activeSheet = result.sheets[activeSheetIndex] ?? result.sheets[0]
+  const [hoveredRemnantId, setHoveredRemnantId] = useState<string | null>(null)
+  const activeSheet = currentResult.sheets[activeSheetIndex] ?? currentResult.sheets[0]
+  const currentFutureFillContext = futureFillContext ? {
+    ...futureFillContext,
+    usableRemnants: usableRemnantsFromResult(currentResult),
+  } : null
 
   function handleSheetChange(index: number) {
     setActiveSheetIndex(index)
     setHoveredPart(null)
     setSelectedPart(null)
+    setHoveredRemnantId(null)
+  }
+
+  function updateActiveSheetRemnants(data: Pick<NonNullable<typeof activeSheet>, 'remnantGeom' | 'remnantCandidates' | 'selectedRemnants'>) {
+    if (!activeSheet) return
+    setCurrentResult((current) => ({
+      ...current,
+      sheets: current.sheets.map((sheet) => sheet.id === activeSheet.id ? { ...sheet, ...data } : sheet),
+    }))
   }
 
   return (
@@ -59,15 +75,15 @@ export function NestingResultClient({
         </div>
       </div>
 
-      <ResultStatsCards result={result} />
+      <ResultStatsCards result={currentResult} />
 
-      <GroupedDemandSummary result={result} />
+      <GroupedDemandSummary result={currentResult} />
 
-      <FutureFillPanel context={futureFillContext} />
+      <FutureFillPanel context={currentFutureFillContext} />
 
       <UnplacedPartsList parts={result.unplacedParts} />
 
-      <SheetTabs sheets={result.sheets} activeIndex={activeSheetIndex} onChange={handleSheetChange} />
+      <SheetTabs sheets={currentResult.sheets} activeIndex={activeSheetIndex} onChange={handleSheetChange} />
 
       {activeSheet ? (
         <>
@@ -77,11 +93,19 @@ export function NestingResultClient({
                 sheet={activeSheet}
                 hoveredPart={hoveredPart}
                 selectedPart={selectedPart}
+                hoveredRemnantId={hoveredRemnantId}
                 onPartHover={setHoveredPart}
                 onPartSelect={setSelectedPart}
               />
             </CardContent>
           </Card>
+
+          <RemnantSelectionPanel
+            projectId={project.id}
+            sheet={activeSheet}
+            onHoverRemnant={setHoveredRemnantId}
+            onSaved={updateActiveSheetRemnants}
+          />
 
           <SheetInfoPanel sheet={activeSheet} />
 
@@ -101,6 +125,27 @@ export function NestingResultClient({
       )}
     </div>
   )
+}
+
+function usableRemnantsFromResult(result: NestingResult): FutureFillRemnant[] {
+  return result.sheets.flatMap((sheet) => {
+    const remnants = sheet.selectedRemnants?.length ? sheet.selectedRemnants : sheet.remnantGeom ? [sheet.remnantGeom] : []
+
+    return remnants.filter((remnant) => remnant.isUsable).map((remnant) => ({
+      id: remnant.id,
+      sheetId: sheet.id,
+      sheetIndex: sheet.sheetIndex,
+      material: sheet.material,
+      steelTypeId: sheet.steelTypeId,
+      steelTypeName: sheet.steelTypeName,
+      thickness: sheet.thickness,
+      x: remnant.x,
+      y: remnant.y,
+      width: remnant.width,
+      height: remnant.height,
+      area: remnant.area,
+    }))
+  })
 }
 
 function GroupedDemandSummary({ result }: { result: NestingResult }) {

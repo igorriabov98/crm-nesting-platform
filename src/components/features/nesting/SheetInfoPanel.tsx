@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle } from 'lucide-react'
+import { CheckCircle2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { SheetResult } from '@/lib/nesting/api'
 
@@ -20,6 +20,8 @@ function InfoItem({ label, value }: { label: string; value: ReactNode }) {
 }
 
 export function SheetInfoPanel({ sheet }: { sheet: SheetResult }) {
+  const selectedRemnants = sheet.selectedRemnants?.length ? sheet.selectedRemnants : sheet.remnantGeom ? [sheet.remnantGeom] : []
+
   return (
     <div className="space-y-3 rounded-lg border border-[#E8ECF0] bg-white p-4 text-sm">
       <div className="flex flex-wrap gap-x-5 gap-y-2">
@@ -29,23 +31,21 @@ export function SheetInfoPanel({ sheet }: { sheet: SheetResult }) {
         <InfoItem label="Деталей на листе" value={sheet.placements.length} />
       </div>
 
-      {sheet.remnantGeom && (
+      {selectedRemnants.length > 0 && (
         <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-[#E8ECF0] pt-3">
-          <InfoItem label="Деловой отход" value={`${sheet.remnantGeom.width}×${sheet.remnantGeom.height} мм`} />
-          <InfoItem label="Площадь" value={formatArea(sheet.remnantGeom.area)} />
+          <InfoItem label="Деловых остатков" value={selectedRemnants.length} />
+          <InfoItem label="Общая площадь" value={formatArea(selectedRemnants.reduce((sum, remnant) => sum + remnant.area, 0))} />
           <span className="inline-flex items-center gap-1 font-medium text-green-700">
-            {sheet.remnantGeom.isUsable ? (
-              <>
-                <CheckCircle2 className="h-4 w-4" />
-                Пригоден для использования
-              </>
-            ) : (
-              <>
-                <XCircle className="h-4 w-4 text-red-600" />
-                Непригоден для использования
-              </>
-            )}
+            <CheckCircle2 className="h-4 w-4" />
+            Выбраны для использования
           </span>
+          <div className="basis-full text-[#6B7280]">
+            {selectedRemnants.map((remnant, index) => (
+              <span key={remnant.id} className="mr-4 inline-flex">
+                #{index + 1}: {Math.round(remnant.width)}×{Math.round(remnant.height)} мм
+              </span>
+            ))}
+          </div>
         </div>
       )}
     </div>

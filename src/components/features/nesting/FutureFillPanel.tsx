@@ -107,7 +107,7 @@ export function FutureFillPanel({ context }: Props) {
         {context.usableRemnants.length > 0 && (
           <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {context.usableRemnants.slice(0, 6).map((remnant) => (
-              <div key={remnant.sheetId} className="rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] px-3 py-2 text-sm">
+              <div key={`${remnant.sheetId}-${remnant.id}`} className="rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] px-3 py-2 text-sm">
                 <div className="font-medium text-[#374151]">Лист {remnant.sheetIndex}</div>
                 <div className="text-[#6B7280]">
                   {remnant.material}{remnant.steelTypeName ? ` / ${remnant.steelTypeName}` : ''}, {remnant.thickness} мм

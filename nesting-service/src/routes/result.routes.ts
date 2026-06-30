@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { NotFoundError, ValidationError } from '../lib/errors';
 import { createLeadSegments, type LeadSegment } from '../lib/dxf/leads';
 import { readFittedPartGeometry } from '../lib/dxf/part-geometry';
@@ -6,6 +8,7 @@ import { ensureCCW, ensureCW, removeClosingPoint, transformContourForDxf, type D
 import { prisma } from '../lib/prisma';
 import { normalizeCadText } from '../lib/text-encoding';
 import { idParamSchema } from '../schemas/common.schema';
+import { projectSheetParamsSchema } from '../schemas/project.schema';
 
 type PlacementForResult = {
   partId: string;
@@ -42,9 +45,30 @@ type JsonPoint = {
   y: number;
 };
 
+type RemnantCandidateForResult = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  area: number;
+  isUsable: boolean;
+};
+
+type RemnantPayload = {
+  primary: RemnantCandidateForResult | null;
+  candidates: RemnantCandidateForResult[];
+  selectedIds: string[];
+  selectedRemnants: RemnantCandidateForResult[];
+};
+
 const LEAD_IN_LENGTH_MM = 3;
 const LEAD_OUT_LENGTH_MM = 2;
 const SHEET_MARGIN_MM = 5;
+
+const updateRemnantsSchema = z.object({
+  selectedRemnantIds: z.array(z.string().min(1)).max(10),
+});
 
 export async function resultRoutes(app: FastifyInstance) {
   app.get('/:id/result', async (request) => {
@@ -84,6 +108,8 @@ export async function resultRoutes(app: FastifyInstance) {
         placedByPartId.set(placement.partId, (placedByPartId.get(placement.partId) ?? 0) + 1);
       }
 
+      const remnantPayload = readRemnantPayload(sheet.remnantGeom);
+
       return {
         id: sheet.id,
         sheetIndex: sheet.sheetIndex,
@@ -97,7 +123,9 @@ export async function resultRoutes(app: FastifyInstance) {
         placements,
         utilization: sheet.utilization,
         waste: sheet.waste,
-        remnantGeom: sheet.remnantGeom,
+        remnantGeom: remnantPayload.primary,
+        remnantCandidates: remnantPayload.candidates,
+        selectedRemnants: remnantPayload.selectedRemnants,
       };
     });
 
@@ -128,6 +156,47 @@ export async function resultRoutes(app: FastifyInstance) {
         totalSheets: sheets.length,
         avgUtilization,
         totalWaste,
+      },
+    };
+  });
+
+  app.put('/:id/sheets/:sheetId/remnants', async (request) => {
+    const { id, sheetId } = projectSheetParamsSchema.parse(request.params);
+    const body = updateRemnantsSchema.parse(request.body);
+    const selectedIds = Array.from(new Set(body.selectedRemnantIds));
+    const sheet = await prisma.nestingSheet.findFirst({
+      where: { id: sheetId, projectId: id },
+      select: { id: true, remnantGeom: true },
+    });
+
+    if (!sheet) {
+      throw new NotFoundError('Лист раскладки', sheetId);
+    }
+
+    const payload = readRemnantPayload(sheet.remnantGeom);
+    const candidateById = new Map(payload.candidates.map((candidate) => [candidate.id, candidate]));
+
+    for (const selectedId of selectedIds) {
+      if (!candidateById.has(selectedId)) {
+        throw new ValidationError(`Остаток ${selectedId} не найден среди кандидатов листа`);
+      }
+    }
+
+    const selectedRemnants = selectedIds.map((selectedId) => candidateById.get(selectedId)!);
+    validateNonOverlappingRemnants(selectedRemnants);
+
+    const nextStorage = createRemnantStorage(payload.candidates, selectedIds);
+    await prisma.nestingSheet.update({
+      where: { id: sheetId },
+      data: { remnantGeom: nextStorage === null ? Prisma.JsonNull : nextStorage as Prisma.InputJsonValue },
+    });
+
+    const nextPayload = readRemnantPayload(nextStorage);
+    return {
+      data: {
+        remnantGeom: nextPayload.primary,
+        remnantCandidates: nextPayload.candidates,
+        selectedRemnants: nextPayload.selectedRemnants,
       },
     };
   });
@@ -226,11 +295,123 @@ function translateLeadSegment(segment: LeadSegment, offsetX: number, offsetY: nu
   };
 }
 
+function readRemnantPayload(value: unknown): RemnantPayload {
+  const record = isRecord(value) ? value : null;
+  const candidates = Array.isArray(record?.candidates)
+    ? record.candidates.map(readRemnantCandidate).filter((candidate): candidate is RemnantCandidateForResult => candidate !== null)
+    : [];
+  const legacy = readRemnantCandidate(value);
+  const normalizedCandidates = uniqueRemnants(candidates.length > 0 ? candidates : legacy ? [legacy] : []);
+  const selectedIds = Array.isArray(record?.selectedIds)
+    ? record.selectedIds.filter((id): id is string => typeof id === 'string')
+    : normalizedCandidates.length > 0 && legacy?.isUsable !== false
+      ? [normalizedCandidates[0].id]
+      : [];
+  const selectedSet = new Set(selectedIds);
+  const selectedRemnants = normalizedCandidates.filter((candidate) => selectedSet.has(candidate.id));
+  const primary = selectedRemnants.sort(compareRemnants)[0] ?? null;
+
+  return {
+    primary,
+    candidates: normalizedCandidates,
+    selectedIds: selectedRemnants.map((candidate) => candidate.id),
+    selectedRemnants,
+  };
+}
+
+function createRemnantStorage(candidates: RemnantCandidateForResult[], selectedIds: string[]): Record<string, unknown> | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const selectedSet = new Set(selectedIds);
+  const selectedRemnants = candidates.filter((candidate) => selectedSet.has(candidate.id)).sort(compareRemnants);
+  const base = selectedRemnants[0] ?? candidates[0];
+
+  return {
+    ...base,
+    isUsable: selectedRemnants.length > 0,
+    candidates,
+    selectedIds: selectedRemnants.map((candidate) => candidate.id),
+  };
+}
+
+function readRemnantCandidate(value: unknown): RemnantCandidateForResult | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const x = Number(value.x);
+  const y = Number(value.y);
+  const width = Number(value.width);
+  const height = Number(value.height);
+
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const area = Number.isFinite(Number(value.area)) ? Number(value.area) : Math.round(width * height);
+  const candidate = {
+    id: typeof value.id === 'string' && value.id.length > 0 ? value.id : remnantId({ x, y, width, height }),
+    x: roundMm(x),
+    y: roundMm(y),
+    width: roundMm(width),
+    height: roundMm(height),
+    area: Math.round(area),
+    isUsable: value.isUsable !== false,
+  };
+
+  return candidate;
+}
+
+function uniqueRemnants(candidates: RemnantCandidateForResult[]): RemnantCandidateForResult[] {
+  const byId = new Map<string, RemnantCandidateForResult>();
+  for (const candidate of candidates) {
+    byId.set(candidate.id, candidate);
+  }
+  return Array.from(byId.values()).sort(compareRemnants);
+}
+
+function validateNonOverlappingRemnants(remnants: RemnantCandidateForResult[]): void {
+  for (let leftIndex = 0; leftIndex < remnants.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < remnants.length; rightIndex += 1) {
+      if (remnantsOverlap(remnants[leftIndex], remnants[rightIndex])) {
+        throw new ValidationError('Выбранные деловые остатки пересекаются. Оставьте один из пересекающихся вариантов.');
+      }
+    }
+  }
+}
+
+function remnantsOverlap(left: RemnantCandidateForResult, right: RemnantCandidateForResult): boolean {
+  return !(
+    left.x + left.width <= right.x + 0.001 ||
+    right.x + right.width <= left.x + 0.001 ||
+    left.y + left.height <= right.y + 0.001 ||
+    right.y + right.height <= left.y + 0.001
+  );
+}
+
+function compareRemnants(left: RemnantCandidateForResult, right: RemnantCandidateForResult): number {
+  return right.area - left.area || right.width - left.width || right.height - left.height || left.y - right.y || left.x - right.x;
+}
+
+function remnantId(rect: Pick<RemnantCandidateForResult, 'x' | 'y' | 'width' | 'height'>): string {
+  return [roundMm(rect.x), roundMm(rect.y), roundMm(rect.width), roundMm(rect.height)].join(':');
+}
+
 function roundPoint(point: JsonPoint): JsonPoint {
   return {
     x: Math.round(point.x * 10) / 10,
     y: Math.round(point.y * 10) / 10,
   };
+}
+
+function roundMm(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isPlacementForResult(value: unknown): value is PlacementForResult {

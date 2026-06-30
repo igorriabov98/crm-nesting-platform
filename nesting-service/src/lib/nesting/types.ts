@@ -68,6 +68,19 @@ export interface SheetResult {
 }
 
 export interface RemnantInfo {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  area: number;
+  isUsable: boolean;
+  candidates?: RemnantCandidate[];
+  selectedIds?: string[];
+}
+
+export interface RemnantCandidate {
+  id: string;
   x: number;
   y: number;
   width: number;

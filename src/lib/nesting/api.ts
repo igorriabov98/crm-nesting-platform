@@ -89,6 +89,7 @@ export interface Placement {
 }
 
 export interface RemnantGeom {
+  id: string
   x: number
   y: number
   width: number
@@ -111,6 +112,8 @@ export interface SheetResult {
   utilization: number
   waste: number
   remnantGeom: RemnantGeom | null
+  remnantCandidates: RemnantGeom[]
+  selectedRemnants: RemnantGeom[]
 }
 
 export interface NestingResult {

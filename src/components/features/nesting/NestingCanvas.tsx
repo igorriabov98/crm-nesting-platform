@@ -62,12 +62,14 @@ export function NestingCanvas({
   sheet,
   hoveredPart,
   selectedPart,
+  hoveredRemnantId = null,
   onPartHover,
   onPartSelect,
 }: {
   sheet: SheetResult
   hoveredPart: string | null
   selectedPart: string | null
+  hoveredRemnantId?: string | null
   onPartHover: (partId: string | null) => void
   onPartSelect: (partId: string | null) => void
 }) {
@@ -86,6 +88,10 @@ export function NestingCanvas({
   const gridBigId = `nesting-grid-big-${reactId}`
   const xTicks = createTicks(sheet.width, GRID_STEP_BIG)
   const yTicks = createTicks(sheet.height, GRID_STEP_BIG)
+  const remnantCandidates = sheet.remnantCandidates?.length ? sheet.remnantCandidates : sheet.remnantGeom ? [sheet.remnantGeom] : []
+  const selectedRemnantIds = new Set(
+    sheet.selectedRemnants?.length ? sheet.selectedRemnants.map((remnant) => remnant.id) : sheet.remnantGeom ? [sheet.remnantGeom.id] : []
+  )
   const basePartStrokeWidth = Math.max(0.2, Math.min(0.7, scale * 1.5))
   const hoveredPartStrokeWidth = Math.max(basePartStrokeWidth + 0.1, Math.min(0.9, scale * 2.5))
   const selectedPartStrokeWidth = Math.max(basePartStrokeWidth + 0.2, Math.min(1.1, scale * 3))
@@ -236,6 +242,43 @@ export function NestingCanvas({
           </g>
         ))}
 
+        {remnantCandidates.map((remnant) => {
+          const selected = selectedRemnantIds.has(remnant.id)
+          const hovered = hoveredRemnantId === remnant.id
+          const remnantX = getSvgX(remnant.x)
+          const remnantY = getSvgY(remnant.y, remnant.height)
+          const remnantWidth = remnant.width * scale
+          const remnantHeight = remnant.height * scale
+
+          return (
+            <g key={remnant.id}>
+              <rect
+                x={remnantX}
+                y={remnantY}
+                width={remnantWidth}
+                height={remnantHeight}
+                fill={selected ? 'rgb(34, 197, 94)' : 'transparent'}
+                fillOpacity={selected ? (hovered ? 0.18 : 0.1) : 0}
+                stroke={selected ? 'rgb(34, 197, 94)' : '#64748B'}
+                strokeWidth={hovered ? 1.5 : 1}
+                strokeDasharray={selected ? '8 4' : '4 5'}
+                rx="2"
+              />
+              {(selected || hovered) && remnantWidth > 90 && remnantHeight > 28 && (
+                <text
+                  x={getSvgX(remnant.x + remnant.width / 2)}
+                  y={getSvgY(remnant.y, remnant.height) + remnantHeight / 2}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  className={selected ? 'fill-green-700 text-[11px] font-medium' : 'fill-slate-600 text-[11px] font-medium'}
+                >
+                  Остаток {formatMm(remnant.width)}×{formatMm(remnant.height)}
+                </text>
+              )}
+            </g>
+          )
+        })}
+
         {sheet.placements.map((placement, index) => {
           const partName = placement.name || placement.partId
           const color = getPartColor(partName)
@@ -352,33 +395,6 @@ export function NestingCanvas({
           )
         })}
 
-        {sheet.remnantGeom && (
-          <g>
-            <rect
-              x={getSvgX(sheet.remnantGeom.x)}
-              y={getSvgY(sheet.remnantGeom.y, sheet.remnantGeom.height)}
-              width={sheet.remnantGeom.width * scale}
-              height={sheet.remnantGeom.height * scale}
-              fill="rgb(34, 197, 94)"
-              fillOpacity="0.1"
-              stroke="rgb(34, 197, 94)"
-              strokeWidth="1"
-              strokeDasharray="8 4"
-              rx="2"
-            />
-            {sheet.remnantGeom.width * scale > 90 && sheet.remnantGeom.height * scale > 28 && (
-              <text
-                x={getSvgX(sheet.remnantGeom.x + sheet.remnantGeom.width / 2)}
-                y={getSvgY(sheet.remnantGeom.y, sheet.remnantGeom.height) + (sheet.remnantGeom.height * scale) / 2}
-                textAnchor="middle"
-                dominantBaseline="central"
-                className="fill-green-700 text-[11px] font-medium"
-              >
-                Остаток {formatMm(sheet.remnantGeom.width)}×{formatMm(sheet.remnantGeom.height)}
-              </text>
-            )}
-          </g>
-        )}
       </svg>
 
       {tooltip && (

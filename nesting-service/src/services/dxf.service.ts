@@ -272,6 +272,10 @@ function readRemnant(value: unknown, sheetId: string): DxfRemnantData | null {
     throw new ValidationError(`Sheet ${sheetId} remnant geometry is invalid`);
   }
 
+  if (value.isUsable === false) {
+    return null;
+  }
+
   if (!isFiniteNumber(value.x) || !isFiniteNumber(value.y) || !isFiniteNumber(value.width) || !isFiniteNumber(value.height)) {
     throw new ValidationError(`Sheet ${sheetId} remnant geometry has invalid dimensions`);
   }

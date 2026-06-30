@@ -117,12 +117,15 @@ type FutureFillBatchContext = {
 }
 
 export type FutureFillRemnant = {
+  id: string
   sheetId: string
   sheetIndex: number
   material: string
   steelTypeId: string | null
   steelTypeName: string | null
   thickness: number
+  x: number
+  y: number
   width: number
   height: number
   area: number
@@ -188,24 +191,27 @@ function addDays(value: string, days: number) {
   return date.toISOString().slice(0, 10)
 }
 
-function sheetRemnant(sheet: SheetResult): FutureFillRemnant | null {
-  const remnant = sheet.remnantGeom
-  if (!remnant?.isUsable) return null
-  return {
+function sheetRemnants(sheet: SheetResult): FutureFillRemnant[] {
+  const remnants = sheet.selectedRemnants?.length ? sheet.selectedRemnants : sheet.remnantGeom ? [sheet.remnantGeom] : []
+
+  return remnants.filter((remnant) => remnant.isUsable).map((remnant) => ({
+    id: remnant.id,
     sheetId: sheet.id,
     sheetIndex: sheet.sheetIndex,
     material: sheet.material,
     steelTypeId: sheet.steelTypeId,
     steelTypeName: sheet.steelTypeName,
     thickness: sheet.thickness,
+    x: remnant.x,
+    y: remnant.y,
     width: remnant.width,
     height: remnant.height,
     area: remnant.area,
-  }
+  }))
 }
 
 function usableRemnants(result: NestingResult) {
-  return result.sheets.map(sheetRemnant).filter((item): item is FutureFillRemnant => Boolean(item))
+  return result.sheets.flatMap(sheetRemnants)
 }
 
 async function loadBatchContext(db: LooseDb, projectId: string): Promise<FutureFillBatchContext | null> {
@@ -527,6 +533,7 @@ function futurePlacementRows(projectId: string, result: NestingResult, futureIte
 
 function sourceRemnantPayload(remnant: RemnantGeom) {
   return {
+    id: remnant.id,
     x: remnant.x,
     y: remnant.y,
     width: remnant.width,
@@ -534,6 +541,14 @@ function sourceRemnantPayload(remnant: RemnantGeom) {
     area: remnant.area,
     isUsable: remnant.isUsable,
   }
+}
+
+function readSourceRemnantId(value: unknown) {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const id = (value as { id?: unknown }).id
+    if (typeof id === 'string' && id.length > 0) return id
+  }
+  return 'legacy'
 }
 
 function sheetSizeFromRemnant(remnant: RemnantGeom) {
@@ -588,41 +603,47 @@ export async function finalizeFutureFill(input: {
 
     const { data: existingScrapData } = await db
       .from('inventory')
-      .select('source_nesting_sheet_id')
+      .select('source_nesting_sheet_id, source_remnant_geom')
       .eq('source_nesting_project_id', parsed.projectId)
-    const existingSheetIds = new Set(((existingScrapData || []) as { source_nesting_sheet_id: string | null }[]).map((row) => row.source_nesting_sheet_id).filter(Boolean))
+    const existingRemnantKeys = new Set(((existingScrapData || []) as { source_nesting_sheet_id: string | null; source_remnant_geom: unknown }[])
+      .map((row) => row.source_nesting_sheet_id ? `${row.source_nesting_sheet_id}:${readSourceRemnantId(row.source_remnant_geom)}` : null)
+      .filter((value): value is string => Boolean(value)))
     const futureScrapRows: Array<Record<string, unknown>> = []
 
     for (const sheet of currentResult.data.sheets) {
-      if (!sheet.remnantGeom?.isUsable || existingSheetIds.has(sheet.id)) continue
-      const resolved = await resolveSheetMetalMaterialForRequestRow(db, userId, {
-        materialName: sheet.material,
-        materialGrade: sheet.steelTypeName,
-        steelTypeId: sheet.steelTypeId,
-        sheetSize: sheetSizeFromRemnant(sheet.remnantGeom),
-        thicknessMm: sheet.thickness,
-      })
+      const remnants = sheet.selectedRemnants?.length ? sheet.selectedRemnants : sheet.remnantGeom ? [sheet.remnantGeom] : []
 
-      futureScrapRows.push({
-        factory_id: cutting.factoryId,
-        material_id: resolved.materialId,
-        material_variant_id: resolved.materialVariantId,
-        total_quantity: 1,
-        reserved_quantity: 0,
-        unit: 'шт',
-        total_secondary_quantity: null,
-        reserved_secondary_quantity: null,
-        secondary_unit: null,
-        is_business_scrap: true,
-        business_scrap_state: 'future',
-        available_from_date: cutting.date,
-        available_from_stage_id: cutting.stageId,
-        source_machine_id: cutting.machineId,
-        source_nesting_project_id: parsed.projectId,
-        source_nesting_sheet_id: sheet.id,
-        source_remnant_geom: sourceRemnantPayload(sheet.remnantGeom),
-        last_updated_by: userId,
-      })
+      for (const remnant of remnants) {
+        if (!remnant.isUsable || existingRemnantKeys.has(`${sheet.id}:${remnant.id}`)) continue
+        const resolved = await resolveSheetMetalMaterialForRequestRow(db, userId, {
+          materialName: sheet.material,
+          materialGrade: sheet.steelTypeName,
+          steelTypeId: sheet.steelTypeId,
+          sheetSize: sheetSizeFromRemnant(remnant),
+          thicknessMm: sheet.thickness,
+        })
+
+        futureScrapRows.push({
+          factory_id: cutting.factoryId,
+          material_id: resolved.materialId,
+          material_variant_id: resolved.materialVariantId,
+          total_quantity: 1,
+          reserved_quantity: 0,
+          unit: 'шт',
+          total_secondary_quantity: null,
+          reserved_secondary_quantity: null,
+          secondary_unit: null,
+          is_business_scrap: true,
+          business_scrap_state: 'future',
+          available_from_date: cutting.date,
+          available_from_stage_id: cutting.stageId,
+          source_machine_id: cutting.machineId,
+          source_nesting_project_id: parsed.projectId,
+          source_nesting_sheet_id: sheet.id,
+          source_remnant_geom: sourceRemnantPayload(remnant),
+          last_updated_by: userId,
+        })
+      }
     }
 
     let insertedScrapRows = 0
