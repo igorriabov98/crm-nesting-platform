@@ -4,6 +4,8 @@ import {
   type ClassificationMethod,
   type Point2D,
   computeBoundingBox,
+  computeMeshArea,
+  computeMeshVolume,
   classifySheetMetalV2,
   convexHull,
   ensureClockwise,
@@ -56,6 +58,9 @@ export interface ParsedPart {
   classificationWarning: string | null;
   thumbnailSvg: string;
   boundingBox: BBox3D;
+  meshVolume: number;
+  meshArea: number;
+  facesCount: number;
 }
 
 export interface StepParseResult {
@@ -203,10 +208,14 @@ function processMesh(
 
   const positions = toFloat32Array(positionArray);
   const indices = mesh.index?.array ? toUint32Array(mesh.index.array) : new Uint32Array();
+  const hasIndexedTriangles = indices.length >= 3;
   const rawName = sourceMeshNames.get(index) || mesh.name || meshNames.get(index) || `Part_${index + 1}`;
   const name = normalizeCadText(rawName);
   const boundingBox = computeBoundingBox(positions);
-  const classification = classifySheetMetalV2(boundingBox, positions, indices.length >= 3 ? indices : null, 0.15);
+  const meshArea = hasIndexedTriangles ? computeMeshArea(positions, indices) : 0;
+  const meshVolume = hasIndexedTriangles ? computeMeshVolume(positions, indices) : 0;
+  const facesCount = hasIndexedTriangles ? Math.floor(indices.length / 3) : 0;
+  const classification = classifySheetMetalV2(boundingBox, positions, hasIndexedTriangles ? indices : null, 0.15);
   const classificationWarning = classification.warnings.length > 0 ? classification.warnings.join('; ') : null;
   const holes: Point2D[][] = [];
   let contour: Point2D[] = [];
@@ -254,6 +263,9 @@ function processMesh(
     classificationWarning,
     thumbnailSvg,
     boundingBox,
+    meshVolume,
+    meshArea,
+    facesCount,
   };
 }
 

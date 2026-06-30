@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS nesting."Part" (
   "material" TEXT NOT NULL DEFAULT 'Сталь',
   "width" DOUBLE PRECISION NOT NULL,
   "height" DOUBLE PRECISION NOT NULL,
+  "bboxSizeX" DOUBLE PRECISION,
+  "bboxSizeY" DOUBLE PRECISION,
+  "bboxSizeZ" DOUBLE PRECISION,
+  "meshVolume" DOUBLE PRECISION,
+  "meshArea" DOUBLE PRECISION,
+  "facesCount" INTEGER,
   "contour" JSONB NOT NULL,
   "holes" JSONB,
   "quantity" INTEGER NOT NULL DEFAULT 1,
@@ -46,6 +52,24 @@ ALTER TABLE nesting."Part"
 
 ALTER TABLE nesting."Part"
   ADD COLUMN IF NOT EXISTS "classificationWarning" TEXT;
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "bboxSizeX" DOUBLE PRECISION;
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "bboxSizeY" DOUBLE PRECISION;
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "bboxSizeZ" DOUBLE PRECISION;
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "meshVolume" DOUBLE PRECISION;
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "meshArea" DOUBLE PRECISION;
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "facesCount" INTEGER;
 
 CREATE TABLE IF NOT EXISTS nesting."AISettings" (
   "id" TEXT PRIMARY KEY DEFAULT 'singleton',

@@ -39,6 +39,12 @@ export interface NestingPart {
   steelTypeRaw: string | null
   width: number
   height: number
+  bboxSizeX: number | null
+  bboxSizeY: number | null
+  bboxSizeZ: number | null
+  meshVolume: number | null
+  meshArea: number | null
+  facesCount: number | null
   quantity: number
   isSheetMetal: boolean
   grainLock: boolean
@@ -127,8 +133,18 @@ export interface NestingResult {
 }
 
 export interface BOMEntry {
+  articleNumber: string
   position: string
   designation: string
+  description: string
+  partType: 'sheet' | 'channel' | 'angle' | 'round_bar' | 'tube' | 'flat_bar' | 'other'
+  thicknessMm: number | null
+  widthMm: number | null
+  heightMm: number | null
+  massKg: number | null
+  materialGrade: string
+  materialType: string
+  norm: string
   name: string
   material: string
   steelTypeRaw: string | null
@@ -160,8 +176,9 @@ export interface AIMatchResult {
   bomPosition: string
   bomDesignation: string
   bomName: string
-  matchType: 'exact' | 'contains' | 'designation' | 'fuzzy' | 'none'
+  matchType: 'exact' | 'contains' | 'designation' | 'geometry' | 'fuzzy' | 'none'
   matchConfidence: number
+  matchDetails: string
   suggestedMaterial: string | null
   suggestedMaterialGrade: string | null
   suggestedSteelTypeId: string | null

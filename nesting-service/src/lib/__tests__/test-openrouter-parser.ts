@@ -52,6 +52,8 @@ const parsed = parsePDFAnalysisResponse(JSON.stringify({
 
 assert.equal(parsed.bom.length, 3);
 assert.equal(parsed.bom[0].designation, 'ЛЕДА.024.00.005');
+assert.equal(parsed.bom[0].description, 'Стойка');
+assert.equal(parsed.bom[0].partType, 'other');
 assert.equal(parsed.bom[0].quantity, 4);
 assert.equal(parsed.details.length, 3);
 assert.equal(parsed.details[0].thicknessMm, 3);
@@ -61,5 +63,72 @@ assert.equal(parsed.details[1].unfoldingWidth, null);
 assert.match(parsed.details[1].notes, /2мм и 2,5мм/);
 assert.equal(parsed.details[2].thicknessMm, 8);
 assert.equal(parsed.details[2].materialType, 'Нержавейка');
+
+const germanParsed = parsePDFAnalysisResponse(JSON.stringify({
+  bom: [
+    {
+      position: '1',
+      article_number: '70000000006505',
+      designation: '10461.geo',
+      description: 'BL 3 x 995 x 2318',
+      part_type: 'sheet',
+      thickness_mm: null,
+      width_mm: null,
+      height_mm: null,
+      quantity: 1,
+      mass_kg: '54,41',
+      material_grade: 'S235JRG2',
+      material_type: 'S235JRG2',
+      norm: 'DIN EN 10130',
+    },
+    {
+      position: '6',
+      article_number: '',
+      designation: '',
+      description: 'U 80 - 690',
+      part_type: 'channel',
+      thickness_mm: null,
+      width_mm: null,
+      height_mm: null,
+      quantity: '4',
+      mass_kg: 5.97,
+      material_grade: 'S235JRG2',
+      material_type: '',
+      norm: '',
+    },
+    {
+      position: '8',
+      article_number: '',
+      designation: '',
+      description: 'RU 16 - 60',
+      part_type: 'round_bar',
+      thickness_mm: null,
+      width_mm: null,
+      height_mm: null,
+      quantity: 2,
+      mass_kg: 0.095,
+      material_grade: 'S235JRG2',
+      material_type: 'Сталь',
+      norm: '',
+    },
+  ],
+  details: [],
+}));
+
+assert.equal(germanParsed.bom.length, 3);
+assert.equal(germanParsed.bom[0].articleNumber, '70000000006505');
+assert.equal(germanParsed.bom[0].partType, 'sheet');
+assert.equal(germanParsed.bom[0].thicknessMm, 3);
+assert.equal(germanParsed.bom[0].widthMm, 995);
+assert.equal(germanParsed.bom[0].heightMm, 2318);
+assert.equal(germanParsed.bom[0].massKg, 54.41);
+assert.equal(germanParsed.bom[0].materialType, 'Сталь');
+assert.equal(germanParsed.bom[1].partType, 'channel');
+assert.equal(germanParsed.bom[1].widthMm, 80);
+assert.equal(germanParsed.bom[1].heightMm, 690);
+assert.equal(germanParsed.bom[1].quantity, 4);
+assert.equal(germanParsed.bom[2].partType, 'round_bar');
+assert.equal(germanParsed.bom[2].widthMm, 16);
+assert.equal(germanParsed.bom[2].heightMm, 60);
 
 console.log('[openrouter-parser] all tests passed');

@@ -30,8 +30,18 @@ console.log('[steel-types] all tests passed');
 
 function createBom(name: string, material: string, steelTypeRaw: string | null): BOMEntry {
   return {
+    articleNumber: '',
     position: '',
     designation: '',
+    description: name,
+    partType: 'other',
+    thicknessMm: null,
+    widthMm: null,
+    heightMm: null,
+    massKg: null,
+    materialGrade: steelTypeRaw ?? '',
+    materialType: 'Сталь',
+    norm: '',
     name,
     material,
     steelTypeRaw,

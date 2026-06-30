@@ -1,5 +1,5 @@
 import * as fs from 'node:fs/promises';
-import type { BOMEntry, DetailEntry, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
+import type { BOMEntry, BOMPartType, DetailEntry, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
 
 type OpenRouterResponse = {
   choices?: Array<{
@@ -12,53 +12,95 @@ type OpenRouterResponse = {
   };
 };
 
-const systemPrompt = `Ты — опытный технолог на производстве листового металла. Тебе дан PDF-чертёж изделия (сборочный чертёж + чертежи деталей + спецификация).
+const systemPrompt = `Ты — опытный технолог на производстве металлоконструкций. Тебе дан PDF-чертёж изделия. Чертёж может быть на ЛЮБОМ языке: русском, немецком, английском или другом.
 
 Извлеки ДВА набора данных:
 
-## 1. СПЕЦИФИКАЦИЯ (BOM)
-Из таблицы спецификации (обычно на 2-3 странице) извлеки все позиции:
-- position: номер позиции (число)
-- designation: обозначение (например "ЛЕДА.024.00.008")
-- name: наименование ("Стенка боковая")
-- quantity: количество штук
+## 1. СПЕЦИФИКАЦИЯ (BOM / MATERIALLISTE / BILL OF MATERIALS)
+Найди таблицу со списком материалов. Она может называться:
+- Русский: "Спецификация", "Ведомость материалов"
+- Немецкий: "MATERIALLISTE", "STÜCKLISTE", "ZUSCHNITTSLISTE"
+- Английский: "BILL OF MATERIALS", "BOM", "PARTS LIST"
 
-## 2. ДАННЫЕ ДЕТАЛЕЙ
-Для каждой детали, у которой есть отдельный чертёж в PDF, извлеки:
-- designation: обозначение детали (например "ЛЕДА.024.00.005")
-- name: наименование
-- material_full: полное обозначение материала из штампа чертежа 
-  (например "Лист БТ-ПН-2,0 ГОСТ 19903-90 Ст3пс ГОСТ 16523-97")
+Для каждой позиции извлеки:
+- position: номер позиции, если есть
+- article_number: артикул/номер, если есть
+- designation: обозначение, номер чертежа или имя файла
+- description: описание/наименование, например "BL 3 x 995 x 2318", "U 80 - 690", "Стенка боковая"
+- part_type:
+  - "BL" или "Лист" или "Blech" или "Sheet" -> "sheet"
+  - "U" или "Швеллер" или "UNP" -> "channel"
+  - "L" или "Уголок" или "Winkel" -> "angle"
+  - "RU" или "Круг" или "Rundstahl" или "Round" -> "round_bar"
+  - "RO" или "Труба" или "Rohr" или "Tube" -> "tube"
+  - "FL" или "Полоса" или "Flachstahl" -> "flat_bar"
+  - Иначе -> "other"
+- thickness_mm: толщина в мм, если есть
+- width_mm: ширина/первый размер сечения в мм, если есть
+- height_mm: длина/высота/главный размер в мм, если есть
+- quantity: количество штук (STK, шт, Stk, pcs)
+- mass_kg: масса одной штуки в кг, если есть
+- material_grade: марка материала ("S235JRG2", "Ст3пс", "304")
+- material_type: тип ("Сталь", "Нержавейка", "Алюминий")
+- norm: стандарт/норма ("DIN EN 10130", "ГОСТ 19903-90")
+
+Как парсить обозначения:
+- "BL 3 x 995 x 2318" -> part_type="sheet", thickness_mm=3, width_mm=995, height_mm=2318
+- "BL 20 x 90 x 160" -> part_type="sheet", thickness_mm=20, width_mm=90, height_mm=160
+- "U 80 - 690" -> part_type="channel", width_mm=80, height_mm=690
+- "U 50 x 38 - 1090" -> part_type="channel", width_mm=50, height_mm=1090
+- "RU 16 - 60" -> part_type="round_bar", width_mm=16, height_mm=60
+- "L 50 x 50 x 5 - 300" -> part_type="angle", thickness_mm=5, width_mm=50, height_mm=300
+- "Б-ПН-3 ГОСТ 19903-90" -> thickness_mm=3
+- "БТ-ПН-2,0 ГОСТ 19903-90" -> thickness_mm=2.0
+
+## 2. ДАННЫЕ ДЕТАЛЕЙ (из отдельных чертежей)
+Для каждой детали у которой есть отдельный чертёж, извлеки:
+- designation: обозначение детали или имя файла
+- name: наименование детали
+- description: обозначение/описание детали
+- material_full: полное обозначение материала из штампа
 - material_type: тип материала ("Сталь", "Нержавейка", "Алюминий")
-- material_grade: марка стали ("Ст3пс", "09Г2С", "12Х18Н10Т", "АМг3")
-- thickness_mm: толщина в мм, извлечённая из обозначения листа:
-  - "БТ-ПН-2,0" → 2.0
-  - "Б-ПН-3" → 3.0
-  - "БТ-ПН-8" → 8.0
-  - "Б-ПН-1,5" → 1.5
-  Число после "ПН-" — это толщина в мм
-- unfolding_width: ширина развёртки в мм (из строки "Развертка - ШхВ мм")
-- unfolding_height: высота развёртки в мм
-- mass_kg: масса детали в кг (из штампа)
-- is_sheet_metal: true если деталь изготавливается из листа (есть обозначение листа в материале)
-- notes: примечания с чертежа
+- material_grade: марка материала
+- thickness_mm: толщина в мм
+- unfolding_width: ширина развёртки из "Развертка", "Zuschnitt", "Flat pattern"
+- unfolding_height: высота развёртки
+- mass_kg: масса
+- bend_info: информация о гибах ("NACH OBEN 90°", "NACH UNTEN 66°")
+- is_sheet_metal: true если деталь из листа (BL, Лист, Blech, Sheet)
+- notes: важные примечания
 
 ВАЖНО:
-- Толщину ВСЕГДА извлекай из обозначения материала (число после "ПН-"), НЕ из размеров на чертеже
-- Развёртку ищи в примечаниях: "Развертка - 1172×1186 мм" или "Развёртка - 360×55 мм"
-- Если на чертеже указано "Допускается изготавливать из листа толщиной 2мм и 2,5мм" — укажи в notes
-- Если деталь не имеет отдельного чертежа (например "Заглушка пластмассовая") — пропусти данные детали, укажи только BOM-строку
-- В материалах: "Ст3пс", "Ст3сп" → Сталь; "12Х18Н10Т", "08Х18Н10" → Нержавейка; "АМг3", "АД31" → Алюминий
+- Если таблица дублируется на нескольких страницах — объедини, не дублируй записи
+- Материал S235JRG2, S235, S355, Ст3пс, Ст3сп -> "Сталь"
+- Материал 12Х18Н10Т, 08Х18Н10, AISI 304, 304, 316 -> "Нержавейка"
+- Материал АМг3, АД31, 6061 -> "Алюминий"
+- Если значение неизвестно: для строк верни "", для чисел null, для boolean false
+- Ответь СТРОГО JSON-объектом без пояснений
 
-Ответь СТРОГО JSON-объектом без пояснений:
 {
   "bom": [
-    {"position": "1", "designation": "ЛЕДА.024.00.001", "name": "Обшивка верхняя", "quantity": 1}
+    {
+      "position": "1",
+      "article_number": "70000000006505",
+      "designation": "10461.geo",
+      "description": "BL 3 x 995 x 2318",
+      "part_type": "sheet",
+      "thickness_mm": 3,
+      "width_mm": 995,
+      "height_mm": 2318,
+      "quantity": 1,
+      "mass_kg": 54.41,
+      "material_grade": "S235JRG2",
+      "material_type": "Сталь",
+      "norm": "DIN EN 10130"
+    }
   ],
   "details": [
     {
       "designation": "ЛЕДА.024.00.001",
       "name": "Обшивка верхняя",
+      "description": "Обшивка верхняя",
       "material_full": "Лист БТ-ПН-2,0 ГОСТ 19903-90 Ст3пс ГОСТ 16523-97",
       "material_type": "Сталь",
       "material_grade": "Ст3пс",
@@ -66,6 +108,7 @@ const systemPrompt = `Ты — опытный технолог на произв
       "unfolding_width": 1172,
       "unfolding_height": 1186,
       "mass_kg": 21.71,
+      "bend_info": "",
       "is_sheet_metal": true,
       "notes": ""
     }
@@ -124,11 +167,37 @@ export async function analyzePDF(
                 additionalProperties: false,
                 properties: {
                   position: { type: 'string' },
+                  article_number: { type: 'string' },
                   designation: { type: 'string' },
-                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  part_type: {
+                    type: 'string',
+                    enum: ['sheet', 'channel', 'angle', 'round_bar', 'tube', 'flat_bar', 'other'],
+                  },
+                  thickness_mm: { type: ['number', 'null'] },
+                  width_mm: { type: ['number', 'null'] },
+                  height_mm: { type: ['number', 'null'] },
                   quantity: { type: 'integer' },
+                  mass_kg: { type: ['number', 'null'] },
+                  material_grade: { type: 'string' },
+                  material_type: { type: 'string' },
+                  norm: { type: 'string' },
                 },
-                required: ['position', 'designation', 'name', 'quantity'],
+                required: [
+                  'position',
+                  'article_number',
+                  'designation',
+                  'description',
+                  'part_type',
+                  'thickness_mm',
+                  'width_mm',
+                  'height_mm',
+                  'quantity',
+                  'mass_kg',
+                  'material_grade',
+                  'material_type',
+                  'norm',
+                ],
               },
             },
             details: {
@@ -139,6 +208,7 @@ export async function analyzePDF(
                 properties: {
                   designation: { type: 'string' },
                   name: { type: 'string' },
+                  description: { type: 'string' },
                   material_full: { type: 'string' },
                   material_type: { type: 'string' },
                   material_grade: { type: 'string' },
@@ -146,12 +216,14 @@ export async function analyzePDF(
                   unfolding_width: { type: ['number', 'null'] },
                   unfolding_height: { type: ['number', 'null'] },
                   mass_kg: { type: ['number', 'null'] },
+                  bend_info: { type: 'string' },
                   is_sheet_metal: { type: 'boolean' },
                   notes: { type: 'string' },
                 },
                 required: [
                   'designation',
                   'name',
+                  'description',
                   'material_full',
                   'material_type',
                   'material_grade',
@@ -159,6 +231,7 @@ export async function analyzePDF(
                   'unfolding_width',
                   'unfolding_height',
                   'mass_kg',
+                  'bend_info',
                   'is_sheet_metal',
                   'notes',
                 ],
@@ -323,7 +396,12 @@ export function parsePDFAnalysisResponse(content: string): { bom: BOMEntry[]; de
 
   const bom = bomEntries
     .map((entry) => normalizeBOMEntry(entry))
-    .filter((entry): entry is BOMEntry => Boolean(entry && (entry.name.length > 0 || entry.designation.length > 0)));
+    .filter((entry): entry is BOMEntry => Boolean(entry && (
+      entry.description.length > 0 ||
+      entry.name.length > 0 ||
+      entry.designation.length > 0 ||
+      entry.articleNumber.length > 0
+    )));
   const details = detailEntries
     .map((entry) => normalizeDetailEntry(entry))
     .filter((entry): entry is DetailEntry => Boolean(entry && entry.designation.length > 0));
@@ -338,26 +416,124 @@ export function parseBOM(content: string): BOMEntry[] {
 function normalizeBOMEntry(entry: unknown): BOMEntry | null {
   if (!isRecord(entry)) return null;
 
-  const quantity = Number(entry.quantity);
-  const rawThickness = entry.thickness === null || entry.thickness === undefined || entry.thickness === ''
-    ? null
-    : Number(entry.thickness);
+  const description = String(entry.description ?? entry.name ?? '').trim();
+  const parsedGeometry = parseBOMGeometry(description);
+  const materialGrade = String(entry.material_grade ?? entry.materialGrade ?? entry.steelTypeRaw ?? entry.steel_type ?? '').trim();
+  const materialType = normalizeMaterialType(String(entry.material_type ?? entry.materialType ?? entry.material ?? materialGrade));
+  const thicknessMm = normalizePositiveNumber(entry.thickness_mm ?? entry.thicknessMm ?? entry.thickness) ?? parsedGeometry.thicknessMm;
+  const widthMm = normalizePositiveNumber(entry.width_mm ?? entry.widthMm) ?? parsedGeometry.widthMm;
+  const heightMm = normalizePositiveNumber(entry.height_mm ?? entry.heightMm) ?? parsedGeometry.heightMm;
+  const norm = String(entry.norm ?? '').trim();
+  const quantity = normalizePositiveNumber(entry.quantity ?? entry.stk ?? entry.qty ?? entry.count);
+  const partType = normalizePartType(entry.part_type ?? entry.partType, description) ?? parsedGeometry.partType;
+  const material = String(entry.material ?? materialType ?? materialGrade ?? 'Не указан').trim() || 'Не указан';
 
   return {
+    articleNumber: String(entry.article_number ?? entry.articleNumber ?? entry.article ?? '').trim(),
     position: String(entry.position || ''),
     designation: String(entry.designation || '').trim(),
-    name: String(entry.name || '').trim(),
-    material: String(entry.material || 'Не указан').trim() || 'Не указан',
+    description,
+    partType,
+    thicknessMm,
+    widthMm,
+    heightMm,
+    massKg: normalizePositiveNumber(entry.mass_kg ?? entry.massKg ?? entry.weight_kg ?? entry.weightKg),
+    materialGrade,
+    materialType,
+    norm,
+    name: String(entry.name ?? description).trim(),
+    material,
     steelTypeRaw: normalizeNullableText(
       entry.steelTypeRaw ?? entry.steel_type ?? entry.steelType ?? entry.materialGrade ?? entry.material_grade
     ),
     steelTypeId: null,
     steelTypeName: null,
     steelTypeWarning: null,
-    quantity: Number.isFinite(quantity) && quantity > 0 ? Math.round(quantity) : 1,
-    thickness: typeof rawThickness === 'number' && Number.isFinite(rawThickness) && rawThickness > 0 ? rawThickness : null,
-    notes: String(entry.notes || ''),
+    quantity: quantity ? Math.max(1, Math.round(quantity)) : 1,
+    thickness: thicknessMm,
+    notes: String(entry.notes ?? norm ?? ''),
   };
+}
+
+function parseBOMGeometry(description: string): {
+  partType: BOMPartType;
+  thicknessMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+} {
+  const normalized = description
+    .trim()
+    .replace(/[×х]/gi, 'x')
+    .replace(/[‐‑‒–—−]/g, '-')
+    .replace(/,/g, '.');
+  const lower = normalized.toLowerCase();
+  const partType = normalizePartType(null, normalized) ?? 'other';
+  const numbers = Array.from(normalized.matchAll(/\d+(?:\.\d+)?/g)).map((match) => Number(match[0]));
+  const pnThickness = normalizePositiveNumber(normalized.match(/\bпн\s*-\s*(\d+(?:[,.]\d+)?)/i)?.[1]);
+
+  if (partType === 'sheet') {
+    return {
+      partType,
+      thicknessMm: numbers[0] ?? pnThickness,
+      widthMm: numbers[1] ?? null,
+      heightMm: numbers[2] ?? null,
+    };
+  }
+
+  if (partType === 'channel' || partType === 'tube' || partType === 'flat_bar') {
+    return {
+      partType,
+      thicknessMm: null,
+      widthMm: numbers[0] ?? null,
+      heightMm: numbers.length > 1 ? numbers[numbers.length - 1] : null,
+    };
+  }
+
+  if (partType === 'round_bar') {
+    return {
+      partType,
+      thicknessMm: null,
+      widthMm: numbers[0] ?? null,
+      heightMm: numbers[1] ?? null,
+    };
+  }
+
+  if (partType === 'angle') {
+    return {
+      partType,
+      thicknessMm: numbers.length >= 4 ? numbers[numbers.length - 2] : numbers[2] ?? null,
+      widthMm: numbers[0] ?? null,
+      heightMm: numbers.length > 1 ? numbers[numbers.length - 1] : null,
+    };
+  }
+
+  return {
+    partType,
+    thicknessMm: pnThickness,
+    widthMm: null,
+    heightMm: null,
+  };
+}
+
+function normalizePartType(value: unknown, source = ''): BOMPartType | null {
+  const explicit = String(value ?? '').trim().toLowerCase();
+  if (isBOMPartType(explicit)) return explicit;
+
+  const text = `${explicit} ${source}`.trim().toLowerCase();
+  if (!text) return null;
+
+  if (/\b(bl|blech|sheet)\b/.test(text) || /лист|бт?\s*-\s*пн/i.test(text)) return 'sheet';
+  if (/\b(unp|u)\b/.test(text) || /швеллер/i.test(text)) return 'channel';
+  if (/\b(l|winkel)\b/.test(text) || /уголок/i.test(text)) return 'angle';
+  if (/\b(ru|rundstahl|round)\b/.test(text) || /круг/i.test(text)) return 'round_bar';
+  if (/\b(ro|rohr|tube)\b/.test(text) || /труба/i.test(text)) return 'tube';
+  if (/\b(fl|flachstahl)\b/.test(text) || /полоса/i.test(text)) return 'flat_bar';
+
+  return 'other';
+}
+
+function isBOMPartType(value: string): value is BOMPartType {
+  return ['sheet', 'channel', 'angle', 'round_bar', 'tube', 'flat_bar', 'other'].includes(value);
 }
 
 function normalizeDetailEntry(entry: unknown): DetailEntry | null {
@@ -365,10 +541,12 @@ function normalizeDetailEntry(entry: unknown): DetailEntry | null {
 
   const materialFull = String(entry.material_full ?? entry.materialFull ?? '').trim();
   const materialType = normalizeMaterialType(String(entry.material_type ?? entry.materialType ?? materialFull));
+  const bendInfo = String(entry.bend_info ?? entry.bendInfo ?? '').trim();
+  const notes = [entry.notes, bendInfo].map((value) => String(value ?? '').trim()).filter(Boolean).join('; ');
 
   return {
     designation: String(entry.designation || '').trim(),
-    name: String(entry.name || '').trim(),
+    name: String(entry.name ?? entry.description ?? '').trim(),
     materialFull,
     materialType,
     materialGrade: String(entry.material_grade ?? entry.materialGrade ?? '').trim(),
@@ -377,7 +555,7 @@ function normalizeDetailEntry(entry: unknown): DetailEntry | null {
     unfoldingHeight: normalizePositiveNumber(entry.unfolding_height ?? entry.unfoldingHeight),
     massKg: normalizePositiveNumber(entry.mass_kg ?? entry.massKg),
     isSheetMetal: normalizeBoolean(entry.is_sheet_metal ?? entry.isSheetMetal),
-    notes: String(entry.notes || ''),
+    notes,
   };
 }
 
@@ -409,8 +587,9 @@ function normalizeBoolean(value: unknown): boolean {
 
 function normalizeMaterialType(raw: string): string {
   const lower = raw.toLowerCase();
-  if (lower.includes('нерж') || lower.includes('12х18') || lower.includes('08х18') || lower.includes('aisi')) return 'Нержавейка';
+  if (lower.includes('нерж') || lower.includes('12х18') || lower.includes('08х18') || lower.includes('aisi') || /\b(304|316)\b/.test(lower)) return 'Нержавейка';
   if (lower.includes('алюм') || lower.includes('амг') || lower.includes('ад31')) return 'Алюминий';
+  if (lower.includes('стал') || lower.includes('ст3') || lower.includes('09г2с') || /\bs(?:235|355)\b/.test(lower)) return 'Сталь';
   return 'Сталь';
 }
 

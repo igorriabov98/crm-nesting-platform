@@ -121,12 +121,73 @@ assert.equal(suffixMatches[0].suggestedThickness, 3);
 assert.equal(suffixMatches[0].suggestedUnfoldingWidth, 725);
 assert.equal(suffixMatches[0].suggestedUnfoldingHeight, 55);
 
+const geometryBom = [
+  createBom({ description: 'BL 3 x 995 x 2318', partType: 'sheet', thicknessMm: 3, widthMm: 995, heightMm: 2318, quantity: 1, massKg: 54.41 }),
+  createBom({ description: 'BL 2 x 702 x 1656', partType: 'sheet', thicknessMm: 2, widthMm: 702, heightMm: 1656, quantity: 2, massKg: 14.93 }),
+  createBom({ description: 'BL 20 x 90 x 160', partType: 'sheet', thicknessMm: 20, widthMm: 90, heightMm: 160, quantity: 2, massKg: 1.7 }),
+  createBom({ description: 'BL 20 x 65 x 230', partType: 'sheet', thicknessMm: 20, widthMm: 65, heightMm: 230, quantity: 4, massKg: 1.31 }),
+  createBom({ description: 'BL 6 x 75 x 280', partType: 'sheet', thicknessMm: 6, widthMm: 75, heightMm: 280, quantity: 4, massKg: 1 }),
+  createBom({ description: 'U 80 - 690', partType: 'channel', widthMm: 80, heightMm: 690, quantity: 4, massKg: 5.97 }),
+  createBom({ description: 'U 50 x 38 - 1090', partType: 'channel', widthMm: 50, heightMm: 1090, quantity: 1, massKg: 6.09 }),
+  createBom({ description: 'RU 16 - 60', partType: 'round_bar', widthMm: 16, heightMm: 60, quantity: 2, massKg: 0.095 }),
+];
+
+const geometryParts = [
+  createPart({ id: 'back-wall', name: 'Задняя стенка', thickness: 3, quantity: 1, bboxSizeX: 1569, bboxSizeY: 606, bboxSizeZ: 995, isSheetMetal: true }),
+  createPart({ id: 'side-wall', name: 'Боковая стенка', thickness: 2, quantity: 2, bboxSizeX: 1557, bboxSizeY: 604, bboxSizeZ: 52, isSheetMetal: true }),
+  createPart({ id: 'profile-690', name: 'Профиль 690', thickness: 5.85, quantity: 4, bboxSizeX: 80, bboxSizeY: 690, bboxSizeZ: 45, isSheetMetal: false }),
+  createPart({ id: 'profile-1090', name: 'Профиль 1090', thickness: 4.91, quantity: 1, bboxSizeX: 63, bboxSizeY: 60, bboxSizeZ: 1090, isSheetMetal: false }),
+  createPart({ id: 'round-bar', name: 'Круг', thickness: 7.06, quantity: 2, bboxSizeX: 16, bboxSizeY: 16, bboxSizeZ: 60, isSheetMetal: false }),
+  createPart({ id: 'support', name: 'Опора', thickness: 5.43, quantity: 4, bboxSizeX: 75, bboxSizeY: 147, bboxSizeZ: 173, isSheetMetal: true }),
+  createPart({ id: 'lower', name: 'Грушина нижняя', thickness: 12.89, quantity: 2, bboxSizeX: 160, bboxSizeY: 90, bboxSizeZ: 20, isSheetMetal: true }),
+  createPart({ id: 'upper', name: 'Грушина верхняя', thickness: 11.26, quantity: 4, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, isSheetMetal: true }),
+];
+
+const geometryMatches = matchBOMToParts(geometryBom, geometryParts);
+const expectedGeometryNames = [
+  'BL 3 x 995 x 2318',
+  'BL 2 x 702 x 1656',
+  'U 80 - 690',
+  'U 50 x 38 - 1090',
+  'RU 16 - 60',
+  'BL 6 x 75 x 280',
+  'BL 20 x 90 x 160',
+  'BL 20 x 65 x 230',
+];
+
+assert.equal(geometryMatches.length, expectedGeometryNames.length);
+for (let index = 0; index < expectedGeometryNames.length; index += 1) {
+  assert.equal(geometryMatches[index].matchType, 'geometry');
+  assert.equal(geometryMatches[index].bomName, expectedGeometryNames[index]);
+  assert.match(geometryMatches[index].matchDetails, /dim:|thickness:/);
+}
+assert.equal(geometryMatches[2].suggestedQuantity, null);
+assert.equal(geometryMatches[0].suggestedUnfoldingWidth, 995);
+assert.equal(geometryMatches[0].suggestedUnfoldingHeight, 2318);
+
+const fallbackGeometryMatches = matchBOMToParts(
+  [createBom({ description: 'U 80 - 690', partType: 'channel', widthMm: 80, heightMm: 690, quantity: 4 })],
+  [createPart({ id: 'legacy-profile', name: 'Профиль старый', thickness: 5.85, width: 80, height: 690, quantity: 4, isSheetMetal: false })]
+);
+assert.equal(fallbackGeometryMatches[0].matchType, 'geometry');
+assert.equal(fallbackGeometryMatches[0].bomName, 'U 80 - 690');
+
 console.log('[bom-matcher] all tests passed');
 
 function createBom(input: Partial<BOMEntry>): BOMEntry {
   return {
+    articleNumber: input.articleNumber ?? '',
     position: input.position ?? '',
     designation: input.designation ?? '',
+    description: input.description ?? input.name ?? '',
+    partType: input.partType ?? 'other',
+    thicknessMm: input.thicknessMm ?? input.thickness ?? null,
+    widthMm: input.widthMm ?? null,
+    heightMm: input.heightMm ?? null,
+    massKg: input.massKg ?? null,
+    materialGrade: input.materialGrade ?? '',
+    materialType: input.materialType ?? 'Сталь',
+    norm: input.norm ?? '',
     name: input.name ?? '',
     material: input.material ?? 'Сталь',
     steelTypeRaw: input.steelTypeRaw ?? null,
@@ -151,6 +212,12 @@ function createPart(input: Partial<PartForMatching> & { id: string; name: string
     thickness: input.thickness ?? 2,
     width: input.width ?? 100,
     height: input.height ?? 100,
+    bboxSizeX: input.bboxSizeX ?? null,
+    bboxSizeY: input.bboxSizeY ?? null,
+    bboxSizeZ: input.bboxSizeZ ?? null,
+    meshVolume: input.meshVolume ?? null,
+    meshArea: input.meshArea ?? null,
+    facesCount: input.facesCount ?? null,
     isSheetMetal: input.isSheetMetal ?? true,
     hasBends: input.hasBends ?? false,
   };

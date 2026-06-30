@@ -1,14 +1,15 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, Bot, CheckCircle2, Loader2, XCircle } from 'lucide-react'
+import { AlertTriangle, Bot, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ROUTES } from '@/lib/constants/routes'
 import type { AIAnalysisResponse, AIMatchResult, AIStatus, NestingPart } from '@/lib/nesting/api'
 
@@ -37,31 +38,7 @@ export function AIAnalysisPanel({
     return (analysis?.matches || []).filter((match) => hasSuggestion(match) && !match.autoApplied)
   }, [analysis])
 
-  useEffect(() => {
-    if (!hasPdf) return
-
-    let cancelled = false
-    fetch('/api/nesting/ai/status')
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(data.error || 'Не удалось проверить статус AI')
-        if (!cancelled) setStatus(data as AIStatus)
-      })
-      .catch((error) => {
-        if (!cancelled) setStatusError(error instanceof Error ? error.message : 'Не удалось проверить статус AI')
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [hasPdf])
-
-  useEffect(() => {
-    if (!hasPdf) return
-    void loadSpecification()
-  }, [hasPdf, projectId])
-
-  async function loadSpecification() {
+  const loadSpecification = useCallback(async () => {
     setIsLoadingSpecification(true)
     setSpecificationError(null)
     try {
@@ -84,7 +61,31 @@ export function AIAnalysisPanel({
     } finally {
       setIsLoadingSpecification(false)
     }
-  }
+  }, [projectId])
+
+  useEffect(() => {
+    if (!hasPdf) return
+
+    let cancelled = false
+    fetch('/api/nesting/ai/status')
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.error || 'Не удалось проверить статус AI')
+        if (!cancelled) setStatus(data as AIStatus)
+      })
+      .catch((error) => {
+        if (!cancelled) setStatusError(error instanceof Error ? error.message : 'Не удалось проверить статус AI')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [hasPdf])
+
+  useEffect(() => {
+    if (!hasPdf) return
+    void loadSpecification()
+  }, [hasPdf, loadSpecification])
 
   async function analyze() {
     setIsAnalyzing(true)
@@ -217,22 +218,25 @@ export function AIAnalysisPanel({
                 </div>
 
                 <div className="overflow-x-auto rounded-lg border border-[#E8ECF0]">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-[#F8F9FA]">
-                        <TableHead>Деталь</TableHead>
-                        <TableHead>BOM совпал</TableHead>
-                        <TableHead>Материал</TableHead>
-                        <TableHead>Тип стали</TableHead>
-                        <TableHead>Толщ.</TableHead>
-                        <TableHead>Развёртка</TableHead>
-                        <TableHead>Кол-во</TableHead>
-                        <TableHead>Статус</TableHead>
-                        <TableHead>Принять</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {analysis.matches.map((match) => {
+                  <TooltipProvider>
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-[#F8F9FA]">
+                          <TableHead>Деталь</TableHead>
+                          <TableHead>BOM совпал</TableHead>
+                          <TableHead>Метод</TableHead>
+                          <TableHead>Детали</TableHead>
+                          <TableHead>Материал</TableHead>
+                          <TableHead>Тип стали</TableHead>
+                          <TableHead>Толщ.</TableHead>
+                          <TableHead>Развёртка</TableHead>
+                          <TableHead>Кол-во</TableHead>
+                          <TableHead>Статус</TableHead>
+                          <TableHead>Принять</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {analysis.matches.map((match) => {
                         const part = partsById.get(match.partId)
                         const confidence = Math.round(match.matchConfidence * 100)
                         const canSelect = hasSuggestion(match) && !match.autoApplied
@@ -253,6 +257,32 @@ export function AIAnalysisPanel({
                                   <CheckCircle2 className="h-4 w-4" />
                                   {confidence}% · {match.bomPosition || match.bomDesignation || match.bomName}
                                 </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {match.matchType === 'none' ? (
+                                <span className="text-[#6B7280]">—</span>
+                              ) : (
+                                <Badge variant={match.matchType === 'geometry' ? 'default' : 'outline'}>
+                                  {matchTypeLabel(match.matchType)}
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="max-w-[240px]">
+                              {match.matchDetails ? (
+                                <Tooltip>
+                                  <TooltipTrigger
+                                    render={
+                                      <span className="inline-flex max-w-[220px] items-center gap-1 truncate text-xs text-[#475569]">
+                                        <Info className="h-3.5 w-3.5 shrink-0" />
+                                        {match.matchDetails}
+                                      </span>
+                                    }
+                                  />
+                                  <TooltipContent className="max-w-sm whitespace-normal">{match.matchDetails}</TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <span className="text-[#6B7280]">—</span>
                               )}
                             </TableCell>
                             <TableCell>
@@ -333,9 +363,10 @@ export function AIAnalysisPanel({
                             </TableCell>
                           </TableRow>
                         )
-                      })}
-                    </TableBody>
-                  </Table>
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TooltipProvider>
                 </div>
 
                 {analysis.unmatchedBom.length > 0 && (
@@ -399,6 +430,23 @@ function formatSize(width: number, height: number) {
 
 function formatNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, '')
+}
+
+function matchTypeLabel(type: AIMatchResult['matchType']) {
+  switch (type) {
+    case 'geometry':
+      return 'Геометрия'
+    case 'designation':
+      return 'Обозначение'
+    case 'exact':
+      return 'Имя'
+    case 'contains':
+      return 'Имя'
+    case 'fuzzy':
+      return 'Похоже'
+    default:
+      return '—'
+  }
 }
 
 function hasSuggestion(match: AIMatchResult) {

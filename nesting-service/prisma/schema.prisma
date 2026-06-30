@@ -80,6 +80,12 @@ model Part {
   steelTypeRaw  String?
   width        Float
   height       Float
+  bboxSizeX    Float?
+  bboxSizeY    Float?
+  bboxSizeZ    Float?
+  meshVolume   Float?
+  meshArea     Float?
+  facesCount   Int?
   contour      Json
   holes        Json?
   quantity     Int            @default(1)

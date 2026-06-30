@@ -17,9 +17,21 @@ export interface SteelTypeCatalogItem {
   densityKgMm3?: number | null;
 }
 
+export type BOMPartType = 'sheet' | 'channel' | 'angle' | 'round_bar' | 'tube' | 'flat_bar' | 'other';
+
 export interface BOMEntry {
+  articleNumber: string;
   position: string;
   designation: string;
+  description: string;
+  partType: BOMPartType;
+  thicknessMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+  massKg: number | null;
+  materialGrade: string;
+  materialType: string;
+  norm: string;
   name: string;
   material: string;
   steelTypeRaw: string | null;
@@ -66,6 +78,12 @@ export interface PartForMatching {
   thickness: number;
   width: number;
   height: number;
+  bboxSizeX?: number | null;
+  bboxSizeY?: number | null;
+  bboxSizeZ?: number | null;
+  meshVolume?: number | null;
+  meshArea?: number | null;
+  facesCount?: number | null;
   isSheetMetal: boolean;
   hasBends: boolean;
 }
@@ -76,8 +94,9 @@ export interface MatchResult {
   bomPosition: string;
   bomDesignation: string;
   bomName: string;
-  matchType: 'exact' | 'contains' | 'designation' | 'fuzzy' | 'none';
+  matchType: 'exact' | 'contains' | 'designation' | 'geometry' | 'fuzzy' | 'none';
   matchConfidence: number;
+  matchDetails: string;
   suggestedMaterial: string | null;
   suggestedMaterialGrade: string | null;
   suggestedSteelTypeId: string | null;
