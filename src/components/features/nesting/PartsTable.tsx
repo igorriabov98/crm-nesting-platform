@@ -58,6 +58,8 @@ function classificationMethodLabel(method: string | null | undefined) {
       return 'heuristic'
     case 'bbox':
       return 'bbox'
+    case 'pdf_bom':
+      return 'PDF'
     default:
       return null
   }
@@ -73,6 +75,8 @@ function classificationMethodTitle(method: string | null | undefined) {
       return 'Классификация по эвристике'
     case 'bbox':
       return 'Классификация по bounding box'
+    case 'pdf_bom':
+      return 'Листовая деталь подтверждена PDF/BOM'
     default:
       return ''
   }

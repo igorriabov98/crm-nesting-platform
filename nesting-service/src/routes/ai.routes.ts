@@ -143,6 +143,8 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         width?: number;
         height?: number;
         hasBends?: boolean;
+        classificationMethod?: string;
+        classificationWarning?: string | null;
       } = {};
       if (match.material) data.material = match.material;
       if (match.quantity) data.quantity = match.quantity;
@@ -150,7 +152,13 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       if ('steelTypeName' in match) data.steelTypeName = match.steelTypeName ?? null;
       if ('steelTypeRaw' in match) data.steelTypeRaw = match.steelTypeRaw ?? null;
       if (match.thickness) data.thickness = match.thickness;
-      if (match.isSheetMetal !== undefined) data.isSheetMetal = match.isSheetMetal;
+      if (match.isSheetMetal !== undefined) {
+        data.isSheetMetal = match.isSheetMetal;
+        if (match.isSheetMetal === true) {
+          data.classificationMethod = 'pdf_bom';
+          data.classificationWarning = null;
+        }
+      }
       if (match.unfoldingWidth && match.unfoldingHeight) {
         data.width = match.unfoldingWidth;
         data.height = match.unfoldingHeight;

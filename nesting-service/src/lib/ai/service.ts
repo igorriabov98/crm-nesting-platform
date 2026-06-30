@@ -157,9 +157,16 @@ async function autoApplyMatches(matches: MatchResult[]): Promise<MatchResult[]> 
     if (match.suggestedUnfoldingWidth && match.suggestedUnfoldingHeight) {
       data.width = match.suggestedUnfoldingWidth;
       data.height = match.suggestedUnfoldingHeight;
-      data.hasBends = true;
+      data.hasBends = !isFlatBOMSheet(match);
     }
-    if (match.suggestedIsSheetMetal !== null) data.isSheetMetal = match.suggestedIsSheetMetal;
+    if (match.suggestedIsSheetMetal === true) {
+      data.isSheetMetal = true;
+      data.classificationMethod = 'pdf_bom';
+      data.classificationWarning = null;
+      if (isFlatBOMSheet(match)) data.hasBends = false;
+    } else if (match.suggestedIsSheetMetal === false) {
+      data.isSheetMetal = false;
+    }
     if (typeof match.suggestedQuantity === 'number') data.quantity = match.suggestedQuantity;
 
     if (Object.keys(data).length === 0) continue;
@@ -173,6 +180,11 @@ async function autoApplyMatches(matches: MatchResult[]): Promise<MatchResult[]> 
   }
 
   return nextMatches;
+}
+
+function isFlatBOMSheet(match: Pick<MatchResult, 'bomName'>): boolean {
+  const source = match.bomName.toLowerCase();
+  return /\b(bl|blech|sheet)\b/.test(source) || /лист/.test(source);
 }
 
 async function persistProjectSpecification(input: {

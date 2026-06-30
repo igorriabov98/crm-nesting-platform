@@ -180,6 +180,8 @@ for (let index = 0; index < expectedGeometryNames.length; index += 1) {
 assert.equal(geometryMatches[2].suggestedQuantity, null);
 assert.equal(geometryMatches[0].suggestedUnfoldingWidth, 995);
 assert.equal(geometryMatches[0].suggestedUnfoldingHeight, 2318);
+assert.equal(geometryMatches[4].bomName, 'RU 16 - 60');
+assert.equal(geometryMatches[4].suggestedIsSheetMetal, null);
 
 const fallbackGeometryMatches = matchBOMToParts(
   [createBom({ description: 'U 80 - 690', partType: 'channel', widthMm: 80, heightMm: 690, quantity: 4 })],
@@ -216,12 +218,12 @@ const lugBom = resolveBOMSteelTypes(
   [{ id: 'steel-s235', name: 'S235', densityKgMm3: 0.00000785 }]
 );
 const lugParts = [
-  createPart({ id: 'lower-1', name: 'flat body 10461 A', thickness: 20, bboxSizeX: 159.6135, bboxSizeY: 90, bboxSizeZ: 20, meshVolume: 214206.593, isSheetMetal: true }),
-  createPart({ id: 'lower-2', name: 'flat body 10461 B', thickness: 20, bboxSizeX: 159.6135, bboxSizeY: 90, bboxSizeZ: 20, meshVolume: 214206.593, isSheetMetal: true }),
-  createPart({ id: 'upper-1', name: 'flat body 10464 A', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: true }),
-  createPart({ id: 'upper-2', name: 'flat body 10464 B', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: true }),
-  createPart({ id: 'upper-3', name: 'flat body 10464 C', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: true }),
-  createPart({ id: 'upper-4', name: 'flat body 10464 D', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: true }),
+  createPart({ id: 'lower-1', name: 'flat body 10461 A', thickness: 20, bboxSizeX: 159.6135, bboxSizeY: 90, bboxSizeZ: 20, meshVolume: 214206.593, isSheetMetal: false }),
+  createPart({ id: 'lower-2', name: 'flat body 10461 B', thickness: 20, bboxSizeX: 159.6135, bboxSizeY: 90, bboxSizeZ: 20, meshVolume: 214206.593, isSheetMetal: false }),
+  createPart({ id: 'upper-1', name: 'flat body 10464 A', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: false }),
+  createPart({ id: 'upper-2', name: 'flat body 10464 B', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: false }),
+  createPart({ id: 'upper-3', name: 'flat body 10464 C', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: false }),
+  createPart({ id: 'upper-4', name: 'flat body 10464 D', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: false }),
 ];
 const lugMatches = matchBOMToParts(lugBom, lugParts, [], [
   { id: 'steel-s235', name: 'S235', densityKgMm3: 0.00000785 },
@@ -235,6 +237,7 @@ for (const match of lugMatches) {
   assert.match(match.matchDetails, /dim:/);
   assert.match(match.matchDetails, /mass:/);
   assert.equal(match.suggestedThickness, null);
+  assert.equal(match.suggestedIsSheetMetal, true);
   assert.equal(match.suggestedSteelTypeId, 'steel-s235');
   assert.equal(match.suggestedSteelTypeName, 'S235');
   lugCounts.set(match.bomName, (lugCounts.get(match.bomName) ?? 0) + 1);

@@ -356,15 +356,32 @@ function classifyPartType(part: PartForMatching, stepDims: number[]): BOMEntry['
     return 'round_bar';
   }
 
+  if (isSheetLikeGeometry(part, stepDims)) {
+    return 'sheet';
+  }
+
   if (minD && maxD && minD / maxD < 0.12 && !part.isSheetMetal) {
     return 'channel';
   }
 
-  if (part.isSheetMetal || (minD && maxD && minD / maxD < 0.08)) {
+  if (part.isSheetMetal) {
     return 'sheet';
   }
 
   return 'other';
+}
+
+function isSheetLikeGeometry(part: PartForMatching, stepDims: number[]): boolean {
+  const [minD, midD, maxD] = stepDims;
+  if (!minD || !midD || !maxD) return false;
+  if (part.isSheetMetal) return true;
+
+  const ratio = minD / maxD;
+  if (minD <= 12 && midD >= 80 && ratio <= 0.08) {
+    return true;
+  }
+
+  return minD >= 12 && minD <= 30 && midD >= 45 && maxD <= 350 && ratio <= 0.16;
 }
 
 function normalizePositiveNumber(value: unknown): number | null {

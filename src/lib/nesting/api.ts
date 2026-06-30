@@ -2,7 +2,7 @@ import 'server-only'
 
 export type NestingStatus = 'created' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
 export type NestingStrategy = 'minWaste' | 'remnant' | 'minSheets'
-export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic'
+export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom'
 export type NestingMaterial = 'Сталь' | 'Нержавейка' | 'Алюминий'
 
 export interface NestingProject {
