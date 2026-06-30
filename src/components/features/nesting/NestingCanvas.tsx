@@ -95,6 +95,21 @@ export function NestingCanvas({
     return PADDING + (sheet.height - y - height) * scale
   }
 
+  function getSvgPoint(point: { x: number; y: number }) {
+    return {
+      x: getSvgX(point.x),
+      y: PADDING + (sheet.height - point.y) * scale,
+    }
+  }
+
+  function pointsToPath(points: { x: number; y: number }[], close = true) {
+    if (points.length === 0) return ''
+    const [first, ...rest] = points.map(getSvgPoint)
+    const commands = [`M ${first.x} ${first.y}`, ...rest.map((point) => `L ${point.x} ${point.y}`)]
+    if (close) commands.push('Z')
+    return commands.join(' ')
+  }
+
   function updateTooltip(event: ReactMouseEvent<SVGGElement>, part: Placement) {
     const rect = wrapperRef.current?.getBoundingClientRect()
     if (!rect) {
@@ -225,6 +240,7 @@ export function NestingCanvas({
           const width = placement.placedW * scale
           const height = placement.placedH * scale
           const labelLimit = Math.max(4, Math.floor(width / 7))
+          const hasContour = Boolean(placement.contour && placement.contour.length >= 3)
 
           return (
             <g
@@ -241,17 +257,64 @@ export function NestingCanvas({
                 onPartSelect(selected ? null : placement.partId)
               }}
             >
-              <rect
-                x={x}
-                y={y}
-                width={width}
-                height={height}
-                fill={color}
-                fillOpacity={selected ? 0.35 : hovered ? 0.4 : 0.2}
-                stroke={color}
-                strokeWidth={selected ? 2.5 : hovered ? 2 : 1}
-                rx="1"
-              />
+              {hasContour ? (
+                <>
+                  <path
+                    d={pointsToPath(placement.contour || [])}
+                    fill={color}
+                    fillOpacity={selected ? 0.35 : hovered ? 0.4 : 0.2}
+                    stroke={color}
+                    strokeWidth={selected ? 2.5 : hovered ? 2 : 1}
+                  />
+                  {(placement.holes || []).map((hole, holeIndex) => (
+                    <path
+                      key={`hole-${holeIndex}`}
+                      d={pointsToPath(hole)}
+                      fill="#ffffff"
+                      fillOpacity="0.85"
+                      stroke={color}
+                      strokeOpacity="0.7"
+                      strokeWidth="1"
+                    />
+                  ))}
+                </>
+              ) : (
+                <rect
+                  x={x}
+                  y={y}
+                  width={width}
+                  height={height}
+                  fill={color}
+                  fillOpacity={selected ? 0.35 : hovered ? 0.4 : 0.2}
+                  stroke={color}
+                  strokeWidth={selected ? 2.5 : hovered ? 2 : 1}
+                  rx="1"
+                />
+              )}
+
+              {(placement.leadIn || []).map((segment, segmentIndex) => {
+                const from = getSvgPoint(segment.from)
+                const to = getSvgPoint(segment.to)
+
+                return (
+                  <g key={`lead-in-${segmentIndex}`}>
+                    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#2563EB" strokeWidth="1.8" />
+                    <circle cx={from.x} cy={from.y} r="2.4" fill="#2563EB" />
+                  </g>
+                )
+              })}
+
+              {(placement.leadOut || []).map((segment, segmentIndex) => {
+                const from = getSvgPoint(segment.from)
+                const to = getSvgPoint(segment.to)
+
+                return (
+                  <g key={`lead-out-${segmentIndex}`}>
+                    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#EA580C" strokeWidth="1.8" />
+                    <circle cx={to.x} cy={to.y} r="2.4" fill="#EA580C" />
+                  </g>
+                )
+              })}
 
               {width > 50 && height > 20 && (
                 <text

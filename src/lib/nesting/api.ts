@@ -82,6 +82,10 @@ export interface Placement {
   rotation: 0 | 90
   placedW: number
   placedH: number
+  contour?: { x: number; y: number }[]
+  holes?: { x: number; y: number }[][]
+  leadIn?: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>
+  leadOut?: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>
 }
 
 export interface RemnantGeom {
