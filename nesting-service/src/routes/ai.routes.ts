@@ -33,13 +33,21 @@ const applyBomSchema = z.object({
       steelTypeName: z.string().min(1).nullable().optional(),
       steelTypeRaw: z.string().min(1).nullable().optional(),
       quantity: z.coerce.number().int().min(1).optional(),
+      thickness: z.coerce.number().positive().max(50).optional(),
+      isSheetMetal: z.boolean().optional(),
+      unfoldingWidth: z.coerce.number().positive().max(12000).optional(),
+      unfoldingHeight: z.coerce.number().positive().max(12000).optional(),
     }).refine((value) =>
       value.material ||
       value.quantity ||
+      value.thickness ||
+      value.isSheetMetal !== undefined ||
+      value.unfoldingWidth ||
+      value.unfoldingHeight ||
       'steelTypeId' in value ||
       'steelTypeName' in value ||
       'steelTypeRaw' in value, {
-      message: 'Нужно указать material, quantity или steelTypeId',
+      message: 'Нужно указать хотя бы одно изменение',
     })
   ),
 });
@@ -94,6 +102,7 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         bom: result.bom,
         matches: result.matches,
         unmatchedBom: result.unmatchedBom,
+        details: result.details,
         tokensUsed: result.tokensUsed,
         model: result.model,
         cost: result.cost,
@@ -123,12 +132,30 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     for (const match of body.matches) {
       if (!validPartIds.has(match.partId)) continue;
 
-      const data: { material?: string; quantity?: number; steelTypeId?: string | null; steelTypeName?: string | null; steelTypeRaw?: string | null } = {};
+      const data: {
+        material?: string;
+        quantity?: number;
+        steelTypeId?: string | null;
+        steelTypeName?: string | null;
+        steelTypeRaw?: string | null;
+        thickness?: number;
+        isSheetMetal?: boolean;
+        width?: number;
+        height?: number;
+        hasBends?: boolean;
+      } = {};
       if (match.material) data.material = match.material;
       if (match.quantity) data.quantity = match.quantity;
       if ('steelTypeId' in match) data.steelTypeId = match.steelTypeId ?? null;
       if ('steelTypeName' in match) data.steelTypeName = match.steelTypeName ?? null;
       if ('steelTypeRaw' in match) data.steelTypeRaw = match.steelTypeRaw ?? null;
+      if (match.thickness) data.thickness = match.thickness;
+      if (match.isSheetMetal !== undefined) data.isSheetMetal = match.isSheetMetal;
+      if (match.unfoldingWidth && match.unfoldingHeight) {
+        data.width = match.unfoldingWidth;
+        data.height = match.unfoldingHeight;
+        data.hasBends = true;
+      }
       if (Object.keys(data).length === 0) continue;
 
       await prisma.part.update({

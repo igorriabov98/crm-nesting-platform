@@ -121,6 +121,7 @@ export interface NestingResult {
 
 export interface BOMEntry {
   position: string
+  designation: string
   name: string
   material: string
   steelTypeRaw: string | null
@@ -132,26 +133,48 @@ export interface BOMEntry {
   notes: string
 }
 
+export interface DetailEntry {
+  designation: string
+  name: string
+  materialFull: string
+  materialType: string
+  materialGrade: string
+  thicknessMm: number
+  unfoldingWidth: number | null
+  unfoldingHeight: number | null
+  massKg: number | null
+  isSheetMetal: boolean
+  notes: string
+}
+
 export interface AIMatchResult {
   partId: string
   partName: string
   bomPosition: string
+  bomDesignation: string
   bomName: string
   matchType: 'exact' | 'contains' | 'designation' | 'fuzzy' | 'none'
   matchConfidence: number
   suggestedMaterial: string | null
+  suggestedMaterialGrade: string | null
   suggestedSteelTypeId: string | null
   suggestedSteelTypeName: string | null
   suggestedSteelTypeRaw: string | null
   steelTypeWarning: string | null
   suggestedQuantity: number | null
   suggestedThickness: number | null
+  suggestedUnfoldingWidth: number | null
+  suggestedUnfoldingHeight: number | null
+  suggestedIsSheetMetal: boolean | null
+  suggestedMassKg: number | null
+  detailNotes: string
   autoApplied: boolean
 }
 
 export interface AIAnalysisResponse {
   data: {
     bom: BOMEntry[]
+    details: DetailEntry[]
     matches: AIMatchResult[]
     unmatchedBom: BOMEntry[]
     tokensUsed: number
@@ -304,6 +327,9 @@ export async function updatePart(
     grainLock: boolean
     isSheetMetal: boolean
     thickness: number
+    width: number
+    height: number
+    hasBends: boolean
   }>
 ): Promise<{ data: NestingPart }> {
   const res = await request(buildUrl(`/api/projects/${projectId}/parts/${partId}`), {
@@ -385,6 +411,10 @@ export async function applyProjectBOM(
     steelTypeName?: string | null
     steelTypeRaw?: string | null
     quantity?: number
+    thickness?: number
+    isSheetMetal?: boolean
+    unfoldingWidth?: number
+    unfoldingHeight?: number
   }>
 ): Promise<{ updated: number }> {
   const res = await request(buildUrl(`/api/projects/${projectId}/apply-bom`), {

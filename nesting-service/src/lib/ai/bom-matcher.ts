@@ -1,98 +1,223 @@
-import type { BOMEntry, MatchResult, PartForMatching } from './types';
+import type { BOMEntry, DetailEntry, MatchResult, PartForMatching } from './types';
 
-export function matchBOMToParts(bom: BOMEntry[], parts: PartForMatching[]): MatchResult[] {
+type MatchType = MatchResult['matchType'];
+
+export function matchBOMToParts(
+  bom: BOMEntry[],
+  parts: PartForMatching[],
+  details: DetailEntry[] = []
+): MatchResult[] {
+  const detailsByDesignation = buildDesignationMap(details, (detail) => detail.designation);
+  const bomByDesignation = buildDesignationMap(bom, (entry) => entry.designation);
   const results: MatchResult[] = [];
 
   for (const part of parts) {
-    let bestMatch: { entry: BOMEntry; type: MatchResult['matchType']; confidence: number } | null = null;
-
-    for (const entry of bom) {
-      const partName = normalize(part.name);
-      const entryName = normalize(entry.name);
-
-      if (partName && partName === entryName) {
-        bestMatch = { entry, type: 'exact', confidence: 1 };
-        break;
-      }
-
-      if (partName && entryName && (partName.includes(entryName) || entryName.includes(partName))) {
-        const longer = Math.max(partName.length, entryName.length);
-        const shorter = Math.min(partName.length, entryName.length);
-        const confidence = longer > 0 ? shorter / longer : 0;
-        if (!bestMatch || confidence > bestMatch.confidence) {
-          bestMatch = { entry, type: 'contains', confidence: Math.min(0.9, confidence) };
-        }
-      }
-
-      const partDesignation = extractDesignation(part.name);
-      const bomDesignation = extractDesignation(entry.position) || extractDesignation(entry.name);
-      if (partDesignation && bomDesignation && partDesignation === bomDesignation) {
-        if (!bestMatch || bestMatch.confidence < 0.85) {
-          bestMatch = { entry, type: 'designation', confidence: 0.85 };
-        }
-      }
-
-      const maxLen = Math.max(partName.length, entryName.length);
-      if (maxLen > 0) {
-        const distance = levenshtein(partName, entryName);
-        if (distance / maxLen < 0.3) {
-          const confidence = 1 - distance / maxLen;
-          if (!bestMatch || confidence > bestMatch.confidence) {
-            bestMatch = { entry, type: 'fuzzy', confidence: Math.min(0.7, confidence) };
-          }
-        }
-      }
-    }
-
-    if (bestMatch) {
-      const suggestedMaterial = normalizeMaterial(bestMatch.entry.material);
-
-      results.push({
-        partId: part.id,
-        partName: part.name,
-        bomPosition: bestMatch.entry.position,
-        bomName: bestMatch.entry.name,
-        matchType: bestMatch.type,
-        matchConfidence: bestMatch.confidence,
-        suggestedMaterial: suggestedMaterial !== part.material ? suggestedMaterial : null,
-        suggestedSteelTypeId:
-          bestMatch.entry.steelTypeId && bestMatch.entry.steelTypeId !== part.steelTypeId
-            ? bestMatch.entry.steelTypeId
-            : null,
-        suggestedSteelTypeName:
-          bestMatch.entry.steelTypeId && bestMatch.entry.steelTypeId !== part.steelTypeId
-            ? bestMatch.entry.steelTypeName
-            : null,
-        suggestedSteelTypeRaw:
-          bestMatch.entry.steelTypeId && bestMatch.entry.steelTypeId !== part.steelTypeId
-            ? bestMatch.entry.steelTypeRaw
-            : null,
-        steelTypeWarning: bestMatch.entry.steelTypeWarning,
-        suggestedQuantity: bestMatch.entry.quantity !== part.quantity ? bestMatch.entry.quantity : null,
-        suggestedThickness: bestMatch.entry.thickness,
-        autoApplied: false,
-      });
-    } else {
-      results.push({
-        partId: part.id,
-        partName: part.name,
-        bomPosition: '',
-        bomName: '',
-        matchType: 'none',
-        matchConfidence: 0,
-        suggestedMaterial: null,
-        suggestedSteelTypeId: null,
-        suggestedSteelTypeName: null,
-        suggestedSteelTypeRaw: null,
-        steelTypeWarning: null,
-        suggestedQuantity: null,
-        suggestedThickness: null,
-        autoApplied: false,
-      });
-    }
+    const match = findBestMatch(part, bom, detailsByDesignation, bomByDesignation);
+    results.push(buildMatchResult(part, match.bomEntry, match.detail, match.matchType, match.matchConfidence));
   }
 
   return suppressAmbiguousQuantitySuggestions(results);
+}
+
+function findBestMatch(
+  part: PartForMatching,
+  bom: BOMEntry[],
+  detailsByDesignation: Map<string, DetailEntry>,
+  bomByDesignation: Map<string, BOMEntry>
+): {
+  bomEntry: BOMEntry | null;
+  detail: DetailEntry | null;
+  matchType: MatchType;
+  matchConfidence: number;
+} {
+  const partDesignation = extractDesignationKey(part.name);
+  let bomEntry: BOMEntry | null = null;
+  let detail: DetailEntry | null = null;
+  let matchType: MatchType = 'none';
+  let matchConfidence = 0;
+
+  if (partDesignation) {
+    detail = detailsByDesignation.get(partDesignation) ?? null;
+    bomEntry = bomByDesignation.get(partDesignation) ?? null;
+
+    if (detail || bomEntry) {
+      matchType = 'designation';
+      matchConfidence = 0.95;
+    }
+
+    if (!detail || !bomEntry) {
+      const suffix = extractTrailingSuffix(part.name);
+      if (suffix) {
+        const fullKey = `${partDesignation.replace(/-\d{2,3}$/, '')}-${suffix}`;
+        detail = detail ?? detailsByDesignation.get(fullKey) ?? null;
+        bomEntry = bomEntry ?? bomByDesignation.get(fullKey) ?? null;
+        if (detail || bomEntry) {
+          matchType = 'designation';
+          matchConfidence = Math.max(matchConfidence, 0.9);
+        }
+      }
+    }
+
+    if (!detail || !bomEntry) {
+      const baseKey = partDesignation.replace(/-\d{2,3}$/, '');
+      if (baseKey !== partDesignation) {
+        detail = detail ?? detailsByDesignation.get(baseKey) ?? null;
+        bomEntry = bomEntry ?? bomByDesignation.get(baseKey) ?? null;
+        if (detail || bomEntry) {
+          matchType = 'designation';
+          matchConfidence = Math.max(matchConfidence, 0.8);
+        }
+      }
+    }
+  }
+
+  if (!detail && bomEntry) {
+    const bomKey = extractDesignationKey(bomEntry.designation);
+    detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
+  }
+
+  if (!bomEntry && detail) {
+    const detailKey = extractDesignationKey(detail.designation);
+    bomEntry = detailKey ? bomByDesignation.get(detailKey) ?? null : null;
+  }
+
+  if (!detail && !bomEntry) {
+    const nameMatch = findNameMatch(part, bom);
+    if (nameMatch) {
+      bomEntry = nameMatch.entry;
+      matchType = nameMatch.type;
+      matchConfidence = nameMatch.confidence;
+
+      const bomKey = extractDesignationKey(bomEntry.designation);
+      if (bomKey && detailsByDesignation.has(bomKey)) {
+        detail = detailsByDesignation.get(bomKey)!;
+        matchConfidence = Math.max(matchConfidence, 0.7);
+      }
+    }
+  }
+
+  return { bomEntry, detail, matchType, matchConfidence };
+}
+
+function findNameMatch(
+  part: PartForMatching,
+  bom: BOMEntry[]
+): { entry: BOMEntry; type: MatchType; confidence: number } | null {
+  let bestMatch: { entry: BOMEntry; type: MatchType; confidence: number } | null = null;
+
+  for (const entry of bom) {
+    const partName = normalize(part.name);
+    const entryName = normalize(entry.name);
+
+    if (partName && partName === entryName) {
+      return { entry, type: 'exact', confidence: 1 };
+    }
+
+    if (partName && entryName && (partName.includes(entryName) || entryName.includes(partName))) {
+      const longer = Math.max(partName.length, entryName.length);
+      const shorter = Math.min(partName.length, entryName.length);
+      const confidence = longer > 0 ? shorter / longer : 0;
+      if (!bestMatch || confidence > bestMatch.confidence) {
+        bestMatch = { entry, type: 'contains', confidence: Math.min(0.9, confidence) };
+      }
+    }
+
+    const maxLen = Math.max(partName.length, entryName.length);
+    if (maxLen > 0) {
+      const distance = levenshtein(partName, entryName);
+      if (distance / maxLen < 0.3) {
+        const confidence = 1 - distance / maxLen;
+        if (!bestMatch || confidence > bestMatch.confidence) {
+          bestMatch = { entry, type: 'fuzzy', confidence: Math.min(0.7, confidence) };
+        }
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+function buildMatchResult(
+  part: PartForMatching,
+  bomEntry: BOMEntry | null,
+  detail: DetailEntry | null,
+  matchType: MatchType,
+  matchConfidence: number
+): MatchResult {
+  const result: MatchResult = {
+    partId: part.id,
+    partName: part.name,
+    bomPosition: bomEntry?.position || '',
+    bomDesignation: bomEntry?.designation || detail?.designation || '',
+    bomName: bomEntry?.name || detail?.name || '',
+    matchType,
+    matchConfidence,
+    suggestedMaterial: null,
+    suggestedMaterialGrade: null,
+    suggestedSteelTypeId: null,
+    suggestedSteelTypeName: null,
+    suggestedSteelTypeRaw: null,
+    steelTypeWarning: bomEntry?.steelTypeWarning || null,
+    suggestedQuantity: null,
+    suggestedThickness: null,
+    suggestedUnfoldingWidth: null,
+    suggestedUnfoldingHeight: null,
+    suggestedIsSheetMetal: null,
+    suggestedMassKg: null,
+    detailNotes: '',
+    autoApplied: false,
+  };
+
+  const suggestedMaterial = detail?.materialType || (bomEntry ? normalizeMaterial(bomEntry.material) : null);
+  if (suggestedMaterial && suggestedMaterial !== part.material) {
+    result.suggestedMaterial = suggestedMaterial;
+  }
+
+  if (detail) {
+    const materialGrade = detail.materialGrade.trim();
+    if (materialGrade) {
+      result.suggestedMaterialGrade = materialGrade;
+      if (!sameSteelType(materialGrade, part.steelTypeRaw) && !sameSteelType(materialGrade, part.steelTypeName)) {
+        result.suggestedSteelTypeRaw = materialGrade;
+      }
+    }
+
+    if (detail.thicknessMm > 0 && Math.abs(detail.thicknessMm - part.thickness) > 0.1) {
+      result.suggestedThickness = detail.thicknessMm;
+    }
+
+    if (detail.unfoldingWidth && detail.unfoldingHeight) {
+      result.suggestedUnfoldingWidth = detail.unfoldingWidth;
+      result.suggestedUnfoldingHeight = detail.unfoldingHeight;
+    }
+
+    if (detail.isSheetMetal && !part.isSheetMetal) {
+      result.suggestedIsSheetMetal = true;
+    }
+
+    result.suggestedMassKg = detail.massKg;
+    result.detailNotes = detail.notes;
+  } else if (bomEntry?.thickness && Math.abs(bomEntry.thickness - part.thickness) > 0.1) {
+    result.suggestedThickness = bomEntry.thickness;
+  }
+
+  if (bomEntry) {
+    if (bomEntry.steelTypeId && bomEntry.steelTypeId !== part.steelTypeId) {
+      result.suggestedSteelTypeId = bomEntry.steelTypeId;
+      result.suggestedSteelTypeName = bomEntry.steelTypeName;
+      result.suggestedSteelTypeRaw = bomEntry.steelTypeRaw;
+      result.suggestedMaterialGrade = result.suggestedMaterialGrade || bomEntry.steelTypeRaw;
+    } else if (!result.suggestedSteelTypeRaw && bomEntry.steelTypeRaw && !sameSteelType(bomEntry.steelTypeRaw, part.steelTypeRaw)) {
+      result.suggestedSteelTypeRaw = bomEntry.steelTypeRaw;
+      result.suggestedMaterialGrade = result.suggestedMaterialGrade || bomEntry.steelTypeRaw;
+    }
+
+    if (bomEntry.quantity !== part.quantity) {
+      result.suggestedQuantity = bomEntry.quantity;
+    }
+  }
+
+  return result;
 }
 
 export function normalizeMaterial(raw: string): string {
@@ -117,17 +242,49 @@ export function normalizeMaterial(raw: string): string {
   return 'Сталь';
 }
 
+export function extractDesignationKey(str: string): string | null {
+  const match = str.match(/(\d{3}\.\d{2}\.\d{3})(?:[_\s-]*(\d{2,3}))?/);
+  if (!match) return null;
+  const base = match[1];
+  const suffix = match[2];
+  return suffix ? `${base}-${suffix}` : base;
+}
+
+function buildDesignationMap<T>(entries: T[], getDesignation: (entry: T) => string): Map<string, T> {
+  const map = new Map<string, T>();
+  for (const entry of entries) {
+    const key = extractDesignationKey(getDesignation(entry));
+    if (key) map.set(key, entry);
+  }
+  return map;
+}
+
+function extractTrailingSuffix(str: string): string | null {
+  const match = str.match(/[_-]+(\d{2,3})(?:\s|$)/);
+  return match ? match[1] : null;
+}
+
+function sameSteelType(a: string | null | undefined, b: string | null | undefined): boolean {
+  const left = normalizeSteelType(a);
+  const right = normalizeSteelType(b);
+  return left.length > 0 && left === right;
+}
+
+function normalizeSteelType(value: string | null | undefined): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/[‐‑‒–—−]/g, '-')
+    .replace(/[х]/g, 'x')
+    .replace(/[^a-zа-я0-9]+/gi, '');
+}
+
 function normalize(str: string): string {
   return str
     .toLowerCase()
     .trim()
     .replace(/\s+/g, ' ')
     .replace(/[_\-.]/g, ' ');
-}
-
-function extractDesignation(str: string): string | null {
-  const match = str.match(/\d{3}\.\d{2}\.\d{3}/);
-  return match ? match[0] : null;
 }
 
 function suppressAmbiguousQuantitySuggestions(results: MatchResult[]): MatchResult[] {
@@ -138,7 +295,7 @@ function suppressAmbiguousQuantitySuggestions(results: MatchResult[]): MatchResu
       continue;
     }
 
-    const key = buildBomKey(result.bomPosition, result.bomName);
+    const key = buildBomKey(result.bomPosition, result.bomDesignation, result.bomName);
     matchesByBom.set(key, [...(matchesByBom.get(key) ?? []), result]);
   }
 
@@ -153,14 +310,14 @@ function suppressAmbiguousQuantitySuggestions(results: MatchResult[]): MatchResu
   }
 
   return results.map((result) =>
-    ambiguousBomKeys.has(buildBomKey(result.bomPosition, result.bomName))
+    ambiguousBomKeys.has(buildBomKey(result.bomPosition, result.bomDesignation, result.bomName))
       ? { ...result, suggestedQuantity: null }
       : result
   );
 }
 
-function buildBomKey(position: string, name: string): string {
-  return `${position.trim().toLowerCase()}__${name.trim().toLowerCase()}`;
+function buildBomKey(position: string, designation: string, name: string): string {
+  return `${position.trim().toLowerCase()}__${designation.trim().toLowerCase()}__${name.trim().toLowerCase()}`;
 }
 
 function levenshtein(a: string, b: string): number {

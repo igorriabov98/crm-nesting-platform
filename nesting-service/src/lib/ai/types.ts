@@ -19,6 +19,7 @@ export interface SteelTypeCatalogItem {
 
 export interface BOMEntry {
   position: string;
+  designation: string;
   name: string;
   material: string;
   steelTypeRaw: string | null;
@@ -30,9 +31,24 @@ export interface BOMEntry {
   notes: string;
 }
 
+export interface DetailEntry {
+  designation: string;
+  name: string;
+  materialFull: string;
+  materialType: string;
+  materialGrade: string;
+  thicknessMm: number;
+  unfoldingWidth: number | null;
+  unfoldingHeight: number | null;
+  massKg: number | null;
+  isSheetMetal: boolean;
+  notes: string;
+}
+
 export interface PDFAnalysisResult {
   success: boolean;
   bom: BOMEntry[];
+  details: DetailEntry[];
   rawResponse: string;
   model: string;
   tokensUsed: number;
@@ -48,22 +64,33 @@ export interface PartForMatching {
   steelTypeRaw: string | null;
   quantity: number;
   thickness: number;
+  width: number;
+  height: number;
+  isSheetMetal: boolean;
+  hasBends: boolean;
 }
 
 export interface MatchResult {
   partId: string;
   partName: string;
   bomPosition: string;
+  bomDesignation: string;
   bomName: string;
   matchType: 'exact' | 'contains' | 'designation' | 'fuzzy' | 'none';
   matchConfidence: number;
   suggestedMaterial: string | null;
+  suggestedMaterialGrade: string | null;
   suggestedSteelTypeId: string | null;
   suggestedSteelTypeName: string | null;
   suggestedSteelTypeRaw: string | null;
   steelTypeWarning: string | null;
   suggestedQuantity: number | null;
   suggestedThickness: number | null;
+  suggestedUnfoldingWidth: number | null;
+  suggestedUnfoldingHeight: number | null;
+  suggestedIsSheetMetal: boolean | null;
+  suggestedMassKg: number | null;
+  detailNotes: string;
   autoApplied: boolean;
 }
 

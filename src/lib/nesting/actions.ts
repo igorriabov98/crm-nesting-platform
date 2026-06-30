@@ -31,6 +31,9 @@ export async function updateNestingPart(
     grainLock: boolean
     isSheetMetal: boolean
     thickness: number
+    width: number
+    height: number
+    hasBends: boolean
   }>
 ) {
   const result = await updatePart(projectId, partId, data)

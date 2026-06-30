@@ -123,6 +123,10 @@ export function AIAnalysisPanel({
         steelTypeName: match.suggestedSteelTypeName || undefined,
         steelTypeRaw: match.suggestedSteelTypeRaw || undefined,
         quantity: match.suggestedQuantity || undefined,
+        thickness: match.suggestedThickness || undefined,
+        isSheetMetal: match.suggestedIsSheetMetal ?? undefined,
+        unfoldingWidth: match.suggestedUnfoldingWidth || undefined,
+        unfoldingHeight: match.suggestedUnfoldingHeight || undefined,
       }))
 
     if (payload.length === 0) {
@@ -220,6 +224,8 @@ export function AIAnalysisPanel({
                         <TableHead>BOM совпал</TableHead>
                         <TableHead>Материал</TableHead>
                         <TableHead>Тип стали</TableHead>
+                        <TableHead>Толщ.</TableHead>
+                        <TableHead>Развёртка</TableHead>
                         <TableHead>Кол-во</TableHead>
                         <TableHead>Статус</TableHead>
                         <TableHead>Принять</TableHead>
@@ -245,14 +251,20 @@ export function AIAnalysisPanel({
                               ) : (
                                 <span className="inline-flex items-center gap-1 text-emerald-700">
                                   <CheckCircle2 className="h-4 w-4" />
-                                  {confidence}% · {match.bomPosition || match.bomName}
+                                  {confidence}% · {match.bomPosition || match.bomDesignation || match.bomName}
                                 </span>
                               )}
                             </TableCell>
                             <TableCell>
-                              {match.suggestedMaterial
-                                ? match.autoApplied ? `Применено: ${match.suggestedMaterial}` : `${part?.material || '—'} → ${match.suggestedMaterial}`
-                                : '—'}
+                              {match.suggestedMaterial ? (
+                                match.autoApplied ? (
+                                  `Применено: ${match.suggestedMaterial}`
+                                ) : (
+                                  <ChangeText from={part?.material || '—'} to={match.suggestedMaterial} />
+                                )
+                              ) : (
+                                <OkText value={part?.material || '—'} />
+                              )}
                             </TableCell>
                             <TableCell>
                               {match.steelTypeWarning ? (
@@ -260,18 +272,45 @@ export function AIAnalysisPanel({
                                   <AlertTriangle className="h-4 w-4" />
                                   {match.steelTypeWarning}
                                 </span>
-                              ) : match.suggestedSteelTypeName ? (
-                                match.autoApplied ? `Применено: ${match.suggestedSteelTypeName}` : `${part?.steelTypeName || '—'} → ${match.suggestedSteelTypeName}`
-                              ) : match.suggestedSteelTypeRaw ? (
-                                match.suggestedSteelTypeRaw
+                              ) : match.suggestedSteelTypeName || match.suggestedSteelTypeRaw ? (
+                                match.autoApplied ? (
+                                  `Применено: ${match.suggestedSteelTypeName || match.suggestedSteelTypeRaw}`
+                                ) : (
+                                  <ChangeText
+                                    from={part?.steelTypeName || part?.steelTypeRaw || '—'}
+                                    to={match.suggestedSteelTypeName || match.suggestedSteelTypeRaw || '—'}
+                                  />
+                                )
                               ) : (
-                                '—'
+                                <OkText value={part?.steelTypeName || part?.steelTypeRaw || match.suggestedMaterialGrade || '—'} />
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {match.suggestedThickness ? (
+                                match.autoApplied ? (
+                                  `Применено: ${formatThickness(match.suggestedThickness)}`
+                                ) : (
+                                  <ChangeText from={formatThickness(part?.thickness)} to={formatThickness(match.suggestedThickness)} />
+                                )
+                              ) : (
+                                <OkText value={formatThickness(part?.thickness)} />
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {match.suggestedUnfoldingWidth && match.suggestedUnfoldingHeight ? (
+                                <span className="inline-flex items-center gap-2">
+                                  {match.autoApplied ? 'Применено: ' : null}
+                                  {formatSize(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)}
+                                  {!match.autoApplied && <Badge variant="outline">PDF</Badge>}
+                                </span>
+                              ) : (
+                                <span className="text-[#6B7280]">—</span>
                               )}
                             </TableCell>
                             <TableCell>
                               {match.suggestedQuantity
-                                ? match.autoApplied ? `Применено: ${match.suggestedQuantity}` : `${part?.quantity || '—'} → ${match.suggestedQuantity}`
-                                : '—'}
+                                ? match.autoApplied ? `Применено: ${match.suggestedQuantity}` : <ChangeText from={String(part?.quantity || '—')} to={String(match.suggestedQuantity)} />
+                                : <OkText value={String(part?.quantity || '—')} />}
                             </TableCell>
                             <TableCell>
                               {match.autoApplied ? (
@@ -305,7 +344,7 @@ export function AIAnalysisPanel({
                     <div className="mt-2 flex flex-wrap gap-2">
                       {analysis.unmatchedBom.slice(0, 8).map((entry, index) => (
                         <Badge key={`${entry.position}-${entry.name}-${index}`} variant="outline" className="bg-white">
-                          {[entry.position, entry.name, entry.steelTypeName || entry.steelTypeRaw].filter(Boolean).join(' · ')}
+                          {[entry.position, entry.designation, entry.name, entry.steelTypeName || entry.steelTypeRaw].filter(Boolean).join(' · ')}
                         </Badge>
                       ))}
                       {analysis.unmatchedBom.length > 8 && <span>ещё {analysis.unmatchedBom.length - 8}</span>}
@@ -331,6 +370,46 @@ export function AIAnalysisPanel({
   )
 }
 
+function ChangeText({ from, to }: { from: string; to: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-amber-700">
+      <span className="text-[#6B7280]">{from}</span>
+      <span>→</span>
+      <span className="font-medium">{to}</span>
+    </span>
+  )
+}
+
+function OkText({ value }: { value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-emerald-700">
+      <CheckCircle2 className="h-4 w-4" />
+      {value}
+    </span>
+  )
+}
+
+function formatThickness(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${formatNumber(value)} мм` : '—'
+}
+
+function formatSize(width: number, height: number) {
+  return `${formatNumber(width)}×${formatNumber(height)} мм`
+}
+
+function formatNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, '')
+}
+
 function hasSuggestion(match: AIMatchResult) {
-  return Boolean(match.suggestedMaterial || match.suggestedQuantity || match.suggestedSteelTypeId)
+  return Boolean(
+    match.suggestedMaterial ||
+      match.suggestedQuantity ||
+      match.suggestedSteelTypeId ||
+      match.suggestedSteelTypeRaw ||
+      match.suggestedThickness ||
+      match.suggestedUnfoldingWidth ||
+      match.suggestedUnfoldingHeight ||
+      match.suggestedIsSheetMetal
+  )
 }

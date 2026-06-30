@@ -1,15 +1,16 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../prisma';
 import { NotFoundError } from '../errors';
-import { analyzePDF } from './openrouter';
+import { analyzePDF, parsePDFAnalysisResponse } from './openrouter';
 import { estimateCost, getAISettingsView, recordAIUsage } from './settings';
 import { matchBOMToParts } from './bom-matcher';
 import { resolveBOMSteelTypes } from './steel-types';
-import type { BOMEntry, MatchResult, PartForMatching, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
+import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
 
 export interface ProjectPdfAnalysisResult {
   success: boolean;
   bom: BOMEntry[];
+  details: DetailEntry[];
   matches: MatchResult[];
   unmatchedBom: BOMEntry[];
   tokensUsed: number;
@@ -44,9 +45,13 @@ export async function analyzeProjectPdf(input: {
       steelTypeRaw: true,
       quantity: true,
       thickness: true,
+      width: true,
+      height: true,
+      isSheetMetal: true,
+      hasBends: true,
     },
   });
-  const matches = matchBOMToParts(bom, parts);
+  const matches = matchBOMToParts(bom, parts, pdfResult.details);
   const finalMatches = input.autoApply === false ? matches : await autoApplyMatches(matches);
   const unmatchedBom = getUnmatchedBom(bom, finalMatches);
   const cost = estimateCost(pdfResult.tokensUsed, pdfResult.model);
@@ -64,6 +69,7 @@ export async function analyzeProjectPdf(input: {
   await persistProjectSpecification({
     projectId: input.projectId,
     bom,
+    details: pdfResult.details,
     matches: finalMatches,
     unmatchedBom,
     tokensUsed: pdfResult.tokensUsed,
@@ -76,6 +82,7 @@ export async function analyzeProjectPdf(input: {
   return {
     success: true,
     bom,
+    details: pdfResult.details,
     matches: finalMatches,
     unmatchedBom,
     tokensUsed: pdfResult.tokensUsed,
@@ -109,6 +116,7 @@ export async function getProjectSpecification(projectId: string): Promise<Omit<P
 
   return {
     bom: project.specification.bom as unknown as BOMEntry[],
+    details: parseStoredDetails(project.specification.rawResponse),
     matches: project.specification.matches as unknown as MatchResult[],
     unmatchedBom: project.specification.unmatchedBom as unknown as BOMEntry[],
     tokensUsed: project.specification.tokensUsed,
@@ -134,7 +142,18 @@ async function autoApplyMatches(matches: MatchResult[]): Promise<MatchResult[]> 
       data.steelTypeId = match.suggestedSteelTypeId;
       data.steelTypeName = match.suggestedSteelTypeName;
       data.steelTypeRaw = match.suggestedSteelTypeRaw;
+    } else if (match.suggestedSteelTypeRaw) {
+      data.steelTypeId = null;
+      data.steelTypeName = null;
+      data.steelTypeRaw = match.suggestedSteelTypeRaw;
     }
+    if (typeof match.suggestedThickness === 'number') data.thickness = match.suggestedThickness;
+    if (match.suggestedUnfoldingWidth && match.suggestedUnfoldingHeight) {
+      data.width = match.suggestedUnfoldingWidth;
+      data.height = match.suggestedUnfoldingHeight;
+      data.hasBends = true;
+    }
+    if (match.suggestedIsSheetMetal !== null) data.isSheetMetal = match.suggestedIsSheetMetal;
     if (typeof match.suggestedQuantity === 'number') data.quantity = match.suggestedQuantity;
 
     if (Object.keys(data).length === 0) continue;
@@ -153,6 +172,7 @@ async function autoApplyMatches(matches: MatchResult[]): Promise<MatchResult[]> 
 async function persistProjectSpecification(input: {
   projectId: string;
   bom: BOMEntry[];
+  details: DetailEntry[];
   matches: MatchResult[];
   unmatchedBom: BOMEntry[];
   tokensUsed: number;
@@ -214,20 +234,31 @@ function getUnmatchedBom(bom: BOMEntry[], matches: MatchResult[]): BOMEntry[] {
   const matchedKeys = new Set(
     matches
       .filter((match) => match.matchType !== 'none')
-      .map((match) => buildBomKey(match.bomPosition, match.bomName))
+      .map((match) => buildBomKey(match.bomPosition, match.bomDesignation, match.bomName))
   );
 
-  return bom.filter((entry) => !matchedKeys.has(buildBomKey(entry.position, entry.name)));
+  return bom.filter((entry) => !matchedKeys.has(buildBomKey(entry.position, entry.designation, entry.name)));
 }
 
-function buildBomKey(position: string, name: string): string {
+function buildBomKey(position: string, designation: string, name: string): string {
+  const designationKey = designation.trim().toLowerCase();
+  if (designationKey) return `designation__${designationKey}`;
   return `${position.trim().toLowerCase()}__${name.trim().toLowerCase()}`;
+}
+
+function parseStoredDetails(rawResponse: string): DetailEntry[] {
+  try {
+    return parsePDFAnalysisResponse(rawResponse).details;
+  } catch {
+    return [];
+  }
 }
 
 function buildFailedResult(pdfResult: PDFAnalysisResult): ProjectPdfAnalysisResult {
   return {
     success: false,
     bom: [],
+    details: [],
     matches: [],
     unmatchedBom: [],
     tokensUsed: pdfResult.tokensUsed,
