@@ -88,6 +88,21 @@ assert.equal(resolvedGradeMatches[0].suggestedSteelTypeId, 'steel-st3ps');
 assert.equal(resolvedGradeMatches[0].suggestedSteelTypeName, 'Ст3пс');
 assert.equal(resolvedGradeMatches[0].suggestedSteelTypeRaw, 'Ст3пс');
 
+const s235AliasMatches = matchBOMToParts(
+  designationBom,
+  designationParts,
+  [createDetail({
+    designation: 'ЛЕДА.024.00.008',
+    name: 'Стенка боковая',
+    materialGrade: 'S235JRG2',
+  })],
+  [{ id: 'steel-s235', name: 'S235', densityKgMm3: 0.00000785 }]
+);
+
+assert.equal(s235AliasMatches[0].suggestedSteelTypeId, 'steel-s235');
+assert.equal(s235AliasMatches[0].suggestedSteelTypeName, 'S235');
+assert.equal(s235AliasMatches[0].suggestedSteelTypeRaw, 'S235');
+
 const suffixBom = [
   createBom({
     position: '6',

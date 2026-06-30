@@ -38,7 +38,7 @@ export function resolveSteelTypeForEntry(
 
   if (matches.length === 1) {
     return {
-      steelTypeRaw: raw,
+      steelTypeRaw: matches[0].name,
       steelTypeId: matches[0].id,
       steelTypeName: matches[0].name,
       steelTypeWarning: null,
@@ -63,12 +63,17 @@ export function resolveSteelTypeForEntry(
 }
 
 export function normalizeSteelTypeName(value: string | null | undefined): string {
-  return String(value ?? '')
+  const normalized = String(value ?? '')
     .toLowerCase()
     .trim()
     .replace(/[‐‑‒–—−]/g, '-')
     .replace(/[х]/g, 'x')
     .replace(/[^a-zа-я0-9]+/gi, '');
+
+  const enGrade = normalized.match(/^(s(?:235|355))[a-z0-9]*$/);
+  if (enGrade) return enGrade[1];
+
+  return normalized;
 }
 
 function extractCatalogSteelType(value: string | null | undefined, steelTypes: SteelTypeCatalogItem[]): string | null {
@@ -87,7 +92,16 @@ function extractCatalogSteelType(value: string | null | undefined, steelTypes: S
 
 function extractCommonSteelMark(value: string | null | undefined): string | null {
   const source = String(value ?? '');
-  const match = source.match(/\b(?:s235|s355|hardox|aisi\s*304|aisi\s*316|09г2с|ст3)\b/i);
+  const normalized = normalizeSteelTypeName(source);
+  if (normalized === 's235') return 'S235';
+  if (normalized === 's355') return 'S355';
+
+  const enGrade = source.match(/\bs(?:235|355)[a-z0-9]*\b/i);
+  if (enGrade) {
+    return normalizeSteelTypeName(enGrade[0]).toUpperCase();
+  }
+
+  const match = source.match(/\b(?:hardox|aisi\s*304|aisi\s*316|09г2с|ст3)\b/i);
   return match ? match[0].replace(/\s+/g, ' ').trim() : null;
 }
 

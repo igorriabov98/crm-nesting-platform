@@ -564,8 +564,8 @@ function extractTrailingSuffix(str: string): string | null {
 }
 
 function sameSteelType(a: string | null | undefined, b: string | null | undefined): boolean {
-  const left = normalizeSteelType(a);
-  const right = normalizeSteelType(b);
+  const left = normalizeSteelTypeName(a);
+  const right = normalizeSteelTypeName(b);
   return left.length > 0 && left === right;
 }
 
@@ -574,15 +574,6 @@ function resolveCatalogSteelType(raw: string, steelTypes: SteelTypeCatalogItem[]
   if (!normalizedRaw) return null;
   const matches = steelTypes.filter((steelType) => normalizeSteelTypeName(steelType.name) === normalizedRaw);
   return matches.length === 1 ? matches[0] : null;
-}
-
-function normalizeSteelType(value: string | null | undefined): string {
-  return String(value ?? '')
-    .toLowerCase()
-    .trim()
-    .replace(/[‐‑‒–—−]/g, '-')
-    .replace(/[х]/g, 'x')
-    .replace(/[^a-zа-я0-9]+/gi, '');
 }
 
 function normalize(str: string): string {
