@@ -86,6 +86,12 @@ export function NestingCanvas({
   const gridBigId = `nesting-grid-big-${reactId}`
   const xTicks = createTicks(sheet.width, GRID_STEP_BIG)
   const yTicks = createTicks(sheet.height, GRID_STEP_BIG)
+  const basePartStrokeWidth = Math.max(0.2, Math.min(0.7, scale * 1.5))
+  const hoveredPartStrokeWidth = Math.max(basePartStrokeWidth + 0.1, Math.min(0.9, scale * 2.5))
+  const selectedPartStrokeWidth = Math.max(basePartStrokeWidth + 0.2, Math.min(1.1, scale * 3))
+  const holeStrokeWidth = Math.max(0.18, Math.min(0.55, scale * 1.2))
+  const leadStrokeWidth = Math.max(0.25, Math.min(0.8, scale * 1.5))
+  const leadPointRadius = Math.max(0.45, Math.min(1.5, scale * 3))
 
   function getSvgX(x: number) {
     return PADDING + x * scale
@@ -241,6 +247,7 @@ export function NestingCanvas({
           const height = placement.placedH * scale
           const labelLimit = Math.max(4, Math.floor(width / 7))
           const hasContour = Boolean(placement.contour && placement.contour.length >= 3)
+          const partStrokeWidth = selected ? selectedPartStrokeWidth : hovered ? hoveredPartStrokeWidth : basePartStrokeWidth
 
           return (
             <g
@@ -264,7 +271,7 @@ export function NestingCanvas({
                     fill={color}
                     fillOpacity={selected ? 0.35 : hovered ? 0.4 : 0.2}
                     stroke={color}
-                    strokeWidth={selected ? 2.5 : hovered ? 2 : 1}
+                    strokeWidth={partStrokeWidth}
                   />
                   {(placement.holes || []).map((hole, holeIndex) => (
                     <path
@@ -274,7 +281,7 @@ export function NestingCanvas({
                       fillOpacity="0.85"
                       stroke={color}
                       strokeOpacity="0.7"
-                      strokeWidth="1"
+                      strokeWidth={holeStrokeWidth}
                     />
                   ))}
                 </>
@@ -287,7 +294,7 @@ export function NestingCanvas({
                   fill={color}
                   fillOpacity={selected ? 0.35 : hovered ? 0.4 : 0.2}
                   stroke={color}
-                  strokeWidth={selected ? 2.5 : hovered ? 2 : 1}
+                  strokeWidth={partStrokeWidth}
                   rx="1"
                 />
               )}
@@ -298,8 +305,8 @@ export function NestingCanvas({
 
                 return (
                   <g key={`lead-in-${segmentIndex}`}>
-                    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#2563EB" strokeWidth="1.8" />
-                    <circle cx={from.x} cy={from.y} r="2.4" fill="#2563EB" />
+                    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#2563EB" strokeWidth={leadStrokeWidth} />
+                    <circle cx={from.x} cy={from.y} r={leadPointRadius} fill="#2563EB" />
                   </g>
                 )
               })}
@@ -310,8 +317,8 @@ export function NestingCanvas({
 
                 return (
                   <g key={`lead-out-${segmentIndex}`}>
-                    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#EA580C" strokeWidth="1.8" />
-                    <circle cx={to.x} cy={to.y} r="2.4" fill="#EA580C" />
+                    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#EA580C" strokeWidth={leadStrokeWidth} />
+                    <circle cx={to.x} cy={to.y} r={leadPointRadius} fill="#EA580C" />
                   </g>
                 )
               })}

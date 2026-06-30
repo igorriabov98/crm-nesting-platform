@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { NotFoundError, ValidationError } from '../lib/errors';
 import { createLeadSegments, type LeadSegment } from '../lib/dxf/leads';
+import { readFittedPartGeometry } from '../lib/dxf/part-geometry';
 import { ensureCCW, ensureCW, removeClosingPoint, transformContourForDxf, type DxfRotation } from '../lib/dxf/transform';
 import { prisma } from '../lib/prisma';
 import { normalizeCadText } from '../lib/text-encoding';
@@ -43,6 +44,7 @@ type JsonPoint = {
 
 const LEAD_IN_LENGTH_MM = 3;
 const LEAD_OUT_LENGTH_MM = 2;
+const SHEET_MARGIN_MM = 5;
 
 export async function resultRoutes(app: FastifyInstance) {
   app.get('/:id/result', async (request) => {
@@ -159,29 +161,41 @@ function enrichPlacements(
     const part = partsById.get(placement.partId);
     const x = Number(placement.x);
     const y = Number(placement.y);
+    const placedW = Number(placement.placedW);
+    const placedH = Number(placement.placedH);
     const rotation = readRotation(placement.rotation);
 
-    if (!part || !Number.isFinite(x) || !Number.isFinite(y) || rotation === null) {
+    if (
+      !part ||
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      !Number.isFinite(placedW) ||
+      !Number.isFinite(placedH) ||
+      rotation === null
+    ) {
       return placement;
     }
 
-    const contour = readPointArray(part.contour, part.width, part.height);
-    const holes = readHoles(part.holes);
+    const localWidth = isQuarterTurn(rotation) ? placedH : placedW;
+    const localHeight = isQuarterTurn(rotation) ? placedW : placedH;
+    const { contour, holes } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight);
     const localOuterContour = ensureCW(
-      removeClosingPoint(transformContourForDxf(contour, rotation, 0, 0, part.width, part.height))
+      removeClosingPoint(transformContourForDxf(contour, rotation, 0, 0, localWidth, localHeight))
     );
     const localHoleContours = holes.map((hole) =>
-      ensureCCW(removeClosingPoint(transformContourForDxf(hole, rotation, 0, 0, part.width, part.height)))
+      ensureCCW(removeClosingPoint(transformContourForDxf(hole, rotation, 0, 0, localWidth, localHeight)))
     );
     const leadResults = [
       createLeadSegments(localOuterContour, { x, y }, index, 'outer', { width: sheetWidth, height: sheetHeight }, boxes, {
         leadInLength: LEAD_IN_LENGTH_MM,
         leadOutLength: LEAD_OUT_LENGTH_MM,
+        safeMargin: SHEET_MARGIN_MM,
       }),
       ...localHoleContours.map((hole, holeIndex) =>
         createLeadSegments(hole, { x, y }, index, `hole-${holeIndex + 1}`, { width: sheetWidth, height: sheetHeight }, boxes, {
           leadInLength: LEAD_IN_LENGTH_MM,
           leadOutLength: LEAD_OUT_LENGTH_MM,
+          safeMargin: SHEET_MARGIN_MM,
         })
       ),
     ];
@@ -189,47 +203,20 @@ function enrichPlacements(
 
     return {
       ...placement,
-      contour: transformContourForDxf(contour, rotation, x, y, part.width, part.height).map(roundPoint),
-      holes: holes.map((hole) => transformContourForDxf(hole, rotation, x, y, part.width, part.height).map(roundPoint)),
+      contour: transformContourForDxf(contour, rotation, x, y, localWidth, localHeight).map(roundPoint),
+      holes: holes.map((hole) => transformContourForDxf(hole, rotation, x, y, localWidth, localHeight).map(roundPoint)),
       leadIn: leadSegments.filter((segment) => segment.kind === 'leadIn').map((segment) => translateLeadSegment(segment, x, y)),
       leadOut: leadSegments.filter((segment) => segment.kind === 'leadOut').map((segment) => translateLeadSegment(segment, x, y)),
     };
   });
 }
 
+function isQuarterTurn(rotation: DxfRotation): boolean {
+  return rotation === 90 || rotation === 270;
+}
+
 function readRotation(value: unknown): DxfRotation | null {
   return value === 0 || value === 90 || value === 180 || value === 270 ? value : null;
-}
-
-function readPointArray(value: unknown, width: number, height: number): JsonPoint[] {
-  if (isPointArray(value)) {
-    return value.map((point) => ({ x: Number(point.x), y: Number(point.y) }));
-  }
-
-  return [
-    { x: 0, y: 0 },
-    { x: width, y: 0 },
-    { x: width, y: height },
-    { x: 0, y: height },
-    { x: 0, y: 0 },
-  ];
-}
-
-function readHoles(value: unknown): JsonPoint[][] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter(isPointArray).map((hole) => hole.map((point) => ({ x: Number(point.x), y: Number(point.y) })));
-}
-
-function isPointArray(value: unknown): value is JsonPoint[] {
-  return Array.isArray(value) && value.every(isPointLike);
-}
-
-function isPointLike(value: unknown): value is JsonPoint {
-  const record = value as Record<string, unknown>;
-  return typeof record?.x === 'number' && typeof record?.y === 'number';
 }
 
 function translateLeadSegment(segment: LeadSegment, offsetX: number, offsetY: number): LeadSegmentForResult {

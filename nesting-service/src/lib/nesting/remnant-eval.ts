@@ -2,6 +2,7 @@ import type { PlacedPart, RemnantInfo } from './types';
 
 const MIN_REMNANT_WIDTH = 100;
 const MIN_REMNANT_HEIGHT = 100;
+const SHEET_MARGIN_MM = 5;
 
 export function evaluateRemnant(
   sheetW: number,
@@ -22,15 +23,15 @@ export function evaluateRemnant(
   if (strategy === 'remnant') {
     const maxX = Math.max(...placements.map((placement) => placement.x + placement.placedW));
     x = maxX + gap;
-    y = 0;
-    width = sheetW - x;
-    height = sheetH;
+    y = SHEET_MARGIN_MM;
+    width = sheetW - SHEET_MARGIN_MM - x;
+    height = sheetH - SHEET_MARGIN_MM * 2;
   } else {
     const maxY = Math.max(...placements.map((placement) => placement.y + placement.placedH));
-    x = 0;
+    x = SHEET_MARGIN_MM;
     y = maxY + gap;
-    width = sheetW;
-    height = sheetH - y;
+    width = sheetW - SHEET_MARGIN_MM * 2;
+    height = sheetH - SHEET_MARGIN_MM - y;
   }
 
   if (width < MIN_REMNANT_WIDTH || height < MIN_REMNANT_HEIGHT) {

@@ -26,6 +26,25 @@ assert.equal(result.segments[1].kind, 'leadOut');
 assert.equal(segmentLength(result.segments[0]), 3);
 assert.equal(segmentLength(result.segments[1]), 2);
 
+const marginResult = createLeadSegments(
+  contour,
+  { x: 5, y: 5 },
+  0,
+  'outer',
+  { width: 100, height: 100 },
+  [{ index: 0, x: 5, y: 5, width: 30, height: 20 }],
+  { leadInLength: 3, leadOutLength: 2, safeMargin: 5 }
+);
+
+assert.equal(marginResult.warnings.length, 0);
+for (const segment of marginResult.segments) {
+  for (const point of [segment.from, segment.to]) {
+    const sheetPoint = { x: point.x + 5, y: point.y + 5 };
+    assert.ok(sheetPoint.x >= 5 && sheetPoint.x <= 95, `lead ${segment.kind} x=${sheetPoint.x} is outside safe margin`);
+    assert.ok(sheetPoint.y >= 5 && sheetPoint.y <= 95, `lead ${segment.kind} y=${sheetPoint.y} is outside safe margin`);
+  }
+}
+
 console.log('[plasma-leads] all tests passed');
 
 function segmentLength(segment: { from: Point2D; to: Point2D }): number {

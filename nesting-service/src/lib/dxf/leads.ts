@@ -26,6 +26,7 @@ export type LeadObstacleBox = {
 export type LeadOptions = {
   leadInLength: number;
   leadOutLength: number;
+  safeMargin?: number;
 };
 
 export function createLeadSegments(
@@ -44,6 +45,8 @@ export function createLeadSegments(
   if (contour.length < 3) {
     return { segments: [], warnings: [`LEAD_SKIPPED part=${partIndex + 1} contour=${contourName} reason=short_contour`] };
   }
+
+  const safeMargin = normalizeSafeMargin(options.safeMargin);
 
   for (let index = 0; index < contour.length; index += 1) {
     const point = contour[index];
@@ -83,7 +86,7 @@ export function createLeadSegments(
 
     if (
       candidateSegments.every((segment) =>
-        isSafeLeadSegment(segment, part, partIndex, sheet, obstacleBoxes)
+        isSafeLeadSegment(segment, part, partIndex, sheet, obstacleBoxes, safeMargin)
       )
     ) {
       return { segments: candidateSegments, warnings: [] };
@@ -98,12 +101,13 @@ function isSafeLeadSegment(
   part: LeadPlacedPart,
   partIndex: number,
   sheet: { width: number; height: number },
-  obstacleBoxes: LeadObstacleBox[]
+  obstacleBoxes: LeadObstacleBox[],
+  safeMargin: number
 ): boolean {
   const start = translatePoint(segment.from, part.x, part.y);
   const end = translatePoint(segment.to, part.x, part.y);
 
-  if (!pointWithinSheet(start, sheet) || !pointWithinSheet(end, sheet)) {
+  if (!pointWithinSheet(start, sheet, safeMargin) || !pointWithinSheet(end, sheet, safeMargin)) {
     return false;
   }
 
@@ -122,12 +126,16 @@ function leftNormal(start: Point2D, end: Point2D): Point2D | null {
   return { x: -dy / length, y: dx / length };
 }
 
-function pointWithinSheet(point: Point2D, sheet: { width: number; height: number }): boolean {
+function normalizeSafeMargin(value: number | undefined): number {
+  return Number.isFinite(value) ? Math.max(0, Number(value)) : 0;
+}
+
+function pointWithinSheet(point: Point2D, sheet: { width: number; height: number }, safeMargin: number): boolean {
   return (
-    point.x >= -EPSILON_MM &&
-    point.y >= -EPSILON_MM &&
-    point.x <= sheet.width + EPSILON_MM &&
-    point.y <= sheet.height + EPSILON_MM
+    point.x >= safeMargin - EPSILON_MM &&
+    point.y >= safeMargin - EPSILON_MM &&
+    point.x <= sheet.width - safeMargin + EPSILON_MM &&
+    point.y <= sheet.height - safeMargin + EPSILON_MM
   );
 }
 

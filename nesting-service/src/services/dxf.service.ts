@@ -6,9 +6,9 @@ import type { Part } from '@prisma/client';
 import { config } from '../config';
 import { AppError, NotFoundError, ValidationError } from '../lib/errors';
 import { CAM_DXF_OPTIONS, generateDXF, type DxfPartData, type DxfRemnantData } from '../lib/dxf/generator';
+import { readFittedPartGeometry } from '../lib/dxf/part-geometry';
 import { validateDXF } from '../lib/dxf/validate';
 import type { DxfRotation } from '../lib/dxf/transform';
-import type { Point2D } from '../lib/nesting/types';
 import { prisma } from '../lib/prisma';
 import { normalizeCadText } from '../lib/text-encoding';
 import { ensureDir, sanitizeFilename, transliterate } from '../lib/utils';
@@ -203,8 +203,9 @@ export class DxfService {
 export const dxfService = new DxfService();
 
 function toDxfPartData(placement: PlacementForDxf, part: Part): DxfPartData {
-  const contour = readPointArray(part.contour, `part ${part.id} contour`);
-  const holes = readHoles(part.holes, `part ${part.id} holes`);
+  const localWidth = isQuarterTurn(placement.rotation) ? placement.placedH : placement.placedW;
+  const localHeight = isQuarterTurn(placement.rotation) ? placement.placedW : placement.placedH;
+  const { contour, holes } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight);
 
   return {
     name: normalizeCadText(placement.name || part.name),
@@ -215,8 +216,8 @@ function toDxfPartData(placement: PlacementForDxf, part: Part): DxfPartData {
     placedH: placement.placedH,
     contour,
     holes,
-    originalW: part.width,
-    originalH: part.height,
+    originalW: localWidth,
+    originalH: localHeight,
     grainLock: part.grainLock,
   };
 }
@@ -262,34 +263,6 @@ function readPlacement(value: unknown, sheetId: string, index: number): Placemen
   };
 }
 
-function readPointArray(value: unknown, label: string): Point2D[] {
-  if (!Array.isArray(value) || value.length < 3) {
-    throw new ValidationError(`${label} must contain at least 3 points`);
-  }
-
-  const points = value.map((point, index) => {
-    if (!isRecord(point) || !isFiniteNumber(point.x) || !isFiniteNumber(point.y)) {
-      throw new ValidationError(`${label} point #${index + 1} is invalid`);
-    }
-
-    return { x: point.x, y: point.y };
-  });
-
-  return points;
-}
-
-function readHoles(value: unknown, label: string): Point2D[][] {
-  if (value === null || value === undefined) {
-    return [];
-  }
-
-  if (!Array.isArray(value)) {
-    throw new ValidationError(`${label} must be an array`);
-  }
-
-  return value.map((hole, index) => readPointArray(hole, `${label} #${index + 1}`));
-}
-
 function readRemnant(value: unknown, sheetId: string): DxfRemnantData | null {
   if (value === null || value === undefined) {
     return null;
@@ -321,6 +294,10 @@ function readRotation(value: unknown): DxfRotation | null {
   }
 
   return null;
+}
+
+function isQuarterTurn(rotation: DxfRotation): boolean {
+  return rotation === 90 || rotation === 270;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -47,6 +47,7 @@ for (const strategy of ['minWaste', 'remnant', 'minSheets'] as const) {
   assert.equal(result.sheets[0].width, 6000);
   assert.equal(result.sheets[0].height, 1500);
   assertSheetMargin(result.sheets[0].placements, result.sheets[0].width, result.sheets[0].height, strategy);
+  assertRemnantMargin(result.sheets[0].remnant, result.sheets[0].width, result.sheets[0].height, strategy);
   assertMinimumPlacementGap(result.sheets[0].placements, CUTTING_GAP_MM, strategy);
   assertAdjacentGapExists(result.sheets[0].placements, CUTTING_GAP_MM, strategy);
 }
@@ -143,6 +144,22 @@ function assertSheetMargin(
       `${strategy}: ${placement.name} is too close to top edge`
     );
   }
+}
+
+function assertRemnantMargin(
+  remnant: { x: number; y: number; width: number; height: number } | null,
+  sheetWidth: number,
+  sheetHeight: number,
+  strategy: string
+): void {
+  if (!remnant) {
+    return;
+  }
+
+  assert.ok(remnant.x >= SHEET_MARGIN_MM, `${strategy}: remnant is too close to left edge`);
+  assert.ok(remnant.y >= SHEET_MARGIN_MM, `${strategy}: remnant is too close to bottom edge`);
+  assert.ok(remnant.x + remnant.width <= sheetWidth - SHEET_MARGIN_MM, `${strategy}: remnant is too close to right edge`);
+  assert.ok(remnant.y + remnant.height <= sheetHeight - SHEET_MARGIN_MM, `${strategy}: remnant is too close to top edge`);
 }
 
 function assertMinimumPlacementGap(

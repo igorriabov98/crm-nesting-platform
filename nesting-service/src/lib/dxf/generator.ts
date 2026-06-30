@@ -48,6 +48,7 @@ export const CAM_DXF_OPTIONS: DxfGenerationOptions = {
   leadOutLayer: DEFAULT_LAYERS.leadOut.name,
   leadInLength: 3,
   leadOutLength: 2,
+  leadSafeMargin: 5,
 };
 
 export interface DxfPartData {
@@ -89,6 +90,7 @@ export interface DxfGenerationOptions {
   leadOutLayer?: string;
   leadInLength?: number;
   leadOutLength?: number;
+  leadSafeMargin?: number;
 }
 
 export function generateDXF(
@@ -169,6 +171,7 @@ type ResolvedDxfOptions = {
   blockMode: boolean;
   leadInLength: number;
   leadOutLength: number;
+  leadSafeMargin: number;
   layers: Record<DxfLayerKey, string>;
 };
 
@@ -183,6 +186,7 @@ function resolveOptions(options: DxfGenerationOptions): ResolvedDxfOptions {
     blockMode: options.blockMode === true,
     leadInLength: normalizeLength(options.leadInLength),
     leadOutLength: normalizeLength(options.leadOutLength),
+    leadSafeMargin: normalizeSafeMargin(options.leadSafeMargin),
     layers: {
       sheet: options.sheetLayer ?? DEFAULT_LAYERS.sheet.name,
       cut: options.cutLayer ?? DEFAULT_LAYERS.cut.name,
@@ -336,9 +340,17 @@ function prepareParts(
       ensureCCW(removeClosingPoint(transformContourForDxf(hole, part.rotation, 0, 0, part.originalW, part.originalH)))
     );
     const leadResults = [
-      createLeadSegments(outerContour, part, index, 'outer', sheet, boxes, options),
+      createLeadSegments(outerContour, part, index, 'outer', sheet, boxes, {
+        leadInLength: options.leadInLength,
+        leadOutLength: options.leadOutLength,
+        safeMargin: options.leadSafeMargin,
+      }),
       ...holeContours.map((hole, holeIndex) =>
-        createLeadSegments(hole, part, index, `hole-${holeIndex + 1}`, sheet, boxes, options)
+        createLeadSegments(hole, part, index, `hole-${holeIndex + 1}`, sheet, boxes, {
+          leadInLength: options.leadInLength,
+          leadOutLength: options.leadOutLength,
+          safeMargin: options.leadSafeMargin,
+        })
       ),
     ];
 
@@ -503,6 +515,14 @@ function makeBlockName(part: DxfPartData, index: number): string {
 
 function normalizeLength(value: number | undefined): number {
   if (!Number.isFinite(value) || value === undefined || value <= 0) {
+    return 0;
+  }
+
+  return value;
+}
+
+function normalizeSafeMargin(value: number | undefined): number {
+  if (!Number.isFinite(value) || value === undefined || value < 0) {
     return 0;
   }
 
