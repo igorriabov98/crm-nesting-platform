@@ -8,6 +8,10 @@ type GeometryScore = {
   strongMatches: number;
 };
 
+const STANDARD_THICKNESSES = [
+  0.5, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20, 25, 30,
+];
+
 export function matchBOMToParts(
   bom: BOMEntry[],
   parts: PartForMatching[],
@@ -162,12 +166,12 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
   let strongMatches = 0;
   const bomDims = getBOMDimensions(bom);
   const stepDims = getPartBBoxDims(part);
-  const dimensionWeight = bomDims.partType === 'sheet' || bomDims.partType === 'other' ? 0.25 : 0.3;
+  const dimensionWeight = 0.3;
 
   if (bomDims.thicknessMm) {
     const wallThickness = getPartWallThickness(part);
     if (sizeMatch(bomDims.thicknessMm, wallThickness, 0.3)) {
-      score += 0.3;
+      score += 0.35;
       strongMatches += 1;
       details.push(`thickness: BOM=${formatNumber(bomDims.thicknessMm)} ~= STEP_VA=${formatNumber(wallThickness)}`);
     } else if (sizeMatch(bomDims.thicknessMm, part.thickness, 0.3)) {
@@ -208,8 +212,8 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
 
   if (bomDims.partType !== 'other') {
     const stepType = classifyPartType(part, stepDims);
-    if (bomDims.partType === stepType) {
-      score += 0.1;
+    if (bomDims.partType === stepType || isBOMSheetCandidate(bomDims, part, stepDims, strongMatches)) {
+      score += bomDims.partType === 'sheet' ? 0.15 : 0.1;
       details.push(`type: ${bomDims.partType}`);
     }
   }
@@ -308,6 +312,13 @@ function getPartBBoxDims(part: PartForMatching): number[] {
 }
 
 function getPartWallThickness(part: PartForMatching): number {
+  if (part.meshVolume && part.meshArea && part.meshVolume > 0 && part.meshArea > 0) {
+    const wallThickness = (part.meshVolume * 2) / part.meshArea;
+    if (Number.isFinite(wallThickness) && wallThickness > 0) {
+      return roundToStandardThickness(wallThickness);
+    }
+  }
+
   return part.thickness;
 }
 
@@ -371,6 +382,19 @@ function classifyPartType(part: PartForMatching, stepDims: number[]): BOMEntry['
   return 'other';
 }
 
+function isBOMSheetCandidate(
+  bomDims: ReturnType<typeof getBOMDimensions>,
+  part: PartForMatching,
+  stepDims: number[],
+  strongMatches: number
+): boolean {
+  if (bomDims.partType !== 'sheet') return false;
+  const inferredType = classifyPartType(part, stepDims);
+  if (inferredType === 'sheet') return true;
+  if (inferredType !== 'other') return false;
+  return strongMatches >= 2 && getPartWallThickness(part) <= 12;
+}
+
 function isSheetLikeGeometry(part: PartForMatching, stepDims: number[]): boolean {
   const [minD, midD, maxD] = stepDims;
   if (!minD || !midD || !maxD) return false;
@@ -382,6 +406,15 @@ function isSheetLikeGeometry(part: PartForMatching, stepDims: number[]): boolean
   }
 
   return minD >= 12 && minD <= 30 && midD >= 45 && maxD <= 350 && ratio <= 0.16;
+}
+
+function roundToStandardThickness(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return STANDARD_THICKNESSES.reduce((closest, current) => {
+    const currentDiff = Math.abs(current - raw);
+    const closestDiff = Math.abs(closest - raw);
+    return currentDiff < closestDiff ? current : closest;
+  });
 }
 
 function normalizePositiveNumber(value: unknown): number | null {
@@ -457,6 +490,7 @@ function buildMatchResult(
     suggestedUnfoldingWidth: null,
     suggestedUnfoldingHeight: null,
     suggestedIsSheetMetal: null,
+    suggestedHasBends: null,
     suggestedMassKg: null,
     detailNotes: '',
     autoApplied: false,
@@ -494,6 +528,12 @@ function buildMatchResult(
       result.suggestedIsSheetMetal = true;
     }
 
+    if (detail.isSheetMetal) {
+      result.suggestedHasBends = detail.unfoldingWidth && detail.unfoldingHeight
+        ? computeSheetHasBends(part, detail.thicknessMm, detail.unfoldingWidth, detail.unfoldingHeight)
+        : part.hasBends;
+    }
+
     result.suggestedMassKg = detail.massKg;
     result.detailNotes = detail.notes;
   } else if ((bomEntry?.thicknessMm || bomEntry?.thickness) && Math.abs((bomEntry.thicknessMm ?? bomEntry.thickness ?? 0) - part.thickness) > 0.1) {
@@ -519,13 +559,19 @@ function buildMatchResult(
       result.suggestedQuantity = bomEntry.quantity;
     }
 
-    if (!result.suggestedUnfoldingWidth && !result.suggestedUnfoldingHeight && bomEntry.partType === 'sheet' && bomEntry.widthMm && bomEntry.heightMm) {
-      result.suggestedUnfoldingWidth = bomEntry.widthMm;
-      result.suggestedUnfoldingHeight = bomEntry.heightMm;
-    }
-
-    if (bomEntry.partType === 'sheet' && !part.isSheetMetal) {
+    if (bomEntry.partType === 'sheet') {
       result.suggestedIsSheetMetal = true;
+      if (bomEntry.thicknessMm && Math.abs(bomEntry.thicknessMm - part.thickness) > 0.1) {
+        result.suggestedThickness = bomEntry.thicknessMm;
+      }
+      if (bomEntry.widthMm && bomEntry.heightMm) {
+        result.suggestedUnfoldingWidth = bomEntry.widthMm;
+        result.suggestedUnfoldingHeight = bomEntry.heightMm;
+        result.suggestedHasBends = computeSheetHasBends(part, bomEntry.thicknessMm, bomEntry.widthMm, bomEntry.heightMm);
+      }
+    } else if (bomEntry.partType !== 'other') {
+      result.suggestedIsSheetMetal = false;
+      result.suggestedHasBends = false;
     }
 
     if (bomEntry.massKg) {
@@ -534,6 +580,26 @@ function buildMatchResult(
   }
 
   return result;
+}
+
+function computeSheetHasBends(
+  part: PartForMatching,
+  thicknessMm: number | null,
+  unfoldingWidth: number,
+  unfoldingHeight: number
+): boolean {
+  const stepDims = getPartBBoxDims(part);
+  if (stepDims.length < 3 || !thicknessMm) return part.hasBends;
+
+  const hasThicknessAxis = stepDims.some((dim) => sizeMatch(thicknessMm, dim, 0.3));
+  if (!hasThicknessAxis) return true;
+
+  const usedDims = new Set<number>();
+  const widthMatch = findClosestDim(unfoldingWidth, stepDims, usedDims);
+  if (widthMatch && widthMatch.diff <= 0.15) usedDims.add(widthMatch.index);
+  const heightMatch = findClosestDim(unfoldingHeight, stepDims, usedDims);
+
+  return !(widthMatch && widthMatch.diff <= 0.15 && heightMatch && heightMatch.diff <= 0.15);
 }
 
 export function normalizeMaterial(raw: string): string {

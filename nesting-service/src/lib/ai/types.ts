@@ -108,6 +108,7 @@ export interface MatchResult {
   suggestedUnfoldingWidth: number | null;
   suggestedUnfoldingHeight: number | null;
   suggestedIsSheetMetal: boolean | null;
+  suggestedHasBends: boolean | null;
   suggestedMassKg: number | null;
   detailNotes: string;
   autoApplied: boolean;

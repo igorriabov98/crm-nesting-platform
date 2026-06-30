@@ -190,6 +190,7 @@ export interface AIMatchResult {
   suggestedUnfoldingWidth: number | null
   suggestedUnfoldingHeight: number | null
   suggestedIsSheetMetal: boolean | null
+  suggestedHasBends: boolean | null
   suggestedMassKg: number | null
   detailNotes: string
   autoApplied: boolean
@@ -437,6 +438,7 @@ export async function applyProjectBOM(
     quantity?: number
     thickness?: number
     isSheetMetal?: boolean
+    hasBends?: boolean
     unfoldingWidth?: number
     unfoldingHeight?: number
   }>

@@ -154,7 +154,18 @@ const geometryParts = [
   createPart({ id: 'profile-690', name: 'Профиль 690', thickness: 5.85, quantity: 4, bboxSizeX: 80, bboxSizeY: 690, bboxSizeZ: 45, isSheetMetal: false }),
   createPart({ id: 'profile-1090', name: 'Профиль 1090', thickness: 4.91, quantity: 1, bboxSizeX: 63, bboxSizeY: 60, bboxSizeZ: 1090, isSheetMetal: false }),
   createPart({ id: 'round-bar', name: 'Круг', thickness: 7.06, quantity: 2, bboxSizeX: 16, bboxSizeY: 16, bboxSizeZ: 60, isSheetMetal: false }),
-  createPart({ id: 'support', name: 'Опора', thickness: 5.43, quantity: 4, bboxSizeX: 75, bboxSizeY: 147, bboxSizeZ: 173, isSheetMetal: true }),
+  createPart({
+    id: 'support',
+    name: 'Опора',
+    thickness: 30,
+    quantity: 4,
+    bboxSizeX: 75,
+    bboxSizeY: 146.78,
+    bboxSizeZ: 173.28,
+    meshVolume: 124633.9,
+    meshArea: 45967.2,
+    isSheetMetal: false,
+  }),
   createPart({ id: 'lower', name: 'Грушина нижняя', thickness: 12.89, quantity: 2, bboxSizeX: 160, bboxSizeY: 90, bboxSizeZ: 20, isSheetMetal: true }),
   createPart({ id: 'upper', name: 'Грушина верхняя', thickness: 11.26, quantity: 4, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, isSheetMetal: true }),
 ];
@@ -181,7 +192,14 @@ assert.equal(geometryMatches[2].suggestedQuantity, null);
 assert.equal(geometryMatches[0].suggestedUnfoldingWidth, 995);
 assert.equal(geometryMatches[0].suggestedUnfoldingHeight, 2318);
 assert.equal(geometryMatches[4].bomName, 'RU 16 - 60');
-assert.equal(geometryMatches[4].suggestedIsSheetMetal, null);
+assert.equal(geometryMatches[4].suggestedIsSheetMetal, false);
+assert.equal(geometryMatches[5].bomName, 'BL 6 x 75 x 280');
+assert.equal(geometryMatches[5].suggestedIsSheetMetal, true);
+assert.equal(geometryMatches[5].suggestedThickness, 6);
+assert.equal(geometryMatches[5].suggestedUnfoldingWidth, 75);
+assert.equal(geometryMatches[5].suggestedUnfoldingHeight, 280);
+assert.equal(geometryMatches[5].suggestedHasBends, true);
+assert.match(geometryMatches[5].matchDetails, /mass:/);
 
 const fallbackGeometryMatches = matchBOMToParts(
   [createBom({ description: 'U 80 - 690', partType: 'channel', widthMm: 80, heightMm: 690, quantity: 4 })],
@@ -238,6 +256,7 @@ for (const match of lugMatches) {
   assert.match(match.matchDetails, /mass:/);
   assert.equal(match.suggestedThickness, null);
   assert.equal(match.suggestedIsSheetMetal, true);
+  assert.equal(match.suggestedHasBends, false);
   assert.equal(match.suggestedSteelTypeId, 'steel-s235');
   assert.equal(match.suggestedSteelTypeName, 'S235');
   lugCounts.set(match.bomName, (lugCounts.get(match.bomName) ?? 0) + 1);

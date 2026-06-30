@@ -4,6 +4,7 @@ import { NotFoundError } from '../errors';
 import { analyzePDF, parsePDFAnalysisResponse } from './openrouter';
 import { estimateCost, getAISettingsView, recordAIUsage } from './settings';
 import { matchBOMToParts } from './bom-matcher';
+import { extractDeterministicBOMFromPdf, mergeDeterministicBOM } from './pdf-bom-fallback';
 import { resolveBOMSteelTypes } from './steel-types';
 import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
 
@@ -33,7 +34,9 @@ export async function analyzeProjectPdf(input: {
     return buildFailedResult(pdfResult);
   }
 
-  const bom = resolveBOMSteelTypes(pdfResult.bom, input.steelTypes ?? []);
+  const deterministicBom = await loadDeterministicBom(input.pdfFilePath);
+  const extractedBom = mergeDeterministicBOM(pdfResult.bom, deterministicBom);
+  const bom = resolveBOMSteelTypes(extractedBom, input.steelTypes ?? []);
   const parts = await prisma.part.findMany({
     where: { projectId: input.projectId },
     select: {
@@ -140,7 +143,7 @@ async function autoApplyMatches(matches: MatchResult[]): Promise<MatchResult[]> 
 
   for (let index = 0; index < nextMatches.length; index += 1) {
     const match = nextMatches[index];
-    if (match.matchConfidence <= 0.8) continue;
+    if (match.matchConfidence < 0.8) continue;
 
     const data: Prisma.PartUpdateInput = {};
     if (match.suggestedMaterial) data.material = match.suggestedMaterial;
@@ -157,15 +160,17 @@ async function autoApplyMatches(matches: MatchResult[]): Promise<MatchResult[]> 
     if (match.suggestedUnfoldingWidth && match.suggestedUnfoldingHeight) {
       data.width = match.suggestedUnfoldingWidth;
       data.height = match.suggestedUnfoldingHeight;
-      data.hasBends = !isFlatBOMSheet(match);
     }
+    if (match.suggestedHasBends !== null) data.hasBends = match.suggestedHasBends;
     if (match.suggestedIsSheetMetal === true) {
       data.isSheetMetal = true;
       data.classificationMethod = 'pdf_bom';
       data.classificationWarning = null;
-      if (isFlatBOMSheet(match)) data.hasBends = false;
     } else if (match.suggestedIsSheetMetal === false) {
       data.isSheetMetal = false;
+      data.hasBends = false;
+      data.classificationMethod = 'pdf_bom';
+      data.classificationWarning = null;
     }
     if (typeof match.suggestedQuantity === 'number') data.quantity = match.suggestedQuantity;
 
@@ -182,9 +187,18 @@ async function autoApplyMatches(matches: MatchResult[]): Promise<MatchResult[]> 
   return nextMatches;
 }
 
-function isFlatBOMSheet(match: Pick<MatchResult, 'bomName'>): boolean {
-  const source = match.bomName.toLowerCase();
-  return /\b(bl|blech|sheet)\b/.test(source) || /лист/.test(source);
+async function loadDeterministicBom(pdfFilePath: string): Promise<BOMEntry[]> {
+  try {
+    const bom = await extractDeterministicBOMFromPdf(pdfFilePath);
+    if (bom.length > 0) {
+      console.log(`[ai] deterministic PDF BOM parsed: ${bom.length} entries`);
+    }
+    return bom;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[ai] deterministic PDF BOM fallback failed: ${message}`);
+    return [];
+  }
 }
 
 async function persistProjectSpecification(input: {

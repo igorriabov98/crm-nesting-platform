@@ -35,6 +35,7 @@ const applyBomSchema = z.object({
       quantity: z.coerce.number().int().min(1).optional(),
       thickness: z.coerce.number().positive().max(50).optional(),
       isSheetMetal: z.boolean().optional(),
+      hasBends: z.boolean().optional(),
       unfoldingWidth: z.coerce.number().positive().max(12000).optional(),
       unfoldingHeight: z.coerce.number().positive().max(12000).optional(),
     }).refine((value) =>
@@ -42,6 +43,7 @@ const applyBomSchema = z.object({
       value.quantity ||
       value.thickness ||
       value.isSheetMetal !== undefined ||
+      value.hasBends !== undefined ||
       value.unfoldingWidth ||
       value.unfoldingHeight ||
       'steelTypeId' in value ||
@@ -152,9 +154,14 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       if ('steelTypeName' in match) data.steelTypeName = match.steelTypeName ?? null;
       if ('steelTypeRaw' in match) data.steelTypeRaw = match.steelTypeRaw ?? null;
       if (match.thickness) data.thickness = match.thickness;
+      if (match.hasBends !== undefined) data.hasBends = match.hasBends;
       if (match.isSheetMetal !== undefined) {
         data.isSheetMetal = match.isSheetMetal;
         if (match.isSheetMetal === true) {
+          data.classificationMethod = 'pdf_bom';
+          data.classificationWarning = null;
+        } else {
+          data.hasBends = false;
           data.classificationMethod = 'pdf_bom';
           data.classificationWarning = null;
         }
@@ -162,7 +169,7 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       if (match.unfoldingWidth && match.unfoldingHeight) {
         data.width = match.unfoldingWidth;
         data.height = match.unfoldingHeight;
-        data.hasBends = true;
+        if (data.hasBends === undefined) data.hasBends = true;
       }
       if (Object.keys(data).length === 0) continue;
 

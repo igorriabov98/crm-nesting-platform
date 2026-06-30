@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Wrench } from 'lucide-react'
+import { AlertTriangle, Info, Wrench } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Table,
@@ -80,6 +80,19 @@ function classificationMethodTitle(method: string | null | undefined) {
     default:
       return ''
   }
+}
+
+function formatBBox(part: NestingPart) {
+  if (!part.bboxSizeX || !part.bboxSizeY || !part.bboxSizeZ) return ''
+  return `STEP bbox: ${formatDim(part.bboxSizeX)} × ${formatDim(part.bboxSizeY)} × ${formatDim(part.bboxSizeZ)} мм`
+}
+
+function formatDim(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, '')
+}
+
+function isPdfNonSheet(part: NestingPart) {
+  return !part.isSheetMetal && part.classificationMethod === 'pdf_bom'
 }
 
 export function PartsTable({
@@ -204,9 +217,10 @@ export function PartsTable({
             {visibleParts.map((part) => {
               const disabled = savingPartId === part.id
               const methodLabel = classificationMethodLabel(part.classificationMethod)
+              const pdfNonSheet = isPdfNonSheet(part)
 
               return (
-                <TableRow key={part.id} className={cn(!part.isSheetMetal && 'opacity-50')}>
+                <TableRow key={part.id} className={cn(!part.isSheetMetal && !pdfNonSheet && 'opacity-50')}>
                   <TableCell>
                     <div
                       className="flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-md border border-[#E8ECF0] bg-[#F8F9FA] [&_svg]:max-h-[44px] [&_svg]:max-w-[44px]"
@@ -221,7 +235,23 @@ export function PartsTable({
                       </div>
                     ) : null}
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{Math.round(part.width)} × {Math.round(part.height)} мм</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1 font-mono text-xs">
+                      <span>{Math.round(part.width)} × {Math.round(part.height)} мм</span>
+                      {formatBBox(part) ? (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <span className="inline-flex">
+                                <Info className="h-3.5 w-3.5 text-[#6B7280]" />
+                              </span>
+                            }
+                          />
+                          <TooltipContent>{formatBBox(part)}</TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <div className="flex min-w-[150px] items-center gap-2">
                       {editingThicknessPartId === part.id ? (
@@ -360,10 +390,22 @@ export function PartsTable({
                   </TableCell>
                   <TableCell>
                     <button type="button" disabled={disabled} onClick={() => savePart(part, { isSheetMetal: !part.isSheetMetal })}>
-                      <Badge variant="secondary" className={part.isSheetMetal ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}>
-                        {part.isSheetMetal ? 'Листовая' : 'Не листовая'}
+                      <Badge
+                        variant="secondary"
+                        className={
+                          part.isSheetMetal
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : pdfNonSheet
+                              ? 'bg-sky-100 text-sky-700'
+                              : 'bg-slate-100 text-slate-600'
+                        }
+                      >
+                        {part.isSheetMetal ? 'Листовая' : pdfNonSheet ? 'Профиль/круг' : 'Не листовая'}
                       </Badge>
                     </button>
+                    {pdfNonSheet ? (
+                      <div className="mt-1 text-[11px] text-[#6B7280]">не для листового раскроя</div>
+                    ) : null}
                   </TableCell>
                 </TableRow>
               )

@@ -126,6 +126,7 @@ export function AIAnalysisPanel({
         quantity: match.suggestedQuantity || undefined,
         thickness: match.suggestedThickness || undefined,
         isSheetMetal: match.suggestedIsSheetMetal ?? undefined,
+        hasBends: match.suggestedHasBends ?? undefined,
         unfoldingWidth: match.suggestedUnfoldingWidth || undefined,
         unfoldingHeight: match.suggestedUnfoldingHeight || undefined,
       }))
@@ -458,6 +459,7 @@ function hasSuggestion(match: AIMatchResult) {
       match.suggestedThickness ||
       match.suggestedUnfoldingWidth ||
       match.suggestedUnfoldingHeight ||
-      match.suggestedIsSheetMetal
+      match.suggestedIsSheetMetal ||
+      typeof match.suggestedHasBends === 'boolean'
   )
 }
