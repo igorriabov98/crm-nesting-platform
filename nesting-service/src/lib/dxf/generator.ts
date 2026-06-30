@@ -35,13 +35,13 @@ const DEFAULT_LAYERS: Record<DxfLayerKey, DxfLayerDefinition> = {
 };
 
 export const CAM_DXF_OPTIONS: DxfGenerationOptions = {
-  dxfVersion: 'AC1027',
-  entityMode: 'lwpolyline',
+  dxfVersion: 'AC1009',
+  entityMode: 'line',
   includeSheet: false,
   includeLabels: false,
   includeRemnant: false,
   grainArrow: false,
-  blockMode: true,
+  blockMode: false,
   cutLayer: DEFAULT_LAYERS.cut.name,
   holeLayer: DEFAULT_LAYERS.holes.name,
   leadInLayer: DEFAULT_LAYERS.leadIn.name,

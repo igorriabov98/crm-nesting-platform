@@ -16,13 +16,18 @@ const dxf = generateDXF(
 const validation = validateDXF(dxf);
 
 assert.equal(validation.valid, true);
-assert.equal(validation.stats.blocks, 2, 'each placed part copy should be a separate BLOCK');
-assert.equal(validation.stats.inserts, 2, 'each placed part copy should be placed with INSERT');
-assert.equal(validation.stats.polylines, 2, 'only part contours should be closed polylines');
+assert.equal(validation.stats.blocks, 0, 'CAM export should not hide geometry inside BLOCK definitions');
+assert.equal(validation.stats.inserts, 0, 'CAM export should not rely on INSERT entities on layer 0');
+assert.equal(validation.stats.polylines, 0, 'CAM export should use plain LINE entities for maximum CAM compatibility');
+assert.ok(validation.stats.lines >= 8, 'part contours should be emitted as direct LINE entities');
 assert.match(dxf, /\r\n2\r\nCUT\r\n/, 'CUT layer should be declared');
 assert.match(dxf, /\r\n2\r\nHOLES\r\n/, 'HOLES layer should be declared');
 assert.match(dxf, /\r\n2\r\nLEAD_IN\r\n/, 'LEAD_IN layer should be declared');
 assert.match(dxf, /\r\n2\r\nLEAD_OUT\r\n/, 'LEAD_OUT layer should be declared');
+assert.match(dxf, /\r\n8\r\nCUT\r\n/, 'CUT geometry should be present directly on the CUT layer');
+assert.match(dxf, /\r\n8\r\nLEAD_IN\r\n/, 'lead-in geometry should be present directly on the LEAD_IN layer');
+assert.match(dxf, /\r\n8\r\nLEAD_OUT\r\n/, 'lead-out geometry should be present directly on the LEAD_OUT layer');
+assert.doesNotMatch(dxf, /\r\n0\r\nSECTION\r\n2\r\nBLOCKS\r\n/, 'CAM export should not include a BLOCKS section');
 assert.doesNotMatch(dxf, /\r\n2\r\nSHEET\r\n/, 'CAM export should not include sheet frame layer');
 assert.doesNotMatch(dxf, /\r\n2\r\nREMNANT\r\n/, 'CAM export should not include remnant layer');
 assert.doesNotMatch(dxf, /LEAD_SKIPPED/, 'simple separated rectangles should receive lead-in and lead-out');
