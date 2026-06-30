@@ -547,6 +547,18 @@ export function classifySheetMetalV2(
   }
 
   if (minDim.size > 12) {
+    if (isCompactThickPlateCandidate(dims)) {
+      return {
+        isSheetMetal: true,
+        thickness: roundToStandardThickness(minDim.size),
+        projectionAxis: minDim.axis,
+        confidence: 0.8,
+        method: 'bbox',
+        hasBends: false,
+        warnings: [],
+      };
+    }
+
     if (midDim.size <= 30) {
       return {
         isSheetMetal: false,
@@ -888,6 +900,21 @@ function isManualThinWallShellCandidate(
     volumeInfo.roundedWall < minDim.size * 0.05 &&
     midDim.size > 100 &&
     maxDim.size > 500
+  );
+}
+
+function isCompactThickPlateCandidate(dims: Array<{ axis: Axis; size: number }>): boolean {
+  const minDim = dims[0];
+  const midDim = dims[1];
+  const maxDim = dims[2];
+  const ratio = minDim.size / maxDim.size;
+
+  return (
+    minDim.size >= 12 &&
+    minDim.size <= 30 &&
+    midDim.size >= 45 &&
+    maxDim.size <= 350 &&
+    ratio <= 0.16
   );
 }
 

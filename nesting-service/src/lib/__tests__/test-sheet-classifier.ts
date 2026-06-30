@@ -100,4 +100,38 @@ const compactResult = classify(compactPart);
 assert.equal(compactResult.isSheetMetal, false);
 assert.equal(compactResult.developedBlank, undefined);
 
+const upperLug = extrudePolygon(
+  [
+    [0, 0],
+    [230, 0],
+    [230, 68],
+    [0, 68],
+  ],
+  [[0, 1, 2], [0, 2, 3]],
+  20
+);
+const upperLugResult = classify(upperLug);
+assert.equal(upperLugResult.isSheetMetal, true);
+assert.equal(upperLugResult.thickness, 20);
+assert.equal(upperLugResult.method, 'bbox');
+assert.equal(upperLugResult.hasBends, false);
+assert.deepEqual(upperLugResult.warnings, []);
+
+const lowerLug = extrudePolygon(
+  [
+    [0, 0],
+    [160, 0],
+    [160, 90],
+    [0, 90],
+  ],
+  [[0, 1, 2], [0, 2, 3]],
+  20
+);
+const lowerLugResult = classify(lowerLug);
+assert.equal(lowerLugResult.isSheetMetal, true);
+assert.equal(lowerLugResult.thickness, 20);
+assert.equal(lowerLugResult.method, 'bbox');
+assert.equal(lowerLugResult.hasBends, false);
+assert.deepEqual(lowerLugResult.warnings, []);
+
 console.log('[sheet-classifier] all tests passed');

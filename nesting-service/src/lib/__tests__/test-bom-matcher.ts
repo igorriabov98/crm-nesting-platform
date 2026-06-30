@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { matchBOMToParts } from '../ai/bom-matcher';
+import { resolveBOMSteelTypes } from '../ai/steel-types';
 import type { BOMEntry, DetailEntry, PartForMatching } from '../ai/types';
 
 const duplicateBom = [createBom({ position: '10', name: 'Plastic plug', quantity: 2 })];
@@ -186,6 +187,62 @@ const fallbackGeometryMatches = matchBOMToParts(
 );
 assert.equal(fallbackGeometryMatches[0].matchType, 'geometry');
 assert.equal(fallbackGeometryMatches[0].bomName, 'U 80 - 690');
+
+const lugBom = resolveBOMSteelTypes(
+  [
+    createBom({
+      description: 'BL 20 x 90 x 160',
+      partType: 'sheet',
+      thicknessMm: 20,
+      widthMm: 90,
+      heightMm: 160,
+      quantity: 2,
+      massKg: 1.695,
+      materialGrade: 'S235JRG2',
+      steelTypeRaw: 'S235JRG2',
+    }),
+    createBom({
+      description: 'BL 20 x 65 x 230',
+      partType: 'sheet',
+      thicknessMm: 20,
+      widthMm: 65,
+      heightMm: 230,
+      quantity: 4,
+      massKg: 1.308,
+      materialGrade: 'S235JRG2',
+      steelTypeRaw: 'S235JRG2',
+    }),
+  ],
+  [{ id: 'steel-s235', name: 'S235', densityKgMm3: 0.00000785 }]
+);
+const lugParts = [
+  createPart({ id: 'lower-1', name: 'flat body 10461 A', thickness: 20, bboxSizeX: 159.6135, bboxSizeY: 90, bboxSizeZ: 20, meshVolume: 214206.593, isSheetMetal: true }),
+  createPart({ id: 'lower-2', name: 'flat body 10461 B', thickness: 20, bboxSizeX: 159.6135, bboxSizeY: 90, bboxSizeZ: 20, meshVolume: 214206.593, isSheetMetal: true }),
+  createPart({ id: 'upper-1', name: 'flat body 10464 A', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: true }),
+  createPart({ id: 'upper-2', name: 'flat body 10464 B', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: true }),
+  createPart({ id: 'upper-3', name: 'flat body 10464 C', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: true }),
+  createPart({ id: 'upper-4', name: 'flat body 10464 D', thickness: 20, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, meshVolume: 179436.52, isSheetMetal: true }),
+];
+const lugMatches = matchBOMToParts(lugBom, lugParts, [], [
+  { id: 'steel-s235', name: 'S235', densityKgMm3: 0.00000785 },
+]);
+const lugCounts = new Map<string, number>();
+
+assert.equal(lugMatches.length, 6);
+for (const match of lugMatches) {
+  assert.equal(match.matchType, 'geometry');
+  assert.match(match.matchDetails, /thickness:/);
+  assert.match(match.matchDetails, /dim:/);
+  assert.match(match.matchDetails, /mass:/);
+  assert.equal(match.suggestedThickness, null);
+  assert.equal(match.suggestedSteelTypeId, 'steel-s235');
+  assert.equal(match.suggestedSteelTypeName, 'S235');
+  lugCounts.set(match.bomName, (lugCounts.get(match.bomName) ?? 0) + 1);
+}
+assert.equal(lugCounts.get('BL 20 x 90 x 160'), 2);
+assert.equal(lugCounts.get('BL 20 x 65 x 230'), 4);
+assert.equal(lugMatches.find((match) => match.bomName === 'BL 20 x 90 x 160')?.suggestedUnfoldingWidth, 90);
+assert.equal(lugMatches.find((match) => match.bomName === 'BL 20 x 65 x 230')?.suggestedUnfoldingHeight, 230);
 
 console.log('[bom-matcher] all tests passed');
 

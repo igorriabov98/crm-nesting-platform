@@ -198,7 +198,7 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
   }
 
   if (bom.massKg && bom.massKg > 0 && part.meshVolume && part.meshVolume > 0) {
-    const stepMassKg = part.meshVolume * 7.85 / 1e9;
+    const stepMassKg = part.meshVolume * 7.85 / 1e6;
     if (sizeMatch(bom.massKg, stepMassKg, 0.2)) {
       score += 0.15;
       strongMatches += 1;
