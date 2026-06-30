@@ -80,6 +80,14 @@ assert.equal(designationMatches[0].suggestedUnfoldingHeight, 356);
 assert.equal(designationMatches[0].suggestedIsSheetMetal, true);
 assert.equal(designationMatches[0].suggestedQuantity, 2);
 
+const resolvedGradeMatches = matchBOMToParts(designationBom, designationParts, designationDetails, [
+  { id: 'steel-st3ps', name: 'Ст3пс', densityKgMm3: 0.00000785 },
+]);
+
+assert.equal(resolvedGradeMatches[0].suggestedSteelTypeId, 'steel-st3ps');
+assert.equal(resolvedGradeMatches[0].suggestedSteelTypeName, 'Ст3пс');
+assert.equal(resolvedGradeMatches[0].suggestedSteelTypeRaw, 'Ст3пс');
+
 const suffixBom = [
   createBom({
     position: '6',

@@ -1,11 +1,13 @@
-import type { BOMEntry, DetailEntry, MatchResult, PartForMatching } from './types';
+import { normalizeSteelTypeName } from './steel-types';
+import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, SteelTypeCatalogItem } from './types';
 
 type MatchType = MatchResult['matchType'];
 
 export function matchBOMToParts(
   bom: BOMEntry[],
   parts: PartForMatching[],
-  details: DetailEntry[] = []
+  details: DetailEntry[] = [],
+  steelTypes: SteelTypeCatalogItem[] = []
 ): MatchResult[] {
   const detailsByDesignation = buildDesignationMap(details, (detail) => detail.designation);
   const bomByDesignation = buildDesignationMap(bom, (entry) => entry.designation);
@@ -13,7 +15,7 @@ export function matchBOMToParts(
 
   for (const part of parts) {
     const match = findBestMatch(part, bom, detailsByDesignation, bomByDesignation);
-    results.push(buildMatchResult(part, match.bomEntry, match.detail, match.matchType, match.matchConfidence));
+    results.push(buildMatchResult(part, match.bomEntry, match.detail, match.matchType, match.matchConfidence, steelTypes));
   }
 
   return suppressAmbiguousQuantitySuggestions(results);
@@ -142,7 +144,8 @@ function buildMatchResult(
   bomEntry: BOMEntry | null,
   detail: DetailEntry | null,
   matchType: MatchType,
-  matchConfidence: number
+  matchConfidence: number,
+  steelTypes: SteelTypeCatalogItem[]
 ): MatchResult {
   const result: MatchResult = {
     partId: part.id,
@@ -177,7 +180,12 @@ function buildMatchResult(
     const materialGrade = detail.materialGrade.trim();
     if (materialGrade) {
       result.suggestedMaterialGrade = materialGrade;
-      if (!sameSteelType(materialGrade, part.steelTypeRaw) && !sameSteelType(materialGrade, part.steelTypeName)) {
+      const catalogSteelType = resolveCatalogSteelType(materialGrade, steelTypes);
+      if (catalogSteelType && catalogSteelType.id !== part.steelTypeId) {
+        result.suggestedSteelTypeId = catalogSteelType.id;
+        result.suggestedSteelTypeName = catalogSteelType.name;
+        result.suggestedSteelTypeRaw = catalogSteelType.name;
+      } else if (!catalogSteelType && !sameSteelType(materialGrade, part.steelTypeRaw) && !sameSteelType(materialGrade, part.steelTypeName)) {
         result.suggestedSteelTypeRaw = materialGrade;
       }
     }
@@ -268,6 +276,13 @@ function sameSteelType(a: string | null | undefined, b: string | null | undefine
   const left = normalizeSteelType(a);
   const right = normalizeSteelType(b);
   return left.length > 0 && left === right;
+}
+
+function resolveCatalogSteelType(raw: string, steelTypes: SteelTypeCatalogItem[]): SteelTypeCatalogItem | null {
+  const normalizedRaw = normalizeSteelTypeName(raw);
+  if (!normalizedRaw) return null;
+  const matches = steelTypes.filter((steelType) => normalizeSteelTypeName(steelType.name) === normalizedRaw);
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function normalizeSteelType(value: string | null | undefined): string {

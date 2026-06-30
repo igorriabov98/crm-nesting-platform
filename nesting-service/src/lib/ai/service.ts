@@ -51,7 +51,7 @@ export async function analyzeProjectPdf(input: {
       hasBends: true,
     },
   });
-  const matches = matchBOMToParts(bom, parts, pdfResult.details);
+  const matches = matchBOMToParts(bom, parts, pdfResult.details, input.steelTypes ?? []);
   const finalMatches = input.autoApply === false ? matches : await autoApplyMatches(matches);
   const unmatchedBom = getUnmatchedBom(bom, finalMatches);
   const cost = estimateCost(pdfResult.tokensUsed, pdfResult.model);
