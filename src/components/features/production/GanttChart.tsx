@@ -422,7 +422,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
     workshop: '',
     confirmation: '',
     productionMonth: '',
-    showSupply: false,
+    showSupply: true,
     visibleStages: [...STAGE_ORDER],
   })
   const filters = externalFilters || internalFilters
@@ -479,7 +479,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
         Boolean(machine.planned_material_date) ||
         Boolean(machine.actual_material_date)
 
-      if (hasMaterialTimeline || supplyItems.length > 0) {
+      if (filters.showSupply && (hasMaterialTimeline || supplyItems.length > 0)) {
         rows.push({
           id: `${machine.id}:supply`,
           type: 'supply',

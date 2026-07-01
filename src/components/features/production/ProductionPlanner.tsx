@@ -119,7 +119,7 @@ const defaultFilters: GanttFilters = {
   workshop: '',
   confirmation: '',
   productionMonth: '',
-  showSupply: false,
+  showSupply: true,
   visibleStages: [...PRODUCTION_PLAN_STAGE_ORDER],
 }
 
@@ -486,6 +486,7 @@ function PlannerVirtualRow({
   dayWidth,
   todayOffset,
   selected,
+  showSupply,
   onSelect,
 }: {
   row: PlannerRow
@@ -495,6 +496,7 @@ function PlannerVirtualRow({
   dayWidth: number
   todayOffset: number
   selected: boolean
+  showSupply: boolean
   onSelect: (machineId: string) => void
 }) {
   const machine = row.machine
@@ -614,74 +616,76 @@ function PlannerVirtualRow({
           </div>
         ))}
 
-        <div
-          className="absolute left-0 border-b border-emerald-100/80 bg-emerald-50/30"
-          style={{ top: SUPPLY_LANE_TOP, height: SUPPLY_LANE_HEIGHT, width: totalWidth }}
-        >
-          {productionNeedDate && (() => {
-            const offset = dateOffset(productionNeedDate, rangeStart, dayWidth)
-            if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
-            const label = formatDesiredShippingDate(productionNeedDate)
-            return (
-              <GanttMaterialMarker
-                key={`production-need:${productionNeedDate}`}
-                type="production_need"
-                date={productionNeedDate}
-                items={[]}
+        {showSupply && (
+          <div
+            className="absolute left-0 border-b border-emerald-100/80 bg-emerald-50/30"
+            style={{ top: SUPPLY_LANE_TOP, height: SUPPLY_LANE_HEIGHT, width: totalWidth }}
+          >
+            {productionNeedDate && (() => {
+              const offset = dateOffset(productionNeedDate, rangeStart, dayWidth)
+              if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
+              const label = formatDesiredShippingDate(productionNeedDate)
+              return (
+                <GanttMaterialMarker
+                  key={`production-need:${productionNeedDate}`}
+                  type="production_need"
+                  date={productionNeedDate}
+                  items={[]}
+                  rangeStart={rangeStart}
+                  unitWidth={dayWidth}
+                  machineId={machine.id}
+                  machineName={machine.name}
+                  title={label ? `Мат.план от производства: ${label}` : undefined}
+                />
+              )
+            })()}
+            {plannedMaterialGroups.map((group) => {
+              const offset = dateOffset(group.date, rangeStart, dayWidth)
+              if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
+              const label = formatDesiredShippingDate(group.date)
+              return (
+                <GanttMaterialMarker
+                  key={`planned:${group.date}`}
+                  type="planned"
+                  date={group.date}
+                  items={group.items}
+                  rangeStart={rangeStart}
+                  unitWidth={dayWidth}
+                  machineId={machine.id}
+                  machineName={machine.name}
+                  title={label ? `Дата снабжения материала: ${label}` : undefined}
+                />
+              )
+            })}
+            {actualMaterialGroups.map((group) => {
+              const offset = dateOffset(group.date, rangeStart, dayWidth)
+              if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
+              const label = formatDesiredShippingDate(group.date)
+              return (
+                <GanttMaterialMarker
+                  key={`actual:${group.date}`}
+                  type="actual"
+                  date={group.date}
+                  items={group.items}
+                  rangeStart={rangeStart}
+                  unitWidth={dayWidth}
+                  machineId={machine.id}
+                  machineName={machine.name}
+                  title={label ? `Факт. поставка материала: ${label}` : undefined}
+                />
+              )
+            })}
+            {row.supplyItems.map((item) => (
+              <GanttSupplyMarker
+                key={item.id}
+                item={item}
                 rangeStart={rangeStart}
+                scale={scale}
                 unitWidth={dayWidth}
-                machineId={machine.id}
-                machineName={machine.name}
-                title={label ? `Мат.план от производства: ${label}` : undefined}
               />
-            )
-          })()}
-          {plannedMaterialGroups.map((group) => {
-            const offset = dateOffset(group.date, rangeStart, dayWidth)
-            if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
-            const label = formatDesiredShippingDate(group.date)
-            return (
-              <GanttMaterialMarker
-                key={`planned:${group.date}`}
-                type="planned"
-                date={group.date}
-                items={group.items}
-                rangeStart={rangeStart}
-                unitWidth={dayWidth}
-                machineId={machine.id}
-                machineName={machine.name}
-                title={label ? `Дата снабжения материала: ${label}` : undefined}
-              />
-            )
-          })}
-          {actualMaterialGroups.map((group) => {
-            const offset = dateOffset(group.date, rangeStart, dayWidth)
-            if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
-            const label = formatDesiredShippingDate(group.date)
-            return (
-              <GanttMaterialMarker
-                key={`actual:${group.date}`}
-                type="actual"
-                date={group.date}
-                items={group.items}
-                rangeStart={rangeStart}
-                unitWidth={dayWidth}
-                machineId={machine.id}
-                machineName={machine.name}
-                title={label ? `Факт. поставка материала: ${label}` : undefined}
-              />
-            )
-          })}
-          {row.supplyItems.map((item) => (
-            <GanttSupplyMarker
-              key={item.id}
-              item={item}
-              rangeStart={rangeStart}
-              scale={scale}
-              unitWidth={dayWidth}
-            />
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1246,9 +1250,11 @@ export function ProductionPlanner({
 
       const supplyItems = filters.showSupply ? machine.supply_deadlines : []
       const hasSupplyTimeline =
-        machine.material_items.length > 0 ||
-        Boolean(machine.planned_material_date) ||
-        Boolean(machine.actual_material_date)
+        filters.showSupply && (
+          machine.material_items.length > 0 ||
+          Boolean(machine.planned_material_date) ||
+          Boolean(machine.actual_material_date)
+        )
       if (visibleMachineStages.length === 0 && supplyItems.length === 0 && !hasSupplyTimeline) continue
 
       rows.push({
@@ -1863,6 +1869,7 @@ export function ProductionPlanner({
                         dayWidth={dayWidth}
                         todayOffset={todayOffset}
                         selected={row.machine.id === selectedMachineId}
+                        showSupply={filters.showSupply}
                         onSelect={setSelectedMachineId}
                       />
                     )

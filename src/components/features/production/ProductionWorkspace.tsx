@@ -34,7 +34,7 @@ const defaultGanttFilters: GanttFilters = {
   workshop: '',
   confirmation: '',
   productionMonth: '',
-  showSupply: false,
+  showSupply: true,
   visibleStages: [...PRODUCTION_PLAN_STAGE_ORDER],
 }
 

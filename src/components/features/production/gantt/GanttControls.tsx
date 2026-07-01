@@ -3,7 +3,6 @@
 import React from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -11,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { CalendarDays, ChevronDown, Minus, Plus, Search } from 'lucide-react'
+import { CalendarDays, Check, ChevronDown, Minus, Plus, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import type { StageType } from '@/lib/types'
@@ -94,13 +93,30 @@ export function GanttControls({
           </Button>
         </div>
 
-        <label className="flex min-h-11 cursor-pointer select-none items-center gap-2 rounded-md border border-[#E8ECF0] px-3 text-sm text-[#374151] sm:min-h-10">
-          <Checkbox
+        <label className={cn(
+          'flex min-h-11 cursor-pointer select-none items-center gap-2 rounded-md border px-3 text-sm transition-colors sm:min-h-10',
+          filters.showSupply
+            ? 'border-[#BFDBFE] bg-[#EFF6FF] text-[#1B3A6B]'
+            : 'border-[#E8ECF0] text-[#374151] hover:bg-[#F8F9FA]'
+        )}>
+          <input
+            type="checkbox"
             checked={filters.showSupply}
-            onCheckedChange={(c) => setF({ showSupply: c === true })}
-            className="h-4 w-4"
+            onChange={(event) => setF({ showSupply: event.target.checked })}
+            className="peer sr-only"
           />
-          Показать снабжение
+          <span
+            aria-hidden="true"
+            className={cn(
+              'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-[#2563EB]/30',
+              filters.showSupply
+                ? 'border-[#2563EB] bg-[#2563EB] text-white'
+                : 'border-[#D1D5DB] bg-white text-transparent'
+            )}
+          >
+            <Check className="h-3 w-3" />
+          </span>
+          <span>Показать снабжение</span>
         </label>
       </div>
 
