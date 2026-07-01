@@ -185,7 +185,9 @@ export const GanttMaterialMarker = React.memo(function GanttMaterialMarker({
                   const total = totalPrice(item)
                   return (
                     <div key={item.id} className="rounded border border-[#E8ECF0] bg-[#F8F9FA] p-2">
-                      <div className="font-medium text-[#1B3A6B]">{item.nomenclature || 'Без названия'}</div>
+                      <div className="break-words font-medium leading-5 text-[#1B3A6B] [overflow-wrap:anywhere]">
+                        {item.nomenclature || 'Без названия'}
+                      </div>
                       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[#6B7280]">
                         <span>{Number(item.quantity || 0).toLocaleString('ru-RU')} {item.unit || 'шт'}</span>
                         <span>{statusLabel[item.supply_status] ?? item.supply_status}</span>

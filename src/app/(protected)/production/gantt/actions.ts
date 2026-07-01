@@ -176,6 +176,10 @@ type GanttScheduleRow = {
   received_quantity: number | null
   delivered_at: string | null
 }
+type GanttSteelTypeRow = {
+  id: string
+  name: string
+}
 
 const GANTT_ORDER_TABLES = [
   'request_sheet_metal',
@@ -225,7 +229,138 @@ function applyProductionManagerFactoryScope<T>(query: T, factoryId: string | nul
   return scopedQuery.or(`factory_id.eq.${factoryId},factory_id.is.null`)
 }
 
-function ganttItemName(row: GanttRequestItemRow, fallback: unknown) {
+function valueText(value: unknown) {
+  const text = String(value || '').trim()
+  return text.length > 0 ? text : null
+}
+
+function compactParts(parts: unknown[]) {
+  const seen = new Set<string>()
+  return parts
+    .map((part) => typeof part === 'number' ? String(part) : valueText(part))
+    .filter((part): part is string => Boolean(part))
+    .filter((part) => {
+      const key = part.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function formatGanttNumber(value: unknown) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) return null
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(number)
+}
+
+function steelName(row: GanttRequestItemRow, steelTypeNames: Map<string, string>) {
+  const steelTypeId = valueText(row.steel_type_id)
+  return (
+    (steelTypeId ? steelTypeNames.get(steelTypeId) : null) ||
+    valueText(row.material_grade) ||
+    valueText(row.steel_grade)
+  )
+}
+
+function dimensionText(...values: unknown[]) {
+  const dimensions = values.map(formatGanttNumber).filter(Boolean)
+  return dimensions.length > 0 ? `${dimensions.join('x')} мм` : null
+}
+
+function pipeTypeLabel(value: unknown) {
+  if (value === 'round') return 'Труба круглая'
+  if (value === 'square') return 'Труба квадратная'
+  if (value === 'rectangular') return 'Труба прямоугольная'
+  if (value === 'wire') return 'Проволока'
+  return 'Труба'
+}
+
+function ganttItemName(
+  table: string,
+  row: GanttRequestItemRow,
+  fallback: unknown,
+  steelTypeNames: Map<string, string>,
+) {
+  const materialName = valueText(row.material_name) || row.materials?.name || null
+  const steel = steelName(row, steelTypeNames)
+
+  if (table === 'request_sheet_metal') {
+    const thickness = formatGanttNumber(row.thickness_mm)
+    return compactParts([
+      materialName || 'Листовой металл',
+      steel,
+      row.sheet_size,
+      thickness ? `${thickness} мм` : null,
+    ]).join(' · ')
+  }
+
+  if (table === 'request_round_tube') {
+    return compactParts([
+      materialName || 'Круг / труба',
+      row.piece_count,
+    ]).join(' · ')
+  }
+
+  if (table === 'request_circle') {
+    const diameter = formatGanttNumber(row.diameter_mm)
+    return compactParts([
+      row.materials?.name || 'Круг',
+      steel,
+      diameter ? `Ø${diameter} мм` : null,
+      row.is_calibrated ? 'калиброванный' : null,
+    ]).join(' · ')
+  }
+
+  if (table === 'request_pipe') {
+    const diameter = formatGanttNumber(row.diameter_mm)
+    const wall = formatGanttNumber(row.wall_thickness_mm)
+    return compactParts([
+      pipeTypeLabel(row.pipe_type),
+      steel,
+      row.size || (diameter ? `Ø${diameter} мм` : null),
+      wall ? `стенка ${wall} мм` : null,
+    ]).join(' · ')
+  }
+
+  if (table === 'request_knives') {
+    return compactParts([
+      row.knife_type || row.materials?.name || 'Ножи',
+      steel,
+      dimensionText(row.length_mm, row.width_mm, row.height_mm),
+    ]).join(' · ')
+  }
+
+  if (table === 'request_components') {
+    const diameter = formatGanttNumber(row.diameter_mm)
+    return compactParts([
+      row.component_name || row.materials?.name || 'Комплектация',
+      diameter ? `Ø${diameter} мм` : null,
+    ]).join(' · ')
+  }
+
+  if (table === 'request_paint') {
+    return compactParts([
+      row.paint_type || row.materials?.name || 'Краска',
+      row.ral_code,
+      row.finish,
+    ]).join(' · ')
+  }
+
+  if (table === 'request_mesh') {
+    return compactParts([
+      row.materials?.name || 'Сетка',
+      row.description,
+      dimensionText(row.length_mm, row.width_mm),
+    ]).join(' · ')
+  }
+
+  if (table === 'request_chain_cord') {
+    return compactParts([
+      row.item_type || row.materials?.name || 'Цепь / Шнур',
+      row.parameters,
+    ]).join(' · ')
+  }
+
   return row.materials?.name || String(fallback || 'Материал')
 }
 
@@ -323,6 +458,19 @@ async function loadGanttSupplierNames(db: LooseGanttDb, supplierIds: string[]) {
   return new Map(((data || []) as { id: string; name: string }[]).map((supplier) => [supplier.id, supplier.name]))
 }
 
+async function loadGanttSteelTypeNames(db: LooseGanttDb, steelTypeIds: string[]) {
+  const uniqueIds = Array.from(new Set(steelTypeIds.filter(Boolean)))
+  if (uniqueIds.length === 0) return new Map<string, string>()
+
+  const { data, error } = await db
+    .from('steel_types')
+    .select('id, name')
+    .in('id', uniqueIds)
+
+  if (error) throw new Error(error.message || 'Не удалось загрузить марки стали для Gantt')
+  return new Map(((data || []) as GanttSteelTypeRow[]).map((steelType) => [steelType.id, steelType.name]))
+}
+
 async function loadSupplyOrderMaterialMarkers(db: LooseGanttDb, machines: SelectedGanttMachine[]) {
   const machineIds = machines.map((machine) => machine.id).filter(Boolean)
   const machineDateMap = new Map(machines.map((machine) => [machine.id, machine.planned_material_date || null]))
@@ -346,6 +494,9 @@ async function loadSupplyOrderMaterialMarkers(db: LooseGanttDb, machines: Select
     table,
     rows: await loadGanttRequestRows(db, table, requestIds),
   })))
+  const steelTypeNames = await loadGanttSteelTypeNames(db, rowSets.flatMap(({ rows }) => (
+    rows.map((row) => valueText(row.steel_type_id)).filter((id): id is string => Boolean(id))
+  )))
 
   const items: GanttSupplyOrderItem[] = []
   for (const { table, rows } of rowSets) {
@@ -361,7 +512,7 @@ async function loadSupplyOrderMaterialMarkers(db: LooseGanttDb, machines: Select
         id: row.id,
         request_id: row.request_id,
         machine_id: machineId,
-        nomenclature: ganttItemName(row, ganttNameFallback(table, row)),
+        nomenclature: ganttItemName(table, row, ganttNameFallback(table, row), steelTypeNames),
         quantity,
         unit: ganttPrimaryUnit(table, row),
         supplier_id: row.supplier_id || null,
