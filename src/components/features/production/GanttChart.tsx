@@ -815,13 +815,6 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
               ))}
             </div>
 
-            {todayOffset >= 0 && (
-              <div
-                className="pointer-events-none absolute top-0 bottom-0 z-0 w-0.5 bg-red-500"
-                style={{ left: GANTT_LEFT_WIDTH + todayOffset + dayWidth / 2 }}
-              />
-            )}
-
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
               const row = flatRows[virtualRow.index]
               if (!row) return null

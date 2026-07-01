@@ -1849,13 +1849,6 @@ export function ProductionPlanner({
                     ))}
                   </div>
 
-                  {todayOffset >= 0 && (
-                    <div
-                      className="pointer-events-none absolute top-0 bottom-0 z-10 w-0.5 bg-red-500"
-                      style={{ left: MACHINE_RAIL_WIDTH + todayOffset + dayWidth / 2 }}
-                    />
-                  )}
-
                   {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                     const row = plannerRows[virtualRow.index]
                     if (!row) return null
