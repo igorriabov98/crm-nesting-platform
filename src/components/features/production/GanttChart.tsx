@@ -198,10 +198,6 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
   dayWidth: number
   todayOffset: number
 }) {
-  const deadlineOffset = row.machine.desired_shipping_date
-    ? differenceInCalendarDays(new Date(row.machine.desired_shipping_date), rangeStart) * dayWidth
-    : null
-  const deadlineLabel = formatDesiredShippingDate(row.machine.desired_shipping_date)
   const actualShippingOffset = dateOffset(row.machine.actual_shipping_date, rangeStart, dayWidth)
   const actualShippingLabel = formatDesiredShippingDate(row.machine.actual_shipping_date)
   const isStripedMachine = row.machineIndex % 2 === 1
@@ -303,13 +299,6 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
           <div
             className="pointer-events-none absolute inset-y-0 z-0 bg-red-100/80"
             style={{ left: todayOffset, width: dayWidth }}
-          />
-        )}
-        {deadlineOffset !== null && deadlineOffset >= 0 && deadlineOffset <= totalWidth && (
-          <div
-            className="absolute top-0 bottom-0 z-10 border-l-2 border-dashed border-[#DC2626]"
-            style={{ left: deadlineOffset }}
-            title={deadlineLabel ? `Желаемая отгрузка: ${deadlineLabel}` : undefined}
           />
         )}
         {row.type === 'supply' && productionNeedDate && (() => {

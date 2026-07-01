@@ -510,8 +510,6 @@ function PlannerVirtualRow({
   onSelect: (machineId: string) => void
 }) {
   const machine = row.machine
-  const deadlineOffset = dateOffset(machine.desired_shipping_date, rangeStart, dayWidth)
-  const deadlineLabel = formatDesiredShippingDate(machine.desired_shipping_date)
   const queueLabel = productionQueueLabel(machine.production_workshop, machine.production_queue_number)
   const monthLabel = productionMonthLabel(machine.production_month)
   const stageLanes = buildStageLanes(row.visibleStages, rangeStart, dayWidth)
@@ -592,14 +590,6 @@ function PlannerVirtualRow({
           <div
             className="pointer-events-none absolute inset-y-0 z-0 bg-red-50"
             style={{ left: todayOffset, width: dayWidth }}
-          />
-        )}
-
-        {deadlineOffset !== null && deadlineOffset >= 0 && deadlineOffset <= totalWidth && (
-          <div
-            className="absolute top-0 bottom-0 z-10 border-l-2 border-dashed border-red-600"
-            style={{ left: deadlineOffset }}
-            title={deadlineLabel ? `Желаемая отгрузка: ${deadlineLabel}` : undefined}
           />
         )}
 
