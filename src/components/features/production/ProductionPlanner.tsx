@@ -99,12 +99,12 @@ const TIMELINE_HEIGHT = 56
 const BAR_HEIGHT = 18
 const BAR_LANE_GAP = 4
 const BAR_LANES = 3
-const STAGE_LANE_TOP = 8
-const STAGE_LANE_AREA_HEIGHT = BAR_LANES * BAR_HEIGHT + (BAR_LANES - 1) * BAR_LANE_GAP
 const SUPPLY_LANE_GAP = 6
 const SUPPLY_LANE_HEIGHT = 44
-const SUPPLY_LANE_TOP = STAGE_LANE_TOP + STAGE_LANE_AREA_HEIGHT + SUPPLY_LANE_GAP
-const PLANNER_ROW_HEIGHT = SUPPLY_LANE_TOP + SUPPLY_LANE_HEIGHT
+const SUPPLY_LANE_TOP = 8
+const STAGE_LANE_TOP = SUPPLY_LANE_TOP + SUPPLY_LANE_HEIGHT + SUPPLY_LANE_GAP
+const STAGE_LANE_AREA_HEIGHT = BAR_LANES * BAR_HEIGHT + (BAR_LANES - 1) * BAR_LANE_GAP
+const PLANNER_ROW_HEIGHT = STAGE_LANE_TOP + STAGE_LANE_AREA_HEIGHT + 8
 const ZOOM_MIN = 15
 const ZOOM_MAX = 80
 const ZOOM_STEP = 5
@@ -531,9 +531,15 @@ function PlannerVirtualRow({
         <button
           type="button"
           className="grid h-full w-full min-w-0 rounded-md text-left transition-colors hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-          style={{ gridTemplateRows: `1fr ${SUPPLY_LANE_HEIGHT}px` }}
+          style={{ gridTemplateRows: `${SUPPLY_LANE_HEIGHT}px 1fr` }}
           onClick={() => onSelect(machine.id)}
         >
+          <span className="flex min-w-0 items-center gap-1 border-b border-emerald-100 px-2 text-[11px] text-slate-500">
+            <PackageCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+            <span className="truncate">
+              Мат.план: {formatDateValue(machine.planned_material_date, true)}
+            </span>
+          </span>
           <span className="flex min-w-0 flex-col justify-center px-2">
             <span className="flex w-full min-w-0 items-center gap-2">
               <span className="truncate text-sm font-semibold text-blue-900" title={machine.name}>
@@ -548,12 +554,6 @@ function PlannerVirtualRow({
             <span className="mt-1 flex w-full min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-slate-600">
               <span>{Number(machine.total_weight || 0).toFixed(1)} т</span>
               <span className="truncate">{monthLabel ? `${monthLabel} · ${queueLabel}` : queueLabel}</span>
-            </span>
-          </span>
-          <span className="flex min-w-0 items-center gap-1 border-t border-emerald-100 px-2 text-[11px] text-slate-500">
-            <PackageCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-            <span className="truncate">
-              Мат.план: {formatDateValue(machine.planned_material_date, true)}
             </span>
           </span>
         </button>
@@ -603,7 +603,7 @@ function PlannerVirtualRow({
         ))}
 
         <div
-          className="absolute left-0 border-t border-emerald-100/80 bg-emerald-50/30"
+          className="absolute left-0 border-b border-emerald-100/80 bg-emerald-50/30"
           style={{ top: SUPPLY_LANE_TOP, height: SUPPLY_LANE_HEIGHT, width: totalWidth }}
         >
           {plannedMaterialGroups.map((group) => {
