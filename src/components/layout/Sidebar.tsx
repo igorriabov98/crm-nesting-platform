@@ -246,18 +246,21 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
         !isMobile && 'hidden lg:flex h-full'
       )}
     >
-      <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#E8ECF0] px-4">
-        <div className="flex items-center gap-3 overflow-hidden">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1B3A6B]">
-            <FactoryIcon className="h-4 w-4 text-white" />
-          </div>
-          {!collapsed && (
+      <div className={cn(
+        'flex h-16 shrink-0 items-center border-b border-[#E8ECF0]',
+        collapsed ? 'justify-center px-0' : 'justify-between px-4'
+      )}>
+        {!collapsed && (
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1B3A6B]">
+              <FactoryIcon className="h-4 w-4 text-white" />
+            </div>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-[#1B3A6B]">CRM Завода</p>
               <p className="truncate text-xs text-[#9CA3AF]">{user.factory?.name ?? '-'}</p>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {!isMobile && (
           <Button
