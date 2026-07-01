@@ -1941,7 +1941,6 @@ export function ProductionPlanner({
                     rangeStart={rangeStart}
                     rangeEnd={rangeEnd}
                     scale={scale}
-                    todayOffset={todayOffset}
                     unitWidth={dayWidth}
                   />
                 </div>

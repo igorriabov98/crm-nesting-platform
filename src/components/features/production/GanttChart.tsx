@@ -781,7 +781,6 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
               rangeStart={rangeStart}
               rangeEnd={rangeEnd}
               scale={scale}
-              todayOffset={todayOffset}
               unitWidth={dayWidth}
             />
           </div>

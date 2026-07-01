@@ -8,11 +8,10 @@ interface GanttTimelineProps {
   rangeStart: Date
   rangeEnd: Date
   scale: GanttScale
-  todayOffset: number
   unitWidth?: number
 }
 
-export function GanttTimeline({ rangeStart, rangeEnd, scale, todayOffset, unitWidth = SCALE_UNIT_WIDTH[scale] }: GanttTimelineProps) {
+export function GanttTimeline({ rangeStart, rangeEnd, scale, unitWidth = SCALE_UNIT_WIDTH[scale] }: GanttTimelineProps) {
   const scaleItems = generateDateScale(rangeStart, rangeEnd, scale)
   const monthItems = generateMonthScale(scaleItems, scale)
 
@@ -48,13 +47,6 @@ export function GanttTimeline({ rangeStart, rangeEnd, scale, todayOffset, unitWi
           </div>
         ))}
 
-        {/* Today red line */}
-        {todayOffset >= 0 && (
-          <div
-            className="pointer-events-none absolute top-0 bottom-0 z-0 w-0.5 bg-red-500"
-            style={{ left: `${todayOffset + unitWidth / 2}px` }}
-          />
-        )}
       </div>
     </div>
   )
