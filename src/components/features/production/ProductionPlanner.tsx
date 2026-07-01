@@ -369,14 +369,25 @@ function DateField({
   short?: boolean
 }) {
   const [saving, setSaving] = useState(false)
+  const [displayValue, setDisplayValue] = useState(value)
+
+  useEffect(() => {
+    setDisplayValue(value)
+  }, [value])
 
   const handleChange = async (date: Date | undefined) => {
     if (!onSave) return
+    const nextValue = date ? formatDateOnly(date) : null
+    if (dateOnlyKey(nextValue) === dateOnlyKey(displayValue)) return
+
+    const previousValue = displayValue
+    setDisplayValue(nextValue)
     setSaving(true)
     try {
-      const result = await onSave(date ? formatDateOnly(date) : null)
+      const result = await onSave(nextValue)
       if (isFailedResult(result)) throw new Error(result.error || 'Сохранение отменено')
     } catch (error) {
+      setDisplayValue(previousValue)
       toast.error(error instanceof Error ? error.message : 'Ошибка сохранения')
     } finally {
       setSaving(false)
@@ -389,7 +400,7 @@ function DateField({
       {editable ? (
         <div className="relative">
           <DatePicker
-            value={parseDateOnly(value)}
+            value={parseDateOnly(displayValue)}
             onChange={handleChange}
             disabled={saving}
             placeholder="Выбрать"
