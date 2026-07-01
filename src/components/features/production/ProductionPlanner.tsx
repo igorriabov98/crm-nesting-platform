@@ -14,7 +14,6 @@ import {
   PackageCheck,
   PanelRightClose,
   PanelRightOpen,
-  TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -34,7 +33,7 @@ import { createProductionPlanDateChangeRequest, type ProductionMonthPlanSummary,
 import { useRole } from '@/lib/hooks/useRole'
 import { ROUTES } from '@/lib/constants/routes'
 import { barGeometry, generateDateScale, type GanttScale } from '@/lib/utils/gantt'
-import { formatDesiredShippingDate, getDesiredShippingInfo } from '@/lib/utils/desired-shipping'
+import { formatDesiredShippingDate } from '@/lib/utils/desired-shipping'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { cn } from '@/lib/utils'
 import type {
@@ -958,7 +957,6 @@ function ProductionMachineInspector({
 }) {
   const [open, setOpen] = useState(defaultOpen)
 
-  const deadline = getDesiredShippingInfo(productionRow?.machine.desired_shipping_date || machine?.desired_shipping_date || null)
   const sortedStages = useMemo(() => {
     if (!productionRow) return []
     return productionRow.stages.filter((stage) => PRODUCTION_PLAN_STAGE_ORDER.includes(stage.stage_type)).sort(
@@ -1054,18 +1052,6 @@ function ProductionMachineInspector({
           ) : (
             <div className="mt-1 text-amber-800">Изменения дат будут отправлены на согласование.</div>
           )}
-        </div>
-      )}
-
-      {deadline && (
-        <div className={cn(
-          'flex items-start gap-2 rounded-lg border p-3 text-sm',
-          deadline.tone === 'overdue' && 'border-red-200 bg-red-50 text-red-800',
-          deadline.tone === 'soon' && 'border-amber-200 bg-amber-50 text-amber-800',
-          deadline.tone === 'normal' && 'border-slate-200 bg-slate-50 text-slate-700'
-        )}>
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{deadline.label}</span>
         </div>
       )}
 
