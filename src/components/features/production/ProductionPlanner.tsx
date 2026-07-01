@@ -215,6 +215,15 @@ function groupMaterialItemsByDate(
     .map(([date, groupedItems]) => ({ date, items: groupedItems }))
 }
 
+function isMaterialItemReceived(item: GanttMaterialItem) {
+  return item.supply_status === 'received' || Boolean(item.actual_delivery_date)
+}
+
+function hasMaterialGroupDate(groups: { date: string; items: GanttMaterialItem[] }[], date: string | null | undefined) {
+  const key = dateOnlyKey(date)
+  return Boolean(key && groups.some((group) => group.date === key))
+}
+
 function addMaterialDateGroup(
   groups: { date: string; items: GanttMaterialItem[] }[],
   date: string | null | undefined,
@@ -494,10 +503,13 @@ function PlannerVirtualRow({
   const queueLabel = productionQueueLabel(machine.production_workshop, machine.production_queue_number)
   const monthLabel = productionMonthLabel(machine.production_month)
   const stageLanes = buildStageLanes(row.visibleStages, rangeStart, dayWidth)
-  const plannedMaterialGroups = addMaterialDateGroup(
-    groupMaterialItemsByDate(machine.material_items, (item) => item.planned_delivery_date),
-    machine.planned_material_date
+  const plannedMaterialGroups = groupMaterialItemsByDate(
+    machine.material_items.filter((item) => !isMaterialItemReceived(item)),
+    (item) => item.planned_delivery_date
   )
+  const productionNeedDate = hasMaterialGroupDate(plannedMaterialGroups, machine.planned_material_date)
+    ? null
+    : dateOnlyKey(machine.planned_material_date)
   const actualMaterialGroups = addMaterialDateGroup(
     groupMaterialItemsByDate(
       machine.material_items,
@@ -606,6 +618,24 @@ function PlannerVirtualRow({
           className="absolute left-0 border-b border-emerald-100/80 bg-emerald-50/30"
           style={{ top: SUPPLY_LANE_TOP, height: SUPPLY_LANE_HEIGHT, width: totalWidth }}
         >
+          {productionNeedDate && (() => {
+            const offset = dateOffset(productionNeedDate, rangeStart, dayWidth)
+            if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
+            const label = formatDesiredShippingDate(productionNeedDate)
+            return (
+              <GanttMaterialMarker
+                key={`production-need:${productionNeedDate}`}
+                type="production_need"
+                date={productionNeedDate}
+                items={[]}
+                rangeStart={rangeStart}
+                unitWidth={dayWidth}
+                machineId={machine.id}
+                machineName={machine.name}
+                title={label ? `Мат.план от производства: ${label}` : undefined}
+              />
+            )
+          })()}
           {plannedMaterialGroups.map((group) => {
             const offset = dateOffset(group.date, rangeStart, dayWidth)
             if (offset === null || offset + dayWidth / 2 < 0 || offset + dayWidth / 2 > totalWidth) return null
@@ -620,7 +650,7 @@ function PlannerVirtualRow({
                 unitWidth={dayWidth}
                 machineId={machine.id}
                 machineName={machine.name}
-                title={label ? `План. поставка материала: ${label}` : undefined}
+                title={label ? `Дата снабжения материала: ${label}` : undefined}
               />
             )
           })}

@@ -8,7 +8,7 @@ import { formatDate } from '@/lib/utils/gantt'
 import type { GanttMaterialItem } from '@/app/(protected)/production/gantt/actions'
 import { GANTT_MARKER_SIZE } from './types'
 
-type MaterialMarkerType = 'planned' | 'actual'
+type MaterialMarkerType = 'production_need' | 'planned' | 'actual'
 
 type PopoverPosition = {
   top: number
@@ -62,9 +62,18 @@ export const GanttMaterialMarker = React.memo(function GanttMaterialMarker({
   const popoverRef = useRef<HTMLDivElement>(null)
   const markerDate = useMemo(() => new Date(date), [date])
   const left = differenceInCalendarDays(markerDate, rangeStart) * unitWidth + unitWidth / 2 - MARKER_HIT_SIZE / 2
-  const label = type === 'planned' ? 'План поставки материала' : 'Факт поставки материала'
-  const emptyText = type === 'planned' ? 'Нет позиций на эту дату' : 'Нет полученных позиций'
+  const label = type === 'production_need'
+    ? 'Мат.план от производства'
+    : type === 'planned'
+      ? 'Дата снабжения материала'
+      : 'Факт поставки материала'
+  const emptyText = type === 'production_need'
+    ? 'Дата, к которой производство ждёт материал'
+    : type === 'planned'
+      ? 'Нет позиций на эту дату'
+      : 'Нет полученных позиций'
   const isActual = type === 'actual'
+  const isProductionNeed = type === 'production_need'
 
   const updatePosition = useCallback(() => {
     if (typeof window === 'undefined') return
@@ -151,12 +160,13 @@ export const GanttMaterialMarker = React.memo(function GanttMaterialMarker({
         }}
       >
         <span
-          className="block rotate-45 shadow-[0_1px_2px_rgba(22,163,74,0.25)]"
+          className="block rotate-45"
           style={{
             width: GANTT_MARKER_SIZE,
             height: GANTT_MARKER_SIZE,
-            backgroundColor: isActual ? '#16A34A' : '#FFFFFF',
-            border: isActual ? 'none' : '2px solid #16A34A',
+            backgroundColor: isActual ? '#16A34A' : isProductionNeed ? '#F59E0B' : '#FFFFFF',
+            border: isActual || isProductionNeed ? 'none' : '2px solid #16A34A',
+            boxShadow: isProductionNeed ? '0 1px 2px rgba(245, 158, 11, 0.28)' : '0 1px 2px rgba(22, 163, 74, 0.25)',
           }}
         />
       </button>
