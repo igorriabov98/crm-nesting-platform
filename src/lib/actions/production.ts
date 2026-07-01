@@ -204,17 +204,18 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
       throw new Error('План месяца подтверждён. Отправьте запрос на изменение дат руководителю отдела планирования.')
     }
 
-    const { data: machineItemsData, error: itemsErr } = await supabase
-      .from('machine_items')
-      .select('coating')
-      .eq('machine_id', stageObj.machine_id)
+    if (data.is_skipped === true && stageObj.stage_type === 'galvanizing') {
+      const { data: machineItemsData, error: itemsErr } = await supabase
+        .from('machine_items')
+        .select('coating')
+        .eq('machine_id', stageObj.machine_id)
 
-    if (itemsErr) throw itemsErr
-    const machineItems = (machineItemsData ?? []) as MachineItemCoating[]
-    const hasZinc = machineItems?.some((item) => item.coating === 'zinc') ?? false
-
-    if (data.is_skipped === true && stageObj.stage_type === 'galvanizing' && hasZinc) {
-      throw new Error('Нельзя пропустить цинкование, если хотя бы у одного товара выбрано покрытие цинком')
+      if (itemsErr) throw itemsErr
+      const machineItems = (machineItemsData ?? []) as MachineItemCoating[]
+      const hasZinc = machineItems.some((item) => item.coating === 'zinc')
+      if (hasZinc) {
+        throw new Error('Нельзя пропустить цинкование, если хотя бы у одного товара выбрано покрытие цинком')
+      }
     }
 
     const fixedWorkshopStages = ['cutting', 'painting', 'packaging']
