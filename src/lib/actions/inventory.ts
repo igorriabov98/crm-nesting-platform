@@ -30,9 +30,51 @@ type LooseDb = {
 }
 
 type ActionResult<T = unknown> = { success: boolean; error?: string; data?: T }
+type RequestItemWeight = { weightKg: number; quantity: number | null }
+type RequestItemWeightConfig = {
+  columns: string
+  weight: (row: Record<string, unknown>) => number | null
+  quantity: (row: Record<string, unknown>) => number | null
+}
 const INVENTORY_LIST_COLUMNS = 'id, factory_id, material_id, material_variant_id, total_quantity, reserved_quantity, available_quantity, unit, total_secondary_quantity, reserved_secondary_quantity, available_secondary_quantity, secondary_unit, calculated_weight_kg, piece_length_mm, is_business_scrap, business_scrap_state, available_from_date, available_from_stage_id, source_inventory_id, source_reservation_id, source_machine_id, source_piece_length_mm, source_nesting_project_id, source_nesting_sheet_id, source_remnant_geom, deleted_at, deleted_by, delete_comment, last_updated_by, created_at, updated_at'
 const INVENTORY_LIST_COLUMNS_WITHOUT_SOURCE_MACHINE = INVENTORY_LIST_COLUMNS.replace(', source_machine_id', '')
 const MATERIAL_VARIANT_COLUMNS = 'id, material_id, category, steel_type_id, material_grade, thickness_mm, sheet_size, weight_per_unit_kg, length_m, weight_per_m_kg, piece_description, knife_dimensions, knife_material, standard_length_mm, specification, default_unit, ral_code, finish, default_waste_percent, diameter_mm, is_calibrated, pipe_type, wall_thickness_mm, width_mm, height_mm, mesh_description, mesh_length_mm, mesh_width_mm, chain_cord_type, chain_cord_parameters, unit_weight_kg, times_used, last_used_at, created_at'
+const REQUEST_ITEM_WEIGHT_CONFIGS: Record<string, RequestItemWeightConfig> = {
+  request_sheet_metal: {
+    columns: 'id, calculated_weight_kg, quantity_sheets, remainder_qty',
+    weight: (row) => numberOrNull(row.calculated_weight_kg),
+    quantity: (row) => numberOrNull(row.remainder_qty) ?? numberOrNull(row.quantity_sheets),
+  },
+  request_round_tube: {
+    columns: 'id, order_kg',
+    weight: (row) => numberOrNull(row.order_kg),
+    quantity: (row) => numberOrNull(row.order_kg),
+  },
+  request_knives: {
+    columns: 'id, calculated_weight_kg, remainder_meters, to_order_mm, order_mm',
+    weight: (row) => numberOrNull(row.calculated_weight_kg),
+    quantity: (row) => {
+      const remainderMeters = numberOrNull(row.remainder_meters)
+      if (remainderMeters && remainderMeters > 0) return remainderMeters * 1000
+      return numberOrNull(row.to_order_mm) ?? numberOrNull(row.order_mm)
+    },
+  },
+  request_paint: {
+    columns: 'id, weight_with_waste_kg, weight_kg, remainder_kg',
+    weight: (row) => numberOrNull(row.weight_with_waste_kg) ?? numberOrNull(row.weight_kg),
+    quantity: (row) => numberOrNull(row.remainder_kg) ?? numberOrNull(row.weight_with_waste_kg) ?? numberOrNull(row.weight_kg),
+  },
+  request_circle: {
+    columns: 'id, calculated_weight_kg, remainder_mm',
+    weight: (row) => numberOrNull(row.calculated_weight_kg),
+    quantity: (row) => numberOrNull(row.remainder_mm),
+  },
+  request_pipe: {
+    columns: 'id, calculated_weight_kg, pipe_type, remainder_length_mm, remainder_kg',
+    weight: (row) => numberOrNull(row.calculated_weight_kg),
+    quantity: (row) => row.pipe_type === 'wire' ? numberOrNull(row.remainder_kg) : numberOrNull(row.remainder_length_mm),
+  },
+}
 
 function normalizeInventorySearch(value: string) {
   return value.trim().replace(/\s+/g, ' ').toLowerCase().replace(/[\u0445\u00d7*]/g, 'x')
@@ -592,7 +634,7 @@ export async function deleteInventoryItem(inventoryId: string): Promise<ActionRe
 }
 
 type InventoryHistoryStockRow = Pick<Inventory, 'id' | 'material_id' | 'total_quantity' | 'unit' | 'total_secondary_quantity' | 'secondary_unit' | 'calculated_weight_kg' | 'business_scrap_state'>
-type InventoryHistoryTransactionRow = Pick<InventoryTransaction, 'id' | 'inventory_id' | 'material_id' | 'material_variant_id' | 'transaction_type' | 'quantity' | 'secondary_quantity' | 'created_at'>
+type InventoryHistoryTransactionRow = Pick<InventoryTransaction, 'id' | 'inventory_id' | 'material_id' | 'material_variant_id' | 'transaction_type' | 'quantity' | 'secondary_quantity' | 'request_item_table' | 'request_item_id' | 'created_at'>
 
 export async function getWarehouseHistoryOverview(filters: {
   factory_id?: string | null
@@ -611,7 +653,7 @@ export async function getWarehouseHistoryOverview(filters: {
 
     let transactionQuery = db
       .from('inventory_transactions')
-      .select('id, factory_id, inventory_id, material_id, material_variant_id, transaction_type, quantity, secondary_quantity, created_at')
+      .select('id, factory_id, inventory_id, material_id, material_variant_id, transaction_type, quantity, secondary_quantity, request_item_table, request_item_id, created_at')
       .gte('created_at', period.fromIso)
       .lte('created_at', period.toIso)
       .order('created_at', { ascending: true })
@@ -645,6 +687,7 @@ export async function getWarehouseHistoryOverview(filters: {
       if (error) throw new Error(error.message || 'Не удалось загрузить веса вариантов материалов')
       for (const row of (data || []) as MaterialVariant[]) transactionVariantMap.set(row.id, row)
     }
+    const requestItemWeightMap = await loadRequestItemWeightMap(db, transactionRows)
 
     const materialIds = Array.from(new Set([
       ...currentRows.map((row) => row.material_id),
@@ -702,7 +745,7 @@ export async function getWarehouseHistoryOverview(filters: {
       const variant = row.material_variant_id ? transactionVariantMap.get(row.material_variant_id) : null
       const category = materialCategoryMap.get(row.material_id) || materialCategoryMap.get(stock?.material_id || '') || 'other'
       const summary = ensureCategory(category)
-      const movementWeight = estimateTransactionWeight(row, stock, variant)
+      const movementWeight = requestItemTransactionWeight(row, requestItemWeightMap) ?? estimateTransactionWeight(row, stock, variant)
       const totalDelta = totalStockDeltaWeight(row, movementWeight)
 
       summary.transactionCount += 1
@@ -1036,6 +1079,7 @@ async function hydrateTransactions(db: LooseDb, rows: InventoryTransaction[]): P
     const { data } = await db.from('suppliers').select('id, name').in('id', supplierIds)
     for (const item of (data || []) as { id: string; name: string }[]) supplierMap.set(item.id, item.name)
   }
+  const requestItemWeightMap = await loadRequestItemWeightMap(db, rows)
 
   return rows.map((row) => {
     const inventory = inventoryMap.get(row.inventory_id)
@@ -1052,7 +1096,7 @@ async function hydrateTransactions(db: LooseDb, rows: InventoryTransaction[]): P
           business_scrap_state: 'available' as const,
         }
       : undefined
-    const weightKg = estimateTransactionWeight(row, stock, variant)
+    const weightKg = requestItemTransactionWeight(row, requestItemWeightMap) ?? estimateTransactionWeight(row, stock, variant)
 
     return {
       ...row,
@@ -1067,6 +1111,57 @@ async function hydrateTransactions(db: LooseDb, rows: InventoryTransaction[]): P
       user_name: userMap.get(row.performed_by) || null,
     }
   })
+}
+
+async function loadRequestItemWeightMap(db: LooseDb, rows: Array<Pick<InventoryTransaction, 'request_item_table' | 'request_item_id'>>) {
+  const idsByTable = new Map<string, string[]>()
+  for (const row of rows) {
+    if (!row.request_item_table || !row.request_item_id || !REQUEST_ITEM_WEIGHT_CONFIGS[row.request_item_table]) continue
+    const ids = idsByTable.get(row.request_item_table) || []
+    ids.push(row.request_item_id)
+    idsByTable.set(row.request_item_table, ids)
+  }
+
+  const weightMap = new Map<string, RequestItemWeight>()
+  for (const [table, ids] of idsByTable.entries()) {
+    const config = REQUEST_ITEM_WEIGHT_CONFIGS[table]
+    const uniqueIds = Array.from(new Set(ids))
+    const { data, error } = await db.from(table).select(config.columns).in('id', uniqueIds)
+    if (error) throw new Error(error.message || 'Не удалось загрузить веса позиций заявки')
+    for (const item of (data || []) as Array<Record<string, unknown> & { id: string }>) {
+      const weightKg = config.weight(item)
+      if (!weightKg || weightKg <= 0) continue
+      weightMap.set(requestItemWeightKey(table, item.id), {
+        weightKg,
+        quantity: config.quantity(item),
+      })
+    }
+  }
+  return weightMap
+}
+
+function requestItemTransactionWeight(
+  row: Pick<InventoryTransaction, 'request_item_table' | 'request_item_id' | 'quantity'>,
+  weightMap: Map<string, RequestItemWeight>,
+) {
+  if (!row.request_item_table || !row.request_item_id) return null
+  const item = weightMap.get(requestItemWeightKey(row.request_item_table, row.request_item_id))
+  if (!item || item.weightKg <= 0) return null
+  const transactionQuantity = Math.abs(Number(row.quantity || 0))
+  const itemQuantity = Math.abs(Number(item.quantity || 0))
+  if (transactionQuantity > 0 && itemQuantity > 0 && transactionQuantity < itemQuantity) {
+    return item.weightKg * (transactionQuantity / itemQuantity)
+  }
+  return item.weightKg
+}
+
+function requestItemWeightKey(table: string, id: string) {
+  return `${table}:${id}`
+}
+
+function numberOrNull(value: unknown) {
+  const number = Number(value || 0)
+  return Number.isFinite(number) && number > 0 ? number : null
 }
 
 function revalidateInventory(materialId?: string | null) {
