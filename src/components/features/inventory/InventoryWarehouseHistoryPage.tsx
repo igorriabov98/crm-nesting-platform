@@ -230,7 +230,7 @@ export function InventoryWarehouseHistoryPage({
         </div>
 
         <div className="hidden overflow-x-auto lg:block">
-          <table className="w-full min-w-[1180px] text-left text-sm">
+          <table className="w-full min-w-[1260px] text-left text-sm">
             <thead className="bg-[#F8FAFC] text-xs uppercase tracking-wide text-[#64748B]">
               <tr>
                 <th className="px-4 py-3">Дата</th>
@@ -239,6 +239,7 @@ export function InventoryWarehouseHistoryPage({
                 <th className="px-4 py-3">Категория</th>
                 <th className="px-4 py-3">Характеристики</th>
                 <th className="px-4 py-3">Количество</th>
+                <th className="px-4 py-3">Вес, кг</th>
                 <th className="px-4 py-3">Машина</th>
                 <th className="px-4 py-3">Поставщик</th>
                 <th className="px-4 py-3">Кто</th>
@@ -254,6 +255,7 @@ export function InventoryWarehouseHistoryPage({
                   <td className="px-4 py-3 text-[#475569]">{categoryLabel(row.material_category)}</td>
                   <td className="px-4 py-3 text-[#64748B]">{variantSummary(row)}</td>
                   <td className={row.quantity < 0 ? 'px-4 py-3 font-semibold text-red-700' : 'px-4 py-3 font-semibold text-emerald-700'}>{quantityText(row)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-semibold tabular-nums text-[#111827]">{weightText(row)}</td>
                   <td className="px-4 py-3">{machineCell(row)}</td>
                   <td className="px-4 py-3 text-[#475569]">{row.supplier_name || '-'}</td>
                   <td className="px-4 py-3 text-[#475569]">{row.user_name || '-'}</td>
@@ -262,7 +264,7 @@ export function InventoryWarehouseHistoryPage({
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-[#94A3B8]">Операций за выбранный период нет</td>
+                  <td colSpan={11} className="px-4 py-10 text-center text-[#94A3B8]">Операций за выбранный период нет</td>
                 </tr>
               )}
             </tbody>
@@ -283,6 +285,7 @@ export function InventoryWarehouseHistoryPage({
               <div className="mt-3 grid gap-2 text-sm">
                 <InfoLine label="Характеристики" value={variantSummary(row)} />
                 <InfoLine label="Количество" value={quantityText(row)} strong={row.quantity < 0 ? 'down' : 'up'} />
+                <InfoLine label="Вес" value={weightText(row)} />
                 <InfoLine label="Машина" value={row.machine_name || '-'} />
                 <InfoLine label="Поставщик" value={row.supplier_name || '-'} />
                 <InfoLine label="Кто" value={row.user_name || '-'} />
@@ -452,6 +455,11 @@ function quantityText(row: InventoryTransactionWithRelations) {
   const primary = `${signedAmount(row.quantity)} ${row.unit || ''}`.trim()
   if (row.secondary_quantity === null || row.secondary_quantity === undefined) return primary
   return `${primary} / ${signedAmount(row.secondary_quantity)} ${row.secondary_unit || ''}`.trim()
+}
+
+function weightText(row: InventoryTransactionWithRelations) {
+  if (row.weight_kg === null || row.weight_kg === undefined) return '-'
+  return formatKg(row.weight_kg)
 }
 
 function variantSummary(row: InventoryTransactionWithRelations) {
