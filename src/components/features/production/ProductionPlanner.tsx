@@ -30,6 +30,7 @@ import { GanttMaterialMarker } from '@/components/features/production/gantt/Gant
 import { STAGES, STAGE_ORDER } from '@/lib/constants/stages'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { clearProductionStageDates, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
+import { createProductionPlanDateChangeRequest, type ProductionMonthPlanSummary, type ProductionPlanDateChangeInput } from '@/lib/actions/production-plan'
 import { useRole } from '@/lib/hooks/useRole'
 import { ROUTES } from '@/lib/constants/routes'
 import { barGeometry, generateDateScale, type GanttScale } from '@/lib/utils/gantt'
@@ -48,6 +49,7 @@ import type { StageType } from '@/lib/types'
 interface ProductionPlannerProps {
   data: GanttData
   productionData: ProductionRow[]
+  monthPlans?: ProductionMonthPlanSummary[]
   filters?: GanttFilters
   onFiltersChange?: (filters: GanttFilters) => void
   height?: string
@@ -84,6 +86,12 @@ type WeldingLoadMachine = {
 type MachineDateField = 'planned_material_date'
 type ProductionStage = ProductionRow['stages'][number]
 type ActionResult = { success?: boolean; error?: string | null }
+type DateChangeDraft = ProductionPlanDateChangeInput & {
+  key: string
+  machineId: string
+  label: string
+  old_value: string | null
+}
 
 const MACHINE_RAIL_WIDTH = 248
 const PLANNER_ROW_HEIGHT = 78
@@ -177,6 +185,21 @@ function dateOffset(date: string | null | undefined, rangeStart: Date, dayWidth:
 
 function dateOnlyKey(date: string | null | undefined) {
   return date ? date.slice(0, 10) : null
+}
+
+function machineDateDraftKey(machineId: string, field: MachineDateField) {
+  return `${machineId}:machine:${field}`
+}
+
+function stageDateDraftKey(machineId: string, stageId: string, field: 'date_start' | 'date_end' | 'night_shift_date') {
+  return `${machineId}:stage:${stageId}:${field}`
+}
+
+function draftDateLabel(stage: ProductionStage | null, field: MachineDateField | 'date_start' | 'date_end' | 'night_shift_date') {
+  if (!stage) return 'Плановая поставка материала'
+  const stageLabel = STAGES[stage.stage_type]?.label || stage.stage_type
+  const fieldLabel = field === 'date_start' ? 'начало' : field === 'date_end' ? 'окончание' : 'ночная смена'
+  return `${stageLabel}: ${fieldLabel}`
 }
 
 function dayKey(date: Date) {
@@ -670,6 +693,7 @@ function StageEditor({
   stage,
   canEdit,
   clearingStageId,
+  getDateValue,
   onStageDateUpdate,
   onStageUpdate,
   onClearDates,
@@ -678,6 +702,7 @@ function StageEditor({
   stage: ProductionStage
   canEdit: boolean
   clearingStageId: string | null
+  getDateValue?: (stage: ProductionStage, field: 'date_start' | 'date_end' | 'night_shift_date') => string | null
   onStageDateUpdate: (
     row: ProductionRow,
     stage: ProductionStage,
@@ -732,7 +757,7 @@ function StageEditor({
         {isShippingDateOnly ? (
           <DateField
             label="Дата"
-            value={stage.date_end}
+            value={getDateValue ? getDateValue(stage, 'date_end') : stage.date_end}
             editable={editable}
             onSave={(value) => onStageDateUpdate(row, stage, 'date_end', value)}
           />
@@ -746,14 +771,14 @@ function StageEditor({
             />
             <DateField
               label="Начало"
-              value={stage.date_start}
+              value={getDateValue ? getDateValue(stage, 'date_start') : stage.date_start}
               editable={editable}
               onSave={(value) => onStageDateUpdate(row, stage, 'date_start', value)}
               short
             />
             <DateField
               label="Конец"
-              value={stage.date_end}
+              value={getDateValue ? getDateValue(stage, 'date_end') : stage.date_end}
               editable={editable}
               onSave={(value) => onStageDateUpdate(row, stage, 'date_end', value)}
               short
@@ -774,7 +799,7 @@ function StageEditor({
           </label>
           <DateField
             label="Дата ночи"
-            value={stage.night_shift_date}
+            value={getDateValue ? getDateValue(stage, 'night_shift_date') : stage.night_shift_date}
             editable={editable && stage.is_night_shift}
             onSave={(value) => onStageDateUpdate(row, stage, 'night_shift_date', value)}
             short
@@ -789,21 +814,33 @@ function ProductionMachineInspector({
   machine,
   productionRow,
   canEdit,
+  approvalLocked,
+  pendingDateChanges,
+  submittingDateRequest,
   clearingStageId,
   collapsible = false,
   defaultOpen = true,
+  getMachineDateValue,
+  getStageDateValue,
   onMachineDateUpdate,
   onStageDateUpdate,
   onStageUpdate,
   onClearDates,
+  onSubmitDateChangeRequest,
+  onResetDateChangeDraft,
   onCollapse,
 }: {
   machine: GanttMachine | null
   productionRow: ProductionRow | undefined
   canEdit: boolean
+  approvalLocked: boolean
+  pendingDateChanges: DateChangeDraft[]
+  submittingDateRequest: boolean
   clearingStageId: string | null
   collapsible?: boolean
   defaultOpen?: boolean
+  getMachineDateValue?: (machine: GanttMachine, field: MachineDateField) => string | null
+  getStageDateValue?: (stage: ProductionStage, field: 'date_start' | 'date_end' | 'night_shift_date') => string | null
   onMachineDateUpdate: (machineId: string, field: MachineDateField, value: string | null) => Promise<ActionResult | void>
   onStageDateUpdate: (
     row: ProductionRow,
@@ -813,6 +850,8 @@ function ProductionMachineInspector({
   ) => Promise<ActionResult | void>
   onStageUpdate: (stageId: string, field: string, value: string | number | boolean | null) => Promise<ActionResult | void>
   onClearDates: (stage: ProductionStage) => Promise<ActionResult | void>
+  onSubmitDateChangeRequest: () => Promise<void>
+  onResetDateChangeDraft: () => void
   onCollapse?: () => void
 }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -869,11 +908,52 @@ function ProductionMachineInspector({
         />
         <DateField
           label="Материал план"
-          value={productionRow?.machine.planned_material_date || machine.planned_material_date}
+          value={getMachineDateValue ? getMachineDateValue(machine, 'planned_material_date') : productionRow?.machine.planned_material_date || machine.planned_material_date}
           editable={canEdit}
           onSave={(value) => onMachineDateUpdate(machine.id, 'planned_material_date', value)}
         />
       </div>
+
+      {approvalLocked && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="font-semibold">План месяца подтверждён</div>
+          {pendingDateChanges.length > 0 ? (
+            <div className="mt-2 space-y-2">
+              <div className="space-y-1">
+                {pendingDateChanges.map((change) => (
+                  <div key={change.key} className="rounded-md bg-white/70 px-2 py-1 text-xs leading-5">
+                    {change.label}: {formatDateValue(change.old_value)}{' -> '}{formatDateValue(change.new_value)}
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={submittingDateRequest}
+                  onClick={onSubmitDateChangeRequest}
+                  className="min-h-10 flex-1 bg-amber-700 text-white hover:bg-amber-800"
+                >
+                  {submittingDateRequest && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Отправить запрос
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={submittingDateRequest}
+                  onClick={onResetDateChangeDraft}
+                  className="min-h-10 flex-1 border-amber-200 bg-white text-amber-800 hover:bg-amber-50"
+                >
+                  Сбросить
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-1 text-amber-800">Изменения дат будут отправлены на согласование.</div>
+          )}
+        </div>
+      )}
 
       {deadline && (
         <div className={cn(
@@ -901,6 +981,7 @@ function ProductionMachineInspector({
                 stage={stage}
                 canEdit={canEdit}
                 clearingStageId={clearingStageId}
+                getDateValue={getStageDateValue}
                 onStageDateUpdate={onStageDateUpdate}
                 onStageUpdate={onStageUpdate}
                 onClearDates={onClearDates}
@@ -981,6 +1062,7 @@ function ProductionMachineInspector({
 export function ProductionPlanner({
   data,
   productionData,
+  monthPlans = [],
   filters: externalFilters,
   onFiltersChange,
   height = 'clamp(430px, 62dvh, 700px)',
@@ -998,6 +1080,8 @@ export function ProductionPlanner({
   const [weldingLoadOpen, setWeldingLoadOpen] = useState(true)
   const [scrollShadows, setScrollShadows] = useState({ left: false, right: false })
   const [clearingStageId, setClearingStageId] = useState<string | null>(null)
+  const [dateChangeDrafts, setDateChangeDrafts] = useState<Record<string, DateChangeDraft>>({})
+  const [submittingDateRequest, setSubmittingDateRequest] = useState(false)
 
   const filters = externalFilters || internalFilters
   const setFilters = onFiltersChange || setInternalFilters
@@ -1124,6 +1208,52 @@ export function ProductionPlanner({
       : null
   ), [ganttMachineById, selectedMachineId, unscheduledRows])
   const selectedProductionRow = selectedMachineId ? productionByMachineId.get(selectedMachineId) : undefined
+  const selectedMachinePlanStatus = useMemo(() => {
+    if (!selectedMachine?.factory_id || !selectedMachine.production_month) return 'draft'
+    const month = normalizeProductionMonthValue(selectedMachine.production_month)
+    const plan = month
+      ? monthPlans.find((item) => item.factory_id === selectedMachine.factory_id && item.production_month === month)
+      : null
+    return plan?.status || 'draft'
+  }, [monthPlans, selectedMachine])
+  const selectedMachineRequiresApproval = Boolean(
+    selectedMachine &&
+    isProductionManager &&
+    !isDirector &&
+    selectedMachinePlanStatus === 'confirmed'
+  )
+  const selectedDateChanges = useMemo(
+    () => Object.values(dateChangeDrafts).filter((change) => change.machineId === selectedMachineId),
+    [dateChangeDrafts, selectedMachineId],
+  )
+
+  const recordDateDraft = useCallback((change: DateChangeDraft) => {
+    setDateChangeDrafts((current) => {
+      if (dateOnlyKey(change.old_value) === dateOnlyKey(change.new_value)) {
+        const { [change.key]: _removed, ...rest } = current
+        void _removed
+        return rest
+      }
+      return { ...current, [change.key]: change }
+    })
+  }, [])
+
+  const getMachineDraftValue = useCallback((machine: GanttMachine, field: MachineDateField) => {
+    const key = machineDateDraftKey(machine.id, field)
+    return dateChangeDrafts[key]?.new_value ?? machine[field]
+  }, [dateChangeDrafts])
+
+  const getStageDraftValue = useCallback((stage: ProductionStage, field: 'date_start' | 'date_end' | 'night_shift_date') => {
+    if (!selectedMachineId) return stage[field]
+    const key = stageDateDraftKey(selectedMachineId, stage.id, field)
+    return dateChangeDrafts[key]?.new_value ?? stage[field]
+  }, [dateChangeDrafts, selectedMachineId])
+
+  const clearSelectedDrafts = useCallback(() => {
+    setDateChangeDrafts((current) => Object.fromEntries(
+      Object.entries(current).filter(([, change]) => change.machineId !== selectedMachineId)
+    ))
+  }, [selectedMachineId])
 
   const rowVirtualizer = useVirtualizer({
     count: plannerRows.length,
@@ -1363,6 +1493,21 @@ export function ProductionPlanner({
     field: 'date_start' | 'date_end' | 'night_shift_date',
     value: string | null
   ) => {
+    if (selectedMachineRequiresApproval) {
+      recordDateDraft({
+        key: stageDateDraftKey(row.machine.id, stage.id, field),
+        machineId: row.machine.id,
+        target_type: 'stage',
+        production_stage_id: stage.id,
+        field_name: field,
+        old_value: dateOnlyKey(stage[field]),
+        new_value: dateOnlyKey(value),
+        label: draftDateLabel(stage, field),
+      })
+      toast.success('Изменение добавлено в запрос')
+      return { success: true, error: null }
+    }
+
     if (
       stage.stage_type === 'shipping' &&
       field === 'date_end' &&
@@ -1377,9 +1522,23 @@ export function ProductionPlanner({
     }
 
     return saveStageField(stage.id, field, value)
-  }, [saveStageField])
+  }, [recordDateDraft, saveStageField, selectedMachineRequiresApproval])
 
   const saveMachineDate = useCallback(async (machineId: string, field: MachineDateField, value: string | null) => {
+    if (selectedMachineRequiresApproval && selectedProductionRow) {
+      recordDateDraft({
+        key: machineDateDraftKey(machineId, field),
+        machineId,
+        target_type: 'machine',
+        field_name: field,
+        old_value: dateOnlyKey(selectedProductionRow.machine[field]),
+        new_value: dateOnlyKey(value),
+        label: draftDateLabel(null, field),
+      })
+      toast.success('Изменение добавлено в запрос')
+      return { success: true, error: null }
+    }
+
     const result = await updateMachineDate(machineId, field, value)
     if (result.success) {
       toast.success('Сохранено')
@@ -1388,9 +1547,34 @@ export function ProductionPlanner({
       toast.error(result.error || 'Ошибка сохранения')
     }
     return result
-  }, [router])
+  }, [recordDateDraft, router, selectedMachineRequiresApproval, selectedProductionRow])
 
   const clearStageDates = useCallback(async (stage: ProductionStage) => {
+    if (selectedMachineRequiresApproval && selectedProductionRow) {
+      recordDateDraft({
+        key: stageDateDraftKey(selectedProductionRow.machine.id, stage.id, 'date_start'),
+        machineId: selectedProductionRow.machine.id,
+        target_type: 'stage',
+        production_stage_id: stage.id,
+        field_name: 'date_start',
+        old_value: dateOnlyKey(stage.date_start),
+        new_value: null,
+        label: draftDateLabel(stage, 'date_start'),
+      })
+      recordDateDraft({
+        key: stageDateDraftKey(selectedProductionRow.machine.id, stage.id, 'date_end'),
+        machineId: selectedProductionRow.machine.id,
+        target_type: 'stage',
+        production_stage_id: stage.id,
+        field_name: 'date_end',
+        old_value: dateOnlyKey(stage.date_end),
+        new_value: null,
+        label: draftDateLabel(stage, 'date_end'),
+      })
+      toast.success('Очистка дат добавлена в запрос')
+      return { success: true, error: null }
+    }
+
     setClearingStageId(stage.id)
     try {
       const result = await clearProductionStageDates(stage.id)
@@ -1404,7 +1588,33 @@ export function ProductionPlanner({
     } finally {
       setClearingStageId(null)
     }
-  }, [router])
+  }, [recordDateDraft, router, selectedMachineRequiresApproval, selectedProductionRow])
+
+  const submitDateChangeRequest = useCallback(async () => {
+    if (!selectedMachineId || selectedDateChanges.length === 0) return
+    const comment = window.prompt('Комментарий к запросу на изменение дат', '') || null
+    setSubmittingDateRequest(true)
+    try {
+      const result = await createProductionPlanDateChangeRequest({
+        machineId: selectedMachineId,
+        changes: selectedDateChanges.map(({ target_type, production_stage_id, field_name, new_value }) => ({
+          target_type,
+          production_stage_id,
+          field_name,
+          new_value,
+        })),
+        comment,
+      })
+      if (!result.success) throw new Error(result.error || 'Не удалось отправить запрос')
+      toast.success('Запрос отправлен руководителю планирования')
+      clearSelectedDrafts()
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось отправить запрос')
+    } finally {
+      setSubmittingDateRequest(false)
+    }
+  }, [clearSelectedDrafts, router, selectedDateChanges, selectedMachineId])
 
   const confirmedCount = [
     ...plannerRows.map((row) => row.machine),
@@ -1593,13 +1803,20 @@ export function ProductionPlanner({
             machine={selectedMachine}
             productionRow={selectedProductionRow}
             canEdit={canEdit}
+            approvalLocked={selectedMachineRequiresApproval}
+            pendingDateChanges={selectedDateChanges}
+            submittingDateRequest={submittingDateRequest}
             clearingStageId={clearingStageId}
             collapsible
             defaultOpen
+            getMachineDateValue={getMachineDraftValue}
+            getStageDateValue={getStageDraftValue}
             onMachineDateUpdate={saveMachineDate}
             onStageDateUpdate={saveStageDate}
             onStageUpdate={saveStageField}
             onClearDates={clearStageDates}
+            onSubmitDateChangeRequest={submitDateChangeRequest}
+            onResetDateChangeDraft={clearSelectedDrafts}
           />
         </div>
 
@@ -1695,11 +1912,18 @@ export function ProductionPlanner({
               machine={selectedMachine}
               productionRow={selectedProductionRow}
               canEdit={canEdit}
+              approvalLocked={selectedMachineRequiresApproval}
+              pendingDateChanges={selectedDateChanges}
+              submittingDateRequest={submittingDateRequest}
               clearingStageId={clearingStageId}
+              getMachineDateValue={getMachineDraftValue}
+              getStageDateValue={getStageDraftValue}
               onMachineDateUpdate={saveMachineDate}
               onStageDateUpdate={saveStageDate}
               onStageUpdate={saveStageField}
               onClearDates={clearStageDates}
+              onSubmitDateChangeRequest={submitDateChangeRequest}
+              onResetDateChangeDraft={clearSelectedDrafts}
               onCollapse={() => setDesktopInspectorOpen(false)}
             />
           </div>

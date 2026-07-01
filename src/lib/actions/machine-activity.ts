@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
 import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import type { CurrentUser, UserRole } from '@/lib/types'
 
 const DIRECTOR_ROLES: readonly UserRole[] = ['planning_director', 'financial_director', 'commercial_director']
@@ -78,7 +79,9 @@ type MachineChatMessageRow = {
   id: string
   machine_id: string
   body: string
-  created_by: string
+  created_by: string | null
+  message_kind?: string | null
+  system_event_key?: string | null
   created_at: string
 }
 type MachineChatMentionRow = {
@@ -128,6 +131,8 @@ export type MachineChatMessageItem = {
   id: string
   body: string
   created_at: string
+  message_kind: 'user' | 'system'
+  system_event_key: string | null
   author: { id: string; full_name: string } | null
   mentions: Array<{ id: string; full_name: string }>
 }
@@ -316,7 +321,7 @@ function mapMessage(
   usersById: Map<string, UserSummaryRow>,
   mentionsByMessage: Map<string, MachineChatMentionRow[]>,
 ): MachineChatMessageItem {
-  const author = usersById.get(row.created_by)
+  const author = row.created_by ? usersById.get(row.created_by) : null
   const mentions = (mentionsByMessage.get(row.id) || [])
     .map((mention) => usersById.get(mention.user_id))
     .filter((user): user is UserSummaryRow => Boolean(user))
@@ -326,6 +331,8 @@ function mapMessage(
     id: row.id,
     body: row.body,
     created_at: row.created_at,
+    message_kind: row.message_kind === 'system' ? 'system' : 'user',
+    system_event_key: row.system_event_key || null,
     author: author ? { id: author.id, full_name: author.full_name } : null,
     mentions,
   }
@@ -362,7 +369,7 @@ export async function getMachineActivity(machineId: string): Promise<{ data: Mac
         .limit(10),
       db
         .from('machine_chat_messages')
-        .select('id, machine_id, body, created_by, created_at')
+        .select('id, machine_id, body, created_by, message_kind, system_event_key, created_at')
         .eq('machine_id', machine.id)
         .order('created_at', { ascending: false })
         .limit(50),
@@ -389,7 +396,7 @@ export async function getMachineActivity(machineId: string): Promise<{ data: Mac
 
     const userIds = [
       ...updates.flatMap((update) => [update.created_by, update.updated_by].filter((id): id is string => Boolean(id))),
-      ...messages.map((message) => message.created_by),
+      ...messages.map((message) => message.created_by).filter((id): id is string => Boolean(id)),
       ...mentions.map((mention) => mention.user_id),
     ]
     const usersById = await loadUsersByIds(db, userIds)
@@ -574,9 +581,60 @@ export async function sendMachineChatMessage(machineId: string, body: string, me
       if (notificationError) throw notificationError
     }
 
+    await dispatchPendingTelegramDeliveries({ machineId: machine.id })
     revalidateActivity(machine.id)
     return { success: true, error: null }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }
   }
+}
+
+export async function createSystemMachineChatMessage(input: {
+  machineId: string
+  body: string
+  eventKey?: string | null
+  excludeUserId?: string | null
+}) {
+  const parsedMachineId = machineIdSchema.parse(input.machineId)
+  const parsedBody = bodySchema.parse(input.body)
+  const db = dbFrom(createAdminClient())
+
+  const { data: machineData, error: machineError } = await db
+    .from('machines')
+    .select('id, is_archived')
+    .eq('id', parsedMachineId)
+    .maybeSingle()
+
+  if (machineError) throw machineError
+  if (!machineData) throw new Error('Машина не найдена')
+
+  const { error: messageError } = await db.from('machine_chat_messages').insert({
+    machine_id: parsedMachineId,
+    body: parsedBody,
+    created_by: null,
+    message_kind: 'system',
+    system_event_key: input.eventKey || null,
+  })
+
+  if (messageError) throw messageError
+
+  const recipientIds = await loadStructureRecipientIds(db)
+  if (input.excludeUserId) recipientIds.delete(input.excludeUserId)
+
+  if (recipientIds.size > 0) {
+    const { error: notificationError } = await db.from('notifications').insert(
+      Array.from(recipientIds).map((recipientId) => ({
+        user_id: recipientId,
+        type: MACHINE_CHAT_NOTIFICATION_TYPE,
+        title: 'Системное сообщение в чате машины',
+        message: notificationMessage('Система', parsedBody),
+        related_machine_id: parsedMachineId,
+      })),
+    )
+
+    if (notificationError) throw notificationError
+  }
+
+  await dispatchPendingTelegramDeliveries({ machineId: parsedMachineId })
+  revalidateActivity(parsedMachineId)
 }

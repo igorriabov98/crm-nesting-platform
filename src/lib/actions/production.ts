@@ -7,6 +7,7 @@ import { isDirector } from '@/lib/utils/permissions'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
+import { isMachineInConfirmedProductionPlan, notifyProductionPlanShippingDateChanged } from '@/lib/actions/production-plan'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { CurrentUser } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
@@ -29,6 +30,9 @@ type MachineDateField =
 type StageForUpdate = {
   machine_id: string
   stage_type: Database['public']['Enums']['stage_type']
+  date_start: string | null
+  date_end: string | null
+  night_shift_date: string | null
   machines: { factory_id: string | null; is_archived: boolean } | null
 }
 type MachineItemCoating = {
@@ -178,7 +182,7 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
 
     const { data: currentStage, error: stageErr } = await supabase
       .from('production_stages')
-      .select('machine_id, stage_type, machines(factory_id, is_archived)')
+      .select('machine_id, stage_type, date_start, date_end, night_shift_date, machines(factory_id, is_archived)')
       .eq('id', stageId)
       .single()
 
@@ -189,6 +193,16 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
     if (!machine) throw new Error('Машина не найдена')
     if (machine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
     if (machine.factory_id !== user.factory_id) throw new Error('Доступ запрещён')
+
+    const dateFields = ['date_start', 'date_end', 'night_shift_date'] as const
+    const changesPlanDate = dateFields.some((field) => field in data)
+    if (
+      user.role === 'production_manager' &&
+      changesPlanDate &&
+      await isMachineInConfirmedProductionPlan(stageObj.machine_id)
+    ) {
+      throw new Error('План месяца подтверждён. Отправьте запрос на изменение дат руководителю отдела планирования.')
+    }
 
     const { data: machineItemsData, error: itemsErr } = await supabase
       .from('machine_items')
@@ -255,6 +269,14 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
     if (stageObj.stage_type === 'shipping' && ('date_end' in data || 'planned_date_end' in data)) {
       await syncTransportCostTask(supabase, stageObj.machine_id)
     }
+    if (stageObj.stage_type === 'shipping' && 'date_end' in data) {
+      await notifyProductionPlanShippingDateChanged(
+        stageObj.machine_id,
+        stageObj.date_end,
+        dateOnly(data.date_end),
+        user.id,
+      )
+    }
 
     revalidatePath(`${ROUTES.SALES_PLAN}/${stageObj.machine_id}`)
     revalidatePath(ROUTES.PRODUCTION)
@@ -318,6 +340,13 @@ export async function updateMachineDate(
     const dateValue = value ? value.slice(0, 10) : null
     if (field === 'actual_shipping_date' && dateValue && dateValue < todayDateOnly()) {
       throw new Error('Факт отгрузки нельзя поставить раньше сегодняшнего дня')
+    }
+    if (
+      user.role === 'production_manager' &&
+      field === 'planned_material_date' &&
+      await isMachineInConfirmedProductionPlan(machineId)
+    ) {
+      throw new Error('План месяца подтверждён. Отправьте запрос на изменение дат руководителю отдела планирования.')
     }
 
     const updateData: MachineUpdate = { [field]: dateValue }

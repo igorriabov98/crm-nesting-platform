@@ -400,11 +400,26 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
               </div>
             ) : (
               messages.map((message) => (
-                <article key={message.id} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <article
+                  key={message.id}
+                  className={cn(
+                    'rounded-xl border px-4 py-3',
+                    message.message_kind === 'system'
+                      ? 'border-amber-200 bg-amber-50'
+                      : 'border-slate-200 bg-slate-50'
+                  )}
+                >
                   <div className="mb-2 flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-slate-900">
-                        {message.author?.full_name || 'Неизвестный пользователь'}
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <div className="truncate text-sm font-semibold text-slate-900">
+                          {message.message_kind === 'system' ? 'Система' : message.author?.full_name || 'Неизвестный пользователь'}
+                        </div>
+                        {message.message_kind === 'system' && (
+                          <Badge variant="outline" className="border-amber-200 bg-white/70 text-amber-800">
+                            Автоматически
+                          </Badge>
+                        )}
                       </div>
                       <div className="mt-0.5 text-xs text-slate-500">{activityDate(message.created_at)}</div>
                     </div>

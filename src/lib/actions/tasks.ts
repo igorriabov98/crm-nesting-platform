@@ -109,6 +109,7 @@ const DIRECTOR_ROLES: UserRole[] = [
   'planning_director',
 ]
 const CUTTING_ROLLBACK_TASK_TYPE = 'production_cutting_rollback_review' as const
+const PRODUCTION_PLAN_DATE_CHANGE_TASK_TYPE = 'production_plan_date_change_approval' as const
 
 async function getCurrentUser() {
   const { supabase, userId, user, role, factoryId } = await getCurrentUserContext()
@@ -1073,6 +1074,16 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       throw new TaskBusinessError(
         'Откройте preview отката и выберите действие в модальном окне.',
         'CUTTING_ROLLBACK_PREVIEW_REQUIRED',
+      )
+    }
+
+    if (
+      taskRow.task_type === PRODUCTION_PLAN_DATE_CHANGE_TASK_TYPE &&
+      (status === 'in_progress' || status === 'completed')
+    ) {
+      throw new TaskBusinessError(
+        'Откройте задачу согласования дат и примите решение в модальном окне.',
+        'DATE_CHANGE_APPROVAL_REQUIRED',
       )
     }
 

@@ -540,21 +540,27 @@ export type Database = {
           id: string
           machine_id: string
           body: string
-          created_by: string
+          created_by: string | null
+          message_kind: string
+          system_event_key: string | null
           created_at: string
         }
         Insert: {
           id?: string
           machine_id: string
           body: string
-          created_by: string
+          created_by?: string | null
+          message_kind?: string
+          system_event_key?: string | null
           created_at?: string
         }
         Update: {
           id?: string
           machine_id?: string
           body?: string
-          created_by?: string
+          created_by?: string | null
+          message_kind?: string
+          system_event_key?: string | null
           created_at?: string
         }
       }
@@ -1708,6 +1714,138 @@ export type Database = {
           inventory_id?: string
           previous_business_scrap_state?: string
           created_at?: string
+        }
+      }
+      production_month_plans: {
+        Row: {
+          id: string
+          factory_id: string
+          production_month: string
+          status: Database['public']['Enums']['production_month_plan_status']
+          preliminary_ready_at: string | null
+          preliminary_ready_by: string | null
+          confirmed_at: string | null
+          confirmed_by: string | null
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          factory_id: string
+          production_month: string
+          status?: Database['public']['Enums']['production_month_plan_status']
+          preliminary_ready_at?: string | null
+          preliminary_ready_by?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          factory_id?: string
+          production_month?: string
+          status?: Database['public']['Enums']['production_month_plan_status']
+          preliminary_ready_at?: string | null
+          preliminary_ready_by?: string | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      production_plan_date_change_requests: {
+        Row: {
+          id: string
+          production_month_plan_id: string
+          machine_id: string
+          requested_by: string
+          decided_by: string | null
+          task_id: string | null
+          status: Database['public']['Enums']['production_date_change_request_status']
+          comment: string | null
+          decision_comment: string | null
+          created_at: string
+          updated_at: string
+          decided_at: string | null
+        }
+        Insert: {
+          id?: string
+          production_month_plan_id: string
+          machine_id: string
+          requested_by: string
+          decided_by?: string | null
+          task_id?: string | null
+          status?: Database['public']['Enums']['production_date_change_request_status']
+          comment?: string | null
+          decision_comment?: string | null
+          created_at?: string
+          updated_at?: string
+          decided_at?: string | null
+        }
+        Update: {
+          id?: string
+          production_month_plan_id?: string
+          machine_id?: string
+          requested_by?: string
+          decided_by?: string | null
+          task_id?: string | null
+          status?: Database['public']['Enums']['production_date_change_request_status']
+          comment?: string | null
+          decision_comment?: string | null
+          created_at?: string
+          updated_at?: string
+          decided_at?: string | null
+        }
+      }
+      production_plan_date_change_request_items: {
+        Row: {
+          id: string
+          request_id: string
+          machine_id: string
+          target_type: 'machine' | 'stage'
+          production_stage_id: string | null
+          stage_type: Database['public']['Enums']['stage_type'] | null
+          field_name: string
+          old_value: string | null
+          new_value: string | null
+          status: Database['public']['Enums']['production_date_change_request_status']
+          sort_order: number
+          created_at: string
+          decided_at: string | null
+        }
+        Insert: {
+          id?: string
+          request_id: string
+          machine_id: string
+          target_type: 'machine' | 'stage'
+          production_stage_id?: string | null
+          stage_type?: Database['public']['Enums']['stage_type'] | null
+          field_name: string
+          old_value?: string | null
+          new_value?: string | null
+          status?: Database['public']['Enums']['production_date_change_request_status']
+          sort_order?: number
+          created_at?: string
+          decided_at?: string | null
+        }
+        Update: {
+          id?: string
+          request_id?: string
+          machine_id?: string
+          target_type?: 'machine' | 'stage'
+          production_stage_id?: string | null
+          stage_type?: Database['public']['Enums']['stage_type'] | null
+          field_name?: string
+          old_value?: string | null
+          new_value?: string | null
+          status?: Database['public']['Enums']['production_date_change_request_status']
+          sort_order?: number
+          created_at?: string
+          decided_at?: string | null
         }
       }
       production_tonnage_facts: {
@@ -3601,7 +3739,9 @@ export type Database = {
       pipe_subtype: 'square' | 'rectangular' | 'round' | 'wire'
       chain_cord_subtype: 'chain' | 'cord'
       task_delegation_status: 'pending' | 'accepted' | 'declined' | 'cancelled'
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review'
+      production_month_plan_status: 'draft' | 'preliminary_ready' | 'confirmed'
+      production_date_change_request_status: 'pending' | 'approved' | 'rejected' | 'conflicted'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'

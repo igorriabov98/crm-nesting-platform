@@ -11,6 +11,7 @@ import { createMachineSchema, machineExpenseSchema, machineItemSchema, machinePa
 import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
 import { SALES_PLAN_MACHINE_LIMIT } from '@/lib/constants/sales-plan'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
+import { isMachineInConfirmedProductionPlan, notifyMachineEnteredReadyProductionPlan } from '@/lib/actions/production-plan'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
 import { loadClientProductPriceLookup, resolveClientProductPrice, type ClientPriceDb, type ClientProductPriceLookup } from '@/lib/client-prices/server'
 import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
@@ -939,6 +940,7 @@ export async function createMachine(data: CreateMachineInput) {
     await notifyDirectorsAboutNewMachine(supabase, machineId, newMachine.name)
     await notifyProductionManagersAboutFactoryAssignment(supabase, parsed.factory_id, machineId, newMachine.name)
     await createPlanningDirectorReviewTasks(db, machineId, newMachine.name)
+    await notifyMachineEnteredReadyProductionPlan(machineId, user.id)
     if (parsed.desired_shipping_date) {
       await syncTransportCostTask(db, machineId)
     }
@@ -1059,6 +1061,14 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
   try {
     const { supabase, db, user } = await requireSalesPlanPermission('manage')
     await assertMachineNotArchived(db, id)
+    if (
+      user.role === 'production_manager' &&
+      data.planned_material_date !== undefined &&
+      await isMachineInConfirmedProductionPlan(id)
+    ) {
+      throw new Error('План месяца подтверждён. Отправьте запрос на изменение дат руководителю отдела планирования.')
+    }
+
     const currentClientIdForPricing = data.client_id !== undefined || data.items !== undefined
       ? await getMachineClientId(db, id)
       : undefined
@@ -1210,6 +1220,9 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
 
       if (data.material_type !== undefined) {
         await refreshMaterialUndefinedAgenda(supabase, data.material_type)
+      }
+      if (productionQueueGroupChanged) {
+        await notifyMachineEnteredReadyProductionPlan(id, user.id)
       }
     }
 

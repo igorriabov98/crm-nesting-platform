@@ -31,6 +31,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { ROUTES } from '@/lib/constants/routes'
+import { STAGES } from '@/lib/constants/stages'
+import { formatProductionMonth } from '@/lib/utils/production-months'
+import {
+  decideProductionPlanDateChangeRequest,
+  getProductionPlanDateChangeApproval,
+  type ProductionPlanDateChangeApprovalPayload,
+  type ProductionPlanDateChangeApprovalItem,
+} from '@/lib/actions/production-plan'
 import {
   acceptTaskDelegation,
   cancelTaskDelegation,
@@ -72,6 +80,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   consumable_request_shortage: 'Недопоставка расходника',
   supply_material_receipt_shortage: 'Недовес материала',
   production_cutting_rollback_review: 'Откат заготовки',
+  production_plan_date_change_approval: 'Согласование дат',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {
@@ -217,11 +226,27 @@ function isCuttingRollbackTask(taskType: TaskType) {
   return taskType === 'production_cutting_rollback_review'
 }
 
+function isProductionPlanDateChangeTask(taskType: TaskType) {
+  return taskType === 'production_plan_date_change_approval'
+}
+
 function getTaskTypeBadgeClass(taskType: TaskType) {
   if (isConsumableTask(taskType)) return 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
   if (isSupplyReceiptTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (isCuttingRollbackTask(taskType)) return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
+  if (isProductionPlanDateChangeTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'
+}
+
+function dateChangeFieldLabel(item: ProductionPlanDateChangeApprovalItem) {
+  if (item.target_type === 'machine') return 'Плановая поставка материала'
+  const stage = item.stage_type ? STAGES[item.stage_type]?.label || item.stage_type : 'Этап'
+  const field = item.field_name === 'date_start'
+    ? 'начало'
+    : item.field_name === 'date_end'
+      ? 'окончание'
+      : 'ночная смена'
+  return `${stage}: ${field}`
 }
 
 function getStatusIcon(status: TaskStatus, overdue: boolean) {
@@ -270,6 +295,10 @@ export function TaskCards({
   const [cuttingRollbackPreview, setCuttingRollbackPreview] = useState<CuttingRollbackPreview | null>(null)
   const [cuttingRollbackComment, setCuttingRollbackComment] = useState('')
   const [cuttingRollbackLoading, setCuttingRollbackLoading] = useState(false)
+  const [dateChangeTask, setDateChangeTask] = useState<TaskWithRelations | null>(null)
+  const [dateChangeApproval, setDateChangeApproval] = useState<ProductionPlanDateChangeApprovalPayload | null>(null)
+  const [dateChangeDecisionComment, setDateChangeDecisionComment] = useState('')
+  const [dateChangeApprovalLoading, setDateChangeApprovalLoading] = useState(false)
   const [delegationTask, setDelegationTask] = useState<TaskWithRelations | null>(null)
   const [declineTask, setDeclineTask] = useState<TaskWithRelations | null>(null)
   const [delegationCandidates, setDelegationCandidates] = useState<TaskDelegationCandidate[]>([])
@@ -509,6 +538,53 @@ export function TaskCards({
     }
   }
 
+  const openDateChangeApprovalDialog = async (task: TaskWithRelations) => {
+    setDateChangeTask(task)
+    setDateChangeApproval(null)
+    setDateChangeDecisionComment('')
+    setDateChangeApprovalLoading(true)
+    try {
+      const result = await getProductionPlanDateChangeApproval(task.id)
+      if (!result.data || result.error) throw new Error(result.error || 'Не удалось загрузить запрос')
+      setDateChangeApproval(result.data)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось загрузить запрос')
+      setDateChangeTask(null)
+    } finally {
+      setDateChangeApprovalLoading(false)
+    }
+  }
+
+  const handleDateChangeDecision = async (decision: 'approved' | 'rejected') => {
+    if (!dateChangeTask || !dateChangeApproval) return
+    setUpdatingId(dateChangeTask.id)
+    try {
+      const result = await decideProductionPlanDateChangeRequest({
+        requestId: dateChangeApproval.request.id,
+        decision,
+        comment: dateChangeDecisionComment,
+      })
+      if (!result.success) throw new Error(result.error || 'Не удалось обработать запрос')
+
+      if (result.outcome === 'approved') {
+        toast.success('Изменения дат одобрены')
+      } else if (result.outcome === 'conflicted') {
+        toast.error('Даты уже изменились. Запрос закрыт с конфликтом.')
+      } else {
+        toast.success('Запрос отклонён')
+      }
+
+      setDateChangeTask(null)
+      setDateChangeApproval(null)
+      setDateChangeDecisionComment('')
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось обработать запрос')
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
   if (tasks.length === 0) {
     return (
       <div className="flex min-h-32 items-center gap-3 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-6 text-sm text-slate-600">
@@ -627,6 +703,22 @@ export function TaskCards({
     }
 
     if (context === 'outgoing' && pendingDelegation) return null
+
+    if (isProductionPlanDateChangeTask(task.task_type)) {
+      if (task.status === 'completed' || task.status === 'cancelled') return null
+      return (
+        <div className={groupClass}>
+          <Button
+            size="sm"
+            onClick={() => openDateChangeApprovalDialog(task)}
+            disabled={updatingId === task.id || dateChangeApprovalLoading}
+            className={buttonClass}
+          >
+            Рассмотреть
+          </Button>
+        </div>
+      )
+    }
 
     if (
       nextStatus === 'completed'
@@ -1024,6 +1116,136 @@ export function TaskCards({
     </Dialog>
   )
 
+  const dateChangeApprovalDialog = (
+    <Dialog open={!!dateChangeTask} onOpenChange={(open) => {
+      if (!open) {
+        setDateChangeTask(null)
+        setDateChangeApproval(null)
+        setDateChangeDecisionComment('')
+      }
+    }}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Согласование изменения дат</DialogTitle>
+          <DialogDescription>
+            Проверьте старые и запрошенные даты перед решением.
+          </DialogDescription>
+        </DialogHeader>
+
+        {dateChangeApprovalLoading ? (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
+            Загружаю запрос...
+          </div>
+        ) : dateChangeApproval ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="text-xs font-medium text-slate-500">Машина</div>
+                <div className="mt-1 font-semibold text-slate-950">{dateChangeApproval.request.machine.name}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="text-xs font-medium text-slate-500">План</div>
+                <div className="mt-1 font-semibold text-slate-950">
+                  {dateChangeApproval.request.factory?.name || 'Завод'} · {formatProductionMonth(dateChangeApproval.request.plan.production_month)}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="text-xs font-medium text-slate-500">Инициатор</div>
+                <div className="mt-1 font-semibold text-slate-950">
+                  {dateChangeApproval.request.requested_by_user?.full_name || 'Сотрудник'}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="text-xs font-medium text-slate-500">Дата запроса</div>
+                <div className="mt-1 font-semibold text-slate-950">{formatTaskDate(dateChangeApproval.request.created_at)}</div>
+              </div>
+            </div>
+
+            {dateChangeApproval.request.comment && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <div className="font-medium">Комментарий инициатора</div>
+                <div className="mt-1 whitespace-pre-wrap">{dateChangeApproval.request.comment}</div>
+              </div>
+            )}
+
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50 hover:bg-slate-50">
+                    <TableHead>Дата</TableHead>
+                    <TableHead className="w-32">Было</TableHead>
+                    <TableHead className="w-32">Запрошено</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dateChangeApproval.items.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-medium text-slate-900">{dateChangeFieldLabel(item)}</TableCell>
+                      <TableCell className="tabular-nums text-slate-600">{formatTaskDate(item.old_value)}</TableCell>
+                      <TableCell className="tabular-nums font-semibold text-slate-950">{formatTaskDate(item.new_value)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="date_change_decision_comment">Комментарий к решению</Label>
+              <Textarea
+                id="date_change_decision_comment"
+                value={dateChangeDecisionComment}
+                onChange={(event) => setDateChangeDecisionComment(event.target.value)}
+                placeholder="Причина отклонения или короткий комментарий к одобрению."
+                rows={3}
+                disabled={dateChangeApproval.request.status !== 'pending'}
+              />
+            </div>
+
+            {dateChangeApproval.request.status !== 'pending' && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                Запрос уже обработан. Решение: {dateChangeApproval.request.status}.
+                {dateChangeApproval.request.decision_comment ? ` Комментарий: ${dateChangeApproval.request.decision_comment}` : ''}
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setDateChangeTask(null)
+              setDateChangeApproval(null)
+              setDateChangeDecisionComment('')
+            }}
+            disabled={!!updatingId}
+            className="min-h-11"
+          >
+            Закрыть
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => handleDateChangeDecision('rejected')}
+            disabled={!dateChangeApproval || dateChangeApproval.request.status !== 'pending' || !!updatingId || dateChangeApprovalLoading}
+            className="min-h-11 border-red-200 text-red-700 hover:bg-red-50"
+          >
+            Отклонить
+          </Button>
+          <Button
+            type="button"
+            onClick={() => handleDateChangeDecision('approved')}
+            disabled={!dateChangeApproval || dateChangeApproval.request.status !== 'pending' || !!updatingId || dateChangeApprovalLoading}
+            className="min-h-11"
+          >
+            Одобрить
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+
   if (layout === 'list') {
     return (
       <>
@@ -1159,6 +1381,7 @@ export function TaskCards({
         {declineDialog}
         {deliverablesDialog}
         {cuttingRollbackDialog}
+        {dateChangeApprovalDialog}
       </>
     )
   }
@@ -1276,6 +1499,7 @@ export function TaskCards({
       {declineDialog}
       {deliverablesDialog}
       {cuttingRollbackDialog}
+      {dateChangeApprovalDialog}
     </>
   )
 }
