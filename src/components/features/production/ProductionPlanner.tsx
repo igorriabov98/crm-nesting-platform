@@ -62,6 +62,17 @@ type PlannerRow = {
   machineIndex: number
 }
 
+type StageLaneItem = {
+  stage: GanttStage
+  lane: number
+}
+
+type StageLaneLayout = {
+  items: StageLaneItem[]
+  laneCount: number
+  rowHeight: number
+}
+
 type UnscheduledRow = {
   machine: GanttMachine
   productionRow: ProductionRow
@@ -102,13 +113,14 @@ const MACHINE_RAIL_WIDTH = 248
 const TIMELINE_HEIGHT = 56
 const BAR_HEIGHT = 18
 const BAR_LANE_GAP = 4
-const BAR_LANES = 3
+const MIN_BAR_LANES = 3
+const BAR_COLLISION_GAP = 6
 const SUPPLY_LANE_GAP = 6
 const SUPPLY_LANE_HEIGHT = 44
 const SUPPLY_LANE_TOP = 8
 const STAGE_LANE_TOP = SUPPLY_LANE_TOP + SUPPLY_LANE_HEIGHT + SUPPLY_LANE_GAP
-const STAGE_LANE_AREA_HEIGHT = BAR_LANES * BAR_HEIGHT + (BAR_LANES - 1) * BAR_LANE_GAP
-const PLANNER_ROW_HEIGHT = STAGE_LANE_TOP + STAGE_LANE_AREA_HEIGHT + 8
+const DEFAULT_PLANNER_ROW_HEIGHT =
+  STAGE_LANE_TOP + MIN_BAR_LANES * BAR_HEIGHT + (MIN_BAR_LANES - 1) * BAR_LANE_GAP + 8
 const ZOOM_MIN = 15
 const ZOOM_MAX = 80
 const ZOOM_STEP = 5
@@ -511,26 +523,54 @@ function SelectField({
   )
 }
 
-function buildStageLanes(stages: GanttStage[], rangeStart: Date, dayWidth: number) {
-  const laneEnds: number[] = []
+function getPlannerRowHeight(laneCount: number) {
+  const normalizedLaneCount = Math.max(MIN_BAR_LANES, laneCount)
+  return STAGE_LANE_TOP + normalizedLaneCount * BAR_HEIGHT + (normalizedLaneCount - 1) * BAR_LANE_GAP + 8
+}
 
-  return stages.map((stage) => {
-    const start = new Date(stage.date_start)
-    const end = new Date(stage.date_end)
-    const { left, width } = barGeometry(start, end, rangeStart, scale, dayWidth)
-    let lane = laneEnds.findIndex((endPx) => endPx <= left - 6)
+function buildStageLaneLayout(stages: GanttStage[], rangeStart: Date, dayWidth: number): StageLaneLayout {
+  const laneEnds: number[] = []
+  const positionedStages = stages
+    .map((stage) => {
+      const start = new Date(stage.date_start)
+      const end = new Date(stage.date_end)
+      const { left, width } = barGeometry(start, end, rangeStart, scale, dayWidth)
+
+      return {
+        stage,
+        left,
+        right: left + width,
+      }
+    })
+    .sort((a, b) => (
+      a.left - b.left ||
+      a.right - b.right ||
+      STAGE_ORDER.indexOf(a.stage.stage_type) - STAGE_ORDER.indexOf(b.stage.stage_type)
+    ))
+
+  const items = positionedStages.map(({ stage, left, right }) => {
+    let lane = laneEnds.findIndex((endPx) => endPx <= left - BAR_COLLISION_GAP)
 
     if (lane === -1) {
-      lane = laneEnds.length < BAR_LANES ? laneEnds.length : BAR_LANES - 1
+      lane = laneEnds.length
     }
 
-    laneEnds[lane] = Math.max(laneEnds[lane] || 0, left + width)
+    laneEnds[lane] = Math.max(laneEnds[lane] || 0, right)
     return { stage, lane }
   })
+
+  const laneCount = Math.max(MIN_BAR_LANES, laneEnds.length)
+
+  return {
+    items,
+    laneCount,
+    rowHeight: getPlannerRowHeight(laneCount),
+  }
 }
 
 function PlannerVirtualRow({
   row,
+  layout,
   top,
   totalWidth,
   rangeStart,
@@ -541,6 +581,7 @@ function PlannerVirtualRow({
   onSelect,
 }: {
   row: PlannerRow
+  layout: StageLaneLayout
   top: number
   totalWidth: number
   rangeStart: Date
@@ -553,7 +594,7 @@ function PlannerVirtualRow({
   const machine = row.machine
   const queueLabel = productionQueueLabel(machine.production_workshop, machine.production_queue_number)
   const monthLabel = productionMonthLabel(machine.production_month)
-  const stageLanes = buildStageLanes(row.visibleStages, rangeStart, dayWidth)
+  const stageLanes = layout.items
   const plannedMaterialGroups = groupMaterialItemsByDate(
     machine.material_items.filter((item) => !isMaterialItemReceived(item)),
     (item) => item.planned_delivery_date
@@ -578,7 +619,7 @@ function PlannerVirtualRow({
       )}
       style={{
         top,
-        height: PLANNER_ROW_HEIGHT,
+        height: layout.rowHeight,
         width: MACHINE_RAIL_WIDTH + totalWidth,
         gridTemplateColumns: `${MACHINE_RAIL_WIDTH}px ${totalWidth}px`,
         contain: 'layout style',
@@ -1342,6 +1383,11 @@ export function ProductionPlanner({
     return rows
   }, [effectiveData.machines, filters])
 
+  const plannerRowLayouts = useMemo(
+    () => plannerRows.map((row) => buildStageLaneLayout(row.visibleStages, rangeStart, dayWidth)),
+    [plannerRows, rangeStart, dayWidth]
+  )
+
   const unscheduledRows = useMemo<UnscheduledRow[]>(() => {
     const selectedWorkshop = filters.workshop ? parseInt(filters.workshop) : null
     const selectedProductionMonth = normalizeProductionMonthValue(filters.productionMonth)
@@ -1460,9 +1506,13 @@ export function ProductionPlanner({
   const rowVirtualizer = useVirtualizer({
     count: plannerRows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => PLANNER_ROW_HEIGHT,
+    estimateSize: (index) => plannerRowLayouts[index]?.rowHeight ?? DEFAULT_PLANNER_ROW_HEIGHT,
     overscan: 10,
   })
+
+  useEffect(() => {
+    rowVirtualizer.measure()
+  }, [plannerRowLayouts, rowVirtualizer])
 
   const todayOffset = useMemo(() => {
     const today = new Date()
@@ -1981,12 +2031,18 @@ export function ProductionPlanner({
 
                   {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                     const row = plannerRows[virtualRow.index]
+                    const layout = plannerRowLayouts[virtualRow.index]
                     if (!row) return null
 
                     return (
                       <PlannerVirtualRow
                         key={virtualRow.key}
                         row={row}
+                        layout={layout ?? {
+                          items: [],
+                          laneCount: MIN_BAR_LANES,
+                          rowHeight: DEFAULT_PLANNER_ROW_HEIGHT,
+                        }}
                         top={virtualRow.start}
                         totalWidth={totalWidth}
                         rangeStart={rangeStart}
