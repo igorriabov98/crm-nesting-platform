@@ -8,7 +8,7 @@ import { barGeometry, formatDate, type GanttScale } from '@/lib/utils/gantt'
 import { cn } from '@/lib/utils'
 import { ROUTES } from '@/lib/constants/routes'
 import type { GanttStage } from '@/app/(protected)/production/gantt/actions'
-import { getGanttStageColor, getGanttStageLabel } from './types'
+import { GANTT_SHIPPING_READY_MARKER_SIZE, getGanttStageColor, getGanttStageLabel } from './types'
 
 interface GanttBarProps {
   stage: GanttStage
@@ -99,6 +99,7 @@ export const GanttBar = React.memo(function GanttBar({
   const visibleStatus = planOnly ? 'not_planned' : stage.status
   const isPlanned = visibleStatus === 'not_planned'
   const showLabel = width > 70
+  const isShippingReadiness = stage.stage_type === 'shipping'
 
   let nightLeft = 0
   let showNight = false
@@ -114,6 +115,19 @@ export const GanttBar = React.memo(function GanttBar({
     Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1
   )
   const usesExpandedHitArea = Boolean(onSelect)
+  const shippingMarkerGeometry = isShippingReadiness
+    ? barGeometry(endDate, endDate, rangeStart, scale, unitWidth)
+    : null
+  const shippingHitWidth = usesExpandedHitArea
+    ? Math.max(32, GANTT_SHIPPING_READY_MARKER_SIZE)
+    : Math.max(24, GANTT_SHIPPING_READY_MARKER_SIZE)
+  const shippingMarkerCenter = shippingMarkerGeometry
+    ? shippingMarkerGeometry.left + shippingMarkerGeometry.width / 2
+    : left + width / 2
+  const containerLeft = isShippingReadiness
+    ? shippingMarkerCenter - shippingHitWidth / 2
+    : left
+  const containerWidth = isShippingReadiness ? shippingHitWidth : width
 
   return (
     <div
@@ -124,8 +138,8 @@ export const GanttBar = React.memo(function GanttBar({
         "cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1"
       )}
       style={{
-        left,
-        width,
+        left: containerLeft,
+        width: containerWidth,
         height: usesExpandedHitArea ? 44 : '100%',
         zIndex: 5,
       }}
@@ -147,62 +161,77 @@ export const GanttBar = React.memo(function GanttBar({
       data-stage-status={visibleStatus}
       data-stage-type={stage.stage_type}
     >
-      <div
-        className={cn(
-          "absolute left-0 right-0 overflow-hidden rounded-none transition-[filter,box-shadow] hover:brightness-105",
-          usesExpandedHitArea ? "top-1/2 h-[18px] -translate-y-1/2" : "inset-0",
-          isPlanned ? "border-2 border-dashed" : "shadow-sm",
-          visibleStatus === 'overdue' && "ring-2 ring-red-500"
-        )}
-        style={{
-          borderColor: isPlanned ? color : undefined,
-          backgroundColor: isPlanned ? hexToRgba(color, 0.16) : color,
-        }}
-      >
-        {showNight && !isPlanned && (
+      {isShippingReadiness ? (
+        <div
+          className={cn(
+            "absolute left-1/2 top-1/2 rounded-full border-2 border-white shadow-[0_2px_6px_rgba(22,163,74,0.35)] transition-[filter,box-shadow] -translate-x-1/2 -translate-y-1/2 hover:brightness-105",
+            visibleStatus === 'overdue' && "ring-2 ring-red-500 ring-offset-1"
+          )}
+          style={{
+            width: GANTT_SHIPPING_READY_MARKER_SIZE,
+            height: GANTT_SHIPPING_READY_MARKER_SIZE,
+            backgroundColor: color,
+          }}
+          aria-label={`${getGanttStageLabel(stage.stage_type)}: ${formatDate(endDate)}`}
+        />
+      ) : (
+        <div
+          className={cn(
+            "absolute left-0 right-0 overflow-hidden rounded-none transition-[filter,box-shadow] hover:brightness-105",
+            usesExpandedHitArea ? "top-1/2 h-[18px] -translate-y-1/2" : "inset-0",
+            isPlanned ? "border-2 border-dashed" : "shadow-sm",
+            visibleStatus === 'overdue' && "ring-2 ring-red-500"
+          )}
+          style={{
+            borderColor: isPlanned ? color : undefined,
+            backgroundColor: isPlanned ? hexToRgba(color, 0.16) : color,
+          }}
+        >
+          {showNight && !isPlanned && (
+            <div
+              className="absolute top-0 bottom-0 opacity-75"
+              style={{
+                left: nightLeft,
+                width: unitWidth,
+                backgroundColor: NIGHT_SHIFT_COLOR,
+              }}
+            />
+          )}
+
           <div
-            className="absolute top-0 bottom-0 opacity-75"
+            className="pointer-events-none absolute inset-0"
             style={{
-              left: nightLeft,
-              width: unitWidth,
-              backgroundColor: NIGHT_SHIFT_COLOR,
+              backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${unitWidth}px)`,
             }}
           />
-        )}
 
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${unitWidth}px)`,
-          }}
-        />
+          {!isConfirmed && !isPlanned && (
+            <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(255,255,255,0.22)_4px,rgba(255,255,255,0.22)_8px)]" />
+          )}
 
-        {!isConfirmed && !isPlanned && (
-          <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(255,255,255,0.22)_4px,rgba(255,255,255,0.22)_8px)]" />
-        )}
-
-        {showLabel && (onSelect ? (
-          <span
-            className={cn(
-              "relative z-10 flex h-full items-center truncate px-3 text-[11px] font-medium",
-              isPlanned ? "text-[#374151]" : "text-white"
-            )}
-          >
-            {getGanttStageLabel(stage.stage_type)}
-          </span>
-        ) : (
-          <Link
-            href={`${ROUTES.SALES_PLAN}/${machineId}`}
-            className={cn(
-              "relative z-10 flex h-full items-center truncate px-3 text-[11px] font-medium",
-              isPlanned ? "text-[#374151]" : "text-white"
-            )}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {getGanttStageLabel(stage.stage_type)}
-          </Link>
-        ))}
-      </div>
+          {showLabel && (onSelect ? (
+            <span
+              className={cn(
+                "relative z-10 flex h-full items-center truncate px-3 text-[11px] font-medium",
+                isPlanned ? "text-[#374151]" : "text-white"
+              )}
+            >
+              {getGanttStageLabel(stage.stage_type)}
+            </span>
+          ) : (
+            <Link
+              href={`${ROUTES.SALES_PLAN}/${machineId}`}
+              className={cn(
+                "relative z-10 flex h-full items-center truncate px-3 text-[11px] font-medium",
+                isPlanned ? "text-[#374151]" : "text-white"
+              )}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {getGanttStageLabel(stage.stage_type)}
+            </Link>
+          ))}
+        </div>
+      )}
 
       {showTooltip && typeof document !== 'undefined' && createPortal(
         <div
@@ -216,13 +245,22 @@ export const GanttBar = React.memo(function GanttBar({
           }}
         >
           <p className="mb-1.5 flex items-center gap-2 font-semibold">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: color }} />
+            <span
+              className={cn("h-2.5 w-2.5", isShippingReadiness ? "rounded-full" : "rounded-sm")}
+              style={{ backgroundColor: color }}
+            />
             {getGanttStageLabel(stage.stage_type)}
           </p>
           {stage.workshop && <p className="text-[#6B7280]">Цех: <span className="text-[#1B3A6B]">{stage.workshop}</span></p>}
-          <p className="text-[#6B7280]">Начало: <span className="text-[#1B3A6B]">{formatDate(startDate)}</span></p>
-          <p className="text-[#6B7280]">Конец: <span className="text-[#1B3A6B]">{formatDate(endDate)}</span></p>
-          <p className="text-[#6B7280]">Длительность: <span className="text-[#1B3A6B]">{durationDays} дн.</span></p>
+          {isShippingReadiness ? (
+            <p className="text-[#6B7280]">Дата: <span className="text-[#1B3A6B]">{formatDate(endDate)}</span></p>
+          ) : (
+            <>
+              <p className="text-[#6B7280]">Начало: <span className="text-[#1B3A6B]">{formatDate(startDate)}</span></p>
+              <p className="text-[#6B7280]">Конец: <span className="text-[#1B3A6B]">{formatDate(endDate)}</span></p>
+              <p className="text-[#6B7280]">Длительность: <span className="text-[#1B3A6B]">{durationDays} дн.</span></p>
+            </>
+          )}
           {isPlanned && <p className="mt-1 text-[#6B7280]">Запланировано</p>}
           {visibleStatus === 'active' && <p className="mt-1 text-[#2563EB]">В работе</p>}
           {visibleStatus === 'completed' && <p className="mt-1 text-[#16A34A]">Завершен</p>}

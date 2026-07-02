@@ -10,7 +10,7 @@ export const GANTT_STAGE_COLORS: Record<StageType, string> = {
   post_galvanizing_cleaning: '#D6A500',
   painting: '#70AD47',
   packaging: '#F4B183',
-  shipping: '#C55A11',
+  shipping: '#16A34A',
   actual_shipping: '#B91C1C',
 }
 
@@ -18,6 +18,7 @@ export const GANTT_ROW_HEIGHT = 56
 export const GANTT_TIMELINE_HEIGHT = 56
 export const GANTT_BAR_HEIGHT = 22
 export const GANTT_STAGE_DOT_SIZE = 10
+export const GANTT_SHIPPING_READY_MARKER_SIZE = 16
 export const GANTT_MARKER_SIZE = 12
 export const GANTT_SHIPPING_MARKER_HEIGHT = 10
 export const GANTT_MACHINE_COL_WIDTH = 184

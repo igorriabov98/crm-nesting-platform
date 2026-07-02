@@ -3,6 +3,7 @@
 import React from 'react'
 import Link from 'next/link'
 import { ROUTES } from '@/lib/constants/routes'
+import { cn } from '@/lib/utils'
 import {
   GANTT_LEFT_WIDTH,
   GANTT_MACHINE_COL_WIDTH,
@@ -76,7 +77,10 @@ export function GanttMachineList({ groups }: GanttMachineListProps) {
                   {row.type === 'stage' ? (
                     <>
                       <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                        className={cn(
+                          "h-2.5 w-2.5 shrink-0",
+                          row.stage.stage_type === 'shipping' ? "rounded-full" : "rounded-sm"
+                        )}
                         style={{ backgroundColor: getGanttStageColor(row.stage.stage_type) }}
                       />
                       <span className="truncate">{getGanttStageLabel(row.stage.stage_type)}</span>

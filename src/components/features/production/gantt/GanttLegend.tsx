@@ -42,7 +42,7 @@ export function GanttLegend({
             {stages.map((stage) => (
               <div key={stage} className="flex items-center gap-1.5">
                 <div
-                  className="shrink-0 rounded-sm"
+                  className={cn("shrink-0", stage === 'shipping' ? "rounded-full" : "rounded-sm")}
                   style={{
                     width: GANTT_STAGE_DOT_SIZE,
                     height: GANTT_STAGE_DOT_SIZE,
