@@ -4,6 +4,7 @@ import { NotFoundError } from '../errors';
 import { analyzePDF, parsePDFAnalysisResponse } from './openrouter';
 import { estimateCost, getAISettingsView, recordAIUsage } from './settings';
 import { matchBOMToParts } from './bom-matcher';
+import { applyDimensionGuard } from './dimension-guard';
 import { extractDeterministicBOMFromPdf, mergeDeterministicBOM } from './pdf-bom-fallback';
 import { resolveBOMSteelTypes } from './steel-types';
 import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
@@ -61,7 +62,8 @@ export async function analyzeProjectPdf(input: {
     },
   });
   const matches = matchBOMToParts(bom, parts, pdfResult.details, input.steelTypes ?? []);
-  const finalMatches = input.autoApply === false ? matches : await autoApplyMatches(matches);
+  const partsById = new Map(parts.map((part) => [part.id, part]));
+  const finalMatches = input.autoApply === false ? matches : await autoApplyMatches(matches, partsById);
   const unmatchedBom = getUnmatchedBom(bom, finalMatches);
   const cost = estimateCost(pdfResult.tokensUsed, pdfResult.model);
 
@@ -138,7 +140,10 @@ export async function getProjectSpecification(projectId: string): Promise<Omit<P
   };
 }
 
-async function autoApplyMatches(matches: MatchResult[]): Promise<MatchResult[]> {
+async function autoApplyMatches(
+  matches: MatchResult[],
+  partsById: Map<string, { id: string; name: string; width: number; height: number }>
+): Promise<MatchResult[]> {
   const nextMatches = [...matches];
 
   for (let index = 0; index < nextMatches.length; index += 1) {
@@ -157,9 +162,12 @@ async function autoApplyMatches(matches: MatchResult[]): Promise<MatchResult[]> 
       data.steelTypeRaw = match.suggestedSteelTypeRaw;
     }
     if (typeof match.suggestedThickness === 'number') data.thickness = match.suggestedThickness;
-    if (match.suggestedUnfoldingWidth && match.suggestedUnfoldingHeight) {
-      data.width = match.suggestedUnfoldingWidth;
-      data.height = match.suggestedUnfoldingHeight;
+    const part = partsById.get(match.partId);
+    const dimensionGuard = part
+      ? applyDimensionGuard(data, part, match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)
+      : null;
+    if (dimensionGuard) {
+      Object.assign(data, dimensionGuard.data);
     }
     if (match.suggestedHasBends !== null) data.hasBends = match.suggestedHasBends;
     if (match.suggestedIsSheetMetal === true) {

@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import { applyDimensionGuard, isDimensionChangeSafe } from '../ai/dimension-guard';
+
+const part = {
+  name: 'Panel A',
+  width: 100,
+  height: 50,
+};
+
+assert.equal(isDimensionChangeSafe(part, 100.5, 50.5), true, 'roughly one percent dimension change should pass');
+assert.equal(isDimensionChangeSafe(part, 105, 50), false, 'five percent area/aspect mismatch should fail');
+
+const blocked = applyDimensionGuard({}, part, 105, 50, { blockOnMismatch: true });
+assert.equal(blocked.blocked, true, 'manual apply should block unsafe dimensions without force');
+assert.match(blocked.note ?? '', /PDF предлагает 105 x 50 мм/);
+
+const forced = applyDimensionGuard({}, part, 105, 50, { blockOnMismatch: true, force: true });
+assert.equal(forced.blocked, false, 'force=true should bypass the block');
+assert.equal(forced.dimensionsApplied, true);
+assert.equal(forced.data.width, 105);
+assert.equal(forced.data.height, 50);
+assert.equal(forced.data.dimensionMismatch, false);
+
+const safeFields = applyDimensionGuard({ material: 'Алюминий', quantity: 3 }, part, 105, 50);
+assert.equal(safeFields.blocked, false, 'auto apply should keep safe fields on dimension mismatch');
+assert.equal(safeFields.dimensionsApplied, false);
+assert.equal(safeFields.data.material, 'Алюминий');
+assert.equal(safeFields.data.quantity, 3);
+assert.equal(safeFields.data.dimensionMismatch, true);
+assert.match(String(safeFields.data.mismatchNote), /STEP содержит 100 x 50 мм/);
+
+console.log('[dimension-guard] all tests passed');

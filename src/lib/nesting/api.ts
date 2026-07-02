@@ -49,6 +49,8 @@ export interface NestingPart {
   isSheetMetal: boolean
   grainLock: boolean
   hasBends: boolean
+  dimensionMismatch: boolean
+  mismatchNote: string | null
   thumbnailSvg: string | null
   classificationMethod: ClassificationMethod | string | null
   classificationWarning: string | null
@@ -441,12 +443,13 @@ export async function applyProjectBOM(
     hasBends?: boolean
     unfoldingWidth?: number
     unfoldingHeight?: number
-  }>
+  }>,
+  force?: boolean
 ): Promise<{ updated: number }> {
   const res = await request(buildUrl(`/api/projects/${projectId}/apply-bom`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ matches }),
+    body: JSON.stringify({ matches, force }),
   }, 'Не удалось применить предложения AI')
   return readJson<{ updated: number }>(res, 'Не удалось применить предложения AI')
 }

@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { AppError, NotFoundError, ValidationError } from '../lib/errors';
 import { prisma } from '../lib/prisma';
 import { idParamSchema } from '../schemas/common.schema';
 import { analyzeProjectPdf, getProjectSpecification, markSpecificationMatchesApplied } from '../lib/ai/service';
+import { applyDimensionGuard } from '../lib/ai/dimension-guard';
 import {
   aiSettingsInputSchema,
   getAISettingsView,
@@ -25,6 +27,7 @@ const analyzePdfSchema = z.object({
 });
 
 const applyBomSchema = z.object({
+  force: z.boolean().optional(),
   matches: z.array(
     z.object({
       partId: z.string().min(1),
@@ -125,29 +128,17 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     const body = applyBomSchema.parse(request.body ?? {});
     const parts = await prisma.part.findMany({
       where: { projectId: id, id: { in: body.matches.map((match) => match.partId) } },
-      select: { id: true },
+      select: { id: true, name: true, width: true, height: true },
     });
-    const validPartIds = new Set(parts.map((part) => part.id));
-    let updated = 0;
+    const partsById = new Map(parts.map((part) => [part.id, part]));
+    const pendingUpdates: Array<{ partId: string; data: Prisma.PartUpdateInput }> = [];
     const updatedPartIds = new Set<string>();
 
     for (const match of body.matches) {
-      if (!validPartIds.has(match.partId)) continue;
+      const part = partsById.get(match.partId);
+      if (!part) continue;
 
-      const data: {
-        material?: string;
-        quantity?: number;
-        steelTypeId?: string | null;
-        steelTypeName?: string | null;
-        steelTypeRaw?: string | null;
-        thickness?: number;
-        isSheetMetal?: boolean;
-        width?: number;
-        height?: number;
-        hasBends?: boolean;
-        classificationMethod?: string;
-        classificationWarning?: string | null;
-      } = {};
+      const data: Prisma.PartUpdateInput = {};
       if (match.material) data.material = match.material;
       if (match.quantity) data.quantity = match.quantity;
       if ('steelTypeId' in match) data.steelTypeId = match.steelTypeId ?? null;
@@ -167,23 +158,37 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         }
       }
       if (match.unfoldingWidth && match.unfoldingHeight) {
-        data.width = match.unfoldingWidth;
-        data.height = match.unfoldingHeight;
         if (data.hasBends === undefined) data.hasBends = true;
       }
-      if (Object.keys(data).length === 0) continue;
 
-      await prisma.part.update({
-        where: { id: match.partId },
-        data,
+      const guarded = applyDimensionGuard(data, part, match.unfoldingWidth, match.unfoldingHeight, {
+        force: body.force === true,
+        blockOnMismatch: true,
       });
-      updated += 1;
+
+      if (guarded.blocked) {
+        throw new AppError(409, guarded.note ?? 'Размеры PDF расходятся с геометрией STEP', {
+          partId: match.partId,
+          mismatchNote: guarded.note,
+        });
+      }
+
+      if (Object.keys(guarded.data).length === 0) continue;
+
+      pendingUpdates.push({ partId: match.partId, data: guarded.data });
       updatedPartIds.add(match.partId);
+    }
+
+    for (const update of pendingUpdates) {
+      await prisma.part.update({
+        where: { id: update.partId },
+        data: update.data,
+      });
     }
 
     await markSpecificationMatchesApplied(id, updatedPartIds);
 
-    return { updated };
+    return { updated: pendingUpdates.length };
   });
 }
 

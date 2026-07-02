@@ -92,6 +92,8 @@ model Part {
   isSheetMetal Boolean        @default(true)
   grainLock    Boolean        @default(false)
   hasBends     Boolean        @default(false)
+  dimensionMismatch Boolean   @default(false)
+  mismatchNote String?
   thumbnailSvg String?
   classificationMethod  String?
   classificationWarning String?

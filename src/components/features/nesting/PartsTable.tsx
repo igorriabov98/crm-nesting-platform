@@ -250,6 +250,18 @@ export function PartsTable({
                           <TooltipContent>{formatBBox(part)}</TooltipContent>
                         </Tooltip>
                       ) : null}
+                      {part.dimensionMismatch ? (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <span className="inline-flex">
+                                <AlertTriangle className="h-3.5 w-3.5 text-[#D97706]" />
+                              </span>
+                            }
+                          />
+                          <TooltipContent>{part.mismatchNote || 'Размеры PDF расходятся с геометрией STEP'}</TooltipContent>
+                        </Tooltip>
+                      ) : null}
                     </div>
                   </TableCell>
                   <TableCell>

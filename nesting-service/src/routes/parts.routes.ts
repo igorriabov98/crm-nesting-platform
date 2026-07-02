@@ -33,6 +33,8 @@ const partListSelect = {
   isSheetMetal: true,
   grainLock: true,
   hasBends: true,
+  dimensionMismatch: true,
+  mismatchNote: true,
   thumbnailSvg: true,
   classificationMethod: true,
   classificationWarning: true,
