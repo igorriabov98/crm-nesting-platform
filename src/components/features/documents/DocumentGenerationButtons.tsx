@@ -28,7 +28,7 @@ import { Label } from "@/components/ui/label"
 import { LoadingButton } from "@/components/ui/loading-button"
 import { ContractSelectField } from "@/components/features/contracts/ContractSelectField"
 
-type DocumentType = "specification" | "invoice" | "packing_list" | "all"
+type DocumentType = "specification" | "invoice" | "packing_list" | "quality_control" | "all"
 
 interface DocumentGenerationButtonsProps {
   machineId: string
@@ -46,6 +46,7 @@ const DOCUMENT_OPTIONS: Array<{
   { type: "specification", label: "Specification (PDF)", kind: "pdf" },
   { type: "invoice", label: "Invoice (PDF)", kind: "pdf" },
   { type: "packing_list", label: "Packing List (PDF)", kind: "pdf" },
+  { type: "quality_control", label: "Контроль качества (PDF)", kind: "pdf" },
   { type: "all", label: "Все документы (ZIP)", kind: "zip" },
 ]
 
@@ -79,6 +80,8 @@ function getFileName(type: DocumentType, documentNumber: string) {
       return `Invoice_${safeDocumentNumber}.pdf`
     case "packing_list":
       return `PackingList_${safeDocumentNumber}.pdf`
+    case "quality_control":
+      return `QualityControl_${safeDocumentNumber}.pdf`
     case "all":
       return `Documents_${safeDocumentNumber}.zip`
   }
@@ -248,13 +251,13 @@ export function DocumentGenerationButtons({
           align="end"
           className="w-64 border-[#E8ECF0] bg-white text-[#374151]"
         >
-          {DOCUMENT_OPTIONS.map((option, index) => {
+          {DOCUMENT_OPTIONS.map((option) => {
             const isActive = loadingType === option.type
             const Icon = option.kind === "zip" ? Package : FileText
 
             return (
               <Fragment key={option.type}>
-                {index === 3 && <DropdownMenuSeparator className="bg-[#E8ECF0]" />}
+                {option.type === "all" && <DropdownMenuSeparator className="bg-[#E8ECF0]" />}
                 <DropdownMenuItem
                   disabled={isLoading}
                   onClick={() => openDialog(option.type)}

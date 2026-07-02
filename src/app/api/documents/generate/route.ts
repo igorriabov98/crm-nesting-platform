@@ -8,12 +8,13 @@ import { getDocumentData, type DocumentData } from '@/lib/actions/document-gener
 import { SpecificationDocument } from '@/lib/pdf/SpecificationDocument'
 import { InvoiceDocument } from '@/lib/pdf/InvoiceDocument'
 import { PackingListDocument } from '@/lib/pdf/PackingListDocument'
+import { QualityControlDocument } from '@/lib/pdf/QualityControlDocument'
 
 export const runtime = 'nodejs'
 
 const requestSchema = z.object({
   machineId: z.string().uuid(),
-  type: z.enum(['specification', 'invoice', 'packing_list', 'all']),
+  type: z.enum(['specification', 'invoice', 'packing_list', 'quality_control', 'all']),
 })
 
 type DocumentType = z.infer<typeof requestSchema>['type']
@@ -23,6 +24,7 @@ const singleDocuments: Record<Exclude<DocumentType, 'all'>, { component: PdfComp
   specification: { component: SpecificationDocument, fileBase: 'Specification' },
   invoice: { component: InvoiceDocument, fileBase: 'Invoice' },
   packing_list: { component: PackingListDocument, fileBase: 'PackingList' },
+  quality_control: { component: QualityControlDocument, fileBase: 'QualityControl' },
 }
 
 function safeFilePart(value: string) {
@@ -65,15 +67,17 @@ export async function POST(request: Request) {
     const number = safeFilePart(data.machine.specification_number || data.machine.id)
 
     if (parsed.type === 'all') {
-      const [specBuffer, invoiceBuffer, packingBuffer] = await Promise.all([
+      const [specBuffer, invoiceBuffer, packingBuffer, qualityBuffer] = await Promise.all([
         renderPdf(SpecificationDocument, data),
         renderPdf(InvoiceDocument, data),
         renderPdf(PackingListDocument, data),
+        renderPdf(QualityControlDocument, data),
       ])
       const zip = new JSZip()
       zip.file('Specification.pdf', specBuffer)
       zip.file('Invoice.pdf', invoiceBuffer)
       zip.file('PackingList.pdf', packingBuffer)
+      zip.file('QualityControl.pdf', qualityBuffer)
       const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' })
 
       return new NextResponse(bufferBody(zipBuffer), {
