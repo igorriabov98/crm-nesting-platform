@@ -51,6 +51,7 @@ export interface ParsedPart {
   height: number;
   contour: Point2D[];
   holes: Point2D[][];
+  contourSource: ContourSource;
   isSheetMetal: boolean;
   hasBends: boolean;
   confidence: number;
@@ -62,6 +63,8 @@ export interface ParsedPart {
   meshArea: number;
   facesCount: number;
 }
+
+export type ContourSource = 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE';
 
 export interface StepParseResult {
   success: boolean;
@@ -219,6 +222,7 @@ function processMesh(
   const classificationWarning = classification.warnings.length > 0 ? classification.warnings.join('; ') : null;
   const holes: Point2D[][] = [];
   let contour: Point2D[] = [];
+  let contourSource: ContourSource | null = null;
 
   if (classificationWarning) {
     errors.push(`${name}: ${classificationWarning}`);
@@ -226,10 +230,14 @@ function processMesh(
 
   if (classification.developedBlank) {
     contour = classification.developedBlank.contour;
+    contourSource = 'RECT_ESTIMATE';
   } else if (classification.isSheetMetal) {
     try {
       if (indices.length >= 3) {
         contour = extractBoundaryContour(positions, indices, classification.projectionAxis);
+        if (contour.length >= 3) {
+          contourSource = 'EXACT_BOUNDARY';
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -240,6 +248,7 @@ function processMesh(
   if (contour.length < 3) {
     const projected = projectTo2D(positions, classification.projectionAxis);
     contour = convexHull(projected);
+    contourSource = 'CONVEX_HULL';
   }
 
   contour = simplifyContour(contour, classification.isSheetMetal ? 0.5 : 1);
@@ -256,6 +265,7 @@ function processMesh(
     height,
     contour,
     holes,
+    contourSource: contourSource ?? 'CONVEX_HULL',
     isSheetMetal: classification.isSheetMetal,
     hasBends: classification.hasBends,
     confidence: classification.confidence,

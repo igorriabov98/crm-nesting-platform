@@ -129,7 +129,7 @@ export function KFactorsCatalogTab({
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-base font-semibold text-[#1B3A6B]">K-факторы (для развёрток гнутых деталей)</h2>
+        <h2 className="text-base font-semibold text-[#1B3A6B]">K-факторы</h2>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
           Добавить
@@ -189,7 +189,7 @@ export function KFactorsCatalogTab({
       <div className="flex gap-2 rounded-lg border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-900">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <p>
-          K-фактор определяет положение нейтральной оси при гибке и используется для расчёта развёрток. Стандартные значения: сталь 0.35-0.45, нержавейка 0.35-0.42, алюминий 0.33-0.38.
+          Справочник. Будет использоваться при расчёте развёрток (в разработке). Стандартные значения: сталь 0.35-0.45, нержавейка 0.35-0.42, алюминий 0.33-0.38.
         </p>
       </div>
 

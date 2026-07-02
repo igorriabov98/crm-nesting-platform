@@ -157,6 +157,7 @@ async function processStepJob(job: StepJob) {
             facesCount: part.facesCount,
             contour: part.contour as unknown as Prisma.InputJsonValue,
             holes: part.holes as unknown as Prisma.InputJsonValue,
+            contourSource: part.contourSource,
             quantity: input.isBatch ? input.quantity : 1,
             isSheetMetal: part.isSheetMetal,
             grainLock: false,
