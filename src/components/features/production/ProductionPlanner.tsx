@@ -71,6 +71,7 @@ type StageLaneLayout = {
   items: StageLaneItem[]
   laneCount: number
   rowHeight: number
+  stageLaneTop: number
 }
 
 type UnscheduledRow = {
@@ -118,9 +119,11 @@ const BAR_COLLISION_GAP = 6
 const SUPPLY_LANE_GAP = 6
 const SUPPLY_LANE_HEIGHT = 44
 const SUPPLY_LANE_TOP = 8
-const STAGE_LANE_TOP = SUPPLY_LANE_TOP + SUPPLY_LANE_HEIGHT + SUPPLY_LANE_GAP
+const ROW_VERTICAL_PADDING = 8
+const STAGE_LANE_TOP_WITH_SUPPLY = SUPPLY_LANE_TOP + SUPPLY_LANE_HEIGHT + SUPPLY_LANE_GAP
+const STAGE_LANE_TOP_WITHOUT_SUPPLY = ROW_VERTICAL_PADDING
 const DEFAULT_PLANNER_ROW_HEIGHT =
-  STAGE_LANE_TOP + MIN_BAR_LANES * BAR_HEIGHT + (MIN_BAR_LANES - 1) * BAR_LANE_GAP + 8
+  STAGE_LANE_TOP_WITH_SUPPLY + MIN_BAR_LANES * BAR_HEIGHT + (MIN_BAR_LANES - 1) * BAR_LANE_GAP + ROW_VERTICAL_PADDING
 const ZOOM_MIN = 15
 const ZOOM_MAX = 80
 const ZOOM_STEP = 5
@@ -523,12 +526,24 @@ function SelectField({
   )
 }
 
-function getPlannerRowHeight(laneCount: number) {
-  const normalizedLaneCount = Math.max(MIN_BAR_LANES, laneCount)
-  return STAGE_LANE_TOP + normalizedLaneCount * BAR_HEIGHT + (normalizedLaneCount - 1) * BAR_LANE_GAP + 8
+function getStageLaneTop(showSupply: boolean) {
+  return showSupply ? STAGE_LANE_TOP_WITH_SUPPLY : STAGE_LANE_TOP_WITHOUT_SUPPLY
 }
 
-function buildStageLaneLayout(stages: GanttStage[], rangeStart: Date, dayWidth: number): StageLaneLayout {
+function getPlannerRowHeight(laneCount: number, showSupply: boolean) {
+  const normalizedLaneCount = Math.max(MIN_BAR_LANES, laneCount)
+  return getStageLaneTop(showSupply) +
+    normalizedLaneCount * BAR_HEIGHT +
+    (normalizedLaneCount - 1) * BAR_LANE_GAP +
+    ROW_VERTICAL_PADDING
+}
+
+function buildStageLaneLayout(
+  stages: GanttStage[],
+  rangeStart: Date,
+  dayWidth: number,
+  showSupply: boolean
+): StageLaneLayout {
   const laneEnds: number[] = []
   const positionedStages = stages
     .map((stage) => {
@@ -564,7 +579,8 @@ function buildStageLaneLayout(stages: GanttStage[], rangeStart: Date, dayWidth: 
   return {
     items,
     laneCount,
-    rowHeight: getPlannerRowHeight(laneCount),
+    rowHeight: getPlannerRowHeight(laneCount, showSupply),
+    stageLaneTop: getStageLaneTop(showSupply),
   }
 }
 
@@ -635,15 +651,17 @@ function PlannerVirtualRow({
         <button
           type="button"
           className="grid h-full w-full min-w-0 rounded-md text-left transition-colors hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-          style={{ gridTemplateRows: `${SUPPLY_LANE_HEIGHT}px 1fr` }}
+          style={{ gridTemplateRows: showSupply ? `${SUPPLY_LANE_HEIGHT}px 1fr` : '1fr' }}
           onClick={() => onSelect(machine.id)}
         >
-          <span className="flex min-w-0 items-center gap-1 border-b border-emerald-100 px-2 text-[11px] text-slate-500">
-            <PackageCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-            <span className="truncate">
-              Мат.план: {formatDateValue(machine.planned_material_date, true)}
+          {showSupply && (
+            <span className="flex min-w-0 items-center gap-1 border-b border-emerald-100 px-2 text-[11px] text-slate-500">
+              <PackageCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <span className="truncate">
+                Мат.план: {formatDateValue(machine.planned_material_date, true)}
+              </span>
             </span>
-          </span>
+          )}
           <span className="flex min-w-0 flex-col justify-center px-2">
             <span className="flex w-full min-w-0 items-center gap-2">
               <span className="truncate text-sm font-semibold text-blue-900" title={machine.name}>
@@ -680,7 +698,7 @@ function PlannerVirtualRow({
             key={stage.id}
             className="absolute left-0"
             style={{
-              top: STAGE_LANE_TOP + lane * (BAR_HEIGHT + BAR_LANE_GAP),
+              top: layout.stageLaneTop + lane * (BAR_HEIGHT + BAR_LANE_GAP),
               height: BAR_HEIGHT,
               width: totalWidth,
             }}
@@ -1384,8 +1402,8 @@ export function ProductionPlanner({
   }, [effectiveData.machines, filters])
 
   const plannerRowLayouts = useMemo(
-    () => plannerRows.map((row) => buildStageLaneLayout(row.visibleStages, rangeStart, dayWidth)),
-    [plannerRows, rangeStart, dayWidth]
+    () => plannerRows.map((row) => buildStageLaneLayout(row.visibleStages, rangeStart, dayWidth, filters.showSupply)),
+    [plannerRows, rangeStart, dayWidth, filters.showSupply]
   )
 
   const unscheduledRows = useMemo<UnscheduledRow[]>(() => {
@@ -2041,7 +2059,8 @@ export function ProductionPlanner({
                         layout={layout ?? {
                           items: [],
                           laneCount: MIN_BAR_LANES,
-                          rowHeight: DEFAULT_PLANNER_ROW_HEIGHT,
+                          rowHeight: getPlannerRowHeight(MIN_BAR_LANES, filters.showSupply),
+                          stageLaneTop: getStageLaneTop(filters.showSupply),
                         }}
                         top={virtualRow.start}
                         totalWidth={totalWidth}
