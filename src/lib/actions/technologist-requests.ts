@@ -8,6 +8,7 @@ import { recordMaterialUsage } from '@/lib/actions/materials'
 import { repairImportedSheetMetalMaterials } from '@/lib/actions/request-sheet-metal-materials'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { requirePermission } from '@/lib/permissions/server'
+import { assertMachineCanUseTechnologistRequest } from '@/lib/actions/machine-progress'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import {
   availabilitySchema,
@@ -441,6 +442,7 @@ export async function createRequest(machineId: string): Promise<ActionResult<Tec
   try {
     const { db, userId } = await requireRequestPermission('manage')
     await assertMachineNotArchived(db, machineId)
+    await assertMachineCanUseTechnologistRequest(db, machineId)
 
     const { data: existing } = await db
       .from('technologist_requests')
@@ -469,6 +471,7 @@ export async function submitRequest(requestId: string): Promise<ActionResult> {
     const { db, userId } = await requireRequestPermission('manage')
     const request = await getRequestMachine(db, requestId)
     await assertMachineNotArchived(db, request.machine_id)
+    await assertMachineCanUseTechnologistRequest(db, request.machine_id)
 
     await validateRequestReadyForSupply(db, requestId, userId)
 
@@ -496,6 +499,7 @@ export async function completeStockReservation(requestId: string): Promise<Actio
     const { db, userId } = await requireRequestPermission('manage')
     const request = await getRequestMachine(db, requestId)
     await assertMachineNotArchived(db, request.machine_id)
+    await assertMachineCanUseTechnologistRequest(db, request.machine_id)
 
     if (request.status !== 'pending_stock_check' && request.status !== 'stock_checked') {
       throw new Error('Бронь уже завершена или заявка не находится на проверке склада')
@@ -558,6 +562,7 @@ export async function submitToSupply(requestId: string): Promise<ActionResult> {
     const { db, userId } = await requireRequestPermission('manage')
     const request = await getRequestMachine(db, requestId)
     await assertMachineNotArchived(db, request.machine_id)
+    await assertMachineCanUseTechnologistRequest(db, request.machine_id)
     if (request.status !== 'submitted_to_supply' && request.status !== 'stock_checked') throw new Error('Заявка ещё не отправлена в снабжение')
     if (request.status !== 'submitted_to_supply') {
       await validateRequestReadyForSupply(db, requestId, userId)

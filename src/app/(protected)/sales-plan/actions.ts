@@ -13,6 +13,7 @@ import { SALES_PLAN_MACHINE_LIMIT } from '@/lib/constants/sales-plan'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { isMachineInConfirmedProductionPlan, notifyMachineEnteredReadyProductionPlan } from '@/lib/actions/production-plan'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
+import { loadMachineProgressContexts, resolveMachineProgressWithContext } from '@/lib/actions/machine-progress'
 import { loadClientProductPriceLookup, resolveClientProductPrice, type ClientPriceDb, type ClientProductPriceLookup } from '@/lib/client-prices/server'
 import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
@@ -60,6 +61,7 @@ type LooseQuery = PromiseLike<DbResult> & {
   delete: () => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
+  order: (column: string, options?: { ascending?: boolean }) => LooseQuery
   single: () => Promise<DbResult>
 }
 type LooseDb = {
@@ -101,16 +103,6 @@ function requireMachineMutationAccess(user: CurrentUser) {
   void user
 }
 
-async function getMachineItemsCount(db: LooseDb, machineId: string) {
-  const { data, error } = await db
-    .from('machine_items')
-    .select('id')
-    .eq('machine_id', machineId)
-
-  if (error) throw new Error(error.message || 'Не удалось проверить товары и образцы машины')
-  return ((data || []) as Array<{ id: string }>).length
-}
-
 async function getMachineGoodsCount(db: LooseDb, machineId: string) {
   const { data, error } = await db
     .from('machine_items')
@@ -119,6 +111,19 @@ async function getMachineGoodsCount(db: LooseDb, machineId: string) {
 
   if (error) throw new Error(error.message || 'Не удалось проверить товары машины')
   return ((data || []) as Array<{ id: string; is_sample: boolean | null }>).filter((item) => !item.is_sample).length
+}
+
+async function getMachineGoodsCountAfterDeleting(db: LooseDb, machineId: string, deletedItemIds: string[] = []) {
+  const deletedIds = new Set(deletedItemIds)
+  const { data, error } = await db
+    .from('machine_items')
+    .select('id, is_sample')
+    .eq('machine_id', machineId)
+
+  if (error) throw new Error(error.message || 'Не удалось проверить товары машины')
+  return ((data || []) as Array<{ id: string; is_sample: boolean | null }>)
+    .filter((item) => !item.is_sample && !deletedIds.has(item.id))
+    .length
 }
 
 async function refreshMaterialUndefinedAgenda(
@@ -373,9 +378,9 @@ function productBackedItemUpdate(
   return payload
 }
 
-function assertCanConfirmMachine(hasItemsOrSamples: boolean) {
-  if (!hasItemsOrSamples) {
-    throw new Error('Нельзя подтвердить машину без изделий или образцов. Добавьте хотя бы одну позицию.')
+function assertCanConfirmMachine(hasGoods: boolean) {
+  if (!hasGoods) {
+    throw new Error('Нельзя подтвердить машину без товаров. Добавьте хотя бы одну товарную позицию.')
   }
 }
 
@@ -667,7 +672,7 @@ export async function getProductionMonthFilterOptions(factoryFilter?: string | n
 
 export async function getMachines(factoryFilter?: string | null, productionMonthFilter?: string | null) {
   try {
-    const { supabase, user } = await requireSalesPlanPermission('view')
+    const { supabase, db, user } = await requireSalesPlanPermission('view')
     const normalizedProductionMonth = normalizeProductionMonthValue(productionMonthFilter)
 
     let query = supabase
@@ -699,7 +704,8 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
 
     if (error) throw error
 
-    const rows = (rawData || []) as unknown as Omit<MachineListItem, 'production_progress' | 'supply_progress' | 'uniqueCoatings'>[]
+    const rows = (rawData || []) as unknown as Omit<MachineListItem, 'production_progress' | 'supply_progress' | 'uniqueCoatings' | 'progress'>[]
+    const progressContexts = await loadMachineProgressContexts(db, rows.map((machine) => machine.id))
     const mappedData: MachineListItem[] = rows.map((m) => {
       // Производство
       const activeStages = (m.production_stages || []).filter((s) => !s.is_skipped)
@@ -726,7 +732,8 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
         status: getDisplayMachineStatus(m),
         production_progress,
         supply_progress,
-        uniqueCoatings
+        uniqueCoatings,
+        progress: resolveMachineProgressWithContext(m, progressContexts.get(m.id)),
       }
     })
 
@@ -739,7 +746,7 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
 // === Получение одной машины ===
 export async function getMachine(id: string) {
   try {
-    const { supabase, user } = await requireSalesPlanPermission('view')
+    const { supabase, db, user } = await requireSalesPlanPermission('view')
 
     let query = supabase
       .from('machines')
@@ -787,6 +794,7 @@ export async function getMachine(id: string) {
     const total_cost = total_items_cost + total_expenses
     const has_zinc = items.some((i) => i.coating === 'zinc')
     const has_painting = items.some((i) => i.coating === 'powder_coating')
+    const progressContexts = await loadMachineProgressContexts(db, [machineData.id])
 
     const enrichedData: MachineDetails = {
       ...machineData,
@@ -797,7 +805,8 @@ export async function getMachine(id: string) {
       total_cost,
       item_count: items.length,
       has_zinc,
-      has_painting
+      has_painting,
+      progress: resolveMachineProgressWithContext(machineData, progressContexts.get(machineData.id)),
     }
 
     return { data: enrichedData, error: null }
@@ -825,7 +834,7 @@ export async function createMachine(data: CreateMachineInput) {
     const priceDb = clientPriceDb()
     const clientPriceLookup = await loadClientProductPriceLookup(priceDb, parsed.client_id, productIds)
     if (parsed.is_confirmed) {
-      assertCanConfirmMachine(allItems.length > 0)
+      assertCanConfirmMachine(goods.length > 0)
     }
 
     const { data: clientData, error: clientError } = await db
@@ -1087,12 +1096,12 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
       if (machineError || !machineData) throw new Error('Машина не найдена')
       const currentMachine = machineData as { is_confirmed: boolean | null }
       const willBeConfirmed = data.is_confirmed ?? Boolean(currentMachine.is_confirmed)
-      const resultingItemCount = data.items !== undefined
-        ? data.items.length
-        : Math.max(0, (await getMachineItemsCount(db, id)) - (data.deletedItemIds?.length || 0))
+      const resultingGoodsCount = data.items !== undefined
+        ? data.items.filter((item) => !item.is_sample).length
+        : await getMachineGoodsCountAfterDeleting(db, id, data.deletedItemIds || [])
 
       if (willBeConfirmed) {
-        assertCanConfirmMachine(resultingItemCount > 0)
+        assertCanConfirmMachine(resultingGoodsCount > 0)
       }
     }
 
@@ -1539,8 +1548,8 @@ export async function updateMachineConfirmation(id: string, isConfirmed: boolean
     }
 
     if (isConfirmed) {
-      const itemCount = await getMachineItemsCount(db, id)
-      assertCanConfirmMachine(itemCount > 0)
+      const goodsCount = await getMachineGoodsCount(db, id)
+      assertCanConfirmMachine(goodsCount > 0)
     }
 
     const { error } = await db
@@ -1664,8 +1673,8 @@ export async function deleteMachineItem(itemId: string, machineId: string) {
 
     if (machineError || !machineData) throw new Error('Машина не найдена')
     const machine = machineData as { is_confirmed: boolean | null }
-    if (machine.is_confirmed && (await getMachineItemsCount(db, machineId)) <= 1) {
-      throw new Error('Нельзя удалить последнюю позицию у подтверждённой машины. Сначала снимите подтверждение.')
+    if (machine.is_confirmed && (await getMachineGoodsCountAfterDeleting(db, machineId, [itemId])) <= 0) {
+      throw new Error('Нельзя удалить последний товар у подтверждённой машины. Сначала снимите подтверждение.')
     }
 
     const { error } = await db.from('machine_items').delete().eq('id', itemId).eq('machine_id', machineId)

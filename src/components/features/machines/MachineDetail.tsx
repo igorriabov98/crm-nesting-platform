@@ -30,7 +30,7 @@ import { InvoiceTab } from './tabs/InvoiceTab'
 import { MachineTasksPanel } from './MachineTasksPanel'
 import { MachineRequestPanel } from './MachineRequestPanel'
 import { MachineActivityPanel } from './MachineActivityPanel'
-import { MachineStatusBadge, MachineStatusProgress } from './MachineStatusBadge'
+import { MachineProgressBadge, MachineStatusProgress } from './MachineStatusBadge'
 
 import { MachineEditDialog } from './MachineEditDialog'
 import { MachineArchiveDialog } from './MachineArchiveDialog'
@@ -206,7 +206,7 @@ export function MachineDetail({
                 {machine.name}
               </h1>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <MachineStatusBadge status={machine.status} className="border-white/20 bg-white/10 text-white" />
+                <MachineProgressBadge progress={machine.progress} className="border-white/20 bg-white/10 text-white" />
                 {machine.is_confirmed ? (
                   <Badge variant="outline" className="border-emerald-300/40 bg-emerald-400/15 text-emerald-100">
                     <CheckCircle2 className="mr-1 h-3 w-3" />
@@ -344,7 +344,7 @@ export function MachineDetail({
           </div>
       </div>
 
-      <MachineStatusProgress status={machine.status} />
+      <MachineStatusProgress progress={machine.progress} />
 
       <MachineRequestPanel
         machineId={machine.id}

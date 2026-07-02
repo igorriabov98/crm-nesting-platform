@@ -84,6 +84,34 @@ export type RequestStatus = Database['public']['Enums']['request_status']
 export type OrderItemStatus = Database['public']['Enums']['order_item_status']
 export type InventoryTransactionType = Database['public']['Enums']['inventory_transaction_type']
 
+export type MachineProgressKey =
+  | 'created'
+  | 'decoded'
+  | 'planned'
+  | 'waiting_request'
+  | 'purchasing'
+  | 'material_received'
+  | `production:${string}`
+  | 'shipped'
+
+export type MachineProgressStepState = 'done' | 'active' | 'pending' | 'blocked'
+export type MachineProgressStepKind = 'milestone' | 'check' | 'production'
+
+export type MachineProgressStep = {
+  key: MachineProgressKey
+  label: string
+  state: MachineProgressStepState
+  kind: MachineProgressStepKind
+  blocker?: string | null
+}
+
+export type MachineProgress = {
+  currentKey: MachineProgressKey
+  currentLabel: string
+  steps: MachineProgressStep[]
+  blockers: string[]
+}
+
 export type CurrentUser = User & {
   factory: Factory
   department_memberships?: UserDepartmentMembershipSummary[]
@@ -151,6 +179,7 @@ export type MachineDetails = Machine & {
   item_count: number
   has_zinc: boolean
   has_painting: boolean
+  progress: MachineProgress
 }
 
 export type MachineListItem = MachineWithTotals & {
@@ -165,6 +194,7 @@ export type MachineListItem = MachineWithTotals & {
   production_progress: { completed: number; total: number }
   supply_progress: { completed: number; total: number }
   uniqueCoatings: CoatingType[]
+  progress: MachineProgress
 }
 
 export type Meeting = {

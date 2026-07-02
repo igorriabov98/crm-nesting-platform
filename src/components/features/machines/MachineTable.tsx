@@ -46,8 +46,9 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
+import { MACHINE_PROGRESS_STATIC_LABELS, MACHINE_PROGRESS_STATIC_ORDER } from '@/lib/machine-progress'
 import type { ProductionMonthOption } from '@/lib/utils/production-months'
-import { MACHINE_STATUS_LABELS, MachineStatusBadge } from './MachineStatusBadge'
+import { MachineProgressBadge } from './MachineStatusBadge'
 
 const MachineEditDialog = dynamic(() => import('./MachineEditDialog').then((mod) => mod.MachineEditDialog))
 const MachineArchiveDialog = dynamic(() => import('./MachineArchiveDialog').then((mod) => mod.MachineArchiveDialog))
@@ -362,6 +363,20 @@ export function MachineTable({
   }
 
   const normalizedSearch = filters.search.trim().toLowerCase()
+  const progressOptions = useMemo(() => {
+    const options = new Map<string, string>()
+    for (const key of MACHINE_PROGRESS_STATIC_ORDER) {
+      options.set(key, MACHINE_PROGRESS_STATIC_LABELS[key])
+    }
+    for (const machine of machines) {
+      options.set(machine.progress.currentKey, machine.progress.currentLabel)
+    }
+    return Array.from(options.entries()).map(([value, label]) => ({ value, label }))
+  }, [machines])
+  const progressLabelMap = useMemo(
+    () => new Map(progressOptions.map((option) => [option.value, option.label])),
+    [progressOptions]
+  )
 
   const filteredMachines = useMemo(() => machines.filter((machine) => {
     const searchable = [
@@ -385,7 +400,7 @@ export function MachineTable({
     const matchesSearch = !normalizedSearch || searchable.includes(normalizedSearch)
     const matchesCoating = filters.coating === 'all'
       || machine.uniqueCoatings?.includes(filters.coating as CoatingType)
-    const matchesStatus = filters.status === 'all' || machine.status === filters.status
+    const matchesStatus = filters.status === 'all' || machine.progress.currentKey === filters.status
     const matchesMaterial = filters.material === 'all'
       || (filters.material === 'undefined'
         ? !machine.material_type
@@ -431,12 +446,12 @@ export function MachineTable({
     const items: Array<{ key: keyof SalesPlanFilters; label: string }> = []
     if (filters.search) items.push({ key: 'search', label: `Поиск: ${filters.search}` })
     if (filters.coating !== 'all') items.push({ key: 'coating', label: coatingFilterLabels[filters.coating] })
-    if (filters.status !== 'all') items.push({ key: 'status', label: MACHINE_STATUS_LABELS[filters.status as keyof typeof MACHINE_STATUS_LABELS] })
+    if (filters.status !== 'all') items.push({ key: 'status', label: progressLabelMap.get(filters.status) || filters.status })
     if (filters.material !== 'all') items.push({ key: 'material', label: materialFilterLabels[filters.material] })
     if (filters.confirmation !== 'all') items.push({ key: 'confirmation', label: confirmationFilterLabels[filters.confirmation] })
     if (canViewInvoice && filters.invoice !== 'all') items.push({ key: 'invoice', label: invoiceFilterLabels[filters.invoice] })
     return items
-  }, [canViewInvoice, filters])
+  }, [canViewInvoice, filters, progressLabelMap])
 
   const hasAnyFilters = activeClientFilters.length > 0 || factoryFilter !== 'all' || Boolean(productionMonthFilter)
 
@@ -554,11 +569,11 @@ export function MachineTable({
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <Select value={filters.status} onValueChange={(value) => updateFilter('status', value || 'all')}>
               <SelectTrigger className="h-10 border-slate-200 bg-white text-slate-700">
-                <SelectValue>{filters.status === 'all' ? 'Все статусы' : MACHINE_STATUS_LABELS[filters.status as keyof typeof MACHINE_STATUS_LABELS]}</SelectValue>
+                <SelectValue>{filters.status === 'all' ? 'Все статусы' : progressLabelMap.get(filters.status) || filters.status}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Все статусы</SelectItem>
-                {Object.entries(MACHINE_STATUS_LABELS).map(([value, label]) => (
+                {progressOptions.map(({ value, label }) => (
                   <SelectItem key={value} value={value}>{label}</SelectItem>
                 ))}
               </SelectContent>
@@ -745,7 +760,7 @@ export function MachineTable({
                                   <AlertTriangle className="mr-1 h-3 w-3" />Черновик
                                 </Badge>
                               )}
-                              <MachineStatusBadge status={machine.status} />
+                              <MachineProgressBadge progress={machine.progress} />
                             </div>
                           </td>
                           <td className="border-b border-slate-100 px-3 py-4 align-top group-hover:bg-slate-50/70">
@@ -856,7 +871,7 @@ export function MachineTable({
                             <AlertTriangle className="mr-1 h-3 w-3" />Черновик
                           </Badge>
                         )}
-                        <MachineStatusBadge status={machine.status} />
+                        <MachineProgressBadge progress={machine.progress} />
                       </div>
                     </div>
 
