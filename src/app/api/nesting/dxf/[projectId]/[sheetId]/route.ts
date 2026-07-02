@@ -31,6 +31,8 @@ export async function GET(
   const headers = new Headers()
   headers.set('Content-Type', res.headers.get('Content-Type') || 'application/dxf')
   headers.set('Content-Disposition', res.headers.get('Content-Disposition') || 'attachment; filename="sheet.dxf"')
+  const warnings = res.headers.get('X-DXF-Warnings')
+  if (warnings) headers.set('X-DXF-Warnings', warnings)
 
   return new NextResponse(body, { headers })
 }

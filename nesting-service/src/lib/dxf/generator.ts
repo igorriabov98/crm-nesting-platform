@@ -1,13 +1,14 @@
 import { dxfComment, dxfInsert, dxfLine, dxfLwPolyline, dxfPathAsLines, dxfText, formatNum } from './entities';
 import { createLeadSegments, type LeadSegment, type LeadObstacleBox } from './leads';
 import { ensureCCW, ensureCW, removeClosingPoint, transformContourForDxf, type DxfRotation } from './transform';
+import { DEFAULT_SHEET_MARGIN_MM } from '../nesting/params';
 import type { Point2D } from '../nesting/types';
 
 const NL = '\r\n';
 
 type DxfEntityMode = 'lwpolyline' | 'line';
 
-type DxfLayerKey = 'sheet' | 'cut' | 'holes' | 'labels' | 'remnant' | 'grain' | 'leadIn' | 'leadOut';
+type DxfLayerKey = 'sheet' | 'cut' | 'holes' | 'labels' | 'remnant' | 'grain' | 'leadIn' | 'leadOut' | 'needsReview';
 
 type DxfLayerDefinition = {
   name: string;
@@ -32,6 +33,7 @@ const DEFAULT_LAYERS: Record<DxfLayerKey, DxfLayerDefinition> = {
   grain: { name: 'GRAIN', color: 6 },
   leadIn: { name: 'LEAD_IN', color: 4 },
   leadOut: { name: 'LEAD_OUT', color: 5 },
+  needsReview: { name: 'NEEDS_REVIEW', color: 30 },
 };
 
 export const CAM_DXF_OPTIONS: DxfGenerationOptions = {
@@ -48,7 +50,7 @@ export const CAM_DXF_OPTIONS: DxfGenerationOptions = {
   leadOutLayer: DEFAULT_LAYERS.leadOut.name,
   leadInLength: 3,
   leadOutLength: 2,
-  leadSafeMargin: 5,
+  leadSafeMargin: DEFAULT_SHEET_MARGIN_MM,
 };
 
 export interface DxfPartData {
@@ -63,6 +65,9 @@ export interface DxfPartData {
   originalW: number;
   originalH: number;
   grainLock: boolean;
+  needsReview?: boolean;
+  reviewReason?: string | null;
+  contourSource?: 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE' | string | null;
 }
 
 export interface DxfRemnantData {
@@ -88,9 +93,15 @@ export interface DxfGenerationOptions {
   grainLayer?: string;
   leadInLayer?: string;
   leadOutLayer?: string;
+  needsReviewLayer?: string;
   leadInLength?: number;
   leadOutLength?: number;
   leadSafeMargin?: number;
+}
+
+export interface DxfGenerationResult {
+  dxfContent: string;
+  warnings: string[];
 }
 
 export function generateDXF(
@@ -99,9 +110,19 @@ export function generateDXF(
   remnant: DxfRemnantData | null,
   options: DxfGenerationOptions = {}
 ): string {
+  return generateDXFWithWarnings(sheet, parts, remnant, options).dxfContent;
+}
+
+export function generateDXFWithWarnings(
+  sheet: { width: number; height: number; material: string; thickness: number },
+  parts: DxfPartData[],
+  remnant: DxfRemnantData | null,
+  options: DxfGenerationOptions = {}
+): DxfGenerationResult {
   const resolvedOptions = resolveOptions(options);
   const preparedParts = prepareParts(sheet, parts, resolvedOptions);
-  const layers = collectLayers(resolvedOptions);
+  const layers = collectLayers(resolvedOptions, preparedParts.some((part) => usesNeedsReviewLayer(part.part)));
+  const warnings = preparedParts.flatMap((part) => part.warnings);
   const lines: string[] = [];
 
   lines.push(...buildHeader(sheet, resolvedOptions));
@@ -152,13 +173,16 @@ export function generateDXF(
     pushEntity(lines, dxfText('GRAIN', 70, grainY + 12, 8, resolvedOptions.layers.grain));
   }
 
-  for (const warning of preparedParts.flatMap((part) => part.warnings)) {
+  for (const warning of warnings) {
     pushEntity(lines, dxfComment(warning));
   }
 
   lines.push('0', 'ENDSEC', '0', 'EOF');
 
-  return `${lines.join(NL)}${NL}`;
+  return {
+    dxfContent: `${lines.join(NL)}${NL}`,
+    warnings,
+  };
 }
 
 type ResolvedDxfOptions = {
@@ -196,6 +220,7 @@ function resolveOptions(options: DxfGenerationOptions): ResolvedDxfOptions {
       grain: options.grainLayer ?? DEFAULT_LAYERS.grain.name,
       leadIn: options.leadInLayer ?? DEFAULT_LAYERS.leadIn.name,
       leadOut: options.leadOutLayer ?? DEFAULT_LAYERS.leadOut.name,
+      needsReview: options.needsReviewLayer ?? DEFAULT_LAYERS.needsReview.name,
     },
   };
 }
@@ -280,7 +305,7 @@ function buildTables(layers: DxfLayerDefinition[]): string[] {
   return lines;
 }
 
-function collectLayers(options: ResolvedDxfOptions): DxfLayerDefinition[] {
+function collectLayers(options: ResolvedDxfOptions, hasNeedsReview: boolean): DxfLayerDefinition[] {
   const layers = new Map<string, DxfLayerDefinition>();
 
   const addLayer = (name: string, fallback: DxfLayerDefinition) => {
@@ -316,6 +341,10 @@ function collectLayers(options: ResolvedDxfOptions): DxfLayerDefinition[] {
     addLayer(options.layers.grain, DEFAULT_LAYERS.grain);
   }
 
+  if (hasNeedsReview) {
+    addLayer(options.layers.needsReview, DEFAULT_LAYERS.needsReview);
+  }
+
   return Array.from(layers.values());
 }
 
@@ -339,20 +368,25 @@ function prepareParts(
     const holeContours = part.holes.map((hole) =>
       ensureCCW(removeClosingPoint(transformContourForDxf(hole, part.rotation, 0, 0, part.originalW, part.originalH)))
     );
-    const leadResults = [
-      createLeadSegments(outerContour, part, index, 'outer', sheet, boxes, {
-        leadInLength: options.leadInLength,
-        leadOutLength: options.leadOutLength,
-        safeMargin: options.leadSafeMargin,
-      }),
-      ...holeContours.map((hole, holeIndex) =>
-        createLeadSegments(hole, part, index, `hole-${holeIndex + 1}`, sheet, boxes, {
+    const leadResults = part.needsReview
+      ? []
+      : [
+        createLeadSegments(outerContour, part, index, 'outer', sheet, boxes, {
           leadInLength: options.leadInLength,
           leadOutLength: options.leadOutLength,
           safeMargin: options.leadSafeMargin,
-        })
-      ),
-    ];
+        }),
+        ...holeContours.map((hole, holeIndex) =>
+          createLeadSegments(hole, part, index, `hole-${holeIndex + 1}`, sheet, boxes, {
+            leadInLength: options.leadInLength,
+            leadOutLength: options.leadOutLength,
+            safeMargin: options.leadSafeMargin,
+          })
+        ),
+      ];
+    const reviewWarnings = part.needsReview
+      ? [`${part.name}: ${part.reviewReason ?? 'geometry requires review'}`]
+      : [];
 
     return {
       part,
@@ -360,7 +394,7 @@ function prepareParts(
       outerContour,
       holeContours,
       leadSegments: leadResults.flatMap((result) => result.segments),
-      warnings: leadResults.flatMap((result) => result.warnings),
+      warnings: [...reviewWarnings, ...leadResults.flatMap((result) => result.warnings)],
     };
   });
 }
@@ -408,6 +442,14 @@ function pushPlacedPartEntities(lines: string[], prepared: PreparedPart, options
 }
 
 function pushLocalPartEntities(lines: string[], prepared: PreparedPart, options: ResolvedDxfOptions): void {
+  if (prepared.part.needsReview) {
+    pushPath(lines, prepared.outerContour, options.layers.needsReview, true, options.entityMode);
+    if (isRectEstimate(prepared.part)) {
+      pushEstimateLabel(lines, prepared, options);
+    }
+    return;
+  }
+
   pushPath(lines, prepared.outerContour, options.layers.cut, true, options.entityMode);
 
   for (const hole of prepared.holeContours) {
@@ -436,6 +478,10 @@ function pushLocalPartEntities(lines: string[], prepared: PreparedPart, options:
       Math.min(bounds.maxX - bounds.minX, 80),
       options.layers.grain
     );
+  }
+
+  if (isRectEstimate(prepared.part)) {
+    pushEstimateLabel(lines, prepared, options);
   }
 }
 
@@ -477,6 +523,26 @@ function addGrainArrow(lines: string[], x: number, y: number, maxWidth: number, 
   pushEntity(lines, dxfLine(startX, y, endX, y, layer));
   pushEntity(lines, dxfLine(endX, y, endX - 8, y + 5, layer));
   pushEntity(lines, dxfLine(endX, y, endX - 8, y - 5, layer));
+}
+
+function pushEstimateLabel(lines: string[], prepared: PreparedPart, options: ResolvedDxfOptions): void {
+  const bounds = getBounds(prepared.outerContour);
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  const textHeight = Math.min(Math.max(Math.min(width, height) * 0.12, 4), 15);
+
+  pushEntity(
+    lines,
+    dxfText(`${prepared.part.name} ESTIMATE`, bounds.minX, bounds.maxY + textHeight * 1.4, textHeight, options.layers.needsReview)
+  );
+}
+
+function usesNeedsReviewLayer(part: DxfPartData): boolean {
+  return part.needsReview === true || isRectEstimate(part);
+}
+
+function isRectEstimate(part: DxfPartData): boolean {
+  return part.contourSource === 'RECT_ESTIMATE';
 }
 
 function translatePoints(points: Point2D[], offsetX: number, offsetY: number): Point2D[] {

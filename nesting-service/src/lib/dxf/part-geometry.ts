@@ -1,10 +1,13 @@
 import type { Point2D } from '../nesting/types';
 
 const EPSILON_MM = 0.001;
+const SCALE_MISMATCH_TOLERANCE = 0.005;
 
 export type FittedPartGeometry = {
   contour: Point2D[];
   holes: Point2D[][];
+  needsReview: boolean;
+  reviewReason: string | null;
 };
 
 type Bounds = {
@@ -29,19 +32,44 @@ export function readFittedPartGeometry(
     return {
       contour: createRectangleContour(targetWidth, targetHeight),
       holes: [],
+      needsReview: false,
+      reviewReason: null,
     };
   }
 
   const scaleX = targetWidth / bounds.width;
   const scaleY = targetHeight / bounds.height;
+  const scaleDelta = Math.abs(scaleX - scaleY) / ((scaleX + scaleY) / 2);
+
+  if (scaleDelta > SCALE_MISMATCH_TOLERANCE) {
+    return {
+      contour: createRectangleContour(targetWidth, targetHeight),
+      holes: [],
+      needsReview: true,
+      reviewReason: [
+        `DXF geometry scale mismatch`,
+        `scaleX ${formatPercent(scaleX)}`,
+        `scaleY ${formatPercent(scaleY)}`,
+        `delta ${formatPercent(scaleDelta)}`,
+      ].join('; '),
+    };
+  }
+
+  const uniformScale = (scaleX + scaleY) / 2;
+  const fittedWidth = bounds.width * uniformScale;
+  const fittedHeight = bounds.height * uniformScale;
+  const offsetX = (targetWidth - fittedWidth) / 2;
+  const offsetY = (targetHeight - fittedHeight) / 2;
   const fitPoint = (point: Point2D): Point2D => ({
-    x: roundMm(clamp((point.x - bounds.minX) * scaleX, 0, targetWidth)),
-    y: roundMm(clamp((point.y - bounds.minY) * scaleY, 0, targetHeight)),
+    x: roundMm((point.x - bounds.minX) * uniformScale + offsetX),
+    y: roundMm((point.y - bounds.minY) * uniformScale + offsetY),
   });
 
   return {
     contour: rawContour.map(fitPoint),
     holes: readHoles(holesValue).map((hole) => hole.map(fitPoint)).filter((hole) => hole.length >= 3),
+    needsReview: false,
+    reviewReason: null,
   };
 }
 
@@ -118,10 +146,10 @@ function getBounds(points: Point2D[]): Bounds | null {
   };
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
 function roundMm(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(2)}%`;
 }

@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream';
 import type { Part } from '@prisma/client';
 import { config } from '../config';
 import { AppError, NotFoundError, ValidationError } from '../lib/errors';
-import { CAM_DXF_OPTIONS, generateDXF, type DxfPartData, type DxfRemnantData } from '../lib/dxf/generator';
+import { CAM_DXF_OPTIONS, generateDXFWithWarnings, type DxfPartData, type DxfRemnantData } from '../lib/dxf/generator';
 import { readFittedPartGeometry } from '../lib/dxf/part-geometry';
 import { validateDXF } from '../lib/dxf/validate';
 import type { DxfRotation } from '../lib/dxf/transform';
@@ -29,12 +29,14 @@ type DxfSheetResult = {
   fileName: string;
   dxfContent: string;
   storageUri: string | null;
+  warnings: string[];
 };
 
 type DxfZipResult = {
   filePath: string | null;
   fileName: string;
   storageUri: string | null;
+  warnings: string[];
 };
 
 export class DxfService {
@@ -78,7 +80,7 @@ export class DxfService {
 
     const remnant = readRemnant(sheet.remnantGeom, sheetId);
     const material = normalizeCadText(sheet.material);
-    const dxfContent = generateDXF(
+    const generation = generateDXFWithWarnings(
       {
         width: sheet.width,
         height: sheet.height,
@@ -87,8 +89,12 @@ export class DxfService {
       },
       dxfParts,
       remnant,
-      CAM_DXF_OPTIONS
+      {
+        ...CAM_DXF_OPTIONS,
+        leadSafeMargin: sheet.usedMargin,
+      }
     );
+    const { dxfContent, warnings } = generation;
 
     const validation = validateDXF(dxfContent);
     if (!validation.valid) {
@@ -124,7 +130,7 @@ export class DxfService {
       data: { dxfFileUrl: filePath, dxfStorageUri: storageUri },
     });
 
-    return { filePath, fileName, dxfContent, storageUri };
+    return { filePath, fileName, dxfContent, storageUri, warnings };
   }
 
   async generateZip(projectId: string): Promise<DxfZipResult> {
@@ -150,9 +156,11 @@ export class DxfService {
     }
 
     const files: { fileName: string; content: string }[] = [];
+    const warnings: string[] = [];
     for (const sheet of sheets) {
       const result = await this.generateForSheet(projectId, sheet.id);
       files.push({ fileName: result.fileName, content: result.dxfContent });
+      warnings.push(...result.warnings);
     }
 
     const orderLatin = sanitizeFilename(transliterate(project.orderNumber));
@@ -196,7 +204,7 @@ export class DxfService {
       });
     }
 
-    return { filePath, fileName, storageUri };
+    return { filePath, fileName, storageUri, warnings };
   }
 }
 
@@ -205,7 +213,7 @@ export const dxfService = new DxfService();
 function toDxfPartData(placement: PlacementForDxf, part: Part): DxfPartData {
   const localWidth = isQuarterTurn(placement.rotation) ? placement.placedH : placement.placedW;
   const localHeight = isQuarterTurn(placement.rotation) ? placement.placedW : placement.placedH;
-  const { contour, holes } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight);
+  const { contour, holes, needsReview, reviewReason } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight);
 
   return {
     name: normalizeCadText(placement.name || part.name),
@@ -219,6 +227,9 @@ function toDxfPartData(placement: PlacementForDxf, part: Part): DxfPartData {
     originalW: localWidth,
     originalH: localHeight,
     grainLock: part.grainLock,
+    needsReview,
+    reviewReason,
+    contourSource: part.contourSource,
   };
 }
 

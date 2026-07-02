@@ -12,6 +12,7 @@ export async function dxfRoutes(app: FastifyInstance) {
 
     reply.header('Content-Type', 'application/zip');
     reply.header('Content-Disposition', contentDisposition(result.fileName));
+    setWarningsHeader(reply, result.warnings);
 
     if (result.storageUri) return reply.send(await downloadStorageBuffer(result.storageUri));
     return reply.send(createReadStream(result.filePath!));
@@ -23,6 +24,7 @@ export async function dxfRoutes(app: FastifyInstance) {
 
     reply.header('Content-Type', 'application/dxf');
     reply.header('Content-Disposition', contentDisposition(result.fileName));
+    setWarningsHeader(reply, result.warnings);
 
     if (result.storageUri) return reply.send(await downloadStorageBuffer(result.storageUri));
     return reply.send(createReadStream(result.filePath!));
@@ -31,4 +33,10 @@ export async function dxfRoutes(app: FastifyInstance) {
 
 function contentDisposition(fileName: string): string {
   return `attachment; filename="${fileName.replace(/"/g, '')}"`;
+}
+
+function setWarningsHeader(reply: { header: (name: string, value: string) => unknown }, warnings: string[]): void {
+  if (warnings.length > 0) {
+    reply.header('X-DXF-Warnings', JSON.stringify(warnings));
+  }
 }
