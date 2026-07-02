@@ -2,14 +2,21 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../prisma';
 import { normalizeCadText } from '../text-encoding';
 import { distributePartsToSheets } from './multi-sheet';
+import { resolveNestingParams } from './params';
 import type { NestingParams, NestingPart, NestingResult, Point2D, SheetOption } from './types';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
-const CUTTING_GAP_MM = 5;
 
 type JsonPoint = {
   x: number;
   y: number;
+};
+
+type SheetRequirements = {
+  totalPartsArea: number;
+  maxPartWidth: number;
+  maxPartHeight: number;
+  parts: Array<Pick<NestingPart, 'width' | 'height'>>;
 };
 
 export async function runNesting(projectId: string): Promise<NestingResult> {
@@ -87,10 +94,12 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
       quantities.set(part.id, part.quantity * project.quantity);
     }
 
+    const groupParams = await resolveNestingParams({ material, thickness });
     const groupTotalParts = Array.from(quantities.values()).reduce((sum, quantity) => sum + quantity, 0);
     totalParts += groupTotalParts;
 
-    const sheets = await findSuitableSheets(material, thickness);
+    const requirements = buildSheetRequirements(nestingParts, quantities, groupParams.gap);
+    const sheets = await findSuitableSheets(material, thickness, requirements, groupParams.margin);
     if (sheets.length === 0) {
       for (const part of groupParts) {
         const quantity = quantities.get(part.id) ?? 0;
@@ -103,7 +112,8 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
 
     const result = distributePartsToSheets(nestingParts, quantities, sheets, {
       strategy,
-      gap: CUTTING_GAP_MM,
+      gap: groupParams.gap,
+      margin: groupParams.margin,
       grainDirection: 'horizontal',
     });
 
@@ -143,7 +153,12 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   return result;
 }
 
-async function findSuitableSheets(material: string, thickness: number): Promise<SheetOption[]> {
+async function findSuitableSheets(
+  material: string,
+  thickness: number,
+  requirements: SheetRequirements,
+  margin: number
+): Promise<SheetOption[]> {
   const sheets: SheetOption[] = [];
   const remnants = await prisma.remnant.findMany({
     where: { material, thickness, isAvailable: true },
@@ -151,6 +166,10 @@ async function findSuitableSheets(material: string, thickness: number): Promise<
   });
 
   for (const remnant of remnants) {
+    if (!sheetCanFitAnyPart(remnant.width, remnant.height, requirements, margin)) {
+      continue;
+    }
+
     sheets.push({
       id: remnant.id,
       width: remnant.width,
@@ -159,15 +178,20 @@ async function findSuitableSheets(material: string, thickness: number): Promise<
       thickness: remnant.thickness,
       isRemnant: true,
       priority: 0,
+      potentialUtilization: potentialUtilization(requirements.totalPartsArea, remnant.width, remnant.height),
     });
   }
 
   const catalogSheets = await prisma.sheetCatalog.findMany({
     where: { material, thickness, isActive: true },
-    orderBy: [{ width: 'desc' }, { height: 'desc' }],
+    orderBy: [{ width: 'asc' }, { height: 'asc' }],
   });
 
   for (const sheet of catalogSheets) {
+    if (!sheetCanFitAnyPart(sheet.width, sheet.height, requirements, margin)) {
+      continue;
+    }
+
     sheets.push({
       id: sheet.id,
       width: sheet.width,
@@ -176,10 +200,64 @@ async function findSuitableSheets(material: string, thickness: number): Promise<
       thickness: sheet.thickness,
       isRemnant: false,
       priority: 1,
+      potentialUtilization: potentialUtilization(requirements.totalPartsArea, sheet.width, sheet.height),
     });
   }
 
-  return sheets.sort((a, b) => a.priority - b.priority || b.width * b.height - a.width * a.height);
+  return sheets.sort(
+    (a, b) =>
+      a.priority - b.priority ||
+      b.potentialUtilization - a.potentialUtilization ||
+      a.width * a.height - b.width * b.height
+  );
+}
+
+function buildSheetRequirements(
+  parts: NestingPart[],
+  quantities: Map<string, number>,
+  gap: number
+): SheetRequirements {
+  return {
+    totalPartsArea: parts.reduce((sum, part) => {
+      const quantity = quantities.get(part.id) ?? 0;
+      return sum + (part.width + gap) * (part.height + gap) * quantity;
+    }, 0),
+    maxPartWidth: Math.max(...parts.map((part) => part.width)),
+    maxPartHeight: Math.max(...parts.map((part) => part.height)),
+    parts: parts.map((part) => ({ width: part.width, height: part.height })),
+  };
+}
+
+function sheetCanFitAnyPart(
+  sheetWidth: number,
+  sheetHeight: number,
+  requirements: SheetRequirements,
+  margin: number
+): boolean {
+  const workWidth = sheetWidth - margin * 2;
+  const workHeight = sheetHeight - margin * 2;
+  const largestEnvelopeFits =
+    (requirements.maxPartWidth <= workWidth && requirements.maxPartHeight <= workHeight) ||
+    (requirements.maxPartHeight <= workWidth && requirements.maxPartWidth <= workHeight);
+
+  if (largestEnvelopeFits) {
+    return true;
+  }
+
+  return requirements.parts.some((part) =>
+    (part.width <= workWidth && part.height <= workHeight) ||
+    (part.height <= workWidth && part.width <= workHeight)
+  );
+}
+
+function potentialUtilization(totalPartsArea: number, sheetWidth: number, sheetHeight: number): number {
+  const sheetArea = sheetWidth * sheetHeight;
+
+  if (sheetArea <= 0) {
+    return 0;
+  }
+
+  return Math.min(100, roundPercent((totalPartsArea / sheetArea) * 100));
 }
 
 async function saveResults(projectId: string, result: NestingResult): Promise<void> {
@@ -218,6 +296,8 @@ async function saveResults(projectId: string, result: NestingResult): Promise<vo
           width: sheet.width,
           height: sheet.height,
           sheetIndex: index + 1,
+          usedGap: sheet.usedGap,
+          usedMargin: sheet.usedMargin,
           placements: placementsForDb as unknown as Prisma.InputJsonValue,
           utilization: sheet.utilization,
           waste: sheet.waste,

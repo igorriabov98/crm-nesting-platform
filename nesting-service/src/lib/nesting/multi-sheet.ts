@@ -1,4 +1,4 @@
-import { nestOnSheet, sortPartsByStrategy } from './blf';
+import { nestOnSheetOptimized, sortPartsByStrategy } from './blf';
 import { evaluateRemnant } from './remnant-eval';
 import type { NestingParams, NestingPart, NestingResult, PlacedPart, SheetOption, SheetResult } from './types';
 
@@ -85,7 +85,11 @@ function expandParts(parts: NestingPart[], quantities: Map<string, number>): Nes
 
 function sortSheetOptions(sheets: SheetOption[]): SheetOption[] {
   return [...sheets].sort(
-    (a, b) => a.priority - b.priority || Number(a.isRemnant) - Number(b.isRemnant) || sheetArea(a) - sheetArea(b)
+    (a, b) =>
+      a.priority - b.priority ||
+      Number(a.isRemnant) - Number(b.isRemnant) ||
+      b.potentialUtilization - a.potentialUtilization ||
+      sheetArea(a) - sheetArea(b)
   );
 }
 
@@ -94,14 +98,14 @@ function createSheetCandidate(
   remaining: NestingPart[],
   params: NestingParams
 ): SheetCandidate | null {
-  const { placed, unplaced } = nestOnSheet(remaining, sheet.width, sheet.height, params);
+  const { placed, unplaced } = nestOnSheetOptimized(remaining, sheet.width, sheet.height, params);
 
   if (placed.length === 0) {
     return null;
   }
 
   const stats = computeSheetStats(placed, sheet.width, sheet.height);
-  const remnant = evaluateRemnant(sheet.width, sheet.height, placed, params.strategy, params.gap);
+  const remnant = evaluateRemnant(sheet.width, sheet.height, placed, params.strategy, params.gap, params.margin);
 
   return {
     sheet,
@@ -114,6 +118,8 @@ function createSheetCandidate(
       steelTypeName: null,
       thickness: sheet.thickness,
       isRemnant: sheet.isRemnant,
+      usedGap: params.gap,
+      usedMargin: params.margin,
       placements: placed,
       utilization: stats.utilization,
       waste: stats.waste,
@@ -163,9 +169,9 @@ function compareMinWasteCandidate(candidate: SheetCandidate, best: SheetCandidat
 
 function compareRemnantCandidate(candidate: SheetCandidate, best: SheetCandidate): number {
   return (
+    compareNumber(candidate.result.waste, best.result.waste) ||
     compareNumber(candidate.sheetArea, best.sheetArea) ||
     compareNumber(best.remnantArea, candidate.remnantArea) ||
-    compareNumber(candidate.result.waste, best.result.waste) ||
     compareSheetPriority(candidate, best)
   );
 }

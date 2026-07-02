@@ -164,6 +164,8 @@ model NestingSheet {
   width       Float
   height      Float
   sheetIndex  Int
+  usedGap     Float          @default(5)
+  usedMargin  Float          @default(5)
   placements  Json
   utilization Float
   waste       Float

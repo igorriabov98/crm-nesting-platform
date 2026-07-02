@@ -30,6 +30,7 @@ export interface SheetOption {
   thickness: number;
   isRemnant: boolean;
   priority: number;
+  potentialUtilization: number;
 }
 
 export interface PlacedPart {
@@ -61,6 +62,8 @@ export interface SheetResult {
   steelTypeName: string | null;
   thickness: number;
   isRemnant: boolean;
+  usedGap: number;
+  usedMargin: number;
   placements: PlacedPart[];
   utilization: number;
   waste: number;
@@ -103,5 +106,6 @@ export interface NestingResult {
 export interface NestingParams {
   strategy: 'minWaste' | 'remnant' | 'minSheets';
   gap: number;
+  margin: number;
   grainDirection: 'horizontal';
 }

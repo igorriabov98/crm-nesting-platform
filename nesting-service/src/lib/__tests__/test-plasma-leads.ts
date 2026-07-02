@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { createLeadSegments } from '../dxf/leads';
+import { DEFAULT_SHEET_MARGIN_MM } from '../nesting/params';
 import type { Point2D } from '../nesting/types';
+
+const margin = DEFAULT_SHEET_MARGIN_MM;
 
 const contour: Point2D[] = [
   { x: 0, y: 0 },
@@ -28,20 +31,20 @@ assert.equal(segmentLength(result.segments[1]), 2);
 
 const marginResult = createLeadSegments(
   contour,
-  { x: 5, y: 5 },
+  { x: margin, y: margin },
   0,
   'outer',
   { width: 100, height: 100 },
-  [{ index: 0, x: 5, y: 5, width: 30, height: 20 }],
-  { leadInLength: 3, leadOutLength: 2, safeMargin: 5 }
+  [{ index: 0, x: margin, y: margin, width: 30, height: 20 }],
+  { leadInLength: 3, leadOutLength: 2, safeMargin: margin }
 );
 
 assert.equal(marginResult.warnings.length, 0);
 for (const segment of marginResult.segments) {
   for (const point of [segment.from, segment.to]) {
-    const sheetPoint = { x: point.x + 5, y: point.y + 5 };
-    assert.ok(sheetPoint.x >= 5 && sheetPoint.x <= 95, `lead ${segment.kind} x=${sheetPoint.x} is outside safe margin`);
-    assert.ok(sheetPoint.y >= 5 && sheetPoint.y <= 95, `lead ${segment.kind} y=${sheetPoint.y} is outside safe margin`);
+    const sheetPoint = { x: point.x + margin, y: point.y + margin };
+    assert.ok(sheetPoint.x >= margin && sheetPoint.x <= 100 - margin, `lead ${segment.kind} x=${sheetPoint.x} is outside safe margin`);
+    assert.ok(sheetPoint.y >= margin && sheetPoint.y <= 100 - margin, `lead ${segment.kind} y=${sheetPoint.y} is outside safe margin`);
   }
 }
 

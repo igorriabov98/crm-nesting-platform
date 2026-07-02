@@ -2,8 +2,6 @@ import type { PlacedPart, RemnantCandidate, RemnantInfo } from './types';
 
 const MIN_REMNANT_WIDTH = 100;
 const MIN_REMNANT_HEIGHT = 100;
-const SHEET_MARGIN_MM = 5;
-const CUTTING_GAP_MM = 5;
 const MAX_CANDIDATES = 10;
 const EPSILON_MM = 0.001;
 
@@ -19,9 +17,10 @@ export function evaluateRemnant(
   sheetH: number,
   placements: PlacedPart[],
   _strategy: 'minWaste' | 'remnant' | 'minSheets',
-  _gap: number
+  gap: number,
+  margin: number
 ): RemnantInfo | null {
-  const candidates = buildRemnantCandidates(sheetW, sheetH, placements);
+  const candidates = buildRemnantCandidates(sheetW, sheetH, placements, gap, margin);
   const selected = candidates[0] ?? null;
 
   if (!selected) {
@@ -35,19 +34,25 @@ export function evaluateRemnant(
   };
 }
 
-export function buildRemnantCandidates(sheetW: number, sheetH: number, placements: PlacedPart[]): RemnantCandidate[] {
+export function buildRemnantCandidates(
+  sheetW: number,
+  sheetH: number,
+  placements: PlacedPart[],
+  gap: number,
+  margin: number
+): RemnantCandidate[] {
   const workArea: Rect = {
-    x: SHEET_MARGIN_MM,
-    y: SHEET_MARGIN_MM,
-    width: sheetW - SHEET_MARGIN_MM * 2,
-    height: sheetH - SHEET_MARGIN_MM * 2,
+    x: margin,
+    y: margin,
+    width: sheetW - margin * 2,
+    height: sheetH - margin * 2,
   };
 
   if (workArea.width < MIN_REMNANT_WIDTH || workArea.height < MIN_REMNANT_HEIGHT) {
     return [];
   }
 
-  const obstacles = placements.map((placement) => inflatePlacement(placement, workArea)).filter((rect): rect is Rect => rect !== null);
+  const obstacles = placements.map((placement) => inflatePlacement(placement, workArea, gap)).filter((rect): rect is Rect => rect !== null);
   const xStarts = new Set<number>([workArea.x]);
   const xEnds = new Set<number>([workArea.x + workArea.width]);
   const yStarts = new Set<number>([workArea.y]);
@@ -92,11 +97,11 @@ export function buildRemnantCandidates(sheetW: number, sheetH: number, placement
     .slice(0, MAX_CANDIDATES);
 }
 
-function inflatePlacement(placement: PlacedPart, workArea: Rect): Rect | null {
-  const x1 = Math.max(workArea.x, placement.x - CUTTING_GAP_MM);
-  const y1 = Math.max(workArea.y, placement.y - CUTTING_GAP_MM);
-  const x2 = Math.min(workArea.x + workArea.width, placement.x + placement.placedW + CUTTING_GAP_MM);
-  const y2 = Math.min(workArea.y + workArea.height, placement.y + placement.placedH + CUTTING_GAP_MM);
+function inflatePlacement(placement: PlacedPart, workArea: Rect, gap: number): Rect | null {
+  const x1 = Math.max(workArea.x, placement.x - gap);
+  const y1 = Math.max(workArea.y, placement.y - gap);
+  const x2 = Math.min(workArea.x + workArea.width, placement.x + placement.placedW + gap);
+  const y2 = Math.min(workArea.y + workArea.height, placement.y + placement.placedH + gap);
 
   if (x2 <= x1 || y2 <= y1) {
     return null;

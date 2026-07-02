@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { nestOnSheet } from '../nesting/blf';
+import { nestOnSheet, nestOnSheetOptimized } from '../nesting/blf';
 import { distributePartsToSheets } from '../nesting/multi-sheet';
+import { DEFAULT_CUTTING_GAP_MM, DEFAULT_SHEET_MARGIN_MM } from '../nesting/params';
 import type { NestingParams, NestingPart, SheetOption } from '../nesting/types';
 
-const SHEET_MARGIN_MM = 5;
-const CUTTING_GAP_MM = 5;
+const SHEET_MARGIN_MM = DEFAULT_SHEET_MARGIN_MM;
+const CUTTING_GAP_MM = DEFAULT_CUTTING_GAP_MM;
 
 const sheets: SheetOption[] = [
   {
@@ -15,6 +16,7 @@ const sheets: SheetOption[] = [
     thickness: 3,
     isRemnant: false,
     priority: 1,
+    potentialUtilization: 8.4,
   },
   {
     id: 'optimal',
@@ -24,6 +26,7 @@ const sheets: SheetOption[] = [
     thickness: 3,
     isRemnant: false,
     priority: 1,
+    potentialUtilization: 11.2,
   },
 ];
 
@@ -38,7 +41,7 @@ const quantities = new Map([
 ]);
 
 for (const strategy of ['minWaste', 'remnant', 'minSheets'] as const) {
-  const params: NestingParams = { strategy, gap: 5, grainDirection: 'horizontal' };
+  const params: NestingParams = { strategy, gap: CUTTING_GAP_MM, margin: SHEET_MARGIN_MM, grainDirection: 'horizontal' };
   const result = distributePartsToSheets(parts, quantities, sheets, params);
 
   assert.equal(result.totalSheets, 1, `${strategy}: expected all parts on one sheet`);
@@ -56,6 +59,8 @@ assertEdgeMargin();
 assertExactAdjacentGap();
 assertVerticalOrientationPreferred();
 assertHorizontalFallbackWhenVerticalDoesNotFit();
+assertSmallPartsPreferCompactSheet();
+assertOptimizedNestingIsNotWorseThanSingleStrategy();
 
 console.log('[nesting-sheet-selection] all tests passed');
 
@@ -79,21 +84,21 @@ function createPart(id: string, name: string, width: number, height: number): Ne
 }
 
 function assertEdgeMargin(): void {
-  const params: NestingParams = { strategy: 'minWaste', gap: 50, grainDirection: 'horizontal' };
+  const params: NestingParams = { strategy: 'minWaste', gap: 50, margin: SHEET_MARGIN_MM, grainDirection: 'horizontal' };
   const result = nestOnSheet([createPart('tight', 'Tight detail', 90, 90)], 100, 100, params);
 
-  assert.equal(result.placed.length, 1, 'detail should fit exactly inside the 5mm margin frame');
+  assert.equal(result.placed.length, 1, 'detail should fit exactly inside the configured margin frame');
   assert.equal(result.placed[0].x, SHEET_MARGIN_MM);
   assert.equal(result.placed[0].y, SHEET_MARGIN_MM);
   assert.equal(result.placed[0].x + result.placed[0].placedW, 100 - SHEET_MARGIN_MM);
   assert.equal(result.placed[0].y + result.placed[0].placedH, 100 - SHEET_MARGIN_MM);
 
   const tooLarge = nestOnSheet([createPart('too-large', 'Too large', 91, 90)], 100, 100, params);
-  assert.equal(tooLarge.placed.length, 0, 'detail must not enter the 5mm margin frame');
+  assert.equal(tooLarge.placed.length, 0, 'detail must not enter the configured margin frame');
 }
 
 function assertExactAdjacentGap(): void {
-  const params: NestingParams = { strategy: 'minWaste', gap: 25, grainDirection: 'horizontal' };
+  const params: NestingParams = { strategy: 'minWaste', gap: CUTTING_GAP_MM, margin: SHEET_MARGIN_MM, grainDirection: 'horizontal' };
   const result = nestOnSheet(
     [createPart('left', 'Left detail', 40, 40), createPart('right', 'Right detail', 40, 40)],
     100,
@@ -101,13 +106,13 @@ function assertExactAdjacentGap(): void {
     params
   );
 
-  assert.equal(result.placed.length, 2, 'both details should fit with one fixed 5mm cutting gap');
+  assert.equal(result.placed.length, 2, 'both details should fit with one fixed cutting gap');
   assert.equal(result.placed[0].x, SHEET_MARGIN_MM);
   assert.equal(result.placed[1].x - (result.placed[0].x + result.placed[0].placedW), CUTTING_GAP_MM);
 }
 
 function assertVerticalOrientationPreferred(): void {
-  const params: NestingParams = { strategy: 'minWaste', gap: 5, grainDirection: 'horizontal' };
+  const params: NestingParams = { strategy: 'minWaste', gap: CUTTING_GAP_MM, margin: SHEET_MARGIN_MM, grainDirection: 'horizontal' };
   const result = nestOnSheet([createPart('vertical', 'Vertical preferred', 120, 80)], 200, 200, params);
 
   assert.equal(result.placed.length, 1);
@@ -117,13 +122,61 @@ function assertVerticalOrientationPreferred(): void {
 }
 
 function assertHorizontalFallbackWhenVerticalDoesNotFit(): void {
-  const params: NestingParams = { strategy: 'minWaste', gap: 5, grainDirection: 'horizontal' };
+  const params: NestingParams = { strategy: 'minWaste', gap: CUTTING_GAP_MM, margin: SHEET_MARGIN_MM, grainDirection: 'horizontal' };
   const result = nestOnSheet([createPart('horizontal', 'Horizontal fallback', 160, 40)], 180, 80, params);
 
   assert.equal(result.placed.length, 1);
   assert.equal(result.placed[0].rotation, 0, 'horizontal orientation should be used when vertical does not fit');
   assert.equal(result.placed[0].placedW, 160);
   assert.equal(result.placed[0].placedH, 40);
+}
+
+function assertSmallPartsPreferCompactSheet(): void {
+  const params: NestingParams = { strategy: 'minWaste', gap: CUTTING_GAP_MM, margin: SHEET_MARGIN_MM, grainDirection: 'horizontal' };
+  const leg = createPart('leg', 'Leg support', 495, 100);
+  const compactSheets: SheetOption[] = [
+    {
+      id: 'huge',
+      width: 2500,
+      height: 1250,
+      material: 'Steel',
+      thickness: 8,
+      isRemnant: false,
+      priority: 1,
+      potentialUtilization: 6.6,
+    },
+    {
+      id: 'compact',
+      width: 1000,
+      height: 500,
+      material: 'Steel',
+      thickness: 8,
+      isRemnant: false,
+      priority: 1,
+      potentialUtilization: 41.4,
+    },
+  ];
+  const result = distributePartsToSheets([leg], new Map([['leg', 4]]), compactSheets, params);
+
+  assert.equal(result.totalSheets, 1, 'four small legs should fit on one compact sheet');
+  assert.equal(result.sheets[0].sheetOptionId, 'compact', 'small parts should prefer the compact suitable sheet');
+}
+
+function assertOptimizedNestingIsNotWorseThanSingleStrategy(): void {
+  const params: NestingParams = { strategy: 'minWaste', gap: CUTTING_GAP_MM, margin: SHEET_MARGIN_MM, grainDirection: 'horizontal' };
+  const mixedParts = [
+    createPart('wide', 'Wide rail', 900, 80),
+    createPart('tall-a', 'Tall A', 90, 700),
+    createPart('tall-b', 'Tall B', 90, 700),
+    createPart('panel', 'Panel', 300, 300),
+  ];
+  const single = nestOnSheet(mixedParts, 1000, 900, params);
+  const optimized = nestOnSheetOptimized(mixedParts, 1000, 900, params);
+
+  assert.ok(
+    optimized.placed.length >= single.placed.length,
+    `optimized nesting placed ${optimized.placed.length}, single strategy placed ${single.placed.length}`
+  );
 }
 
 function assertSheetMargin(

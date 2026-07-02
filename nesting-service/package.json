@@ -12,7 +12,8 @@
     "db:studio": "prisma studio",
     "worker:step": "tsx src/workers/step-worker.ts",
     "worker:nesting": "tsx src/workers/nesting-worker.ts",
-    "test:storage-auth": "tsx src/lib/__tests__/test-storage-auth.ts"
+    "test:storage-auth": "tsx src/lib/__tests__/test-storage-auth.ts",
+    "test:phase0": "tsx src/lib/__tests__/test-dimension-guard.ts && tsx src/lib/__tests__/test-dxf-no-anisotropy.ts && tsx src/lib/__tests__/test-nesting-params.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

@@ -38,6 +38,9 @@ type EnrichedPlacementForResult = PlacementForResult & {
   holes?: JsonPoint[][];
   leadIn?: LeadSegmentForResult[];
   leadOut?: LeadSegmentForResult[];
+  dimensionMismatch?: boolean;
+  mismatchNote?: string | null;
+  contourSource?: string;
 };
 
 type JsonPoint = {
@@ -64,7 +67,6 @@ type RemnantPayload = {
 
 const LEAD_IN_LENGTH_MM = 3;
 const LEAD_OUT_LENGTH_MM = 2;
-const SHEET_MARGIN_MM = 5;
 
 const updateRemnantsSchema = z.object({
   selectedRemnantIds: z.array(z.string().min(1)).max(10),
@@ -101,7 +103,7 @@ export async function resultRoutes(app: FastifyInstance) {
         ...placement,
         name: placement.name ? normalizeCadText(placement.name) : placement.name,
       }));
-      const placements = enrichPlacements(basePlacements, partsById, sheet.width, sheet.height);
+      const placements = enrichPlacements(basePlacements, partsById, sheet.width, sheet.height, sheet.usedMargin);
 
       for (const placement of placements) {
         placedParts += 1;
@@ -119,6 +121,8 @@ export async function resultRoutes(app: FastifyInstance) {
         thickness: sheet.thickness,
         width: sheet.width,
         height: sheet.height,
+        usedGap: sheet.usedGap,
+        usedMargin: sheet.usedMargin,
         isRemnant: Boolean(sheet.remnantId),
         placements,
         utilization: sheet.utilization,
@@ -212,9 +216,19 @@ function readPlacements(value: unknown): PlacementForResult[] {
 
 function enrichPlacements(
   placements: PlacementForResult[],
-  partsById: Map<string, { id: string; width: number; height: number; contour: unknown; holes: unknown }>,
+  partsById: Map<string, {
+    id: string;
+    width: number;
+    height: number;
+    contour: unknown;
+    holes: unknown;
+    contourSource: string;
+    dimensionMismatch: boolean;
+    mismatchNote: string | null;
+  }>,
   sheetWidth: number,
-  sheetHeight: number
+  sheetHeight: number,
+  usedMargin: number
 ): EnrichedPlacementForResult[] {
   const boxes = placements
     .map((placement, index) => ({
@@ -242,7 +256,12 @@ function enrichPlacements(
       !Number.isFinite(placedH) ||
       rotation === null
     ) {
-      return placement;
+      return part ? {
+        ...placement,
+        contourSource: part.contourSource,
+        dimensionMismatch: part.dimensionMismatch,
+        mismatchNote: part.mismatchNote,
+      } : placement;
     }
 
     const localWidth = isQuarterTurn(rotation) ? placedH : placedW;
@@ -258,13 +277,13 @@ function enrichPlacements(
       createLeadSegments(localOuterContour, { x, y }, index, 'outer', { width: sheetWidth, height: sheetHeight }, boxes, {
         leadInLength: LEAD_IN_LENGTH_MM,
         leadOutLength: LEAD_OUT_LENGTH_MM,
-        safeMargin: SHEET_MARGIN_MM,
+        safeMargin: usedMargin,
       }),
       ...localHoleContours.map((hole, holeIndex) =>
         createLeadSegments(hole, { x, y }, index, `hole-${holeIndex + 1}`, { width: sheetWidth, height: sheetHeight }, boxes, {
           leadInLength: LEAD_IN_LENGTH_MM,
           leadOutLength: LEAD_OUT_LENGTH_MM,
-          safeMargin: SHEET_MARGIN_MM,
+          safeMargin: usedMargin,
         })
       ),
     ];
@@ -272,6 +291,9 @@ function enrichPlacements(
 
     return {
       ...placement,
+      contourSource: part.contourSource,
+      dimensionMismatch: part.dimensionMismatch,
+      mismatchNote: part.mismatchNote,
       contour: transformContourForDxf(contour, rotation, x, y, localWidth, localHeight).map(roundPoint),
       holes: holes.map((hole) => transformContourForDxf(hole, rotation, x, y, localWidth, localHeight).map(roundPoint)),
       leadIn: leadSegments.filter((segment) => segment.kind === 'leadIn').map((segment) => translateLeadSegment(segment, x, y)),

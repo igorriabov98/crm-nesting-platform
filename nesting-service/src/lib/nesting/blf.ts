@@ -11,11 +11,45 @@ type Candidate = {
   attachmentScore: number;
 };
 
-const SHEET_MARGIN_MM = 5;
-const CUTTING_GAP_MM = 5;
 const EPSILON_MM = 0.001;
+const SORT_STRATEGIES: Array<(parts: NestingPart[], params: NestingParams) => NestingPart[]> = [
+  (parts, params) => sortPartsByStrategy(parts, params.strategy),
+  (parts) => [...parts].sort((a, b) => b.width * b.height - a.width * a.height),
+  (parts) => [...parts].sort((a, b) => b.height - a.height || b.width - a.width),
+  (parts) => [...parts].sort((a, b) => b.width - a.width || b.height - a.height),
+  (parts) => [...parts].sort((a, b) => (b.width + b.height) - (a.width + a.height)),
+  (parts) => [...parts].sort((a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height)),
+];
 
 export function nestOnSheet(
+  parts: NestingPart[],
+  sheetW: number,
+  sheetH: number,
+  params: NestingParams
+): { placed: PlacedPart[]; unplaced: NestingPart[] } {
+  return placePartsInOrder(sortPartsByStrategy(parts, params.strategy), sheetW, sheetH, params);
+}
+
+export function nestOnSheetOptimized(
+  parts: NestingPart[],
+  sheetW: number,
+  sheetH: number,
+  params: NestingParams
+): { placed: PlacedPart[]; unplaced: NestingPart[] } {
+  let best: { placed: PlacedPart[]; unplaced: NestingPart[] } | null = null;
+
+  for (const sortParts of SORT_STRATEGIES) {
+    const result = placePartsInOrder(sortParts(parts, params), sheetW, sheetH, params);
+
+    if (!best || isBetterOptimizedResult(result, best, sheetW, sheetH)) {
+      best = result;
+    }
+  }
+
+  return best ?? { placed: [], unplaced: [...parts] };
+}
+
+function placePartsInOrder(
   parts: NestingPart[],
   sheetW: number,
   sheetH: number,
@@ -24,7 +58,7 @@ export function nestOnSheet(
   const placed: PlacedPart[] = [];
   const unplaced: NestingPart[] = [];
 
-  for (const part of sortPartsByStrategy(parts, params.strategy)) {
+  for (const part of parts) {
     const candidate = findBestCandidate(part, placed, sheetW, sheetH, params);
 
     if (!candidate) {
@@ -56,6 +90,60 @@ export function nestOnSheet(
   }
 
   return { placed, unplaced };
+}
+
+function isBetterOptimizedResult(
+  candidate: { placed: PlacedPart[]; unplaced: NestingPart[] },
+  best: { placed: PlacedPart[]; unplaced: NestingPart[] },
+  sheetW: number,
+  sheetH: number
+): boolean {
+  if (candidate.placed.length !== best.placed.length) {
+    return candidate.placed.length > best.placed.length;
+  }
+
+  const candidateUtilization = placementArea(candidate.placed) / (sheetW * sheetH);
+  const bestUtilization = placementArea(best.placed) / (sheetW * sheetH);
+  if (Math.abs(candidateUtilization - bestUtilization) > EPSILON_MM) {
+    return candidateUtilization > bestUtilization;
+  }
+
+  const candidateBounds = placementBounds(candidate.placed);
+  const bestBounds = placementBounds(best.placed);
+  if (Math.abs(candidateBounds.area - bestBounds.area) > EPSILON_MM) {
+    return candidateBounds.area < bestBounds.area;
+  }
+
+  if (Math.abs(candidateBounds.maxY - bestBounds.maxY) > EPSILON_MM) {
+    return candidateBounds.maxY < bestBounds.maxY;
+  }
+
+  if (Math.abs(candidateBounds.maxX - bestBounds.maxX) > EPSILON_MM) {
+    return candidateBounds.maxX < bestBounds.maxX;
+  }
+
+  return false;
+}
+
+function placementArea(placements: PlacedPart[]): number {
+  return placements.reduce((sum, placement) => sum + placement.placedW * placement.placedH, 0);
+}
+
+function placementBounds(placements: PlacedPart[]): { area: number; maxX: number; maxY: number } {
+  if (placements.length === 0) {
+    return { area: Number.POSITIVE_INFINITY, maxX: Number.POSITIVE_INFINITY, maxY: Number.POSITIVE_INFINITY };
+  }
+
+  const minX = Math.min(...placements.map((placement) => placement.x));
+  const minY = Math.min(...placements.map((placement) => placement.y));
+  const maxX = Math.max(...placements.map((placement) => placement.x + placement.placedW));
+  const maxY = Math.max(...placements.map((placement) => placement.y + placement.placedH));
+
+  return {
+    area: (maxX - minX) * (maxY - minY),
+    maxX,
+    maxY,
+  };
 }
 
 export function sortPartsByStrategy(
@@ -124,19 +212,19 @@ function findBestCandidate(
 ): Candidate | null {
   const rotations: Rotation[] = part.grainLock ? [0] : [0, 90];
   let best: Candidate | null = null;
-  const gap = CUTTING_GAP_MM;
+  const { gap, margin } = params;
 
   for (const rotation of rotations) {
     const placedW = rotation === 90 || rotation === 270 ? part.height : part.width;
     const placedH = rotation === 90 || rotation === 270 ? part.width : part.height;
 
-    if (!fitsInsideSheet(placedW, placedH, sheetW, sheetH)) {
+    if (!fitsInsideSheet(placedW, placedH, sheetW, sheetH, margin)) {
       continue;
     }
 
-    for (const x of buildCandidateCoordinates('x', placed, placedW, sheetW, gap)) {
-      for (const y of buildCandidateCoordinates('y', placed, placedH, sheetH, gap)) {
-        if (!isCandidateValid(x, y, placedW, placedH, placed, sheetW, sheetH, gap)) {
+    for (const x of buildCandidateCoordinates('x', placed, placedW, sheetW, gap, margin)) {
+      for (const y of buildCandidateCoordinates('y', placed, placedH, sheetH, gap, margin)) {
+        if (!isCandidateValid(x, y, placedW, placedH, placed, sheetW, sheetH, gap, margin)) {
           continue;
         }
 
@@ -146,7 +234,7 @@ function findBestCandidate(
           rotation,
           placedW,
           placedH,
-          attachmentScore: computeAttachmentScore(x, y, placedW, placedH, placed, sheetW, sheetH, gap),
+          attachmentScore: computeAttachmentScore(x, y, placedW, placedH, placed, sheetW, sheetH, gap, margin),
         };
 
         if (!best || isBetterCandidate(candidate, best, params.strategy)) {
@@ -159,12 +247,12 @@ function findBestCandidate(
   return best;
 }
 
-function fitsInsideSheet(placedW: number, placedH: number, sheetW: number, sheetH: number): boolean {
+function fitsInsideSheet(placedW: number, placedH: number, sheetW: number, sheetH: number, margin: number): boolean {
   return (
     placedW > 0 &&
     placedH > 0 &&
-    placedW <= sheetW - SHEET_MARGIN_MM * 2 + EPSILON_MM &&
-    placedH <= sheetH - SHEET_MARGIN_MM * 2 + EPSILON_MM
+    placedW <= sheetW - margin * 2 + EPSILON_MM &&
+    placedH <= sheetH - margin * 2 + EPSILON_MM
   );
 }
 
@@ -173,9 +261,10 @@ function buildCandidateCoordinates(
   placed: PlacedPart[],
   size: number,
   sheetSize: number,
-  gap: number
+  gap: number,
+  margin: number
 ): number[] {
-  const values = new Set<number>([SHEET_MARGIN_MM, sheetSize - SHEET_MARGIN_MM - size]);
+  const values = new Set<number>([margin, sheetSize - margin - size]);
 
   for (const existing of placed) {
     const start = axis === 'x' ? existing.x : existing.y;
@@ -187,7 +276,7 @@ function buildCandidateCoordinates(
 
   return Array.from(values)
     .map(roundMm)
-    .filter((value) => value >= SHEET_MARGIN_MM - EPSILON_MM && value + size <= sheetSize - SHEET_MARGIN_MM + EPSILON_MM)
+    .filter((value) => value >= margin - EPSILON_MM && value + size <= sheetSize - margin + EPSILON_MM)
     .sort((a, b) => a - b);
 }
 
@@ -199,13 +288,14 @@ function isCandidateValid(
   placed: PlacedPart[],
   sheetW: number,
   sheetH: number,
-  gap: number
+  gap: number,
+  margin: number
 ): boolean {
   if (
-    x < SHEET_MARGIN_MM - EPSILON_MM ||
-    y < SHEET_MARGIN_MM - EPSILON_MM ||
-    x + placedW > sheetW - SHEET_MARGIN_MM + EPSILON_MM ||
-    y + placedH > sheetH - SHEET_MARGIN_MM + EPSILON_MM
+    x < margin - EPSILON_MM ||
+    y < margin - EPSILON_MM ||
+    x + placedW > sheetW - margin + EPSILON_MM ||
+    y + placedH > sheetH - margin + EPSILON_MM
   ) {
     return false;
   }
@@ -234,14 +324,15 @@ function computeAttachmentScore(
   placed: PlacedPart[],
   sheetW: number,
   sheetH: number,
-  gap: number
+  gap: number,
+  margin: number
 ): number {
   let score = 0;
 
-  if (isClose(x, SHEET_MARGIN_MM)) score += 1;
-  if (isClose(y, SHEET_MARGIN_MM)) score += 1;
-  if (isClose(x + placedW, sheetW - SHEET_MARGIN_MM)) score += 1;
-  if (isClose(y + placedH, sheetH - SHEET_MARGIN_MM)) score += 1;
+  if (isClose(x, margin)) score += 1;
+  if (isClose(y, margin)) score += 1;
+  if (isClose(x + placedW, sheetW - margin)) score += 1;
+  if (isClose(y + placedH, sheetH - margin)) score += 1;
 
   for (const existing of placed) {
     const overlapsY = intervalsOverlap(y, y + placedH, existing.y, existing.y + existing.placedH);

@@ -3,6 +3,7 @@ import 'server-only'
 export type NestingStatus = 'created' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
 export type NestingStrategy = 'minWaste' | 'remnant' | 'minSheets'
 export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom'
+export type ContourSource = 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
 export type NestingMaterial = 'Сталь' | 'Нержавейка' | 'Алюминий'
 
 export interface NestingProject {
@@ -45,6 +46,7 @@ export interface NestingPart {
   meshVolume: number | null
   meshArea: number | null
   facesCount: number | null
+  contourSource: ContourSource | string
   quantity: number
   isSheetMetal: boolean
   grainLock: boolean
@@ -94,6 +96,9 @@ export interface Placement {
   holes?: { x: number; y: number }[][]
   leadIn?: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>
   leadOut?: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>
+  dimensionMismatch?: boolean
+  mismatchNote?: string | null
+  contourSource?: ContourSource | string
 }
 
 export interface RemnantGeom {
@@ -115,6 +120,8 @@ export interface SheetResult {
   thickness: number
   width: number
   height: number
+  usedGap: number
+  usedMargin: number
   isRemnant: boolean
   placements: Placement[]
   utilization: number

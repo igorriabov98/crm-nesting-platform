@@ -142,7 +142,7 @@ export class CatalogService {
     });
   }
 
-  async getGapForMaterial(material: string, thickness: number): Promise<number> {
+  async getGapForMaterial(material: string, thickness: number): Promise<number | null> {
     const rule = await prisma.gapTable.findFirst({
       where: {
         material,
@@ -152,7 +152,7 @@ export class CatalogService {
       orderBy: { thicknessMin: 'desc' },
     });
 
-    return rule?.gap ?? Math.max(thickness * 1.5, 3);
+    return rule?.gap ?? null;
   }
 
   async createGap(data: CreateGap): Promise<Gap> {
