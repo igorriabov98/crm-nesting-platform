@@ -83,10 +83,6 @@ type SelectedGanttStage = RawGanttStage & {
   night_shift_date: string | null
 }
 
-type PlannedGanttStage = SelectedGanttStage & {
-  date_start: string
-}
-
 type SelectedMachineItem = {
   coating: string | null
 }
@@ -193,16 +189,23 @@ const GANTT_ORDER_TABLES = [
   'request_chain_cord',
 ]
 
-function isPlannedStage(stage: SelectedGanttStage): stage is PlannedGanttStage {
-  return !stage.is_skipped && Boolean(stage.date_start)
+function getStageTimelineStart(stage: RawGanttStage) {
+  if (stage.date_start) return stage.date_start
+  if (stage.stage_type === 'shipping' && stage.date_end) return stage.date_end
+  return null
+}
+
+function isPlannedStage(stage: SelectedGanttStage) {
+  return !stage.is_skipped && Boolean(getStageTimelineStart(stage))
 }
 
 function computeGanttStatus(s: RawGanttStage): { status: GanttStageStatus; delay_days: number } {
-  if (!s.date_start) return { status: 'not_planned', delay_days: 0 }
+  const timelineStart = getStageTimelineStart(s)
+  if (!timelineStart) return { status: 'not_planned', delay_days: 0 }
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const startDate = new Date(s.date_start)
+  const startDate = new Date(timelineStart)
   const endDate = s.date_end ? new Date(s.date_end) : null
 
   if (s.stage_type === 'actual_shipping' && endDate) {
@@ -703,9 +706,13 @@ export async function getGanttData(
     }
 
     const ganttStages: GanttStage[] = stages.map((s) => {
+      const timelineStart = getStageTimelineStart(s)
+      if (!timelineStart) return null
+
       const { status, delay_days } = computeGanttStatus(s)
-      const startDate = new Date(s.date_start)
-      const endDate = s.date_end ? new Date(s.date_end) : addDays(startDate, 7)
+      const startDate = new Date(timelineStart)
+      const endValue = s.date_end || (s.stage_type === 'shipping' ? timelineStart : addDays(startDate, 7).toISOString().split('T')[0])
+      const endDate = new Date(endValue)
 
       if (!minDate || startDate < minDate) minDate = startDate
       if (!maxDate || endDate > maxDate) maxDate = endDate
@@ -714,15 +721,15 @@ export async function getGanttData(
         id: s.id,
         stage_type: s.stage_type,
         workshop: s.workshop,
-        date_start: s.date_start,
-        date_end: s.date_end || addDays(startDate, 7).toISOString().split('T')[0],
+        date_start: timelineStart,
+        date_end: endValue,
         manual_overdue: Boolean(s.manual_overdue),
         is_night_shift: Boolean(s.is_night_shift),
         night_shift_date: s.night_shift_date,
         status,
         delay_days,
       }
-    })
+    }).filter((stage): stage is GanttStage => Boolean(stage))
 
     ;[
       m.desired_shipping_date,

@@ -264,7 +264,11 @@ function productionMonthLabel(date: string | null | undefined) {
 }
 
 function hasScheduledStage(row: ProductionRow) {
-  return row.stages.some((stage) => PRODUCTION_PLAN_STAGE_ORDER.includes(stage.stage_type) && !stage.is_skipped && Boolean(stage.date_start))
+  return row.stages.some((stage) => (
+    PRODUCTION_PLAN_STAGE_ORDER.includes(stage.stage_type) &&
+    !stage.is_skipped &&
+    Boolean(getProductionStageTimelineStart(stage))
+  ))
 }
 
 function compareProductionMachines(
@@ -318,23 +322,35 @@ function productionRowToGanttMachine(row: ProductionRow, fallback?: GanttMachine
 }
 
 function productionStageToGanttStage(stage: ProductionStage): GanttStage | null {
-  if (stage.is_skipped || !stage.date_start) return null
+  if (stage.is_skipped) return null
 
-  const startDate = new Date(stage.date_start)
+  const timelineStart = getProductionStageTimelineStart(stage)
+  if (!timelineStart) return null
+
+  const startDate = new Date(timelineStart)
+  const endValue = stage.date_end || (stage.stage_type === 'shipping'
+    ? timelineStart
+    : addDays(startDate, 7).toISOString().split('T')[0])
   const status: GanttStage['status'] = stage.status === 'skipped' ? 'not_planned' : stage.status
 
   return {
     id: stage.id,
     stage_type: stage.stage_type,
     workshop: stage.workshop,
-    date_start: stage.date_start,
-    date_end: stage.date_end || addDays(startDate, 7).toISOString().split('T')[0],
+    date_start: timelineStart,
+    date_end: endValue,
     manual_overdue: stage.manual_overdue,
     is_night_shift: stage.is_night_shift,
     night_shift_date: stage.night_shift_date,
     status,
     delay_days: stage.delay_days,
   }
+}
+
+function getProductionStageTimelineStart(stage: Pick<ProductionStage, 'stage_type' | 'date_start' | 'date_end'>) {
+  if (stage.date_start) return stage.date_start
+  if (stage.stage_type === 'shipping' && stage.date_end) return stage.date_end
+  return null
 }
 
 function formatTons(value: number) {
