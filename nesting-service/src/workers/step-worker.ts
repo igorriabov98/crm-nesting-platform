@@ -8,6 +8,7 @@ import {
   materializeValidatedStorageObject,
   type MaterializedStorageObject,
 } from '../lib/storage';
+import { catalogService } from '../services/catalog.service';
 
 type StepJob = {
   id: string;
@@ -101,7 +102,8 @@ async function processStepJob(job: StepJob) {
     let totalMeshes = 0;
     let sheetMetalCount = 0;
     let totalParseMs = 0;
-    let brepOk = 0;
+    let brepFlat = 0;
+    let brepUnfolded = 0;
     let brepFallback = 0;
     const perPartParseReport: ProjectParseReport['perPart'] = [];
 
@@ -114,11 +116,24 @@ async function processStepJob(job: StepJob) {
         pdfObject = input.pdfFileRef
           ? await materializeValidatedStorageObject(input.pdfFileRef, 'pdf')
           : null;
-        const result = await parseStepFile(stepObject.filePath);
+        const result = await parseStepFile(stepObject.filePath, {
+          material: 'Сталь',
+          resolveKFactor: async ({ material, thickness }) => {
+            const resolved = await catalogService.resolveKFactorForMaterial(material, thickness);
+            return {
+              kFactor: resolved.kFactor,
+              defaulted: resolved.defaulted,
+              warning: resolved.defaulted
+                ? `K-factor not found for ${material} ${thickness}mm, default 0.4 used`
+                : undefined,
+            };
+          },
+        });
         totalMeshes += result.totalMeshes;
         sheetMetalCount += result.sheetMetalCount;
         totalParseMs += result.parseTimeMs;
-        brepOk += result.brepOk;
+        brepFlat += result.brepFlat;
+        brepUnfolded += result.brepUnfolded;
         brepFallback += result.brepFallback;
         perPartParseReport.push(
           ...result.brepTrace.map((trace) => ({
@@ -157,8 +172,8 @@ async function processStepJob(job: StepJob) {
     }
 
     const parseReport: ProjectParseReport = {
-      brepFlat: brepOk,
-      brepUnfolded: 0,
+      brepFlat,
+      brepUnfolded,
       fallback: brepFallback,
       perPart: perPartParseReport,
     };
@@ -196,6 +211,9 @@ async function processStepJob(job: StepJob) {
             isSheetMetal: part.isSheetMetal,
             grainLock: false,
             hasBends: part.hasBends,
+            bendCount: part.bendCount,
+            kFactor: part.kFactor,
+            kFactorDefaulted: part.kFactorDefaulted,
             thumbnailSvg: part.thumbnailSvg,
             classificationMethod: part.classificationMethod,
             classificationWarning: part.classificationWarning,
@@ -246,7 +264,9 @@ async function processStepJob(job: StepJob) {
       status: 'completed',
       totalMeshes,
       sheetMetalCount,
-      brepOk,
+      brepOk: brepFlat,
+      brepFlat,
+      brepUnfolded,
       brepFallback,
       partsCreated: parsedParts.length,
       parseTimeMs: totalParseMs,

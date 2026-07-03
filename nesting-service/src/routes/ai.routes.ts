@@ -133,6 +133,7 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     const partsById = new Map(parts.map((part) => [part.id, part]));
     const pendingUpdates: Array<{ partId: string; data: Prisma.PartUpdateInput }> = [];
     const updatedPartIds = new Set<string>();
+    let needsUnfoldRecalculation = false;
 
     for (const match of body.matches) {
       const part = partsById.get(match.partId);
@@ -174,6 +175,9 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       }
 
       if (Object.keys(guarded.data).length === 0) continue;
+      if (guarded.data.material !== undefined || guarded.data.thickness !== undefined) {
+        needsUnfoldRecalculation = true;
+      }
 
       pendingUpdates.push({ partId: match.partId, data: guarded.data });
       updatedPartIds.add(match.partId);
@@ -187,6 +191,15 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     }
 
     await markSpecificationMatchesApplied(id, updatedPartIds);
+    if (needsUnfoldRecalculation) {
+      await prisma.nestingProject.update({
+        where: { id },
+        data: {
+          status: 'parsed',
+          errorMessage: 'требуется пересчёт развёртки после изменения материала/толщины',
+        },
+      });
+    }
 
     return { updated: pendingUpdates.length };
   });

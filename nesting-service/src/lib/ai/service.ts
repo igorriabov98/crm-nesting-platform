@@ -63,7 +63,7 @@ export async function analyzeProjectPdf(input: {
   });
   const matches = matchBOMToParts(bom, parts, pdfResult.details, input.steelTypes ?? []);
   const partsById = new Map(parts.map((part) => [part.id, part]));
-  const finalMatches = input.autoApply === false ? matches : await autoApplyMatches(matches, partsById);
+  const finalMatches = input.autoApply === false ? matches : await autoApplyMatches(input.projectId, matches, partsById);
   const unmatchedBom = getUnmatchedBom(bom, finalMatches);
   const cost = estimateCost(pdfResult.tokensUsed, pdfResult.model);
 
@@ -141,10 +141,12 @@ export async function getProjectSpecification(projectId: string): Promise<Omit<P
 }
 
 async function autoApplyMatches(
+  projectId: string,
   matches: MatchResult[],
   partsById: Map<string, { id: string; name: string; width: number; height: number }>
 ): Promise<MatchResult[]> {
   const nextMatches = [...matches];
+  let needsUnfoldRecalculation = false;
 
   for (let index = 0; index < nextMatches.length; index += 1) {
     const match = nextMatches[index];
@@ -183,6 +185,9 @@ async function autoApplyMatches(
     if (typeof match.suggestedQuantity === 'number') data.quantity = match.suggestedQuantity;
 
     if (Object.keys(data).length === 0) continue;
+    if (data.material !== undefined || data.thickness !== undefined) {
+      needsUnfoldRecalculation = true;
+    }
 
     await prisma.part.update({
       where: { id: match.partId },
@@ -190,6 +195,16 @@ async function autoApplyMatches(
     });
 
     nextMatches[index] = { ...match, autoApplied: true };
+  }
+
+  if (needsUnfoldRecalculation) {
+    await prisma.nestingProject.update({
+      where: { id: projectId },
+      data: {
+        status: 'parsed',
+        errorMessage: 'требуется пересчёт развёртки после изменения материала/толщины',
+      },
+    });
   }
 
   return nextMatches;

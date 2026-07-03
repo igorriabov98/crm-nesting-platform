@@ -196,7 +196,7 @@ export class CatalogService {
     });
   }
 
-  async getKFactorForMaterial(material: string, thickness: number): Promise<number> {
+  async resolveKFactorForMaterial(material: string, thickness: number): Promise<{ kFactor: number; defaulted: boolean }> {
     const rule = await prisma.kFactor.findFirst({
       where: {
         material,
@@ -206,7 +206,15 @@ export class CatalogService {
       orderBy: { thicknessMin: 'desc' },
     });
 
-    return rule?.kFactor ?? 0.4;
+    return {
+      kFactor: rule?.kFactor ?? 0.4,
+      defaulted: !rule,
+    };
+  }
+
+  async getKFactorForMaterial(material: string, thickness: number): Promise<number> {
+    const resolved = await this.resolveKFactorForMaterial(material, thickness);
+    return resolved.kFactor;
   }
 
   async createKFactor(data: CreateKFactor): Promise<KFactor> {

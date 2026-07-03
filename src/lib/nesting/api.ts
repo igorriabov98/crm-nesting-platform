@@ -3,7 +3,7 @@ import 'server-only'
 export type NestingStatus = 'created' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
 export type NestingStrategy = 'minWaste' | 'remnant' | 'minSheets'
 export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom'
-export type ContourSource = 'EXACT_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
+export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
 export type NestingMaterial = 'Сталь' | 'Нержавейка' | 'Алюминий'
 
 export interface NestingParseReport {
@@ -63,6 +63,9 @@ export interface NestingPart {
   isSheetMetal: boolean
   grainLock: boolean
   hasBends: boolean
+  bendCount: number
+  kFactor: number | null
+  kFactorDefaulted: boolean
   dimensionMismatch: boolean
   mismatchNote: string | null
   thumbnailSvg: string | null

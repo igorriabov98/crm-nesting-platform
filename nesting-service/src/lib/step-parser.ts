@@ -15,8 +15,7 @@ import {
   projectTo2D,
   simplifyContour,
 } from './geometry';
-import { readBrepPartContours, type BrepContourResult } from './brep/brep-reader';
-import type { ExtractedPartContour } from './brep/contour-extractor';
+import { readBrepPartContours, type BrepContourResult, type BrepPartContour, type KFactorResolver } from './brep/brep-reader';
 import { extractStepOccurrenceNames } from './step-source-names';
 import { normalizeCadText } from './text-encoding';
 
@@ -64,9 +63,12 @@ export interface ParsedPart {
   meshVolume: number;
   meshArea: number;
   facesCount: number;
+  bendCount: number;
+  kFactor: number | null;
+  kFactorDefaulted: boolean;
 }
 
-export type ContourSource = 'EXACT_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE';
+export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE';
 
 export type BrepTrace = {
   partName: string;
@@ -81,11 +83,18 @@ export interface StepParseResult {
   totalMeshes: number;
   sheetMetalCount: number;
   brepOk: number;
+  brepFlat: number;
+  brepUnfolded: number;
   brepFallback: number;
   brepTrace: BrepTrace[];
   errors: string[];
   parseTimeMs: number;
 }
+
+export type StepParseOptions = {
+  material?: string;
+  resolveKFactor?: KFactorResolver;
+};
 
 let occtInstance: any = null;
 let occtLoading: Promise<any> | null = null;
@@ -108,7 +117,7 @@ async function getOcct(): Promise<any> {
   return occtLoading;
 }
 
-export async function parseStepFile(filePath: string): Promise<StepParseResult> {
+export async function parseStepFile(filePath: string, options: StepParseOptions = {}): Promise<StepParseResult> {
   const startTime = Date.now();
   const errors: string[] = [];
   const parts: ParsedPart[] = [];
@@ -130,6 +139,8 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
         totalMeshes: 0,
         sheetMetalCount: 0,
         brepOk: 0,
+        brepFlat: 0,
+        brepUnfolded: 0,
         brepFallback: 0,
         brepTrace: [],
         errors: ['STEP file contains no geometry bodies.'],
@@ -144,6 +155,8 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
         totalMeshes: 0,
         sheetMetalCount: 0,
         brepOk: 0,
+        brepFlat: 0,
+        brepUnfolded: 0,
         brepFallback: 0,
         brepTrace: [],
         errors: [extractOcctError(result)],
@@ -154,11 +167,16 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
     const meshes = result.meshes ?? [];
     const sourceMeshNames = extractStepOccurrenceNames(fileContent);
     const meshNames = extractMeshNames(result.root);
-    const brepContours = await readBrepPartContours(fileBytes, { timeoutMs: BREP_PART_TIMEOUT_MS });
+    const brepContours = await readBrepPartContours(fileBytes, {
+      timeoutMs: BREP_PART_TIMEOUT_MS,
+      material: options.material,
+      resolveKFactor: options.resolveKFactor,
+    });
     const brepByIndex = new Map<number, BrepContourResult>();
     const brepTrace: BrepTrace[] = [];
     let brepReadError: string | null = null;
-    let brepOk = 0;
+    let brepFlat = 0;
+    let brepUnfolded = 0;
     let brepFallback = 0;
 
     if (brepContours.ok) {
@@ -175,11 +193,19 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
       const exactContour = brepResult?.contour ?? null;
 
       try {
-        const part = processMesh(mesh, i, meshNames, sourceMeshNames, errors, exactContour);
+        const part = processMesh(mesh, i, meshNames, sourceMeshNames, errors, exactContour, brepResult);
         if (part) {
           parts.push(part);
           if (part.contourSource === 'EXACT_BREP') {
-            brepOk += 1;
+            brepFlat += 1;
+            brepTrace.push({
+              partName: part.name,
+              source: part.contourSource,
+              reason: null,
+              elapsedMs: brepResult?.elapsedMs ?? null,
+            });
+          } else if (part.contourSource === 'UNFOLDED_BREP') {
+            brepUnfolded += 1;
             brepTrace.push({
               partName: part.name,
               source: part.contourSource,
@@ -207,7 +233,9 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
       parts,
       totalMeshes: meshes.length,
       sheetMetalCount: parts.filter((part) => part.isSheetMetal).length,
-      brepOk,
+      brepOk: brepFlat,
+      brepFlat,
+      brepUnfolded,
       brepFallback,
       brepTrace,
       errors,
@@ -222,6 +250,8 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
       totalMeshes: 0,
       sheetMetalCount: 0,
       brepOk: 0,
+      brepFlat: 0,
+      brepUnfolded: 0,
       brepFallback: 0,
       brepTrace: [],
       errors: [`Failed to parse STEP file: ${message}`],
@@ -260,7 +290,8 @@ function processMesh(
   meshNames: Map<number, string>,
   sourceMeshNames: Map<number, string>,
   errors: string[],
-  exactContour: ExtractedPartContour | null
+  exactContour: BrepPartContour | null,
+  brepResult: BrepContourResult | null
 ): ParsedPart | null {
   const positionArray = mesh.attributes?.position?.array;
 
@@ -291,6 +322,9 @@ function processMesh(
     contour = exactContour.contour;
     holes.push(...exactContour.holes);
     contourSource = exactContour.source;
+    for (const warning of brepResult?.warnings ?? []) {
+      errors.push(`${name}: ${warning}`);
+    }
   } else if (classification.developedBlank) {
     contour = classification.developedBlank.contour;
     contourSource = 'RECT_ESTIMATE';
@@ -332,15 +366,18 @@ function processMesh(
     holes,
     contourSource: contourSource ?? 'CONVEX_HULL',
     isSheetMetal: exactContour ? true : classification.isSheetMetal,
-    hasBends: exactContour ? false : classification.hasBends,
+    hasBends: exactContour?.source === 'UNFOLDED_BREP' ? true : exactContour ? false : classification.hasBends,
     confidence: exactContour ? 0.98 : classification.confidence,
     classificationMethod: classification.method,
-    classificationWarning: exactContour ? null : classificationWarning,
+    classificationWarning: exactContour ? (brepResult?.warnings.join('; ') || null) : classificationWarning,
     thumbnailSvg,
     boundingBox,
     meshVolume,
     meshArea,
     facesCount,
+    bendCount: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.bendCount : 0,
+    kFactor: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.kFactor : null,
+    kFactorDefaulted: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.kFactorDefaulted : false,
   };
 }
 

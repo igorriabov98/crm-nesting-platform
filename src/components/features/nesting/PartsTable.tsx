@@ -95,6 +95,11 @@ function isPdfNonSheet(part: NestingPart) {
   return !part.isSheetMetal && part.classificationMethod === 'pdf_bom'
 }
 
+function formatKFactor(part: NestingPart) {
+  if (part.kFactor === null || part.kFactor === undefined) return ''
+  return `${part.kFactor.toFixed(2)}${part.kFactorDefaulted ? ' default' : ''}`
+}
+
 export function PartsTable({
   projectId,
   parts,
@@ -317,12 +322,17 @@ export function PartsTable({
                           <Tooltip>
                             <TooltipTrigger
                               render={
-                                <span className="inline-flex">
+                                <span className="inline-flex items-center gap-1 text-[11px] text-[#1B3A6B]">
                                   <Wrench className="h-4 w-4 text-[#1B3A6B]" />
+                                  {part.contourSource === 'UNFOLDED_BREP' ? `${part.bendCount} гиб.` : null}
                                 </span>
                               }
                             />
-                            <TooltipContent>Гнутая деталь</TooltipContent>
+                            <TooltipContent>
+                              {part.contourSource === 'UNFOLDED_BREP'
+                                ? `Развёртка B-Rep, K=${formatKFactor(part)}`
+                                : 'Гнутая деталь'}
+                            </TooltipContent>
                           </Tooltip>
                         ) : null}
                         {part.classificationWarning ? (

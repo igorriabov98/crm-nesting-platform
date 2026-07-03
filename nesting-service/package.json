@@ -14,10 +14,12 @@
     "worker:nesting": "tsx src/workers/nesting-worker.ts",
     "brep:dump": "tsx scripts/brep-dump.ts",
     "brep:solids": "tsx scripts/brep-solids.ts",
-    "fixtures:phase1": "tsx scripts/generate-phase1-fixtures.ts",
+    "fixtures": "tsx scripts/generate-fixtures.ts",
+    "fixtures:phase1": "tsx scripts/generate-fixtures.ts",
     "test:storage-auth": "tsx src/lib/__tests__/test-storage-auth.ts",
     "test:phase0": "tsx src/lib/__tests__/test-dimension-guard.ts && tsx src/lib/__tests__/test-dxf-no-anisotropy.ts && tsx src/lib/__tests__/test-nesting-params.ts",
-    "test:phase1": "tsx src/lib/__tests__/test-brep-contour.ts && tsx src/lib/__tests__/test-polygon-utilization.ts && tsx src/lib/__tests__/test-put-guard.ts && tsx src/lib/__tests__/test-phase1-fixture-pipeline.ts"
+    "test:phase1": "tsx src/lib/__tests__/test-brep-contour.ts && tsx src/lib/__tests__/test-polygon-utilization.ts && tsx src/lib/__tests__/test-put-guard.ts && tsx src/lib/__tests__/test-phase1-fixture-pipeline.ts",
+    "test:phase2": "tsx src/lib/__tests__/test-bend-detector.ts && tsx src/lib/__tests__/test-unfold.ts && tsx src/lib/__tests__/test-unfold-pipeline.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
