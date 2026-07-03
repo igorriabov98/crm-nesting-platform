@@ -122,6 +122,7 @@ function createSheetCandidate(
       usedMargin: params.margin,
       placements: placed,
       utilization: stats.utilization,
+      bboxUtilization: stats.bboxUtilization,
       waste: stats.waste,
       remnant,
     },
@@ -197,18 +198,20 @@ function computeSheetStats(
   placements: PlacedPart[],
   sheetW: number,
   sheetH: number
-): { utilization: number; waste: number } {
-  const usedArea = placements.reduce((sum, placement) => sum + placement.placedW * placement.placedH, 0);
+): { utilization: number; bboxUtilization: number; waste: number } {
+  const usedArea = placements.reduce((sum, placement) => sum + placement.area, 0);
+  const bboxUsedArea = placements.reduce((sum, placement) => sum + placement.placedW * placement.placedH, 0);
   const totalArea = sheetW * sheetH;
 
   if (totalArea <= 0) {
-    return { utilization: 0, waste: 100 };
+    return { utilization: 0, bboxUtilization: 0, waste: 100 };
   }
 
   const utilization = roundPercent((usedArea / totalArea) * 100);
+  const bboxUtilization = roundPercent((bboxUsedArea / totalArea) * 100);
   const waste = roundPercent(100 - utilization);
 
-  return { utilization, waste };
+  return { utilization, bboxUtilization, waste };
 }
 
 function roundPercent(value: number): number {

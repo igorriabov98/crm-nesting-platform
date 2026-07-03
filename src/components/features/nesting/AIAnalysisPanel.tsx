@@ -13,6 +13,25 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { ROUTES } from '@/lib/constants/routes'
 import type { AIAnalysisResponse, AIMatchResult, AIStatus, NestingPart } from '@/lib/nesting/api'
 
+type ApplyMatchPayload = {
+  partId: string
+  material?: string
+  steelTypeId?: string | null
+  steelTypeName?: string | null
+  steelTypeRaw?: string | null
+  quantity?: number
+  thickness?: number
+  isSheetMetal?: boolean
+  hasBends?: boolean
+  unfoldingWidth?: number
+  unfoldingHeight?: number
+}
+
+type DimensionMismatchState = {
+  note: string
+  payload: ApplyMatchPayload[]
+}
+
 export function AIAnalysisPanel({
   projectId,
   hasPdf,
@@ -32,6 +51,7 @@ export function AIAnalysisPanel({
   const [isApplying, setIsApplying] = useState(false)
   const [isLoadingSpecification, setIsLoadingSpecification] = useState(false)
   const [specificationError, setSpecificationError] = useState<string | null>(null)
+  const [dimensionMismatch, setDimensionMismatch] = useState<DimensionMismatchState | null>(null)
 
   const partsById = useMemo(() => new Map(parts.map((part) => [part.id, part])), [parts])
   const selectableMatches = useMemo(() => {
@@ -136,22 +156,45 @@ export function AIAnalysisPanel({
       return
     }
 
+    await submitApply(payload, false)
+  }
+
+  async function applyForced() {
+    if (!dimensionMismatch) return
+
+    const confirmed = window.confirm(
+      `${dimensionMismatch.note}\n\nПрименить размеры из PDF принудительно?`
+    )
+
+    if (!confirmed) return
+
+    await submitApply(dimensionMismatch.payload, true)
+  }
+
+  async function submitApply(payload: ApplyMatchPayload[], force: boolean) {
     setIsApplying(true)
     try {
       const res = await fetch(`/api/nesting/ai/apply/${projectId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches: payload }),
+        body: JSON.stringify({ matches: payload, force }),
       })
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
+        const details = data.details as { mismatchNote?: string } | undefined
+        if (res.status === 409 && details?.mismatchNote) {
+          setDimensionMismatch({ note: details.mismatchNote, payload })
+          throw new Error('Размеры PDF расходятся с геометрией STEP')
+        }
+
         throw new Error(data.error || 'Не удалось применить предложения AI')
       }
 
       await onReloadParts()
       await loadSpecification()
       setSelected({})
+      setDimensionMismatch(null)
       toast.success(`Обновлено деталей: ${data.updated || 0}`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось применить предложения AI')
@@ -380,6 +423,18 @@ export function AIAnalysisPanel({
                         </Badge>
                       ))}
                       {analysis.unmatchedBom.length > 8 && <span>ещё {analysis.unmatchedBom.length - 8}</span>}
+                    </div>
+                  </div>
+                )}
+
+                {dimensionMismatch && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <p>{dimensionMismatch.note}</p>
+                      <Button type="button" variant="outline" onClick={applyForced} disabled={isApplying}>
+                        {isApplying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertTriangle className="mr-2 h-4 w-4" />}
+                        Применить принудительно
+                      </Button>
                     </div>
                   </div>
                 )}

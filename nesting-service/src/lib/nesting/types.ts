@@ -49,6 +49,7 @@ export interface PlacedPart {
   rotation: 0 | 90 | 180 | 270;
   placedW: number;
   placedH: number;
+  area: number;
   contour: Point2D[];
   holes: Point2D[][];
 }
@@ -66,6 +67,7 @@ export interface SheetResult {
   usedMargin: number;
   placements: PlacedPart[];
   utilization: number;
+  bboxUtilization: number;
   waste: number;
   remnant: RemnantInfo | null;
 }

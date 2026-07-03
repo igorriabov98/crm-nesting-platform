@@ -3,7 +3,7 @@ import 'server-only'
 export type NestingStatus = 'created' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
 export type NestingStrategy = 'minWaste' | 'remnant' | 'minSheets'
 export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom'
-export type ContourSource = 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
+export type ContourSource = 'EXACT_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
 export type NestingMaterial = 'Сталь' | 'Нержавейка' | 'Алюминий'
 
 export interface NestingProject {
@@ -125,6 +125,7 @@ export interface SheetResult {
   isRemnant: boolean
   placements: Placement[]
   utilization: number
+  bboxUtilization: number
   waste: number
   remnantGeom: RemnantGeom | null
   remnantCandidates: RemnantGeom[]
@@ -361,8 +362,6 @@ export async function updatePart(
     grainLock: boolean
     isSheetMetal: boolean
     thickness: number
-    width: number
-    height: number
     hasBends: boolean
   }>
 ): Promise<{ data: NestingPart }> {

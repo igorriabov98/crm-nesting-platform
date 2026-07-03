@@ -67,7 +67,7 @@ export interface DxfPartData {
   grainLock: boolean;
   needsReview?: boolean;
   reviewReason?: string | null;
-  contourSource?: 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE' | string | null;
+  contourSource?: 'EXACT_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE' | string | null;
 }
 
 export interface DxfRemnantData {

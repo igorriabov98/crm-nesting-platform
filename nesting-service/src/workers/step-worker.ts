@@ -91,6 +91,8 @@ async function processStepJob(job: StepJob) {
     let totalMeshes = 0;
     let sheetMetalCount = 0;
     let totalParseMs = 0;
+    let brepOk = 0;
+    let brepFallback = 0;
 
     for (const input of inputs) {
       console.log(`[step-worker] STEP source: ${input.stepFileRef}`);
@@ -105,10 +107,17 @@ async function processStepJob(job: StepJob) {
         totalMeshes += result.totalMeshes;
         sheetMetalCount += result.sheetMetalCount;
         totalParseMs += result.parseTimeMs;
+        brepOk += result.brepOk;
+        brepFallback += result.brepFallback;
 
         console.log(
           `[step-worker] Parsed ${input.sourceLabel} in ${result.parseTimeMs}ms: ${result.totalMeshes} meshes, ${result.sheetMetalCount} sheet metal`
         );
+        for (const trace of result.brepTrace) {
+          const suffix = trace.reason ? ` fallback: ${trace.reason}` : ' exact contour';
+          const elapsed = trace.elapsedMs === null ? '' : ` (${trace.elapsedMs}ms)`;
+          console.log(`[step-worker] ${input.sourceLabel} / ${trace.partName}: ${trace.source}${suffix}${elapsed}`);
+        }
 
         if (!result.success) {
           throw new Error(`${input.sourceLabel}: ${result.errors.join('; ') || 'STEP parsing failed'}`);
@@ -127,7 +136,7 @@ async function processStepJob(job: StepJob) {
       }
     }
 
-    const statusMessage = buildStatusMessage(errors, parsedParts.length, totalMeshes);
+    const statusMessage = buildStatusMessage(errors, parsedParts.length, totalMeshes, brepOk, brepFallback);
 
     await prisma.$transaction(async (tx) => {
       await tx.part.deleteMany({ where: { projectId } });
@@ -211,6 +220,8 @@ async function processStepJob(job: StepJob) {
       status: 'completed',
       totalMeshes,
       sheetMetalCount,
+      brepOk,
+      brepFallback,
       partsCreated: parsedParts.length,
       parseTimeMs: totalParseMs,
     };
@@ -266,20 +277,28 @@ async function main() {
   });
 }
 
-function buildStatusMessage(errors: string[], partsCount: number, totalMeshes: number): string | null {
+function buildStatusMessage(
+  errors: string[],
+  partsCount: number,
+  totalMeshes: number,
+  brepOk: number,
+  brepFallback: number
+): string | null {
+  const brepSummary = `B-Rep exact: ${brepOk}, fallback: ${brepFallback}`;
+
   if (errors.length > 0) {
-    return truncateErrorMessage(`STEP parsing completed with warnings: ${errors.join('; ')}`);
+    return truncateErrorMessage(`STEP parsing completed with warnings (${brepSummary}): ${errors.join('; ')}`);
   }
 
   if (totalMeshes === 0) {
-    return 'STEP parsing completed, but no meshes were found.';
+    return `STEP parsing completed, but no meshes were found. ${brepSummary}.`;
   }
 
   if (partsCount === 0) {
-    return 'STEP parsing completed, but no parts were extracted.';
+    return `STEP parsing completed, but no parts were extracted. ${brepSummary}.`;
   }
 
-  return null;
+  return brepOk > 0 || brepFallback > 0 ? brepSummary : null;
 }
 
 function truncateErrorMessage(message: string): string {

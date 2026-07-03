@@ -1,0 +1,4 @@
+ALTER TYPE "nesting"."ContourSource" ADD VALUE IF NOT EXISTS 'EXACT_BREP';
+
+ALTER TABLE "nesting"."NestingSheet"
+  ADD COLUMN "bboxUtilization" DOUBLE PRECISION NOT NULL DEFAULT 0;

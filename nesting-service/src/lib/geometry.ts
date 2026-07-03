@@ -773,7 +773,7 @@ export function normalizeContour(points: Point2D[]): Point2D[] {
   return closeContour(removeAdjacentDuplicates(normalized, POINT_EPSILON));
 }
 
-export function polygonArea(points: Point2D[]): number {
+export function signedPolygonArea(points: Point2D[]): number {
   if (points.length < 3) {
     return 0;
   }
@@ -786,12 +786,29 @@ export function polygonArea(points: Point2D[]): number {
   return area / 2;
 }
 
+export function polygonArea(points: Point2D[]): number {
+  return Math.abs(signedPolygonArea(points));
+}
+
 export function ensureClockwise(points: Point2D[]): Point2D[] {
-  if (polygonArea(points) > 0) {
+  if (signedPolygonArea(points) > 0) {
     return closeContour(points.slice(0, -1).reverse());
   }
 
   return closeContour(points);
+}
+
+export function ensureCounterClockwise(points: Point2D[]): Point2D[] {
+  if (signedPolygonArea(points) < 0) {
+    return closeContour(points.slice(0, -1).reverse());
+  }
+
+  return closeContour(points);
+}
+
+export function polygonNetArea(contour: Point2D[], holes: Point2D[][] = []): number {
+  const holeArea = holes.reduce((sum, hole) => sum + polygonArea(hole), 0);
+  return Math.max(0, polygonArea(contour) - holeArea);
 }
 
 export function generateThumbnailSvg(contour: Point2D[], holes: Point2D[][], size = 100): string {
@@ -1065,7 +1082,7 @@ function closeContour(points: Point2D[]): Point2D[] {
 }
 
 function contourScore(points: Point2D[]): number {
-  const area = Math.abs(polygonArea(closeContour(points)));
+  const area = polygonArea(closeContour(points));
   return area > 0 ? area : polylineLength(points);
 }
 

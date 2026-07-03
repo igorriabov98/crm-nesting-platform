@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../prisma';
 import { normalizeCadText } from '../text-encoding';
+import { polygonNetArea } from '../geometry';
 import { distributePartsToSheets } from './multi-sheet';
 import { resolveNestingParams } from './params';
 import type { NestingParams, NestingPart, NestingResult, Point2D, SheetOption } from './types';
@@ -70,24 +71,30 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
 
   for (const group of groups.values()) {
     const { material, thickness, steelTypeId, steelTypeName, parts: groupParts } = group;
-    const nestingParts: NestingPart[] = groupParts.map((part) => ({
-      id: part.id,
-      name: part.name,
-      sourceInputId: part.sourceInputId,
-      sourceId: part.sourceId,
-      sourceType: part.sourceType,
-      sourceLabel: part.sourceLabel,
-      sourceMachineId: part.sourceMachineId,
-      sourceMachineName: part.sourceMachineName,
-      sourceMachineItemId: part.sourceMachineItemId,
-      sourceProductId: part.sourceProductId,
-      width: part.width,
-      height: part.height,
-      contour: readPointArray(part.contour, part.width, part.height),
-      holes: readHoles(part.holes),
-      grainLock: part.grainLock,
-      area: part.width * part.height,
-    }));
+    const nestingParts: NestingPart[] = groupParts.map((part) => {
+      const contour = readPointArray(part.contour, part.width, part.height);
+      const holes = readHoles(part.holes);
+      const area = polygonNetArea(contour, holes);
+
+      return {
+        id: part.id,
+        name: part.name,
+        sourceInputId: part.sourceInputId,
+        sourceId: part.sourceId,
+        sourceType: part.sourceType,
+        sourceLabel: part.sourceLabel,
+        sourceMachineId: part.sourceMachineId,
+        sourceMachineName: part.sourceMachineName,
+        sourceMachineItemId: part.sourceMachineItemId,
+        sourceProductId: part.sourceProductId,
+        width: part.width,
+        height: part.height,
+        contour,
+        holes,
+        grainLock: part.grainLock,
+        area: area > 0 ? area : part.width * part.height,
+      };
+    });
     const quantities = new Map<string, number>();
 
     for (const part of groupParts) {
@@ -98,7 +105,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     const groupTotalParts = Array.from(quantities.values()).reduce((sum, quantity) => sum + quantity, 0);
     totalParts += groupTotalParts;
 
-    const requirements = buildSheetRequirements(nestingParts, quantities, groupParams.gap);
+    const requirements = buildSheetRequirements(nestingParts, quantities);
     const sheets = await findSuitableSheets(material, thickness, requirements, groupParams.margin);
     if (sheets.length === 0) {
       for (const part of groupParts) {
@@ -214,13 +221,12 @@ async function findSuitableSheets(
 
 function buildSheetRequirements(
   parts: NestingPart[],
-  quantities: Map<string, number>,
-  gap: number
+  quantities: Map<string, number>
 ): SheetRequirements {
   return {
     totalPartsArea: parts.reduce((sum, part) => {
       const quantity = quantities.get(part.id) ?? 0;
-      return sum + (part.width + gap) * (part.height + gap) * quantity;
+      return sum + part.area * quantity;
     }, 0),
     maxPartWidth: Math.max(...parts.map((part) => part.width)),
     maxPartHeight: Math.max(...parts.map((part) => part.height)),
@@ -300,6 +306,7 @@ async function saveResults(projectId: string, result: NestingResult): Promise<vo
           usedMargin: sheet.usedMargin,
           placements: placementsForDb as unknown as Prisma.InputJsonValue,
           utilization: sheet.utilization,
+          bboxUtilization: sheet.bboxUtilization,
           waste: sheet.waste,
           remnantGeom:
             sheet.remnant === null ? Prisma.JsonNull : (sheet.remnant as unknown as Prisma.InputJsonValue),

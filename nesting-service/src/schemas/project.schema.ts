@@ -66,10 +66,8 @@ export const updatePartSchema = z.object({
   grainLock: z.boolean().optional(),
   isSheetMetal: z.boolean().optional(),
   thickness: z.coerce.number().positive().max(50).optional(),
-  width: z.coerce.number().positive().max(12000).optional(),
-  height: z.coerce.number().positive().max(12000).optional(),
   hasBends: z.boolean().optional(),
-});
+}).strict();
 
 export const calculateSchema = z.object({
   strategy: z.enum(['minWaste', 'remnant', 'minSheets']).default('minWaste'),

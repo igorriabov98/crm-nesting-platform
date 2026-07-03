@@ -1,0 +1,307 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { getOCC } from '../src/lib/brep/occ-loader';
+import type {
+  BRepBuilderAPI_MakeEdge,
+  BRepBuilderAPI_MakeWire,
+  gp_Ax2,
+  gp_Circ,
+  gp_Dir,
+  gp_Pnt,
+  gp_Vec,
+  Message_ProgressRange,
+  OpenCascadeInstance,
+  TopoDS_Edge,
+  TopoDS_Face,
+  TopoDS_Shape,
+  TopoDS_Wire,
+} from 'opencascade.js/dist/node';
+
+type Deletable = {
+  delete(): void;
+};
+
+type Point3 = [number, number, number];
+
+const FIXTURE_DIR = path.resolve(__dirname, '../src/lib/__tests__/fixtures');
+
+async function main(): Promise<void> {
+  const oc = await getOCC();
+  fs.mkdirSync(FIXTURE_DIR, { recursive: true });
+
+  writeStep(oc, createPlateWithHoles(oc), path.join(FIXTURE_DIR, 'plate_100x50x3_two_holes.step'));
+  writeStep(oc, createRoundedPlate(oc), path.join(FIXTURE_DIR, 'rounded_plate_80x80x2_r15.step'));
+  writeStep(oc, createLAngle(oc), path.join(FIXTURE_DIR, 'l_angle_100x40x40x2.step'));
+
+  console.log(`[fixtures] phase1 STEP fixtures written to ${FIXTURE_DIR}`);
+}
+
+function createPlateWithHoles(oc: OpenCascadeInstance): TopoDS_Shape {
+  const outer = makePolygonWire(oc, [
+    [0, 0, 0],
+    [100, 0, 0],
+    [100, 50, 0],
+    [0, 50, 0],
+  ]);
+  const holes = [
+    makeCircleWire(oc, 35, 25, 0, 5),
+    makeCircleWire(oc, 65, 25, 0, 5),
+  ];
+
+  return extrudeFace(oc, makeFaceWithHoles(oc, outer, holes), [0, 0, 3]);
+}
+
+function createRoundedPlate(oc: OpenCascadeInstance): TopoDS_Shape {
+  const outer = makeRoundedRectWire(oc, 80, 80, 15);
+  return extrudeFace(oc, makeFaceWithHoles(oc, outer, []), [0, 0, 2]);
+}
+
+function createLAngle(oc: OpenCascadeInstance): TopoDS_Shape {
+  const profile = makePolygonWire(oc, [
+    [0, 0, 0],
+    [0, 40, 0],
+    [0, 40, 2],
+    [0, 2, 2],
+    [0, 2, 40],
+    [0, 0, 40],
+  ]);
+
+  return extrudeFace(oc, makeFaceWithHoles(oc, profile, []), [100, 0, 0]);
+}
+
+function makePolygonWire(oc: OpenCascadeInstance, points: Point3[]): TopoDS_Wire {
+  let builder: import('opencascade.js/dist/node').BRepBuilderAPI_MakePolygon | null = null;
+  const occPoints: gp_Pnt[] = [];
+
+  try {
+    builder = new oc.BRepBuilderAPI_MakePolygon_1();
+    for (const [x, y, z] of points) {
+      const point = new oc.gp_Pnt_3(x, y, z);
+      occPoints.push(point);
+      builder.Add_1(point);
+    }
+    builder.Close();
+
+    if (!builder.IsDone()) {
+      throw new Error('Failed to create polygon wire');
+    }
+
+    return builder.Wire();
+  } finally {
+    for (const point of occPoints) {
+      safeDelete(point);
+    }
+    safeDelete(builder);
+  }
+}
+
+function makeRoundedRectWire(oc: OpenCascadeInstance, width: number, height: number, radius: number): TopoDS_Wire {
+  let wireBuilder: BRepBuilderAPI_MakeWire | null = null;
+  const edges: TopoDS_Edge[] = [];
+
+  try {
+    wireBuilder = new oc.BRepBuilderAPI_MakeWire_1();
+    edges.push(
+      makeLineEdge(oc, [radius, 0, 0], [width - radius, 0, 0]),
+      makeArcEdge(oc, width - radius, radius, 0, radius, -Math.PI / 2, 0),
+      makeLineEdge(oc, [width, radius, 0], [width, height - radius, 0]),
+      makeArcEdge(oc, width - radius, height - radius, 0, radius, 0, Math.PI / 2),
+      makeLineEdge(oc, [width - radius, height, 0], [radius, height, 0]),
+      makeArcEdge(oc, radius, height - radius, 0, radius, Math.PI / 2, Math.PI),
+      makeLineEdge(oc, [0, height - radius, 0], [0, radius, 0]),
+      makeArcEdge(oc, radius, radius, 0, radius, Math.PI, Math.PI * 1.5)
+    );
+
+    for (const edge of edges) {
+      wireBuilder.Add_1(edge);
+    }
+
+    if (!wireBuilder.IsDone()) {
+      throw new Error('Failed to create rounded rectangle wire');
+    }
+
+    return wireBuilder.Wire();
+  } finally {
+    for (const edge of edges) {
+      safeDelete(edge);
+    }
+    safeDelete(wireBuilder);
+  }
+}
+
+function makeLineEdge(oc: OpenCascadeInstance, from: Point3, to: Point3): TopoDS_Edge {
+  let p1: gp_Pnt | null = null;
+  let p2: gp_Pnt | null = null;
+  let edgeBuilder: BRepBuilderAPI_MakeEdge | null = null;
+
+  try {
+    p1 = new oc.gp_Pnt_3(...from);
+    p2 = new oc.gp_Pnt_3(...to);
+    edgeBuilder = new oc.BRepBuilderAPI_MakeEdge_3(p1, p2);
+
+    if (!edgeBuilder.IsDone()) {
+      throw new Error('Failed to create line edge');
+    }
+
+    return edgeBuilder.Edge();
+  } finally {
+    safeDelete(edgeBuilder);
+    safeDelete(p2);
+    safeDelete(p1);
+  }
+}
+
+function makeArcEdge(
+  oc: OpenCascadeInstance,
+  centerX: number,
+  centerY: number,
+  centerZ: number,
+  radius: number,
+  startAngle: number,
+  endAngle: number
+): TopoDS_Edge {
+  let center: gp_Pnt | null = null;
+  let normal: gp_Dir | null = null;
+  let xDirection: gp_Dir | null = null;
+  let axis: gp_Ax2 | null = null;
+  let circle: gp_Circ | null = null;
+  let edgeBuilder: BRepBuilderAPI_MakeEdge | null = null;
+
+  try {
+    center = new oc.gp_Pnt_3(centerX, centerY, centerZ);
+    normal = new oc.gp_Dir_4(0, 0, 1);
+    xDirection = new oc.gp_Dir_4(1, 0, 0);
+    axis = new oc.gp_Ax2_2(center, normal, xDirection);
+    circle = new oc.gp_Circ_2(axis, radius);
+    edgeBuilder = new oc.BRepBuilderAPI_MakeEdge_9(circle, startAngle, endAngle);
+
+    if (!edgeBuilder.IsDone()) {
+      throw new Error('Failed to create arc edge');
+    }
+
+    return edgeBuilder.Edge();
+  } finally {
+    safeDelete(edgeBuilder);
+    safeDelete(circle);
+    safeDelete(axis);
+    safeDelete(xDirection);
+    safeDelete(normal);
+    safeDelete(center);
+  }
+}
+
+function makeCircleWire(
+  oc: OpenCascadeInstance,
+  centerX: number,
+  centerY: number,
+  centerZ: number,
+  radius: number
+): TopoDS_Wire {
+  let center: gp_Pnt | null = null;
+  let normal: gp_Dir | null = null;
+  let xDirection: gp_Dir | null = null;
+  let axis: gp_Ax2 | null = null;
+  let circle: gp_Circ | null = null;
+  let edgeBuilder: BRepBuilderAPI_MakeEdge | null = null;
+  let wireBuilder: BRepBuilderAPI_MakeWire | null = null;
+
+  try {
+    center = new oc.gp_Pnt_3(centerX, centerY, centerZ);
+    normal = new oc.gp_Dir_4(0, 0, 1);
+    xDirection = new oc.gp_Dir_4(1, 0, 0);
+    axis = new oc.gp_Ax2_2(center, normal, xDirection);
+    circle = new oc.gp_Circ_2(axis, radius);
+    edgeBuilder = new oc.BRepBuilderAPI_MakeEdge_8(circle);
+    wireBuilder = new oc.BRepBuilderAPI_MakeWire_2(edgeBuilder.Edge());
+    const wire = wireBuilder.Wire();
+    wire.Reverse();
+    return wire;
+  } finally {
+    safeDelete(wireBuilder);
+    safeDelete(edgeBuilder);
+    safeDelete(circle);
+    safeDelete(axis);
+    safeDelete(xDirection);
+    safeDelete(normal);
+    safeDelete(center);
+  }
+}
+
+function makeFaceWithHoles(oc: OpenCascadeInstance, outer: TopoDS_Wire, holes: TopoDS_Wire[]): TopoDS_Face {
+  let faceBuilder: import('opencascade.js/dist/node').BRepBuilderAPI_MakeFace | null = null;
+
+  try {
+    faceBuilder = new oc.BRepBuilderAPI_MakeFace_15(outer, true);
+    for (const hole of holes) {
+      faceBuilder.Add(hole);
+    }
+
+    if (!faceBuilder.IsDone()) {
+      throw new Error('Failed to create face');
+    }
+
+    return faceBuilder.Face();
+  } finally {
+    safeDelete(faceBuilder);
+    safeDelete(outer);
+    for (const hole of holes) {
+      safeDelete(hole);
+    }
+  }
+}
+
+function extrudeFace(oc: OpenCascadeInstance, face: TopoDS_Face, vector: Point3): TopoDS_Shape {
+  let vec: gp_Vec | null = null;
+  let prism: import('opencascade.js/dist/node').BRepPrimAPI_MakePrism | null = null;
+
+  try {
+    vec = new oc.gp_Vec_4(...vector);
+    prism = new oc.BRepPrimAPI_MakePrism_1(face, vec, false, true);
+    return prism.Shape();
+  } finally {
+    safeDelete(prism);
+    safeDelete(vec);
+    safeDelete(face);
+  }
+}
+
+function writeStep(oc: OpenCascadeInstance, shape: TopoDS_Shape, outputPath: string): void {
+  const internalPath = `/phase1-${path.basename(outputPath)}`;
+  let writer: import('opencascade.js/dist/node').STEPControl_Writer | null = null;
+  let progress: Message_ProgressRange | null = null;
+
+  try {
+    writer = new oc.STEPControl_Writer_1();
+    progress = new oc.Message_ProgressRange_1();
+    const transferStatus = writer.Transfer(shape, oc.STEPControl_StepModelType.STEPControl_AsIs, true, progress);
+
+    if (transferStatus !== oc.IFSelect_ReturnStatus.IFSelect_RetDone) {
+      throw new Error(`STEP transfer failed for ${outputPath}`);
+    }
+
+    const writeStatus = writer.Write(internalPath);
+    if (writeStatus !== oc.IFSelect_ReturnStatus.IFSelect_RetDone) {
+      throw new Error(`STEP write failed for ${outputPath}`);
+    }
+
+    const bytes = oc.FS.readFile(internalPath) as Uint8Array;
+    const content = Buffer.from(bytes).toString('utf8').replace(/[ \t]+$/gm, '');
+    fs.writeFileSync(outputPath, content, 'utf8');
+    oc.FS.unlink(internalPath);
+  } finally {
+    safeDelete(progress);
+    safeDelete(writer);
+    safeDelete(shape);
+  }
+}
+
+function safeDelete(value: Deletable | null | undefined): void {
+  if (value) {
+    value.delete();
+  }
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

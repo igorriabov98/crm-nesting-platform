@@ -12,8 +12,12 @@
     "db:studio": "prisma studio",
     "worker:step": "tsx src/workers/step-worker.ts",
     "worker:nesting": "tsx src/workers/nesting-worker.ts",
+    "brep:dump": "tsx scripts/brep-dump.ts",
+    "brep:solids": "tsx scripts/brep-solids.ts",
+    "fixtures:phase1": "tsx scripts/generate-phase1-fixtures.ts",
     "test:storage-auth": "tsx src/lib/__tests__/test-storage-auth.ts",
-    "test:phase0": "tsx src/lib/__tests__/test-dimension-guard.ts && tsx src/lib/__tests__/test-dxf-no-anisotropy.ts && tsx src/lib/__tests__/test-nesting-params.ts"
+    "test:phase0": "tsx src/lib/__tests__/test-dimension-guard.ts && tsx src/lib/__tests__/test-dxf-no-anisotropy.ts && tsx src/lib/__tests__/test-nesting-params.ts",
+    "test:phase1": "tsx src/lib/__tests__/test-brep-contour.ts && tsx src/lib/__tests__/test-polygon-utilization.ts && tsx src/lib/__tests__/test-put-guard.ts && tsx src/lib/__tests__/test-phase1-fixture-pipeline.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
@@ -24,6 +28,7 @@
     "archiver": "^7.0.0",
     "fastify": "^5.0.0",
     "occt-import-js": "^0.0.23",
+    "opencascade.js": "^2.0.0-beta.b5ff984",
     "pdf-parse": "^1.1.1",
     "pg-boss": "^10.0.0",
     "pino": "^9.0.0",
