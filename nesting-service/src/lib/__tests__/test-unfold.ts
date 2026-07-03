@@ -37,6 +37,23 @@ async function main(): Promise<void> {
   assertWithin(uUnfold.height, uExpectedLength, 0.005, 'U-channel unfolded length');
   logLengthCheck('U-channel', '40 + 34 + 40 + 2 * pi/2 * (3 + 0.4 * 2)', uExpectedLength, uUnfold.height);
 
+  const zTopology = await detectFixtureTopology('z_profile_100x40x40_t2_r3.step');
+  assert.ok(zTopology, 'Z-profile topology should be detected');
+  assert.equal(zTopology.bends.length, 2, 'Z-profile should have two bends');
+  assert.deepEqual(
+    [...new Set(zTopology.bends.map((bend) => bend.direction))].sort(),
+    ['down', 'up'],
+    'Z-profile bends should keep opposite directions'
+  );
+  const zUnfold = unfoldPart(zTopology, K_FACTOR);
+  assert.ok(zUnfold, 'Z-profile should unfold');
+  assert.equal(zUnfold.source, 'UNFOLDED_BREP');
+  assert.equal(zUnfold.bendCount, 2);
+  // Z-profile fixture has two 40 mm flanges, 34 mm tangent web span, and two BA strips.
+  const zExpectedLength = 40 + 34 + 40 + 2 * BEND_ALLOWANCE;
+  assertWithin(zUnfold.height, zExpectedLength, 0.005, 'Z-profile unfolded length');
+  logLengthCheck('Z-profile', '40 + 34 + 40 + 2 * pi/2 * (3 + 0.4 * 2)', zExpectedLength, zUnfold.height);
+
   const invalidExpectedArea = uTopology.volume / uTopology.thickness;
   const badKFactor = 2.0;
   const invalidBa = RIGHT_ANGLE * (INNER_RADIUS + badKFactor * THICKNESS);

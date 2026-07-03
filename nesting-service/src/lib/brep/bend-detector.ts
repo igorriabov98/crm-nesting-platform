@@ -28,6 +28,7 @@ export type SheetMetalFlange = {
   area: number;
   normal: Vec3;
   origin: Vec3;
+  localOrigin: Vec3;
   uAxis: Vec3;
   vAxis: Vec3;
   length: number;
@@ -43,6 +44,8 @@ export type SheetMetalBend = {
   innerRadius: number;
   angleRad: number;
   axis: Vec3;
+  axisLocation: Vec3;
+  usesComplementAngle: boolean;
   direction: BendDirection;
 };
 
@@ -97,6 +100,7 @@ type FlangePair = {
 type BendCandidate = {
   innerRadius: number;
   angleRad: number;
+  usesComplementAngle: boolean;
   axisLocation: Vec3;
   axisDirection: Vec3;
 };
@@ -339,6 +343,7 @@ function buildFlange(input: SheetMetalTopologyInput, pair: FlangePair, id: numbe
     area: Math.max(pair.a.area, pair.b.area),
     normal,
     origin: midpoint(pair.a.frame.origin, pair.b.frame.origin),
+    localOrigin: add(add(face.frame.origin, scale(uAxis, bounds.minX)), scale(vAxis, bounds.minY)),
     uAxis,
     vAxis,
     length: roundMm(normalizedBounds.maxX - normalizedBounds.minX, 100),
@@ -361,9 +366,11 @@ function findBendCandidates(cylinders: CylindricalFace[], thickness: number, ben
     for (let index = 1; index < radii.length; index += 1) {
       if (relativeDelta(radii[index] - radii[index - 1], thickness) <= THICKNESS_TOLERANCE) {
         const inner = group.find((cylinder) => Math.abs(cylinder.radius - radii[index - 1]) <= 0.01) ?? group[0];
+        const angle = normalizeBendAngleSpan(inner.angleSpanRad);
         candidates.push({
           innerRadius: radii[index - 1],
-          angleRad: Math.abs(inner.angleSpanRad),
+          angleRad: angle.value,
+          usesComplementAngle: angle.usesComplement,
           axisLocation: inner.axisLocation,
           axisDirection: bendAxis,
         });
@@ -409,6 +416,8 @@ function connectBends(candidates: BendCandidate[], flanges: SheetMetalFlange[], 
         innerRadius: roundMm(candidate.innerRadius, 100),
         angleRad: candidate.angleRad,
         axis: candidate.axisDirection,
+        axisLocation: candidate.axisLocation,
+        usesComplementAngle: candidate.usesComplementAngle,
         direction,
       });
     }
@@ -830,6 +839,22 @@ function midpoint(a: Vec3, b: Vec3): Vec3 {
     y: (a.y + b.y) / 2,
     z: (a.z + b.z) / 2,
   };
+}
+
+function add(a: Vec3, b: Vec3): Vec3 {
+  return {
+    x: a.x + b.x,
+    y: a.y + b.y,
+    z: a.z + b.z,
+  };
+}
+
+function normalizeBendAngleSpan(span: number): { value: number; usesComplement: boolean } {
+  const fullTurn = Math.PI * 2;
+  const positive = Math.abs(span) % fullTurn;
+  return positive > Math.PI
+    ? { value: fullTurn - positive, usesComplement: true }
+    : { value: positive, usesComplement: false };
 }
 
 function canonicalDirection(direction: Vec3): Vec3 {

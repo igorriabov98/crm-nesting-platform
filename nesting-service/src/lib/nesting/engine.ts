@@ -35,6 +35,11 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     ? (project.strategy as NestingParams['strategy'])
     : 'minWaste';
   const sheetMetalParts = project.parts.filter((part) => part.isSheetMetal);
+  type PartWithKnownThickness = (typeof sheetMetalParts)[number] & { thickness: number };
+  const partsWithKnownThickness = sheetMetalParts.filter(
+    (part): part is PartWithKnownThickness => typeof part.thickness === 'number'
+  );
+  const partsWithoutThickness = sheetMetalParts.filter((part) => part.thickness === null);
 
   if (sheetMetalParts.length === 0) {
     throw new Error('Нет листовых деталей для раскладки');
@@ -45,10 +50,10 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     thickness: number;
     steelTypeId: string | null;
     steelTypeName: string | null;
-    parts: typeof sheetMetalParts;
+    parts: PartWithKnownThickness[];
   }>();
 
-  for (const part of sheetMetalParts) {
+  for (const part of partsWithKnownThickness) {
     const material = normalizeCadText(part.material);
     const steelTypeId = part.steelTypeId ?? null;
     const steelTypeName = part.steelTypeName ?? null;
@@ -68,6 +73,14 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   const allUnplaced: NestingResult['unplacedParts'] = [];
   let totalParts = 0;
   let placedParts = 0;
+
+  for (const part of partsWithoutThickness) {
+    const quantity = part.quantity * project.quantity;
+    totalParts += quantity;
+    for (let index = 1; index <= quantity; index += 1) {
+      allUnplaced.push({ partId: part.id, name: `${part.name} (#${index}) - толщина не определена` });
+    }
+  }
 
   for (const group of groups.values()) {
     const { material, thickness, steelTypeId, steelTypeName, parts: groupParts } = group;

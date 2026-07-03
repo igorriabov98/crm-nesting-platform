@@ -16,6 +16,7 @@
 **/uploads/
 **/output/
 **/*.log
+**/validation-report.*
 
 # env files
 **/.env

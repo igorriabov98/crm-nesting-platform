@@ -164,6 +164,7 @@ function isWarningLine(value: string): boolean {
     normalized.includes('вырез') ||
     normalized.includes('k-factor') ||
     normalized.includes('kfactor') ||
+    normalized.includes('толщина не определена') ||
     normalized.includes('timeout')
   );
 }
@@ -313,7 +314,11 @@ function increment(map: Map<string, number>, key: string): void {
   map.set(key, (map.get(key) ?? 0) + 1);
 }
 
-function round(value: number): number {
+function round(value: number | null): number | null {
+  if (value === null) {
+    return null;
+  }
+
   return Math.round(value * 100) / 100;
 }
 
