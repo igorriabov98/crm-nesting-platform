@@ -15,6 +15,8 @@ import {
   projectTo2D,
   simplifyContour,
 } from './geometry';
+import { readBrepPartContours, type BrepContourResult } from './brep/brep-reader';
+import type { ExtractedPartContour } from './brep/contour-extractor';
 import { extractStepOccurrenceNames } from './step-source-names';
 import { normalizeCadText } from './text-encoding';
 
@@ -64,19 +66,30 @@ export interface ParsedPart {
   facesCount: number;
 }
 
-export type ContourSource = 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE';
+export type ContourSource = 'EXACT_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE';
+
+export type BrepTrace = {
+  partName: string;
+  source: ContourSource;
+  reason: string | null;
+  elapsedMs: number | null;
+};
 
 export interface StepParseResult {
   success: boolean;
   parts: ParsedPart[];
   totalMeshes: number;
   sheetMetalCount: number;
+  brepOk: number;
+  brepFallback: number;
+  brepTrace: BrepTrace[];
   errors: string[];
   parseTimeMs: number;
 }
 
 let occtInstance: any = null;
 let occtLoading: Promise<any> | null = null;
+const BREP_PART_TIMEOUT_MS = 30_000;
 
 async function getOcct(): Promise<any> {
   if (occtInstance) {
@@ -116,6 +129,9 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
         parts: [],
         totalMeshes: 0,
         sheetMetalCount: 0,
+        brepOk: 0,
+        brepFallback: 0,
+        brepTrace: [],
         errors: ['STEP file contains no geometry bodies.'],
         parseTimeMs: Date.now() - startTime,
       };
@@ -127,6 +143,9 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
         parts: [],
         totalMeshes: 0,
         sheetMetalCount: 0,
+        brepOk: 0,
+        brepFallback: 0,
+        brepTrace: [],
         errors: [extractOcctError(result)],
         parseTimeMs: Date.now() - startTime,
       };
@@ -135,14 +154,47 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
     const meshes = result.meshes ?? [];
     const sourceMeshNames = extractStepOccurrenceNames(fileContent);
     const meshNames = extractMeshNames(result.root);
+    const brepContours = await readBrepPartContours(fileBytes, { timeoutMs: BREP_PART_TIMEOUT_MS });
+    const brepByIndex = new Map<number, BrepContourResult>();
+    const brepTrace: BrepTrace[] = [];
+    let brepReadError: string | null = null;
+    let brepOk = 0;
+    let brepFallback = 0;
+
+    if (brepContours.ok) {
+      for (const item of brepContours.results) {
+        brepByIndex.set(item.solidIndex, item);
+      }
+    } else {
+      brepReadError = brepContours.error ?? 'B-Rep reader failed';
+    }
 
     for (let i = 0; i < meshes.length; i += 1) {
       const mesh = meshes[i];
+      const brepResult = brepByIndex.get(i) ?? null;
+      const exactContour = brepResult?.contour ?? null;
 
       try {
-        const part = processMesh(mesh, i, meshNames, sourceMeshNames, errors);
+        const part = processMesh(mesh, i, meshNames, sourceMeshNames, errors, exactContour);
         if (part) {
           parts.push(part);
+          if (part.contourSource === 'EXACT_BREP') {
+            brepOk += 1;
+            brepTrace.push({
+              partName: part.name,
+              source: part.contourSource,
+              reason: null,
+              elapsedMs: brepResult?.elapsedMs ?? null,
+            });
+          } else {
+            brepFallback += 1;
+            brepTrace.push({
+              partName: part.name,
+              source: part.contourSource,
+              reason: brepResult?.fallbackReason ?? brepReadError ?? 'no matching B-Rep solid',
+              elapsedMs: brepResult?.elapsedMs ?? null,
+            });
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -155,6 +207,9 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
       parts,
       totalMeshes: meshes.length,
       sheetMetalCount: parts.filter((part) => part.isSheetMetal).length,
+      brepOk,
+      brepFallback,
+      brepTrace,
       errors,
       parseTimeMs: Date.now() - startTime,
     };
@@ -166,6 +221,9 @@ export async function parseStepFile(filePath: string): Promise<StepParseResult> 
       parts: [],
       totalMeshes: 0,
       sheetMetalCount: 0,
+      brepOk: 0,
+      brepFallback: 0,
+      brepTrace: [],
       errors: [`Failed to parse STEP file: ${message}`],
       parseTimeMs: Date.now() - startTime,
     };
@@ -201,7 +259,8 @@ function processMesh(
   index: number,
   meshNames: Map<number, string>,
   sourceMeshNames: Map<number, string>,
-  errors: string[]
+  errors: string[],
+  exactContour: ExtractedPartContour | null
 ): ParsedPart | null {
   const positionArray = mesh.attributes?.position?.array;
 
@@ -224,11 +283,15 @@ function processMesh(
   let contour: Point2D[] = [];
   let contourSource: ContourSource | null = null;
 
-  if (classificationWarning) {
+  if (!exactContour && classificationWarning) {
     errors.push(`${name}: ${classificationWarning}`);
   }
 
-  if (classification.developedBlank) {
+  if (exactContour) {
+    contour = exactContour.contour;
+    holes.push(...exactContour.holes);
+    contourSource = exactContour.source;
+  } else if (classification.developedBlank) {
     contour = classification.developedBlank.contour;
     contourSource = 'RECT_ESTIMATE';
   } else if (classification.isSheetMetal) {
@@ -251,26 +314,28 @@ function processMesh(
     contourSource = 'CONVEX_HULL';
   }
 
-  contour = simplifyContour(contour, classification.isSheetMetal ? 0.5 : 1);
-  contour = normalizeContour(contour);
-  contour = ensureClockwise(contour);
+  if (!exactContour) {
+    contour = simplifyContour(contour, classification.isSheetMetal ? 0.5 : 1);
+    contour = normalizeContour(contour);
+    contour = ensureClockwise(contour);
+  }
 
-  const { width, height } = getContourSize(contour);
+  const { width, height } = exactContour ?? getContourSize(contour);
   const thumbnailSvg = generateThumbnailSvg(contour, holes);
 
   return {
     name,
-    thickness: classification.thickness,
+    thickness: exactContour?.thickness ?? classification.thickness,
     width,
     height,
     contour,
     holes,
     contourSource: contourSource ?? 'CONVEX_HULL',
-    isSheetMetal: classification.isSheetMetal,
-    hasBends: classification.hasBends,
-    confidence: classification.confidence,
+    isSheetMetal: exactContour ? true : classification.isSheetMetal,
+    hasBends: exactContour ? false : classification.hasBends,
+    confidence: exactContour ? 0.98 : classification.confidence,
     classificationMethod: classification.method,
-    classificationWarning,
+    classificationWarning: exactContour ? null : classificationWarning,
     thumbnailSvg,
     boundingBox,
     meshVolume,

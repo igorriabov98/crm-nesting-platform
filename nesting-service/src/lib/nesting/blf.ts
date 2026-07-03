@@ -82,6 +82,7 @@ function placePartsInOrder(
       rotation: candidate.rotation,
       placedW: candidate.placedW,
       placedH: candidate.placedH,
+      area: part.area,
       contour: transformContour(part.contour, candidate.rotation, candidate.x, candidate.y, part.width, part.height),
       holes: part.holes.map((hole) =>
         transformContour(hole, candidate.rotation, candidate.x, candidate.y, part.width, part.height)

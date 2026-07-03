@@ -9,6 +9,7 @@ datasource db {
 }
 
 enum ContourSource {
+  EXACT_BREP
   EXACT_BOUNDARY
   CONVEX_HULL
   RECT_ESTIMATE
@@ -181,6 +182,7 @@ model NestingSheet {
   remnantGeom Json?
   dxfFileUrl  String?
   dxfStorageUri String?
+  bboxUtilization Float @default(0)
 
   @@index([projectId])
   @@schema("nesting")

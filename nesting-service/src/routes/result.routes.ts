@@ -126,6 +126,7 @@ export async function resultRoutes(app: FastifyInstance) {
         isRemnant: Boolean(sheet.remnantId),
         placements,
         utilization: sheet.utilization,
+        bboxUtilization: sheet.bboxUtilization,
         waste: sheet.waste,
         remnantGeom: remnantPayload.primary,
         remnantCandidates: remnantPayload.candidates,
