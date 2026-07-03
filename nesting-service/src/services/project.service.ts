@@ -1,4 +1,4 @@
-import type { NestingProject, Prisma } from '@prisma/client';
+import { Prisma, type NestingProject } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { generateId } from '../lib/utils';
 import { AppError, NotFoundError } from '../lib/errors';
@@ -30,6 +30,7 @@ export interface ProjectWithStats {
   strategy: string;
   status: string;
   errorMessage: string | null;
+  parseReport: Prisma.JsonValue | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -69,6 +70,7 @@ function toProjectWithStats(project: ProjectWithCounts, avgUtilization: number |
     strategy: project.strategy,
     status: project.status,
     errorMessage: project.errorMessage,
+    parseReport: project.parseReport,
     createdBy: project.createdBy,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
@@ -129,6 +131,7 @@ export class ProjectService {
         data: {
           status: 'parsing',
           errorMessage: null,
+          parseReport: Prisma.DbNull,
         },
       });
 
@@ -218,6 +221,7 @@ export class ProjectService {
         data: {
           status: 'parsing',
           errorMessage: null,
+          parseReport: Prisma.DbNull,
         },
       });
 
@@ -352,13 +356,19 @@ export class ProjectService {
     });
   }
 
-  async getStatus(id: string): Promise<{ id: string; status: string; errorMessage: string | null }> {
+  async getStatus(id: string): Promise<{
+    id: string;
+    status: string;
+    errorMessage: string | null;
+    parseReport: Prisma.JsonValue | null;
+  }> {
     const project = await prisma.nestingProject.findUnique({
       where: { id },
       select: {
         id: true,
         status: true,
         errorMessage: true,
+        parseReport: true,
       },
     });
 

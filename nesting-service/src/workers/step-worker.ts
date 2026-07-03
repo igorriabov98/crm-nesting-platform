@@ -8,6 +8,7 @@ import {
   materializeValidatedStorageObject,
   type MaterializedStorageObject,
 } from '../lib/storage';
+import { catalogService } from '../services/catalog.service';
 
 type StepJob = {
   id: string;
@@ -27,6 +28,18 @@ type StepInputContext = {
   stepFileRef: string;
   pdfFileRef?: string | null;
   isBatch: boolean;
+};
+
+type ProjectParseReport = {
+  brepFlat: number;
+  brepUnfolded: number;
+  fallback: number;
+  perPart: Array<{
+    partName: string;
+    source: string;
+    bendCount?: number;
+    fallbackReason?: string;
+  }>;
 };
 
 function getInputs(data: StepParsingJobData, projectId: string): StepInputContext[] {
@@ -86,13 +99,14 @@ async function processStepJob(job: StepJob) {
       return { status: 'skipped', reason: `Project status is ${project.status}` };
     }
 
-    const errors: string[] = [];
     const parsedParts: Array<{ input: StepInputContext; part: ParsedPart }> = [];
     let totalMeshes = 0;
     let sheetMetalCount = 0;
     let totalParseMs = 0;
-    let brepOk = 0;
+    let brepFlat = 0;
+    let brepUnfolded = 0;
     let brepFallback = 0;
+    const perPartParseReport: ProjectParseReport['perPart'] = [];
 
     for (const input of inputs) {
       console.log(`[step-worker] STEP source: ${input.stepFileRef}`);
@@ -103,12 +117,33 @@ async function processStepJob(job: StepJob) {
         pdfObject = input.pdfFileRef
           ? await materializeValidatedStorageObject(input.pdfFileRef, 'pdf')
           : null;
-        const result = await parseStepFile(stepObject.filePath);
+        const result = await parseStepFile(stepObject.filePath, {
+          material: 'Сталь',
+          resolveKFactor: async ({ material, thickness }) => {
+            const resolved = await catalogService.resolveKFactorForMaterial(material, thickness);
+            return {
+              kFactor: resolved.kFactor,
+              defaulted: resolved.defaulted,
+              warning: resolved.defaulted
+                ? `K-factor not found for ${material} ${thickness}mm, default 0.4 used`
+                : undefined,
+            };
+          },
+        });
         totalMeshes += result.totalMeshes;
         sheetMetalCount += result.sheetMetalCount;
         totalParseMs += result.parseTimeMs;
-        brepOk += result.brepOk;
+        brepFlat += result.brepFlat;
+        brepUnfolded += result.brepUnfolded;
         brepFallback += result.brepFallback;
+        perPartParseReport.push(
+          ...result.brepTrace.map((trace) => ({
+            partName: trace.partName,
+            source: trace.source,
+            ...(trace.bendCount > 0 ? { bendCount: trace.bendCount } : {}),
+            ...(trace.reason ? { fallbackReason: trace.reason } : {}),
+          }))
+        );
 
         console.log(
           `[step-worker] Parsed ${input.sourceLabel} in ${result.parseTimeMs}ms: ${result.totalMeshes} meshes, ${result.sheetMetalCount} sheet metal`
@@ -123,7 +158,9 @@ async function processStepJob(job: StepJob) {
           throw new Error(`${input.sourceLabel}: ${result.errors.join('; ') || 'STEP parsing failed'}`);
         }
 
-        errors.push(...result.errors.map((error) => `${input.sourceLabel}: ${error}`));
+        for (const warning of result.errors) {
+          console.warn(`[step-worker] ${input.sourceLabel}: ${warning}`);
+        }
         parsedParts.push(...result.parts.map((part) => ({ input, part })));
 
         if (!input.isBatch && pdfObject) {
@@ -136,7 +173,12 @@ async function processStepJob(job: StepJob) {
       }
     }
 
-    const statusMessage = buildStatusMessage(errors, parsedParts.length, totalMeshes, brepOk, brepFallback);
+    const parseReport: ProjectParseReport = {
+      brepFlat,
+      brepUnfolded,
+      fallback: brepFallback,
+      perPart: perPartParseReport,
+    };
 
     await prisma.$transaction(async (tx) => {
       await tx.part.deleteMany({ where: { projectId } });
@@ -171,6 +213,9 @@ async function processStepJob(job: StepJob) {
             isSheetMetal: part.isSheetMetal,
             grainLock: false,
             hasBends: part.hasBends,
+            bendCount: part.bendCount,
+            kFactor: part.kFactor,
+            kFactorDefaulted: part.kFactorDefaulted,
             thumbnailSvg: part.thumbnailSvg,
             classificationMethod: part.classificationMethod,
             classificationWarning: part.classificationWarning,
@@ -182,7 +227,8 @@ async function processStepJob(job: StepJob) {
         where: { id: projectId },
         data: {
           status: 'parsed',
-          errorMessage: statusMessage,
+          errorMessage: null,
+          parseReport: parseReport as unknown as Prisma.InputJsonValue,
         },
       });
     });
@@ -220,7 +266,9 @@ async function processStepJob(job: StepJob) {
       status: 'completed',
       totalMeshes,
       sheetMetalCount,
-      brepOk,
+      brepOk: brepFlat,
+      brepFlat,
+      brepUnfolded,
       brepFallback,
       partsCreated: parsedParts.length,
       parseTimeMs: totalParseMs,
@@ -275,30 +323,6 @@ async function main() {
   process.on('SIGINT', () => {
     void shutdown('SIGINT');
   });
-}
-
-function buildStatusMessage(
-  errors: string[],
-  partsCount: number,
-  totalMeshes: number,
-  brepOk: number,
-  brepFallback: number
-): string | null {
-  const brepSummary = `B-Rep exact: ${brepOk}, fallback: ${brepFallback}`;
-
-  if (errors.length > 0) {
-    return truncateErrorMessage(`STEP parsing completed with warnings (${brepSummary}): ${errors.join('; ')}`);
-  }
-
-  if (totalMeshes === 0) {
-    return `STEP parsing completed, but no meshes were found. ${brepSummary}.`;
-  }
-
-  if (partsCount === 0) {
-    return `STEP parsing completed, but no parts were extracted. ${brepSummary}.`;
-  }
-
-  return brepOk > 0 || brepFallback > 0 ? brepSummary : null;
 }
 
 function truncateErrorMessage(message: string): string {

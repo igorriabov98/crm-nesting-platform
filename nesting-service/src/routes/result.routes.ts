@@ -41,6 +41,9 @@ type EnrichedPlacementForResult = PlacementForResult & {
   dimensionMismatch?: boolean;
   mismatchNote?: string | null;
   contourSource?: string;
+  bendCount?: number;
+  kFactor?: number | null;
+  kFactorDefaulted?: boolean;
 };
 
 type JsonPoint = {
@@ -224,6 +227,9 @@ function enrichPlacements(
     contour: unknown;
     holes: unknown;
     contourSource: string;
+    bendCount: number;
+    kFactor: number | null;
+    kFactorDefaulted: boolean;
     dimensionMismatch: boolean;
     mismatchNote: string | null;
   }>,
@@ -260,6 +266,9 @@ function enrichPlacements(
       return part ? {
         ...placement,
         contourSource: part.contourSource,
+        bendCount: part.bendCount,
+        kFactor: part.kFactor,
+        kFactorDefaulted: part.kFactorDefaulted,
         dimensionMismatch: part.dimensionMismatch,
         mismatchNote: part.mismatchNote,
       } : placement;
@@ -293,6 +302,9 @@ function enrichPlacements(
     return {
       ...placement,
       contourSource: part.contourSource,
+      bendCount: part.bendCount,
+      kFactor: part.kFactor,
+      kFactorDefaulted: part.kFactorDefaulted,
       dimensionMismatch: part.dimensionMismatch,
       mismatchNote: part.mismatchNote,
       contour: transformContourForDxf(contour, rotation, x, y, localWidth, localHeight).map(roundPoint),

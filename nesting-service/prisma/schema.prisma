@@ -10,6 +10,7 @@ datasource db {
 
 enum ContourSource {
   EXACT_BREP
+  UNFOLDED_BREP
   EXACT_BOUNDARY
   CONVEX_HULL
   RECT_ESTIMATE
@@ -24,6 +25,7 @@ model NestingProject {
   strategy     String         @default("minWaste")
   status       String         @default("created")
   errorMessage String?
+  parseReport  Json?
   createdBy    String         @default("system")
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -102,6 +104,9 @@ model Part {
   isSheetMetal Boolean        @default(true)
   grainLock    Boolean        @default(false)
   hasBends     Boolean        @default(false)
+  bendCount    Int            @default(0)
+  kFactor      Float?
+  kFactorDefaulted Boolean    @default(false)
   dimensionMismatch Boolean   @default(false)
   mismatchNote String?
   thumbnailSvg String?

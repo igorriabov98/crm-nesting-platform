@@ -18,7 +18,6 @@ export const GANTT_ROW_HEIGHT = 56
 export const GANTT_TIMELINE_HEIGHT = 56
 export const GANTT_BAR_HEIGHT = 22
 export const GANTT_STAGE_DOT_SIZE = 10
-export const GANTT_SHIPPING_READY_MARKER_SIZE = 16
 export const GANTT_MARKER_SIZE = 12
 export const GANTT_SHIPPING_MARKER_HEIGHT = 10
 export const GANTT_MACHINE_COL_WIDTH = 184

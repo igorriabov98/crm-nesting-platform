@@ -1,5 +1,7 @@
 import { getOCC } from './occ-loader';
 import { extractPartContour, type ExtractedPartContour } from './contour-extractor';
+import { detectSheetMetalTopology } from './bend-detector';
+import { unfoldPart, type UnfoldedPartContour } from './unfolder';
 import type {
   Bnd_Box,
   BRepAdaptor_Surface,
@@ -73,9 +75,12 @@ export interface BrepSolidsReport {
 
 export interface BrepContourResult {
   solidIndex: number;
-  contour: ExtractedPartContour | null;
+  contour: BrepPartContour | null;
   fallbackReason: string | null;
   elapsedMs: number;
+  kFactor: number | null;
+  kFactorDefaulted: boolean;
+  warnings: string[];
 }
 
 export interface BrepContoursReport {
@@ -84,6 +89,20 @@ export interface BrepContoursReport {
   solidCount: number;
   results: BrepContourResult[];
 }
+
+export type BrepPartContour = ExtractedPartContour | UnfoldedPartContour;
+
+export type KFactorLookupResult = {
+  kFactor: number;
+  defaulted: boolean;
+  warning?: string;
+};
+
+export type KFactorResolver = (input: {
+  material: string;
+  thickness: number;
+  solidIndex: number;
+}) => Promise<KFactorLookupResult> | KFactorLookupResult;
 
 type Deletable = {
   delete(): void;
@@ -267,7 +286,7 @@ export async function readBrepSolids(fileBytes: Uint8Array): Promise<BrepSolidsR
 
 export async function readBrepPartContours(
   fileBytes: Uint8Array,
-  options: { timeoutMs?: number } = {}
+  options: { timeoutMs?: number; material?: string; resolveKFactor?: KFactorResolver } = {}
 ): Promise<BrepContoursReport> {
   const oc = await getOCC();
   let reader: STEPControl_Reader | null = null;
@@ -306,18 +325,39 @@ export async function readBrepPartContours(
       try {
         currentShape = explorer.Current();
         solid = oc.TopoDS.Solid_1(currentShape);
-        const contour = extractPartContour({
-          oc,
-          shape: solid,
-          deadlineMs: options.timeoutMs ? startTime + options.timeoutMs : undefined,
-        });
+        const deadlineMs = options.timeoutMs ? startTime + options.timeoutMs : undefined;
+        const flatContour = extractPartContour({ oc, shape: solid, deadlineMs });
 
-        results.push({
-          solidIndex,
-          contour,
-          fallbackReason: contour ? null : 'not a flat sheet contour by B-Rep validation',
-          elapsedMs: Date.now() - startTime,
-        });
+        if (flatContour) {
+          results.push({
+            solidIndex,
+            contour: flatContour,
+            fallbackReason: null,
+            elapsedMs: Date.now() - startTime,
+            kFactor: null,
+            kFactorDefaulted: false,
+            warnings: [],
+          });
+        } else {
+          const unfolded = await tryUnfoldSolid({
+            oc,
+            solid,
+            solidIndex,
+            deadlineMs,
+            material: options.material ?? 'Сталь',
+            resolveKFactor: options.resolveKFactor,
+          });
+
+          results.push({
+            solidIndex,
+            contour: unfolded.contour,
+            fallbackReason: unfolded.contour ? null : unfolded.reason,
+            elapsedMs: Date.now() - startTime,
+            kFactor: unfolded.kFactor,
+            kFactorDefaulted: unfolded.kFactorDefaulted,
+            warnings: unfolded.warnings,
+          });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         results.push({
@@ -325,6 +365,9 @@ export async function readBrepPartContours(
           contour: null,
           fallbackReason: message,
           elapsedMs: Date.now() - startTime,
+          kFactor: null,
+          kFactorDefaulted: false,
+          warnings: [],
         });
       } finally {
         safeDelete(solid);
@@ -360,6 +403,72 @@ export async function readBrepPartContours(
       }
     }
   }
+}
+
+async function tryUnfoldSolid(input: {
+  oc: OpenCascadeInstance;
+  solid: TopoDS_Solid;
+  solidIndex: number;
+  deadlineMs?: number;
+  material: string;
+  resolveKFactor?: KFactorResolver;
+}): Promise<{
+  contour: UnfoldedPartContour | null;
+  reason: string;
+  kFactor: number | null;
+  kFactorDefaulted: boolean;
+  warnings: string[];
+}> {
+  const topology = detectSheetMetalTopology({
+    oc: input.oc,
+    shape: input.solid,
+    deadlineMs: input.deadlineMs,
+  });
+
+  if (!topology) {
+    return {
+      contour: null,
+      reason: 'not a validated bend topology by B-Rep validation',
+      kFactor: null,
+      kFactorDefaulted: false,
+      warnings: [],
+    };
+  }
+
+  const lookup = input.resolveKFactor
+    ? await input.resolveKFactor({
+        material: input.material,
+        thickness: topology.thickness,
+        solidIndex: input.solidIndex,
+      })
+    : {
+        kFactor: 0.4,
+        defaulted: true,
+        warning: 'K-factor rule not found, default 0.4 used',
+      };
+  const unfolded = unfoldPart(topology, lookup.kFactor);
+  const warnings = lookup.warning ? [lookup.warning] : [];
+
+  if (!unfolded) {
+    return {
+      contour: null,
+      reason: 'unfold validation failed (bend-zone cutout or area mismatch)',
+      kFactor: lookup.kFactor,
+      kFactorDefaulted: lookup.defaulted,
+      warnings,
+    };
+  }
+
+  return {
+    contour: {
+      ...unfolded,
+      kFactorDefaulted: lookup.defaulted,
+    },
+    reason: '',
+    kFactor: lookup.kFactor,
+    kFactorDefaulted: lookup.defaulted,
+    warnings,
+  };
 }
 
 function readFaceInfo(oc: OpenCascadeInstance, currentShape: TopoDS_Shape, index: number): FaceInfo {

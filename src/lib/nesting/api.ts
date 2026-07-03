@@ -3,8 +3,20 @@ import 'server-only'
 export type NestingStatus = 'created' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
 export type NestingStrategy = 'minWaste' | 'remnant' | 'minSheets'
 export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom'
-export type ContourSource = 'EXACT_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
+export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
 export type NestingMaterial = 'Сталь' | 'Нержавейка' | 'Алюминий'
+
+export interface NestingParseReport {
+  brepFlat: number
+  brepUnfolded: number
+  fallback: number
+  perPart: Array<{
+    partName: string
+    source: ContourSource | string
+    bendCount?: number
+    fallbackReason?: string
+  }>
+}
 
 export interface NestingProject {
   id: string
@@ -13,6 +25,7 @@ export interface NestingProject {
   strategy: NestingStrategy | string
   status: NestingStatus
   errorMessage: string | null
+  parseReport: NestingParseReport | null
   createdBy: string
   createdAt: string
   updatedAt: string
@@ -51,6 +64,9 @@ export interface NestingPart {
   isSheetMetal: boolean
   grainLock: boolean
   hasBends: boolean
+  bendCount: number
+  kFactor: number | null
+  kFactorDefaulted: boolean
   dimensionMismatch: boolean
   mismatchNote: string | null
   thumbnailSvg: string | null
@@ -74,6 +90,7 @@ export interface NestingProjectStatus {
   id: string
   status: NestingStatus | string
   errorMessage: string | null
+  parseReport: NestingParseReport | null
 }
 
 export interface Placement {
@@ -99,6 +116,9 @@ export interface Placement {
   dimensionMismatch?: boolean
   mismatchNote?: string | null
   contourSource?: ContourSource | string
+  bendCount?: number
+  kFactor?: number | null
+  kFactorDefaulted?: boolean
 }
 
 export interface RemnantGeom {

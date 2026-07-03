@@ -34,6 +34,9 @@ const partListSelect = {
   isSheetMetal: true,
   grainLock: true,
   hasBends: true,
+  bendCount: true,
+  kFactor: true,
+  kFactorDefaulted: true,
   dimensionMismatch: true,
   mismatchNote: true,
   thumbnailSvg: true,
@@ -112,10 +115,25 @@ export async function partsRoutes(app: FastifyInstance) {
       throw new NotFoundError('Деталь', partId);
     }
 
-    const updated = await prisma.part.update({
-      where: { id: partId },
-      data,
-      select: partListSelect,
+    const needsUnfoldRecalculation = data.material !== undefined || data.thickness !== undefined;
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextPart = await tx.part.update({
+        where: { id: partId },
+        data,
+        select: partListSelect,
+      });
+
+      if (needsUnfoldRecalculation) {
+        await tx.nestingProject.update({
+          where: { id },
+          data: {
+            status: 'parsed',
+            errorMessage: 'требуется пересчёт развёртки после изменения материала/толщины',
+          },
+        });
+      }
+
+      return nextPart;
     });
 
     return { data: normalizePartText(updated) };

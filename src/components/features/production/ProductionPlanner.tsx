@@ -626,6 +626,16 @@ function PlannerVirtualRow({
     machine.actual_material_date,
     machine.material_items.filter((item) => item.supply_status === 'received')
   )
+  const shippingReadinessCells = stageLanes
+    .filter(({ stage }) => stage.stage_type === 'shipping')
+    .map(({ stage }) => {
+      const start = new Date(stage.date_start)
+      const end = new Date(stage.date_end || stage.date_start)
+      const { left, width } = barGeometry(start, end, rangeStart, scale, dayWidth)
+
+      return { id: stage.id, left, width }
+    })
+    .filter(({ left, width }) => left + width > 0 && left < totalWidth)
 
   return (
     <div
@@ -692,6 +702,15 @@ function PlannerVirtualRow({
             style={{ left: todayOffset, width: dayWidth }}
           />
         )}
+
+        {shippingReadinessCells.map((cell) => (
+          <div
+            key={`shipping-readiness-cell:${cell.id}`}
+            className="pointer-events-none absolute inset-y-0 z-[1] border-2 border-dashed border-emerald-600 bg-emerald-100/70"
+            style={{ left: cell.left, width: cell.width }}
+            aria-hidden="true"
+          />
+        ))}
 
         {stageLanes.map(({ stage, lane }) => (
           <div

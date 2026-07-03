@@ -79,6 +79,7 @@ function createPlaced(partId: string, x: number, y: number, placedW: number, pla
     rotation: 0,
     placedW,
     placedH,
+    area: placedW * placedH,
     contour: [],
     holes: [],
   };
