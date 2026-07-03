@@ -8,7 +8,7 @@ import { barGeometry, formatDate, type GanttScale } from '@/lib/utils/gantt'
 import { cn } from '@/lib/utils'
 import { ROUTES } from '@/lib/constants/routes'
 import type { GanttStage } from '@/app/(protected)/production/gantt/actions'
-import { GANTT_SHIPPING_READY_MARKER_SIZE, getGanttStageColor, getGanttStageLabel } from './types'
+import { getGanttStageColor, getGanttStageLabel } from './types'
 
 interface GanttBarProps {
   stage: GanttStage
@@ -115,19 +115,8 @@ export const GanttBar = React.memo(function GanttBar({
     Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1
   )
   const usesExpandedHitArea = Boolean(onSelect)
-  const shippingMarkerGeometry = isShippingReadiness
-    ? barGeometry(endDate, endDate, rangeStart, scale, unitWidth)
-    : null
-  const shippingHitWidth = usesExpandedHitArea
-    ? Math.max(32, GANTT_SHIPPING_READY_MARKER_SIZE)
-    : Math.max(24, GANTT_SHIPPING_READY_MARKER_SIZE)
-  const shippingMarkerCenter = shippingMarkerGeometry
-    ? shippingMarkerGeometry.left + shippingMarkerGeometry.width / 2
-    : left + width / 2
-  const containerLeft = isShippingReadiness
-    ? shippingMarkerCenter - shippingHitWidth / 2
-    : left
-  const containerWidth = isShippingReadiness ? shippingHitWidth : width
+  const containerLeft = left
+  const containerWidth = width
 
   return (
     <div
@@ -164,16 +153,28 @@ export const GanttBar = React.memo(function GanttBar({
       {isShippingReadiness ? (
         <div
           className={cn(
-            "absolute left-1/2 top-1/2 rounded-full border-2 border-white shadow-[0_2px_6px_rgba(22,163,74,0.35)] transition-[filter,box-shadow] -translate-x-1/2 -translate-y-1/2 hover:brightness-105",
+            "absolute left-0 right-0 overflow-hidden rounded-none transition-[filter,box-shadow] hover:brightness-105",
+            usesExpandedHitArea ? "top-1/2 h-[18px] -translate-y-1/2" : "inset-0",
+            isPlanned ? "border-2 border-dashed" : "shadow-sm",
             visibleStatus === 'overdue' && "ring-2 ring-red-500 ring-offset-1"
           )}
           style={{
-            width: GANTT_SHIPPING_READY_MARKER_SIZE,
-            height: GANTT_SHIPPING_READY_MARKER_SIZE,
-            backgroundColor: color,
+            borderColor: isPlanned ? color : undefined,
+            backgroundColor: isPlanned ? hexToRgba(color, 0.16) : color,
           }}
           aria-label={`${getGanttStageLabel(stage.stage_type)}: ${formatDate(endDate)}`}
-        />
+        >
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.28) ${unitWidth}px)`,
+            }}
+          />
+
+          {!isConfirmed && !isPlanned && (
+            <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(255,255,255,0.22)_4px,rgba(255,255,255,0.22)_8px)]" />
+          )}
+        </div>
       ) : (
         <div
           className={cn(
