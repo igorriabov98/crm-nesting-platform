@@ -1,11 +1,12 @@
 "use client"
 
-import React, { useMemo, useState, useTransition } from 'react'
-import { PackageCheck, Plus, Save, Trash2, Truck } from 'lucide-react'
+import React, { useEffect, useMemo, useState, useTransition } from 'react'
+import { FileText, PackageCheck, Plus, Save, Trash2, Truck } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
 import { Button } from '@/components/ui/button'
+import { DatePicker } from '@/components/ui/date-picker'
 import { Input } from '@/components/ui/input'
 import {
   Table,
@@ -16,6 +17,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { updateMachinePackingSettings } from '@/app/(protected)/sales-plan/actions'
+import { getNextSpecificationNumber } from '@/lib/actions/contracts'
+import { ContractSelectField } from '@/components/features/contracts/ContractSelectField'
 import { MACHINE_DELIVERY_BASIS_OPTIONS, MACHINE_DELIVERY_BASIS_VALUES, type MachineDeliveryBasisType } from '@/lib/constants/machine-delivery-basis'
 import { documentGrossWeight, documentLineNetWeight, packingSummaryFromGroups, totalPackingPlaces } from '@/lib/packing-summary'
 import { cn } from '@/lib/utils'
@@ -95,6 +98,14 @@ function formatWeight(value: number) {
   return safeValue.toFixed(3).replace(/\.?0+$/, '')
 }
 
+function dateOnly(date: Date | undefined) {
+  if (!date) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function groupGoodsByHsCode(items: MachineGoodsItem[]): GoodsGroup[] {
   const groups: GoodsGroup[] = []
 
@@ -142,6 +153,11 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
     ).groups
   }, [goodsGroups])
   const [groups, setGroups] = useState<DraftGroup[]>(() => initialGroups(machine))
+  const [contractId, setContractId] = useState<string | null>(() => machine.contract_id || null)
+  const [documentNumber, setDocumentNumber] = useState(() => machine.specification_number || '')
+  const [documentDate, setDocumentDate] = useState(() => machine.specification_date || '')
+  const [isNumberDirty, setIsNumberDirty] = useState(Boolean(machine.specification_number?.trim()))
+  const [autoNumber, setAutoNumber] = useState('')
   const [deliveryBasisType, setDeliveryBasisType] = useState<MachineDeliveryBasisType | ''>(
     () => machine.delivery_basis_type || '',
   )
@@ -194,6 +210,31 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
     setGroups((current) => current.filter((_, groupIndex) => groupIndex !== index))
   }
 
+  useEffect(() => {
+    if (!canEdit || !machine.client_id || isNumberDirty) return
+    if (documentNumber.trim() && documentNumber !== autoNumber) return
+
+    let cancelled = false
+    getNextSpecificationNumber({
+      client_id: machine.client_id,
+      contract_id: contractId || null,
+    }).then((result) => {
+      if (cancelled) return
+      if (result.error) {
+        toast.error(result.error)
+        return
+      }
+      if (result.data) {
+        setAutoNumber(result.data)
+        setDocumentNumber(result.data)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [autoNumber, canEdit, contractId, documentNumber, isNumberDirty, machine.client_id])
+
   const save = () => {
     if (!deliveryBasisType) {
       toast.error('Выберите базис доставки')
@@ -232,6 +273,9 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
 
     startTransition(async () => {
       const result = await updateMachinePackingSettings(machine.id, {
+        contract_id: contractId,
+        specification_number: documentNumber,
+        specification_date: documentDate,
         delivery_basis_type: deliveryBasisType,
         packing_boxes_count: parsedBoxesCount,
         groups: parsedGroups,
@@ -262,6 +306,46 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
             Сохранить
           </Button>
         )}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-950">
+          <FileText className="h-4 w-4 text-blue-950" aria-hidden="true" />
+          Данные документов
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="lg:col-span-2">
+            <label className="mb-2 block text-sm font-medium text-[#374151]">Контракт</label>
+            <ContractSelectField
+              clientId={machine.client_id}
+              value={contractId}
+              onChange={setContractId}
+              disabled={!canEdit || isPending}
+            />
+          </div>
+          <label className="grid gap-2 text-sm font-medium text-[#374151]">
+            Номер инвойса / спецификации
+            <Input
+              value={documentNumber}
+              onChange={(event) => {
+                setDocumentNumber(event.target.value)
+                setIsNumberDirty(true)
+              }}
+              disabled={!canEdit || isPending}
+              className="bg-white border-[#E8ECF0] text-[#1B3A6B]"
+            />
+          </label>
+          <label className="grid gap-2 text-sm font-medium text-[#374151]">
+            Дата документов
+            <DatePicker
+              value={documentDate ? new Date(documentDate) : undefined}
+              onChange={(date) => setDocumentDate(dateOnly(date))}
+              disabled={!canEdit || isPending}
+              placeholder="Выберите дату"
+              displayFormat="dd.MM.yyyy"
+            />
+          </label>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

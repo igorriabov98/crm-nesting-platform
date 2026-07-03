@@ -227,31 +227,30 @@ export function MachineDetail({
 
             <div className="flex flex-wrap items-center gap-2 lg:max-w-[560px] lg:justify-end">
               <DocumentReadinessIndicator missingFields={documentMissingFields} />
-            <DocumentGenerationButtons
-              machineId={machine.id}
-              clientId={machine.client_id}
-              contractId={machine.contract_id}
-              specificationNumber={machine.specification_number}
-              specificationDate={machine.specification_date}
-            />
-            {!machine.factory_id && isDirector && (
-              <Button
-                className="min-h-10 bg-white text-blue-950 hover:bg-blue-50"
-                onClick={() => setIsAssignOpen(true)}
-              >
-                <Factory className="mr-2 h-4 w-4" />
-                Назначить завод
-              </Button>
-            )}
-            {canEdit && (
-              <Button
-                className="min-h-10 bg-blue-600 text-white hover:bg-blue-500"
-                onClick={() => setIsEditOpen(true)}
-              >
-                <Edit className="mr-2 h-4 w-4" />
-                Редактировать
-              </Button>
-            )}
+              <DocumentGenerationButtons
+                machineId={machine.id}
+                specificationNumber={machine.specification_number}
+                specificationDate={machine.specification_date}
+                deliveryBasisType={machine.delivery_basis_type}
+              />
+              {!machine.factory_id && isDirector && (
+                <Button
+                  className="min-h-10 bg-white text-blue-950 hover:bg-blue-50"
+                  onClick={() => setIsAssignOpen(true)}
+                >
+                  <Factory className="mr-2 h-4 w-4" />
+                  Назначить завод
+                </Button>
+              )}
+              {canEdit && (
+                <Button
+                  className="min-h-10 bg-blue-600 text-white hover:bg-blue-500"
+                  onClick={() => setIsEditOpen(true)}
+                >
+                  <Edit className="mr-2 h-4 w-4" />
+                  Редактировать
+                </Button>
+              )}
               {(canEditConfirmation || canDelete) && (
                 <DropdownMenu>
                   <DropdownMenuTrigger

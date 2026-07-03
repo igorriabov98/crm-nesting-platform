@@ -1012,6 +1012,8 @@ export async function updateMachinePackingSettings(machineId: string, data: Mach
     const parsed = machinePackingSettingsSchema.parse(data)
 
     await assertMachineNotArchived(db, parsedMachineId)
+    const clientId = await getMachineClientId(db, parsedMachineId)
+    await assertContractBelongsToClient(db, parsed.contract_id, clientId)
 
     const goodsCount = await getMachineGoodsCount(db, parsedMachineId)
     for (const group of parsed.groups) {
@@ -1023,6 +1025,9 @@ export async function updateMachinePackingSettings(machineId: string, data: Mach
     const { error: machineUpdateError } = await db
       .from('machines')
       .update({
+        contract_id: parsed.contract_id || null,
+        specification_number: parsed.specification_number?.trim() || null,
+        specification_date: parsed.specification_date?.trim() || null,
         delivery_basis_type: parsed.delivery_basis_type,
         packing_boxes_count: parsed.packing_boxes_count,
       } satisfies MachineUpdate)

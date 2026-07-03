@@ -18,6 +18,7 @@ type ContractSelectFieldProps = {
   value?: string | null
   onChange: (value: string | null) => void
   onCreated?: (contract: Contract) => void
+  disabled?: boolean
 }
 
 function todayDateOnly() {
@@ -40,7 +41,7 @@ function contractLabel(contract: Contract) {
   return `№${contract.number} от ${format(new Date(contract.date), 'dd.MM.yyyy')}`
 }
 
-export function ContractSelectField({ clientId, value, onChange, onCreated }: ContractSelectFieldProps) {
+export function ContractSelectField({ clientId, value, onChange, onCreated, disabled = false }: ContractSelectFieldProps) {
   const [contractState, setContractState] = useState<{ clientId: string | null; contracts: Contract[] }>({
     clientId: null,
     contracts: [],
@@ -117,7 +118,7 @@ export function ContractSelectField({ clientId, value, onChange, onCreated }: Co
       <Select
         value={selectedValue}
         onValueChange={(nextValue) => onChange(nextValue === 'none' ? null : nextValue)}
-        disabled={!clientId}
+        disabled={!clientId || disabled}
       >
         <SelectTrigger className="bg-[#F8F9FA] border-[#E8ECF0]">
           <SelectValue placeholder={clientId ? 'Выберите контракт' : 'Сначала выберите клиента'}>
@@ -137,7 +138,7 @@ export function ContractSelectField({ clientId, value, onChange, onCreated }: Co
         type="button"
         variant="outline"
         size="icon"
-        disabled={!clientId}
+        disabled={!clientId || disabled}
         onClick={() => setIsDialogOpen(true)}
         title={clientId ? 'Добавить контракт' : 'Сначала выберите клиента'}
       >
