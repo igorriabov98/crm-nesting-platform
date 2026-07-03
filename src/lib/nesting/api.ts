@@ -31,6 +31,7 @@ export interface NestingProject {
   createdAt: string
   updatedAt: string
   pdfFileUrl: string | null
+  supersededByProjectId: string | null
   partsCount: number
   sheetsCount: number
   avgUtilization: number | null
@@ -358,6 +359,17 @@ export async function deleteProject(id: string): Promise<void> {
   const res = await request(buildUrl(`/api/projects/${id}`), { method: 'DELETE' }, 'Не удалось удалить проект')
   if (!res.ok) {
     await readJson(res, 'Не удалось удалить проект')
+  }
+}
+
+export async function markProjectSuperseded(projectId: string, supersededByProjectId: string): Promise<void> {
+  const res = await request(buildUrl(`/api/projects/${projectId}/supersede`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ supersededByProjectId }),
+  }, 'Не удалось пометить проект заменённым')
+  if (!res.ok) {
+    await readJson(res, 'Не удалось пометить проект заменённым')
   }
 }
 

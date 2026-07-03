@@ -76,6 +76,10 @@ export const calculateSchema = z.object({
   strategy: z.enum(['minWaste', 'remnant', 'minSheets']).default('minWaste'),
 });
 
+export const supersedeProjectSchema = z.object({
+  supersededByProjectId: z.string().min(1),
+});
+
 export const projectPartParamsSchema = z.object({
   id: z.string().min(1),
   partId: z.string().min(1),
@@ -93,4 +97,5 @@ export type CreateStorageProject = z.infer<typeof createStorageProjectSchema>;
 export type CreateStorageBatchProject = z.infer<typeof createStorageBatchProjectSchema>;
 export type UpdatePart = z.infer<typeof updatePartSchema>;
 export type CalculateRequest = z.infer<typeof calculateSchema>;
+export type SupersedeProjectRequest = z.infer<typeof supersedeProjectSchema>;
 export type ProjectStatus = z.infer<typeof projectStatusSchema>;

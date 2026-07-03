@@ -38,6 +38,7 @@ export interface ProjectWithStats {
   updatedAt: Date;
   stepFileUrl: string | null;
   pdfFileUrl: string | null;
+  supersededByProjectId: string | null;
   partsCount: number;
   sheetsCount: number;
   avgUtilization: number | null;
@@ -82,6 +83,7 @@ function toProjectWithStats(project: ProjectWithCounts, avgUtilization: number |
       ?? inputPdfFileUrl?.pdfStorageUri
       ?? inputPdfFileUrl?.pdfFileUrl
       ?? null,
+    supersededByProjectId: project.supersededByProjectId,
     partsCount: project._count.parts,
     sheetsCount: project._count.sheets,
     avgUtilization,
@@ -348,6 +350,36 @@ export class ProjectService {
       removeOwnedStorageUris(storageUris),
       removeProjectStorageObjects(id),
     ]);
+  }
+
+  async markSuperseded(id: string, supersededByProjectId: string): Promise<{ id: string; supersededByProjectId: string }> {
+    if (id === supersededByProjectId) {
+      throw new AppError(400, 'Проект не может заменять сам себя');
+    }
+
+    const replacement = await prisma.nestingProject.findUnique({
+      where: { id: supersededByProjectId },
+      select: { id: true },
+    });
+    if (!replacement) {
+      throw new NotFoundError('Новый проект', supersededByProjectId);
+    }
+
+    const project = await prisma.nestingProject.update({
+      where: { id },
+      data: { supersededByProjectId },
+      select: { id: true, supersededByProjectId: true },
+    }).catch((error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new NotFoundError('Проект', id);
+      }
+      throw error;
+    });
+
+    return {
+      id: project.id,
+      supersededByProjectId: project.supersededByProjectId!,
+    };
   }
 
   async updateStatus(id: string, status: string, errorMessage?: string): Promise<void> {

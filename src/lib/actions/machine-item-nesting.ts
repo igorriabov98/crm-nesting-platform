@@ -5,7 +5,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
-import { fetchNestingService as fetch, getNestingServiceUrl, getResult, type SheetResult } from '@/lib/nesting/api'
+import { fetchNestingService as fetch, getNestingServiceUrl, getResult, markProjectSuperseded, type SheetResult } from '@/lib/nesting/api'
 import { resolveSheetMetalMaterialForRequestRow } from '@/lib/actions/request-sheet-metal-materials'
 import type { Database } from '@/lib/types/database'
 import type { PermissionOperation } from '@/lib/permissions/resources'
@@ -440,6 +440,12 @@ export async function startMachineItemNesting(machineId: string, machineItemId: 
           .single()) as DbSingleResult<MachineItemNestingRun>
 
     if (result.error || !result.data) throw new Error(result.error?.message || 'Не удалось сохранить связь раскладки')
+
+    if (context.existingRun?.nesting_project_id && context.existingRun.nesting_project_id !== project.id) {
+      await markProjectSuperseded(context.existingRun.nesting_project_id, project.id).catch((supersedeError) => {
+        console.warn('[nesting] Failed to mark previous project as superseded:', supersedeError)
+      })
+    }
 
     revalidateMachine(machineId, project.id)
     return { success: true, data: summarizeRun(result.data) }

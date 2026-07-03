@@ -33,6 +33,7 @@ model NestingProject {
   pdfFileUrl   String?
   stepStorageUri String?
   pdfStorageUri  String?
+  supersededByProjectId String?
   inputs       ProjectInput[]
   parts        Part[]
   sheets       NestingSheet[]

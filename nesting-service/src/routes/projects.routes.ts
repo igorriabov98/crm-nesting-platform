@@ -7,6 +7,7 @@ import {
   createStorageBatchProjectSchema,
   createStorageProjectSchema,
   projectListFilterSchema,
+  supersedeProjectSchema,
 } from '../schemas/project.schema';
 import { parseStorageUri } from '../lib/storage';
 import { projectService, type BatchProjectInput } from '../services/project.service';
@@ -176,5 +177,11 @@ export async function projectsRoutes(app: FastifyInstance) {
     const { id } = idParamSchema.parse(request.params);
     await projectService.deleteProject(id);
     return { success: true };
+  });
+
+  app.post('/:id/supersede', async (request) => {
+    const { id } = idParamSchema.parse(request.params);
+    const body = supersedeProjectSchema.parse(request.body ?? {});
+    return { data: await projectService.markSuperseded(id, body.supersededByProjectId) };
   });
 }

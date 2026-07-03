@@ -14,8 +14,12 @@ CREATE TABLE IF NOT EXISTS nesting."NestingProject" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "stepFileUrl" TEXT,
-  "pdfFileUrl" TEXT
+  "pdfFileUrl" TEXT,
+  "supersededByProjectId" TEXT
 );
+
+ALTER TABLE nesting."NestingProject"
+  ADD COLUMN IF NOT EXISTS "supersededByProjectId" TEXT;
 
 CREATE TABLE IF NOT EXISTS nesting."Part" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,

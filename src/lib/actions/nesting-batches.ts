@@ -6,7 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { NESTING_QUEUE_LIMIT } from '@/lib/constants/performance-limits'
 import { requirePermission } from '@/lib/permissions/server'
-import { fetchNestingService as fetch, getNestingServiceUrl, getProjectStatus } from '@/lib/nesting/api'
+import { fetchNestingService as fetch, getNestingServiceUrl, getProjectStatus, markProjectSuperseded } from '@/lib/nesting/api'
 import { isCompletedNestingStatus } from '@/lib/nesting/status'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 
@@ -109,6 +109,8 @@ type PrecutRow = {
   machine_item_id: string
   quantity: number
 }
+
+type ExistingRunLinkRow = Pick<RunRow, 'machine_item_id' | 'nesting_project_id'>
 
 export type NestingQueueItem = {
   id: string
@@ -533,18 +535,25 @@ export async function createNestingBatch(input: {
     const machineIds = Array.from(new Set(items.map((item) => item.machine_id)))
     const productIds = Array.from(new Set(items.map((item) => item.product_id).filter(Boolean))) as string[]
 
-    const [machinesResult, engineerTasksResult, productsResult, filesResult, precutsResult] = await Promise.all([
+    const [machinesResult, engineerTasksResult, productsResult, filesResult, precutsResult, existingRunsResult] = await Promise.all([
       db.from('machines').select('id, name, is_archived, desired_shipping_date, production_month, created_at').in('id', machineIds),
       db.from('tasks').select('id, machine_id, deadline, status').eq('task_type', 'engineer_confirm').eq('status', 'completed').in('machine_id', machineIds),
       productIds.length ? db.from('products').select('id, name_uk, drawing_number, status').in('id', productIds) : Promise.resolve({ data: [], error: null } as DbResult),
       productIds.length ? db.from('product_files').select('id, product_id, file_kind, file_name, file_path, mime_type').in('product_id', productIds) : Promise.resolve({ data: [], error: null } as DbResult),
       uniqueItemIds.length ? db.from('nesting_precut_parts').select('machine_item_id, quantity').in('machine_item_id', uniqueItemIds) : Promise.resolve({ data: [], error: null } as DbResult),
+      uniqueItemIds.length ? db.from('machine_item_nesting_runs').select('machine_item_id, nesting_project_id').in('machine_item_id', uniqueItemIds) : Promise.resolve({ data: [], error: null } as DbResult),
     ])
 
     if (machinesResult.error) throw new Error(machinesResult.error.message || 'Не удалось загрузить машины')
     if (engineerTasksResult.error) throw new Error(engineerTasksResult.error.message || 'Не удалось проверить подтверждение инженера')
     if (productsResult.error) throw new Error(productsResult.error.message || 'Не удалось загрузить товары')
     if (filesResult.error) throw new Error(filesResult.error.message || 'Не удалось загрузить файлы товаров')
+    if (existingRunsResult.error) throw new Error(existingRunsResult.error.message || 'Не удалось проверить предыдущие раскладки')
+    const previousProjectIds = new Set(
+      ((existingRunsResult.data || []) as ExistingRunLinkRow[])
+        .map((run) => run.nesting_project_id)
+        .filter(Boolean)
+    )
 
     const machines = new Map(((machinesResult.data || []) as Array<MachineRow & { is_archived?: boolean }>).map((machine) => [machine.id, machine]))
     const engineerConfirmed = new Set(((engineerTasksResult.data || []) as TaskRow[]).map((task) => task.machine_id).filter(Boolean))
@@ -675,6 +684,16 @@ export async function createNestingBatch(input: {
       .from('machine_item_nesting_runs')
       .upsert(runRows, { onConflict: 'machine_item_id' })
     if (runsResult.error) throw new Error(runsResult.error.message || 'Не удалось сохранить связи раскладки')
+
+    await Promise.all(
+      Array.from(previousProjectIds)
+        .filter((projectId) => projectId !== nestingProjectId)
+        .map((projectId) =>
+          markProjectSuperseded(projectId, nestingProjectId).catch((supersedeError) => {
+            console.warn('[nesting] Failed to mark previous batch project as superseded:', supersedeError)
+          })
+        )
+    )
 
     revalidatePath(ROUTES.NESTING)
     for (const machineId of machineIds) {
