@@ -48,6 +48,12 @@ type MachineRow = {
   is_archived?: boolean | null
 }
 
+type SupplierBaseOption = {
+  id: string
+  name: string
+  is_active: boolean
+}
+
 export type OutsourcingWorkType = {
   id: string
   code: string | null
@@ -249,6 +255,21 @@ function normalizeMonthOrNull(value: string | null | undefined) {
   return normalizeProductionMonthValue(value)
 }
 
+function isMissingSupplierCapabilityColumns(error: DbResult['error']) {
+  const message = error?.message || ''
+  return error?.code === '42703'
+    || /suppliers\.can_(outsource|transport)/i.test(message)
+    || /column .*can_(outsource|transport).* does not exist/i.test(message)
+}
+
+function withLegacySupplierCapabilities(suppliers: SupplierBaseOption[]) {
+  return suppliers.map((supplier) => ({
+    ...supplier,
+    can_outsource: true,
+    can_transport: true,
+  }))
+}
+
 function formatDate(value: string | null | undefined) {
   const date = dateOnly(value)
   if (!date) return 'не указана'
@@ -406,8 +427,36 @@ async function loadSuppliers(db: LooseDb) {
     .select('id, name, can_outsource, can_transport, is_active')
     .eq('is_active', true)
     .order('name')
-  if (error) throw new Error(error.message || 'Не удалось загрузить поставщиков')
+  if (error && !isMissingSupplierCapabilityColumns(error)) throw new Error(error.message || 'Не удалось загрузить поставщиков')
+  if (error) {
+    const fallback = await db
+      .from('suppliers')
+      .select('id, name, is_active')
+      .eq('is_active', true)
+      .order('name')
+    if (fallback.error) throw new Error(fallback.error.message || 'Не удалось загрузить поставщиков')
+    return withLegacySupplierCapabilities((fallback.data || []) as SupplierBaseOption[])
+  }
   return (data || []) as OutsourcingSupplierOption[]
+}
+
+async function loadSuppliersByIds(db: LooseDb, supplierIds: string[]): Promise<DbResult> {
+  if (supplierIds.length === 0) return { data: [], error: null }
+  const result = await db
+    .from('suppliers')
+    .select('id, name, can_outsource, can_transport, is_active')
+    .in('id', supplierIds)
+  if (!result.error || !isMissingSupplierCapabilityColumns(result.error)) return result
+
+  const fallback = await db
+    .from('suppliers')
+    .select('id, name, is_active')
+    .in('id', supplierIds)
+  if (fallback.error) return fallback
+  return {
+    data: withLegacySupplierCapabilities((fallback.data || []) as SupplierBaseOption[]),
+    error: null,
+  }
 }
 
 async function loadFactories(db: LooseDb) {
@@ -461,7 +510,7 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
 
   const [workTypesRes, suppliersRes, factoriesRes, itemLinksRes, needsRes, itemsRes] = await Promise.all([
     workTypeIds.length > 0 ? db.from('outsourcing_work_types').select('id, name, code, is_zinc, is_active').in('id', workTypeIds) : Promise.resolve({ data: [], error: null }),
-    supplierIds.length > 0 ? db.from('suppliers').select('id, name, can_outsource, can_transport, is_active').in('id', supplierIds) : Promise.resolve({ data: [], error: null }),
+    loadSuppliersByIds(db, supplierIds),
     factoryIds.length > 0 ? db.from('factories').select('id, name').in('id', factoryIds) : Promise.resolve({ data: [], error: null }),
     db.from('machine_outsourcing_operation_items').select('operation_id, machine_item_id').in('operation_id', operationIds),
     db.from('machine_outsourcing_transport_needs').select('*').in('operation_id', operationIds),
