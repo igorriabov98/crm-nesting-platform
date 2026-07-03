@@ -19,6 +19,31 @@ export interface NestingParseReport {
   }>
 }
 
+export type LayoutViolationType =
+  | 'overlap'
+  | 'gap'
+  | 'out_of_bounds'
+  | 'quantity'
+  | 'hole_outside'
+  | 'part_in_hole'
+
+export interface LayoutViolation {
+  type: LayoutViolationType
+  sheetIndex?: number
+  sheetId?: string
+  partIds: string[]
+  amountMm?: number
+  expected?: number
+  actual?: number
+  message: string
+}
+
+export interface LayoutValidationReport {
+  valid: boolean
+  violations: LayoutViolation[]
+  checkedAt: string
+}
+
 export interface NestingProject {
   id: string
   orderNumber: string
@@ -27,6 +52,7 @@ export interface NestingProject {
   status: NestingStatus
   errorMessage: string | null
   parseReport: NestingParseReport | null
+  validationReport: LayoutValidationReport | null
   createdBy: string
   createdAt: string
   updatedAt: string
@@ -93,6 +119,7 @@ export interface NestingProjectStatus {
   status: NestingStatus | string
   errorMessage: string | null
   parseReport: NestingParseReport | null
+  validationReport: LayoutValidationReport | null
 }
 
 export interface Placement {
@@ -108,7 +135,7 @@ export interface Placement {
   sourceProductId?: string | null
   x: number
   y: number
-  rotation: 0 | 90
+  rotation: 0 | 90 | 180 | 270
   placedW: number
   placedH: number
   contour?: { x: number; y: number }[]
@@ -162,6 +189,7 @@ export interface NestingResult {
   totalSheets: number
   avgUtilization: number
   totalWaste: number
+  validationReport: LayoutValidationReport | null
 }
 
 export interface BOMEntry {

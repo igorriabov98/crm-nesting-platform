@@ -165,6 +165,7 @@ export async function resultRoutes(app: FastifyInstance) {
         totalSheets: sheets.length,
         avgUtilization,
         totalWaste,
+        validationReport: project.validationReport,
       },
     };
   });

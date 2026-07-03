@@ -33,6 +33,7 @@ export interface ProjectWithStats {
   status: string;
   errorMessage: string | null;
   parseReport: Prisma.JsonValue | null;
+  validationReport: Prisma.JsonValue | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -74,6 +75,7 @@ function toProjectWithStats(project: ProjectWithCounts, avgUtilization: number |
     status: project.status,
     errorMessage: project.errorMessage,
     parseReport: project.parseReport,
+    validationReport: project.validationReport,
     createdBy: project.createdBy,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
@@ -397,6 +399,7 @@ export class ProjectService {
     status: string;
     errorMessage: string | null;
     parseReport: Prisma.JsonValue | null;
+    validationReport: Prisma.JsonValue | null;
   }> {
     const project = await prisma.nestingProject.findUnique({
       where: { id },
@@ -405,6 +408,7 @@ export class ProjectService {
         status: true,
         errorMessage: true,
         parseReport: true,
+        validationReport: true,
       },
     });
 

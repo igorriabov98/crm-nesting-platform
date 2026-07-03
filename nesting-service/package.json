@@ -18,7 +18,7 @@
     "fixtures:phase1": "tsx scripts/generate-fixtures.ts",
     "validate:real": "tsx scripts/validate-real-parts.ts",
     "test:storage-auth": "tsx src/lib/__tests__/test-storage-auth.ts",
-    "test:phase0": "tsx src/lib/__tests__/test-dimension-guard.ts && tsx src/lib/__tests__/test-dxf-no-anisotropy.ts && tsx src/lib/__tests__/test-nesting-params.ts",
+    "test:phase0": "tsx src/lib/__tests__/test-dimension-guard.ts && tsx src/lib/__tests__/test-dxf-no-anisotropy.ts && tsx src/lib/__tests__/test-nesting-params.ts && tsx src/lib/__tests__/test-layout-validator.ts",
     "test:phase1": "tsx src/lib/__tests__/test-brep-contour.ts && tsx src/lib/__tests__/test-polygon-utilization.ts && tsx src/lib/__tests__/test-put-guard.ts && tsx src/lib/__tests__/test-phase1-fixture-pipeline.ts",
     "test:phase2": "tsx src/lib/__tests__/test-bend-detector.ts && tsx src/lib/__tests__/test-unfold.ts && tsx src/lib/__tests__/test-unfold-pipeline.ts"
   },
