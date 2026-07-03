@@ -73,6 +73,7 @@ export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 
 export type BrepTrace = {
   partName: string;
   source: ContourSource;
+  bendCount: number;
   reason: string | null;
   elapsedMs: number | null;
 };
@@ -201,6 +202,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
             brepTrace.push({
               partName: part.name,
               source: part.contourSource,
+              bendCount: part.bendCount,
               reason: null,
               elapsedMs: brepResult?.elapsedMs ?? null,
             });
@@ -209,6 +211,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
             brepTrace.push({
               partName: part.name,
               source: part.contourSource,
+              bendCount: part.bendCount,
               reason: null,
               elapsedMs: brepResult?.elapsedMs ?? null,
             });
@@ -217,6 +220,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
             brepTrace.push({
               partName: part.name,
               source: part.contourSource,
+              bendCount: part.bendCount,
               reason: brepResult?.fallbackReason ?? brepReadError ?? 'no matching B-Rep solid',
               elapsedMs: brepResult?.elapsedMs ?? null,
             });

@@ -37,6 +37,7 @@ type ProjectParseReport = {
   perPart: Array<{
     partName: string;
     source: string;
+    bendCount?: number;
     fallbackReason?: string;
   }>;
 };
@@ -139,6 +140,7 @@ async function processStepJob(job: StepJob) {
           ...result.brepTrace.map((trace) => ({
             partName: trace.partName,
             source: trace.source,
+            ...(trace.bendCount > 0 ? { bendCount: trace.bendCount } : {}),
             ...(trace.reason ? { fallbackReason: trace.reason } : {}),
           }))
         );

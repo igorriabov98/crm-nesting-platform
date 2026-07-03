@@ -13,6 +13,7 @@ export interface NestingParseReport {
   perPart: Array<{
     partName: string
     source: ContourSource | string
+    bendCount?: number
     fallbackReason?: string
   }>
 }
@@ -115,6 +116,9 @@ export interface Placement {
   dimensionMismatch?: boolean
   mismatchNote?: string | null
   contourSource?: ContourSource | string
+  bendCount?: number
+  kFactor?: number | null
+  kFactorDefaulted?: boolean
 }
 
 export interface RemnantGeom {
