@@ -706,7 +706,7 @@ function PlannerVirtualRow({
         {shippingReadinessCells.map((cell) => (
           <div
             key={`shipping-readiness-cell:${cell.id}`}
-            className="pointer-events-none absolute inset-y-0 z-[1] border-x border-emerald-300/70 bg-emerald-100/70"
+            className="pointer-events-none absolute inset-y-0 z-[1] border-2 border-dashed border-emerald-600 bg-emerald-100/70"
             style={{ left: cell.left, width: cell.width }}
             aria-hidden="true"
           />

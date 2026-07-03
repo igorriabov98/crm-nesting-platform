@@ -155,7 +155,7 @@ export const GanttBar = React.memo(function GanttBar({
           className={cn(
             "absolute left-0 right-0 overflow-hidden rounded-none transition-[filter,box-shadow] hover:brightness-105",
             usesExpandedHitArea ? "top-1/2 h-[18px] -translate-y-1/2" : "inset-0",
-            isPlanned ? "border-2 border-dashed" : "shadow-sm",
+            isPlanned && !planOnly ? "border-2 border-dashed" : !isPlanned ? "shadow-sm" : null,
             visibleStatus === 'overdue' && "ring-2 ring-red-500 ring-offset-1"
           )}
           style={{
