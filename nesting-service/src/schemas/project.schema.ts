@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const projectStatusSchema = z.enum(['created', 'parsing', 'parsed', 'calculating', 'done', 'error']);
+export const projectStatusSchema = z.enum(['created', 'parsing', 'parsed', 'calculating', 'done', 'completed_with_warnings', 'error']);
 
 export const projectListFilterSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

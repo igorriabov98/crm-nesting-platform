@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { createNestingBatch, type NestingQueueData, type NestingQueueItem, type NestingQueueMachine } from '@/lib/actions/nesting-batches'
+import { isCompletedNestingStatus } from '@/lib/nesting/status'
 import { cn } from '@/lib/utils'
 
 function formatDate(value: string | null) {
@@ -27,7 +28,7 @@ function itemStatus(item: NestingQueueItem) {
     return { label: 'Вырезано заранее', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: CheckCircle2 }
   }
 
-  if (item.run?.serviceStatus === 'done' || item.run?.status === 'calculated' || item.run?.status === 'imported') {
+  if (isCompletedNestingStatus(item.run?.serviceStatus) || item.run?.status === 'calculated' || item.run?.status === 'imported') {
     return { label: 'Сделано', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: CheckCircle2 }
   }
 

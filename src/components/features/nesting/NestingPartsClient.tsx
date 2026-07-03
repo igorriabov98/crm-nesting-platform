@@ -20,6 +20,7 @@ import { importMachineItemNestingResult, type MachineItemNestingContext } from '
 import { syncNestingBatchProjectStatus } from '@/lib/actions/nesting-batches'
 import type { SteelType } from '@/lib/types/database'
 import type { NestingPart, NestingProject, NestingStatus, NestingStrategy } from '@/lib/nesting/api'
+import { isCompletedNestingStatus } from '@/lib/nesting/status'
 
 const validStrategies = ['minWaste', 'remnant', 'minSheets']
 
@@ -58,7 +59,7 @@ export function NestingPartsClient({
   )
 
   const shouldPoll = ['created', 'parsing', 'calculating'].includes(status)
-  const pollingTargets = status === 'calculating' ? ['done', 'error'] : ['parsed', 'error']
+  const pollingTargets = status === 'calculating' ? ['done', 'completed_with_warnings', 'error'] : ['parsed', 'error']
   const { errorMessage } = useProjectPolling(project.id, pollingTargets, 2000, shouldPoll, {
     onStatusChange: (nextStatus) => {
       setStatus(nextStatus)
@@ -66,7 +67,7 @@ export function NestingPartsClient({
     onTargetStatus: (nextStatus, payload) => {
       setStatus(nextStatus)
 
-      if (nextStatus === 'done') {
+      if (isCompletedNestingStatus(nextStatus)) {
         void syncNestingBatchProjectStatus(project.id)
         setIsCalculating(false)
         if (machineContext) {
@@ -105,7 +106,7 @@ export function NestingPartsClient({
   }, [project.id])
 
   useEffect(() => {
-    if ((status === 'parsed' || status === 'done') && parts.length === 0 && !isLoadingParts) {
+    if ((status === 'parsed' || isCompletedNestingStatus(status)) && parts.length === 0 && !isLoadingParts) {
       loadParts()
     }
   }, [status, parts.length, isLoadingParts, loadParts])
@@ -206,12 +207,12 @@ export function NestingPartsClient({
                     <LoadingButton
                       loading={isCalculating || status === 'calculating'}
                       loadingText="Расчёт раскладки..."
-                      disabled={sheetMetalCount === 0 || !['parsed', 'done'].includes(status)}
+                      disabled={sheetMetalCount === 0 || !(status === 'parsed' || isCompletedNestingStatus(status))}
                       onClick={handleStartCalculation}
                     >
                       Рассчитать раскладку
                     </LoadingButton>
-                    {status === 'done' && (
+                    {isCompletedNestingStatus(status) && (
                       <Button type="button" variant="outline" onClick={handleViewResult}>
                         <Eye className="h-4 w-4" />
                         Проверить раскладку
@@ -246,7 +247,7 @@ function MachineNestingContextCard({
   onImport: () => void
 }) {
   const isImported = context.status === 'imported'
-  const canImport = status === 'done' && !isImported
+  const canImport = isCompletedNestingStatus(status) && !isImported
 
   return (
     <Card className="bg-white">

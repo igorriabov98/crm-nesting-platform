@@ -25,9 +25,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { deleteNestingProject } from '@/lib/nesting/actions'
 import type { NestingProject } from '@/lib/nesting/api'
+import { isCompletedNestingStatus } from '@/lib/nesting/status'
 
 function getProjectHref(project: NestingProject) {
-  return project.status === 'done' ? `/nesting/${project.id}/result` : `/nesting/${project.id}/parts`
+  return isCompletedNestingStatus(project.status) ? `/nesting/${project.id}/result` : `/nesting/${project.id}/parts`
 }
 
 export function ProjectActions({ project }: { project: NestingProject }) {
@@ -59,7 +60,7 @@ export function ProjectActions({ project }: { project: NestingProject }) {
                 Открыть
               </Link>
             </DropdownMenuItem>
-            {project.status === 'done' ? (
+            {isCompletedNestingStatus(project.status) ? (
               <DropdownMenuItem className="p-0">
                 <a className="flex w-full items-center gap-2 px-1.5 py-1" href={`/api/nesting/dxf/${project.id}`}>
                   <Download className="h-4 w-4" />

@@ -7,6 +7,7 @@ import { queueService } from './queue.service';
 import { uploadService } from './upload.service';
 import type { BatchUploadInput } from './upload.service';
 import { removeOwnedStorageUris, removeProjectStorageObjects } from '../lib/storage';
+import { isCompletedProjectStatus } from '../lib/project-status';
 
 interface CreateProjectInput {
   id?: string;
@@ -255,7 +256,7 @@ export class ProjectService {
     }
 
     const avgUtilization =
-      project.status === 'done'
+      isCompletedProjectStatus(project.status)
         ? (
             await prisma.nestingSheet.aggregate({
               where: { projectId: id },
@@ -293,7 +294,7 @@ export class ProjectService {
       prisma.nestingProject.count({ where }),
     ]);
 
-    const doneIds = projects.filter((project) => project.status === 'done').map((project) => project.id);
+    const doneIds = projects.filter((project) => isCompletedProjectStatus(project.status)).map((project) => project.id);
     const averages = doneIds.length
       ? await prisma.nestingSheet.groupBy({
           by: ['projectId'],

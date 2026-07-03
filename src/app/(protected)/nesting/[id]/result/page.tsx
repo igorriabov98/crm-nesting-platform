@@ -3,6 +3,7 @@ import { NestingResultClient } from '@/components/features/nesting/NestingResult
 import { getFutureFillContext } from '@/lib/actions/nesting-future-fill'
 import { getProject, getResult } from '@/lib/nesting/api'
 import type { NestingResult } from '@/lib/nesting/api'
+import { isCompletedNestingStatus } from '@/lib/nesting/status'
 
 export const metadata = { title: 'Результат раскладки — CRM Завода' }
 
@@ -21,7 +22,7 @@ export default async function NestingResultPage({
     notFound()
   }
 
-  if (project.status !== 'done') {
+  if (!isCompletedNestingStatus(project.status)) {
     redirect(`/nesting/${id}/parts`)
   }
 

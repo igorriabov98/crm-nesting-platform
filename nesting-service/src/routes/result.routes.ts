@@ -9,6 +9,7 @@ import { prisma } from '../lib/prisma';
 import { normalizeCadText } from '../lib/text-encoding';
 import { idParamSchema } from '../schemas/common.schema';
 import { projectSheetParamsSchema } from '../schemas/project.schema';
+import { isCompletedProjectStatus } from '../lib/project-status';
 
 type PlacementForResult = {
   partId: string;
@@ -92,7 +93,7 @@ export async function resultRoutes(app: FastifyInstance) {
       throw new NotFoundError('Проект', id);
     }
 
-    if (project.status !== 'done') {
+    if (!isCompletedProjectStatus(project.status)) {
       throw new ValidationError(`Расчёт ещё не завершён. Статус: ${project.status}`);
     }
 

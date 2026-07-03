@@ -7,6 +7,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { NESTING_QUEUE_LIMIT } from '@/lib/constants/performance-limits'
 import { requirePermission } from '@/lib/permissions/server'
 import { fetchNestingService as fetch, getNestingServiceUrl, getProjectStatus } from '@/lib/nesting/api'
+import { isCompletedNestingStatus } from '@/lib/nesting/status'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 
 type ActionResult<T> = {
@@ -98,7 +99,7 @@ type BatchRow = {
   id: string
   nesting_project_id: string
   order_number: string
-  status: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
+  status: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'completed_with_warnings' | 'error'
   error_message: string | null
   source_nesting_project_id?: string | null
   is_future_fill?: boolean
@@ -195,13 +196,13 @@ function fileIssue(stepCount: number, pdfCount: number) {
 }
 
 function serviceStatusToRunStatus(status: string): RunRow['status'] {
-  if (status === 'done') return 'calculated'
+  if (isCompletedNestingStatus(status)) return 'calculated'
   if (status === 'error') return 'error'
   return 'draft'
 }
 
 function serviceStatusToBatchStatus(status: string): BatchRow['status'] {
-  if (status === 'done' || status === 'error' || status === 'parsed' || status === 'calculating' || status === 'parsing') {
+  if (status === 'done' || status === 'completed_with_warnings' || status === 'error' || status === 'parsed' || status === 'calculating' || status === 'parsing') {
     return status
   }
   return 'draft'
@@ -387,7 +388,7 @@ export async function getNestingQueue(scope: 'tasks' | 'all' = 'all'): Promise<A
         const precutQuantity = Math.min(quantity, precutByItem.get(item.id) || 0)
         const remainingQuantity = Math.max(quantity - precutQuantity, 0)
         const isPrecutDone = quantity > 0 && remainingQuantity <= 0
-        const isDone = service?.status === 'done' || ((!service || serviceUnavailable) && (run?.status === 'calculated' || run?.status === 'imported'))
+        const isDone = isCompletedNestingStatus(service?.status) || ((!service || serviceUnavailable) && (run?.status === 'calculated' || run?.status === 'imported'))
         const issue = item.product_id ? fileIssue(stepFileCount, drawingPdfFileCount) : 'Строка не привязана к товару из базы'
         let disabledReason: string | null = null
 
@@ -424,7 +425,7 @@ export async function getNestingQueue(scope: 'tasks' | 'all' = 'all'): Promise<A
 
       const progress = {
         total: items.length,
-        done: items.filter((item) => item.remainingQuantity <= 0 || item.run?.serviceStatus === 'done' || item.run?.status === 'calculated' || item.run?.status === 'imported').length,
+        done: items.filter((item) => item.remainingQuantity <= 0 || isCompletedNestingStatus(item.run?.serviceStatus) || item.run?.status === 'calculated' || item.run?.status === 'imported').length,
         blocked: items.filter((item) => item.disabledReason && item.disabledReason !== 'Раскладка уже готова').length,
         selectable: items.filter((item) => item.selectable).length,
       }

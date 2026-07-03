@@ -14,6 +14,7 @@ const statusOptions = [
   { value: 'parsed', label: 'Готово к расчёту' },
   { value: 'calculating', label: 'Расчёт' },
   { value: 'done', label: 'Готово' },
+  { value: 'completed_with_warnings', label: 'Готово с предупреждениями' },
   { value: 'error', label: 'Ошибка' },
 ]
 

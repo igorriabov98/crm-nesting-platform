@@ -16,9 +16,10 @@ import { StatusBadge } from '@/components/features/nesting/StatusBadge'
 import { ProjectActions } from '@/components/features/nesting/ProjectActions'
 import { cn } from '@/lib/utils'
 import type { NestingProject } from '@/lib/nesting/api'
+import { isCompletedNestingStatus } from '@/lib/nesting/status'
 
 function getProjectHref(project: NestingProject) {
-  return project.status === 'done' ? `/nesting/${project.id}/result` : `/nesting/${project.id}/parts`
+  return isCompletedNestingStatus(project.status) ? `/nesting/${project.id}/result` : `/nesting/${project.id}/parts`
 }
 
 function formatDate(value: string) {

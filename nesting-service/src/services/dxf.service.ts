@@ -13,6 +13,7 @@ import { prisma } from '../lib/prisma';
 import { normalizeCadText } from '../lib/text-encoding';
 import { ensureDir, sanitizeFilename, transliterate } from '../lib/utils';
 import { isStorageConfigured, uploadStorageBuffer } from '../lib/storage';
+import { isCompletedProjectStatus } from '../lib/project-status';
 
 type PlacementForDxf = {
   partId: string;
@@ -49,7 +50,7 @@ export class DxfService {
       throw new NotFoundError('Project', projectId);
     }
 
-    if (project.status !== 'done') {
+    if (!isCompletedProjectStatus(project.status)) {
       throw new ValidationError(`Calculation is not finished. Status: ${project.status}`);
     }
 
@@ -142,7 +143,7 @@ export class DxfService {
       throw new NotFoundError('Project', projectId);
     }
 
-    if (project.status !== 'done') {
+    if (!isCompletedProjectStatus(project.status)) {
       throw new ValidationError(`Calculation is not finished. Status: ${project.status}`);
     }
 

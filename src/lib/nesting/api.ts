@@ -1,6 +1,7 @@
 import 'server-only'
+import type { NestingStatus } from './status'
 
-export type NestingStatus = 'created' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
+export type { NestingStatus } from './status'
 export type NestingStrategy = 'minWaste' | 'remnant' | 'minSheets'
 export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom'
 export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
