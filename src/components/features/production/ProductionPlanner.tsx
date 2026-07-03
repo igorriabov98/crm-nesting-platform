@@ -1917,9 +1917,10 @@ export function ProductionPlanner({
     try {
       const result = await createProductionPlanDateChangeRequest({
         machineId: selectedMachineId,
-        changes: selectedDateChanges.map(({ target_type, production_stage_id, field_name, new_value }) => ({
+        changes: selectedDateChanges.map(({ target_type, production_stage_id, outsourcing_operation_id, field_name, new_value }) => ({
           target_type,
           production_stage_id,
+          outsourcing_operation_id,
           field_name,
           new_value,
         })),

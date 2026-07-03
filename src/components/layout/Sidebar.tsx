@@ -70,6 +70,7 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   consumableRequests: ClipboardList,
   consumables: Warehouse,
   orders: ShoppingCart,
+  transport: Truck,
   inventory: Warehouse,
   history: History,
   receiving: PackagePlus,

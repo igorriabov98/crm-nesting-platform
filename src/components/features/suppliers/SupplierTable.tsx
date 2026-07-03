@@ -35,6 +35,7 @@ export function SupplierTable({ suppliers }: { suppliers: SupplierWithRelations[
               <th className="min-w-[140px] px-4 py-3">Контактное лицо</th>
               <th className="min-w-[120px] px-4 py-3">Телефон</th>
               <th className="min-w-[220px] px-4 py-3">Категории материала</th>
+              <th className="min-w-[160px] px-4 py-3">Сервисы</th>
               <th className="min-w-[120px] px-4 py-3">Дни отгрузки</th>
               <th className="w-24 px-4 py-3">Активен</th>
               <th className="min-w-[120px] px-4 py-3">Срок доставки</th>
@@ -44,7 +45,7 @@ export function SupplierTable({ suppliers }: { suppliers: SupplierWithRelations[
           <tbody className="divide-y divide-[#E8ECF0]">
             {suppliers.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-[#9CA3AF]">
+                <td colSpan={9} className="px-4 py-10 text-center text-[#9CA3AF]">
                   Поставщики пока не добавлены.
                 </td>
               </tr>
@@ -59,17 +60,25 @@ export function SupplierTable({ suppliers }: { suppliers: SupplierWithRelations[
                       {supplier.categories.map((category) => (
                         <Badge key={category} variant="secondary">{MATERIAL_CATEGORY_LABELS[category]}</Badge>
                       ))}
+                      {supplier.categories.length === 0 && <span className="text-[#9CA3AF]">—</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1.5">
+                      {supplier.can_outsource && <Badge variant="outline" className="bg-blue-50 text-blue-900">Аутсорсинг</Badge>}
+                      {supplier.can_transport && <Badge variant="outline" className="bg-emerald-50 text-emerald-700">Транспорт</Badge>}
+                      {!supplier.can_outsource && !supplier.can_transport && <span className="text-[#9CA3AF]">—</span>}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-[#374151]">
                     {supplier.deliveryDays.map((day) => WEEKDAY_LABELS[day]).join(', ') || '—'}
                   </td>
-                  <td className="px-4 py-3 text-[#374151]">{supplier.delivery_lead_days || 0} дн.</td>
                   <td className="px-4 py-3">
                     <Badge variant={supplier.is_active ? 'default' : 'secondary'}>
                       {supplier.is_active ? 'Да' : 'Нет'}
                     </Badge>
                   </td>
+                  <td className="px-4 py-3 text-[#374151]">{supplier.delivery_lead_days || 0} дн.</td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
                       <Link

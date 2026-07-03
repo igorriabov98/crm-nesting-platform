@@ -5,6 +5,7 @@ import { getTasksByMachine } from '@/lib/actions/tasks'
 import { getRequest } from '@/lib/actions/technologist-requests'
 import { getMachineItemNestingStates } from '@/lib/actions/machine-item-nesting'
 import { getMachineActivity, type MachineActivityPayload } from '@/lib/actions/machine-activity'
+import { getMachineOutsourcingData } from '@/lib/actions/outsourcing'
 import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { getCurrentUserPermissions } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
@@ -30,6 +31,7 @@ export default async function MachineDetailPage({
     { data: requestData },
     nestingStatesResult,
     activityResult,
+    outsourcingResult,
     { data: factories },
   ] = await Promise.all([
     getMachine(id),
@@ -37,6 +39,7 @@ export default async function MachineDetailPage({
     getRequest(id),
     getMachineItemNestingStates(id),
     getMachineActivity(id),
+    getMachineOutsourcingData(id),
     supabase.from('factories').select('id, name'),
   ])
 
@@ -61,6 +64,7 @@ export default async function MachineDetailPage({
         requestData={requestData}
         nestingStates={nestingStatesResult.success ? nestingStatesResult.data || [] : []}
         activity={activity}
+        outsourcingData={outsourcingResult.data}
         canManageTechnologistRequests={hasPermission(permissions, 'technologist_requests', 'manage')}
         canViewSupplyRequest={hasPermission(permissions, 'supply', 'view')}
         canManageNesting={hasPermission(permissions, 'nesting', 'manage')}

@@ -1757,6 +1757,252 @@ export type Database = {
           updated_at?: string
         }
       }
+      outsourcing_work_types: {
+        Row: {
+          id: string
+          code: string | null
+          name: string
+          description: string | null
+          is_zinc: boolean
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          code?: string | null
+          name: string
+          description?: string | null
+          is_zinc?: boolean
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          code?: string | null
+          name?: string
+          description?: string | null
+          is_zinc?: boolean
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      factory_zinc_outsourcing_defaults: {
+        Row: {
+          factory_id: string
+          executor_type: Database['public']['Enums']['outsourcing_executor_type']
+          supplier_id: string | null
+          executor_factory_id: string | null
+          updated_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          factory_id: string
+          executor_type: Database['public']['Enums']['outsourcing_executor_type']
+          supplier_id?: string | null
+          executor_factory_id?: string | null
+          updated_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          factory_id?: string
+          executor_type?: Database['public']['Enums']['outsourcing_executor_type']
+          supplier_id?: string | null
+          executor_factory_id?: string | null
+          updated_by?: string | null
+          updated_at?: string
+        }
+      }
+      machine_outsourcing_operations: {
+        Row: {
+          id: string
+          machine_id: string
+          work_type_id: string
+          position_after_stage_type: Database['public']['Enums']['stage_type'] | null
+          source_stage_type: Database['public']['Enums']['stage_type'] | null
+          is_zinc_operation: boolean
+          executor_type: Database['public']['Enums']['outsourcing_executor_type']
+          supplier_id: string | null
+          executor_factory_id: string | null
+          note: string | null
+          planned_send_date: string | null
+          planned_return_date: string | null
+          actual_sent_at: string | null
+          actual_returned_at: string | null
+          service_cost_planned: number | null
+          service_cost_actual: number | null
+          incoming_production_month: string | null
+          incoming_workshop: number | null
+          incoming_queue_number: number | null
+          incoming_date_start: string | null
+          incoming_date_end: string | null
+          archived_at: string | null
+          archived_by: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          machine_id: string
+          work_type_id: string
+          position_after_stage_type?: Database['public']['Enums']['stage_type'] | null
+          source_stage_type?: Database['public']['Enums']['stage_type'] | null
+          is_zinc_operation?: boolean
+          executor_type: Database['public']['Enums']['outsourcing_executor_type']
+          supplier_id?: string | null
+          executor_factory_id?: string | null
+          note?: string | null
+          planned_send_date?: string | null
+          planned_return_date?: string | null
+          actual_sent_at?: string | null
+          actual_returned_at?: string | null
+          service_cost_planned?: number | null
+          service_cost_actual?: number | null
+          incoming_production_month?: string | null
+          incoming_workshop?: number | null
+          incoming_queue_number?: number | null
+          incoming_date_start?: string | null
+          incoming_date_end?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          machine_id?: string
+          work_type_id?: string
+          position_after_stage_type?: Database['public']['Enums']['stage_type'] | null
+          source_stage_type?: Database['public']['Enums']['stage_type'] | null
+          is_zinc_operation?: boolean
+          executor_type?: Database['public']['Enums']['outsourcing_executor_type']
+          supplier_id?: string | null
+          executor_factory_id?: string | null
+          note?: string | null
+          planned_send_date?: string | null
+          planned_return_date?: string | null
+          actual_sent_at?: string | null
+          actual_returned_at?: string | null
+          service_cost_planned?: number | null
+          service_cost_actual?: number | null
+          incoming_production_month?: string | null
+          incoming_workshop?: number | null
+          incoming_queue_number?: number | null
+          incoming_date_start?: string | null
+          incoming_date_end?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      machine_outsourcing_operation_items: {
+        Row: {
+          id: string
+          operation_id: string
+          machine_item_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          operation_id: string
+          machine_item_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          operation_id?: string
+          machine_item_id?: string
+          created_at?: string
+        }
+      }
+      machine_outsourcing_transport_orders: {
+        Row: {
+          id: string
+          direction: Database['public']['Enums']['outsourcing_transport_direction']
+          status: Database['public']['Enums']['outsourcing_transport_order_status']
+          carrier_supplier_id: string | null
+          scheduled_date: string | null
+          price: number | null
+          comment: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          direction: Database['public']['Enums']['outsourcing_transport_direction']
+          status?: Database['public']['Enums']['outsourcing_transport_order_status']
+          carrier_supplier_id?: string | null
+          scheduled_date?: string | null
+          price?: number | null
+          comment?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          direction?: Database['public']['Enums']['outsourcing_transport_direction']
+          status?: Database['public']['Enums']['outsourcing_transport_order_status']
+          carrier_supplier_id?: string | null
+          scheduled_date?: string | null
+          price?: number | null
+          comment?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      machine_outsourcing_transport_needs: {
+        Row: {
+          id: string
+          operation_id: string
+          direction: Database['public']['Enums']['outsourcing_transport_direction']
+          plan_state: Database['public']['Enums']['outsourcing_transport_plan_state']
+          status: Database['public']['Enums']['outsourcing_transport_need_status']
+          needed_date: string
+          task_id: string | null
+          transport_order_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          operation_id: string
+          direction: Database['public']['Enums']['outsourcing_transport_direction']
+          plan_state: Database['public']['Enums']['outsourcing_transport_plan_state']
+          status?: Database['public']['Enums']['outsourcing_transport_need_status']
+          needed_date: string
+          task_id?: string | null
+          transport_order_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          operation_id?: string
+          direction?: Database['public']['Enums']['outsourcing_transport_direction']
+          plan_state?: Database['public']['Enums']['outsourcing_transport_plan_state']
+          status?: Database['public']['Enums']['outsourcing_transport_need_status']
+          needed_date?: string
+          task_id?: string | null
+          transport_order_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       production_plan_date_change_requests: {
         Row: {
           id: string
@@ -1806,8 +2052,9 @@ export type Database = {
           id: string
           request_id: string
           machine_id: string
-          target_type: 'machine' | 'stage'
+          target_type: 'machine' | 'stage' | 'outsourcing'
           production_stage_id: string | null
+          outsourcing_operation_id: string | null
           stage_type: Database['public']['Enums']['stage_type'] | null
           field_name: string
           old_value: string | null
@@ -1821,8 +2068,9 @@ export type Database = {
           id?: string
           request_id: string
           machine_id: string
-          target_type: 'machine' | 'stage'
+          target_type: 'machine' | 'stage' | 'outsourcing'
           production_stage_id?: string | null
+          outsourcing_operation_id?: string | null
           stage_type?: Database['public']['Enums']['stage_type'] | null
           field_name: string
           old_value?: string | null
@@ -1836,8 +2084,9 @@ export type Database = {
           id?: string
           request_id?: string
           machine_id?: string
-          target_type?: 'machine' | 'stage'
+          target_type?: 'machine' | 'stage' | 'outsourcing'
           production_stage_id?: string | null
+          outsourcing_operation_id?: string | null
           stage_type?: Database['public']['Enums']['stage_type'] | null
           field_name?: string
           old_value?: string | null
@@ -2326,6 +2575,8 @@ export type Database = {
           email: string | null
           notes: string | null
           delivery_lead_days: number
+          can_outsource: boolean
+          can_transport: boolean
           is_active: boolean
           created_at: string
           updated_at: string
@@ -2338,6 +2589,8 @@ export type Database = {
           email?: string | null
           notes?: string | null
           delivery_lead_days?: number
+          can_outsource?: boolean
+          can_transport?: boolean
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -2350,6 +2603,8 @@ export type Database = {
           email?: string | null
           notes?: string | null
           delivery_lead_days?: number
+          can_outsource?: boolean
+          can_transport?: boolean
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -3741,7 +3996,12 @@ export type Database = {
       task_delegation_status: 'pending' | 'accepted' | 'declined' | 'cancelled'
       production_month_plan_status: 'draft' | 'preliminary_ready' | 'confirmed'
       production_date_change_request_status: 'pending' | 'approved' | 'rejected' | 'conflicted'
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval'
+      outsourcing_executor_type: 'supplier' | 'factory'
+      outsourcing_transport_direction: 'outbound' | 'return'
+      outsourcing_transport_plan_state: 'preliminary' | 'confirmed'
+      outsourcing_transport_need_status: 'open' | 'linked' | 'completed' | 'cancelled'
+      outsourcing_transport_order_status: 'needed' | 'found' | 'in_transit' | 'completed' | 'cancelled'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'outsourcing_transport'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'

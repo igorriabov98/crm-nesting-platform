@@ -31,6 +31,8 @@ export type SupplierInput = {
   email?: string | null
   notes?: string | null
   is_active?: boolean
+  can_outsource?: boolean
+  can_transport?: boolean
   delivery_lead_days?: number
   deliveryDays: number[]
   categories: MaterialCategory[]
@@ -123,8 +125,9 @@ export async function createSupplier(input: SupplierInput) {
   try {
     const { db } = await requireDirector()
     if (!input.name.trim()) throw new Error('Укажите название поставщика')
-    if (input.categories.length === 0) throw new Error('Выберите хотя бы одну категорию')
-    if (input.deliveryDays.length === 0) throw new Error('Выберите хотя бы один день отгрузки')
+    const hasServiceCapability = Boolean(input.can_outsource || input.can_transport)
+    if (input.categories.length === 0 && !hasServiceCapability) throw new Error('Выберите категорию материала или сервисную возможность')
+    if (input.deliveryDays.length === 0 && !hasServiceCapability) throw new Error('Выберите день отгрузки или сервисную возможность')
 
     const { data, error } = await db.from('suppliers').insert({
       name: input.name.trim(),
@@ -134,6 +137,8 @@ export async function createSupplier(input: SupplierInput) {
       notes: input.notes || null,
       delivery_lead_days: Number(input.delivery_lead_days || 0),
       is_active: input.is_active ?? true,
+      can_outsource: input.can_outsource ?? false,
+      can_transport: input.can_transport ?? false,
     }).select('*').single()
     if (error || !data) throw new Error(error?.message || 'Не удалось создать поставщика')
 
@@ -150,8 +155,9 @@ export async function updateSupplier(id: string, input: SupplierInput) {
   try {
     const { db } = await requireDirector()
     if (!input.name.trim()) throw new Error('Укажите название поставщика')
-    if (input.categories.length === 0) throw new Error('Выберите хотя бы одну категорию')
-    if (input.deliveryDays.length === 0) throw new Error('Выберите хотя бы один день отгрузки')
+    const hasServiceCapability = Boolean(input.can_outsource || input.can_transport)
+    if (input.categories.length === 0 && !hasServiceCapability) throw new Error('Выберите категорию материала или сервисную возможность')
+    if (input.deliveryDays.length === 0 && !hasServiceCapability) throw new Error('Выберите день отгрузки или сервисную возможность')
 
     const { error } = await db.from('suppliers').update({
       name: input.name.trim(),
@@ -161,6 +167,8 @@ export async function updateSupplier(id: string, input: SupplierInput) {
       notes: input.notes || null,
       delivery_lead_days: Number(input.delivery_lead_days || 0),
       is_active: input.is_active ?? true,
+      can_outsource: input.can_outsource ?? false,
+      can_transport: input.can_transport ?? false,
       updated_at: new Date().toISOString(),
     }).eq('id', id)
     if (error) throw new Error(error.message || 'Не удалось обновить поставщика')

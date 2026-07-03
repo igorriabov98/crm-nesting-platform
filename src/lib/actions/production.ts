@@ -6,6 +6,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { isDirector } from '@/lib/utils/permissions'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
+import { syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
 import { isMachineInConfirmedProductionPlan, notifyProductionPlanShippingDateChanged } from '@/lib/actions/production-plan'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
@@ -277,6 +278,12 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
         dateOnly(data.date_end),
         user.id,
       )
+    }
+    if (stageObj.stage_type === 'galvanizing' && ('date_start' in data || 'date_end' in data)) {
+      await syncZincOutsourcingFromStage(stageObj.machine_id, {
+        dateStart: 'date_start' in data ? dateOnly(data.date_start) : stageObj.date_start,
+        dateEnd: 'date_end' in data ? dateOnly(data.date_end) : stageObj.date_end,
+      }, user.id)
     }
 
     revalidatePath(`${ROUTES.SALES_PLAN}/${stageObj.machine_id}`)

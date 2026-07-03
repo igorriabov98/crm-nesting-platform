@@ -13,6 +13,7 @@ import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/util
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { createSystemMachineChatMessage } from '@/lib/actions/machine-activity'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
+import { getIncomingOutsourcingPlanBlockers, syncOutsourcingTransportForProductionPlan, syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import type { ProductionDateChangeRequestStatus, ProductionMonthPlanStatus, StageType, TaskStatus, TaskType, UserRole } from '@/lib/types'
 
@@ -42,9 +43,10 @@ export type ProductionMonthPlanSummary = {
 }
 
 export type ProductionPlanDateChangeInput = {
-  target_type: 'machine' | 'stage'
+  target_type: 'machine' | 'stage' | 'outsourcing'
   production_stage_id?: string | null
-  field_name: 'planned_material_date' | 'date_start' | 'date_end' | 'night_shift_date'
+  outsourcing_operation_id?: string | null
+  field_name: 'planned_material_date' | 'date_start' | 'date_end' | 'night_shift_date' | 'planned_send_date' | 'planned_return_date'
   new_value: string | null
 }
 
@@ -65,8 +67,9 @@ export type ProductionPlanDateChangeApprovalPayload = {
 
 export type ProductionPlanDateChangeApprovalItem = {
   id: string
-  target_type: 'machine' | 'stage'
+  target_type: 'machine' | 'stage' | 'outsourcing'
   production_stage_id: string | null
+  outsourcing_operation_id: string | null
   stage_type: StageType | null
   field_name: string
   old_value: string | null
@@ -130,9 +133,10 @@ type TaskRow = {
 const planStatusSchema = z.enum(['preliminary_ready', 'confirmed'])
 const dateValueSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Некорректная дата').nullable()
 const changeSchema = z.object({
-  target_type: z.enum(['machine', 'stage']),
+  target_type: z.enum(['machine', 'stage', 'outsourcing']),
   production_stage_id: z.string().uuid().optional().nullable(),
-  field_name: z.enum(['planned_material_date', 'date_start', 'date_end', 'night_shift_date']),
+  outsourcing_operation_id: z.string().uuid().optional().nullable(),
+  field_name: z.enum(['planned_material_date', 'date_start', 'date_end', 'night_shift_date', 'planned_send_date', 'planned_return_date']),
   new_value: dateValueSchema,
 }).superRefine((value, ctx) => {
   if (value.target_type === 'machine' && value.field_name !== 'planned_material_date') {
@@ -140,6 +144,9 @@ const changeSchema = z.object({
   }
   if (value.target_type === 'stage' && (!value.production_stage_id || value.field_name === 'planned_material_date')) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['production_stage_id'], message: 'Для этапа нужна дата этапа' })
+  }
+  if (value.target_type === 'outsourcing' && (!value.outsourcing_operation_id || (value.field_name !== 'planned_send_date' && value.field_name !== 'planned_return_date'))) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['outsourcing_operation_id'], message: 'Для аутсорсинга нужна операция и дата отправки или возврата' })
   }
 })
 const createRequestSchema = z.object({
@@ -192,6 +199,11 @@ function statusTitle(status: ProductionMonthPlanStatus) {
 
 function fieldLabel(item: Pick<DateChangeItemRow, 'target_type' | 'stage_type' | 'field_name'>) {
   if (item.target_type === 'machine') return 'Плановая поставка материала'
+  if (item.target_type === 'outsourcing') {
+    return item.field_name === 'planned_send_date'
+      ? 'Аутсорсинг: готовы отправить'
+      : 'Аутсорсинг: ожидаем возврат'
+  }
   const stage = item.stage_type ? STAGES[item.stage_type]?.label || item.stage_type : 'Этап'
   const field = item.field_name === 'date_start'
     ? 'начало'
@@ -421,10 +433,13 @@ export async function markProductionMonthPlanStatus(factoryId: string, productio
       .filter((machine) => !getShippingDate(machine))
       .map((machine) => machine.name)
 
+    const incomingOutsourcingBlockers = await getIncomingOutsourcingPlanBlockers(factoryId, productionMonth)
+    blockers.push(...incomingOutsourcingBlockers.map((name) => `${name} (входящий аутсорсинг)`))
+
     if (blockers.length > 0) {
       return {
         success: false,
-        error: `Укажите дату этапа "Готовность к погрузке" для машин: ${blockers.join(', ')}`,
+        error: `Укажите даты для подтверждения плана: ${blockers.join(', ')}`,
         blockers,
       }
     }
@@ -455,8 +470,10 @@ export async function markProductionMonthPlanStatus(factoryId: string, productio
     for (const machine of machines) {
       await notifyMachinePlanStatus(machine, updatedPlan, nextStatus, context.userId)
     }
+    await syncOutsourcingTransportForProductionPlan(factoryId, productionMonth, nextStatus, context.userId)
 
     revalidatePath(ROUTES.PRODUCTION)
+    revalidatePath(ROUTES.SUPPLY_TRANSPORT)
     revalidatePath(ROUTES.TASKS)
     return { success: true, data: updatedPlan, error: null }
   } catch (error) {
@@ -547,6 +564,7 @@ export async function createProductionPlanDateChangeRequest(input: {
     }
 
     const stageIds = Array.from(new Set(parsed.changes.map((change) => change.production_stage_id).filter((id): id is string => Boolean(id))))
+    const outsourcingOperationIds = Array.from(new Set(parsed.changes.map((change) => change.outsourcing_operation_id).filter((id): id is string => Boolean(id))))
     const stagesById = new Map<string, { id: string; machine_id: string; stage_type: StageType; date_start: string | null; date_end: string | null; night_shift_date: string | null }>()
     if (stageIds.length > 0) {
       const { data: stagesData, error: stagesError } = await db
@@ -559,6 +577,19 @@ export async function createProductionPlanDateChangeRequest(input: {
         if (stage.machine_id === machine.id) stagesById.set(stage.id, stage)
       }
     }
+    const outsourcingById = new Map<string, { id: string; machine_id: string; planned_send_date: string | null; planned_return_date: string | null }>()
+    if (outsourcingOperationIds.length > 0) {
+      const { data: operationsData, error: operationsError } = await db
+        .from('machine_outsourcing_operations')
+        .select('id, machine_id, planned_send_date, planned_return_date')
+        .in('id', outsourcingOperationIds)
+        .is('archived_at', null)
+
+      if (operationsError) throw new Error(operationsError.message || 'Не удалось загрузить операции аутсорсинга')
+      for (const operation of (operationsData || []) as Array<{ id: string; machine_id: string; planned_send_date: string | null; planned_return_date: string | null }>) {
+        if (operation.machine_id === machine.id) outsourcingById.set(operation.id, operation)
+      }
+    }
 
     const items: Array<Record<string, unknown>> = []
     parsed.changes.forEach((change, index) => {
@@ -566,11 +597,15 @@ export async function createProductionPlanDateChangeRequest(input: {
       let stageType: StageType | null = null
       if (change.target_type === 'machine') {
         oldValue = dateOnly(machine.planned_material_date)
-      } else {
+      } else if (change.target_type === 'stage') {
         const stage = change.production_stage_id ? stagesById.get(change.production_stage_id) : null
         if (!stage) throw new Error('Этап производства не найден')
         oldValue = dateOnly(stage[change.field_name as 'date_start' | 'date_end' | 'night_shift_date'])
         stageType = stage.stage_type
+      } else {
+        const operation = change.outsourcing_operation_id ? outsourcingById.get(change.outsourcing_operation_id) : null
+        if (!operation) throw new Error('Операция аутсорсинга не найдена')
+        oldValue = dateOnly(operation[change.field_name as 'planned_send_date' | 'planned_return_date'])
       }
 
       const newValue = dateOnly(change.new_value)
@@ -580,6 +615,7 @@ export async function createProductionPlanDateChangeRequest(input: {
         machine_id: machine.id,
         target_type: change.target_type,
         production_stage_id: change.target_type === 'stage' ? change.production_stage_id : null,
+        outsourcing_operation_id: change.target_type === 'outsourcing' ? change.outsourcing_operation_id : null,
         stage_type: stageType,
         field_name: change.field_name,
         old_value: oldValue,
@@ -696,7 +732,7 @@ export async function getProductionPlanDateChangeApproval(taskId: string): Promi
 
     const { data: itemsData, error: itemsError } = await db
       .from('production_plan_date_change_request_items')
-      .select('id, target_type, production_stage_id, stage_type, field_name, old_value, new_value, status')
+      .select('id, target_type, production_stage_id, outsourcing_operation_id, stage_type, field_name, old_value, new_value, status')
       .eq('request_id', request.id)
       .order('sort_order', { ascending: true })
 
@@ -768,7 +804,9 @@ async function loadRequestItems(db: LooseDb, requestId: string) {
 async function findApprovalConflicts(db: LooseDb, machineId: string, items: DateChangeItemRow[]) {
   const conflicts: string[] = []
   const stageIds = items.map((item) => item.production_stage_id).filter((id): id is string => Boolean(id))
+  const outsourcingOperationIds = items.map((item) => item.outsourcing_operation_id).filter((id): id is string => Boolean(id))
   const stagesById = new Map<string, Record<string, unknown>>()
+  const outsourcingById = new Map<string, Record<string, unknown>>()
 
   if (stageIds.length > 0) {
     const { data, error } = await db
@@ -778,6 +816,17 @@ async function findApprovalConflicts(db: LooseDb, machineId: string, items: Date
     if (error) throw new Error(error.message || 'Не удалось проверить текущие даты этапов')
     for (const stage of (data || []) as Array<Record<string, unknown> & { id: string }>) {
       stagesById.set(stage.id, stage)
+    }
+  }
+
+  if (outsourcingOperationIds.length > 0) {
+    const { data, error } = await db
+      .from('machine_outsourcing_operations')
+      .select('id, planned_send_date, planned_return_date')
+      .in('id', outsourcingOperationIds)
+    if (error) throw new Error(error.message || 'Не удалось проверить текущие даты аутсорсинга')
+    for (const operation of (data || []) as Array<Record<string, unknown> & { id: string }>) {
+      outsourcingById.set(operation.id, operation)
     }
   }
 
@@ -796,7 +845,9 @@ async function findApprovalConflicts(db: LooseDb, machineId: string, items: Date
   for (const item of items) {
     const source = item.target_type === 'machine'
       ? machine
-      : item.production_stage_id ? stagesById.get(item.production_stage_id) || null : null
+      : item.target_type === 'stage'
+        ? item.production_stage_id ? stagesById.get(item.production_stage_id) || null : null
+        : item.outsourcing_operation_id ? outsourcingById.get(item.outsourcing_operation_id) || null : null
     const currentValue = dateOnly(source?.[item.field_name] as string | null | undefined)
     if (currentValue !== dateOnly(item.old_value)) {
       conflicts.push(`${fieldLabel(item)}: было в запросе ${formatDate(item.old_value)}, сейчас ${formatDate(currentValue)}`)
@@ -817,12 +868,22 @@ async function applyRequestItems(db: LooseDb, items: DateChangeItemRow[]) {
       continue
     }
 
-    if (!item.production_stage_id) throw new Error('В запросе не указан этап')
+    if (item.target_type === 'stage') {
+      if (!item.production_stage_id) throw new Error('В запросе не указан этап')
+      const { error } = await db
+        .from('production_stages')
+        .update({ [item.field_name]: dateOnly(item.new_value) })
+        .eq('id', item.production_stage_id)
+      if (error) throw new Error(error.message || 'Не удалось обновить дату этапа')
+      continue
+    }
+
+    if (!item.outsourcing_operation_id) throw new Error('В запросе не указана операция аутсорсинга')
     const { error } = await db
-      .from('production_stages')
+      .from('machine_outsourcing_operations')
       .update({ [item.field_name]: dateOnly(item.new_value) })
-      .eq('id', item.production_stage_id)
-    if (error) throw new Error(error.message || 'Не удалось обновить дату этапа')
+      .eq('id', item.outsourcing_operation_id)
+    if (error) throw new Error(error.message || 'Не удалось обновить дату аутсорсинга')
   }
 }
 
@@ -914,6 +975,24 @@ export async function decideProductionPlanDateChangeRequest(input: {
     await applyRequestItems(db, items)
     if (items.some((item) => item.stage_type === 'shipping' && item.field_name === 'date_end')) {
       await syncTransportCostTask(db, request.machine.id)
+    }
+    const galvanizingStageIds = Array.from(new Set(items
+      .filter((item) => item.stage_type === 'galvanizing' && (item.field_name === 'date_start' || item.field_name === 'date_end'))
+      .map((item) => item.production_stage_id)
+      .filter((id): id is string => Boolean(id))))
+    for (const stageId of galvanizingStageIds) {
+      const { data: stageData } = await db
+        .from('production_stages')
+        .select('date_start, date_end')
+        .eq('id', stageId)
+        .maybeSingle()
+      const stage = stageData as { date_start: string | null; date_end: string | null } | null
+      if (stage) {
+        await syncZincOutsourcingFromStage(request.machine.id, { dateStart: stage.date_start, dateEnd: stage.date_end }, context.userId)
+      }
+    }
+    if (items.some((item) => item.target_type === 'outsourcing') && request.machine.factory_id && request.plan.production_month) {
+      await syncOutsourcingTransportForProductionPlan(request.machine.factory_id, request.plan.production_month, 'confirmed', context.userId)
     }
 
     const { error: requestError } = await db
