@@ -14,7 +14,9 @@ async function main(): Promise<void> {
   const lUnfold = unfoldPart(lTopology, K_FACTOR);
   assert.ok(lUnfold, 'L-angle should unfold');
   // L-angle: 40 + 40 + BA, BA = pi/2 * (3 + 0.4 * 2) = 5.969 mm.
-  assertWithin(lUnfold.height, 40 + 40 + BEND_ALLOWANCE, 0.005, 'L-angle unfolded length');
+  const lExpectedLength = 40 + 40 + BEND_ALLOWANCE;
+  assertWithin(lUnfold.height, lExpectedLength, 0.005, 'L-angle unfolded length');
+  logLengthCheck('L-angle', '40 + 40 + pi/2 * (3 + 0.4 * 2)', lExpectedLength, lUnfold.height);
   assert.equal(lUnfold.holes.length, 2, 'L-angle holes should survive unfold');
   const holeCenters = lUnfold.holes
     .map((hole) => ({
@@ -31,15 +33,40 @@ async function main(): Promise<void> {
   const uUnfold = unfoldPart(uTopology, K_FACTOR);
   assert.ok(uUnfold, 'U-channel should unfold');
   // U-channel fixture has two 40 mm side flanges, 34 mm tangent base span, and two BA strips.
-  assertWithin(uUnfold.height, 40 + 34 + 40 + 2 * BEND_ALLOWANCE, 0.005, 'U-channel unfolded length');
+  const uExpectedLength = 40 + 34 + 40 + 2 * BEND_ALLOWANCE;
+  assertWithin(uUnfold.height, uExpectedLength, 0.005, 'U-channel unfolded length');
+  logLengthCheck('U-channel', '40 + 34 + 40 + 2 * pi/2 * (3 + 0.4 * 2)', uExpectedLength, uUnfold.height);
 
-  const invalidKFactor = unfoldPart(uTopology, 2.0);
-  assert.equal(invalidKFactor, null, 'area preservation check should reject intentionally bad K-factor');
+  const invalidExpectedArea = uTopology.volume / uTopology.thickness;
+  const badKFactor = 2.0;
+  const invalidBa = RIGHT_ANGLE * (INNER_RADIUS + badKFactor * THICKNESS);
+  const invalidLength = 40 + 34 + 40 + 2 * invalidBa;
+  const invalidArea = uUnfold.width * invalidLength;
+  const invalidMismatch = percent(Math.abs(invalidArea - invalidExpectedArea) / invalidExpectedArea);
+  const invalidUnfold = unfoldPart(uTopology, badKFactor);
+  assert.equal(invalidUnfold, null, 'area preservation check should reject intentionally bad K-factor');
+  console.log(
+    `[unfold] area-check fallback: kFactor=2.0 expectedArea=${formatNumber(invalidExpectedArea)} actualArea=${formatNumber(invalidArea)} mismatch=${invalidMismatch}% warning="unfold validation failed (bend-zone cutout or area mismatch)"`
+  );
 }
 
 function assertWithin(actual: number, expected: number, tolerance: number, label: string): void {
   const relativeError = Math.abs(actual - expected) / expected;
   assert.ok(relativeError <= tolerance, `${label}: ${actual} should be within ${tolerance * 100}% of ${expected}`);
+}
+
+function logLengthCheck(label: string, formula: string, expected: number, actual: number): void {
+  console.log(
+    `[unfold] ${label}: formula=${formula}; t=${THICKNESS}; r=${INNER_RADIUS}; K=${K_FACTOR}; expected=${formatNumber(expected)} actual=${formatNumber(actual)} delta=${percent(Math.abs(actual - expected) / expected)}%`
+  );
+}
+
+function formatNumber(value: number): string {
+  return value.toFixed(3);
+}
+
+function percent(value: number): string {
+  return (value * 100).toFixed(3);
 }
 
 main()
