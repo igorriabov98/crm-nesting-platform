@@ -36,6 +36,10 @@ function itemStatus(item: NestingQueueItem) {
     return { label: 'Ошибка', className: 'border-red-200 bg-red-50 text-red-700', icon: AlertTriangle }
   }
 
+  if (item.run?.serviceStatus === 'unavailable') {
+    return { label: 'Сервис недоступен', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: AlertTriangle }
+  }
+
   if (item.run) {
     return { label: 'В работе', className: 'border-blue-200 bg-blue-50 text-blue-700', icon: Loader2 }
   }

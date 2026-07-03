@@ -163,6 +163,7 @@ async function processStepJob(job: StepJob) {
         }
         parsedParts.push(...result.parts.map((part) => ({ input, part })));
 
+        // TODO(INTEGRATION_AUDIT.md §7): add per-input AI PDF analysis for batch projects instead of applying one PDF to all parts.
         if (!input.isBatch && pdfObject) {
           retainedPdf = pdfObject;
           pdfObject = null;

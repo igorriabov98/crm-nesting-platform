@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchNestingService as fetch, getNestingServiceUrl } from '@/lib/nesting/api'
-import { requireNestingProxyAccess } from '@/lib/nesting/proxy-auth'
+import { getNestingProxyAccess } from '@/lib/nesting/proxy-auth'
+import { requireNestingProjectProxyAccess } from '@/lib/nesting/project-access'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,10 +9,12 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ projectId: string; sheetId: string }> }
 ) {
-  const denied = await requireNestingProxyAccess('nesting')
-  if (denied) return denied
-
   const { projectId, sheetId } = await params
+  const access = await getNestingProxyAccess('nesting')
+  if (access.response) return access.response
+  const deniedProject = await requireNestingProjectProxyAccess(projectId, access.context!)
+  if (deniedProject) return deniedProject
+
   let res: Response
   try {
     res = await fetch(`${getNestingServiceUrl()}/api/projects/${projectId}/dxf/${sheetId}`)

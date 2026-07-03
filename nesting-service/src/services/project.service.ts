@@ -13,6 +13,7 @@ interface CreateProjectInput {
   id?: string;
   orderNumber: string;
   quantity: number;
+  createdBy?: string | null;
 }
 
 export type ProjectFileRefs = {
@@ -117,6 +118,7 @@ export class ProjectService {
           pdfFileUrl: files.pdfFilePath ?? null,
           stepStorageUri: files.stepStorageUri ?? null,
           pdfStorageUri: files.pdfStorageUri ?? null,
+          createdBy: input.createdBy || 'system',
         },
       });
       created = true;
@@ -148,7 +150,7 @@ export class ProjectService {
   }
 
   async createBatchProject(
-    input: Pick<CreateProjectInput, 'id' | 'orderNumber'>,
+    input: Pick<CreateProjectInput, 'id' | 'orderNumber' | 'createdBy'>,
     batchInputs: BatchProjectInput[]
   ): Promise<{ id: string; status: string }> {
     const id = input.id ?? generateId();
@@ -164,6 +166,7 @@ export class ProjectService {
             status: 'created',
             stepFileUrl: null,
             pdfFileUrl: null,
+            createdBy: input.createdBy || 'system',
           },
         });
 

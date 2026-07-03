@@ -6,12 +6,22 @@ import type { UserRole } from '@/lib/types'
 
 type AccessMode = 'nesting' | 'director'
 
-export async function requireNestingProxyAccess(mode: AccessMode): Promise<NextResponse | null> {
+export type NestingProxyContext = {
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>
+  userId: string
+  role: UserRole
+  isDirector: boolean
+}
+
+export async function getNestingProxyAccess(mode: AccessMode): Promise<{
+  context: NestingProxyContext | null
+  response: NextResponse | null
+}> {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {
-    return NextResponse.json({ error: 'Необходима авторизация' }, { status: 401 })
+    return { context: null, response: NextResponse.json({ error: 'Необходима авторизация' }, { status: 401 }) }
   }
 
   const { data: profile, error } = await supabase
@@ -21,17 +31,31 @@ export async function requireNestingProxyAccess(mode: AccessMode): Promise<NextR
     .single()
 
   if (error || !profile) {
-    return NextResponse.json({ error: 'Профиль пользователя не найден' }, { status: 403 })
+    return { context: null, response: NextResponse.json({ error: 'Профиль пользователя не найден' }, { status: 403 }) }
   }
 
   const role = (profile as unknown as { role: UserRole }).role
-  const allowed = mode === 'director' ? DIRECTOR_ROLES.includes(role) : canViewNesting(role)
+  const isDirector = DIRECTOR_ROLES.includes(role)
+  const allowed = mode === 'director' ? isDirector : canViewNesting(role)
 
   if (!allowed) {
-    return NextResponse.json({ error: 'Нет доступа' }, { status: 403 })
+    return { context: null, response: NextResponse.json({ error: 'Нет доступа' }, { status: 403 }) }
   }
 
-  return null
+  return {
+    context: {
+      supabase,
+      userId: user.id,
+      role,
+      isDirector,
+    },
+    response: null,
+  }
+}
+
+export async function requireNestingProxyAccess(mode: AccessMode): Promise<NextResponse | null> {
+  const access = await getNestingProxyAccess(mode)
+  return access.response
 }
 
 export async function forwardJsonResponse(res: Response, fallbackMessage: string) {

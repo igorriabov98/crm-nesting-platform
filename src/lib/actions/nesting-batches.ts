@@ -244,8 +244,25 @@ async function syncProjectStatuses(db: LooseDb, runs: RunRow[]) {
           updated_at: new Date().toISOString(),
         })
         .eq('nesting_project_id', projectId)
-    } catch {
-      statusByProject.set(projectId, { status: 'unavailable', errorMessage: null })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Сервис раскладки недоступен'
+      statusByProject.set(projectId, { status: 'unavailable', errorMessage: message })
+      await Promise.all([
+        db
+          .from('machine_item_nesting_runs')
+          .update({
+            error_message: message,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('nesting_project_id', projectId),
+        db
+          .from('nesting_batches')
+          .update({
+            error_message: message,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('nesting_project_id', projectId),
+      ]).catch(() => undefined)
     }
   }))
 
@@ -575,6 +592,7 @@ export async function createNestingBatch(input: {
     const orderNumber = `Batch ${new Date().toISOString().slice(0, 10)} / ${prepared.length} поз.`
     const servicePayload = {
       orderNumber,
+      createdBy: userId,
       inputs: prepared.map((row) => ({
         sourceId: row.item.id,
         sourceType: 'crm_machine_item',
@@ -696,6 +714,21 @@ export async function syncNestingBatchProjectStatus(projectId: string): Promise<
     revalidatePath(ROUTES.NESTING)
     return { success: true, data: { status: status.status } }
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Не удалось синхронизировать статус раскладки'
+    try {
+      const { supabase } = await requireNestingPermission('manage')
+      const db = supabase as unknown as LooseDb
+      await db
+        .from('machine_item_nesting_runs')
+        .update({ error_message: message, updated_at: new Date().toISOString() })
+        .eq('nesting_project_id', projectId)
+      await db
+        .from('nesting_batches')
+        .update({ error_message: message, updated_at: new Date().toISOString() })
+        .eq('nesting_project_id', projectId)
+    } catch {
+      // Best-effort only: the original sync error is returned below.
+    }
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось синхронизировать статус раскладки' }
   }
 }

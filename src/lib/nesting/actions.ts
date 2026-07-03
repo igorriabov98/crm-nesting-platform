@@ -9,13 +9,16 @@ import {
   updatePart,
   type NestingStrategy,
 } from '@/lib/nesting/api'
+import { assertCanAccessNestingProject } from '@/lib/nesting/project-access'
 
 export async function deleteNestingProject(projectId: string) {
+  await assertCanAccessNestingProject(projectId, 'manage')
   await deleteProject(projectId)
   revalidatePath(ROUTES.NESTING)
 }
 
 export async function getNestingParts(projectId: string) {
+  await assertCanAccessNestingProject(projectId, 'view')
   return getParts(projectId)
 }
 
@@ -34,6 +37,7 @@ export async function updateNestingPart(
     hasBends: boolean
   }>
 ) {
+  await assertCanAccessNestingProject(projectId, 'manage')
   const result = await updatePart(projectId, partId, data)
   revalidatePath(`${ROUTES.NESTING}/${projectId}/parts`)
   revalidatePath(ROUTES.NESTING)
@@ -41,6 +45,7 @@ export async function updateNestingPart(
 }
 
 export async function startNestingCalculation(projectId: string, strategy: NestingStrategy) {
+  await assertCanAccessNestingProject(projectId, 'manage')
   const result = await startCalculation(projectId, strategy)
   revalidatePath(`${ROUTES.NESTING}/${projectId}/parts`)
   revalidatePath(ROUTES.NESTING)

@@ -77,6 +77,10 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     if (!project) {
       throw new NotFoundError('Проект', id);
     }
+    if (project.inputs.length > 0) {
+      // TODO(INTEGRATION_AUDIT.md §7): replace first-PDF batch analysis with per-input PDF analysis.
+      throw new ValidationError('AI-анализ PDF для пакетной раскладки временно недоступен');
+    }
     const pdfFileRef = project.pdfStorageUri
       ?? project.pdfFileUrl
       ?? project.inputs.find((input) => input.pdfStorageUri || input.pdfFileUrl)?.pdfStorageUri

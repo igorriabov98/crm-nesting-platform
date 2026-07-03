@@ -47,7 +47,7 @@ export async function projectsRoutes(app: FastifyInstance) {
       if (body.pdfStorageUri) parseStorageUri(body.pdfStorageUri);
 
       const project = await projectService.createProject(
-        { orderNumber: body.orderNumber, quantity: body.quantity },
+        { orderNumber: body.orderNumber, quantity: body.quantity, createdBy: body.createdBy },
         { stepStorageUri: body.stepStorageUri, pdfStorageUri: body.pdfStorageUri ?? null }
       );
 
@@ -72,6 +72,7 @@ export async function projectsRoutes(app: FastifyInstance) {
           id: projectId,
           orderNumber: upload.orderNumber,
           quantity: upload.quantity,
+          createdBy: 'local-upload',
         },
         { stepFilePath: upload.stepFilePath, pdfFilePath: upload.pdfFilePath }
       );
@@ -107,7 +108,7 @@ export async function projectsRoutes(app: FastifyInstance) {
         };
       });
       const project = await projectService.createBatchProject(
-        { orderNumber: body.orderNumber },
+        { orderNumber: body.orderNumber, createdBy: body.createdBy },
         inputs
       );
       return reply.status(201).send({
@@ -135,6 +136,7 @@ export async function projectsRoutes(app: FastifyInstance) {
         {
           id: projectId,
           orderNumber: upload.orderNumber,
+          createdBy: 'local-upload',
         },
         upload.inputs
       );

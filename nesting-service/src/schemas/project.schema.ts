@@ -12,6 +12,7 @@ export const projectListFilterSchema = z.object({
 export const createProjectSchema = z.object({
   orderNumber: z.string().trim().min(1, 'Номер заказа обязателен').max(100),
   quantity: z.coerce.number().int().min(1).max(10000).default(1),
+  createdBy: z.string().trim().min(1).max(120).optional(),
 });
 
 const storageUriSchema = z.string().trim().startsWith('supabase://').max(1200);
@@ -23,6 +24,7 @@ export const createStorageProjectSchema = createProjectSchema.extend({
 
 export const createBatchProjectSchema = z.object({
   orderNumber: z.string().trim().min(1).max(150),
+  createdBy: z.string().trim().min(1).max(120).optional(),
   inputs: z.array(z.object({
     sourceId: z.string().trim().min(1).max(120),
     sourceType: z.string().trim().min(1).max(80).default('crm_machine_item'),
@@ -41,6 +43,7 @@ export const createBatchProjectSchema = z.object({
 
 export const createStorageBatchProjectSchema = z.object({
   orderNumber: z.string().trim().min(1).max(150),
+  createdBy: z.string().trim().min(1).max(120).optional(),
   inputs: z.array(z.object({
     sourceId: z.string().trim().min(1).max(120),
     sourceType: z.string().trim().min(1).max(80).default('crm_machine_item'),

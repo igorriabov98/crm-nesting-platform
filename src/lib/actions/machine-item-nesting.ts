@@ -240,6 +240,7 @@ async function createNestingProject(input: {
   quantity: number
   stepFile: ProductFileRow
   drawingFile: ProductFileRow
+  createdBy: string
 }) {
   let res: Response
   try {
@@ -251,6 +252,7 @@ async function createNestingProject(input: {
         quantity: input.quantity,
         stepStorageUri: `supabase://product-files/${input.stepFile.file_path}`,
         pdfStorageUri: `supabase://product-files/${input.drawingFile.file_path}`,
+        createdBy: input.createdBy,
       }),
     })
   } catch (error) {
@@ -268,6 +270,10 @@ async function createNestingProject(input: {
   }
 
   return payload.data
+}
+
+async function deleteServiceProject(projectId: string) {
+  await fetch(`${getNestingServiceUrl()}/api/projects/${projectId}`, { method: 'DELETE' }).catch(() => undefined)
 }
 
 export async function getMachineItemNestingStates(machineId: string): Promise<ActionResult<MachineItemNestingState[]>> {
@@ -386,6 +392,8 @@ export async function getMachineItemNestingContext(projectId: string): Promise<A
 }
 
 export async function startMachineItemNesting(machineId: string, machineItemId: string): Promise<ActionResult<MachineItemNestingRunSummary>> {
+  let createdProjectId: string | null = null
+
   try {
     const context = await loadStartContext(machineId, machineItemId)
     if (context.existingRun) {
@@ -399,7 +407,9 @@ export async function startMachineItemNesting(machineId: string, machineItemId: 
       quantity,
       stepFile: context.stepFile,
       drawingFile: context.drawingFile,
+      createdBy: context.userId,
     })
+    createdProjectId = project.id
 
     const payload = {
       machine_id: context.machine.id,
@@ -434,6 +444,9 @@ export async function startMachineItemNesting(machineId: string, machineItemId: 
     revalidateMachine(machineId, project.id)
     return { success: true, data: summarizeRun(result.data) }
   } catch (error) {
+    if (createdProjectId) {
+      await deleteServiceProject(createdProjectId)
+    }
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось запустить раскладку' }
   }
 }
