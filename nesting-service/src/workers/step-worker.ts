@@ -29,6 +29,17 @@ type StepInputContext = {
   isBatch: boolean;
 };
 
+type ProjectParseReport = {
+  brepFlat: number;
+  brepUnfolded: number;
+  fallback: number;
+  perPart: Array<{
+    partName: string;
+    source: string;
+    fallbackReason?: string;
+  }>;
+};
+
 function getInputs(data: StepParsingJobData, projectId: string): StepInputContext[] {
   if (data.inputs?.length) {
     return data.inputs.map((input) => {
@@ -86,13 +97,13 @@ async function processStepJob(job: StepJob) {
       return { status: 'skipped', reason: `Project status is ${project.status}` };
     }
 
-    const errors: string[] = [];
     const parsedParts: Array<{ input: StepInputContext; part: ParsedPart }> = [];
     let totalMeshes = 0;
     let sheetMetalCount = 0;
     let totalParseMs = 0;
     let brepOk = 0;
     let brepFallback = 0;
+    const perPartParseReport: ProjectParseReport['perPart'] = [];
 
     for (const input of inputs) {
       console.log(`[step-worker] STEP source: ${input.stepFileRef}`);
@@ -109,6 +120,13 @@ async function processStepJob(job: StepJob) {
         totalParseMs += result.parseTimeMs;
         brepOk += result.brepOk;
         brepFallback += result.brepFallback;
+        perPartParseReport.push(
+          ...result.brepTrace.map((trace) => ({
+            partName: trace.partName,
+            source: trace.source,
+            ...(trace.reason ? { fallbackReason: trace.reason } : {}),
+          }))
+        );
 
         console.log(
           `[step-worker] Parsed ${input.sourceLabel} in ${result.parseTimeMs}ms: ${result.totalMeshes} meshes, ${result.sheetMetalCount} sheet metal`
@@ -123,7 +141,9 @@ async function processStepJob(job: StepJob) {
           throw new Error(`${input.sourceLabel}: ${result.errors.join('; ') || 'STEP parsing failed'}`);
         }
 
-        errors.push(...result.errors.map((error) => `${input.sourceLabel}: ${error}`));
+        for (const warning of result.errors) {
+          console.warn(`[step-worker] ${input.sourceLabel}: ${warning}`);
+        }
         parsedParts.push(...result.parts.map((part) => ({ input, part })));
 
         if (!input.isBatch && pdfObject) {
@@ -136,7 +156,12 @@ async function processStepJob(job: StepJob) {
       }
     }
 
-    const statusMessage = buildStatusMessage(errors, parsedParts.length, totalMeshes, brepOk, brepFallback);
+    const parseReport: ProjectParseReport = {
+      brepFlat: brepOk,
+      brepUnfolded: 0,
+      fallback: brepFallback,
+      perPart: perPartParseReport,
+    };
 
     await prisma.$transaction(async (tx) => {
       await tx.part.deleteMany({ where: { projectId } });
@@ -182,7 +207,8 @@ async function processStepJob(job: StepJob) {
         where: { id: projectId },
         data: {
           status: 'parsed',
-          errorMessage: statusMessage,
+          errorMessage: null,
+          parseReport: parseReport as unknown as Prisma.InputJsonValue,
         },
       });
     });
@@ -275,30 +301,6 @@ async function main() {
   process.on('SIGINT', () => {
     void shutdown('SIGINT');
   });
-}
-
-function buildStatusMessage(
-  errors: string[],
-  partsCount: number,
-  totalMeshes: number,
-  brepOk: number,
-  brepFallback: number
-): string | null {
-  const brepSummary = `B-Rep exact: ${brepOk}, fallback: ${brepFallback}`;
-
-  if (errors.length > 0) {
-    return truncateErrorMessage(`STEP parsing completed with warnings (${brepSummary}): ${errors.join('; ')}`);
-  }
-
-  if (totalMeshes === 0) {
-    return `STEP parsing completed, but no meshes were found. ${brepSummary}.`;
-  }
-
-  if (partsCount === 0) {
-    return `STEP parsing completed, but no parts were extracted. ${brepSummary}.`;
-  }
-
-  return brepOk > 0 || brepFallback > 0 ? brepSummary : null;
 }
 
 function truncateErrorMessage(message: string): string {

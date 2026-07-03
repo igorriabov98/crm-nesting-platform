@@ -24,6 +24,7 @@ model NestingProject {
   strategy     String         @default("minWaste")
   status       String         @default("created")
   errorMessage String?
+  parseReport  Json?
   createdBy    String         @default("system")
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt

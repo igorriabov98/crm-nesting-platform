@@ -6,6 +6,17 @@ export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heurist
 export type ContourSource = 'EXACT_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
 export type NestingMaterial = 'Сталь' | 'Нержавейка' | 'Алюминий'
 
+export interface NestingParseReport {
+  brepFlat: number
+  brepUnfolded: number
+  fallback: number
+  perPart: Array<{
+    partName: string
+    source: ContourSource | string
+    fallbackReason?: string
+  }>
+}
+
 export interface NestingProject {
   id: string
   orderNumber: string
@@ -13,6 +24,7 @@ export interface NestingProject {
   strategy: NestingStrategy | string
   status: NestingStatus
   errorMessage: string | null
+  parseReport: NestingParseReport | null
   createdBy: string
   createdAt: string
   updatedAt: string
@@ -74,6 +86,7 @@ export interface NestingProjectStatus {
   id: string
   status: NestingStatus | string
   errorMessage: string | null
+  parseReport: NestingParseReport | null
 }
 
 export interface Placement {
