@@ -18,15 +18,12 @@ async function main(): Promise<void> {
   assertWithin(lUnfold.height, lExpectedLength, 0.005, 'L-angle unfolded length');
   logLengthCheck('L-angle', '40 + 40 + pi/2 * (3 + 0.4 * 2)', lExpectedLength, lUnfold.height);
   assert.equal(lUnfold.holes.length, 2, 'L-angle holes should survive unfold');
-  const holeCenters = lUnfold.holes
-    .map((hole) => ({
-      x: (Math.min(...hole.map((point) => point.x)) + Math.max(...hole.map((point) => point.x))) / 2,
-      y: (Math.min(...hole.map((point) => point.y)) + Math.max(...hole.map((point) => point.y))) / 2,
-    }))
-    .sort((left, right) => left.x - right.x);
+  const holeCenters = lUnfold.holes.map(measureHoleCenter).sort((left, right) => left.x - right.x);
   assertWithin(holeCenters[0].x, 30, 0.01, 'first hole x');
   assertWithin(holeCenters[1].x, 70, 0.01, 'second hole x');
-  assert.ok(holeCenters.every((center) => center.y > 40 + BEND_ALLOWANCE), 'holes should be on the second flange');
+  const expectedHoleY = 40 + BEND_ALLOWANCE + 18;
+  assertWithin(holeCenters[0].y, expectedHoleY, 0.001, 'first hole y');
+  assertWithin(holeCenters[1].y, expectedHoleY, 0.001, 'second hole y');
 
   const uTopology = await detectFixtureTopology('u_channel_100x40x40_t2_r3.step');
   assert.ok(uTopology, 'U-channel topology should be detected');
@@ -76,6 +73,22 @@ function logLengthCheck(label: string, formula: string, expected: number, actual
   console.log(
     `[unfold] ${label}: formula=${formula}; t=${THICKNESS}; r=${INNER_RADIUS}; K=${K_FACTOR}; expected=${formatNumber(expected)} actual=${formatNumber(actual)} delta=${percent(Math.abs(actual - expected) / expected)}%`
   );
+}
+
+function measureHoleCenter(hole: Array<{ x: number; y: number }>): { x: number; y: number } {
+  const points = openLoop(hole);
+  return {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+  };
+}
+
+function openLoop<T extends { x: number; y: number }>(points: T[]): T[] {
+  const first = points[0];
+  const last = points[points.length - 1];
+  return first && last && Math.hypot(first.x - last.x, first.y - last.y) <= 1e-6
+    ? points.slice(0, -1)
+    : points;
 }
 
 function formatNumber(value: number): string {

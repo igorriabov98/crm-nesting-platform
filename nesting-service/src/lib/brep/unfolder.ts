@@ -108,7 +108,7 @@ function orderFlanges(topology: SheetMetalTopology): { flanges: OrderedFlange[];
     return null;
   }
 
-  const start = topology.flanges.find((flange) => adjacency.get(flange.id)?.length === 1);
+  const start = selectStartFlange(topology.flanges, adjacency);
   if (!start) {
     return null;
   }
@@ -144,6 +144,23 @@ function orderFlanges(topology: SheetMetalTopology): { flanges: OrderedFlange[];
   }
 
   return ordered.length === topology.flanges.length ? { flanges: ordered, bends: orderedBends } : null;
+}
+
+function selectStartFlange(
+  flanges: SheetMetalFlange[],
+  adjacency: Map<number, Array<{ next: number; bend: SheetMetalBend }>>
+): SheetMetalFlange | null {
+  const endpoints = flanges.filter((flange) => adjacency.get(flange.id)?.length === 1);
+  if (endpoints.length === 0) {
+    return null;
+  }
+
+  return endpoints.sort(
+    (left, right) =>
+      left.width - right.width ||
+      left.holes.length - right.holes.length ||
+      left.id - right.id
+  )[0];
 }
 
 function shouldFlipFlangeForUnfold(item: OrderedFlange): boolean {

@@ -35,6 +35,7 @@ export type SheetMetalFlange = {
   width: number;
   contour: Point2D[];
   holes: Point2D[][];
+  sourceFaceIndices: [number, number];
 };
 
 export type SheetMetalBend = {
@@ -84,6 +85,7 @@ type PlanarFace = {
 
 type CylindricalFace = {
   index: number;
+  face: TopoDS_Face;
   area: number;
   radius: number;
   axisLocation: Vec3;
@@ -103,6 +105,8 @@ type BendCandidate = {
   usesComplementAngle: boolean;
   axisLocation: Vec3;
   axisDirection: Vec3;
+  innerCylinder: CylindricalFace;
+  outerRadius: number;
 };
 
 type BendCylinderSet = {
@@ -122,13 +126,17 @@ const THICKNESS_TOLERANCE = 0.05;
 const MIN_FLANGE_WIDTH_FACTOR = 3;
 const TANGENCY_TOLERANCE_MM = 0.35;
 const BEND_ANGLE_TOLERANCE_RAD = 0.2;
+const MIN_INNER_RADIUS_MM = 0.25;
+const MAX_BEND_RADIUS_TO_THICKNESS = 12;
 
 export function detectSheetMetalTopology(input: SheetMetalTopologyInput): SheetMetalTopology | null {
   const planarFaces: PlanarFace[] = [];
+  const cylindricalFaces: CylindricalFace[] = [];
 
   try {
     const faces = collectFaces(input);
     planarFaces.push(...faces.planar);
+    cylindricalFaces.push(...faces.cylinders);
 
     if (faces.cylinders.length === 0 || faces.planar.length < 4) {
       return null;
@@ -152,7 +160,8 @@ export function detectSheetMetalTopology(input: SheetMetalTopologyInput): SheetM
 
     const flanges = facePairs.map((pair, index) => buildFlange(input, pair, index, bendAxis));
     const bendCandidates = findBendCandidates(bendCylinderSet.cylinders, thickness, bendAxis);
-    const bends = connectBends(bendCandidates, flanges, thickness);
+    const facesByIndex = new Map(faces.planar.map((face) => [face.index, face]));
+    const bends = connectBends(input.oc, bendCandidates, flanges, facesByIndex, thickness);
 
     if (!isValidTree(flanges.length, bends)) {
       return null;
@@ -170,6 +179,9 @@ export function detectSheetMetalTopology(input: SheetMetalTopologyInput): SheetM
     };
   } finally {
     for (const face of planarFaces) {
+      safeDelete(face.face);
+    }
+    for (const face of cylindricalFaces) {
       safeDelete(face.face);
     }
   }
@@ -214,9 +226,11 @@ function collectFaces(input: SheetMetalTopologyInput): { planar: PlanarFace[]; c
         } else if (adaptor.GetType() === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) {
           cylinders.push({
             index: cylinders.length,
+            face,
             area: props.Mass(),
             ...readCylinder(adaptor),
           });
+          face = null;
         }
       } finally {
         safeDelete(props);
@@ -350,6 +364,7 @@ function buildFlange(input: SheetMetalTopologyInput, pair: FlangePair, id: numbe
     width: roundMm(normalizedBounds.maxY - normalizedBounds.minY, 100),
     contour: normalizedContour,
     holes: normalizedHoles,
+    sourceFaceIndices: [pair.a.index, pair.b.index],
   };
 }
 
@@ -364,15 +379,25 @@ function findBendCandidates(cylinders: CylindricalFace[], thickness: number, ben
     }
 
     for (let index = 1; index < radii.length; index += 1) {
-      if (relativeDelta(radii[index] - radii[index - 1], thickness) <= THICKNESS_TOLERANCE) {
-        const inner = group.find((cylinder) => Math.abs(cylinder.radius - radii[index - 1]) <= 0.01) ?? group[0];
+      const innerRadius = radii[index - 1];
+      const outerRadius = radii[index];
+      if (
+        relativeDelta(outerRadius - innerRadius, thickness) <= THICKNESS_TOLERANCE &&
+        isReasonableBendRadii(innerRadius, outerRadius, thickness)
+      ) {
+        const inner = group.find((cylinder) => Math.abs(cylinder.radius - innerRadius) <= 0.01);
+        if (!inner) {
+          continue;
+        }
         const angle = normalizeBendAngleSpan(inner.angleSpanRad);
         candidates.push({
-          innerRadius: radii[index - 1],
+          innerRadius,
           angleRad: angle.value,
           usesComplementAngle: angle.usesComplement,
           axisLocation: inner.axisLocation,
           axisDirection: bendAxis,
+          innerCylinder: inner,
+          outerRadius,
         });
       }
     }
@@ -381,7 +406,13 @@ function findBendCandidates(cylinders: CylindricalFace[], thickness: number, ben
   return candidates;
 }
 
-function connectBends(candidates: BendCandidate[], flanges: SheetMetalFlange[], thickness: number): SheetMetalBend[] {
+function connectBends(
+  oc: OpenCascadeInstance,
+  candidates: BendCandidate[],
+  flanges: SheetMetalFlange[],
+  facesByIndex: Map<number, PlanarFace>,
+  thickness: number
+): SheetMetalBend[] {
   const bends: SheetMetalBend[] = [];
 
   for (const candidate of candidates) {
@@ -401,7 +432,11 @@ function connectBends(candidates: BendCandidate[], flanges: SheetMetalFlange[], 
         const angle = Math.acos(clamp(Math.abs(dotProduct(a.flange.normal, b.flange.normal)), -1, 1));
         const score = Math.abs(angle - candidate.angleRad) + a.tangentError + b.tangentError;
 
-        if (Math.abs(angle - candidate.angleRad) <= BEND_ANGLE_TOLERANCE_RAD && (!best || score < best.score)) {
+        if (
+          Math.abs(angle - candidate.angleRad) <= BEND_ANGLE_TOLERANCE_RAD &&
+          cylinderConnectsFlanges(oc, candidate, a.flange, b.flange, facesByIndex) &&
+          (!best || score < best.score)
+        ) {
           best = { a: a.flange, b: b.flange, score };
         }
       }
@@ -424,6 +459,91 @@ function connectBends(candidates: BendCandidate[], flanges: SheetMetalFlange[], 
   }
 
   return bends;
+}
+
+function isReasonableBendRadii(innerRadius: number, outerRadius: number, thickness: number): boolean {
+  if (innerRadius < MIN_INNER_RADIUS_MM || outerRadius <= innerRadius || thickness <= 0) {
+    return false;
+  }
+
+  return innerRadius / thickness <= MAX_BEND_RADIUS_TO_THICKNESS;
+}
+
+function cylinderConnectsFlanges(
+  oc: OpenCascadeInstance,
+  candidate: BendCandidate,
+  a: SheetMetalFlange,
+  b: SheetMetalFlange,
+  facesByIndex: Map<number, PlanarFace>
+): boolean {
+  if (Math.abs(dotProduct(a.normal, b.normal)) >= PARALLEL_DOT_TOLERANCE) {
+    return false;
+  }
+
+  return (
+    cylinderSharesEdgeWithFlange(oc, candidate.innerCylinder.face, a, facesByIndex) &&
+    cylinderSharesEdgeWithFlange(oc, candidate.innerCylinder.face, b, facesByIndex)
+  );
+}
+
+function cylinderSharesEdgeWithFlange(
+  oc: OpenCascadeInstance,
+  cylinderFace: TopoDS_Face,
+  flange: SheetMetalFlange,
+  facesByIndex: Map<number, PlanarFace>
+): boolean {
+  return flange.sourceFaceIndices.some((index) => {
+    const face = facesByIndex.get(index);
+    return face ? facesShareEdge(oc, cylinderFace, face.face) : false;
+  });
+}
+
+function facesShareEdge(oc: OpenCascadeInstance, a: TopoDS_Face, b: TopoDS_Face): boolean {
+  const aEdges = collectFaceEdges(oc, a);
+
+  try {
+    const bEdges = collectFaceEdges(oc, b);
+    try {
+      return aEdges.some((aEdge) => bEdges.some((bEdge) => aEdge.IsSame(bEdge)));
+    } finally {
+      for (const edge of bEdges) {
+        safeDelete(edge);
+      }
+    }
+  } finally {
+    for (const edge of aEdges) {
+      safeDelete(edge);
+    }
+  }
+}
+
+function collectFaceEdges(oc: OpenCascadeInstance, face: TopoDS_Face): TopoDS_Edge[] {
+  const topAbs = oc.TopAbs_ShapeEnum as unknown as {
+    TopAbs_EDGE: Parameters<TopExp_Explorer['Init']>[1];
+    TopAbs_SHAPE: Parameters<TopExp_Explorer['Init']>[2];
+  };
+  const edges: TopoDS_Edge[] = [];
+  let explorer: TopExp_Explorer | null = null;
+
+  try {
+    explorer = new oc.TopExp_Explorer_1();
+    explorer.Init(face, topAbs.TopAbs_EDGE, topAbs.TopAbs_SHAPE);
+
+    while (explorer.More()) {
+      let currentShape: TopoDS_Shape | null = null;
+      try {
+        currentShape = explorer.Current();
+        edges.push(oc.TopoDS.Edge_1(currentShape));
+      } finally {
+        safeDelete(currentShape);
+      }
+      explorer.Next();
+    }
+  } finally {
+    safeDelete(explorer);
+  }
+
+  return edges;
 }
 
 function isValidTree(nodeCount: number, bends: SheetMetalBend[]): boolean {
@@ -715,7 +835,7 @@ function readPlaneFrame(adaptor: BRepAdaptor_Surface): PlaneFrame {
   }
 }
 
-function readCylinder(adaptor: BRepAdaptor_Surface): Omit<CylindricalFace, 'index' | 'area'> {
+function readCylinder(adaptor: BRepAdaptor_Surface): Omit<CylindricalFace, 'index' | 'face' | 'area'> {
   let cylinder: gp_Cylinder | null = null;
   let axis: gp_Ax1 | null = null;
   let location: gp_Pnt | null = null;
