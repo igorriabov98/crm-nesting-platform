@@ -29,6 +29,7 @@ type FileReport = {
 };
 
 const SOURCE_BUCKETS: SourceBucket[] = ['brepFlat', 'brepUnfolded', 'EXACT_BOUNDARY', 'CONVEX_HULL', 'RECT_ESTIMATE'];
+const PARSE_TIMEOUT_MS = 30_000;
 
 async function main(): Promise<void> {
   const targetDir = process.argv[2];
@@ -45,17 +46,18 @@ async function main(): Promise<void> {
     const startedAt = Date.now();
 
     try {
-      const result = await parseStepFile(file);
+      const result = await withTimeout(parseStepFile(file), PARSE_TIMEOUT_MS, `timeout after ${PARSE_TIMEOUT_MS}ms`);
       fileReports.push(toFileReport(rootDir, file, result));
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       fileReports.push({
         file: path.relative(rootDir, file),
         bodies: 0,
         parseTimeMs: Date.now() - startedAt,
         parts: [],
-        fallbackReasons: [{ partName: path.basename(file), reason: error instanceof Error ? error.message : String(error) }],
-        warnings: [],
-        errors: [error instanceof Error ? error.message : String(error)],
+        fallbackReasons: [{ partName: path.basename(file), reason: message }],
+        warnings: isWarningLine(message) ? [message] : [],
+        errors: [message],
       });
     }
   }
@@ -70,6 +72,16 @@ async function main(): Promise<void> {
   console.log(`[validate-real] files=${summary.totalFiles} bodies=${summary.totalBodies}`);
   console.log(`[validate-real] markdown=${markdownPath}`);
   console.log(`[validate-real] json=${jsonPath}`);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timeoutId));
+  });
 }
 
 async function findStepFiles(rootDir: string): Promise<string[]> {
