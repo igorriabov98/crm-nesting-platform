@@ -1,10 +1,9 @@
-import archiver from 'archiver';
-import { createWriteStream, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { PassThrough } from 'node:stream';
 import type { Part } from '@prisma/client';
 import { config } from '../config';
 import { AppError, NotFoundError, ValidationError } from '../lib/errors';
+import { buildDxfZipBuffer, writeDxfZipFile, type DxfZipEntry } from '../lib/dxf/download-archive';
 import { CAM_DXF_OPTIONS, generateDXFWithWarnings, type DxfPartData, type DxfRemnantData } from '../lib/dxf/generator';
 import { readFittedPartGeometry } from '../lib/dxf/part-geometry';
 import { validateDXF } from '../lib/dxf/validate';
@@ -155,7 +154,7 @@ export class DxfService {
       throw new ValidationError('No sheets available for DXF export');
     }
 
-    const files: { fileName: string; content: string }[] = [];
+    const files: DxfZipEntry[] = [];
     const warnings: string[] = [];
     for (const sheet of sheets) {
       const result = await this.generateForSheet(projectId, sheet.id);
@@ -169,39 +168,13 @@ export class DxfService {
     let storageUri: string | null = null;
 
     if (isStorageConfigured()) {
-      const zipBuffer = await new Promise<Buffer>((resolve, reject) => {
-        const output = new PassThrough();
-        const chunks: Buffer[] = [];
-        output.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-        output.on('end', () => resolve(Buffer.concat(chunks)));
-        output.on('error', reject);
-        const archive = archiver('zip', { zlib: { level: 9 } });
-        archive.on('error', reject);
-        archive.pipe(output);
-        for (const file of files) archive.append(file.content, { name: file.fileName });
-        archive.finalize().catch(reject);
-      });
+      const zipBuffer = await buildDxfZipBuffer(files, warnings);
       storageUri = await uploadStorageBuffer(`projects/${projectId}/${fileName}`, zipBuffer, 'application/zip');
     } else {
       const outputDir = path.resolve(config.OUTPUT_DIR, projectId);
       ensureDir(outputDir);
       filePath = path.join(outputDir, fileName);
-      await new Promise<void>((resolve, reject) => {
-        const output = createWriteStream(filePath!);
-      const archive = archiver('zip', { zlib: { level: 9 } });
-
-      output.on('close', resolve);
-      output.on('error', reject);
-      archive.on('error', reject);
-
-      archive.pipe(output);
-
-      for (const file of files) {
-        archive.append(file.content, { name: file.fileName });
-      }
-
-        archive.finalize().catch(reject);
-      });
+      await writeDxfZipFile(filePath, files, warnings);
     }
 
     return { filePath, fileName, storageUri, warnings };

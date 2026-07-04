@@ -4,15 +4,16 @@ import { idParamSchema } from '../schemas/common.schema';
 import { projectSheetParamsSchema } from '../schemas/project.schema';
 import { dxfService } from '../services/dxf.service';
 import { downloadStorageBuffer } from '../lib/storage';
+import { attachmentContentDisposition } from '../lib/http-headers';
 
 export async function dxfRoutes(app: FastifyInstance) {
   app.get('/:id/dxf', async (request, reply) => {
     const { id } = idParamSchema.parse(request.params);
     const result = await dxfService.generateZip(id);
+    logDxfWarnings(request.log, 'zip', { projectId: id }, result.warnings);
 
     reply.header('Content-Type', 'application/zip');
-    reply.header('Content-Disposition', contentDisposition(result.fileName));
-    setWarningsHeader(reply, result.warnings);
+    reply.header('Content-Disposition', attachmentContentDisposition(result.fileName));
 
     if (result.storageUri) return reply.send(await downloadStorageBuffer(result.storageUri));
     return reply.send(createReadStream(result.filePath!));
@@ -21,22 +22,23 @@ export async function dxfRoutes(app: FastifyInstance) {
   app.get('/:id/dxf/:sheetId', async (request, reply) => {
     const { id, sheetId } = projectSheetParamsSchema.parse(request.params);
     const result = await dxfService.generateForSheet(id, sheetId);
+    logDxfWarnings(request.log, 'sheet', { projectId: id, sheetId }, result.warnings);
 
     reply.header('Content-Type', 'application/dxf');
-    reply.header('Content-Disposition', contentDisposition(result.fileName));
-    setWarningsHeader(reply, result.warnings);
+    reply.header('Content-Disposition', attachmentContentDisposition(result.fileName));
 
     if (result.storageUri) return reply.send(await downloadStorageBuffer(result.storageUri));
     return reply.send(createReadStream(result.filePath!));
   });
 }
 
-function contentDisposition(fileName: string): string {
-  return `attachment; filename="${fileName.replace(/"/g, '')}"`;
-}
-
-function setWarningsHeader(reply: { header: (name: string, value: string) => unknown }, warnings: string[]): void {
+function logDxfWarnings(
+  log: { warn: (obj: Record<string, unknown>, msg: string) => void },
+  exportType: 'sheet' | 'zip',
+  context: Record<string, string>,
+  warnings: string[]
+): void {
   if (warnings.length > 0) {
-    reply.header('X-DXF-Warnings', JSON.stringify(warnings));
+    log.warn({ exportType, ...context, warnings }, 'DXF export completed with warnings');
   }
 }
