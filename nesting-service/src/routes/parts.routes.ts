@@ -39,6 +39,8 @@ const partListSelect = {
   kFactorDefaulted: true,
   dimensionMismatch: true,
   mismatchNote: true,
+  thicknessMismatch: true,
+  thicknessMismatchNote: true,
   thumbnailSvg: true,
   classificationMethod: true,
   classificationWarning: true,

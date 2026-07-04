@@ -7,10 +7,25 @@ type GeometryScore = {
   details: string[];
   strongMatches: number;
 };
+type MatchCandidate = {
+  bomEntry: BOMEntry | null;
+  detail: DetailEntry | null;
+  matchType: MatchType;
+  matchConfidence: number;
+  matchDetails: string;
+};
+type PartGroup = {
+  key: string;
+  parts: PartForMatching[];
+  firstIndex: number;
+};
 
 const STANDARD_THICKNESSES = [
   0.5, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20, 25, 30,
 ];
+const THICKNESS_TOLERANCE_MM = 0.3;
+const DIMENSION_CLUSTER_TOLERANCE_MM = 0.3;
+const CONTOUR_CLUSTER_TOLERANCE_MM = 0.3;
 
 export function matchBOMToParts(
   bom: BOMEntry[],
@@ -19,15 +34,113 @@ export function matchBOMToParts(
   steelTypes: SteelTypeCatalogItem[] = []
 ): MatchResult[] {
   const detailsByDesignation = buildDesignationMap(details, (detail) => detail.designation);
-  const bomByDesignation = buildDesignationMap(bom, (entry) => entry.designation);
-  const results: MatchResult[] = [];
+  const remainingByBom = new Map(
+    bom.map((entry) => [buildBomKeyFromEntry(entry), Math.max(1, Math.round(entry.quantity || 1))])
+  );
+  const resultsByPartId = new Map<string, MatchResult>();
+  const groups = clusterIdenticalParts(parts);
 
-  for (const part of parts) {
-    const match = findBestMatch(part, bom, detailsByDesignation, bomByDesignation);
-    results.push(buildMatchResult(part, match.bomEntry, match.detail, match.matchType, match.matchConfidence, match.matchDetails, steelTypes));
+  for (const group of groups) {
+    const eligibleBom = bom.filter((entry) => (remainingByBom.get(buildBomKeyFromEntry(entry)) ?? 0) >= group.parts.length);
+    const bomByDesignation = buildDesignationMap(eligibleBom, (entry) => entry.designation);
+    const match = applyGroupQuantitySignal(
+      findBestMatch(group.parts[0], eligibleBom, detailsByDesignation, bomByDesignation),
+      group.parts.length
+    );
+
+    if (match.bomEntry) {
+      const key = buildBomKeyFromEntry(match.bomEntry);
+      remainingByBom.set(key, Math.max(0, (remainingByBom.get(key) ?? 0) - group.parts.length));
+    }
+
+    for (const part of group.parts) {
+      resultsByPartId.set(
+        part.id,
+        buildMatchResult(
+          part,
+          match.bomEntry,
+          match.detail,
+          match.matchType,
+          match.matchConfidence,
+          match.matchDetails,
+          steelTypes,
+          group.parts.length
+        )
+      );
+    }
   }
 
-  return suppressAmbiguousQuantitySuggestions(results);
+  return parts.map((part) => resultsByPartId.get(part.id) ?? buildMatchResult(part, null, null, 'none', 0, '', steelTypes, 1));
+}
+
+function clusterIdenticalParts(parts: PartForMatching[]): PartGroup[] {
+  const groupsByKey = new Map<string, PartGroup>();
+
+  parts.forEach((part, index) => {
+    const key = buildPartClusterKey(part);
+    const existing = groupsByKey.get(key);
+    if (existing) {
+      existing.parts.push(part);
+      return;
+    }
+
+    groupsByKey.set(key, {
+      key,
+      parts: [part],
+      firstIndex: index,
+    });
+  });
+
+  return Array.from(groupsByKey.values()).sort((left, right) => {
+    if (right.parts.length !== left.parts.length) {
+      return right.parts.length - left.parts.length;
+    }
+    return left.firstIndex - right.firstIndex;
+  });
+}
+
+function buildPartClusterKey(part: PartForMatching): string {
+  const dims = getPartBBoxDims(part).map((dim) => quantize(dim, DIMENSION_CLUSTER_TOLERANCE_MM)).join('x');
+  const thickness = quantize(getStepThickness(part), THICKNESS_TOLERANCE_MM);
+  const volume = quantize(part.meshVolume ?? 0, 1);
+  const area = quantize(part.meshArea ?? 0, 1);
+  const contour = buildContourSignature(part.contour);
+
+  return [
+    thickness,
+    dims,
+    volume,
+    area,
+    part.facesCount ?? 0,
+    part.isSheetMetal ? 'sheet' : 'solid',
+    part.hasBends ? 'bends' : 'flat',
+    contour,
+  ].join('|');
+}
+
+function applyGroupQuantitySignal(match: MatchCandidate, groupSize: number): MatchCandidate {
+  if (!match.bomEntry || match.matchType === 'none') return match;
+
+  const bomQuantity = Math.max(1, Math.round(match.bomEntry.quantity || 1));
+  const exactGroupSize = bomQuantity === groupSize;
+  const quantityDetails = `qty group: BOM=${bomQuantity}, STEP bodies=${groupSize}`;
+  const matchDetails = [match.matchDetails, quantityDetails].filter(Boolean).join('; ');
+
+  if (exactGroupSize) {
+    return {
+      ...match,
+      matchConfidence: Math.min(1, match.matchConfidence + 0.1),
+      matchDetails,
+    };
+  }
+
+  const mismatchRatio = Math.abs(bomQuantity - groupSize) / Math.max(bomQuantity, groupSize);
+  const penalty = Math.min(0.3, 0.1 + mismatchRatio * 0.2);
+  return {
+    ...match,
+    matchConfidence: Math.max(0, match.matchConfidence - penalty),
+    matchDetails,
+  };
 }
 
 function findBestMatch(
@@ -35,54 +148,97 @@ function findBestMatch(
   bom: BOMEntry[],
   detailsByDesignation: Map<string, DetailEntry>,
   bomByDesignation: Map<string, BOMEntry>
-): {
-  bomEntry: BOMEntry | null;
-  detail: DetailEntry | null;
-  matchType: MatchType;
-  matchConfidence: number;
-  matchDetails: string;
-} {
+): MatchCandidate {
+  const rejectedDetails: string[] = [];
+  const designationMatch = findDesignationMatch(part, detailsByDesignation, bomByDesignation);
+
+  if (designationMatch) {
+    if (isThicknessCompatibleWithCandidate(part, designationMatch.bomEntry, designationMatch.detail)) {
+      return designationMatch;
+    }
+    rejectedDetails.push(buildThicknessRejectedDetails(part, designationMatch.bomEntry, designationMatch.detail));
+  }
+
+  const nameMatch = findNameMatch(part, bom, rejectedDetails);
+  if (nameMatch) {
+    const bomKey = extractDesignationKey(nameMatch.entry.designation);
+    const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
+    if (isThicknessCompatibleWithCandidate(part, nameMatch.entry, detail)) {
+      return {
+        bomEntry: nameMatch.entry,
+        detail,
+        matchType: nameMatch.type,
+        matchConfidence: detail ? Math.max(nameMatch.confidence, 0.7) : nameMatch.confidence,
+        matchDetails: nameMatch.details,
+      };
+    }
+    rejectedDetails.push(buildThicknessRejectedDetails(part, nameMatch.entry, detail));
+  }
+
+  const geometryMatch = findGeometryMatch(part, bom, rejectedDetails);
+  if (geometryMatch) {
+    const bomKey = extractDesignationKey(geometryMatch.entry.designation);
+    const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
+    if (isThicknessCompatibleWithCandidate(part, geometryMatch.entry, detail)) {
+      return {
+        bomEntry: geometryMatch.entry,
+        detail,
+        matchType: 'geometry',
+        matchConfidence: geometryMatch.confidence,
+        matchDetails: geometryMatch.details,
+      };
+    }
+    rejectedDetails.push(buildThicknessRejectedDetails(part, geometryMatch.entry, detail));
+  }
+
+  return {
+    bomEntry: null,
+    detail: null,
+    matchType: 'none',
+    matchConfidence: 0,
+    matchDetails: rejectedDetails[0] ?? '',
+  };
+}
+
+function findDesignationMatch(
+  part: PartForMatching,
+  detailsByDesignation: Map<string, DetailEntry>,
+  bomByDesignation: Map<string, BOMEntry>
+): MatchCandidate | null {
   const partDesignation = extractDesignationKey(part.name);
-  let bomEntry: BOMEntry | null = null;
-  let detail: DetailEntry | null = null;
-  let matchType: MatchType = 'none';
+  if (!partDesignation) return null;
+
+  let bomEntry = bomByDesignation.get(partDesignation) ?? null;
+  let detail = detailsByDesignation.get(partDesignation) ?? null;
   let matchConfidence = 0;
   let matchDetails = '';
 
-  if (partDesignation) {
-    detail = detailsByDesignation.get(partDesignation) ?? null;
-    bomEntry = bomByDesignation.get(partDesignation) ?? null;
+  if (detail || bomEntry) {
+    matchConfidence = 0.95;
+    matchDetails = 'designation match';
+  }
 
-    if (detail || bomEntry) {
-      matchType = 'designation';
-      matchConfidence = 0.95;
-      matchDetails = 'designation match';
-    }
-
-    if (!detail || !bomEntry) {
-      const suffix = extractTrailingSuffix(part.name);
-      if (suffix) {
-        const fullKey = `${partDesignation.replace(/-\d{2,3}$/, '')}-${suffix}`;
-        detail = detail ?? detailsByDesignation.get(fullKey) ?? null;
-        bomEntry = bomEntry ?? bomByDesignation.get(fullKey) ?? null;
-        if (detail || bomEntry) {
-          matchType = 'designation';
-          matchConfidence = Math.max(matchConfidence, 0.9);
-          matchDetails = 'designation suffix match';
-        }
+  if (!detail || !bomEntry) {
+    const suffix = extractTrailingSuffix(part.name);
+    if (suffix) {
+      const fullKey = `${partDesignation.replace(/-\d{2,3}$/, '')}-${suffix}`;
+      detail = detail ?? detailsByDesignation.get(fullKey) ?? null;
+      bomEntry = bomEntry ?? bomByDesignation.get(fullKey) ?? null;
+      if (detail || bomEntry) {
+        matchConfidence = Math.max(matchConfidence, 0.9);
+        matchDetails = 'designation suffix match';
       }
     }
+  }
 
-    if (!detail || !bomEntry) {
-      const baseKey = partDesignation.replace(/-\d{2,3}$/, '');
-      if (baseKey !== partDesignation) {
-        detail = detail ?? detailsByDesignation.get(baseKey) ?? null;
-        bomEntry = bomEntry ?? bomByDesignation.get(baseKey) ?? null;
-        if (detail || bomEntry) {
-          matchType = 'designation';
-          matchConfidence = Math.max(matchConfidence, 0.8);
-          matchDetails = 'designation base match';
-        }
+  if (!detail || !bomEntry) {
+    const baseKey = partDesignation.replace(/-\d{2,3}$/, '');
+    if (baseKey !== partDesignation) {
+      detail = detail ?? detailsByDesignation.get(baseKey) ?? null;
+      bomEntry = bomEntry ?? bomByDesignation.get(baseKey) ?? null;
+      if (detail || bomEntry) {
+        matchConfidence = Math.max(matchConfidence, 0.8);
+        matchDetails = 'designation base match';
       }
     }
   }
@@ -97,47 +253,30 @@ function findBestMatch(
     bomEntry = detailKey ? bomByDesignation.get(detailKey) ?? null : null;
   }
 
-  if (!detail && !bomEntry) {
-    const geometryMatch = findGeometryMatch(part, bom);
-    if (geometryMatch) {
-      bomEntry = geometryMatch.entry;
-      matchType = 'geometry';
-      matchConfidence = geometryMatch.confidence;
-      matchDetails = geometryMatch.details;
+  if (!detail && !bomEntry) return null;
 
-      const bomKey = extractDesignationKey(bomEntry.designation);
-      if (bomKey && detailsByDesignation.has(bomKey)) {
-        detail = detailsByDesignation.get(bomKey)!;
-      }
-    }
-  }
-
-  if (!detail && !bomEntry) {
-    const nameMatch = findNameMatch(part, bom);
-    if (nameMatch) {
-      bomEntry = nameMatch.entry;
-      matchType = nameMatch.type;
-      matchConfidence = nameMatch.confidence;
-      matchDetails = nameMatch.details;
-
-      const bomKey = extractDesignationKey(bomEntry.designation);
-      if (bomKey && detailsByDesignation.has(bomKey)) {
-        detail = detailsByDesignation.get(bomKey)!;
-        matchConfidence = Math.max(matchConfidence, 0.7);
-      }
-    }
-  }
-
-  return { bomEntry, detail, matchType, matchConfidence, matchDetails };
+  return {
+    bomEntry,
+    detail,
+    matchType: 'designation',
+    matchConfidence,
+    matchDetails,
+  };
 }
 
 function findGeometryMatch(
   part: PartForMatching,
-  bom: BOMEntry[]
+  bom: BOMEntry[],
+  rejectedDetails: string[] = []
 ): { entry: BOMEntry; confidence: number; details: string } | null {
   let bestMatch: { entry: BOMEntry; confidence: number; details: string; strongMatches: number } | null = null;
 
   for (const entry of bom) {
+    if (!isThicknessCompatibleWithCandidate(part, entry, null)) {
+      rejectedDetails.push(buildThicknessRejectedDetails(part, entry, null));
+      continue;
+    }
+
     const geometry = geometryMatchScore(part, entry);
     if (geometry.score < 0.45 || geometry.strongMatches === 0) {
       continue;
@@ -169,20 +308,22 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
   const dimensionWeight = 0.3;
 
   if (bomDims.thicknessMm) {
+    const stepThickness = getStepThickness(part);
     const wallThickness = getPartWallThickness(part);
-    const stepThickness = part.thickness;
-    if (sizeMatch(bomDims.thicknessMm, wallThickness, 0.3)) {
+    if (thicknessMatch(bomDims.thicknessMm, stepThickness)) {
       score += 0.35;
       strongMatches += 1;
-      details.push(`thickness: BOM=${formatNumber(bomDims.thicknessMm)} ~= STEP_VA=${formatNumber(wallThickness)}`);
-    } else if (stepThickness !== null && sizeMatch(bomDims.thicknessMm, stepThickness, 0.3)) {
-      score += 0.2;
-      strongMatches += 1;
       details.push(`thickness: BOM=${formatNumber(bomDims.thicknessMm)} ~= STEP=${formatNumber(stepThickness)}`);
-    } else if (stepDims[0] && sizeMatch(bomDims.thicknessMm, stepDims[0], 0.3)) {
-      score += 0.2;
+    } else if (thicknessMatch(bomDims.thicknessMm, wallThickness)) {
+      score += 0.25;
       strongMatches += 1;
-      details.push(`thickness: BOM=${formatNumber(bomDims.thicknessMm)} ~= STEP_bbox=${formatNumber(stepDims[0])}`);
+      details.push(`thickness: BOM=${formatNumber(bomDims.thicknessMm)} ~= STEP_VA=${formatNumber(wallThickness)}`);
+    } else {
+      return {
+        score: 0,
+        details: [`thickness rejected: BOM=${formatNumber(bomDims.thicknessMm)}, STEP=${formatNumber(stepThickness)}`],
+        strongMatches: 0,
+      };
     }
   }
 
@@ -308,7 +449,7 @@ function getPartBBoxDims(part: PartForMatching): number[] {
   }
 
   return [part.thickness, part.width, part.height]
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    .filter((value) => Number.isFinite(value) && value > 0)
     .sort((a, b) => a - b);
 }
 
@@ -320,13 +461,43 @@ function getPartWallThickness(part: PartForMatching): number {
     }
   }
 
-  return part.thickness ?? 0;
+  return part.thickness;
+}
+
+function getStepThickness(part: PartForMatching): number {
+  return part.thickness;
+}
+
+function isThicknessCompatibleWithCandidate(
+  part: PartForMatching,
+  bomEntry: BOMEntry | null,
+  detail: DetailEntry | null
+): boolean {
+  const candidateThickness = getCandidateThickness(bomEntry, detail);
+  if (!candidateThickness) return true;
+  return thicknessMatch(candidateThickness, getStepThickness(part));
+}
+
+function getCandidateThickness(bomEntry: BOMEntry | null, detail: DetailEntry | null): number | null {
+  if (detail?.thicknessMm && detail.thicknessMm > 0) return detail.thicknessMm;
+  const bomThickness = bomEntry?.thicknessMm ?? bomEntry?.thickness ?? null;
+  return bomThickness && bomThickness > 0 ? bomThickness : null;
+}
+
+function buildThicknessRejectedDetails(part: PartForMatching, bomEntry: BOMEntry | null, detail: DetailEntry | null): string {
+  const candidateThickness = getCandidateThickness(bomEntry, detail);
+  if (!candidateThickness) return '';
+  return `thickness rejected: BOM=${formatNumber(candidateThickness)} mm, STEP=${formatNumber(getStepThickness(part))} mm`;
 }
 
 function sizeMatch(a: number, b: number, tolerance: number): boolean {
   if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return false;
   const diff = Math.abs(a - b) / Math.max(a, b);
   return diff <= tolerance;
+}
+
+function thicknessMatch(a: number, b: number): boolean {
+  return Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > 0 && Math.abs(a - b) <= THICKNESS_TOLERANCE_MM;
 }
 
 function findClosestDim(
@@ -426,11 +597,17 @@ function normalizePositiveNumber(value: unknown): number | null {
 
 function findNameMatch(
   part: PartForMatching,
-  bom: BOMEntry[]
+  bom: BOMEntry[],
+  rejectedDetails: string[] = []
 ): { entry: BOMEntry; type: MatchType; confidence: number; details: string } | null {
   let bestMatch: { entry: BOMEntry; type: MatchType; confidence: number; details: string } | null = null;
 
   for (const entry of bom) {
+    if (!isThicknessCompatibleWithCandidate(part, entry, null)) {
+      rejectedDetails.push(buildThicknessRejectedDetails(part, entry, null));
+      continue;
+    }
+
     const partName = normalize(part.name);
     const entryName = normalize(entry.name || entry.description);
 
@@ -445,6 +622,11 @@ function findNameMatch(
       if (!bestMatch || confidence > bestMatch.confidence) {
         bestMatch = { entry, type: 'contains', confidence: Math.min(0.9, confidence), details: 'name contains match' };
       }
+    }
+
+    const tokenScore = nameTokenScore(partName, entryName);
+    if (tokenScore >= 0.75 && (!bestMatch || tokenScore > bestMatch.confidence)) {
+      bestMatch = { entry, type: 'contains', confidence: Math.min(0.92, tokenScore), details: 'name token match' };
     }
 
     const maxLen = Math.max(partName.length, entryName.length);
@@ -469,7 +651,8 @@ function buildMatchResult(
   matchType: MatchType,
   matchConfidence: number,
   matchDetails: string,
-  steelTypes: SteelTypeCatalogItem[]
+  steelTypes: SteelTypeCatalogItem[],
+  assignedGroupSize: number
 ): MatchResult {
   const result: MatchResult = {
     partId: part.id,
@@ -493,6 +676,8 @@ function buildMatchResult(
     suggestedIsSheetMetal: null,
     suggestedHasBends: null,
     suggestedMassKg: null,
+    thicknessMismatch: false,
+    thicknessMismatchNote: null,
     detailNotes: '',
     autoApplied: false,
   };
@@ -516,7 +701,7 @@ function buildMatchResult(
       }
     }
 
-    if (detail.thicknessMm > 0 && (part.thickness === null || Math.abs(detail.thicknessMm - part.thickness) > 0.1)) {
+    if (detail.thicknessMm > 0 && Math.abs(detail.thicknessMm - getStepThickness(part)) > 0.1) {
       result.suggestedThickness = detail.thicknessMm;
     }
 
@@ -537,10 +722,7 @@ function buildMatchResult(
 
     result.suggestedMassKg = detail.massKg;
     result.detailNotes = detail.notes;
-  } else if (
-    (bomEntry?.thicknessMm || bomEntry?.thickness) &&
-    (part.thickness === null || Math.abs((bomEntry.thicknessMm ?? bomEntry.thickness ?? 0) - part.thickness) > 0.1)
-  ) {
+  } else if ((bomEntry?.thicknessMm || bomEntry?.thickness) && Math.abs((bomEntry.thicknessMm ?? bomEntry.thickness ?? 0) - getStepThickness(part)) > 0.1) {
     result.suggestedThickness = bomEntry.thicknessMm ?? bomEntry.thickness;
   }
 
@@ -559,13 +741,14 @@ function buildMatchResult(
       result.suggestedMaterialGrade = result.suggestedMaterialGrade || bomEntry.steelTypeRaw;
     }
 
-    if (bomEntry.quantity !== part.quantity) {
-      result.suggestedQuantity = bomEntry.quantity;
+    const suggestedQuantity = getDistributedSuggestedQuantity(part, bomEntry, assignedGroupSize);
+    if (suggestedQuantity !== null) {
+      result.suggestedQuantity = suggestedQuantity;
     }
 
     if (bomEntry.partType === 'sheet') {
       result.suggestedIsSheetMetal = true;
-      if (bomEntry.thicknessMm && (part.thickness === null || Math.abs(bomEntry.thicknessMm - part.thickness) > 0.1)) {
+      if (bomEntry.thicknessMm && Math.abs(bomEntry.thicknessMm - getStepThickness(part)) > 0.1) {
         result.suggestedThickness = bomEntry.thicknessMm;
       }
       if (bomEntry.widthMm && bomEntry.heightMm) {
@@ -584,6 +767,22 @@ function buildMatchResult(
   }
 
   return result;
+}
+
+function getDistributedSuggestedQuantity(
+  part: PartForMatching,
+  bomEntry: BOMEntry,
+  assignedGroupSize: number
+): number | null {
+  const groupSize = Math.max(1, assignedGroupSize);
+  const bomQuantity = Math.max(1, Math.round(bomEntry.quantity || 1));
+  const perBodyQuantity = bomQuantity / groupSize;
+
+  if (!Number.isInteger(perBodyQuantity) || perBodyQuantity < 1) {
+    return null;
+  }
+
+  return perBodyQuantity !== part.quantity ? perBodyQuantity : null;
 }
 
 function computeSheetHasBends(
@@ -664,44 +863,115 @@ function resolveCatalogSteelType(raw: string, steelTypes: SteelTypeCatalogItem[]
 }
 
 function normalize(str: string): string {
-  return str
+  return transliterateCyrillic(str)
     .toLowerCase()
     .trim()
     .replace(/\s+/g, ' ')
     .replace(/[_\-.]/g, ' ');
 }
 
-function suppressAmbiguousQuantitySuggestions(results: MatchResult[]): MatchResult[] {
-  const matchesByBom = new Map<string, MatchResult[]>();
+function nameTokenScore(partName: string, entryName: string): number {
+  const partTokens = meaningfulNameTokens(partName);
+  const entryTokens = meaningfulNameTokens(entryName);
+  if (partTokens.length === 0 || entryTokens.length === 0) return 0;
 
-  for (const result of results) {
-    if (result.matchType === 'none') {
-      continue;
-    }
+  const entrySet = new Set(entryTokens);
+  const overlap = partTokens.filter((token) => entrySet.has(token)).length;
+  if (overlap === 0) return 0;
 
-    const key = buildBomKey(result.bomPosition, result.bomDesignation, result.bomName);
-    matchesByBom.set(key, [...(matchesByBom.get(key) ?? []), result]);
-  }
+  return 0.72 + 0.2 * (overlap / Math.min(partTokens.length, entryTokens.length));
+}
 
-  const ambiguousBomKeys = new Set(
-    Array.from(matchesByBom.entries())
-      .filter(([, matches]) => matches.length > 1)
-      .map(([key]) => key)
-  );
+function meaningfulNameTokens(value: string): string[] {
+  return value
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4 && !/^\d+$/.test(token));
+}
 
-  if (ambiguousBomKeys.size === 0) {
-    return results;
-  }
+function transliterateCyrillic(value: string): string {
+  const map: Record<string, string> = {
+    а: 'a',
+    б: 'b',
+    в: 'v',
+    г: 'g',
+    д: 'd',
+    е: 'e',
+    ё: 'e',
+    ж: 'zh',
+    з: 'z',
+    и: 'i',
+    й: 'y',
+    к: 'k',
+    л: 'l',
+    м: 'm',
+    н: 'n',
+    о: 'o',
+    п: 'p',
+    р: 'r',
+    с: 's',
+    т: 't',
+    у: 'u',
+    ф: 'f',
+    х: 'h',
+    ц: 'ts',
+    ч: 'ch',
+    ш: 'sh',
+    щ: 'sch',
+    ъ: '',
+    ы: 'y',
+    ь: '',
+    э: 'e',
+    ю: 'yu',
+    я: 'ya',
+  };
 
-  return results.map((result) =>
-    ambiguousBomKeys.has(buildBomKey(result.bomPosition, result.bomDesignation, result.bomName))
-      ? { ...result, suggestedQuantity: null }
-      : result
-  );
+  return Array.from(value).map((char) => {
+    const lower = char.toLowerCase();
+    return map[lower] ?? char;
+  }).join('');
+}
+
+function buildBomKeyFromEntry(entry: BOMEntry): string {
+  return buildBomKey(entry.position, entry.designation, entry.description || entry.name);
 }
 
 function buildBomKey(position: string, designation: string, name: string): string {
   return `${position.trim().toLowerCase()}__${designation.trim().toLowerCase()}__${name.trim().toLowerCase()}`;
+}
+
+function quantize(value: number, tolerance: number): string {
+  if (!Number.isFinite(value)) return '0';
+  return String(Math.round(value / tolerance));
+}
+
+function buildContourSignature(contour: unknown): string {
+  const points = readContourPoints(contour);
+  if (points.length < 3) return 'no-contour';
+
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const normalized = points
+    .map((point) => [
+      quantize(point.x - minX, CONTOUR_CLUSTER_TOLERANCE_MM),
+      quantize(point.y - minY, CONTOUR_CLUSTER_TOLERANCE_MM),
+    ].join(':'))
+    .sort()
+    .join(',');
+
+  return `${points.length}:${normalized}`;
+}
+
+function readContourPoints(contour: unknown): Array<{ x: number; y: number }> {
+  if (!Array.isArray(contour)) return [];
+
+  return contour.flatMap((point) => {
+    if (!point || typeof point !== 'object') return [];
+    const maybePoint = point as { x?: unknown; y?: unknown };
+    const x = Number(maybePoint.x);
+    const y = Number(maybePoint.y);
+    return Number.isFinite(x) && Number.isFinite(y) ? [{ x, y }] : [];
+  });
 }
 
 function formatNumber(value: number): string {

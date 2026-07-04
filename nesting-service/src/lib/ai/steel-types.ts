@@ -78,6 +78,16 @@ export function normalizeSteelTypeName(value: string | null | undefined): string
 
 function extractCatalogSteelType(value: string | null | undefined, steelTypes: SteelTypeCatalogItem[]): string | null {
   if (!value || steelTypes.length === 0) return null;
+  const normalizedValue = normalizeSteelTypeName(value);
+  const phraseMatches = steelTypes.filter((steelType) => {
+    const normalizedName = normalizeSteelTypeName(steelType.name);
+    if (!normalizedName || /^\d+$/.test(normalizedName)) return false;
+    return normalizedName.length >= 3 && normalizedValue.includes(normalizedName);
+  });
+
+  if (phraseMatches.length === 1) {
+    return phraseMatches[0].name;
+  }
 
   const normalizedTokens = new Set(
     String(value)
@@ -101,8 +111,11 @@ function extractCommonSteelMark(value: string | null | undefined): string | null
     return normalizeSteelTypeName(enGrade[0]).toUpperCase();
   }
 
-  const match = source.match(/\b(?:hardox|aisi\s*304|aisi\s*316|09г2с|ст3)\b/i);
-  return match ? match[0].replace(/\s+/g, ' ').trim() : null;
+  const namedMatch = source.match(/\b(?:hardox|aisi\s*304|aisi\s*316|aisi\s*430|12х18н10т|09г2с|ст3сп|ст3пс|ст3|40х|65г)\b/i);
+  if (namedMatch) return namedMatch[0].replace(/\s+/g, ' ').trim();
+
+  const numericMatch = source.match(/(?:^|[^\d])(?:сталь\s*)?(10|20|45)(?:[^\d]|$)/i);
+  return numericMatch ? numericMatch[1] : null;
 }
 
 function firstNonEmpty(values: Array<string | null | undefined>): string | null {
