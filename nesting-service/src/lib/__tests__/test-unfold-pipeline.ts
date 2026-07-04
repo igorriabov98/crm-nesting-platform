@@ -18,13 +18,15 @@ async function main(): Promise<void> {
   const part = parsed.parts[0];
   assert.equal(part.contourSource, 'UNFOLDED_BREP');
   assert.ok(part.height > 120, 'unfolded contour should be developed length, not folded bbox');
+  assert.ok(part.thickness !== null, 'unfolded part should have known thickness');
+  const thickness = part.thickness;
 
   const sheet: SheetOption = {
     id: 'phase2-u-channel-sheet',
     width: 180,
     height: 180,
     material: 'Сталь',
-    thickness: part.thickness,
+    thickness,
     isRemnant: false,
     priority: 1,
     potentialUtilization: 100,

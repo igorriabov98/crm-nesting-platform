@@ -21,12 +21,14 @@ async function main(): Promise<void> {
     assert.equal(parsed.parts.length, 1, `${file} should contain one part`);
 
     const part = parsed.parts[0];
+    assert.ok(part.thickness !== null, `${file} should have known thickness`);
+    const thickness = part.thickness;
     const sheet: SheetOption = {
       id: `${file}-sheet`,
       width: Math.max(part.width + 20, 200),
       height: Math.max(part.height + 20, 200),
       material: 'Сталь',
-      thickness: part.thickness,
+      thickness,
       isRemnant: false,
       priority: 1,
       potentialUtilization: 100,

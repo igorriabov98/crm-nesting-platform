@@ -84,7 +84,7 @@ model Part {
   sourceMachineItemId String?
   sourceProductId String?
   name         String
-  thickness    Float
+  thickness    Float?
   material     String         @default("Сталь")
   steelTypeId   String?
   steelTypeName String?

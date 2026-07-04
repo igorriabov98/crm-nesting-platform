@@ -170,14 +170,15 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
 
   if (bomDims.thicknessMm) {
     const wallThickness = getPartWallThickness(part);
+    const stepThickness = part.thickness;
     if (sizeMatch(bomDims.thicknessMm, wallThickness, 0.3)) {
       score += 0.35;
       strongMatches += 1;
       details.push(`thickness: BOM=${formatNumber(bomDims.thicknessMm)} ~= STEP_VA=${formatNumber(wallThickness)}`);
-    } else if (sizeMatch(bomDims.thicknessMm, part.thickness, 0.3)) {
+    } else if (stepThickness !== null && sizeMatch(bomDims.thicknessMm, stepThickness, 0.3)) {
       score += 0.2;
       strongMatches += 1;
-      details.push(`thickness: BOM=${formatNumber(bomDims.thicknessMm)} ~= STEP=${formatNumber(part.thickness)}`);
+      details.push(`thickness: BOM=${formatNumber(bomDims.thicknessMm)} ~= STEP=${formatNumber(stepThickness)}`);
     } else if (stepDims[0] && sizeMatch(bomDims.thicknessMm, stepDims[0], 0.3)) {
       score += 0.2;
       strongMatches += 1;
@@ -307,7 +308,7 @@ function getPartBBoxDims(part: PartForMatching): number[] {
   }
 
   return [part.thickness, part.width, part.height]
-    .filter((value) => Number.isFinite(value) && value > 0)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
     .sort((a, b) => a - b);
 }
 
@@ -319,7 +320,7 @@ function getPartWallThickness(part: PartForMatching): number {
     }
   }
 
-  return part.thickness;
+  return part.thickness ?? 0;
 }
 
 function sizeMatch(a: number, b: number, tolerance: number): boolean {
@@ -515,7 +516,7 @@ function buildMatchResult(
       }
     }
 
-    if (detail.thicknessMm > 0 && Math.abs(detail.thicknessMm - part.thickness) > 0.1) {
+    if (detail.thicknessMm > 0 && (part.thickness === null || Math.abs(detail.thicknessMm - part.thickness) > 0.1)) {
       result.suggestedThickness = detail.thicknessMm;
     }
 
@@ -536,7 +537,10 @@ function buildMatchResult(
 
     result.suggestedMassKg = detail.massKg;
     result.detailNotes = detail.notes;
-  } else if ((bomEntry?.thicknessMm || bomEntry?.thickness) && Math.abs((bomEntry.thicknessMm ?? bomEntry.thickness ?? 0) - part.thickness) > 0.1) {
+  } else if (
+    (bomEntry?.thicknessMm || bomEntry?.thickness) &&
+    (part.thickness === null || Math.abs((bomEntry.thicknessMm ?? bomEntry.thickness ?? 0) - part.thickness) > 0.1)
+  ) {
     result.suggestedThickness = bomEntry.thicknessMm ?? bomEntry.thickness;
   }
 
@@ -561,7 +565,7 @@ function buildMatchResult(
 
     if (bomEntry.partType === 'sheet') {
       result.suggestedIsSheetMetal = true;
-      if (bomEntry.thicknessMm && Math.abs(bomEntry.thicknessMm - part.thickness) > 0.1) {
+      if (bomEntry.thicknessMm && (part.thickness === null || Math.abs(bomEntry.thicknessMm - part.thickness) > 0.1)) {
         result.suggestedThickness = bomEntry.thicknessMm;
       }
       if (bomEntry.widthMm && bomEntry.heightMm) {
