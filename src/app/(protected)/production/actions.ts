@@ -2,7 +2,7 @@
 
 import { getCurrentUserContext } from '@/lib/auth/current-user'
 import type { StageType } from '@/lib/types'
-import { STAGE_ORDER } from '@/lib/constants/stages'
+import { STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
 
 export type StageStatus = 'not_planned' | 'active' | 'completed' | 'overdue' | 'skipped'
 
@@ -112,6 +112,13 @@ function computeStatus(stage: SelectedProductionStage): { status: StageStatus; d
   if (!stage.date_start && !stage.date_end) return { status: 'not_planned', delay_days: 0 }
 
   const today = todayDateOnly()
+  if (stageHasSingleDate(stage.stage_type)) {
+    if (stage.date_end && stage.date_end <= today) {
+      return { status: 'active', delay_days: 0 }
+    }
+    return { status: 'not_planned', delay_days: 0 }
+  }
+
   if (stage.date_start && stage.date_start <= today) {
     return { status: 'active', delay_days: 0 }
   }

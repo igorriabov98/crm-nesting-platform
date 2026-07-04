@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { NIGHT_SHIFT_COLOR, STAGE_ORDER } from '@/lib/constants/stages'
+import { NIGHT_SHIFT_COLOR, STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
 import { cn } from '@/lib/utils'
 import {
   GANTT_BAR_HEIGHT,
@@ -42,7 +42,7 @@ export function GanttLegend({
             {stages.map((stage) => (
               <div key={stage} className="flex items-center gap-1.5">
                 <div
-                  className={cn("shrink-0", stage === 'shipping' ? "rounded-full" : "rounded-sm")}
+                  className={cn("shrink-0", stageHasSingleDate(stage) ? "rounded-full" : "rounded-sm")}
                   style={{
                     width: GANTT_STAGE_DOT_SIZE,
                     height: GANTT_STAGE_DOT_SIZE,

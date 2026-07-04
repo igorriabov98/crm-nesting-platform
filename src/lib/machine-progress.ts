@@ -83,6 +83,11 @@ function hasValue(value: string | null | undefined) {
   return Boolean(value && value.trim().length > 0)
 }
 
+function hasRequiredStageDates(stage: Pick<ProgressProductionStage, 'stage_type' | 'date_start' | 'date_end'>) {
+  if (stage.stage_type === 'shipping') return hasValue(stage.date_end)
+  return hasValue(stage.date_start) && hasValue(stage.date_end)
+}
+
 export function machineHasGoods(machine: MachineProgressMachineInput) {
   if (machine.machine_items) {
     return machine.machine_items.some((item) => !item.is_sample)
@@ -97,14 +102,14 @@ export function getMachineReadiness(machine: MachineProgressMachineInput): Machi
     .filter((stage) => !stage.is_skipped && stage.stage_type !== 'actual_shipping')
   const shippingStage = activeStages.find((stage) => stage.stage_type === 'shipping')
   const allActiveStagesDated = activeStages.length > 0
-    && activeStages.every((stage) => hasValue(stage.date_start) && hasValue(stage.date_end))
+    && activeStages.every(hasRequiredStageDates)
   const planned = allActiveStagesDated
-    && Boolean(shippingStage && hasValue(shippingStage.date_start) && hasValue(shippingStage.date_end))
+    && Boolean(shippingStage && hasRequiredStageDates(shippingStage))
   const blockers: string[] = []
 
   if (!hasGoods) blockers.push('Добавьте хотя бы один товар')
   if (hasGoods && machine.is_confirmed !== true) blockers.push('Подтвердите машину у менеджера')
-  if (!planned) blockers.push('Заполните даты начала и окончания всех активных этапов, включая готовность к погрузке')
+  if (!planned) blockers.push('Заполните даты активных этапов: начало и окончание для производства, одну дату для готовности к погрузке')
 
   return { hasGoods, decoded, planned, blockers }
 }

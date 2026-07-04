@@ -3,12 +3,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
-import { NIGHT_SHIFT_COLOR } from '@/lib/constants/stages'
+import { NIGHT_SHIFT_COLOR, stageHasSingleDate } from '@/lib/constants/stages'
 import { barGeometry, formatDate, type GanttScale } from '@/lib/utils/gantt'
 import { cn } from '@/lib/utils'
 import { ROUTES } from '@/lib/constants/routes'
 import type { GanttStage } from '@/app/(protected)/production/gantt/actions'
-import { getGanttStageColor, getGanttStageLabel } from './types'
+import { getGanttStageColor, getGanttStageLabel, getStageWorkshopLabel } from './types'
 
 interface GanttBarProps {
   stage: GanttStage
@@ -99,7 +99,8 @@ export const GanttBar = React.memo(function GanttBar({
   const visibleStatus = planOnly ? 'not_planned' : stage.status
   const isPlanned = visibleStatus === 'not_planned'
   const showLabel = width > 70
-  const isShippingReadiness = stage.stage_type === 'shipping'
+  const isSingleDateStage = stageHasSingleDate(stage.stage_type)
+  const workshopLabel = getStageWorkshopLabel(stage)
 
   let nightLeft = 0
   let showNight = false
@@ -150,7 +151,7 @@ export const GanttBar = React.memo(function GanttBar({
       data-stage-status={visibleStatus}
       data-stage-type={stage.stage_type}
     >
-      {isShippingReadiness ? (
+      {isSingleDateStage ? (
         <div
           className={cn(
             "absolute left-0 right-0 overflow-hidden rounded-none transition-[filter,box-shadow] hover:brightness-105",
@@ -247,13 +248,15 @@ export const GanttBar = React.memo(function GanttBar({
         >
           <p className="mb-1.5 flex items-center gap-2 font-semibold">
             <span
-              className={cn("h-2.5 w-2.5", isShippingReadiness ? "rounded-full" : "rounded-sm")}
+              className={cn("h-2.5 w-2.5", isSingleDateStage ? "rounded-full" : "rounded-sm")}
               style={{ backgroundColor: color }}
             />
             {getGanttStageLabel(stage.stage_type)}
           </p>
-          {stage.workshop && <p className="text-[#6B7280]">Цех: <span className="text-[#1B3A6B]">{stage.workshop}</span></p>}
-          {isShippingReadiness ? (
+          {workshopLabel && (
+            <p className="text-[#6B7280]">Цех: <span className="text-[#1B3A6B]">{workshopLabel}</span></p>
+          )}
+          {isSingleDateStage ? (
             <p className="text-[#6B7280]">Дата: <span className="text-[#1B3A6B]">{formatDate(endDate)}</span></p>
           ) : (
             <>

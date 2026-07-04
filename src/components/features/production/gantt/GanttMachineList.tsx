@@ -3,6 +3,7 @@
 import React from 'react'
 import Link from 'next/link'
 import { ROUTES } from '@/lib/constants/routes'
+import { stageHasSingleDate } from '@/lib/constants/stages'
 import { cn } from '@/lib/utils'
 import {
   GANTT_LEFT_WIDTH,
@@ -13,7 +14,7 @@ import {
   GANTT_WORKSHOP_COL_WIDTH,
   getGanttStageColor,
   getGanttStageLabel,
-  getWorkshopLabel,
+  getStageWorkshopLabel,
   type GanttMachineGroup,
 } from './types'
 
@@ -79,7 +80,7 @@ export function GanttMachineList({ groups }: GanttMachineListProps) {
                       <span
                         className={cn(
                           "h-2.5 w-2.5 shrink-0",
-                          row.stage.stage_type === 'shipping' ? "rounded-full" : "rounded-sm"
+                          stageHasSingleDate(row.stage.stage_type) ? "rounded-full" : "rounded-sm"
                         )}
                         style={{ backgroundColor: getGanttStageColor(row.stage.stage_type) }}
                       />
@@ -102,7 +103,7 @@ export function GanttMachineList({ groups }: GanttMachineListProps) {
                   className="flex items-center justify-center border-b border-[#EEF2F6] text-xs font-medium text-[#374151] last:border-b-0"
                   style={{ height: GANTT_ROW_HEIGHT }}
                 >
-                  {row.type === 'stage' ? getWorkshopLabel(row.stage.workshop) : ''}
+                  {row.type === 'stage' ? getStageWorkshopLabel(row.stage) : ''}
                 </div>
               ))}
             </div>
