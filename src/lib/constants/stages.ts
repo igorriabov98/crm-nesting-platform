@@ -1,5 +1,5 @@
 // Константы этапов производства
-import { StageType } from '@/lib/types'
+import type { StageType } from '@/lib/types'
 
 export const STAGES: Record<
   StageType,
@@ -15,8 +15,8 @@ export const STAGES: Record<
   cleaning:    { label: 'Зачистка',   color: '#EAB308', fixedWorkshop: null,  canSkip: true },
   galvanizing: { label: 'Цинк',       color: '#6B7280', fixedWorkshop: null,  canSkip: true }, // canSkip=false если coating=zinc (дополнительная проверка в UI и триггере БД)
   post_galvanizing_cleaning: { label: 'Зачистка после цинка', color: '#D6A500', fixedWorkshop: null, canSkip: true },
-  painting:    { label: 'Малярка',    color: '#F97316', fixedWorkshop: 2,     canSkip: true },
-  packaging:   { label: 'Упаковка',   color: '#8B5CF6', fixedWorkshop: 2,     canSkip: true },
+  painting:    { label: 'Малярка',    color: '#F97316', fixedWorkshop: null,  canSkip: true },
+  packaging:   { label: 'Упаковка',   color: '#8B5CF6', fixedWorkshop: null,  canSkip: true },
   shipping:    { label: 'Готовность к погрузке', color: '#EF4444', fixedWorkshop: null,  canSkip: false },
   actual_shipping: { label: 'Факт отгрузки', color: '#B91C1C', fixedWorkshop: null, canSkip: false },
 }
@@ -33,6 +33,26 @@ export const STAGE_ORDER: StageType[] = [
   'shipping',
   'actual_shipping',
 ]
+
+export const SINGLE_DATE_STAGE_TYPES = ['shipping', 'actual_shipping'] as const satisfies readonly StageType[]
+
+export const STAGE_TYPES_WITHOUT_WORKSHOP = [
+  'cutting',
+  'cleaning',
+  'galvanizing',
+  'post_galvanizing_cleaning',
+  'painting',
+  'packaging',
+  ...SINGLE_DATE_STAGE_TYPES,
+] as const satisfies readonly StageType[]
+
+export function stageHasSingleDate(stageType: StageType | string) {
+  return (SINGLE_DATE_STAGE_TYPES as readonly string[]).includes(stageType)
+}
+
+export function stageHasWorkshop(stageType: StageType | string) {
+  return !(STAGE_TYPES_WITHOUT_WORKSHOP as readonly string[]).includes(stageType)
+}
 
 // Цвет ночной смены (оверлей поверх основного цвета этапа)
 export const NIGHT_SHIFT_COLOR = '#1E3A5F'

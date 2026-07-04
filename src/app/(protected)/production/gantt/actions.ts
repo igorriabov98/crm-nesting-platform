@@ -1,7 +1,7 @@
 "use server"
 
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { STAGE_ORDER } from '@/lib/constants/stages'
+import { STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
 import { differenceInCalendarDays, isPast, addDays } from 'date-fns'
 import type { StageType } from '@/lib/types'
 
@@ -191,7 +191,7 @@ const GANTT_ORDER_TABLES = [
 
 function getStageTimelineStart(stage: RawGanttStage) {
   if (stage.date_start) return stage.date_start
-  if (stage.stage_type === 'shipping' && stage.date_end) return stage.date_end
+  if (stageHasSingleDate(stage.stage_type) && stage.date_end) return stage.date_end
   return null
 }
 
@@ -711,7 +711,7 @@ export async function getGanttData(
 
       const { status, delay_days } = computeGanttStatus(s)
       const startDate = new Date(timelineStart)
-      const endValue = s.date_end || (s.stage_type === 'shipping' ? timelineStart : addDays(startDate, 7).toISOString().split('T')[0])
+      const endValue = s.date_end || (stageHasSingleDate(s.stage_type) ? timelineStart : addDays(startDate, 7).toISOString().split('T')[0])
       const endDate = new Date(endValue)
 
       if (!minDate || startDate < minDate) minDate = startDate

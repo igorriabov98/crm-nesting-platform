@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { InlineEdit } from '@/components/features/shared/InlineEdit'
-import { STAGES, STAGE_ORDER } from '@/lib/constants/stages'
+import { STAGES, STAGE_ORDER, stageHasSingleDate, stageHasWorkshop } from '@/lib/constants/stages'
 import { useRole } from '@/lib/hooks/useRole'
 import { clearProductionStageDates, updateMachineDate, updateProductionStage, toggleStageSkip } from '@/lib/actions/production'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -21,8 +21,6 @@ import { toast } from 'sonner'
 interface ProductionTabProps {
   machine: MachineDetails
 }
-
-const stageHasWorkshop = (stageType: string) => !['cutting', 'galvanizing'].includes(stageType)
 
 function todayDateOnly() {
   const now = new Date()
@@ -60,6 +58,12 @@ export function ProductionTab({ machine }: ProductionTabProps) {
     if (!stage.date_start && !stage.date_end) return { label: 'Не запланирован', color: 'bg-[#F8F9FA] text-[#6B7280]' }
 
     const today = todayDateOnly()
+    if (stageHasSingleDate(stage.stage_type)) {
+      if (stage.date_end && stage.date_end <= today) {
+        return { label: 'По плану сейчас', color: 'bg-[#1B3A6B] text-white' }
+      }
+      return { label: 'Запланирован', color: 'bg-[#F8F9FA] text-[#6B7280]' }
+    }
     if (stage.date_start && stage.date_start <= today) {
       return { label: 'По плану сейчас', color: 'bg-[#1B3A6B] text-white' }
     }
@@ -74,6 +78,18 @@ export function ProductionTab({ machine }: ProductionTabProps) {
 
   const handleNightShiftCheckbox = async (stageId: string, isNightShift: boolean) => {
     return handleUpdate(stageId, 'is_night_shift', isNightShift)
+  }
+
+  const handleSingleDateStageUpdate = async (stageId: string, value: string | null) => {
+    const res = await updateProductionStage(stageId, {
+      date_start: null,
+      date_end: value,
+      workshop: null,
+      is_night_shift: false,
+      night_shift_date: null,
+    })
+    if (res.success) router.refresh()
+    return res
   }
 
   const handleMachineDateUpdate = async (
@@ -228,6 +244,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
             const cannotSkip = (isGalvanizing && hasZinc) || (isPainting && hasPainting)
             const isClearingDates = clearingStageId === stage.id
             const hasStageDates = Boolean(stage.date_start || stage.date_end)
+            const isSingleDateStage = stageHasSingleDate(stage.stage_type)
 
             return (
               <tr key={stage.id} className="border-b border-[#E8ECF0] bg-white hover:bg-[#F8F9FA]">
@@ -255,40 +272,57 @@ export function ProductionTab({ machine }: ProductionTabProps) {
                     />
                   )}
                 </td>
-                <td className="px-4 py-3">
-                  <InlineEdit
-                    type="date"
-                    value={stage.date_start}
-                    editable={canEdit && !stage.is_skipped}
-                    onSave={(val) => handleUpdate(stage.id, 'date_start', val)}
-                  />
-                </td>
-                <td className="px-4 py-3">
-                  <InlineEdit
-                    type="date"
-                    value={stage.date_end}
-                    editable={canEdit && !stage.is_skipped}
-                    onSave={(val) => handleUpdate(stage.id, 'date_end', val)}
-                  />
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      checked={stage.is_night_shift || false}
-                      disabled={!canEdit || stage.is_skipped}
-                      onCheckedChange={(c) => handleNightShiftCheckbox(stage.id, c === true)}
+                {isSingleDateStage ? (
+                  <td className="px-4 py-3" colSpan={2}>
+                    <InlineEdit
+                      type="date"
+                      value={stage.date_end}
+                      editable={canEdit && !stage.is_skipped}
+                      onSave={(val) => handleSingleDateStageUpdate(stage.id, val)}
                     />
-                    {stage.is_night_shift && (
+                  </td>
+                ) : (
+                  <>
+                    <td className="px-4 py-3">
                       <InlineEdit
                         type="date"
-                        value={stage.night_shift_date}
+                        value={stage.date_start}
                         editable={canEdit && !stage.is_skipped}
-                        onSave={(val) => handleUpdate(stage.id, 'night_shift_date', val)}
-                        placeholder="Дата..."
-                        className="w-[125px]"
+                        onSave={(val) => handleUpdate(stage.id, 'date_start', val)}
                       />
-                    )}
-                  </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <InlineEdit
+                        type="date"
+                        value={stage.date_end}
+                        editable={canEdit && !stage.is_skipped}
+                        onSave={(val) => handleUpdate(stage.id, 'date_end', val)}
+                      />
+                    </td>
+                  </>
+                )}
+                <td className="px-4 py-3">
+                  {isSingleDateStage ? (
+                    <span className="text-[#9CA3AF]">—</span>
+                  ) : (
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        checked={stage.is_night_shift || false}
+                        disabled={!canEdit || stage.is_skipped}
+                        onCheckedChange={(c) => handleNightShiftCheckbox(stage.id, c === true)}
+                      />
+                      {stage.is_night_shift && (
+                        <InlineEdit
+                          type="date"
+                          value={stage.night_shift_date}
+                          editable={canEdit && !stage.is_skipped}
+                          onSave={(val) => handleUpdate(stage.id, 'night_shift_date', val)}
+                          placeholder="Дата..."
+                          className="w-[125px]"
+                        />
+                      )}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">

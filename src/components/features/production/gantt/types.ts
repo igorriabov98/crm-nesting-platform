@@ -1,4 +1,4 @@
-import { STAGES } from '@/lib/constants/stages'
+import { STAGES, stageHasWorkshop } from '@/lib/constants/stages'
 import type { GanttMachine, GanttStage, GanttSupplyItem } from '@/app/(protected)/production/gantt/actions'
 import type { StageType } from '@/lib/types'
 
@@ -55,4 +55,8 @@ export function getGanttStageColor(stageType: StageType) {
 
 export function getWorkshopLabel(workshop: number | null) {
   return workshop ? `Ц${workshop}` : ''
+}
+
+export function getStageWorkshopLabel(stage: Pick<GanttStage, 'stage_type' | 'workshop'>) {
+  return stageHasWorkshop(stage.stage_type) ? getWorkshopLabel(stage.workshop) : ''
 }

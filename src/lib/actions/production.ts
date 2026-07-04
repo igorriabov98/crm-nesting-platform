@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { ROUTES } from '@/lib/constants/routes'
 import { isDirector } from '@/lib/utils/permissions'
-import { STAGE_ORDER } from '@/lib/constants/stages'
+import { STAGE_ORDER, stageHasSingleDate, stageHasWorkshop } from '@/lib/constants/stages'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
@@ -90,6 +90,10 @@ function stageLabel(stageType: StageDateRow['stage_type']) {
     actual_shipping: 'Факт отгрузки',
   }
   return labels[stageType] || stageType
+}
+
+function isSingleDateShippingStage(stageType: StageDateRow['stage_type']) {
+  return stageHasSingleDate(stageType)
 }
 
 function validateStageDates(
@@ -219,10 +223,22 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
       }
     }
 
-    const fixedWorkshopStages = ['cutting', 'painting', 'packaging']
-    if (data.workshop !== undefined && fixedWorkshopStages.includes(stageObj.stage_type)) {
-      if (stageObj.stage_type === 'cutting') data.workshop = 1
-      else data.workshop = 2
+    if (data.workshop !== undefined && !stageHasWorkshop(stageObj.stage_type)) {
+      data.workshop = null
+    }
+
+    if (isSingleDateShippingStage(stageObj.stage_type)) {
+      if ('date_start' in data && !('date_end' in data)) {
+        data.date_end = dateOnly(data.date_start)
+      }
+      if ('date_start' in data || 'date_end' in data) {
+        data.date_start = null
+        data.workshop = null
+        data.is_night_shift = false
+        data.night_shift_date = null
+      } else if (data.workshop !== undefined) {
+        data.workshop = null
+      }
     }
 
     const shouldValidateDates = 'date_start' in data || 'date_end' in data || 'is_skipped' in data

@@ -27,7 +27,7 @@ import { GanttBar } from '@/components/features/production/gantt/GanttBar'
 import { GanttSupplyMarker } from '@/components/features/production/gantt/GanttSupplyMarker'
 import { GanttMaterialMarker } from '@/components/features/production/gantt/GanttMaterialMarker'
 import { ProductionOutsourcingQuickAdd } from '@/components/features/production/ProductionOutsourcingQuickAdd'
-import { STAGES, STAGE_ORDER } from '@/lib/constants/stages'
+import { STAGES, STAGE_ORDER, stageHasWorkshop } from '@/lib/constants/stages'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { clearProductionStageDates, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
 import { createProductionPlanDateChangeRequest, type ProductionMonthPlanSummary, type ProductionPlanDateChangeInput } from '@/lib/actions/production-plan'
@@ -376,10 +376,6 @@ function formatTons(value: number) {
 
 function getWorkshopLabel(workshop: number | null) {
   return workshop ? `Ц${workshop}` : '—'
-}
-
-function stageHasWorkshop(stageType: StageType) {
-  return !['cutting', 'galvanizing'].includes(stageType)
 }
 
 function mergeWeldingLoadMachine(items: WeldingLoadMachine[], next: WeldingLoadMachine) {
@@ -940,6 +936,7 @@ function StageEditor({
   const editable = canEdit && !isSkipped
   const isClearing = clearingStageId === stage.id
   const hasDates = Boolean(stage.date_start || stage.date_end)
+  const hasWorkshop = stageHasWorkshop(stage.stage_type)
 
   return (
     <div className={cn('rounded-lg border bg-white p-3', isSkipped ? 'border-slate-200 opacity-75' : 'border-slate-200')}>
@@ -975,7 +972,7 @@ function StageEditor({
         </div>
       </div>
 
-      <div className={cn('mt-3 grid gap-2', isShippingDateOnly ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-3')}>
+      <div className={cn('mt-3 grid gap-2', isShippingDateOnly ? 'grid-cols-1' : hasWorkshop ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2')}>
         {isShippingDateOnly ? (
           <DateField
             label="Дата"
@@ -985,12 +982,14 @@ function StageEditor({
           />
         ) : (
           <>
-            <SelectField
-              label="Цех"
-              value={stage.workshop}
-              editable={editable && stageHasWorkshop(stage.stage_type)}
-              onSave={(value) => onStageUpdate(stage.id, 'workshop', value)}
-            />
+            {hasWorkshop && (
+              <SelectField
+                label="Цех"
+                value={stage.workshop}
+                editable={editable}
+                onSave={(value) => onStageUpdate(stage.id, 'workshop', value)}
+              />
+            )}
             <DateField
               label="Начало"
               value={getDateValue ? getDateValue(stage, 'date_start') : stage.date_start}
@@ -1411,7 +1410,7 @@ export function ProductionPlanner({
       const visibleMachineStages = machine.stages.filter((stage) => {
         if (!stage.date_start) return false
         if (!visibleStages.has(stage.stage_type)) return false
-        if (selectedWorkshop && stage.workshop !== selectedWorkshop) return false
+        if (selectedWorkshop && (!stageHasWorkshop(stage.stage_type) || stage.workshop !== selectedWorkshop)) return false
         return true
       })
 

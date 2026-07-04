@@ -11,7 +11,7 @@ import { GanttLegend } from './gantt/GanttLegend'
 import { GanttBar } from './gantt/GanttBar'
 import { GanttSupplyMarker } from './gantt/GanttSupplyMarker'
 import { GanttMaterialMarker } from './gantt/GanttMaterialMarker'
-import { STAGE_ORDER } from '@/lib/constants/stages'
+import { STAGE_ORDER, stageHasWorkshop } from '@/lib/constants/stages'
 import { generateDateScale, type GanttScale } from '@/lib/utils/gantt'
 import { formatDesiredShippingDate } from '@/lib/utils/desired-shipping'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
@@ -30,6 +30,7 @@ import {
   GANTT_WORKSHOP_COL_WIDTH,
   getGanttStageColor,
   getGanttStageLabel,
+  getStageWorkshopLabel,
   getWorkshopLabel,
   type GanttGroupRow,
 } from './gantt/types'
@@ -285,7 +286,7 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
         )}
         style={{ left: GANTT_MACHINE_COL_WIDTH + GANTT_STAGE_COL_WIDTH, width: GANTT_WORKSHOP_COL_WIDTH }}
       >
-        {row.type === 'stage' ? getWorkshopLabel(row.stage.workshop) : ''}
+        {row.type === 'stage' ? getStageWorkshopLabel(row.stage) : ''}
       </div>
 
       <div
@@ -452,7 +453,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
         .filter((stage) => {
           if (!stage.date_start) return false
           if (!visibleStages.has(stage.stage_type)) return false
-          if (selectedWorkshop && stage.workshop !== selectedWorkshop) return false
+          if (selectedWorkshop && (!stageHasWorkshop(stage.stage_type) || stage.workshop !== selectedWorkshop)) return false
           return true
         })
         .map((stage) => ({

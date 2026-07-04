@@ -12,7 +12,7 @@ import { InlineEdit } from '@/components/features/shared/InlineEdit'
 import { StickyTable } from '@/components/features/shared/StickyTable'
 import { ProductionSummary } from './ProductionSummary'
 import { ProductionFilters, type ProductionFilterValues } from './ProductionFilters'
-import { STAGES, STAGE_ORDER } from '@/lib/constants/stages'
+import { STAGES, STAGE_ORDER, stageHasWorkshop } from '@/lib/constants/stages'
 import { useRole } from '@/lib/hooks/useRole'
 import { clearProductionStageDates, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
 import { ROUTES } from '@/lib/constants/routes'
@@ -52,19 +52,17 @@ const workshopCellClass = 'w-[50px] min-w-[50px] px-1 py-1 text-center text-xs'
 const dateCellClass = 'w-[110px] min-w-[110px] px-1 py-1 text-center text-xs'
 const nightCellClass = 'w-[40px] min-w-[40px] px-1 py-1 text-center text-xs'
 
-const stageHasWorkshop = (stageType: string) => !['cutting', 'galvanizing'].includes(stageType)
-
 const getStageColumnWidths = (stageType: string) => {
   if (stageType === 'shipping' || stageType === 'actual_shipping') return [132]
+  if (stageType === 'painting') return stageHasWorkshop(stageType) ? [50, 110, 110, 40] : [110, 110, 40]
   if (!stageHasWorkshop(stageType)) return [110, 110]
-  if (stageType === 'painting') return [50, 110, 110, 40]
   return [50, 110, 110]
 }
 
 const stageColumnWidth = (stageType: string) => {
   if (stageType === 'shipping' || stageType === 'actual_shipping') return 'w-[132px] min-w-[132px]'
+  if (stageType === 'painting') return stageHasWorkshop(stageType) ? 'w-[310px] min-w-[310px]' : 'w-[260px] min-w-[260px]'
   if (!stageHasWorkshop(stageType)) return 'w-[220px] min-w-[220px]'
-  if (stageType === 'painting') return 'w-[310px] min-w-[310px]'
   return 'w-[270px] min-w-[270px]'
 }
 
@@ -461,7 +459,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                 const cols = stageType === 'shipping' || stageType === 'actual_shipping'
                   ? 1
                   : stageType === 'painting'
-                    ? 4
+                    ? (stageHasWorkshop(stageType) ? 4 : 3)
                     : stageHasWorkshop(stageType)
                       ? 3
                       : 2
@@ -559,7 +557,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                       const cols = stageType === 'shipping' || stageType === 'actual_shipping'
                         ? 1
                         : stageType === 'painting'
-                          ? 4
+                          ? (stageHasWorkshop(stageType) ? 4 : 3)
                           : stageHasWorkshop(stageType)
                             ? 3
                             : 2
