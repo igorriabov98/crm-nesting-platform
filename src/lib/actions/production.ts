@@ -331,10 +331,13 @@ export async function updateMachineDate(
   try {
     const { supabase, user } = await requireAuth()
 
+    if (field === 'actual_material_date') {
+      throw new Error('Факт поставки материала заполняется автоматически после приемки всех материалов по заявке')
+    }
+
     const salesFields: MachineDateField[] = ['desired_shipping_date', 'delivery_to_client_date']
     const productionFields: MachineDateField[] = [
       'planned_material_date',
-      'actual_material_date',
       'actual_shipping_date',
     ]
 

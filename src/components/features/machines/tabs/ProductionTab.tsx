@@ -93,7 +93,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
   }
 
   const handleMachineDateUpdate = async (
-    field: 'desired_shipping_date' | 'planned_material_date' | 'actual_material_date' | 'actual_shipping_date' | 'delivery_to_client_date',
+    field: 'desired_shipping_date' | 'planned_material_date' | 'actual_shipping_date' | 'delivery_to_client_date',
     value: string | null
   ) => {
     const res = await updateMachineDate(machine.id, field, value)
@@ -185,8 +185,8 @@ export function ProductionTab({ machine }: ProductionTabProps) {
             <InlineEdit
               type="date"
               value={machine.actual_material_date}
-              editable={canEditProductionDates}
-              onSave={(value) => handleMachineDateUpdate('actual_material_date', value)}
+              editable={false}
+              onSave={async () => ({ success: true })}
               dateDisplayFormat="dd.MM.yyyy"
               fallbackText="—"
               placeholder="Дата..."

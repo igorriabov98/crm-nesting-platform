@@ -73,6 +73,36 @@ type RpcClient = Awaited<ReturnType<typeof createServerSupabaseClient>> & {
 }
 
 const DIRECTOR_ROLES = ['planning_director', 'financial_director', 'commercial_director'] as const
+const SUPPLY_ORDER_REQUEST_STATUSES = ['submitted_to_supply', 'completed']
+const SUPPLY_ORDER_TABLES = [
+  'request_sheet_metal',
+  'request_round_tube',
+  'request_circle',
+  'request_pipe',
+  'request_knives',
+  'request_components',
+  'request_paint',
+  'request_mesh',
+  'request_chain_cord',
+]
+
+type SupplyOrderRequestRow = {
+  id: string
+  machine_id: string
+}
+type SupplyOrderItemRow = Record<string, unknown> & {
+  id: string
+  request_id: string
+  order_status?: string | null
+  delivered_at?: string | null
+}
+type SupplyOrderScheduleRow = {
+  request_item_table: string
+  request_item_id: string
+  delivery_date: string | null
+  status: string | null
+  delivered_at: string | null
+}
 
 function omitExpenseId<T extends { id?: unknown }>(expense: T) {
   const { id: _id, ...payload } = expense
@@ -606,6 +636,141 @@ function getDisplayMachineStatus(machine: {
   return 'created' satisfies MachineStatus
 }
 
+function supplyOrderRequestedQuantity(table: string, row: SupplyOrderItemRow) {
+  if (table === 'request_sheet_metal') return Number(row.remainder_qty || row.to_order_kg || 0)
+  if (table === 'request_round_tube') return Number(row.order_kg || 0)
+  if (table === 'request_circle') return Number(row.remainder_mm || 0)
+  if (table === 'request_pipe') return row.pipe_type === 'wire' ? Number(row.remainder_kg || 0) : Number(row.remainder_length_mm || 0)
+  if (table === 'request_knives') {
+    const meters = Number(row.remainder_meters || 0)
+    return meters > 0 ? meters * 1000 : Number(row.to_order_mm || 0)
+  }
+  if (table === 'request_components') return Math.max(Number(row.quantity_needed || 0) - Number(row.stock_remainder || 0), 0)
+  if (table === 'request_mesh') return Number(row.remainder_qty || 0)
+  if (table === 'request_chain_cord') return Number(row.remainder_meters || 0) * 1000
+  return Number(row.remainder_kg || row.to_order_kg || 0)
+}
+
+function supplyOrderReservedQuantity(table: string, row: SupplyOrderItemRow) {
+  if (table === 'request_sheet_metal') return Number(row.reserved_from_stock_kg || 0)
+  if (table === 'request_round_tube') return Number(row.reserved_from_stock_kg || 0)
+  if (table === 'request_circle') return Number(row.reserved_from_stock_mm || 0)
+  if (table === 'request_pipe') return row.pipe_type === 'wire' ? Number(row.reserved_from_stock_kg || 0) : Number(row.reserved_from_stock_length_mm || 0)
+  if (table === 'request_knives') return Number(row.reserved_from_stock_mm || 0)
+  if (table === 'request_components') return Number(row.reserved_from_stock || 0)
+  if (table === 'request_mesh') return Number(row.reserved_from_stock_qty || 0)
+  if (table === 'request_chain_cord') return Number(row.reserved_from_stock_meters || 0) * 1000
+  return Number(row.reserved_from_stock_kg || 0)
+}
+
+function actualMaterialDateOnly(value: unknown) {
+  return typeof value === 'string' && value.length > 0 ? value.slice(0, 10) : null
+}
+
+function rememberLatestActualMaterialDate(current: string | null, next: string | null) {
+  if (!next) return current
+  return !current || next > current ? next : current
+}
+
+async function loadSupplyOrderActualMaterialDates(db: LooseDb, machineIds: string[]) {
+  const uniqueMachineIds = Array.from(new Set(machineIds.filter(Boolean)))
+  const actualDates = new Map<string, string>()
+  if (uniqueMachineIds.length === 0) return actualDates
+
+  const readDb = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createAdminClient() as unknown as LooseDb
+    : db
+
+  const { data: requestsData, error: requestsError } = await readDb
+    .from('technologist_requests')
+    .select('id, machine_id')
+    .in('machine_id', uniqueMachineIds)
+    .in('status', SUPPLY_ORDER_REQUEST_STATUSES)
+
+  if (requestsError) throw new Error(requestsError.message || 'Не удалось проверить заявки снабжения')
+
+  const requests = (requestsData || []) as SupplyOrderRequestRow[]
+  const requestIds = requests.map((request) => request.id)
+  if (requestIds.length === 0) return actualDates
+
+  const requestMachineMap = new Map(requests.map((request) => [request.id, request.machine_id]))
+  const stateByMachine = new Map(uniqueMachineIds.map((machineId) => [machineId, {
+    hasOrderableItems: false,
+    allDelivered: true,
+    latestDeliveredDate: null as string | null,
+  }]))
+
+  const rowsByTable = await Promise.all(SUPPLY_ORDER_TABLES.map(async (table) => {
+    const { data, error } = await readDb
+      .from(table)
+      .select('*')
+      .in('request_id', requestIds)
+    if (error) throw new Error(error.message || 'Не удалось загрузить позиции снабжения')
+    return { table, rows: (data || []) as SupplyOrderItemRow[] }
+  }))
+
+  const orderableItems: Array<{ table: string; row: SupplyOrderItemRow; machineId: string }> = []
+  for (const { table, rows } of rowsByTable) {
+    for (const row of rows) {
+      const machineId = requestMachineMap.get(row.request_id)
+      if (!machineId) continue
+
+      const toOrder = Math.max(supplyOrderRequestedQuantity(table, row) - supplyOrderReservedQuantity(table, row), 0)
+      if (toOrder <= 0) continue
+      orderableItems.push({ table, row, machineId })
+    }
+  }
+
+  const itemIds = orderableItems.map((item) => item.row.id)
+  const { data: schedulesData, error: schedulesError } = itemIds.length > 0
+    ? await readDb
+        .from('supply_order_delivery_schedules')
+        .select('request_item_table, request_item_id, delivery_date, status, delivered_at')
+        .in('request_item_id', itemIds)
+    : { data: [], error: null }
+
+  if (schedulesError) throw new Error(schedulesError.message || 'Не удалось загрузить график снабжения')
+
+  const schedulesByItem = new Map<string, SupplyOrderScheduleRow[]>()
+  for (const schedule of (schedulesData || []) as SupplyOrderScheduleRow[]) {
+    const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+    schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+  }
+
+  for (const { table, row, machineId } of orderableItems) {
+    const state = stateByMachine.get(machineId)
+    if (!state) continue
+
+    state.hasOrderableItems = true
+    const schedules = schedulesByItem.get(`${table}:${row.id}`) || []
+    const itemDelivered = schedules.length > 0
+      ? schedules.every((schedule) => schedule.status === 'delivered')
+      : row.order_status === 'delivered'
+
+    if (!itemDelivered) {
+      state.allDelivered = false
+      continue
+    }
+
+    state.latestDeliveredDate = rememberLatestActualMaterialDate(state.latestDeliveredDate, actualMaterialDateOnly(row.delivered_at))
+    for (const schedule of schedules) {
+      if (schedule.status !== 'delivered') continue
+      state.latestDeliveredDate = rememberLatestActualMaterialDate(
+        state.latestDeliveredDate,
+        actualMaterialDateOnly(schedule.delivered_at) || actualMaterialDateOnly(schedule.delivery_date)
+      )
+    }
+  }
+
+  for (const [machineId, state] of stateByMachine.entries()) {
+    if (state.hasOrderableItems && state.allDelivered && state.latestDeliveredDate) {
+      actualDates.set(machineId, state.latestDeliveredDate)
+    }
+  }
+
+  return actualDates
+}
+
 async function syncCoatingDependentProductionStages(db: LooseDb, machineId: string) {
   const { data: itemsData, error: itemsError } = await db
     .from('machine_items')
@@ -705,10 +870,18 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
     if (error) throw error
 
     const rows = (rawData || []) as unknown as Omit<MachineListItem, 'production_progress' | 'supply_progress' | 'uniqueCoatings' | 'progress'>[]
-    const progressContexts = await loadMachineProgressContexts(db, rows.map((machine) => machine.id))
+    const machineIds = rows.map((machine) => machine.id)
+    const [progressContexts, actualMaterialDateFallbacks] = await Promise.all([
+      loadMachineProgressContexts(db, machineIds),
+      loadSupplyOrderActualMaterialDates(db, rows.filter((machine) => !machine.actual_material_date).map((machine) => machine.id)),
+    ])
     const mappedData: MachineListItem[] = rows.map((m) => {
+      const machine = {
+        ...m,
+        actual_material_date: m.actual_material_date || actualMaterialDateFallbacks.get(m.id) || null,
+      }
       // Производство
-      const activeStages = (m.production_stages || []).filter((s) => !s.is_skipped)
+      const activeStages = (machine.production_stages || []).filter((s) => !s.is_skipped)
       const completedStages = activeStages.filter((s) => !!s.date_end)
       const production_progress = {
         completed: completedStages.length,
@@ -716,7 +889,7 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
       }
 
       // Снабжение
-      const allSupply = m.supply_items || []
+      const allSupply = machine.supply_items || []
       const receivedSupply = allSupply.filter((s) => s.status === 'received')
       const supply_progress = {
         completed: receivedSupply.length,
@@ -724,16 +897,16 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
       }
       
       // Уникальные покрытия
-      const uniqueCoatings = Array.from(new Set((m.machine_items || []).map((i) => i.coating)))
+      const uniqueCoatings = Array.from(new Set((machine.machine_items || []).map((i) => i.coating)))
 
       return {
-        ...m,
-        product: (m.machine_items || []).find((item) => !item.is_sample && item.product_name)?.product_name || null,
-        status: getDisplayMachineStatus(m),
+        ...machine,
+        product: (machine.machine_items || []).find((item) => !item.is_sample && item.product_name)?.product_name || null,
+        status: getDisplayMachineStatus(machine),
         production_progress,
         supply_progress,
         uniqueCoatings,
-        progress: resolveMachineProgressWithContext(m, progressContexts.get(m.id)),
+        progress: resolveMachineProgressWithContext(machine, progressContexts.get(machine.id)),
       }
     })
 
@@ -794,11 +967,20 @@ export async function getMachine(id: string) {
     const total_cost = total_items_cost + total_expenses
     const has_zinc = items.some((i) => i.coating === 'zinc')
     const has_painting = items.some((i) => i.coating === 'powder_coating')
-    const progressContexts = await loadMachineProgressContexts(db, [machineData.id])
+    const [progressContexts, actualMaterialDateFallbacks] = await Promise.all([
+      loadMachineProgressContexts(db, [machineData.id]),
+      machineData.actual_material_date
+        ? Promise.resolve(new Map<string, string>())
+        : loadSupplyOrderActualMaterialDates(db, [machineData.id]),
+    ])
+    const machineWithActualMaterialDate: MachineDetails = {
+      ...machineData,
+      actual_material_date: machineData.actual_material_date || actualMaterialDateFallbacks.get(machineData.id) || null,
+    }
 
     const enrichedData: MachineDetails = {
-      ...machineData,
-      status: getDisplayMachineStatus(machineData),
+      ...machineWithActualMaterialDate,
+      status: getDisplayMachineStatus(machineWithActualMaterialDate),
       total_weight,
       total_items_cost,
       total_expenses,
@@ -806,7 +988,7 @@ export async function getMachine(id: string) {
       item_count: items.length,
       has_zinc,
       has_painting,
-      progress: resolveMachineProgressWithContext(machineData, progressContexts.get(machineData.id)),
+      progress: resolveMachineProgressWithContext(machineWithActualMaterialDate, progressContexts.get(machineData.id)),
     }
 
     return { data: enrichedData, error: null }
@@ -1075,6 +1257,9 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
   try {
     const { supabase, db, user } = await requireSalesPlanPermission('manage')
     await assertMachineNotArchived(db, id)
+    if (data.actual_material_date !== undefined) {
+      throw new Error('Факт поставки материала заполняется автоматически после приемки всех материалов по заявке')
+    }
     if (
       user.role === 'production_manager' &&
       data.planned_material_date !== undefined &&
@@ -1153,7 +1338,6 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
     if (data.material_type !== undefined) machineUpdates.material_type = data.material_type
     if (data.desired_shipping_date !== undefined) machineUpdates.desired_shipping_date = data.desired_shipping_date || null
     if (data.planned_material_date !== undefined) machineUpdates.planned_material_date = data.planned_material_date || null
-    if (data.actual_material_date !== undefined) machineUpdates.actual_material_date = data.actual_material_date || null
     if (data.actual_shipping_date !== undefined) machineUpdates.actual_shipping_date = data.actual_shipping_date || null
     if (data.delivery_to_client_date !== undefined) machineUpdates.delivery_to_client_date = data.delivery_to_client_date || null
     if (data.production_month !== undefined) machineUpdates.production_month = data.production_month ? normalizeProductionMonth(data.production_month) : null

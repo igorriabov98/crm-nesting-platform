@@ -277,7 +277,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
 
   const handleMachineDateUpdate = async (
     machineId: string,
-    field: 'planned_material_date' | 'actual_material_date' | 'actual_shipping_date',
+    field: 'planned_material_date' | 'actual_shipping_date',
     value: string | null
   ) => {
     const res = await updateMachineDate(machineId, field, value)
@@ -329,7 +329,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
   const renderDateEdit = (
     value: string | null,
     editable: boolean,
-    onSave: (value: string | null) => Promise<unknown>
+    onSave: (value: string | null) => Promise<unknown> = async () => ({ success: true })
   ) => (
     <InlineEdit
       type="date"
@@ -548,7 +548,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                     {renderDateEdit(row.machine.planned_material_date, canEdit, (value) => handleMachineDateUpdate(row.machine.id, 'planned_material_date', value))}
                   </td>
                   <td className={cn('w-[110px] min-w-[110px] px-1 py-1.5 text-center text-xs border-l border-[#E8ECF0]', !row.machine.is_confirmed ? 'bg-amber-50' : 'bg-white')}>
-                    {renderDateEdit(row.machine.actual_material_date, canEdit, (value) => handleMachineDateUpdate(row.machine.id, 'actual_material_date', value))}
+                    {renderDateEdit(row.machine.actual_material_date, false)}
                   </td>
 
                   {displayStageTypes.map((stageType) => {

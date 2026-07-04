@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { MaterialCategory, OrderItemStatus } from '@/lib/types'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
@@ -306,6 +307,7 @@ const ORDER_TABLES = [
   'request_mesh',
   'request_chain_cord',
 ]
+const MATERIAL_COMPLETION_REQUEST_STATUSES = ['submitted_to_supply', 'completed']
 
 async function requireAccess(operation: PermissionOperation = 'view') {
   const { supabase, userId } = await requirePermission('supply_orders', operation)
@@ -465,6 +467,130 @@ async function getAffectedMachineIds(db: LooseDb, groupedItems: Map<string, stri
   if (error) throw new Error(error.message || 'Не удалось определить машины позиций')
 
   return Array.from(new Set(((data || []) as { machine_id: string }[]).map((row) => row.machine_id).filter(Boolean)))
+}
+
+function todayDateOnly() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function dateOnly(value: unknown) {
+  return typeof value === 'string' && value.length > 0 ? value.slice(0, 10) : null
+}
+
+function rememberLatestDate(current: string | null, next: string | null) {
+  if (!next) return current
+  return !current || next > current ? next : current
+}
+
+async function syncActualMaterialDatesForMachines(machineIds: string[]) {
+  const uniqueMachineIds = Array.from(new Set(machineIds.filter(Boolean)))
+  if (uniqueMachineIds.length === 0) return
+
+  const adminDb = createAdminClient() as unknown as LooseDb
+  const { data: requestsData, error: requestsError } = await adminDb
+    .from('technologist_requests')
+    .select('id, machine_id')
+    .in('machine_id', uniqueMachineIds)
+    .in('status', MATERIAL_COMPLETION_REQUEST_STATUSES)
+
+  if (requestsError) throw new Error(requestsError.message || 'Не удалось проверить заявки снабжения')
+
+  const requests = (requestsData || []) as Array<{ id: string; machine_id: string }>
+  const requestIds = requests.map((request) => request.id)
+  if (requestIds.length === 0) return
+
+  const requestMachineMap = new Map(requests.map((request) => [request.id, request.machine_id]))
+  const stateByMachine = new Map(uniqueMachineIds.map((machineId) => [machineId, {
+    hasOrderableItems: false,
+    allDelivered: true,
+    latestDeliveredDate: null as string | null,
+  }]))
+
+  const rowsByTable = await Promise.all(ORDER_TABLES.map(async (table) => ({
+    table,
+    rows: await loadRows(adminDb, table, requestIds),
+  })))
+
+  const orderableItems: Array<{ table: string; row: RequestItemRow; machineId: string }> = []
+  for (const { table, rows } of rowsByTable) {
+    for (const row of rows) {
+      const machineId = requestMachineMap.get(row.request_id)
+      if (!machineId) continue
+
+      const toOrder = Math.max(requestedQuantity(table, row) - reservedQuantity(table, row), 0)
+      if (toOrder <= 0) continue
+      orderableItems.push({ table, row, machineId })
+    }
+  }
+
+  const itemIds = orderableItems.map((item) => item.row.id)
+  const { data: schedulesData, error: schedulesError } = itemIds.length > 0
+    ? await adminDb
+        .from('supply_order_delivery_schedules')
+        .select('request_item_table, request_item_id, delivery_date, status, delivered_at')
+        .in('request_item_id', itemIds)
+    : { data: [], error: null }
+
+  if (schedulesError) throw new Error(schedulesError.message || 'Не удалось загрузить график снабжения')
+
+  const schedulesByItem = new Map<string, Array<{
+    request_item_table: string
+    request_item_id: string
+    delivery_date: string | null
+    status: string | null
+    delivered_at: string | null
+  }>>()
+  for (const schedule of (schedulesData || []) as Array<{
+    request_item_table: string
+    request_item_id: string
+    delivery_date: string | null
+    status: string | null
+    delivered_at: string | null
+  }>) {
+    const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+    schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+  }
+
+  for (const { table, row, machineId } of orderableItems) {
+    const state = stateByMachine.get(machineId)
+    if (!state) continue
+
+    state.hasOrderableItems = true
+    const schedules = schedulesByItem.get(`${table}:${row.id}`) || []
+    const itemDelivered = schedules.length > 0
+      ? schedules.every((schedule) => schedule.status === 'delivered')
+      : row.order_status === 'delivered'
+
+    if (!itemDelivered) {
+      state.allDelivered = false
+      continue
+    }
+
+    state.latestDeliveredDate = rememberLatestDate(state.latestDeliveredDate, dateOnly(row.delivered_at))
+    for (const schedule of schedules) {
+      if (schedule.status !== 'delivered') continue
+      state.latestDeliveredDate = rememberLatestDate(
+        state.latestDeliveredDate,
+        dateOnly(schedule.delivered_at) || dateOnly(schedule.delivery_date)
+      )
+    }
+  }
+
+  await Promise.all(Array.from(stateByMachine.entries()).map(async ([machineId, state]) => {
+    if (!state.hasOrderableItems || !state.allDelivered) return
+
+    const nextDate = state.latestDeliveredDate || todayDateOnly()
+    const { error } = await adminDb
+      .from('machines')
+      .update({ actual_material_date: nextDate })
+      .eq('id', machineId)
+
+    if (error) throw new Error(error.message || 'Не удалось обновить фактическую дату поставки материала')
+  }))
 }
 
 function assertOrderTable(table: string) {
@@ -1919,6 +2045,8 @@ export async function receiveMaterialDelivery(input: {
       throw new Error(error.message || 'Не удалось принять поставку на склад')
     }
 
+    await syncActualMaterialDatesForMachines(machineIds)
+
     try {
       await dispatchPendingTelegramDeliveries({ limit: 100 })
     } catch {
@@ -1930,6 +2058,8 @@ export async function receiveMaterialDelivery(input: {
     revalidateInventoryHistoryPaths(affectedOrderItems)
     revalidatePath(ROUTES.SUPPLY)
     revalidatePath(ROUTES.SUPPLY_ORDERS)
+    revalidatePath(ROUTES.PRODUCTION)
+    revalidatePath(ROUTES.GANTT)
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(ROUTES.TASKS)
     revalidatePath(ROUTES.NOTIFICATIONS)
@@ -2327,6 +2457,7 @@ export async function markOrderStatus(
         p_performed_by: userId,
       })
       if (error) throw new Error(error.message || 'Не удалось принять позиции на склад')
+      await syncActualMaterialDatesForMachines(machineIds)
     } else {
       await Promise.all(selectedItems.map(async (item) => {
         const scheduleSupplierIds = scheduleSuppliersByItem.get(itemKey(item)) || new Set<string>()
@@ -2475,6 +2606,7 @@ export async function receiveOrderDeliverySchedule(scheduleId: string, receivedQ
       p_received_quantity: actualQuantity,
     })
     if (error) throw new Error(error.message || 'Не удалось принять поставку на склад')
+    await syncActualMaterialDatesForMachines(machineIds)
     try {
       await dispatchPendingTelegramDeliveries({ limit: 100 })
     } catch {
