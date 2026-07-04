@@ -326,36 +326,36 @@ export async function readBrepPartContours(
         currentShape = explorer.Current();
         solid = oc.TopoDS.Solid_1(currentShape);
         const deadlineMs = options.timeoutMs ? startTime + options.timeoutMs : undefined;
-        const flatContour = extractPartContour({ oc, shape: solid, deadlineMs });
+        const unfolded = await tryUnfoldSolid({
+          oc,
+          solid,
+          solidIndex,
+          deadlineMs,
+          material: options.material ?? 'Сталь',
+          resolveKFactor: options.resolveKFactor,
+        });
 
-        if (flatContour) {
-          results.push({
-            solidIndex,
-            contour: flatContour,
-            fallbackReason: null,
-            elapsedMs: Date.now() - startTime,
-            kFactor: null,
-            kFactorDefaulted: false,
-            warnings: [],
-          });
-        } else {
-          const unfolded = await tryUnfoldSolid({
-            oc,
-            solid,
-            solidIndex,
-            deadlineMs,
-            material: options.material ?? 'Сталь',
-            resolveKFactor: options.resolveKFactor,
-          });
-
+        if (unfolded.contour) {
           results.push({
             solidIndex,
             contour: unfolded.contour,
-            fallbackReason: unfolded.contour ? null : unfolded.reason,
+            fallbackReason: null,
             elapsedMs: Date.now() - startTime,
             kFactor: unfolded.kFactor,
             kFactorDefaulted: unfolded.kFactorDefaulted,
             warnings: unfolded.warnings,
+          });
+        } else {
+          const flatContour = extractPartContour({ oc, shape: solid, deadlineMs });
+
+          results.push({
+            solidIndex,
+            contour: flatContour,
+            fallbackReason: flatContour ? null : unfolded.reason,
+            elapsedMs: Date.now() - startTime,
+            kFactor: flatContour ? null : unfolded.kFactor,
+            kFactorDefaulted: flatContour ? false : unfolded.kFactorDefaulted,
+            warnings: flatContour ? [] : unfolded.warnings,
           });
         }
       } catch (error) {
