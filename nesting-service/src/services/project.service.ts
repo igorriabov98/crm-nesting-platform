@@ -128,7 +128,7 @@ export class ProjectService {
       created = true;
 
       await withTimeout(
-        queueService.addStepParsingJob({ projectId: id, ...files }),
+        queueService.addStepParsingJob({ projectId: id, sourceLabel: input.orderNumber, ...files }),
         5000,
         'Не удалось поставить STEP-файл в очередь парсинга'
       );
