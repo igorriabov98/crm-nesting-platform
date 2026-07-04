@@ -27,6 +27,7 @@ import { PackingListTab } from './tabs/PackingListTab'
 import { ProductionTab } from './tabs/ProductionTab'
 import { SupplyTab } from './tabs/SupplyTab'
 import { InvoiceTab } from './tabs/InvoiceTab'
+import { OutsourcingTab } from '@/components/features/outsourcing/OutsourcingTab'
 import { MachineTasksPanel } from './MachineTasksPanel'
 import { MachineRequestPanel } from './MachineRequestPanel'
 import { MachineActivityPanel } from './MachineActivityPanel'
@@ -46,6 +47,7 @@ import type { TaskWithRelations } from '@/lib/actions/tasks'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 import type { MachineItemNestingState } from '@/lib/actions/machine-item-nesting'
 import type { MachineActivityPayload } from '@/lib/actions/machine-activity'
+import type { MachineOutsourcingData } from '@/lib/actions/outsourcing'
 import { ROUTES } from '@/lib/constants/routes'
 import { updateMachineConfirmation } from '@/app/(protected)/sales-plan/actions'
 import { cn } from '@/lib/utils'
@@ -57,6 +59,7 @@ interface MachineDetailProps {
   requestData?: TechnologistRequestPayload | null
   nestingStates?: MachineItemNestingState[]
   activity: MachineActivityPayload
+  outsourcingData?: MachineOutsourcingData | null
   canManageTechnologistRequests?: boolean
   canViewSupplyRequest?: boolean
   canManageNesting?: boolean
@@ -104,6 +107,7 @@ export function MachineDetail({
   requestData = null,
   nestingStates = [],
   activity,
+  outsourcingData = null,
   canManageTechnologistRequests = false,
   canViewSupplyRequest = false,
   canManageNesting = false,
@@ -223,31 +227,30 @@ export function MachineDetail({
 
             <div className="flex flex-wrap items-center gap-2 lg:max-w-[560px] lg:justify-end">
               <DocumentReadinessIndicator missingFields={documentMissingFields} />
-            <DocumentGenerationButtons
-              machineId={machine.id}
-              clientId={machine.client_id}
-              contractId={machine.contract_id}
-              specificationNumber={machine.specification_number}
-              specificationDate={machine.specification_date}
-            />
-            {!machine.factory_id && isDirector && (
-              <Button
-                className="min-h-10 bg-white text-blue-950 hover:bg-blue-50"
-                onClick={() => setIsAssignOpen(true)}
-              >
-                <Factory className="mr-2 h-4 w-4" />
-                Назначить завод
-              </Button>
-            )}
-            {canEdit && (
-              <Button
-                className="min-h-10 bg-blue-600 text-white hover:bg-blue-500"
-                onClick={() => setIsEditOpen(true)}
-              >
-                <Edit className="mr-2 h-4 w-4" />
-                Редактировать
-              </Button>
-            )}
+              <DocumentGenerationButtons
+                machineId={machine.id}
+                specificationNumber={machine.specification_number}
+                specificationDate={machine.specification_date}
+                deliveryBasisType={machine.delivery_basis_type}
+              />
+              {!machine.factory_id && isDirector && (
+                <Button
+                  className="min-h-10 bg-white text-blue-950 hover:bg-blue-50"
+                  onClick={() => setIsAssignOpen(true)}
+                >
+                  <Factory className="mr-2 h-4 w-4" />
+                  Назначить завод
+                </Button>
+              )}
+              {canEdit && (
+                <Button
+                  className="min-h-10 bg-blue-600 text-white hover:bg-blue-500"
+                  onClick={() => setIsEditOpen(true)}
+                >
+                  <Edit className="mr-2 h-4 w-4" />
+                  Редактировать
+                </Button>
+              )}
               {(canEditConfirmation || canDelete) && (
                 <DropdownMenu>
                   <DropdownMenuTrigger
@@ -373,6 +376,13 @@ export function MachineDetail({
             <Factory className="h-4 w-4" aria-hidden="true" />
             Производство
           </TabsTrigger>
+          <TabsTrigger
+            value="outsourcing"
+            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
+          >
+            <Truck className="h-4 w-4" aria-hidden="true" />
+            Аутсорсинг
+          </TabsTrigger>
           <TabsTrigger 
             value="supply" 
             className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
@@ -411,6 +421,15 @@ export function MachineDetail({
           </TabsContent>
           <TabsContent value="production" className="outline-none">
             <ProductionTab machine={machine} />
+          </TabsContent>
+          <TabsContent value="outsourcing" className="outline-none">
+            {outsourcingData ? (
+              <OutsourcingTab data={outsourcingData} />
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
+                Аутсорсинг недоступен для этой машины.
+              </div>
+            )}
           </TabsContent>
           <TabsContent value="supply" className="outline-none">
             <SupplyTab machine={machine} />

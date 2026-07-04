@@ -8,8 +8,10 @@ import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { ProductionPlanner } from '@/components/features/production/ProductionPlanner'
+import { ProductionOutsourcingPanel } from '@/components/features/production/ProductionOutsourcingPanel'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { markProductionMonthPlanStatus, type ProductionMonthPlanSummary } from '@/lib/actions/production-plan'
+import type { ProductionOutsourcingSummary } from '@/lib/actions/outsourcing'
 import { formatProductionMonth } from '@/lib/utils/production-months'
 import { useRole } from '@/lib/hooks/useRole'
 import { cn } from '@/lib/utils'
@@ -24,6 +26,7 @@ interface ProductionWorkspaceProps {
   ganttData: GanttData
   productionData: ProductionRow[]
   monthPlans: ProductionMonthPlanSummary[]
+  outsourcingSummary: ProductionOutsourcingSummary
   monthPlanError?: string | null
 }
 
@@ -151,6 +154,7 @@ export function ProductionWorkspace({
   ganttData,
   productionData,
   monthPlans,
+  outsourcingSummary,
   monthPlanError,
 }: ProductionWorkspaceProps) {
   const [plannerFilters, setPlannerFilters] = useState<GanttFilters>(defaultGanttFilters)
@@ -198,6 +202,8 @@ export function ProductionWorkspace({
         plans={monthPlans}
         error={monthPlanError}
       />
+
+      <ProductionOutsourcingPanel summary={outsourcingSummary} />
 
       <ProductionPlanner
         data={ganttData}

@@ -26,6 +26,7 @@ import { GanttLegend } from '@/components/features/production/gantt/GanttLegend'
 import { GanttBar } from '@/components/features/production/gantt/GanttBar'
 import { GanttSupplyMarker } from '@/components/features/production/gantt/GanttSupplyMarker'
 import { GanttMaterialMarker } from '@/components/features/production/gantt/GanttMaterialMarker'
+import { ProductionOutsourcingQuickAdd } from '@/components/features/production/ProductionOutsourcingQuickAdd'
 import { STAGES, STAGE_ORDER } from '@/lib/constants/stages'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { clearProductionStageDates, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
@@ -1182,18 +1183,32 @@ function ProductionMachineInspector({
         </div>
         {productionRow ? (
           <div className="space-y-2">
-            {sortedStages.map((stage) => (
-              <StageEditor
-                key={stage.id}
-                row={productionRow}
-                stage={stage}
-                canEdit={canEdit}
-                clearingStageId={clearingStageId}
-                getDateValue={getStageDateValue}
-                onStageDateUpdate={onStageDateUpdate}
-                onStageUpdate={onStageUpdate}
-                onClearDates={onClearDates}
-              />
+            {sortedStages.map((stage, index) => (
+              <React.Fragment key={stage.id}>
+                <StageEditor
+                  row={productionRow}
+                  stage={stage}
+                  canEdit={canEdit}
+                  clearingStageId={clearingStageId}
+                  getDateValue={getStageDateValue}
+                  onStageDateUpdate={onStageDateUpdate}
+                  onStageUpdate={onStageUpdate}
+                  onClearDates={onClearDates}
+                />
+                {index < sortedStages.length - 1 && (
+                  <div className="relative flex items-center justify-center py-1">
+                    <div className="absolute left-4 right-4 top-1/2 border-t border-dashed border-slate-300" aria-hidden="true" />
+                    <ProductionOutsourcingQuickAdd
+                      machineId={machine.id}
+                      machineName={machine.name}
+                      suggestedPositionAfterStageType={stage.stage_type}
+                      label="Добавить аутсорсинг"
+                      disabled={!canEdit}
+                      className="relative z-10 min-h-9 bg-white px-3 text-xs shadow-sm hover:bg-blue-50"
+                    />
+                  </div>
+                )}
+              </React.Fragment>
             ))}
           </div>
         ) : (
@@ -1917,9 +1932,10 @@ export function ProductionPlanner({
     try {
       const result = await createProductionPlanDateChangeRequest({
         machineId: selectedMachineId,
-        changes: selectedDateChanges.map(({ target_type, production_stage_id, field_name, new_value }) => ({
+        changes: selectedDateChanges.map(({ target_type, production_stage_id, outsourcing_operation_id, field_name, new_value }) => ({
           target_type,
           production_stage_id,
+          outsourcing_operation_id,
           field_name,
           new_value,
         })),

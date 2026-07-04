@@ -22,6 +22,7 @@ export type ResourceKey =
   | 'consumables'
   | 'supply'
   | 'supply_consumable_requests'
+  | 'supply_transport'
   | 'supply_orders'
   | 'inventory'
   | 'inventory_history'
@@ -58,6 +59,7 @@ export type SidebarIconKey =
   | 'consumableRequests'
   | 'consumables'
   | 'orders'
+  | 'transport'
   | 'inventory'
   | 'history'
   | 'receiving'
@@ -129,6 +131,7 @@ const PRODUCT_ROLES = ['sales_manager', 'engineer', ...DIRECTORS] as const satis
 const FINANCE_VIEW_ROLES = ['supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
 const FINANCE_MANAGE_ROLES = ['financial_director', 'planning_director', 'supply_manager'] as const satisfies readonly UserRole[]
 const SUPPLY_AND_DIRECTORS = ['supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
+const TRANSPORT_SUPPLY_ROLES = ['supply_manager', 'procurement_head', ...DIRECTORS] as const satisfies readonly UserRole[]
 const INVENTORY_RECEIVING_ROLES = ['supply_manager', 'procurement_head', 'engineer', 'technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
 const REQUEST_VIEW_ROLES = ['engineer', 'technologist', 'supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
 const REQUEST_MANAGE_ROLES = ['technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
@@ -341,6 +344,16 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: SUPPLY_CONSUMABLE_ROLES,
     routes: [{ path: ROUTES.SUPPLY_CONSUMABLE_REQUESTS, match: 'prefix', operation: 'view', priority: 90 }],
     sidebar: { section: 'supply', icon: 'consumableRequests', order: 5 },
+  },
+  {
+    key: 'supply_transport',
+    label: 'Транспорт',
+    group: 'Снабжение',
+    defaultHref: ROUTES.SUPPLY_TRANSPORT,
+    defaultViewRoles: TRANSPORT_SUPPLY_ROLES,
+    defaultManageRoles: TRANSPORT_SUPPLY_ROLES,
+    routes: [{ path: ROUTES.SUPPLY_TRANSPORT, match: 'prefix', operation: 'view', priority: 95 }],
+    sidebar: { section: 'supply', icon: 'transport', order: 8 },
   },
   {
     key: 'inventory',

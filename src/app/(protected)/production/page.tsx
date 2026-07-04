@@ -2,6 +2,7 @@ import { getProductionData } from '@/app/(protected)/production/actions'
 import { getGanttData } from '@/app/(protected)/production/gantt/actions'
 import { ProductionWorkspace } from '@/components/features/production/ProductionWorkspace'
 import { getProductionMonthPlans } from '@/lib/actions/production-plan'
+import { getProductionOutsourcingSummary } from '@/lib/actions/outsourcing'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import type { CurrentUser, FactorySummary } from '@/lib/types'
 
@@ -57,12 +58,14 @@ export default async function ProductionPage({
   let productionResult: Awaited<ReturnType<typeof getProductionData>>
   let ganttData: Awaited<ReturnType<typeof getGanttData>>
   let monthPlansResult: Awaited<ReturnType<typeof getProductionMonthPlans>>
+  let outsourcingSummaryResult: Awaited<ReturnType<typeof getProductionOutsourcingSummary>>
 
   try {
-    [productionResult, ganttData, monthPlansResult] = await Promise.all([
+    [productionResult, ganttData, monthPlansResult, outsourcingSummaryResult] = await Promise.all([
       getProductionData(activeFactoryId),
       getGanttData(activeFactoryId, { showSupply: false }),
       getProductionMonthPlans(activeFactoryId),
+      getProductionOutsourcingSummary(activeFactoryId),
     ])
   } catch (error: unknown) {
     return (
@@ -93,6 +96,7 @@ export default async function ProductionPage({
       productionData={data}
       monthPlans={monthPlansResult.data}
       monthPlanError={monthPlanError}
+      outsourcingSummary={outsourcingSummaryResult.data}
     />
   )
 }

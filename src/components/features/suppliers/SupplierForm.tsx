@@ -29,6 +29,8 @@ export function SupplierForm({ supplier }: SupplierFormProps) {
     email: supplier?.email || '',
     notes: supplier?.notes || '',
     is_active: supplier?.is_active ?? true,
+    can_outsource: supplier?.can_outsource ?? false,
+    can_transport: supplier?.can_transport ?? false,
     delivery_lead_days: supplier?.delivery_lead_days || 0,
     categories: supplier?.categories || [],
     deliveryDays: supplier?.deliveryDays || [],
@@ -102,8 +104,24 @@ export function SupplierForm({ supplier }: SupplierFormProps) {
         Активен
       </label>
 
+      <div className="mt-4 rounded-lg border border-[#E8ECF0] p-3">
+        <h2 className="mb-3 text-sm font-semibold text-[#1B3A6B]">Сервисные возможности</h2>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <CheckRow
+            checked={Boolean(form.can_outsource)}
+            label="Аутсорсинг"
+            onChange={() => setForm((prev) => ({ ...prev, can_outsource: !prev.can_outsource }))}
+          />
+          <CheckRow
+            checked={Boolean(form.can_transport)}
+            label="Транспорт"
+            onChange={() => setForm((prev) => ({ ...prev, can_transport: !prev.can_transport }))}
+          />
+        </div>
+      </div>
+
       <div className="mt-6 grid gap-6 md:grid-cols-2">
-        <Checklist title="Категории материала *">
+        <Checklist title="Категории материала">
           {MATERIAL_CATEGORIES.map((category) => (
             <CheckRow
               key={category}
@@ -113,7 +131,7 @@ export function SupplierForm({ supplier }: SupplierFormProps) {
             />
           ))}
         </Checklist>
-        <Checklist title="Дни отгрузки *">
+        <Checklist title="Дни отгрузки">
           {DELIVERY_DAYS.map((day) => (
             <CheckRow
               key={day}

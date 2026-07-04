@@ -81,6 +81,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   supply_material_receipt_shortage: 'Недовес материала',
   production_cutting_rollback_review: 'Откат заготовки',
   production_plan_date_change_approval: 'Согласование дат',
+  outsourcing_transport: 'Транспорт аутсорсинга',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {
@@ -235,11 +236,15 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (isSupplyReceiptTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (isCuttingRollbackTask(taskType)) return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (isProductionPlanDateChangeTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
+  if (taskType === 'outsourcing_transport') return 'border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
 function dateChangeFieldLabel(item: ProductionPlanDateChangeApprovalItem) {
   if (item.target_type === 'machine') return 'Плановая поставка материала'
+  if (item.target_type === 'outsourcing') {
+    return item.field_name === 'planned_send_date' ? 'Аутсорсинг: готовы отправить' : 'Аутсорсинг: ожидаем возврат'
+  }
   const stage = item.stage_type ? STAGES[item.stage_type]?.label || item.stage_type : 'Этап'
   const field = item.field_name === 'date_start'
     ? 'начало'
