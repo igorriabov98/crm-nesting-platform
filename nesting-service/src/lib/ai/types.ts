@@ -75,7 +75,7 @@ export interface PartForMatching {
   steelTypeName: string | null;
   steelTypeRaw: string | null;
   quantity: number;
-  thickness: number;
+  thickness: number | null;
   width: number;
   height: number;
   bboxSizeX?: number | null;

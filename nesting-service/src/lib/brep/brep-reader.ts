@@ -346,7 +346,9 @@ export async function readBrepPartContours(
             warnings: unfolded.warnings,
           });
         } else {
-          const flatContour = extractPartContour({ oc, shape: solid, deadlineMs });
+          const flatContour = unfolded.allowFlatContour
+            ? extractPartContour({ oc, shape: solid, deadlineMs })
+            : null;
 
           results.push({
             solidIndex,
@@ -418,6 +420,7 @@ async function tryUnfoldSolid(input: {
   kFactor: number | null;
   kFactorDefaulted: boolean;
   warnings: string[];
+  allowFlatContour: boolean;
 }> {
   const topology = detectSheetMetalTopology({
     oc: input.oc,
@@ -432,6 +435,7 @@ async function tryUnfoldSolid(input: {
       kFactor: null,
       kFactorDefaulted: false,
       warnings: [],
+      allowFlatContour: true,
     };
   }
 
@@ -456,6 +460,7 @@ async function tryUnfoldSolid(input: {
       kFactor: lookup.kFactor,
       kFactorDefaulted: lookup.defaulted,
       warnings,
+      allowFlatContour: false,
     };
   }
 
@@ -468,6 +473,7 @@ async function tryUnfoldSolid(input: {
     kFactor: lookup.kFactor,
     kFactorDefaulted: lookup.defaulted,
     warnings,
+    allowFlatContour: false,
   };
 }
 

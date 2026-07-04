@@ -9,10 +9,14 @@ import {
   classifySheetMetalV2,
   convexHull,
   ensureClockwise,
+  estimateWallThickness,
+  extractTriangleNormals,
   extractBoundaryContour,
+  findDominantPlanePair,
   generateThumbnailSvg,
   normalizeContour,
   projectTo2D,
+  roundToStandardThickness,
   simplifyContour,
 } from './geometry';
 import { readBrepPartContours, type BrepContourResult, type BrepPartContour, type KFactorResolver } from './brep/brep-reader';
@@ -47,7 +51,7 @@ interface OcctResult {
 
 export interface ParsedPart {
   name: string;
-  thickness: number;
+  thickness: number | null;
   width: number;
   height: number;
   contour: Point2D[];
@@ -313,14 +317,10 @@ function processMesh(
   const meshVolume = hasIndexedTriangles ? computeMeshVolume(positions, indices) : 0;
   const facesCount = hasIndexedTriangles ? Math.floor(indices.length / 3) : 0;
   const classification = classifySheetMetalV2(boundingBox, positions, hasIndexedTriangles ? indices : null, 0.15);
-  const classificationWarning = classification.warnings.length > 0 ? classification.warnings.join('; ') : null;
+  const warnings = [...classification.warnings];
   const holes: Point2D[][] = [];
   let contour: Point2D[] = [];
   let contourSource: ContourSource | null = null;
-
-  if (!exactContour && classificationWarning) {
-    errors.push(`${name}: ${classificationWarning}`);
-  }
 
   if (exactContour) {
     contour = exactContour.contour;
@@ -358,12 +358,30 @@ function processMesh(
     contour = ensureClockwise(contour);
   }
 
+  const fallbackThickness = exactContour
+    ? { thickness: exactContour.thickness, warning: null }
+    : estimateFallbackThickness({
+        classification,
+        boundingBox,
+        positions,
+        indices: hasIndexedTriangles ? indices : null,
+        meshVolume,
+        meshArea,
+      });
+  if (fallbackThickness.warning) {
+    warnings.push(fallbackThickness.warning);
+  }
+  const classificationWarning = warnings.length > 0 ? warnings.join('; ') : null;
+  if (!exactContour && classificationWarning) {
+    errors.push(`${name}: ${classificationWarning}`);
+  }
+
   const { width, height } = exactContour ?? getContourSize(contour);
   const thumbnailSvg = generateThumbnailSvg(contour, holes);
 
   return {
     name,
-    thickness: exactContour?.thickness ?? classification.thickness,
+    thickness: fallbackThickness.thickness,
     width,
     height,
     contour,
@@ -383,6 +401,68 @@ function processMesh(
     kFactor: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.kFactor : null,
     kFactorDefaulted: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.kFactorDefaulted : false,
   };
+}
+
+function estimateFallbackThickness(input: {
+  classification: ReturnType<typeof classifySheetMetalV2>;
+  boundingBox: BBox3D;
+  positions: Float32Array;
+  indices: Uint32Array | null;
+  meshVolume: number;
+  meshArea: number;
+}): { thickness: number | null; warning: string | null } {
+  const dims = [
+    input.boundingBox.sizeX,
+    input.boundingBox.sizeY,
+    input.boundingBox.sizeZ,
+  ].sort((a, b) => a - b);
+  const minDim = dims[0] ?? 0;
+  const volumeAreaThickness = roundReliableWallThickness(
+    estimateWallThickness(input.meshVolume, input.meshArea),
+    minDim
+  );
+
+  if (volumeAreaThickness !== null) {
+    return { thickness: volumeAreaThickness, warning: null };
+  }
+
+  if (input.indices && input.indices.length >= 3) {
+    const normals = extractTriangleNormals(input.positions, input.indices);
+    const planePair = findDominantPlanePair(normals, input.positions);
+    const planePairThickness = planePair.found
+      ? roundReliableWallThickness(planePair.thickness, minDim)
+      : null;
+
+    if (planePairThickness !== null) {
+      return { thickness: planePairThickness, warning: null };
+    }
+  }
+
+  if (
+    input.classification.isSheetMetal &&
+    input.classification.thickness > 0 &&
+    (
+      input.classification.thickness <= 12 ||
+      (input.classification.method === 'bbox' && !input.classification.hasBends && input.classification.confidence >= 0.7)
+    )
+  ) {
+    return { thickness: input.classification.thickness, warning: null };
+  }
+
+  return { thickness: null, warning: 'толщина не определена' };
+}
+
+function roundReliableWallThickness(raw: number, minDim: number): number | null {
+  if (!Number.isFinite(raw) || raw <= 0 || minDim <= 0 || raw >= minDim * 0.5) {
+    return null;
+  }
+
+  const rounded = roundToStandardThickness(raw);
+  if (rounded <= 0 || rounded > 12) {
+    return null;
+  }
+
+  return rounded;
 }
 
 function extractOcctError(result: OcctResult): string {

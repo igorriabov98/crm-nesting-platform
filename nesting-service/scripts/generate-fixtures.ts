@@ -38,6 +38,9 @@ async function main(): Promise<void> {
   writeStep(oc, createZProfile(oc), path.join(FIXTURE_DIR, 'z_profile_100x40x40_t2_r3.step'));
   writeStep(oc, createRadiusLAngleWithHoles(oc), path.join(FIXTURE_DIR, 'l_angle_100x40x40_t2_r3_holes.step'));
   writeStep(oc, createBoxCycle(oc), path.join(FIXTURE_DIR, 'box_cycle_100x40x40_t2_r3.step'));
+  writeStep(oc, createPlateWithHalfEdgeHole(oc), path.join(FIXTURE_DIR, 'plate_100x50x3_half_edge_hole_r6.step'));
+  writeStep(oc, createPlateWithSlot(oc), path.join(FIXTURE_DIR, 'plate_100x50x3_slot_30x10.step'));
+  writeStep(oc, createPlateWithEdgeFillet(oc), path.join(FIXTURE_DIR, 'plate_100x50x2_edge_fillet_r1.step'));
 
   console.log(`[fixtures] STEP fixtures written to ${FIXTURE_DIR}`);
 }
@@ -60,6 +63,45 @@ function createPlateWithHoles(oc: OpenCascadeInstance): TopoDS_Shape {
 function createRoundedPlate(oc: OpenCascadeInstance): TopoDS_Shape {
   const outer = makeRoundedRectWire(oc, 80, 80, 15);
   return extrudeFace(oc, makeFaceWithHoles(oc, outer, []), [0, 0, 2]);
+}
+
+function createPlateWithHalfEdgeHole(oc: OpenCascadeInstance): TopoDS_Shape {
+  const outer = makePolygonWire(oc, [
+    [0, 0, 0],
+    [100, 0, 0],
+    [100, 50, 0],
+    [0, 50, 0],
+  ]);
+  const plate = extrudeFace(oc, makeFaceWithHoles(oc, outer, []), [0, 0, 3]);
+
+  return cutCylindricalHoles(oc, plate, [
+    { center: [0, 25, -1], direction: [0, 0, 1], radius: 6, depth: 5 },
+  ]);
+}
+
+function createPlateWithSlot(oc: OpenCascadeInstance): TopoDS_Shape {
+  const outer = makePolygonWire(oc, [
+    [0, 0, 0],
+    [100, 0, 0],
+    [100, 50, 0],
+    [0, 50, 0],
+  ]);
+  const slot = makeSlotWire(oc, 50, 25, 30, 10);
+  slot.Reverse();
+
+  return extrudeFace(oc, makeFaceWithHoles(oc, outer, [slot]), [0, 0, 3]);
+}
+
+function createPlateWithEdgeFillet(oc: OpenCascadeInstance): TopoDS_Shape {
+  const profile = makeWireFromEdges(oc, [
+    makeLineEdge(oc, [0, 0, 0], [0, 50, 0]),
+    makeLineEdge(oc, [0, 50, 0], [0, 50, 1]),
+    makeArcEdgeYZ(oc, 49, 1, 1, 0, Math.PI / 2),
+    makeLineEdge(oc, [0, 49, 2], [0, 0, 2]),
+    makeLineEdge(oc, [0, 0, 2], [0, 0, 0]),
+  ]);
+
+  return extrudeFace(oc, makeFaceWithHoles(oc, profile, []), [100, 0, 0]);
 }
 
 function createLAngle(oc: OpenCascadeInstance): TopoDS_Shape {
@@ -233,6 +275,26 @@ function makeRoundedRectWire(oc: OpenCascadeInstance, width: number, height: num
     }
     safeDelete(wireBuilder);
   }
+}
+
+function makeSlotWire(
+  oc: OpenCascadeInstance,
+  centerX: number,
+  centerY: number,
+  length: number,
+  width: number
+): TopoDS_Wire {
+  const radius = width / 2;
+  const straight = length - width;
+  const leftX = centerX - straight / 2;
+  const rightX = centerX + straight / 2;
+
+  return makeWireFromEdges(oc, [
+    makeLineEdge(oc, [leftX, centerY + radius, 0], [rightX, centerY + radius, 0]),
+    makeArcEdge(oc, rightX, centerY, 0, radius, Math.PI / 2, -Math.PI / 2),
+    makeLineEdge(oc, [rightX, centerY - radius, 0], [leftX, centerY - radius, 0]),
+    makeArcEdge(oc, leftX, centerY, 0, radius, -Math.PI / 2, Math.PI / 2),
+  ]);
 }
 
 function makeRoundedRectWireYZ(
