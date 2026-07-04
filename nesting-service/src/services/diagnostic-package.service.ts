@@ -29,6 +29,7 @@ type ReconciliationRow = {
   pdfWidthMm: number | null;
   pdfHeightMm: number | null;
   mismatchPercent: number | null;
+  stepAreaMismatchPercent: number | null;
   status: 'OK' | 'MISMATCH' | 'NO_PDF_DATA';
   kFactor: number | null;
   kFactorDefaulted: boolean;
@@ -252,6 +253,9 @@ function buildReconciliation(project: Prisma.NestingProjectGetPayload<{
       const mismatchPercent = pdfWidth && pdfHeight
         ? compareDimensionsPercent(part.width, part.height, pdfWidth, pdfHeight)
         : null;
+      const stepAreaMismatchPercent = pdfWidth && pdfHeight
+        ? compareStepAreaPercent(part.width, part.height, pdfWidth, pdfHeight)
+        : null;
 
       return {
         partId: part.id,
@@ -262,6 +266,7 @@ function buildReconciliation(project: Prisma.NestingProjectGetPayload<{
         pdfWidthMm: pdfWidth ? roundMm(pdfWidth) : null,
         pdfHeightMm: pdfHeight ? roundMm(pdfHeight) : null,
         mismatchPercent,
+        stepAreaMismatchPercent,
         status: mismatchPercent === null
           ? 'NO_PDF_DATA'
           : mismatchPercent <= DIMENSION_MATCH_TOLERANCE_PERCENT
@@ -280,8 +285,12 @@ function buildReconciliationMarkdown(rows: ReconciliationRow[]): string {
   const lines = [
     '# PDF/STEP reconciliation',
     '',
-    '| Part | STEP mm | PDF mm | Mismatch | Status | K factor | Notes |',
-    '| --- | ---: | ---: | ---: | --- | ---: | --- |',
+    'Conventions:',
+    '- Mismatch: max side delta after orientation normalization; each side is divided by the corresponding PDF side.',
+    '- STEP area mismatch: absolute area delta divided by STEP unfolding area.',
+    '',
+    '| Part | STEP mm | PDF mm | Mismatch | STEP area mismatch | Status | K factor | Notes |',
+    '| --- | ---: | ---: | ---: | ---: | --- | ---: | --- |',
   ];
 
   for (const row of rows) {
@@ -290,6 +299,7 @@ function buildReconciliationMarkdown(rows: ReconciliationRow[]): string {
       `${row.stepWidthMm} x ${row.stepHeightMm}`,
       row.pdfWidthMm && row.pdfHeightMm ? `${row.pdfWidthMm} x ${row.pdfHeightMm}` : 'n/a',
       row.mismatchPercent === null ? 'n/a' : `${row.mismatchPercent}%`,
+      row.stepAreaMismatchPercent === null ? 'n/a' : `${row.stepAreaMismatchPercent}%`,
       row.status,
       row.kFactor === null ? 'n/a' : String(row.kFactor),
       escapeMarkdown(row.mismatchNote || (row.kFactorDefaulted ? 'K factor defaulted' : '')),
@@ -411,6 +421,16 @@ function compareDimensionsPercent(stepWidth: number, stepHeight: number, pdfWidt
   const widthMismatch = pdf[0] > 0 ? Math.abs(step[0] - pdf[0]) / pdf[0] : 0;
   const heightMismatch = pdf[1] > 0 ? Math.abs(step[1] - pdf[1]) / pdf[1] : 0;
   return roundPercent(Math.max(widthMismatch, heightMismatch) * 100);
+}
+
+function compareStepAreaPercent(stepWidth: number, stepHeight: number, pdfWidth: number, pdfHeight: number): number {
+  const stepArea = stepWidth * stepHeight;
+  const pdfArea = pdfWidth * pdfHeight;
+  if (stepArea <= 0 || !Number.isFinite(stepArea) || !Number.isFinite(pdfArea)) {
+    return 0;
+  }
+
+  return roundPercent((Math.abs(pdfArea - stepArea) / stepArea) * 100);
 }
 
 function isMatchResult(value: unknown): value is MatchResult {
