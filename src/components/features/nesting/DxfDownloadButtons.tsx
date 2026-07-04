@@ -1,6 +1,6 @@
 'use client'
 
-import { Archive, Download, RotateCcw } from 'lucide-react'
+import { Archive, Download, FileSearch, RotateCcw } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 
@@ -43,6 +43,13 @@ export function DxfDownloadButtons({
       <Button onClick={() => handleDownload(`/api/nesting/dxf/${projectId}`, `${safeOrderNumber}-dxf.zip`)}>
         <Archive className="h-4 w-4" />
         Скачать все DXF (ZIP)
+      </Button>
+      <Button
+        variant="outline"
+        onClick={() => handleDownload(`/api/nesting/diagnostic-package/${projectId}`, `${safeOrderNumber}-diagnostic.zip`)}
+      >
+        <FileSearch className="h-4 w-4" />
+        Скачать диагностику
       </Button>
       <Button variant="ghost" onClick={() => router.push(`/nesting/${projectId}/parts`)}>
         <RotateCcw className="h-4 w-4" />
