@@ -7,9 +7,9 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ projectId: string; sheetId: string }> }
+  { params }: { params: Promise<{ projectId: string }> }
 ) {
-  const { projectId, sheetId } = await params
+  const { projectId } = await params
   const access = await getNestingProxyAccess('nesting')
   if (access.response) return access.response
   const deniedProject = await requireNestingProjectProxyAccess(projectId, access.context!)
@@ -17,23 +17,25 @@ export async function GET(
 
   let res: Response
   try {
-    res = await fetch(`${getNestingServiceUrl()}/api/projects/${projectId}/dxf/${sheetId}`)
+    res = await fetch(`${getNestingServiceUrl()}/api/projects/${projectId}/diagnostic-package`)
   } catch (error) {
     return NextResponse.json(
-      { error: `Не удалось скачать DXF: сервис раскладки недоступен (${error instanceof Error ? error.message : 'неизвестная ошибка'})` },
+      { error: `Не удалось скачать диагностику: сервис раскладки недоступен (${error instanceof Error ? error.message : 'неизвестная ошибка'})` },
       { status: 503 }
     )
   }
 
   if (!res.ok) {
-    const data = await res.json().catch(() => ({ error: 'DXF не найден' }))
+    const data = await res.json().catch(() => ({ error: 'Диагностический пакет не найден' }))
     return NextResponse.json(data, { status: res.status })
   }
 
   const body = await res.arrayBuffer()
   const headers = new Headers()
-  headers.set('Content-Type', res.headers.get('Content-Type') || 'application/dxf')
-  headers.set('Content-Disposition', res.headers.get('Content-Disposition') || 'attachment; filename="sheet.dxf"')
+  headers.set('Content-Type', res.headers.get('Content-Type') || 'application/zip')
+  headers.set('Content-Disposition', res.headers.get('Content-Disposition') || `attachment; filename="nesting-${projectId}-diagnostic.zip"`)
+  const warnings = res.headers.get('X-Diagnostic-Warnings')
+  if (warnings) headers.set('X-Diagnostic-Warnings', warnings)
 
   return new NextResponse(body, { headers })
 }

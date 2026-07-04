@@ -7,11 +7,13 @@ import { queueService } from './queue.service';
 import { uploadService } from './upload.service';
 import type { BatchUploadInput } from './upload.service';
 import { removeOwnedStorageUris, removeProjectStorageObjects } from '../lib/storage';
+import { isCompletedProjectStatus } from '../lib/project-status';
 
 interface CreateProjectInput {
   id?: string;
   orderNumber: string;
   quantity: number;
+  createdBy?: string | null;
 }
 
 export type ProjectFileRefs = {
@@ -31,11 +33,13 @@ export interface ProjectWithStats {
   status: string;
   errorMessage: string | null;
   parseReport: Prisma.JsonValue | null;
+  validationReport: Prisma.JsonValue | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
   stepFileUrl: string | null;
   pdfFileUrl: string | null;
+  supersededByProjectId: string | null;
   partsCount: number;
   sheetsCount: number;
   avgUtilization: number | null;
@@ -71,6 +75,7 @@ function toProjectWithStats(project: ProjectWithCounts, avgUtilization: number |
     status: project.status,
     errorMessage: project.errorMessage,
     parseReport: project.parseReport,
+    validationReport: project.validationReport,
     createdBy: project.createdBy,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
@@ -80,6 +85,7 @@ function toProjectWithStats(project: ProjectWithCounts, avgUtilization: number |
       ?? inputPdfFileUrl?.pdfStorageUri
       ?? inputPdfFileUrl?.pdfFileUrl
       ?? null,
+    supersededByProjectId: project.supersededByProjectId,
     partsCount: project._count.parts,
     sheetsCount: project._count.sheets,
     avgUtilization,
@@ -116,6 +122,7 @@ export class ProjectService {
           pdfFileUrl: files.pdfFilePath ?? null,
           stepStorageUri: files.stepStorageUri ?? null,
           pdfStorageUri: files.pdfStorageUri ?? null,
+          createdBy: input.createdBy || 'system',
         },
       });
       created = true;
@@ -147,7 +154,7 @@ export class ProjectService {
   }
 
   async createBatchProject(
-    input: Pick<CreateProjectInput, 'id' | 'orderNumber'>,
+    input: Pick<CreateProjectInput, 'id' | 'orderNumber' | 'createdBy'>,
     batchInputs: BatchProjectInput[]
   ): Promise<{ id: string; status: string }> {
     const id = input.id ?? generateId();
@@ -163,6 +170,7 @@ export class ProjectService {
             status: 'created',
             stepFileUrl: null,
             pdfFileUrl: null,
+            createdBy: input.createdBy || 'system',
           },
         });
 
@@ -255,7 +263,7 @@ export class ProjectService {
     }
 
     const avgUtilization =
-      project.status === 'done'
+      isCompletedProjectStatus(project.status)
         ? (
             await prisma.nestingSheet.aggregate({
               where: { projectId: id },
@@ -293,7 +301,7 @@ export class ProjectService {
       prisma.nestingProject.count({ where }),
     ]);
 
-    const doneIds = projects.filter((project) => project.status === 'done').map((project) => project.id);
+    const doneIds = projects.filter((project) => isCompletedProjectStatus(project.status)).map((project) => project.id);
     const averages = doneIds.length
       ? await prisma.nestingSheet.groupBy({
           by: ['projectId'],
@@ -346,6 +354,36 @@ export class ProjectService {
     ]);
   }
 
+  async markSuperseded(id: string, supersededByProjectId: string): Promise<{ id: string; supersededByProjectId: string }> {
+    if (id === supersededByProjectId) {
+      throw new AppError(400, 'Проект не может заменять сам себя');
+    }
+
+    const replacement = await prisma.nestingProject.findUnique({
+      where: { id: supersededByProjectId },
+      select: { id: true },
+    });
+    if (!replacement) {
+      throw new NotFoundError('Новый проект', supersededByProjectId);
+    }
+
+    const project = await prisma.nestingProject.update({
+      where: { id },
+      data: { supersededByProjectId },
+      select: { id: true, supersededByProjectId: true },
+    }).catch((error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new NotFoundError('Проект', id);
+      }
+      throw error;
+    });
+
+    return {
+      id: project.id,
+      supersededByProjectId: project.supersededByProjectId!,
+    };
+  }
+
   async updateStatus(id: string, status: string, errorMessage?: string): Promise<void> {
     await prisma.nestingProject.update({
       where: { id },
@@ -361,6 +399,7 @@ export class ProjectService {
     status: string;
     errorMessage: string | null;
     parseReport: Prisma.JsonValue | null;
+    validationReport: Prisma.JsonValue | null;
   }> {
     const project = await prisma.nestingProject.findUnique({
       where: { id },
@@ -369,6 +408,7 @@ export class ProjectService {
         status: true,
         errorMessage: true,
         parseReport: true,
+        validationReport: true,
       },
     });
 

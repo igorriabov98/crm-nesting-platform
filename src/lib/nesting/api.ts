@@ -1,6 +1,7 @@
 import 'server-only'
+import type { NestingStatus } from './status'
 
-export type NestingStatus = 'created' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
+export type { NestingStatus } from './status'
 export type NestingStrategy = 'minWaste' | 'remnant' | 'minSheets'
 export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom'
 export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
@@ -18,6 +19,31 @@ export interface NestingParseReport {
   }>
 }
 
+export type LayoutViolationType =
+  | 'overlap'
+  | 'gap'
+  | 'out_of_bounds'
+  | 'quantity'
+  | 'hole_outside'
+  | 'part_in_hole'
+
+export interface LayoutViolation {
+  type: LayoutViolationType
+  sheetIndex?: number
+  sheetId?: string
+  partIds: string[]
+  amountMm?: number
+  expected?: number
+  actual?: number
+  message: string
+}
+
+export interface LayoutValidationReport {
+  valid: boolean
+  violations: LayoutViolation[]
+  checkedAt: string
+}
+
 export interface NestingProject {
   id: string
   orderNumber: string
@@ -26,10 +52,12 @@ export interface NestingProject {
   status: NestingStatus
   errorMessage: string | null
   parseReport: NestingParseReport | null
+  validationReport: LayoutValidationReport | null
   createdBy: string
   createdAt: string
   updatedAt: string
   pdfFileUrl: string | null
+  supersededByProjectId: string | null
   partsCount: number
   sheetsCount: number
   avgUtilization: number | null
@@ -93,6 +121,7 @@ export interface NestingProjectStatus {
   status: NestingStatus | string
   errorMessage: string | null
   parseReport: NestingParseReport | null
+  validationReport: LayoutValidationReport | null
 }
 
 export interface Placement {
@@ -108,7 +137,7 @@ export interface Placement {
   sourceProductId?: string | null
   x: number
   y: number
-  rotation: 0 | 90
+  rotation: 0 | 90 | 180 | 270
   placedW: number
   placedH: number
   contour?: { x: number; y: number }[]
@@ -164,6 +193,7 @@ export interface NestingResult {
   totalSheets: number
   avgUtilization: number
   totalWaste: number
+  validationReport: LayoutValidationReport | null
 }
 
 export interface BOMEntry {
@@ -363,6 +393,17 @@ export async function deleteProject(id: string): Promise<void> {
   const res = await request(buildUrl(`/api/projects/${id}`), { method: 'DELETE' }, 'Не удалось удалить проект')
   if (!res.ok) {
     await readJson(res, 'Не удалось удалить проект')
+  }
+}
+
+export async function markProjectSuperseded(projectId: string, supersededByProjectId: string): Promise<void> {
+  const res = await request(buildUrl(`/api/projects/${projectId}/supersede`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ supersededByProjectId }),
+  }, 'Не удалось пометить проект заменённым')
+  if (!res.ok) {
+    await readJson(res, 'Не удалось пометить проект заменённым')
   }
 }
 

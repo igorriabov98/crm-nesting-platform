@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchNestingService as fetch, getNestingServiceUrl } from '@/lib/nesting/api'
-import { requireNestingProxyAccess } from '@/lib/nesting/proxy-auth'
+import { getNestingProxyAccess } from '@/lib/nesting/proxy-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,8 +55,9 @@ function isAllowedManualStorageUri(value: unknown) {
 
 export async function POST(request: NextRequest) {
   try {
-    const denied = await requireNestingProxyAccess('nesting')
-    if (denied) return denied
+    const access = await getNestingProxyAccess('nesting')
+    if (access.response) return access.response
+    const userId = access.context!.userId
 
     const contentType = request.headers.get('content-type') || ''
     if (contentType.includes('application/json')) {
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
       const res = await fetch(`${getNestingServiceUrl()}/api/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, createdBy: userId }),
       })
       const data = await res.json().catch(() => ({ error: 'Unable to create nesting project' }))
       return NextResponse.json(data, { status: res.status })

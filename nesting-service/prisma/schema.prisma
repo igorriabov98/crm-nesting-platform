@@ -26,6 +26,7 @@ model NestingProject {
   status       String         @default("created")
   errorMessage String?
   parseReport  Json?
+  validationReport Json?
   createdBy    String         @default("system")
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -33,6 +34,7 @@ model NestingProject {
   pdfFileUrl   String?
   stepStorageUri String?
   pdfStorageUri  String?
+  supersededByProjectId String?
   inputs       ProjectInput[]
   parts        Part[]
   sheets       NestingSheet[]

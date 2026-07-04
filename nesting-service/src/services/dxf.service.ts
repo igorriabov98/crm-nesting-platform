@@ -1,27 +1,15 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { Part } from '@prisma/client';
 import { config } from '../config';
 import { AppError, NotFoundError, ValidationError } from '../lib/errors';
 import { buildDxfZipBuffer, writeDxfZipFile, type DxfZipEntry } from '../lib/dxf/download-archive';
-import { CAM_DXF_OPTIONS, generateDXFWithWarnings, type DxfPartData, type DxfRemnantData } from '../lib/dxf/generator';
-import { readFittedPartGeometry } from '../lib/dxf/part-geometry';
+import { generateDXFWithWarnings } from '../lib/dxf/generator';
 import { validateDXF } from '../lib/dxf/validate';
-import type { DxfRotation } from '../lib/dxf/transform';
 import { prisma } from '../lib/prisma';
-import { normalizeCadText } from '../lib/text-encoding';
 import { ensureDir, sanitizeFilename, transliterate } from '../lib/utils';
 import { isStorageConfigured, uploadStorageBuffer } from '../lib/storage';
-
-type PlacementForDxf = {
-  partId: string;
-  name?: string;
-  x: number;
-  y: number;
-  rotation: DxfRotation;
-  placedW: number;
-  placedH: number;
-};
+import { isCompletedProjectStatus } from '../lib/project-status';
+import { buildSheetExportGeometry, dxfOptionsForSheet } from '../lib/export/sheet-geometry';
 
 type DxfSheetResult = {
   filePath: string | null;
@@ -40,45 +28,8 @@ type DxfZipResult = {
 
 export class DxfService {
   async generateForSheet(projectId: string, sheetId: string): Promise<DxfSheetResult> {
-    const project = await prisma.nestingProject.findUnique({
-      where: { id: projectId },
-    });
-
-    if (!project) {
-      throw new NotFoundError('Project', projectId);
-    }
-
-    if (project.status !== 'done') {
-      throw new ValidationError(`Calculation is not finished. Status: ${project.status}`);
-    }
-
-    const sheet = await prisma.nestingSheet.findUnique({
-      where: { id: sheetId },
-    });
-
-    if (!sheet || sheet.projectId !== projectId) {
-      throw new NotFoundError('Sheet', sheetId);
-    }
-
-    const placements = readPlacements(sheet.placements, sheetId);
-    const partIds = Array.from(new Set(placements.map((placement) => placement.partId)));
-    const parts = await prisma.part.findMany({
-      where: { id: { in: partIds }, projectId },
-    });
-    const partsById = new Map(parts.map((part) => [part.id, part]));
-
-    const dxfParts = placements.map((placement) => {
-      const part = partsById.get(placement.partId);
-
-      if (!part) {
-        throw new ValidationError(`Placement references missing part ${placement.partId}`);
-      }
-
-      return toDxfPartData(placement, part);
-    });
-
-    const remnant = readRemnant(sheet.remnantGeom, sheetId);
-    const material = normalizeCadText(sheet.material);
+    const geometry = await buildSheetExportGeometry(projectId, sheetId);
+    const { material, project, sheet } = geometry;
     const generation = generateDXFWithWarnings(
       {
         width: sheet.width,
@@ -86,12 +37,9 @@ export class DxfService {
         material,
         thickness: sheet.thickness,
       },
-      dxfParts,
-      remnant,
-      {
-        ...CAM_DXF_OPTIONS,
-        leadSafeMargin: sheet.usedMargin,
-      }
+      geometry.dxfParts,
+      geometry.remnant,
+      dxfOptionsForSheet(geometry)
     );
     const { dxfContent, warnings } = generation;
 
@@ -141,7 +89,7 @@ export class DxfService {
       throw new NotFoundError('Project', projectId);
     }
 
-    if (project.status !== 'done') {
+    if (!isCompletedProjectStatus(project.status)) {
       throw new ValidationError(`Calculation is not finished. Status: ${project.status}`);
     }
 
@@ -182,119 +130,6 @@ export class DxfService {
 }
 
 export const dxfService = new DxfService();
-
-function toDxfPartData(placement: PlacementForDxf, part: Part): DxfPartData {
-  const localWidth = isQuarterTurn(placement.rotation) ? placement.placedH : placement.placedW;
-  const localHeight = isQuarterTurn(placement.rotation) ? placement.placedW : placement.placedH;
-  const { contour, holes, needsReview, reviewReason } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight);
-
-  return {
-    name: normalizeCadText(placement.name || part.name),
-    x: placement.x,
-    y: placement.y,
-    rotation: placement.rotation,
-    placedW: placement.placedW,
-    placedH: placement.placedH,
-    contour,
-    holes,
-    originalW: localWidth,
-    originalH: localHeight,
-    grainLock: part.grainLock,
-    needsReview,
-    reviewReason,
-    contourSource: part.contourSource,
-  };
-}
-
-function readPlacements(value: unknown, sheetId: string): PlacementForDxf[] {
-  if (!Array.isArray(value)) {
-    throw new ValidationError(`Sheet ${sheetId} placements are not an array`);
-  }
-
-  return value.map((placement, index) => readPlacement(placement, sheetId, index));
-}
-
-function readPlacement(value: unknown, sheetId: string, index: number): PlacementForDxf {
-  if (!isRecord(value)) {
-    throw new ValidationError(`Sheet ${sheetId} placement #${index + 1} is not an object`);
-  }
-
-  const rotation = readRotation(value.rotation);
-
-  if (
-    typeof value.partId !== 'string' ||
-    !isFiniteNumber(value.x) ||
-    !isFiniteNumber(value.y) ||
-    rotation === null ||
-    !isFiniteNumber(value.placedW) ||
-    !isFiniteNumber(value.placedH)
-  ) {
-    throw new ValidationError(`Sheet ${sheetId} placement #${index + 1} has invalid geometry`);
-  }
-
-  if (value.placedW <= 0 || value.placedH <= 0) {
-    throw new ValidationError(`Sheet ${sheetId} placement #${index + 1} has non-positive size`);
-  }
-
-  return {
-    partId: value.partId,
-    name: typeof value.name === 'string' ? value.name : undefined,
-    x: value.x,
-    y: value.y,
-    rotation,
-    placedW: value.placedW,
-    placedH: value.placedH,
-  };
-}
-
-function readRemnant(value: unknown, sheetId: string): DxfRemnantData | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  if (!isRecord(value)) {
-    throw new ValidationError(`Sheet ${sheetId} remnant geometry is invalid`);
-  }
-
-  if (value.isUsable === false) {
-    return null;
-  }
-
-  if (!isFiniteNumber(value.x) || !isFiniteNumber(value.y) || !isFiniteNumber(value.width) || !isFiniteNumber(value.height)) {
-    throw new ValidationError(`Sheet ${sheetId} remnant geometry has invalid dimensions`);
-  }
-
-  if (value.width <= 0 || value.height <= 0) {
-    return null;
-  }
-
-  return {
-    x: value.x,
-    y: value.y,
-    width: value.width,
-    height: value.height,
-  };
-}
-
-function readRotation(value: unknown): DxfRotation | null {
-  if (value === 0 || value === 90 || value === 180 || value === 270) {
-    return value;
-  }
-
-  return null;
-}
-
-function isQuarterTurn(rotation: DxfRotation): boolean {
-  return rotation === 90 || rotation === 270;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
 
 function formatThicknessForFilename(thickness: number): string {
   return Number.parseFloat(thickness.toFixed(4)).toString().replace('.', '_');

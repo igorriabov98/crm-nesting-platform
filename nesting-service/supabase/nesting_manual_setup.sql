@@ -10,12 +10,20 @@ CREATE TABLE IF NOT EXISTS nesting."NestingProject" (
   "strategy" TEXT NOT NULL DEFAULT 'minWaste',
   "status" TEXT NOT NULL DEFAULT 'created',
   "errorMessage" TEXT,
+  "validationReport" JSONB,
   "createdBy" TEXT NOT NULL DEFAULT 'system',
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "stepFileUrl" TEXT,
-  "pdfFileUrl" TEXT
+  "pdfFileUrl" TEXT,
+  "supersededByProjectId" TEXT
 );
+
+ALTER TABLE nesting."NestingProject"
+  ADD COLUMN IF NOT EXISTS "supersededByProjectId" TEXT;
+
+ALTER TABLE nesting."NestingProject"
+  ADD COLUMN IF NOT EXISTS "validationReport" JSONB;
 
 CREATE TABLE IF NOT EXISTS nesting."Part" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,

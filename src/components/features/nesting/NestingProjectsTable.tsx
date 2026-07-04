@@ -11,14 +11,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/features/nesting/StatusBadge'
 import { ProjectActions } from '@/components/features/nesting/ProjectActions'
 import { cn } from '@/lib/utils'
 import type { NestingProject } from '@/lib/nesting/api'
+import { isCompletedNestingStatus } from '@/lib/nesting/status'
 
 function getProjectHref(project: NestingProject) {
-  return project.status === 'done' ? `/nesting/${project.id}/result` : `/nesting/${project.id}/parts`
+  return isCompletedNestingStatus(project.status) ? `/nesting/${project.id}/result` : `/nesting/${project.id}/parts`
 }
 
 function formatDate(value: string) {
@@ -95,7 +97,16 @@ export function NestingProjectsTable({
                 className="cursor-pointer"
                 onClick={() => router.push(getProjectHref(project))}
               >
-                <TableCell className="font-medium text-[#1B3A6B]">{project.orderNumber}</TableCell>
+                <TableCell className="font-medium text-[#1B3A6B]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>{project.orderNumber}</span>
+                    {project.supersededByProjectId && (
+                      <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                        заменён
+                      </Badge>
+                    )}
+                  </div>
+                </TableCell>
                 <TableCell className="text-[#6B7280]">{formatDate(project.createdAt)}</TableCell>
                 <TableCell><StatusBadge status={project.status} /></TableCell>
                 <TableCell className="text-right">{project.partsCount || '—'}</TableCell>

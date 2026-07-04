@@ -5,6 +5,7 @@ import { NestingPartsClient } from '@/components/features/nesting/NestingPartsCl
 import { getProject, type NestingProject } from '@/lib/nesting/api'
 import { getSteelTypes } from '@/lib/actions/steel-types'
 import { getMachineItemNestingContext, type MachineItemNestingContext } from '@/lib/actions/machine-item-nesting'
+import { assertCanAccessNestingProject } from '@/lib/nesting/project-access'
 import type { SteelType } from '@/lib/types/database'
 
 export const metadata = { title: 'Детали раскладки — CRM Завода' }
@@ -21,6 +22,7 @@ export default async function NestingPartsPage({
   let machineContext: MachineItemNestingContext | null = null
 
   try {
+    await assertCanAccessNestingProject(id, 'view')
     const [projectResult, steelTypesResult, nestingContextResult] = await Promise.all([
       getProject(id),
       getSteelTypes(),

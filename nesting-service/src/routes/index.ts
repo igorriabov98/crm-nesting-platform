@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { aiProjectRoutes, aiRoutes } from './ai.routes';
 import { calculateRoutes } from './calculate.routes';
+import { diagnosticRoutes } from './diagnostic.routes';
 import { dxfRoutes } from './dxf.routes';
 import { healthRoutes } from './health.routes';
 import { partsRoutes } from './parts.routes';
@@ -28,4 +29,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(calculateRoutes, { prefix: '/api/projects' });
   await app.register(resultRoutes, { prefix: '/api/projects' });
   await app.register(dxfRoutes, { prefix: '/api/projects' });
+  await app.register(diagnosticRoutes, { prefix: '/api/projects' });
 }

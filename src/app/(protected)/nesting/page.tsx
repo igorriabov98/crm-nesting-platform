@@ -6,11 +6,12 @@ import { NestingProjectsTable } from '@/components/features/nesting/NestingProje
 import { NestingQueueClient } from '@/components/features/nesting/NestingQueueClient'
 import { getNestingQueue } from '@/lib/actions/nesting-batches'
 import { getProjects, type NestingStatus } from '@/lib/nesting/api'
+import { nestingStatuses } from '@/lib/nesting/status'
 import { cn } from '@/lib/utils'
 
 export const metadata = { title: 'Раскладка металла - CRM Завода' }
 
-const statuses: NestingStatus[] = ['created', 'parsing', 'parsed', 'calculating', 'done', 'error']
+const statuses: NestingStatus[] = [...nestingStatuses]
 
 export default async function NestingProjectsPage({
   searchParams,

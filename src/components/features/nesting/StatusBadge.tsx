@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock, Loader2, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock, Loader2, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { NestingStatus } from '@/lib/nesting/api'
@@ -30,6 +30,11 @@ const statusConfig: Record<NestingStatus, { label: string; className: string; ic
     label: 'Готово',
     className: 'bg-emerald-100 text-emerald-700',
     icon: CheckCircle2,
+  },
+  completed_with_warnings: {
+    label: 'Готово с предупреждениями',
+    className: 'bg-amber-100 text-amber-800',
+    icon: AlertTriangle,
   },
   error: {
     label: 'Ошибка',

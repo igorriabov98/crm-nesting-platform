@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { fetchNestingService as fetch, getNestingServiceUrl } from '@/lib/nesting/api'
-import { forwardJsonResponse, requireNestingProxyAccess, serviceUnavailable } from '@/lib/nesting/proxy-auth'
+import { forwardJsonResponse, getNestingProxyAccess, serviceUnavailable } from '@/lib/nesting/proxy-auth'
+import { requireNestingProjectProxyAccess } from '@/lib/nesting/project-access'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,10 +9,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const denied = await requireNestingProxyAccess('nesting')
-  if (denied) return denied
-
   const { id } = await params
+  const access = await getNestingProxyAccess('nesting')
+  if (access.response) return access.response
+  const deniedProject = await requireNestingProjectProxyAccess(id, access.context!)
+  if (deniedProject) return deniedProject
 
   try {
     const body = await request.json().catch(() => ({}))

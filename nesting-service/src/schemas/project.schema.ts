@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const projectStatusSchema = z.enum(['created', 'parsing', 'parsed', 'calculating', 'done', 'error']);
+export const projectStatusSchema = z.enum(['created', 'parsing', 'parsed', 'calculating', 'done', 'completed_with_warnings', 'error']);
 
 export const projectListFilterSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -12,6 +12,7 @@ export const projectListFilterSchema = z.object({
 export const createProjectSchema = z.object({
   orderNumber: z.string().trim().min(1, 'Номер заказа обязателен').max(100),
   quantity: z.coerce.number().int().min(1).max(10000).default(1),
+  createdBy: z.string().trim().min(1).max(120).optional(),
 });
 
 const storageUriSchema = z.string().trim().startsWith('supabase://').max(1200);
@@ -23,6 +24,7 @@ export const createStorageProjectSchema = createProjectSchema.extend({
 
 export const createBatchProjectSchema = z.object({
   orderNumber: z.string().trim().min(1).max(150),
+  createdBy: z.string().trim().min(1).max(120).optional(),
   inputs: z.array(z.object({
     sourceId: z.string().trim().min(1).max(120),
     sourceType: z.string().trim().min(1).max(80).default('crm_machine_item'),
@@ -41,6 +43,7 @@ export const createBatchProjectSchema = z.object({
 
 export const createStorageBatchProjectSchema = z.object({
   orderNumber: z.string().trim().min(1).max(150),
+  createdBy: z.string().trim().min(1).max(120).optional(),
   inputs: z.array(z.object({
     sourceId: z.string().trim().min(1).max(120),
     sourceType: z.string().trim().min(1).max(80).default('crm_machine_item'),
@@ -73,6 +76,10 @@ export const calculateSchema = z.object({
   strategy: z.enum(['minWaste', 'remnant', 'minSheets']).default('minWaste'),
 });
 
+export const supersedeProjectSchema = z.object({
+  supersededByProjectId: z.string().min(1),
+});
+
 export const projectPartParamsSchema = z.object({
   id: z.string().min(1),
   partId: z.string().min(1),
@@ -90,4 +97,5 @@ export type CreateStorageProject = z.infer<typeof createStorageProjectSchema>;
 export type CreateStorageBatchProject = z.infer<typeof createStorageBatchProjectSchema>;
 export type UpdatePart = z.infer<typeof updatePartSchema>;
 export type CalculateRequest = z.infer<typeof calculateSchema>;
+export type SupersedeProjectRequest = z.infer<typeof supersedeProjectSchema>;
 export type ProjectStatus = z.infer<typeof projectStatusSchema>;

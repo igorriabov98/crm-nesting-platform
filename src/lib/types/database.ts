@@ -725,7 +725,7 @@ export type Database = {
           id: string
           nesting_project_id: string
           order_number: string
-          status: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
+          status: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'completed_with_warnings' | 'error'
           error_message: string | null
           source_nesting_project_id: string | null
           is_future_fill: boolean
@@ -738,7 +738,7 @@ export type Database = {
           id?: string
           nesting_project_id: string
           order_number: string
-          status?: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
+          status?: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'completed_with_warnings' | 'error'
           error_message?: string | null
           source_nesting_project_id?: string | null
           is_future_fill?: boolean
@@ -751,7 +751,7 @@ export type Database = {
           id?: string
           nesting_project_id?: string
           order_number?: string
-          status?: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'error'
+          status?: 'draft' | 'parsing' | 'parsed' | 'calculating' | 'done' | 'completed_with_warnings' | 'error'
           error_message?: string | null
           source_nesting_project_id?: string | null
           is_future_fill?: boolean

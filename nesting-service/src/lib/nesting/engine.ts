@@ -5,6 +5,7 @@ import { polygonNetArea } from '../geometry';
 import { distributePartsToSheets } from './multi-sheet';
 import { resolveNestingParams } from './params';
 import type { NestingParams, NestingPart, NestingResult, Point2D, SheetOption } from './types';
+import { validateLayout, type LayoutValidationReport } from '../validation/layout-validator';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
 
@@ -167,8 +168,17 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     totalWaste,
     computeTimeMs: Date.now() - startTime,
   };
+  const validationReport = validateLayout(
+    result.sheets,
+    sheetMetalParts.map((part) => ({
+      id: part.id,
+      name: normalizeCadText(part.name),
+      quantity: part.quantity * project.quantity,
+    })),
+    { unplacedParts: result.unplacedParts }
+  );
 
-  await saveResults(projectId, result);
+  await saveResults(projectId, result, validationReport);
 
   return result;
 }
@@ -279,7 +289,19 @@ function potentialUtilization(totalPartsArea: number, sheetWidth: number, sheetH
   return Math.min(100, roundPercent((totalPartsArea / sheetArea) * 100));
 }
 
-async function saveResults(projectId: string, result: NestingResult): Promise<void> {
+async function saveResults(
+  projectId: string,
+  result: NestingResult,
+  validationReport: LayoutValidationReport
+): Promise<void> {
+  const validationWarning = validationReport.violations.length > 0
+    ? `Найдены нарушения валидации раскладки: ${validationReport.violations.length}`
+    : null;
+  const unplacedWarning = result.unplacedParts.length > 0
+    ? `Не размещено деталей: ${result.unplacedParts.length}`
+    : null;
+  const warningMessage = [validationWarning, unplacedWarning].filter(Boolean).join('; ') || null;
+
   await prisma.$transaction(async (tx) => {
     await tx.nestingSheet.deleteMany({ where: { projectId } });
 
@@ -330,11 +352,9 @@ async function saveResults(projectId: string, result: NestingResult): Promise<vo
     await tx.nestingProject.update({
       where: { id: projectId },
       data: {
-        status: 'done',
-        errorMessage:
-          result.unplacedParts.length > 0
-            ? `Не размещено деталей: ${result.unplacedParts.length}`
-            : null,
+        status: validationReport.valid && result.unplacedParts.length === 0 ? 'done' : 'completed_with_warnings',
+        errorMessage: warningMessage,
+        validationReport: validationReport as unknown as Prisma.InputJsonValue,
       },
     });
   });

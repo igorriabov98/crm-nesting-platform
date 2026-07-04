@@ -7,6 +7,7 @@ import {
   createStorageBatchProjectSchema,
   createStorageProjectSchema,
   projectListFilterSchema,
+  supersedeProjectSchema,
 } from '../schemas/project.schema';
 import { parseStorageUri } from '../lib/storage';
 import { projectService, type BatchProjectInput } from '../services/project.service';
@@ -47,7 +48,7 @@ export async function projectsRoutes(app: FastifyInstance) {
       if (body.pdfStorageUri) parseStorageUri(body.pdfStorageUri);
 
       const project = await projectService.createProject(
-        { orderNumber: body.orderNumber, quantity: body.quantity },
+        { orderNumber: body.orderNumber, quantity: body.quantity, createdBy: body.createdBy },
         { stepStorageUri: body.stepStorageUri, pdfStorageUri: body.pdfStorageUri ?? null }
       );
 
@@ -72,6 +73,7 @@ export async function projectsRoutes(app: FastifyInstance) {
           id: projectId,
           orderNumber: upload.orderNumber,
           quantity: upload.quantity,
+          createdBy: 'local-upload',
         },
         { stepFilePath: upload.stepFilePath, pdfFilePath: upload.pdfFilePath }
       );
@@ -107,7 +109,7 @@ export async function projectsRoutes(app: FastifyInstance) {
         };
       });
       const project = await projectService.createBatchProject(
-        { orderNumber: body.orderNumber },
+        { orderNumber: body.orderNumber, createdBy: body.createdBy },
         inputs
       );
       return reply.status(201).send({
@@ -135,6 +137,7 @@ export async function projectsRoutes(app: FastifyInstance) {
         {
           id: projectId,
           orderNumber: upload.orderNumber,
+          createdBy: 'local-upload',
         },
         upload.inputs
       );
@@ -174,5 +177,11 @@ export async function projectsRoutes(app: FastifyInstance) {
     const { id } = idParamSchema.parse(request.params);
     await projectService.deleteProject(id);
     return { success: true };
+  });
+
+  app.post('/:id/supersede', async (request) => {
+    const { id } = idParamSchema.parse(request.params);
+    const body = supersedeProjectSchema.parse(request.body ?? {});
+    return { data: await projectService.markSuperseded(id, body.supersededByProjectId) };
   });
 }

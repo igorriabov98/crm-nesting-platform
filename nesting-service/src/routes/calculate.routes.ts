@@ -3,6 +3,7 @@ import { AppError, NotFoundError, ValidationError } from '../lib/errors';
 import { prisma } from '../lib/prisma';
 import { idParamSchema } from '../schemas/common.schema';
 import { calculateSchema } from '../schemas/project.schema';
+import { isCompletedProjectStatus } from '../lib/project-status';
 import { queueService } from '../services/queue.service';
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -30,9 +31,9 @@ export async function calculateRoutes(app: FastifyInstance) {
       throw new NotFoundError('Проект', id);
     }
 
-    if (!['parsed', 'done'].includes(project.status)) {
+    if (!(project.status === 'parsed' || isCompletedProjectStatus(project.status))) {
       throw new ValidationError(
-        `Проект в статусе "${project.status}", расчёт можно запустить для "parsed" или "done"`
+        `Проект в статусе "${project.status}", расчёт можно запустить для "parsed", "done" или "completed_with_warnings"`
       );
     }
 
