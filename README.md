@@ -2,6 +2,8 @@
 
 This repository publishes the CRM and the nesting service together.
 
+Operational rules for parallel work, main merges, and deployments are documented in [AGENTS.md](./AGENTS.md).
+
 ## Structure
 
 - Repository root - Next.js CRM application, ready for Vercel.
