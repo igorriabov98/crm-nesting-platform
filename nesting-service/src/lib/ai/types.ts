@@ -75,12 +75,13 @@ export interface PartForMatching {
   steelTypeName: string | null;
   steelTypeRaw: string | null;
   quantity: number;
-  thickness: number | null;
+  thickness: number;
   width: number;
   height: number;
   bboxSizeX?: number | null;
   bboxSizeY?: number | null;
   bboxSizeZ?: number | null;
+  contour?: unknown;
   meshVolume?: number | null;
   meshArea?: number | null;
   facesCount?: number | null;
@@ -110,6 +111,8 @@ export interface MatchResult {
   suggestedIsSheetMetal: boolean | null;
   suggestedHasBends: boolean | null;
   suggestedMassKg: number | null;
+  thicknessMismatch: boolean;
+  thicknessMismatchNote: string | null;
   detailNotes: string;
   autoApplied: boolean;
 }

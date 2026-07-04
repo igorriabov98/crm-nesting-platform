@@ -347,6 +347,18 @@ export function PartsTable({
                             <TooltipContent>{part.classificationWarning}</TooltipContent>
                           </Tooltip>
                         ) : null}
+                        {part.thicknessMismatch ? (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span className="inline-flex">
+                                  <AlertTriangle className="h-4 w-4 text-[#B45309]" />
+                                </span>
+                              }
+                            />
+                            <TooltipContent>{part.thicknessMismatchNote || 'Толщина BOM расходится с геометрией STEP'}</TooltipContent>
+                          </Tooltip>
+                        ) : null}
                       </div>
                     </div>
                   </TableCell>

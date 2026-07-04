@@ -4,7 +4,7 @@ import { NotFoundError } from '../errors';
 import { analyzePDF, parsePDFAnalysisResponse } from './openrouter';
 import { estimateCost, getAISettingsView, recordAIUsage } from './settings';
 import { matchBOMToParts } from './bom-matcher';
-import { applyDimensionGuard } from './dimension-guard';
+import { applyDimensionGuard, applyThicknessGuard } from './dimension-guard';
 import { extractDeterministicBOMFromPdf, mergeDeterministicBOM } from './pdf-bom-fallback';
 import { resolveBOMSteelTypes } from './steel-types';
 import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
@@ -51,6 +51,7 @@ export async function analyzeProjectPdf(input: {
       thickness: true,
       width: true,
       height: true,
+      contour: true,
       bboxSizeX: true,
       bboxSizeY: true,
       bboxSizeZ: true,
@@ -143,7 +144,7 @@ export async function getProjectSpecification(projectId: string): Promise<Omit<P
 async function autoApplyMatches(
   projectId: string,
   matches: MatchResult[],
-  partsById: Map<string, { id: string; name: string; width: number; height: number }>
+  partsById: Map<string, { id: string; name: string; width: number; height: number; thickness: number }>
 ): Promise<MatchResult[]> {
   const nextMatches = [...matches];
   let needsUnfoldRecalculation = false;
@@ -163,8 +164,17 @@ async function autoApplyMatches(
       data.steelTypeName = null;
       data.steelTypeRaw = match.suggestedSteelTypeRaw;
     }
-    if (typeof match.suggestedThickness === 'number') data.thickness = match.suggestedThickness;
     const part = partsById.get(match.partId);
+    const thicknessGuard = part
+      ? applyThicknessGuard(data, part, match.suggestedThickness)
+      : null;
+    if (thicknessGuard) {
+      Object.assign(data, thicknessGuard.data);
+    }
+    if (thicknessGuard?.mismatch) {
+      match.thicknessMismatch = true;
+      match.thicknessMismatchNote = thicknessGuard.note;
+    }
     const dimensionGuard = part
       ? applyDimensionGuard(data, part, match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)
       : null;
@@ -292,7 +302,7 @@ function getUnmatchedBom(bom: BOMEntry[], matches: MatchResult[]): BOMEntry[] {
       .map((match) => buildBomKey(match.bomPosition, match.bomDesignation, match.bomName))
   );
 
-  return bom.filter((entry) => !matchedKeys.has(buildBomKey(entry.position, entry.designation, entry.name)));
+  return bom.filter((entry) => !matchedKeys.has(buildBomKey(entry.position, entry.designation, entry.description || entry.name)));
 }
 
 function buildBomKey(position: string, designation: string, name: string): string {

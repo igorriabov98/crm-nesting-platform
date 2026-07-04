@@ -69,6 +69,8 @@ export interface NestingPart {
   kFactorDefaulted: boolean
   dimensionMismatch: boolean
   mismatchNote: string | null
+  thicknessMismatch: boolean
+  thicknessMismatchNote: string | null
   thumbnailSvg: string | null
   classificationMethod: ClassificationMethod | string | null
   classificationWarning: string | null
@@ -115,6 +117,8 @@ export interface Placement {
   leadOut?: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>
   dimensionMismatch?: boolean
   mismatchNote?: string | null
+  thicknessMismatch?: boolean
+  thicknessMismatchNote?: string | null
   contourSource?: ContourSource | string
   bendCount?: number
   kFactor?: number | null
@@ -222,6 +226,8 @@ export interface AIMatchResult {
   suggestedIsSheetMetal: boolean | null
   suggestedHasBends: boolean | null
   suggestedMassKg: number | null
+  thicknessMismatch: boolean
+  thicknessMismatchNote: string | null
   detailNotes: string
   autoApplied: boolean
 }

@@ -5,7 +5,7 @@ import { AppError, NotFoundError, ValidationError } from '../lib/errors';
 import { prisma } from '../lib/prisma';
 import { idParamSchema } from '../schemas/common.schema';
 import { analyzeProjectPdf, getProjectSpecification, markSpecificationMatchesApplied } from '../lib/ai/service';
-import { applyDimensionGuard } from '../lib/ai/dimension-guard';
+import { applyDimensionGuard, applyThicknessGuard } from '../lib/ai/dimension-guard';
 import {
   aiSettingsInputSchema,
   getAISettingsView,
@@ -128,7 +128,7 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     const body = applyBomSchema.parse(request.body ?? {});
     const parts = await prisma.part.findMany({
       where: { projectId: id, id: { in: body.matches.map((match) => match.partId) } },
-      select: { id: true, name: true, width: true, height: true },
+      select: { id: true, name: true, width: true, height: true, thickness: true },
     });
     const partsById = new Map(parts.map((part) => [part.id, part]));
     const pendingUpdates: Array<{ partId: string; data: Prisma.PartUpdateInput }> = [];
@@ -145,7 +145,6 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       if ('steelTypeId' in match) data.steelTypeId = match.steelTypeId ?? null;
       if ('steelTypeName' in match) data.steelTypeName = match.steelTypeName ?? null;
       if ('steelTypeRaw' in match) data.steelTypeRaw = match.steelTypeRaw ?? null;
-      if (match.thickness) data.thickness = match.thickness;
       if (match.hasBends !== undefined) data.hasBends = match.hasBends;
       if (match.isSheetMetal !== undefined) {
         data.isSheetMetal = match.isSheetMetal;
@@ -162,7 +161,19 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         if (data.hasBends === undefined) data.hasBends = true;
       }
 
-      const guarded = applyDimensionGuard(data, part, match.unfoldingWidth, match.unfoldingHeight, {
+      const thicknessGuard = applyThicknessGuard(data, part, match.thickness, {
+        force: body.force === true,
+        blockOnMismatch: true,
+      });
+
+      if (thicknessGuard.blocked) {
+        throw new AppError(409, thicknessGuard.note ?? 'Толщина BOM расходится с геометрией STEP', {
+          partId: match.partId,
+          thicknessMismatchNote: thicknessGuard.note,
+        });
+      }
+
+      const guarded = applyDimensionGuard(thicknessGuard.data, part, match.unfoldingWidth, match.unfoldingHeight, {
         force: body.force === true,
         blockOnMismatch: true,
       });

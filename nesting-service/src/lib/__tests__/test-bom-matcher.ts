@@ -28,6 +28,7 @@ const steelBom = [
   createBom({
     position: '30',
     name: 'Steel panel',
+    quantity: 2,
     steelTypeRaw: 'S235',
     steelTypeId: 'steel-s235',
     steelTypeName: 'S235',
@@ -44,6 +45,25 @@ assert.equal(steelMatches[0].suggestedQuantity, null);
 assert.equal(steelMatches[1].suggestedQuantity, null);
 assert.equal(steelMatches[0].suggestedSteelTypeId, 'steel-s235');
 assert.equal(steelMatches[1].suggestedSteelTypeName, 'S235');
+
+const exhaustedBom = [createBom({ position: '35', name: 'Single bracket', quantity: 1 })];
+const exhaustedParts = [
+  createPart({ id: 'single-bracket-1', name: 'Single bracket', thickness: 5 }),
+  createPart({ id: 'single-bracket-2', name: 'Single bracket', thickness: 5 }),
+];
+const exhaustedMatches = matchBOMToParts(exhaustedBom, exhaustedParts);
+
+assert.equal(exhaustedMatches[0].matchType, 'none');
+assert.equal(exhaustedMatches[1].matchType, 'none');
+
+const thicknessMismatchMatches = matchBOMToParts(
+  [createBom({ position: '36', name: 'Wrong plate', partType: 'sheet', thicknessMm: 3, quantity: 1 })],
+  [createPart({ id: 'wrong-plate', name: 'Wrong plate', thickness: 4 })]
+);
+
+assert.equal(thicknessMismatchMatches[0].matchType, 'none');
+assert.match(thicknessMismatchMatches[0].matchDetails, /thickness rejected/);
+assert.equal(thicknessMismatchMatches[0].suggestedThickness, null);
 
 const designationBom = [
   createBom({
@@ -74,7 +94,7 @@ const designationParts = [
 const designationMatches = matchBOMToParts(designationBom, designationParts, designationDetails);
 
 assert.equal(designationMatches[0].matchType, 'designation');
-assert.equal(designationMatches[0].matchConfidence, 0.95);
+assert.equal(designationMatches[0].matchConfidence, 0.75);
 assert.equal(designationMatches[0].bomDesignation, 'ЛЕДА.024.00.008');
 assert.equal(designationMatches[0].suggestedUnfoldingWidth, 787);
 assert.equal(designationMatches[0].suggestedUnfoldingHeight, 356);
@@ -96,6 +116,7 @@ const s235AliasMatches = matchBOMToParts(
     designation: 'ЛЕДА.024.00.008',
     name: 'Стенка боковая',
     materialGrade: 'S235JRG2',
+    thicknessMm: 2,
   })],
   [{ id: 'steel-s235', name: 'S235', densityKgMm3: 0.00000785 }]
 );
@@ -125,15 +146,15 @@ const suffixParts = [
   createPart({
     id: 'angle-01',
     name: 'ЛЕДА.024.00.006 Уголок_-01',
-    thickness: 2,
+    thickness: 3,
   }),
 ];
 const suffixMatches = matchBOMToParts(suffixBom, suffixParts, suffixDetails);
 
 assert.equal(suffixMatches[0].matchType, 'designation');
-assert.equal(suffixMatches[0].matchConfidence, 0.9);
+assert.equal(suffixMatches[0].matchConfidence, 0.7);
 assert.equal(suffixMatches[0].bomDesignation, 'ЛЕДА.024.00.006-01');
-assert.equal(suffixMatches[0].suggestedThickness, 3);
+assert.equal(suffixMatches[0].suggestedThickness, null);
 assert.equal(suffixMatches[0].suggestedUnfoldingWidth, 725);
 assert.equal(suffixMatches[0].suggestedUnfoldingHeight, 55);
 
@@ -152,12 +173,12 @@ const geometryParts = [
   createPart({ id: 'back-wall', name: 'Задняя стенка', thickness: 3, quantity: 1, bboxSizeX: 1569, bboxSizeY: 606, bboxSizeZ: 995, isSheetMetal: true }),
   createPart({ id: 'side-wall', name: 'Боковая стенка', thickness: 2, quantity: 2, bboxSizeX: 1557, bboxSizeY: 604, bboxSizeZ: 52, isSheetMetal: true }),
   createPart({ id: 'profile-690', name: 'Профиль 690', thickness: 5.85, quantity: 4, bboxSizeX: 80, bboxSizeY: 690, bboxSizeZ: 45, isSheetMetal: false }),
-  createPart({ id: 'profile-1090', name: 'Профиль 1090', thickness: 4.91, quantity: 1, bboxSizeX: 63, bboxSizeY: 60, bboxSizeZ: 1090, isSheetMetal: false }),
+  createPart({ id: 'profile-1090', name: 'Профиль 1090', thickness: 4.91, quantity: 1, bboxSizeX: 50, bboxSizeY: 60, bboxSizeZ: 1090, isSheetMetal: false }),
   createPart({ id: 'round-bar', name: 'Круг', thickness: 7.06, quantity: 2, bboxSizeX: 16, bboxSizeY: 16, bboxSizeZ: 60, isSheetMetal: false }),
   createPart({
     id: 'support',
     name: 'Опора',
-    thickness: 30,
+    thickness: 6,
     quantity: 4,
     bboxSizeX: 75,
     bboxSizeY: 146.78,
@@ -166,8 +187,8 @@ const geometryParts = [
     meshArea: 45967.2,
     isSheetMetal: false,
   }),
-  createPart({ id: 'lower', name: 'Грушина нижняя', thickness: 12.89, quantity: 2, bboxSizeX: 160, bboxSizeY: 90, bboxSizeZ: 20, isSheetMetal: true }),
-  createPart({ id: 'upper', name: 'Грушина верхняя', thickness: 11.26, quantity: 4, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, isSheetMetal: true }),
+  createPart({ id: 'lower', name: 'Грушина нижняя', thickness: 20, quantity: 2, bboxSizeX: 160, bboxSizeY: 90, bboxSizeZ: 20, isSheetMetal: true }),
+  createPart({ id: 'upper', name: 'Грушина верхняя', thickness: 20, quantity: 4, bboxSizeX: 20, bboxSizeY: 230, bboxSizeZ: 68, isSheetMetal: true }),
 ];
 
 const geometryMatches = matchBOMToParts(geometryBom, geometryParts);
@@ -195,7 +216,7 @@ assert.equal(geometryMatches[4].bomName, 'RU 16 - 60');
 assert.equal(geometryMatches[4].suggestedIsSheetMetal, false);
 assert.equal(geometryMatches[5].bomName, 'BL 6 x 75 x 280');
 assert.equal(geometryMatches[5].suggestedIsSheetMetal, true);
-assert.equal(geometryMatches[5].suggestedThickness, 6);
+assert.equal(geometryMatches[5].suggestedThickness, null);
 assert.equal(geometryMatches[5].suggestedUnfoldingWidth, 75);
 assert.equal(geometryMatches[5].suggestedUnfoldingHeight, 280);
 assert.equal(geometryMatches[5].suggestedHasBends, true);
@@ -254,7 +275,9 @@ for (const match of lugMatches) {
   assert.match(match.matchDetails, /thickness:/);
   assert.match(match.matchDetails, /dim:/);
   assert.match(match.matchDetails, /mass:/);
+  assert.match(match.matchDetails, /qty group:/);
   assert.equal(match.suggestedThickness, null);
+  assert.equal(match.suggestedQuantity, null);
   assert.equal(match.suggestedIsSheetMetal, true);
   assert.equal(match.suggestedHasBends, false);
   assert.equal(match.suggestedSteelTypeId, 'steel-s235');

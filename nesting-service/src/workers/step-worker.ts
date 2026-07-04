@@ -196,7 +196,7 @@ async function processStepJob(job: StepJob) {
             sourceMachineItemId: input.isBatch ? input.sourceMachineItemId ?? null : null,
             sourceProductId: input.isBatch ? input.sourceProductId ?? null : null,
             name: part.name,
-            thickness: part.thickness,
+            thickness: part.thickness ?? 0,
             material: 'Сталь',
             width: part.width,
             height: part.height,

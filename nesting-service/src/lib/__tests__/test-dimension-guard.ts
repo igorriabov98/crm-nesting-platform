@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { applyDimensionGuard, isDimensionChangeSafe } from '../ai/dimension-guard';
+import { applyDimensionGuard, applyThicknessGuard, isDimensionChangeSafe, isThicknessChangeSafe } from '../ai/dimension-guard';
 
 const part = {
   name: 'Panel A',
@@ -28,5 +28,31 @@ assert.equal(safeFields.data.material, 'Алюминий');
 assert.equal(safeFields.data.quantity, 3);
 assert.equal(safeFields.data.dimensionMismatch, true);
 assert.match(String(safeFields.data.mismatchNote), /STEP содержит 100 x 50 мм/);
+
+const thicknessPart = {
+  name: 'Plate 4',
+  thickness: 4,
+};
+
+assert.equal(isThicknessChangeSafe(thicknessPart, 4.2), true, '0.2 mm thickness change should pass');
+assert.equal(isThicknessChangeSafe(thicknessPart, 3), false, '1 mm thickness mismatch should fail');
+
+const blockedThickness = applyThicknessGuard({}, thicknessPart, 3, { blockOnMismatch: true });
+assert.equal(blockedThickness.blocked, true, 'manual apply should block unsafe thickness without force');
+assert.match(blockedThickness.note ?? '', /BOM предлагает толщину 3 мм/);
+assert.match(blockedThickness.note ?? '', /STEP содержит 4 мм/);
+
+const forcedThickness = applyThicknessGuard({}, thicknessPart, 3, { blockOnMismatch: true, force: true });
+assert.equal(forcedThickness.blocked, false, 'force=true should bypass the thickness block');
+assert.equal(forcedThickness.thicknessApplied, true);
+assert.equal(forcedThickness.data.thickness, 3);
+assert.equal(forcedThickness.data.thicknessMismatch, false);
+
+const safeMaterialWithThicknessMismatch = applyThicknessGuard({ material: 'Сталь' }, thicknessPart, 3);
+assert.equal(safeMaterialWithThicknessMismatch.blocked, false);
+assert.equal(safeMaterialWithThicknessMismatch.thicknessApplied, false);
+assert.equal(safeMaterialWithThicknessMismatch.data.material, 'Сталь');
+assert.equal(safeMaterialWithThicknessMismatch.data.thicknessMismatch, true);
+assert.match(String(safeMaterialWithThicknessMismatch.data.thicknessMismatchNote), /STEP содержит 4 мм/);
 
 console.log('[dimension-guard] all tests passed');

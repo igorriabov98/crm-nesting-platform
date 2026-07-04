@@ -163,7 +163,7 @@ export function AIAnalysisPanel({
     if (!dimensionMismatch) return
 
     const confirmed = window.confirm(
-      `${dimensionMismatch.note}\n\nПрименить размеры из PDF принудительно?`
+      `${dimensionMismatch.note}\n\nПрименить данные из PDF принудительно?`
     )
 
     if (!confirmed) return
@@ -182,10 +182,11 @@ export function AIAnalysisPanel({
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        const details = data.details as { mismatchNote?: string } | undefined
-        if (res.status === 409 && details?.mismatchNote) {
-          setDimensionMismatch({ note: details.mismatchNote, payload })
-          throw new Error('Размеры PDF расходятся с геометрией STEP')
+        const details = data.details as { mismatchNote?: string; thicknessMismatchNote?: string } | undefined
+        const mismatchNote = details?.mismatchNote || details?.thicknessMismatchNote
+        if (res.status === 409 && mismatchNote) {
+          setDimensionMismatch({ note: mismatchNote, payload })
+          throw new Error(details?.thicknessMismatchNote ? 'Толщина BOM расходится с геометрией STEP' : 'Размеры PDF расходятся с геометрией STEP')
         }
 
         throw new Error(data.error || 'Не удалось применить предложения AI')
@@ -360,7 +361,21 @@ export function AIAnalysisPanel({
                               )}
                             </TableCell>
                             <TableCell>
-                              {match.suggestedThickness ? (
+                              {match.thicknessMismatch ? (
+                                <Tooltip>
+                                  <TooltipTrigger
+                                    render={
+                                      <span className="inline-flex items-center gap-1 text-amber-700">
+                                        <AlertTriangle className="h-4 w-4" />
+                                        {formatThickness(part?.thickness)}
+                                      </span>
+                                    }
+                                  />
+                                  <TooltipContent className="max-w-sm whitespace-normal">
+                                    {match.thicknessMismatchNote || 'Толщина BOM расходится с геометрией STEP'}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : match.suggestedThickness ? (
                                 match.autoApplied ? (
                                   `Применено: ${formatThickness(match.suggestedThickness)}`
                                 ) : (
@@ -387,7 +402,9 @@ export function AIAnalysisPanel({
                                 : <OkText value={String(part?.quantity || '—')} />}
                             </TableCell>
                             <TableCell>
-                              {match.autoApplied ? (
+                              {match.thicknessMismatch ? (
+                                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Толщина не изменена</Badge>
+                              ) : match.autoApplied ? (
                                 <Badge className="bg-emerald-100 text-emerald-700">Применено автоматически</Badge>
                               ) : match.steelTypeWarning ? (
                                 <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Нужен ручной тип стали</Badge>

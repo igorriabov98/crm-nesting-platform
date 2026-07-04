@@ -3,6 +3,7 @@ import pdfParse from 'pdf-parse';
 import type { BOMEntry, BOMPartType } from './types';
 
 type ParsedBOMLine = {
+  position?: string;
   articleNumber: string;
   description: string;
   designation: string;
@@ -29,7 +30,7 @@ export function parseDeterministicBOMText(text: string): BOMEntry[] {
 
   for (const rawLine of candidates) {
     const line = normalizeLine(rawLine);
-    const parsed = parseMaterialLine(line);
+    const parsed = parseRussianAssemblyLine(line) ?? parseMaterialLine(line);
     if (!parsed) continue;
 
     const entry = createBOMEntry(parsed);
@@ -95,6 +96,7 @@ function parseMaterialLine(line: string): ParsedBOMLine | null {
     .filter((value): value is number => typeof value === 'number');
 
   return {
+    position: '',
     articleNumber,
     description,
     designation,
@@ -108,6 +110,53 @@ function parseMaterialLine(line: string): ParsedBOMLine | null {
     widthMm: geometry.widthMm,
     heightMm: geometry.heightMm,
   };
+}
+
+function parseRussianAssemblyLine(line: string): ParsedBOMLine | null {
+  const thicknessMatch = line.match(/\s[sS]\s*(\d+(?:[,.]\d+)?)\s*$/);
+  if (!thicknessMatch) return null;
+
+  const thicknessMm = normalizePositiveNumber(thicknessMatch[1]);
+  if (!thicknessMm) return null;
+
+  const withoutThickness = line.slice(0, thicknessMatch.index).trim();
+  const headerMatch = withoutThickness.match(/^(\d{1,3})\s*([A-ZА-ЯЁ]+-\d+(?:\.\d+)*)\s*(.+)$/u);
+  if (!headerMatch) return null;
+
+  const position = headerMatch[1];
+  const designation = headerMatch[2];
+  const tail = headerMatch[3].trim();
+  const materialMatch = tail.match(standardSteelPattern());
+  if (!materialMatch || materialMatch.index === undefined) return null;
+
+  const materialGrade = materialMatch[0].replace(/\s+/g, ' ').trim();
+  const beforeMaterial = tail.slice(0, materialMatch.index).trim();
+  const quantityMatch = beforeMaterial.match(/(\d{1,3})\s*$/);
+  if (!quantityMatch || quantityMatch.index === undefined) return null;
+
+  const quantity = Math.max(1, Math.round(Number(quantityMatch[1])));
+  const name = beforeMaterial.slice(0, quantityMatch.index).trim();
+  if (!name) return null;
+
+  return {
+    position,
+    articleNumber: '',
+    description: name,
+    designation,
+    quantity,
+    massKg: null,
+    materialGrade,
+    materialType: 'Сталь',
+    norm: '',
+    partType: 'sheet',
+    thicknessMm,
+    widthMm: null,
+    heightMm: null,
+  };
+}
+
+function standardSteelPattern(): RegExp {
+  return /(?:Ст3сп|Ст3пс|09Г2С|12Х18Н10Т|AISI\s*304|AISI\s*430|40Х|65Г|10|20|45)\s*$/iu;
 }
 
 function buildCandidateSegments(text: string): string[] {
@@ -160,7 +209,7 @@ function extractDesignation(value: string): string {
 function createBOMEntry(input: ParsedBOMLine): BOMEntry {
   return {
     articleNumber: input.articleNumber,
-    position: '',
+    position: input.position ?? '',
     designation: input.designation,
     description: input.description,
     partType: input.partType,
@@ -186,6 +235,7 @@ function createBOMEntry(input: ParsedBOMLine): BOMEntry {
 function mergeBOMEntry(base: BOMEntry, override: BOMEntry): BOMEntry {
   return {
     ...base,
+    position: override.position || base.position,
     articleNumber: override.articleNumber || base.articleNumber,
     designation: override.designation || base.designation,
     description: override.description || base.description,

@@ -6,6 +6,11 @@ type DimensionedPart = {
   height: number;
 };
 
+type ThicknessedPart = {
+  name?: string | null;
+  thickness: number;
+};
+
 type DimensionGuardOptions = {
   force?: boolean;
   blockOnMismatch?: boolean;
@@ -19,8 +24,17 @@ type DimensionGuardResult<T extends Record<string, unknown>> = {
   note: string | null;
 };
 
+type ThicknessGuardResult<T extends Record<string, unknown>> = {
+  data: T & Prisma.PartUpdateInput;
+  blocked: boolean;
+  thicknessApplied: boolean;
+  mismatch: boolean;
+  note: string | null;
+};
+
 // PDF dimensions may override STEP only when both area and aspect ratio stay within 2%.
 export const DIMENSION_MISMATCH_TOLERANCE = 0.02;
+export const THICKNESS_MISMATCH_TOLERANCE_MM = 0.3;
 
 export function isDimensionChangeSafe(part: DimensionedPart, newWidth: number, newHeight: number): boolean {
   const currentArea = part.width * part.height;
@@ -95,6 +109,69 @@ export function applyDimensionGuard<T extends Record<string, unknown>>(
   };
 }
 
+export function isThicknessChangeSafe(part: ThicknessedPart, newThickness: number): boolean {
+  return (
+    isPositiveFinite(part.thickness) &&
+    isPositiveFinite(newThickness) &&
+    Math.abs(newThickness - part.thickness) <= THICKNESS_MISMATCH_TOLERANCE_MM
+  );
+}
+
+export function applyThicknessGuard<T extends Record<string, unknown>>(
+  data: T,
+  part: ThicknessedPart,
+  newThickness: number | null | undefined,
+  options: DimensionGuardOptions = {}
+): ThicknessGuardResult<T> {
+  if (!isPositiveFinite(newThickness)) {
+    return {
+      data: data as T & Prisma.PartUpdateInput,
+      blocked: false,
+      thicknessApplied: false,
+      mismatch: false,
+      note: null,
+    };
+  }
+
+  if (isThicknessChangeSafe(part, newThickness) || options.force === true) {
+    return {
+      data: {
+        ...data,
+        thickness: newThickness,
+        thicknessMismatch: false,
+        thicknessMismatchNote: null,
+      },
+      blocked: false,
+      thicknessApplied: true,
+      mismatch: false,
+      note: null,
+    };
+  }
+
+  const note = buildThicknessMismatchNote(part, newThickness);
+  if (options.blockOnMismatch) {
+    return {
+      data: data as T & Prisma.PartUpdateInput,
+      blocked: true,
+      thicknessApplied: false,
+      mismatch: true,
+      note,
+    };
+  }
+
+  return {
+    data: {
+      ...data,
+      thicknessMismatch: true,
+      thicknessMismatchNote: note,
+    },
+    blocked: false,
+    thicknessApplied: false,
+    mismatch: true,
+    note,
+  };
+}
+
 export function buildDimensionMismatchNote(part: DimensionedPart, newWidth: number, newHeight: number): string {
   const currentArea = part.width * part.height;
   const nextArea = newWidth * newHeight;
@@ -109,6 +186,16 @@ export function buildDimensionMismatchNote(part: DimensionedPart, newWidth: numb
     `STEP содержит ${formatDimension(part.width)} x ${formatDimension(part.height)} мм`,
     `расхождение площади ${formatPercent(areaDiff)}`,
     `соотношения сторон ${formatPercent(aspectDiff)}`,
+  ].join('; ');
+}
+
+export function buildThicknessMismatchNote(part: ThicknessedPart, newThickness: number): string {
+  const partName = part.name ? `${part.name}: ` : '';
+
+  return [
+    `${partName}BOM предлагает толщину ${formatDimension(newThickness)} мм`,
+    `STEP содержит ${formatDimension(part.thickness)} мм`,
+    `допуск ${formatDimension(THICKNESS_MISMATCH_TOLERANCE_MM)} мм`,
   ].join('; ');
 }
 
