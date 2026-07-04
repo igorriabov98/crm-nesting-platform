@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
   type BBox3D,
   type ClassificationMethod,
@@ -98,6 +99,7 @@ export interface StepParseResult {
 
 export type StepParseOptions = {
   material?: string;
+  sourceLabel?: string | null;
   resolveKFactor?: KFactorResolver;
 };
 
@@ -170,6 +172,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
     }
 
     const meshes = result.meshes ?? [];
+    const fallbackBaseName = buildFallbackBaseName(filePath, options.sourceLabel);
     const sourceMeshNames = extractStepOccurrenceNames(fileContent);
     const meshNames = extractMeshNames(result.root);
     const brepContours = await readBrepPartContours(fileBytes, {
@@ -198,7 +201,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
       const exactContour = brepResult?.contour ?? null;
 
       try {
-        const part = processMesh(mesh, i, meshNames, sourceMeshNames, errors, exactContour, brepResult);
+        const part = processMesh(mesh, i, meshes.length, meshNames, sourceMeshNames, fallbackBaseName, errors, exactContour, brepResult);
         if (part) {
           parts.push(part);
           if (part.contourSource === 'EXACT_BREP') {
@@ -292,11 +295,49 @@ function extractMeshNames(root: OcctNode | undefined): Map<number, string> {
   return names;
 }
 
+function buildFallbackBaseName(filePath: string, sourceLabel?: string | null): string {
+  const label = normalizeCadText(sourceLabel?.trim() ?? '');
+  if (isUsableFallbackName(label)) {
+    return label;
+  }
+
+  const fileName = normalizeCadText(path.parse(filePath).name);
+  if (isUsableFallbackName(fileName)) {
+    return fileName;
+  }
+
+  return 'Part';
+}
+
+function resolvePartName(rawName: string, fallbackBaseName: string, index: number, totalMeshes: number): string {
+  const name = normalizeCadText(rawName);
+  if (!isGenericCadName(name)) {
+    return name;
+  }
+
+  return totalMeshes <= 1 ? fallbackBaseName : `${fallbackBaseName}_${index + 1}`;
+}
+
+function isUsableFallbackName(value: string): boolean {
+  const normalized = value.trim();
+  return normalized.length > 0 && !isGenericCadName(normalized);
+}
+
+function isGenericCadName(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return true;
+  if (/^part[_\s-]*\d+$/i.test(normalized)) return true;
+  if (normalized === 'single project') return true;
+  return normalized.includes('open cascade step translator') || normalized.includes('open cascade shape model');
+}
+
 function processMesh(
   mesh: OcctMesh,
   index: number,
+  totalMeshes: number,
   meshNames: Map<number, string>,
   sourceMeshNames: Map<number, string>,
+  fallbackBaseName: string,
   errors: string[],
   exactContour: BrepPartContour | null,
   brepResult: BrepContourResult | null
@@ -311,7 +352,7 @@ function processMesh(
   const indices = mesh.index?.array ? toUint32Array(mesh.index.array) : new Uint32Array();
   const hasIndexedTriangles = indices.length >= 3;
   const rawName = sourceMeshNames.get(index) || mesh.name || meshNames.get(index) || `Part_${index + 1}`;
-  const name = normalizeCadText(rawName);
+  const name = resolvePartName(rawName, fallbackBaseName, index, totalMeshes);
   const boundingBox = computeBoundingBox(positions);
   const meshArea = hasIndexedTriangles ? computeMeshArea(positions, indices) : 0;
   const meshVolume = hasIndexedTriangles ? computeMeshVolume(positions, indices) : 0;

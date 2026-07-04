@@ -44,7 +44,7 @@ export function matchBOMToParts(
     const eligibleBom = bom.filter((entry) => (remainingByBom.get(buildBomKeyFromEntry(entry)) ?? 0) >= group.parts.length);
     const bomByDesignation = buildDesignationMap(eligibleBom, (entry) => entry.designation);
     const match = applyGroupQuantitySignal(
-      findBestMatch(group.parts[0], eligibleBom, detailsByDesignation, bomByDesignation),
+      findBestMatch(group.parts[0], eligibleBom, details, detailsByDesignation, bomByDesignation),
       group.parts.length
     );
 
@@ -146,6 +146,7 @@ function applyGroupQuantitySignal(match: MatchCandidate, groupSize: number): Mat
 function findBestMatch(
   part: PartForMatching,
   bom: BOMEntry[],
+  details: DetailEntry[],
   detailsByDesignation: Map<string, DetailEntry>,
   bomByDesignation: Map<string, BOMEntry>
 ): MatchCandidate {
@@ -189,6 +190,11 @@ function findBestMatch(
       };
     }
     rejectedDetails.push(buildThicknessRejectedDetails(part, geometryMatch.entry, detail));
+  }
+
+  const detailMatch = findDetailMatch(part, details, rejectedDetails);
+  if (detailMatch) {
+    return detailMatch;
   }
 
   return {
@@ -297,6 +303,89 @@ function findGeometryMatch(
   }
 
   return bestMatch;
+}
+
+function findDetailMatch(
+  part: PartForMatching,
+  details: DetailEntry[],
+  rejectedDetails: string[] = []
+): MatchCandidate | null {
+  let bestMatch: MatchCandidate | null = null;
+
+  for (const detail of details) {
+    if (!isThicknessCompatibleWithCandidate(part, null, detail)) {
+      rejectedDetails.push(buildThicknessRejectedDetails(part, null, detail));
+      continue;
+    }
+
+    const geometry = detailGeometryMatchScore(part, detail);
+    if (geometry.score < 0.8 || geometry.strongMatches < 2) {
+      continue;
+    }
+
+    if (!bestMatch || geometry.score > bestMatch.matchConfidence) {
+      bestMatch = {
+        bomEntry: null,
+        detail,
+        matchType: 'geometry',
+        matchConfidence: geometry.score,
+        matchDetails: `detail_geometry: ${geometry.details.join('; ')}`,
+      };
+    }
+  }
+
+  return bestMatch;
+}
+
+function detailGeometryMatchScore(part: PartForMatching, detail: DetailEntry): GeometryScore {
+  const details: string[] = [];
+  let score = 0;
+  let strongMatches = 0;
+  const detailDims = getDetailUnfoldingDims(detail);
+  const partDims = getPartUnfoldingDims(part);
+
+  if (detail.thicknessMm > 0 && thicknessMatch(detail.thicknessMm, getStepThickness(part))) {
+    score += 0.35;
+    strongMatches += 1;
+    details.push(`thickness: detail=${formatNumber(detail.thicknessMm)} ~= STEP=${formatNumber(getStepThickness(part))}`);
+  }
+
+  const usedStepDims = new Set<number>();
+  for (const detailDim of detailDims) {
+    const best = findClosestDim(detailDim, partDims, usedStepDims);
+    if (best && best.diff <= 0.15) {
+      usedStepDims.add(best.index);
+      score += 0.3;
+      strongMatches += 1;
+      details.push(`dim: detail=${formatNumber(detailDim)} ~= STEP=${formatNumber(partDims[best.index])}`);
+    }
+  }
+
+  if (detail.isSheetMetal && part.isSheetMetal) {
+    score += 0.05;
+    details.push('type: sheet');
+  }
+
+  if (detail.massKg && detail.massKg > 0 && part.meshVolume && part.meshVolume > 0) {
+    const stepMassKg = part.meshVolume * 7.85 / 1e6;
+    if (sizeMatch(detail.massKg, stepMassKg, 0.2)) {
+      score += 0.15;
+      strongMatches += 1;
+      details.push(`mass: detail=${formatNumber(detail.massKg)}kg ~= STEP=${formatNumber(stepMassKg)}kg`);
+    }
+  }
+
+  const tokenScore = nameTokenScore(normalize(part.name), normalize(detail.name));
+  if (tokenScore >= 0.75) {
+    score += 0.05;
+    details.push('name token match');
+  }
+
+  return {
+    score: Math.min(1, score),
+    details,
+    strongMatches,
+  };
 }
 
 function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore {
@@ -450,6 +539,18 @@ function getPartBBoxDims(part: PartForMatching): number[] {
 
   return [part.thickness, part.width, part.height]
     .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+}
+
+function getPartUnfoldingDims(part: PartForMatching): number[] {
+  return [part.width, part.height]
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+}
+
+function getDetailUnfoldingDims(detail: DetailEntry): number[] {
+  return [detail.unfoldingWidth, detail.unfoldingHeight]
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
     .sort((a, b) => a - b);
 }
 

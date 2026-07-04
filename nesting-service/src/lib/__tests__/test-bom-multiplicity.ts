@@ -4,7 +4,7 @@ import { applyThicknessGuard } from '../ai/dimension-guard';
 import { matchBOMToParts } from '../ai/bom-matcher';
 import { extractDeterministicBOMFromPdf } from '../ai/pdf-bom-fallback';
 import { resolveBOMSteelTypes } from '../ai/steel-types';
-import type { PartForMatching, SteelTypeCatalogItem } from '../ai/types';
+import type { DetailEntry, PartForMatching, SteelTypeCatalogItem } from '../ai/types';
 import { parseStepFile, type ParsedPart } from '../step-parser';
 
 const stepPath = process.env.BOM_MULTIPLICITY_STEP ?? '/Users/igorrabov/Downloads/KVSH-100-SB-FULL.step';
@@ -80,6 +80,28 @@ async function main(): Promise<void> {
   assert.equal(autoThickness.data.thicknessMismatch, true);
   assert.match(String(autoThickness.data.thicknessMismatchNote), /STEP содержит 4 мм/);
 
+  const detailOnlyPart = createEtalon03Part({ thickness: 2 });
+  const detailOnlyMatches = matchBOMToParts([], [detailOnlyPart], [createEtalon03Detail()], steelTypes);
+  assert.equal(detailOnlyMatches.length, 1, 'detail-only PDF should produce one match result');
+  const detailOnlyMatch = detailOnlyMatches[0];
+  assert.equal(detailOnlyMatch.matchType, 'geometry', 'detail-only PDF should match by geometry');
+  assert.equal(detailOnlyMatch.matchConfidence >= 0.8, true, 'detail-only geometry should be auto-apply eligible');
+  assert.match(detailOnlyMatch.matchDetails, /^detail_geometry:/);
+  assert.equal(detailOnlyMatch.bomName, 'Уголок гнутый');
+  assert.equal(detailOnlyMatch.bomDesignation, 'ЭТЛ-03.001');
+  assert.equal(detailOnlyMatch.suggestedMaterialGrade, 'Ст3сп');
+  assert.equal(detailOnlyMatch.suggestedSteelTypeId, 'steel-st3sp');
+  assert.equal(detailOnlyMatch.suggestedSteelTypeName, 'Ст3сп');
+  assert.equal(detailOnlyMatch.suggestedThickness, null, 'matching s2 detail should not rewrite an s2 STEP part');
+  assert.equal(detailOnlyMatch.suggestedUnfoldingWidth, 85.97);
+  assert.equal(detailOnlyMatch.suggestedUnfoldingHeight, 100);
+  assert.equal(detailOnlyMatch.suggestedQuantity, null, 'detail notes quantity should not be applied');
+
+  const mismatchedDetailMatches = matchBOMToParts([], [createEtalon03Part({ thickness: 4 })], [createEtalon03Detail()], steelTypes);
+  assert.equal(mismatchedDetailMatches[0].matchType, 'none', 'detail s2 must not match STEP thickness s4');
+  assert.equal(mismatchedDetailMatches[0].matchConfidence, 0);
+  assert.equal(mismatchedDetailMatches[0].suggestedSteelTypeId, null);
+
   console.table(
     bom.map((entry) => {
       const rowMatches = matches.filter((match) => match.bomPosition === entry.position);
@@ -114,6 +136,45 @@ function toPartForMatching(part: ParsedPart, index: number): PartForMatching {
     facesCount: part.facesCount,
     isSheetMetal: part.isSheetMetal,
     hasBends: part.hasBends,
+  };
+}
+
+function createEtalon03Part(input: { thickness: number }): PartForMatching {
+  return {
+    id: `etalon-03-s${input.thickness}`,
+    name: 'Open CASCADE STEP translator 7.9 3',
+    material: 'Сталь',
+    steelTypeId: null,
+    steelTypeName: null,
+    steelTypeRaw: null,
+    quantity: 1,
+    thickness: input.thickness,
+    width: 100,
+    height: 85.81,
+    bboxSizeX: 50,
+    bboxSizeY: 40,
+    bboxSizeZ: 100,
+    meshVolume: 17246.11723639627,
+    meshArea: 17998.9244799379,
+    facesCount: 76,
+    isSheetMetal: true,
+    hasBends: true,
+  };
+}
+
+function createEtalon03Detail(): DetailEntry {
+  return {
+    designation: 'ЭТЛ-03.001',
+    name: 'Уголок гнутый',
+    materialFull: 'Ст3сп',
+    materialType: 'Сталь',
+    materialGrade: 'Ст3сп',
+    thicknessMm: 2,
+    unfoldingWidth: 85.97,
+    unfoldingHeight: 100,
+    massKg: 0.135,
+    isSheetMetal: true,
+    notes: 'Кол-во: 6 шт.; Внутр. радиус гиба R3, угол 90°',
   };
 }
 

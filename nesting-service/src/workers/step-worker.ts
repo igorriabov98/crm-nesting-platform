@@ -64,7 +64,7 @@ function getInputs(data: StepParsingJobData, projectId: string): StepInputContex
     sourceInputId: null,
     sourceId: projectId,
     sourceType: 'single_project',
-    sourceLabel: 'Single project',
+    sourceLabel: data.sourceLabel || 'Single project',
     quantity: 1,
     stepFileRef,
     pdfFileRef: data.pdfStorageUri || data.pdfFilePath,
@@ -119,6 +119,7 @@ async function processStepJob(job: StepJob) {
           : null;
         const result = await parseStepFile(stepObject.filePath, {
           material: 'Сталь',
+          sourceLabel: input.sourceLabel,
           resolveKFactor: async ({ material, thickness }) => {
             const resolved = await catalogService.resolveKFactorForMaterial(material, thickness);
             return {

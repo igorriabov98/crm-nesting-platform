@@ -9,6 +9,7 @@ export const QUEUE_NESTING_CALCULATION = 'nesting-calculation';
 
 export interface StepParsingJobData {
   projectId: string;
+  sourceLabel?: string | null;
   stepFilePath?: string | null;
   pdfFilePath?: string | null;
   stepStorageUri?: string | null;
