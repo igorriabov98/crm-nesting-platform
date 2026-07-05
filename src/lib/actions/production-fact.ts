@@ -611,6 +611,23 @@ async function assertFactoryMachine(admin: AdminClient, factoryId: string, machi
   return machine
 }
 
+async function assertFactoryMachines(admin: AdminClient, factoryId: string, machineIds: string[]) {
+  if (machineIds.length === 0) return
+  const { data, error } = await looseDb(admin)
+    .from('machines')
+    .select('id, factory_id, is_archived')
+    .in('id', machineIds)
+
+  if (error) throw error
+  const rows = (data || []) as Array<{ id: string; factory_id: string | null; is_archived: boolean }>
+  const byId = new Map(rows.map((machine) => [machine.id, machine]))
+  for (const machineId of machineIds) {
+    const machine = byId.get(machineId)
+    if (!machine) throw new Error('Машина не найдена')
+    if (machine.factory_id !== factoryId) throw new Error('Машина относится к другому заводу')
+  }
+}
+
 function revalidateProductionFact() {
   revalidatePath(ROUTES.PRODUCTION_FACT)
 }
@@ -623,6 +640,16 @@ function revalidateProductionCuttingFlow(machineId?: string | null) {
   revalidatePath(ROUTES.TASKS)
   revalidatePath(ROUTES.NOTIFICATIONS)
   if (machineId) revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+}
+
+async function runLimited<T>(
+  items: T[],
+  limit: number,
+  runner: (item: T) => Promise<void>,
+) {
+  for (let index = 0; index < items.length; index += limit) {
+    await Promise.all(items.slice(index, index + limit).map(runner))
+  }
 }
 
 async function applyCuttingFactSideEffects(admin: AdminClient, factId: string, userId: string) {
@@ -1358,7 +1385,7 @@ export async function saveUnifiedProductionFact(input: {
   comment?: string | null
 }): Promise<ProductionFactActionResult<{ inserted: number; skipped: number; shippingUpdated: number; tonnageSaved: boolean }>> {
   try {
-    const { admin, role, factoryId: userFactoryId } = await getContext()
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
     const factDate = dateOnly(input.fact_date)
     assertFactoryAccess(role, userFactoryId, input.factory_id)
     assertCanEditFactDate(role, factDate)
@@ -1369,17 +1396,15 @@ export async function saveUnifiedProductionFact(input: {
     const machineIds = Array.from(new Set(input.machine_ids)).filter(Boolean)
     if (machineIds.length === 0) throw new Error('Выберите машины')
 
-    for (const machineId of machineIds) {
-      await assertFactoryMachine(admin, input.factory_id, machineId)
-    }
+    await assertFactoryMachines(admin, input.factory_id, machineIds)
 
     if (stageDefinition.isShipping) {
       let shippingUpdated = 0
-      for (const machineId of machineIds) {
+      await runLimited(machineIds, 6, async (machineId) => {
         const result = await updateMachineDate(machineId, 'actual_shipping_date', factDate)
         if (!result.success) throw new Error(result.error || 'Не удалось сохранить факт отгрузки')
         shippingUpdated += 1
-      }
+      })
       revalidateProductionFact()
       return {
         success: true,
@@ -1389,6 +1414,8 @@ export async function saveUnifiedProductionFact(input: {
     }
 
     await assertActiveFactSection(admin, input.factory_id, input.section_id)
+    const sectionContext = await getFactSectionContext(admin, input.section_id)
+    const isCuttingSection = isCuttingFactSection(sectionContext.section, sectionContext.parent)
 
     const { data: existingRaw, error: existingError } = await looseDb(admin)
       .from('production_machine_facts')
@@ -1401,30 +1428,78 @@ export async function saveUnifiedProductionFact(input: {
 
     if (existingError) throw existingError
     const existingMachineIds = new Set(((existingRaw || []) as Array<{ machine_id: string }>).map((fact) => fact.machine_id))
-    let inserted = 0
+    const missingMachineIds = machineIds.filter((machineId) => !existingMachineIds.has(machineId))
+    let inserted = missingMachineIds.length
 
-    for (const machineId of machineIds) {
-      if (existingMachineIds.has(machineId)) continue
-      const result = await saveProductionMachineFact({
+    if (missingMachineIds.length > 0 && isCuttingSection) {
+      await runLimited(missingMachineIds, 4, async (machineId) => {
+        const result = await saveProductionMachineFact({
+          factory_id: input.factory_id,
+          fact_date: factDate,
+          machine_id: machineId,
+          section_id: input.section_id,
+          shift: input.shift,
+          comment: input.comment,
+        })
+        if (!result.success) throw new Error(result.error || 'Не удалось сохранить факт машины')
+      })
+    } else if (missingMachineIds.length > 0) {
+      const machineFactPayload = missingMachineIds.map((machineId) => ({
         factory_id: input.factory_id,
         fact_date: factDate,
         machine_id: machineId,
         section_id: input.section_id,
         shift: input.shift,
-        comment: input.comment,
-      })
-      if (!result.success) throw new Error(result.error || 'Не удалось сохранить факт машины')
-      inserted += 1
+        comment: normalizeNullableText(input.comment),
+        created_by: userId,
+        updated_by: userId,
+      }))
+
+      const { data: insertedRaw, error: insertError } = await looseDb(admin)
+        .from('production_machine_facts')
+        .insert(machineFactPayload)
+        .select('id, machine_id')
+
+      if (insertError) throw insertError
+      const insertedFacts = (insertedRaw || []) as Array<{ id: string; machine_id: string }>
+      inserted = insertedFacts.length
     }
 
-    const tonnageResult = await saveProductionTonnageFact({
+    const tonnage = Number(input.tonnage || 0)
+    if (!Number.isFinite(tonnage) || tonnage < 0) throw new Error('Тоннаж должен быть числом от 0')
+
+    const { data: existingTonnageRaw, error: existingTonnageError } = await looseDb(admin)
+      .from('production_tonnage_facts')
+      .select('id')
+      .eq('factory_id', input.factory_id)
+      .eq('fact_date', factDate)
+      .eq('section_id', input.section_id)
+      .maybeSingle()
+
+    if (existingTonnageError) throw existingTonnageError
+    const tonnagePayload = {
       factory_id: input.factory_id,
       fact_date: factDate,
       section_id: input.section_id,
-      tonnage: Number(input.tonnage || 0),
-      comment: input.comment,
-    })
-    if (!tonnageResult.success) throw new Error(tonnageResult.error || 'Не удалось сохранить тоннаж')
+      tonnage,
+      comment: normalizeNullableText(input.comment),
+      updated_by: userId,
+    }
+    const existingTonnage = existingTonnageRaw as { id: string } | null
+    if (existingTonnage) {
+      const { error: updateTonnageError } = await looseDb(admin)
+        .from('production_tonnage_facts')
+        .update(tonnagePayload)
+        .eq('id', existingTonnage.id)
+      if (updateTonnageError) throw updateTonnageError
+    } else {
+      const { error: insertTonnageError } = await looseDb(admin)
+        .from('production_tonnage_facts')
+        .insert({ ...tonnagePayload, created_by: userId })
+      if (insertTonnageError) throw insertTonnageError
+    }
+
+    revalidateProductionFact()
 
     return {
       success: true,
