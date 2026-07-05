@@ -3,7 +3,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import {
@@ -47,7 +46,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { cn } from '@/lib/utils'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { MACHINE_PROGRESS_STATIC_LABELS, MACHINE_PROGRESS_STATIC_ORDER } from '@/lib/machine-progress'
-import type { ProductionMonthOption } from '@/lib/utils/production-months'
+import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
 import { MachineProgressBadge } from './MachineStatusBadge'
 
 const MachineEditDialog = dynamic(() => import('./MachineEditDialog').then((mod) => mod.MachineEditDialog))
@@ -336,11 +335,10 @@ export function MachineTable({
   productionMonthFilter,
   productionMonthOptions,
 }: MachineTableProps) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
   const [filters, setFilters] = useState<SalesPlanFilters>(initialFilters)
   const [sort, setSort] = useState<SalesPlanSort>('newest')
+  const [selectedFactoryFilter, setSelectedFactoryFilter] = useState(factoryFilter || 'all')
+  const [selectedProductionMonthFilter, setSelectedProductionMonthFilter] = useState(productionMonthFilter || 'all')
   const [editMachine, setEditMachine] = useState<MachineListItem | null>(null)
   const [archiveMachine, setArchiveMachine] = useState<MachineListItem | null>(null)
   const [deleteMachine, setDeleteMachine] = useState<MachineListItem | null>(null)
@@ -350,13 +348,27 @@ export function MachineTable({
   const canEdit = canCreateMachines(userRole)
   const canDelete = isDirector
 
-  const updateUrlFilter = useCallback((key: 'factory' | 'productionMonth', value: string) => {
-    const params = new URLSearchParams(searchParams.toString())
-    if (!value || value === 'all') params.delete(key)
-    else params.set(key, value)
+  const replaceUrlFilters = useCallback((updates: Partial<Record<'factory' | 'productionMonth', string>>) => {
+    const params = new URLSearchParams(window.location.search)
+    Object.entries(updates).forEach(([key, value]) => {
+      if (!value || value === 'all') params.delete(key)
+      else params.set(key, value)
+    })
     const query = params.toString()
-    router.push(query ? `${pathname}?${query}` : pathname)
-  }, [pathname, router, searchParams])
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}`)
+  }, [])
+
+  const updateFactoryFilter = useCallback((value: string) => {
+    const nextValue = value || 'all'
+    setSelectedFactoryFilter(nextValue)
+    replaceUrlFilters({ factory: nextValue })
+  }, [replaceUrlFilters])
+
+  const updateProductionMonthFilter = useCallback((value: string) => {
+    const nextValue = value || 'all'
+    setSelectedProductionMonthFilter(nextValue)
+    replaceUrlFilters({ productionMonth: nextValue })
+  }, [replaceUrlFilters])
 
   const updateFilter = <K extends keyof SalesPlanFilters>(key: K, value: SalesPlanFilters[K]) => {
     setFilters((current) => ({ ...current, [key]: value }))
@@ -398,6 +410,12 @@ export function MachineTable({
       .toLowerCase()
 
     const matchesSearch = !normalizedSearch || searchable.includes(normalizedSearch)
+    const matchesFactory = selectedFactoryFilter === 'all'
+      || (selectedFactoryFilter === 'no_factory'
+        ? !machine.factory_id
+        : machine.factory_id === selectedFactoryFilter)
+    const matchesProductionMonth = selectedProductionMonthFilter === 'all'
+      || normalizeProductionMonthValue(machine.production_month) === selectedProductionMonthFilter
     const matchesCoating = filters.coating === 'all'
       || machine.uniqueCoatings?.includes(filters.coating as CoatingType)
     const matchesStatus = filters.status === 'all' || machine.progress.currentKey === filters.status
@@ -417,12 +435,14 @@ export function MachineTable({
     }
 
     return matchesSearch
+      && matchesFactory
+      && matchesProductionMonth
       && matchesCoating
       && matchesStatus
       && matchesMaterial
       && matchesConfirmation
       && matchesInvoice
-  }), [canViewInvoice, filters, machines, normalizedSearch])
+  }), [canViewInvoice, filters, machines, normalizedSearch, selectedFactoryFilter, selectedProductionMonthFilter])
 
   const sortedMachines = useMemo(() => [...filteredMachines].sort((left, right) => {
     if (sort === 'oldest') return new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
@@ -453,27 +473,51 @@ export function MachineTable({
     return items
   }, [canViewInvoice, filters, progressLabelMap])
 
-  const hasAnyFilters = activeClientFilters.length > 0 || factoryFilter !== 'all' || Boolean(productionMonthFilter)
+  const hasAnyFilters = activeClientFilters.length > 0
+    || selectedFactoryFilter !== 'all'
+    || selectedProductionMonthFilter !== 'all'
 
   const resetAllFilters = () => {
     setFilters(initialFilters)
     setSort('newest')
-    const params = new URLSearchParams(searchParams.toString())
-    params.delete('factory')
-    params.delete('productionMonth')
-    const query = params.toString()
-    router.push(query ? `${pathname}?${query}` : pathname)
+    setSelectedFactoryFilter('all')
+    setSelectedProductionMonthFilter('all')
+    replaceUrlFilters({ factory: 'all', productionMonth: 'all' })
   }
 
   const removeClientFilter = (key: keyof SalesPlanFilters) => {
     updateFilter(key, initialFilters[key])
   }
 
-  const selectedFactoryLabel = factoryFilter === 'no_factory'
+  const availableProductionMonthOptions = useMemo(() => {
+    const scopedMachines = machines.filter((machine) => selectedFactoryFilter === 'all'
+      || (selectedFactoryFilter === 'no_factory'
+        ? !machine.factory_id
+        : machine.factory_id === selectedFactoryFilter))
+    const monthValues = Array.from(new Set(
+      scopedMachines
+        .map((machine) => normalizeProductionMonthValue(machine.production_month))
+        .filter((value): value is string => Boolean(value))
+    )).sort((left, right) => right.localeCompare(left))
+    const options = monthValues.map((value) => ({ value, label: formatProductionMonth(value) }))
+    if (
+      selectedProductionMonthFilter !== 'all'
+      && !options.some((option) => option.value === selectedProductionMonthFilter)
+    ) {
+      const fallback = productionMonthOptions.find((option) => option.value === selectedProductionMonthFilter)
+      options.unshift(fallback || {
+        value: selectedProductionMonthFilter,
+        label: formatProductionMonth(selectedProductionMonthFilter),
+      })
+    }
+    return options.length > 0 ? options : productionMonthOptions
+  }, [machines, productionMonthOptions, selectedFactoryFilter, selectedProductionMonthFilter])
+
+  const selectedFactoryLabel = selectedFactoryFilter === 'no_factory'
     ? 'Без завода'
-    : factories.find((factory) => factory.id === factoryFilter)?.name || 'Все заводы'
-  const selectedMonthLabel = productionMonthFilter
-    ? productionMonthOptions.find((option) => option.value === productionMonthFilter)?.label || productionMonthFilter
+    : factories.find((factory) => factory.id === selectedFactoryFilter)?.name || 'Все заводы'
+  const selectedMonthLabel = selectedProductionMonthFilter !== 'all'
+    ? availableProductionMonthOptions.find((option) => option.value === selectedProductionMonthFilter)?.label || selectedProductionMonthFilter
     : 'Все месяцы'
 
   return (
@@ -537,7 +581,7 @@ export function MachineTable({
               />
             </label>
 
-            <Select value={factoryFilter} onValueChange={(value) => updateUrlFilter('factory', value || 'all')}>
+            <Select value={selectedFactoryFilter} onValueChange={(value) => updateFactoryFilter(value || 'all')}>
               <SelectTrigger className="h-11 border-slate-200 bg-white text-slate-700">
                 <SelectValue>{selectedFactoryLabel}</SelectValue>
               </SelectTrigger>
@@ -551,15 +595,15 @@ export function MachineTable({
             </Select>
 
             <Select
-              value={productionMonthFilter || 'all'}
-              onValueChange={(value) => updateUrlFilter('productionMonth', value || 'all')}
+              value={selectedProductionMonthFilter}
+              onValueChange={(value) => updateProductionMonthFilter(value || 'all')}
             >
               <SelectTrigger className="h-11 border-slate-200 bg-white text-slate-700">
                 <SelectValue>{selectedMonthLabel}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Все месяцы</SelectItem>
-                {productionMonthOptions.map((option) => (
+                {availableProductionMonthOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                 ))}
               </SelectContent>
@@ -644,19 +688,19 @@ export function MachineTable({
                 <Filter className="h-3.5 w-3.5" />
                 Активно:
               </span>
-              {factoryFilter !== 'all' && (
+              {selectedFactoryFilter !== 'all' && (
                 <button
                   type="button"
-                  onClick={() => updateUrlFilter('factory', 'all')}
+                  onClick={() => updateFactoryFilter('all')}
                   className="inline-flex min-h-8 items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-3 text-xs font-medium text-blue-800 transition-colors hover:bg-blue-100"
                 >
                   {selectedFactoryLabel}<X className="h-3 w-3" />
                 </button>
               )}
-              {productionMonthFilter && (
+              {selectedProductionMonthFilter !== 'all' && (
                 <button
                   type="button"
-                  onClick={() => updateUrlFilter('productionMonth', 'all')}
+                  onClick={() => updateProductionMonthFilter('all')}
                   className="inline-flex min-h-8 items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-3 text-xs font-medium text-blue-800 transition-colors hover:bg-blue-100"
                 >
                   {selectedMonthLabel}<X className="h-3 w-3" />

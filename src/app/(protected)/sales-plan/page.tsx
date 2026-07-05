@@ -4,7 +4,6 @@ import { AccessDenied } from '@/components/ui/AccessDenied'
 import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 import { canViewSalesPlan } from '@/lib/utils/permissions'
 import { INVOICE_VISIBLE_ROLES } from '@/lib/constants/roles'
-import { SALES_PLAN_MACHINE_LIMIT } from '@/lib/constants/sales-plan'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 
 export const metadata = {
@@ -30,8 +29,8 @@ export default async function SalesPlanPage({
     { data: productionMonthOptionsData },
     { data: factoriesData },
   ] = await Promise.all([
-    getMachines(factoryFilter, productionMonthFilter),
-    getProductionMonthFilterOptions(factoryFilter),
+    getMachines(),
+    getProductionMonthFilterOptions(),
     supabase.from('factories').select('id, name'),
   ])
 
@@ -73,7 +72,6 @@ export default async function SalesPlanPage({
         isDirector={['financial_director', 'commercial_director', 'planning_director'].includes(user.role)}
         factories={factoriesData || []}
         factoryFilter={factoryFilter}
-        resultLimit={SALES_PLAN_MACHINE_LIMIT}
         productionMonthFilter={productionMonthFilter}
         productionMonthOptions={productionMonthOptions}
       />

@@ -9,7 +9,6 @@ import { requirePermission } from '@/lib/permissions/server'
 import { dispatchPendingTelegramDeliveries, notifyNewTasks } from '@/lib/services/task-notifications'
 import { createMachineSchema, machineExpenseSchema, machineItemSchema, machinePackingSettingsSchema } from '@/lib/types/schemas'
 import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
-import { SALES_PLAN_MACHINE_LIMIT } from '@/lib/constants/sales-plan'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { isMachineInConfirmedProductionPlan, notifyMachineEnteredReadyProductionPlan } from '@/lib/actions/production-plan'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
@@ -865,7 +864,6 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
 
     const { data: rawData, error } = await query
       .order('created_at', { ascending: false })
-      .limit(SALES_PLAN_MACHINE_LIMIT)
 
     if (error) throw error
 
