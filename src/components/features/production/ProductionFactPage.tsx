@@ -32,6 +32,7 @@ import {
   resolveProductionFactStandardStages,
   type ProductionFactStageKey,
 } from '@/lib/constants/production-fact'
+import { formatProductionMonth } from '@/lib/utils/production-months'
 import { cn } from '@/lib/utils'
 import type { ProductionFactSection, ProductionFactShift } from '@/lib/types'
 
@@ -94,6 +95,12 @@ type DayOverviewRow = {
   tonnage: number
 }
 
+type MachineMonthGroup = {
+  key: string
+  label: string
+  machines: ProductionFactMachineOption[]
+}
+
 export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -135,7 +142,24 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   const canEdit = data.canEditSelectedDate && Boolean(data.selectedFactoryId)
   const readOnlyLabel = !data.canEditSelectedDate && !data.isDirector ? 'Только просмотр: дата старше 7 дней' : null
   const selectedMachineText = machineSelectionLabel(data.machineOptions, selectedMachineIds)
-  const shippingMachinesForDate = data.machineOptions.filter((machine) => machine.actual_shipping_date === data.selectedDate)
+  const machineMonthGroups = useMemo<MachineMonthGroup[]>(() => {
+    const groups = new Map<string, MachineMonthGroup>()
+    for (const machine of data.machineOptions) {
+      const key = machine.production_month || 'without-month'
+      const group = groups.get(key)
+      if (group) {
+        group.machines.push(machine)
+      } else {
+        groups.set(key, {
+          key,
+          label: machine.production_month ? formatProductionMonth(machine.production_month) : 'Без месяца производства',
+          machines: [machine],
+        })
+      }
+    }
+    return Array.from(groups.values())
+  }, [data.machineOptions])
+  const shippingMachinesForDate = data.shippingMachinesForDate
   const factsForSelectedSection = selectedSection
     ? data.machineFacts.filter((fact) => fact.section_id === selectedSection.id)
     : []
@@ -164,10 +188,11 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   }, [data.machineFacts, data.tonnageFacts, resolvedStages])
 
   function updateQuery(
-    updates: Partial<Record<'factory' | 'date' | 'productionMonth', string | null>>,
+    updates: Partial<Record<'factory' | 'date', string | null>>,
     options: { replace?: boolean } = {},
   ) {
     const params = new URLSearchParams(searchParams.toString())
+    params.delete('productionMonth')
     for (const [key, value] of Object.entries(updates)) {
       if (value) params.set(key, value)
       else params.delete(key)
@@ -269,7 +294,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
             <h1 className="mt-1 text-2xl font-semibold tracking-normal text-[#12315F]">Факт производства</h1>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:min-w-[520px]">
+          <div className="w-full sm:max-w-[360px] xl:min-w-[320px]">
             <label className="space-y-1 text-sm font-medium text-[#334155]">
               <span>Завод</span>
               <select
@@ -280,19 +305,6 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
               >
                 {data.factories.map((factory) => (
                   <option key={factory.id} value={factory.id}>{factory.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-1 text-sm font-medium text-[#334155]">
-              <span>Месяц машин</span>
-              <select
-                className={selectClassName}
-                value={data.productionMonth}
-                onChange={(event) => updateQuery({ productionMonth: event.target.value }, { replace: true })}
-                disabled={isFilterPending}
-              >
-                {data.productionMonthOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
@@ -387,36 +399,45 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
               </button>
               {machineDropdownOpen ? (
                 <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-[#E2E8F0] bg-white p-1 shadow-lg" role="group" aria-label="Машины">
-                  {data.machineOptions.map((machine) => {
-                    const checked = selectedMachineIds.includes(machine.id)
-                    return (
-                      <button
-                        key={machine.id}
-                        type="button"
-                        role="checkbox"
-                        aria-checked={checked}
-                        className={cn(
-                          'flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF]',
-                          checked && 'bg-[#EFF6FF] text-[#12315F]',
-                        )}
-                        onClick={() => toggleMachine(machine.id)}
-                      >
-                        <span
-                          className={cn(
-                            'flex size-4 shrink-0 items-center justify-center rounded border border-[#CBD5E1] bg-white text-white transition-colors',
-                            checked && 'border-[#1E40AF] bg-[#1E40AF]',
-                          )}
-                          aria-hidden="true"
-                        >
-                          {checked ? <Check className="size-3" /> : null}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">
-                          {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
-                        </span>
-                        <span className="shrink-0 text-xs text-[#64748B]">{formatNumber(machine.total_weight, 2)} т</span>
-                      </button>
-                    )
-                  })}
+                  {machineMonthGroups.map((group) => (
+                    <div key={group.key} className="py-1 first:pt-0 last:pb-0">
+                      <div className="sticky top-0 z-10 rounded-sm bg-[#F8FAFC] px-2 py-1 text-xs font-semibold uppercase text-[#64748B]">
+                        {group.label}
+                      </div>
+                      <div className="mt-1 space-y-0.5">
+                        {group.machines.map((machine) => {
+                          const checked = selectedMachineIds.includes(machine.id)
+                          return (
+                            <button
+                              key={machine.id}
+                              type="button"
+                              role="checkbox"
+                              aria-checked={checked}
+                              className={cn(
+                                'flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF]',
+                                checked && 'bg-[#EFF6FF] text-[#12315F]',
+                              )}
+                              onClick={() => toggleMachine(machine.id)}
+                            >
+                              <span
+                                className={cn(
+                                  'flex size-4 shrink-0 items-center justify-center rounded border border-[#CBD5E1] bg-white text-white transition-colors',
+                                  checked && 'border-[#1E40AF] bg-[#1E40AF]',
+                                )}
+                                aria-hidden="true"
+                              >
+                                {checked ? <Check className="size-3" /> : null}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate">
+                                {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
+                              </span>
+                              <span className="shrink-0 text-xs text-[#64748B]">{formatNumber(machine.total_weight, 2)} т</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : null}
             </div>

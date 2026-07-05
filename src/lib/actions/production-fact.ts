@@ -7,7 +7,6 @@ import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { updateMachineDate } from '@/lib/actions/production'
-import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import {
   PRODUCTION_FACT_STANDARD_STAGES,
   getProductionFactStageDefinition,
@@ -35,12 +34,6 @@ type MachineOptionRow = Pick<
   MachineWithTotals,
   'id' | 'name' | 'factory_id' | 'production_month' | 'production_queue_number' | 'total_weight' | 'status' | 'actual_shipping_date'
 >
-type InvoicePaymentRow = {
-  machine_id: string | null
-  status: string | null
-  amount: number | null
-  paid_amount: number | null
-}
 type DbError = { message?: string; details?: string; hint?: string; code?: string }
 type LooseDbResult = { data: unknown; error: DbError | null }
 type LooseQuery = PromiseLike<LooseDbResult> & {
@@ -62,11 +55,6 @@ type LooseDb = {
 }
 
 export type ProductionFactFactoryOption = Pick<Factory, 'id' | 'name'>
-
-export type ProductionFactMonthOption = {
-  value: string
-  label: string
-}
 
 export type ProductionFactMachineOption = {
   id: string
@@ -101,10 +89,9 @@ export type ProductionFactWorkspaceData = {
   factories: ProductionFactFactoryOption[]
   selectedFactoryId: string | null
   selectedDate: string
-  productionMonth: string
-  productionMonthOptions: ProductionFactMonthOption[]
   sections: ProductionFactSection[]
   machineOptions: ProductionFactMachineOption[]
+  shippingMachinesForDate: ProductionFactMachineOption[]
   machineFacts: ProductionFactMachineFactRow[]
   tonnageFacts: ProductionFactTonnageFactRow[]
   previousTonnageBySection: Record<string, number>
@@ -185,22 +172,10 @@ function dateOnly(value: string | null | undefined, fallback = chisinauDateOnly(
   return value && DATE_RE.test(value) ? value : fallback
 }
 
-function monthStartFromDate(value: string) {
-  const normalizedDate = dateOnly(value)
-  return `${normalizedDate.slice(0, 7)}-01`
-}
-
 function addDays(value: string, days: number) {
   const date = new Date(`${dateOnly(value)}T00:00:00Z`)
   date.setUTCDate(date.getUTCDate() + days)
   return date.toISOString().slice(0, 10)
-}
-
-function addMonths(value: string, months: number) {
-  const month = normalizeProductionMonthValue(value) || monthStartFromDate(chisinauDateOnly())
-  const date = new Date(`${month}T00:00:00Z`)
-  date.setUTCMonth(date.getUTCMonth() + months)
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`
 }
 
 function canEditFactDate(role: UserRole, factDate: string) {
@@ -222,13 +197,6 @@ function normalizeText(value: string | null | undefined) {
 function normalizeNullableText(value: string | null | undefined) {
   const normalized = normalizeText(value)
   return normalized.length > 0 ? normalized : null
-}
-
-function isInvoiceFullyPaid(invoice: InvoicePaymentRow) {
-  if (invoice.status === 'paid') return true
-  const amount = Number(invoice.amount || 0)
-  const paid = Number(invoice.paid_amount || 0)
-  return amount > 0 && paid >= amount
 }
 
 function toMachineOption(machine: MachineOptionRow): ProductionFactMachineOption {
@@ -372,62 +340,47 @@ async function ensureStandardProductionFactSections(admin: AdminClient, factoryI
   }
 }
 
-async function getProductionMonthOptions(admin: AdminClient, factoryId: string, selectedMonth: string) {
-  const values = new Set<string>()
-  const currentMonth = monthStartFromDate(chisinauDateOnly())
-  for (let offset = -6; offset <= 6; offset += 1) values.add(addMonths(currentMonth, offset))
-  values.add(selectedMonth)
-
-  const { data } = await admin
-    .from('machines')
-    .select('production_month')
-    .eq('factory_id', factoryId)
-    .eq('is_archived', false)
-    .not('production_month', 'is', null)
-    .order('production_month', { ascending: false })
-    .limit(36)
-
-  for (const row of (data || []) as Array<{ production_month: string | null }>) {
-    const normalized = normalizeProductionMonthValue(row.production_month)
-    if (normalized) values.add(normalized)
-  }
-
-  return Array.from(values)
-    .sort((a, b) => b.localeCompare(a))
-    .map((value) => ({ value, label: formatProductionMonth(value) }))
-}
-
-async function getActiveMachineOptions(admin: AdminClient, factoryId: string, productionMonth: string) {
+async function getActiveMachineOptions(admin: AdminClient, factoryId: string) {
   const { data, error } = await admin
     .from('machines_with_totals')
     .select('id, name, factory_id, production_month, production_queue_number, total_weight, status, actual_shipping_date, is_archived')
     .eq('factory_id', factoryId)
-    .eq('production_month', productionMonth)
     .eq('is_archived', false)
-    .order('production_queue_number', { ascending: true })
+    .is('actual_shipping_date', null)
+    .not('production_month', 'is', null)
+    .order('production_month', { ascending: true })
+    .order('production_queue_number', { ascending: true, nullsFirst: false })
     .order('name', { ascending: true })
 
   if (error) throw error
-  const rows = ((data || []) as Array<MachineOptionRow & { is_archived?: boolean | null }>)
-    .filter((machine) => machine.factory_id === factoryId && machine.is_archived !== true)
+  return ((data || []) as Array<MachineOptionRow & { is_archived?: boolean | null }>)
+    .filter((machine) => (
+      machine.factory_id === factoryId
+      && machine.is_archived !== true
+      && !machine.actual_shipping_date
+      && Boolean(machine.production_month)
+    ))
+    .map(toMachineOption)
+}
 
-  const machineIds = rows.map((machine) => machine.id)
-  const fullyPaidMachineIds = new Set<string>()
+async function getShippingMachineOptionsForDate(admin: AdminClient, factoryId: string, selectedDate: string) {
+  const { data, error } = await admin
+    .from('machines_with_totals')
+    .select('id, name, factory_id, production_month, production_queue_number, total_weight, status, actual_shipping_date, is_archived')
+    .eq('factory_id', factoryId)
+    .eq('is_archived', false)
+    .eq('actual_shipping_date', selectedDate)
+    .order('production_month', { ascending: true })
+    .order('production_queue_number', { ascending: true, nullsFirst: false })
+    .order('name', { ascending: true })
 
-  if (machineIds.length > 0) {
-    const { data: invoices, error: invoicesError } = await admin
-      .from('invoices')
-      .select('machine_id, status, amount, paid_amount')
-      .in('machine_id', machineIds)
-
-    if (invoicesError) throw invoicesError
-    for (const invoice of (invoices || []) as InvoicePaymentRow[]) {
-      if (invoice.machine_id && isInvoiceFullyPaid(invoice)) fullyPaidMachineIds.add(invoice.machine_id)
-    }
-  }
-
-  return rows
-    .filter((machine) => !fullyPaidMachineIds.has(machine.id))
+  if (error) throw error
+  return ((data || []) as Array<MachineOptionRow & { is_archived?: boolean | null }>)
+    .filter((machine) => (
+      machine.factory_id === factoryId
+      && machine.is_archived !== true
+      && machine.actual_shipping_date === selectedDate
+    ))
     .map(toMachineOption)
 }
 
@@ -822,7 +775,6 @@ async function ensureCuttingRollbackTask(admin: AdminClient, input: {
 export async function getProductionFactWorkspaceData(input: {
   factoryId?: string | null
   date?: string | null
-  productionMonth?: string | null
 } = {}): Promise<ProductionFactWorkspaceData> {
   const { admin, role, factoryId: userFactoryId, userId } = await getContext()
   const factories = await getVisibleFactories(admin, role, userFactoryId)
@@ -831,17 +783,15 @@ export async function getProductionFactWorkspaceData(input: {
     : factories[0]?.id || null
 
   const selectedDate = dateOnly(input.date)
-  const productionMonth = normalizeProductionMonthValue(input.productionMonth) || monthStartFromDate(chisinauDateOnly())
 
   if (!selectedFactoryId) {
     return {
       factories,
       selectedFactoryId: null,
       selectedDate,
-      productionMonth,
-      productionMonthOptions: [],
       sections: [],
       machineOptions: [],
+      shippingMachinesForDate: [],
       machineFacts: [],
       tonnageFacts: [],
       previousTonnageBySection: {},
@@ -866,22 +816,23 @@ export async function getProductionFactWorkspaceData(input: {
   const [
     sections,
     machineOptions,
+    shippingMachinesForDate,
     machineFacts,
     tonnageFacts,
     previousTonnageFacts,
-    productionMonthOptions,
   ] = await Promise.all([
     getFactorySections(admin, selectedFactoryId),
-    getActiveMachineOptions(admin, selectedFactoryId, productionMonth),
+    getActiveMachineOptions(admin, selectedFactoryId),
+    getShippingMachineOptionsForDate(admin, selectedFactoryId, selectedDate),
     getMachineFacts(admin, selectedFactoryId, selectedDate),
     getTonnageFacts(admin, selectedFactoryId, selectedDate),
     getTonnageFacts(admin, selectedFactoryId, previousDate),
-    getProductionMonthOptions(admin, selectedFactoryId, productionMonth),
   ])
 
   const sectionById = new Map(sections.map((section) => [section.id, section]))
   const machineIds = Array.from(new Set([
     ...machineOptions.map((machine) => machine.id),
+    ...shippingMachinesForDate.map((machine) => machine.id),
     ...machineFacts.map((fact) => fact.machine_id),
   ]))
   const userIds = Array.from(new Set([
@@ -938,10 +889,9 @@ export async function getProductionFactWorkspaceData(input: {
     factories,
     selectedFactoryId,
     selectedDate,
-    productionMonth,
-    productionMonthOptions,
     sections,
     machineOptions,
+    shippingMachinesForDate,
     machineFacts: machineFactRows,
     tonnageFacts: tonnageFactRows,
     previousTonnageBySection,
