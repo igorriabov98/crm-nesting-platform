@@ -46,6 +46,7 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const allowsRouteLevelAuth =
+    pathname.startsWith('/api/version') ||
     pathname.startsWith('/api/documents/generate') ||
     pathname.startsWith('/api/telegram/webhook') ||
     pathname.startsWith('/api/meetings/reminders')

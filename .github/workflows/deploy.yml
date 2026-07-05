@@ -232,13 +232,11 @@ jobs:
         run: npm ci
       - name: Pull Vercel production settings
         run: npx vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
-      - name: Write deployment version
-        run: |
-          mkdir -p public
-          echo "$GITHUB_SHA" > public/version.txt
       - name: Deploy Vercel production
         run: |
           npx vercel deploy --prod --yes --token "$VERCEL_TOKEN" \
+            --build-env DEPLOY_SHA="$GITHUB_SHA" \
+            --env DEPLOY_SHA="$GITHUB_SHA" \
             --meta githubCommitSha="$GITHUB_SHA" \
             --meta githubCommitRef="$GITHUB_REF_NAME" > vercel-url.txt
           cat vercel-url.txt
@@ -258,8 +256,8 @@ jobs:
         run: |
           deployed=""
           for attempt in 1 2 3; do
-            probe="$(curl -fsSL -o /dev/null -w '%{http_code} %{url_effective}' https://crm-nesting-platform.vercel.app/version.txt || true)"
-            deployed="$(curl -fsSL https://crm-nesting-platform.vercel.app/version.txt | tr -d '[:space:]' || true)"
+            probe="$(curl -fsS -o /dev/null -w '%{http_code} %{url_effective}' https://crm-nesting-platform.vercel.app/api/version || true)"
+            deployed="$(curl -fsS https://crm-nesting-platform.vercel.app/api/version | jq -r '.sha' || true)"
             echo "Vercel version check ${attempt}/3: probe=${probe:-failed} body=${deployed:-missing}"
             if [ "$deployed" = "$GITHUB_SHA" ]; then
               exit 0
