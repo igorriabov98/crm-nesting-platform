@@ -7,12 +7,19 @@ on:
         description: Validate deploy workflow without migrations, deploys, or smoke.
         type: boolean
         default: true
+      confirm:
+        description: Type deploy-production to run this workflow.
+        type: string
+        required: true
 
 jobs:
   validate-ref:
     name: validate main ref
     runs-on: ubuntu-latest
     steps:
+      - name: Confirm manual production deploy
+        run: |
+          test "${{ inputs.confirm }}" = "deploy-production"
       - name: Deploy only from main
         run: |
           test "${GITHUB_REF_NAME}" = "main"
