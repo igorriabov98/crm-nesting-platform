@@ -364,7 +364,7 @@ export function MachineDetail({
 
       <Tabs defaultValue="items" className="mt-6 w-full">
         <TabsList className={cn(
-          'grid h-auto w-full grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm sm:grid-cols-3',
+          'grid !h-auto w-full grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm sm:grid-cols-3',
           showInvoiceTab ? 'lg:grid-cols-7' : 'lg:grid-cols-6'
         )}>
           <TabsTrigger 
