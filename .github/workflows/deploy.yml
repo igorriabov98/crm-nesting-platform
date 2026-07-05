@@ -136,8 +136,7 @@ jobs:
         run: npm install -g @railway/cli
       - name: Deploy nesting-service
         run: |
-          railway up ./nesting-service \
-            --path-as-root \
+          railway up . \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_SERVICE_ID" \
@@ -146,21 +145,65 @@ jobs:
             --message "GitHub Actions ${GITHUB_SHA}"
       - name: Wait for Railway success
         run: |
-          for i in {1..60}; do
-            railway deployment list --project "$RAILWAY_PROJECT_ID" --environment "$RAILWAY_ENVIRONMENT_ID" --service "$RAILWAY_SERVICE_ID" --limit 1 --json > railway-deployments.json
-            node - <<'NODE'
-          const fs = require('node:fs');
-          const [latest] = JSON.parse(fs.readFileSync('railway-deployments.json', 'utf8'));
-          console.log(JSON.stringify({ id: latest?.id, status: latest?.status, commitHash: latest?.meta?.commitHash }, null, 2));
-          if (latest?.status === 'SUCCESS') process.exit(0);
-          if (['FAILED', 'CRASHED', 'REMOVED'].includes(latest?.status)) process.exit(2);
-          process.exit(1);
-          NODE
-            code=$?
-            if [ "$code" = "0" ]; then exit 0; fi
-            if [ "$code" = "2" ]; then exit 1; fi
+          last_id=""
+          last_status=""
+
+          print_railway_logs() {
+            deployment_id="$1"
+            if [ -z "$deployment_id" ] || [ "$deployment_id" = "null" ]; then
+              echo "No Railway deployment id available for logs."
+              return 0
+            fi
+
+            echo "::group::Railway build logs (${deployment_id})"
+            railway logs "$deployment_id" \
+              --build \
+              --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --lines 200 || true
+            echo "::endgroup::"
+
+            echo "::group::Railway deploy logs (${deployment_id})"
+            railway logs "$deployment_id" \
+              --deployment \
+              --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --lines 200 || true
+            echo "::endgroup::"
+          }
+
+          for i in {1..90}; do
+            railway_json="$(railway deployment list --project "$RAILWAY_PROJECT_ID" --environment "$RAILWAY_ENVIRONMENT_ID" --service "$RAILWAY_SERVICE_ID" --limit 1 --json 2>&1 || true)"
+
+            if ! printf '%s' "$railway_json" | node -e 'JSON.parse(require("node:fs").readFileSync(0, "utf8"))' >/dev/null 2>&1; then
+              echo "Railway deployment poll ${i}/90: unable to read deployment list"
+              printf '%s\n' "$railway_json"
+              sleep 10
+              continue
+            fi
+
+            latest="$(printf '%s' "$railway_json" | node -e 'const fs = require("node:fs"); const [latest] = JSON.parse(fs.readFileSync(0, "utf8")); console.log([latest?.id ?? "", latest?.status ?? "", latest?.meta?.commitHash ?? latest?.meta?.cliMessage ?? ""].join("\t"));')"
+            IFS=$'\t' read -r last_id last_status last_commit <<< "$latest"
+
+            echo "Railway deployment poll ${i}/90: id=${last_id:-unknown} status=${last_status:-unknown} commit=${last_commit:-unknown}"
+
+            case "$last_status" in
+              SUCCESS)
+                exit 0
+                ;;
+              FAILED|CRASHED|REMOVED)
+                print_railway_logs "$last_id"
+                exit 1
+                ;;
+            esac
+
             sleep 10
           done
+
+          echo "Timed out waiting for Railway deployment after 15 minutes: id=${last_id:-unknown} status=${last_status:-unknown}"
+          print_railway_logs "$last_id"
           exit 1
 
   vercel:
