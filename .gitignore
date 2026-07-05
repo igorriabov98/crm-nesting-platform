@@ -38,4 +38,3 @@
 **/.codex-*.tgz
 
 .vercel
-public/version.txt
