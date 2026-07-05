@@ -716,7 +716,7 @@ export function MachineTable({
                       <th className="sticky left-0 z-40 min-w-[220px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Машина
                       </th>
-                      <th className="min-w-[180px] border-b border-slate-200 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Состояние</th>
+                      <th className="w-[200px] min-w-[200px] border-b border-slate-200 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Состояние</th>
                       <th className="min-w-[155px] border-b border-slate-200 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Производство</th>
                       <th className="min-w-[145px] border-b border-slate-200 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Состав</th>
                       <th className="min-w-[125px] border-b border-slate-200 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Параметры</th>
@@ -749,8 +749,8 @@ export function MachineTable({
                               <div className="mt-2 text-xs font-medium text-slate-600">{machine.client.name}</div>
                             )}
                           </td>
-                          <td className="border-b border-slate-100 px-3 py-4 align-top group-hover:bg-slate-50/70">
-                            <div className="space-y-2">
+                          <td className="w-[200px] min-w-[200px] border-b border-slate-100 px-3 py-4 align-top group-hover:bg-slate-50/70">
+                            <div className="flex flex-col items-start gap-2">
                               {machine.is_confirmed ? (
                                 <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
                                   <CheckCircle2 className="mr-1 h-3 w-3" />Подтверждена
