@@ -232,6 +232,10 @@ jobs:
         run: npm ci
       - name: Pull Vercel production settings
         run: npx vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+      - name: Write deployment version
+        run: |
+          mkdir -p public
+          echo "$GITHUB_SHA" > public/version.txt
       - name: Deploy Vercel production
         run: |
           npx vercel deploy --prod --yes --token "$VERCEL_TOKEN" \
@@ -245,24 +249,25 @@ jobs:
           const fs = require('node:fs');
 
           const deployment = JSON.parse(fs.readFileSync('vercel-inspect.json', 'utf8'));
-          const expectedSha = process.env.GITHUB_SHA;
-          const actualSha =
-            deployment?.meta?.githubCommitSha ??
-            deployment?.gitSource?.sha ??
-            deployment?.githubCommitSha ??
-            null;
-
           console.log(JSON.stringify({
             deploymentId: deployment?.uid ?? deployment?.id ?? null,
             state: deployment?.readyState ?? deployment?.state ?? null,
-            githubCommitSha: actualSha,
           }, null, 2));
-
-          if (actualSha !== expectedSha) {
-            console.error(`Vercel deployment SHA mismatch: expected ${expectedSha}, got ${actualSha ?? '(missing)'}`);
-            process.exit(1);
-          }
           NODE
+      - name: Verify Vercel deployed version
+        run: |
+          deployed=""
+          for attempt in 1 2 3; do
+            deployed="$(curl -fsS -H 'Cache-Control: no-cache' "https://crm-nesting-platform.vercel.app/version.txt?sha=${GITHUB_SHA}&attempt=${attempt}" | tr -d '\r\n' || true)"
+            echo "Vercel version check ${attempt}/3: ${deployed:-missing}"
+            if [ "$deployed" = "$GITHUB_SHA" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "Vercel deployed version mismatch: expected ${GITHUB_SHA}, got ${deployed:-missing}"
+          exit 1
 
   smoke:
     name: production smoke
