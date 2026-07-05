@@ -14,6 +14,7 @@ export const ROUTES = {
   ADMIN_ACCESS_SETTINGS:'/admin/settings/access',
   ADMIN_TELEGRAM_SETTINGS:'/admin/settings/telegram',
   ADMIN_COMPANY_SETTINGS:'/admin/settings/company',
+  ADMIN_PRODUCTION_FACT_SETTINGS:'/admin/settings/production-fact',
   SALES_PLAN:          '/sales-plan',
   SALES_PLAN_NEW:      '/sales-plan/new',
   SALES_PLAN_PRICES:   '/sales-plan/prices',

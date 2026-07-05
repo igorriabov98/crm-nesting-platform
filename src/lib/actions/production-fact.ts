@@ -6,7 +6,14 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
+import { updateMachineDate } from '@/lib/actions/production'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
+import {
+  PRODUCTION_FACT_STANDARD_STAGES,
+  getProductionFactStageDefinition,
+  isProductionFactStageKey,
+  type ProductionFactStageKey,
+} from '@/lib/constants/production-fact'
 import type {
   Factory,
   MachineWithTotals,
@@ -26,7 +33,7 @@ type RpcClient = {
 type UserNameRow = Pick<Database['public']['Tables']['users']['Row'], 'id' | 'full_name' | 'email'>
 type MachineOptionRow = Pick<
   MachineWithTotals,
-  'id' | 'name' | 'factory_id' | 'production_month' | 'production_queue_number' | 'total_weight' | 'status'
+  'id' | 'name' | 'factory_id' | 'production_month' | 'production_queue_number' | 'total_weight' | 'status' | 'actual_shipping_date'
 >
 type InvoicePaymentRow = {
   machine_id: string | null
@@ -68,6 +75,7 @@ export type ProductionFactMachineOption = {
   production_queue_number: number | null
   total_weight: number
   status: string | null
+  actual_shipping_date: string | null
 }
 
 export type ProductionFactMachineFactRow = ProductionMachineFact & {
@@ -111,6 +119,12 @@ export type ProductionFactWorkspaceData = {
     previousTotalTonnage: number
     tonnageDelta: number
   }
+}
+
+export type ProductionFactSettingsData = {
+  factories: ProductionFactFactoryOption[]
+  selectedFactoryId: string | null
+  sections: ProductionFactSection[]
 }
 
 export type ProductionFactActionResult<T = undefined> = {
@@ -225,6 +239,7 @@ function toMachineOption(machine: MachineOptionRow): ProductionFactMachineOption
     production_queue_number: machine.production_queue_number,
     total_weight: Number(machine.total_weight || 0),
     status: machine.status || null,
+    actual_shipping_date: machine.actual_shipping_date || null,
   }
 }
 
@@ -266,6 +281,97 @@ async function getFactorySections(admin: AdminClient, factoryId: string) {
   return (data || []) as ProductionFactSection[]
 }
 
+async function findActiveFactSectionByName(
+  admin: AdminClient,
+  factoryId: string,
+  parentId: string | null,
+  name: string,
+) {
+  let query = looseDb(admin)
+    .from('production_fact_sections')
+    .select('*')
+    .eq('factory_id', factoryId)
+    .eq('name', name)
+    .is('archived_at', null)
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+    .limit(1)
+
+  query = parentId ? query.eq('parent_id', parentId) : query.is('parent_id', null)
+
+  const { data, error } = await query
+  if (error) throw error
+  return ((data || []) as ProductionFactSection[])[0] || null
+}
+
+async function ensureStandardProductionFactSections(admin: AdminClient, factoryId: string, userId: string | null) {
+  for (const stage of PRODUCTION_FACT_STANDARD_STAGES) {
+    const stageProductionType = stage.productionStageType
+    let parent = await findActiveFactSectionByName(admin, factoryId, null, stage.label)
+
+    if (!parent) {
+      const { data, error } = await looseDb(admin)
+        .from('production_fact_sections')
+        .insert({
+          factory_id: factoryId,
+          parent_id: null,
+          name: stage.label,
+          sort_order: stage.sortOrder,
+          production_stage_type: stageProductionType,
+          created_by: userId,
+          updated_by: userId,
+        })
+        .select('*')
+        .single()
+
+      if (error) throw error
+      parent = data as ProductionFactSection
+    } else if (stageProductionType && parent.production_stage_type !== stageProductionType) {
+      const { data, error } = await looseDb(admin)
+        .from('production_fact_sections')
+        .update({
+          production_stage_type: stageProductionType,
+          updated_by: userId,
+        })
+        .eq('id', parent.id)
+        .select('*')
+        .single()
+
+      if (error) throw error
+      parent = data as ProductionFactSection
+    }
+
+    for (const child of stage.children) {
+      const section = await findActiveFactSectionByName(admin, factoryId, parent.id, child.label)
+      if (!section) {
+        const { error } = await looseDb(admin)
+          .from('production_fact_sections')
+          .insert({
+            factory_id: factoryId,
+            parent_id: parent.id,
+            name: child.label,
+            sort_order: child.sortOrder,
+            production_stage_type: stageProductionType,
+            created_by: userId,
+            updated_by: userId,
+          })
+
+        if (error) throw error
+      } else if (stageProductionType && section.production_stage_type !== stageProductionType) {
+        const { error } = await looseDb(admin)
+          .from('production_fact_sections')
+          .update({
+            production_stage_type: stageProductionType,
+            updated_by: userId,
+          })
+          .eq('id', section.id)
+
+        if (error) throw error
+      }
+    }
+  }
+}
+
 async function getProductionMonthOptions(admin: AdminClient, factoryId: string, selectedMonth: string) {
   const values = new Set<string>()
   const currentMonth = monthStartFromDate(chisinauDateOnly())
@@ -294,7 +400,7 @@ async function getProductionMonthOptions(admin: AdminClient, factoryId: string, 
 async function getActiveMachineOptions(admin: AdminClient, factoryId: string, productionMonth: string) {
   const { data, error } = await admin
     .from('machines_with_totals')
-    .select('id, name, factory_id, production_month, production_queue_number, total_weight, status, is_archived')
+    .select('id, name, factory_id, production_month, production_queue_number, total_weight, status, actual_shipping_date, is_archived')
     .eq('factory_id', factoryId)
     .eq('production_month', productionMonth)
     .eq('is_archived', false)
@@ -329,7 +435,7 @@ async function getMachinesByIds(admin: AdminClient, machineIds: string[]) {
   if (machineIds.length === 0) return new Map<string, ProductionFactMachineOption>()
   const { data, error } = await admin
     .from('machines_with_totals')
-    .select('id, name, factory_id, production_month, production_queue_number, total_weight, status')
+    .select('id, name, factory_id, production_month, production_queue_number, total_weight, status, actual_shipping_date')
     .in('id', machineIds)
 
   if (error) throw error
@@ -718,7 +824,7 @@ export async function getProductionFactWorkspaceData(input: {
   date?: string | null
   productionMonth?: string | null
 } = {}): Promise<ProductionFactWorkspaceData> {
-  const { admin, role, factoryId: userFactoryId } = await getContext()
+  const { admin, role, factoryId: userFactoryId, userId } = await getContext()
   const factories = await getVisibleFactories(admin, role, userFactoryId)
   const selectedFactoryId = factories.some((factory) => factory.id === input.factoryId)
     ? input.factoryId!
@@ -754,6 +860,7 @@ export async function getProductionFactWorkspaceData(input: {
   }
 
   assertFactoryAccess(role, userFactoryId, selectedFactoryId)
+  await ensureStandardProductionFactSections(admin, selectedFactoryId, userId)
 
   const previousDate = addDays(selectedDate, -1)
   const [
@@ -849,6 +956,44 @@ export async function getProductionFactWorkspaceData(input: {
       previousTotalTonnage,
       tonnageDelta: totalTonnage - previousTotalTonnage,
     },
+  }
+}
+
+export async function getProductionFactSettingsData(input: {
+  factoryId?: string | null
+} = {}): Promise<ProductionFactSettingsData> {
+  const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+  if (!isDirector(role)) throw new Error('Недостаточно прав для настроек факта производства')
+
+  const factories = await getVisibleFactories(admin, role, userFactoryId)
+  const selectedFactoryId = factories.some((factory) => factory.id === input.factoryId)
+    ? input.factoryId!
+    : factories[0]?.id || null
+
+  if (!selectedFactoryId) {
+    return { factories, selectedFactoryId: null, sections: [] }
+  }
+
+  assertFactoryAccess(role, userFactoryId, selectedFactoryId)
+  await ensureStandardProductionFactSections(admin, selectedFactoryId, userId)
+  const sections = await getFactorySections(admin, selectedFactoryId)
+
+  return { factories, selectedFactoryId, sections }
+}
+
+export async function ensureProductionFactStandardSections(input: {
+  factory_id: string
+}): Promise<ProductionFactActionResult> {
+  try {
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    if (!isDirector(role)) throw new Error('Недостаточно прав для настроек факта производства')
+    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    await ensureStandardProductionFactSections(admin, input.factory_id, userId)
+    revalidateProductionFact()
+    revalidatePath(ROUTES.ADMIN_PRODUCTION_FACT_SETTINGS)
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
   }
 }
 
@@ -1247,6 +1392,100 @@ export async function saveProductionTonnageFact(input: {
     const inserted = data as { id: string }
     revalidateProductionFact()
     return { success: true, data: { id: inserted.id }, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function saveUnifiedProductionFact(input: {
+  factory_id: string
+  fact_date: string
+  stage_key: ProductionFactStageKey
+  section_id: string
+  machine_ids: string[]
+  shift: ProductionFactShift
+  tonnage?: number | null
+  comment?: string | null
+}): Promise<ProductionFactActionResult<{ inserted: number; skipped: number; shippingUpdated: number; tonnageSaved: boolean }>> {
+  try {
+    const { admin, role, factoryId: userFactoryId } = await getContext()
+    const factDate = dateOnly(input.fact_date)
+    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    assertCanEditFactDate(role, factDate)
+    if (!isProductionFactStageKey(input.stage_key)) throw new Error('Некорректный этап факта производства')
+    if (input.shift !== 'day' && input.shift !== 'night') throw new Error('Некорректная смена')
+
+    const stageDefinition = getProductionFactStageDefinition(input.stage_key)
+    const machineIds = Array.from(new Set(input.machine_ids)).filter(Boolean)
+    if (machineIds.length === 0) throw new Error('Выберите машины')
+
+    for (const machineId of machineIds) {
+      await assertFactoryMachine(admin, input.factory_id, machineId)
+    }
+
+    if (stageDefinition.isShipping) {
+      let shippingUpdated = 0
+      for (const machineId of machineIds) {
+        const result = await updateMachineDate(machineId, 'actual_shipping_date', factDate)
+        if (!result.success) throw new Error(result.error || 'Не удалось сохранить факт отгрузки')
+        shippingUpdated += 1
+      }
+      revalidateProductionFact()
+      return {
+        success: true,
+        data: { inserted: 0, skipped: 0, shippingUpdated, tonnageSaved: false },
+        error: null,
+      }
+    }
+
+    await assertActiveFactSection(admin, input.factory_id, input.section_id)
+
+    const { data: existingRaw, error: existingError } = await looseDb(admin)
+      .from('production_machine_facts')
+      .select('machine_id')
+      .eq('factory_id', input.factory_id)
+      .eq('fact_date', factDate)
+      .eq('shift', input.shift)
+      .eq('section_id', input.section_id)
+      .in('machine_id', machineIds)
+
+    if (existingError) throw existingError
+    const existingMachineIds = new Set(((existingRaw || []) as Array<{ machine_id: string }>).map((fact) => fact.machine_id))
+    let inserted = 0
+
+    for (const machineId of machineIds) {
+      if (existingMachineIds.has(machineId)) continue
+      const result = await saveProductionMachineFact({
+        factory_id: input.factory_id,
+        fact_date: factDate,
+        machine_id: machineId,
+        section_id: input.section_id,
+        shift: input.shift,
+        comment: input.comment,
+      })
+      if (!result.success) throw new Error(result.error || 'Не удалось сохранить факт машины')
+      inserted += 1
+    }
+
+    const tonnageResult = await saveProductionTonnageFact({
+      factory_id: input.factory_id,
+      fact_date: factDate,
+      section_id: input.section_id,
+      tonnage: Number(input.tonnage || 0),
+      comment: input.comment,
+    })
+    if (!tonnageResult.success) throw new Error(tonnageResult.error || 'Не удалось сохранить тоннаж')
+
+    return {
+      success: true,
+      data: {
+        inserted,
+        skipped: machineIds.length - inserted,
+        shippingUpdated: 0,
+        tonnageSaved: true,
+      },
+      error: null,
+    }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }
   }

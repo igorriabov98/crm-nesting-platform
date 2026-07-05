@@ -1,14 +1,10 @@
-import { ProductionFactPage, type ProductionFactTab } from '@/components/features/production/ProductionFactPage'
+import { ProductionFactPage } from '@/components/features/production/ProductionFactPage'
 import { getProductionFactWorkspaceData } from '@/lib/actions/production-fact'
 
 export const metadata = { title: 'Факт производства — CRM LEDA' }
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
-}
-
-function normalizeTab(value: string | null | undefined): ProductionFactTab {
-  return value === 'tonnage' ? 'tonnage' : 'machines'
 }
 
 export default async function ProductionFactRoute({
@@ -18,7 +14,6 @@ export default async function ProductionFactRoute({
     factory?: string
     date?: string
     productionMonth?: string
-    tab?: string
   }>
 }) {
   const params = await searchParams
@@ -30,12 +25,10 @@ export default async function ProductionFactRoute({
       productionMonth: params?.productionMonth,
     })
 
-    const activeTab = normalizeTab(params?.tab)
     return (
       <ProductionFactPage
-        key={`${data.selectedFactoryId || 'none'}-${data.selectedDate}-${data.productionMonth}-${activeTab}`}
+        key={`${data.selectedFactoryId || 'none'}-${data.selectedDate}-${data.productionMonth}`}
         data={data}
-        activeTab={activeTab}
       />
     )
   } catch (error) {

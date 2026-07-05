@@ -40,6 +40,7 @@ export type ResourceKey =
   | 'admin_users'
   | 'telegram_settings'
   | 'company_settings'
+  | 'production_fact_settings'
   | 'access_settings'
 
 export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'production' | 'supply' | 'inventory' | 'meetings' | 'tools' | 'settings'
@@ -525,6 +526,15 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: DIRECTORS,
     defaultManageRoles: DIRECTORS,
     routes: [{ path: ROUTES.ADMIN_COMPANY_SETTINGS, match: 'prefix', operation: 'view', priority: 90 }],
+  },
+  {
+    key: 'production_fact_settings',
+    label: 'Настройки факта производства',
+    group: 'Настройки',
+    defaultHref: ROUTES.ADMIN_PRODUCTION_FACT_SETTINGS,
+    defaultViewRoles: DIRECTORS,
+    defaultManageRoles: DIRECTORS,
+    routes: [{ path: ROUTES.ADMIN_PRODUCTION_FACT_SETTINGS, match: 'prefix', operation: 'view', priority: 90 }],
   },
   {
     key: 'access_settings',

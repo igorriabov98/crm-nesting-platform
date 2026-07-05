@@ -1,110 +1,41 @@
 'use client'
 
 import { useMemo, useState, useTransition } from 'react'
-import type { ElementType, FormEvent } from 'react'
+import type { ElementType } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
-  Archive,
-  CalendarDays,
   Check,
   CheckCircle2,
   ChevronDown,
-  ClipboardCheck,
-  Copy,
+  Clock3,
   Factory,
   Gauge,
-  Pencil,
-  Plus,
+  PackageCheck,
   Save,
+  Ship,
   Trash2,
-  TrendingDown,
-  TrendingUp,
+  Users,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  archiveProductionFactSection,
-  copyProductionMachineFactsFromPreviousDay,
-  createProductionFactSection,
   deleteProductionMachineFact,
-  deleteProductionTonnageFact,
-  saveProductionMachineFact,
-  saveProductionTonnageFact,
-  updateProductionFactSection,
+  saveUnifiedProductionFact,
   type ProductionFactMachineFactRow,
   type ProductionFactMachineOption,
-  type ProductionFactTonnageFactRow,
   type ProductionFactWorkspaceData,
 } from '@/lib/actions/production-fact'
+import {
+  getProductionFactStageDefinition,
+  resolveProductionFactStandardStages,
+  type ProductionFactStageKey,
+} from '@/lib/constants/production-fact'
 import { cn } from '@/lib/utils'
 import type { ProductionFactSection, ProductionFactShift } from '@/lib/types'
 
-export type ProductionFactTab = 'machines' | 'tonnage'
-
-type ProductionFactPageProps = {
-  data: ProductionFactWorkspaceData
-  activeTab: ProductionFactTab
-}
-
-type MachineFormState = {
-  id: string | null
-  machine_ids: string[]
-  parent_section_id: string
-  section_id: string
-  shift: ProductionFactShift
-  comment: string
-}
-
-type MachineEntryGroup = {
-  parent: ProductionFactSection | null
-  sections: ProductionFactSection[]
-}
-
-type TonnageRow = {
-  section: ProductionFactSection
-  parentSection: ProductionFactSection | null
-  fact: ProductionFactTonnageFactRow | null
-  previousTonnage: number
-  deltaTonnage: number
-}
-
-type SectionStageSelectValue = '' | 'cutting'
-
 const selectClassName = 'flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50'
-const sectionStageOptions: Array<{ value: SectionStageSelectValue; label: string }> = [
-  { value: '', label: 'Нет' },
-  { value: 'cutting', label: 'Заготовка' },
-]
-
-const emptyMachineForm: MachineFormState = {
-  id: null,
-  machine_ids: [],
-  parent_section_id: '',
-  section_id: '',
-  shift: 'day',
-  comment: '',
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) return '—'
-  return new Date(value).toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
 
 function parseDateOnly(value: string) {
   const [year, month, day] = value.split('-').map(Number)
@@ -120,32 +51,15 @@ function formatDateLong(value: string) {
   })
 }
 
-function formatWeekdayShort(value: string) {
-  return parseDateOnly(value).toLocaleDateString('ru-RU', {
-    timeZone: 'UTC',
-    weekday: 'short',
-  })
-}
-
-function createMonthDays(monthStart: string) {
-  const [year, month] = monthStart.split('-').map(Number)
-  if (!year || !month) return []
-  const daysCount = new Date(Date.UTC(year, month, 0)).getUTCDate()
-  return Array.from({ length: daysCount }, (_, index) => {
-    const day = index + 1
-    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-  })
-}
-
-function getClientToday() {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Chisinau',
-    year: 'numeric',
-    month: '2-digit',
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return '—'
+  return new Date(value).toLocaleString('ru-RU', {
     day: '2-digit',
-  }).formatToParts(new Date())
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
-  return `${values.year}-${values.month}-${values.day}`
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function formatNumber(value: number, digits = 2) {
@@ -159,57 +73,6 @@ function shiftLabel(shift: ProductionFactShift) {
   return shift === 'day' ? 'День' : 'Ночь'
 }
 
-function createInitialTonnageDrafts(data: ProductionFactWorkspaceData) {
-  const drafts: Record<string, { tonnage: string; comment: string }> = {}
-  for (const section of data.sections) {
-    drafts[section.id] = { tonnage: '', comment: '' }
-  }
-  for (const fact of data.tonnageFacts) {
-    drafts[fact.section_id] = {
-      tonnage: String(Number(fact.tonnage || 0)),
-      comment: fact.comment || '',
-    }
-  }
-  return drafts
-}
-
-function isActiveSection(section: ProductionFactSection | null | undefined) {
-  return Boolean(section?.is_active && !section.archived_at)
-}
-
-function getSectionStageValue(section: ProductionFactSection | null | undefined): SectionStageSelectValue {
-  return section?.production_stage_type === 'cutting' ? 'cutting' : ''
-}
-
-function isEffectiveCuttingSection(section: ProductionFactSection, parent?: ProductionFactSection | null) {
-  return section.production_stage_type === 'cutting' || parent?.production_stage_type === 'cutting'
-}
-
-function SectionPath({ parent, section }: { parent: ProductionFactSection | null; section: ProductionFactSection | null }) {
-  if (!section) return <span className="text-[#94A3B8]">Без участка</span>
-  const showParent = parent && parent.id !== section.id
-  return (
-    <span className="inline-flex min-w-0 flex-col">
-      <span className="truncate font-medium text-[#111827]">{section.name}</span>
-      {showParent ? <span className="truncate text-xs text-[#64748B]">{parent.name}</span> : null}
-    </span>
-  )
-}
-
-function sectionEntryTitle(section: ProductionFactSection) {
-  return section.parent_id ? section.name : 'Весь участок'
-}
-
-function sectionEntrySubtitle(section: ProductionFactSection, parent: ProductionFactSection | null) {
-  if (section.parent_id) return parent?.name || 'Участок не выбран'
-  return 'Без подучастков'
-}
-
-function groupEntryCountLabel(sections: ProductionFactSection[]) {
-  if (sections.length === 1 && !sections[0]?.parent_id) return 'ввод по участку'
-  return `${sections.length} подучастков`
-}
-
 function machineSelectionLabel(options: ProductionFactMachineOption[], selectedIds: string[]) {
   if (selectedIds.length === 0) return 'Выбрать машины'
   const names = selectedIds
@@ -219,210 +82,87 @@ function machineSelectionLabel(options: ProductionFactMachineOption[], selectedI
   return `Выбрано: ${selectedIds.length}`
 }
 
-function KpiCard({
-  icon: Icon,
-  label,
-  value,
-  note,
-}: {
-  icon: ElementType
-  label: string
-  value: string
-  note?: string
-}) {
-  return (
-    <div className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-3 shadow-sm">
-      <div className="flex items-center gap-2 text-sm text-[#64748B]">
-        <Icon className="size-4 text-[#1B3A6B]" />
-        <span>{label}</span>
-      </div>
-      <div className="mt-2 text-2xl font-semibold tracking-normal text-[#12315F]">{value}</div>
-      {note ? <div className="mt-1 text-xs text-[#64748B]">{note}</div> : null}
-    </div>
-  )
+function sectionLabel(section: ProductionFactSection | null | undefined, fallback = 'Участок') {
+  return section?.name || fallback
 }
 
-export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps) {
+type DayOverviewRow = {
+  key: string
+  stageLabel: string
+  sectionLabel: string
+  facts: ProductionFactMachineFactRow[]
+  tonnage: number
+}
+
+export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData }) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const [isPending, startTransition] = useTransition()
-  const [machineForm, setMachineForm] = useState<MachineFormState>(emptyMachineForm)
-  const [machineDropdownSectionId, setMachineDropdownSectionId] = useState<string | null>(null)
-  const [sectionName, setSectionName] = useState('')
-  const [sectionOrder, setSectionOrder] = useState('100')
-  const [sectionStageType, setSectionStageType] = useState<SectionStageSelectValue>('')
-  const [subsectionName, setSubsectionName] = useState('')
-  const [subsectionParentId, setSubsectionParentId] = useState('')
-  const [subsectionOrder, setSubsectionOrder] = useState('100')
-  const [subsectionStageType, setSubsectionStageType] = useState<SectionStageSelectValue>('')
-  const [tonnageDrafts, setTonnageDrafts] = useState(() => createInitialTonnageDrafts(data))
-
-  const parentSections = useMemo(
-    () => data.sections
-      .filter((section) => !section.parent_id)
-      .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ru')),
-    [data.sections],
+  const resolvedStages = useMemo(() => resolveProductionFactStandardStages(data.sections), [data.sections])
+  const availableStages = useMemo(
+    () => resolvedStages.filter((stage) => stage.parent && stage.sections.some((section) => section.section)),
+    [resolvedStages],
   )
+  const firstStageKey = (availableStages[0]?.definition.key || 'cutting') as ProductionFactStageKey
+  const [selectedStageKey, setSelectedStageKey] = useState<ProductionFactStageKey>(firstStageKey)
+  const [selectedSectionId, setSelectedSectionId] = useState('')
+  const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([])
+  const [machineDropdownOpen, setMachineDropdownOpen] = useState(false)
+  const [shift, setShift] = useState<ProductionFactShift>('day')
+  const [tonnageDrafts, setTonnageDrafts] = useState<Record<string, string>>({})
+  const [comment, setComment] = useState('')
 
-  const parentById = useMemo(
-    () => new Map(parentSections.map((section) => [section.id, section])),
-    [parentSections],
-  )
+  const effectiveStageKey = availableStages.some((stage) => stage.definition.key === selectedStageKey)
+    ? selectedStageKey
+    : firstStageKey
+  const selectedStage = availableStages.find((stage) => stage.definition.key === effectiveStageKey) || availableStages[0] || null
+  const selectedStageDefinition = selectedStage?.definition || getProductionFactStageDefinition(effectiveStageKey)
+  const isShippingStage = Boolean(selectedStageDefinition.isShipping)
+  const availableSections = selectedStage?.sections.filter((section) => section.section) || []
+  const effectiveSectionId = availableSections.some((section) => section.section?.id === selectedSectionId)
+    ? selectedSectionId
+    : availableSections[0]?.section?.id || ''
+  const selectedSection = availableSections.find((section) => section.section?.id === effectiveSectionId)?.section || null
+  const selectedFactory = data.factories.find((factory) => factory.id === data.selectedFactoryId)
+  const selectedTonnageFact = selectedSection
+    ? data.tonnageFacts.find((fact) => fact.section_id === selectedSection.id)
+    : null
+  const tonnageValue = selectedSection
+    ? tonnageDrafts[selectedSection.id] ?? (selectedTonnageFact ? String(Number(selectedTonnageFact.tonnage || 0)) : '')
+    : ''
+  const canEdit = data.canEditSelectedDate && Boolean(data.selectedFactoryId)
+  const readOnlyLabel = !data.canEditSelectedDate && !data.isDirector ? 'Только просмотр: дата старше 7 дней' : null
+  const selectedMachineText = machineSelectionLabel(data.machineOptions, selectedMachineIds)
+  const shippingMachinesForDate = data.machineOptions.filter((machine) => machine.actual_shipping_date === data.selectedDate)
+  const factsForSelectedSection = selectedSection
+    ? data.machineFacts.filter((fact) => fact.section_id === selectedSection.id)
+    : []
+  const duplicateSelectedCount = factsForSelectedSection
+    .filter((fact) => fact.shift === shift && selectedMachineIds.includes(fact.machine_id))
+    .length
 
-  const sectionsById = useMemo(
-    () => new Map(data.sections.map((section) => [section.id, section])),
-    [data.sections],
-  )
-
-  const childSectionsByParent = useMemo(() => {
-    const map = new Map<string, ProductionFactSection[]>()
-    for (const section of data.sections.filter((item) => item.parent_id)) {
-      const key = section.parent_id!
-      const list = map.get(key) || []
-      list.push(section)
-      map.set(key, list)
-    }
-    for (const list of map.values()) {
-      list.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ru'))
-    }
-    return map
-  }, [data.sections])
-
-  const activeChildSectionsByParent = useMemo(() => {
-    const map = new Map<string, ProductionFactSection[]>()
-    for (const section of data.sections) {
-      if (!section.parent_id || !isActiveSection(section) || !isActiveSection(parentById.get(section.parent_id))) continue
-      const list = map.get(section.parent_id) || []
-      list.push(section)
-      map.set(section.parent_id, list)
-    }
-    for (const list of map.values()) {
-      list.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ru'))
-    }
-    return map
-  }, [data.sections, parentById])
-
-  const activeFactSections = useMemo(() => {
-    const sections: ProductionFactSection[] = []
-    for (const parent of parentSections) {
-      if (!isActiveSection(parent)) continue
-      const children = activeChildSectionsByParent.get(parent.id) || []
-      if (children.length > 0) sections.push(...children)
-      else sections.push(parent)
-    }
-    return sections
-  }, [activeChildSectionsByParent, parentSections])
-
-  const machineOptions = useMemo(() => {
-    const map = new Map<string, ProductionFactMachineOption>()
-    for (const machine of data.machineOptions) map.set(machine.id, machine)
-    for (const fact of data.machineFacts) {
-      if (fact.machine) map.set(fact.machine.id, fact.machine)
-    }
-    return Array.from(map.values())
-  }, [data.machineFacts, data.machineOptions])
-
-  const machineOptionById = useMemo(
-    () => new Map(machineOptions.map((machine) => [machine.id, machine])),
-    [machineOptions],
-  )
-
-  const monthDays = useMemo(() => createMonthDays(data.productionMonth), [data.productionMonth])
-  const todayDate = useMemo(() => getClientToday(), [])
-  const selectedDateInProductionMonth = data.selectedDate.slice(0, 7) === data.productionMonth.slice(0, 7)
-
-  const machineFactsBySection = useMemo(() => {
-    const map = new Map<string, ProductionFactMachineFactRow[]>()
-    for (const fact of data.machineFacts) {
-      const list = map.get(fact.section_id) || []
-      list.push(fact)
-      map.set(fact.section_id, list)
-    }
-    return map
-  }, [data.machineFacts])
-
-  const machineEntryGroups = useMemo<MachineEntryGroup[]>(() => {
-    const sectionMap = new Map<string, { section: ProductionFactSection; parent: ProductionFactSection | null }>()
-    for (const section of activeFactSections) {
-      sectionMap.set(section.id, {
-        section,
-        parent: section.parent_id ? parentById.get(section.parent_id) || null : section,
-      })
-    }
-    for (const fact of data.machineFacts) {
-      const section = fact.section || sectionsById.get(fact.section_id)
-      if (!section) continue
-      sectionMap.set(section.id, {
-        section,
-        parent: fact.parentSection || (section.parent_id ? parentById.get(section.parent_id) || null : section),
-      })
-    }
-
-    const groupMap = new Map<string, MachineEntryGroup>()
-    for (const { section, parent } of sectionMap.values()) {
-      const key = parent?.id || 'without-section'
-      const group = groupMap.get(key) || { parent, sections: [] }
-      group.sections.push(section)
-      groupMap.set(key, group)
-    }
-
-    return Array.from(groupMap.values())
-      .map((group) => ({
-        ...group,
-        sections: group.sections.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ru')),
-      }))
-      .sort((a, b) => {
-        if (!a.parent && b.parent) return 1
-        if (a.parent && !b.parent) return -1
-        return (a.parent?.sort_order || 0) - (b.parent?.sort_order || 0) || (a.parent?.name || '').localeCompare(b.parent?.name || '', 'ru')
-      })
-  }, [activeFactSections, data.machineFacts, parentById, sectionsById])
-
-  const tonnageRows = useMemo<TonnageRow[]>(() => {
-    const activeIds = new Set(activeFactSections.map((section) => section.id))
-    const factsBySection = new Map(data.tonnageFacts.map((fact) => [fact.section_id, fact]))
-    const rows = activeFactSections.map((section) => {
-      const fact = factsBySection.get(section.id) || null
-      const previousTonnage = fact?.previousTonnage ?? data.previousTonnageBySection[section.id] ?? 0
-      const currentTonnage = Number(fact?.tonnage || 0)
-      return {
-        section,
-        parentSection: section.parent_id ? parentById.get(section.parent_id) || null : section,
-        fact,
-        previousTonnage,
-        deltaTonnage: currentTonnage - previousTonnage,
+  const dayOverviewRows = useMemo<DayOverviewRow[]>(() => {
+    const rows: DayOverviewRow[] = []
+    for (const stage of resolvedStages) {
+      if (stage.definition.isShipping) continue
+      for (const item of stage.sections) {
+        if (!item.section) continue
+        const facts = data.machineFacts.filter((fact) => fact.section_id === item.section!.id)
+        const tonnageFact = data.tonnageFacts.find((fact) => fact.section_id === item.section!.id)
+        rows.push({
+          key: item.section.id,
+          stageLabel: stage.definition.label,
+          sectionLabel: item.label,
+          facts,
+          tonnage: Number(tonnageFact?.tonnage || 0),
+        })
       }
-    })
-
-    for (const fact of data.tonnageFacts) {
-      if (activeIds.has(fact.section_id)) continue
-      const section = fact.section || sectionsById.get(fact.section_id)
-      if (!section) continue
-      rows.push({
-        section,
-        parentSection: fact.parentSection || (section.parent_id ? parentById.get(section.parent_id) || null : section),
-        fact,
-        previousTonnage: fact.previousTonnage,
-        deltaTonnage: fact.deltaTonnage,
-      })
     }
     return rows
-  }, [activeFactSections, data.previousTonnageBySection, data.tonnageFacts, parentById, sectionsById])
+  }, [data.machineFacts, data.tonnageFacts, resolvedStages])
 
-  const tonnageTotalsByParent = useMemo(() => {
-    const map = new Map<string, { parent: ProductionFactSection | null; current: number; previous: number }>()
-    for (const row of tonnageRows) {
-      const key = row.parentSection?.id || 'without-section'
-      const value = map.get(key) || { parent: row.parentSection, current: 0, previous: 0 }
-      value.current += Number(row.fact?.tonnage || 0)
-      value.previous += row.previousTonnage
-      map.set(key, value)
-    }
-    return Array.from(map.values()).sort((a, b) => (a.parent?.sort_order || 0) - (b.parent?.sort_order || 0))
-  }, [tonnageRows])
-
-  function updateQuery(updates: Partial<Record<'factory' | 'date' | 'productionMonth' | 'tab', string | null>>) {
+  function updateQuery(updates: Partial<Record<'factory' | 'date' | 'productionMonth', string | null>>) {
     const params = new URLSearchParams(searchParams.toString())
     for (const [key, value] of Object.entries(updates)) {
       if (value) params.set(key, value)
@@ -432,258 +172,83 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
     router.push(query ? `${pathname}?${query}` : pathname)
   }
 
-  function runAction(
-    action: () => Promise<{ success: boolean; error: string | null }>,
-    successMessage: string,
-    onSuccess?: () => void,
-  ) {
-    startTransition(async () => {
-      const result = await action()
-      if (!result.success) {
-        toast.error(result.error || 'Не удалось сохранить')
+  function toggleMachine(machineId: string) {
+    setSelectedMachineIds((current) => (
+      current.includes(machineId)
+        ? current.filter((id) => id !== machineId)
+        : [...current, machineId]
+    ))
+  }
+
+  function handleStageSelect(stageKey: ProductionFactStageKey) {
+    setSelectedStageKey(stageKey)
+    setSelectedMachineIds([])
+    setMachineDropdownOpen(false)
+    setComment('')
+  }
+
+  function handleSave() {
+    if (!data.selectedFactoryId || !selectedSection) {
+      toast.error('Выберите завод и участок')
+      return
+    }
+    if (selectedMachineIds.length === 0) {
+      toast.error('Выберите машины')
+      return
+    }
+    if (!isShippingStage) {
+      const value = Number(tonnageValue || 0)
+      if (!Number.isFinite(value) || value < 0) {
+        toast.error('Тоннаж должен быть числом от 0')
         return
       }
-      toast.success(successMessage)
-      onSuccess?.()
-      router.refresh()
-    })
-  }
-
-  function updateMachineDraftForSection(
-    section: ProductionFactSection,
-    parent: ProductionFactSection | null,
-    updates: Partial<Pick<MachineFormState, 'machine_ids' | 'shift' | 'comment'>>,
-  ) {
-    setMachineForm((current) => {
-      const sameSection = current.section_id === section.id
-      return {
-        id: sameSection ? current.id : null,
-        machine_ids: sameSection ? current.machine_ids : [],
-        parent_section_id: parent?.id || section.parent_id || '',
-        section_id: section.id,
-        shift: sameSection ? current.shift : 'day',
-        comment: sameSection ? current.comment : '',
-        ...updates,
-      }
-    })
-  }
-
-  function toggleMachineForSection(
-    section: ProductionFactSection,
-    parent: ProductionFactSection | null,
-    machineId: string,
-    checked: boolean,
-  ) {
-    setMachineForm((current) => {
-      const sameSection = current.section_id === section.id
-      const currentIds = sameSection ? current.machine_ids : []
-      const machineIds = checked
-        ? Array.from(new Set([...currentIds, machineId]))
-        : currentIds.filter((id) => id !== machineId)
-
-      return {
-        id: sameSection ? current.id : null,
-        machine_ids: machineIds,
-        parent_section_id: parent?.id || section.parent_id || '',
-        section_id: section.id,
-        shift: sameSection ? current.shift : 'day',
-        comment: sameSection ? current.comment : '',
-      }
-    })
-  }
-
-  function handleMachineSave(section: ProductionFactSection, parent: ProductionFactSection | null) {
-    if (!data.selectedFactoryId) return
-    const parentSectionId = parent?.id || section.parent_id || machineForm.parent_section_id
-    const form = machineForm.section_id === section.id
-      ? machineForm
-      : {
-          ...emptyMachineForm,
-          parent_section_id: parentSectionId,
-          section_id: section.id,
-        }
-
-    const machineIds = Array.from(new Set(form.machine_ids)).filter(Boolean)
-    if (machineIds.length === 0 || !section.id) {
-      toast.error('Выберите машину и участок')
-      return
-    }
-
-    const duplicateFacts = (machineFactsBySection.get(section.id) || [])
-      .filter((fact) => fact.shift === form.shift && fact.id !== form.id && machineIds.includes(fact.machine_id))
-
-    if (duplicateFacts.length > 0) {
-      const names = duplicateFacts
-        .map((fact) => fact.machine?.name || machineOptionById.get(fact.machine_id)?.name)
-        .filter(Boolean)
-        .join(', ')
-      toast.error(names ? `Уже добавлены в эту смену: ${names}` : 'Одна из машин уже добавлена в эту смену')
-      return
     }
 
     startTransition(async () => {
-      for (const [index, machineId] of machineIds.entries()) {
-        const result = await saveProductionMachineFact({
-          id: index === 0 ? form.id : null,
-          factory_id: data.selectedFactoryId!,
-          fact_date: data.selectedDate,
-          machine_id: machineId,
-          section_id: section.id,
-          shift: form.shift,
-          comment: form.comment,
-        })
-
-        if (!result.success) {
-          toast.error(result.error || 'Не удалось сохранить')
-          return
-        }
-      }
-
-      toast.success(form.id
-        ? (machineIds.length > 1 ? `Сохранено записей: ${machineIds.length}` : 'Факт обновлен')
-        : `Добавлено записей: ${machineIds.length}`)
-      setMachineForm(emptyMachineForm)
-      setMachineDropdownSectionId(null)
-      router.refresh()
-    })
-  }
-
-  function handleCopyYesterday() {
-    if (!data.selectedFactoryId) return
-    startTransition(async () => {
-      const result = await copyProductionMachineFactsFromPreviousDay({
+      const result = await saveUnifiedProductionFact({
         factory_id: data.selectedFactoryId!,
         fact_date: data.selectedDate,
+        stage_key: selectedStageDefinition.key,
+        section_id: selectedSection.id,
+        machine_ids: selectedMachineIds,
+        shift,
+        tonnage: isShippingStage ? null : Number(tonnageValue || 0),
+        comment,
       })
+
       if (!result.success) {
-        toast.error(result.error || 'Не удалось скопировать')
+        toast.error(result.error || 'Не удалось сохранить факт производства')
         return
       }
-      toast.success(`Скопировано: ${result.data?.inserted || 0}, пропущено: ${result.data?.skipped || 0}`)
+
+      if (isShippingStage) {
+        toast.success(`Факт отгрузки сохранён: ${result.data?.shippingUpdated || 0}`)
+      } else {
+        toast.success(`Факт сохранён: добавлено ${result.data?.inserted || 0}, уже было ${result.data?.skipped || 0}`)
+      }
+      setSelectedMachineIds([])
+      setMachineDropdownOpen(false)
+      setComment('')
       router.refresh()
     })
   }
 
-  function handleAddSection(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!data.selectedFactoryId) return
-    runAction(
-      () => createProductionFactSection({
-        factory_id: data.selectedFactoryId!,
-        name: sectionName,
-        sort_order: Number(sectionOrder || 100),
-        production_stage_type: sectionStageType || null,
-      }),
-      'Участок создан',
-    )
-    setSectionName('')
-    setSectionOrder('100')
-    setSectionStageType('')
-  }
-
-  function handleAddSubsection(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!data.selectedFactoryId || !subsectionParentId) {
-      toast.error('Выберите участок')
-      return
-    }
-    runAction(
-      () => createProductionFactSection({
-        factory_id: data.selectedFactoryId!,
-        parent_id: subsectionParentId,
-        name: subsectionName,
-        sort_order: Number(subsectionOrder || 100),
-        production_stage_type: subsectionStageType || null,
-      }),
-      'Подучасток создан',
-    )
-    setSubsectionName('')
-    setSubsectionOrder('100')
-    setSubsectionStageType('')
-  }
-
-  function handleRenameSection(section: ProductionFactSection) {
-    const name = window.prompt('Название', section.name)
-    if (!name || name.trim() === section.name) return
-    runAction(
-      () => updateProductionFactSection({ id: section.id, name, sort_order: section.sort_order }),
-      'Название обновлено',
-    )
-  }
-
-  function handleSectionStageChange(section: ProductionFactSection, value: SectionStageSelectValue) {
-    runAction(
-      () => updateProductionFactSection({
-        id: section.id,
-        name: section.name,
-        sort_order: section.sort_order,
-        production_stage_type: value || null,
-      }),
-      'Связанный этап обновлен',
-    )
-  }
-
-  function handleArchiveSection(section: ProductionFactSection) {
-    if (!window.confirm(`Отправить в архив: ${section.name}?`)) return
-    runAction(() => archiveProductionFactSection(section.id), 'Участок отправлен в архив')
-  }
-
-  function handleEditMachineFact(fact: ProductionFactMachineFactRow) {
-    setMachineForm({
-      id: fact.id,
-      machine_ids: [fact.machine_id],
-      parent_section_id: fact.parentSection?.id || fact.section?.parent_id || fact.section_id,
-      section_id: fact.section_id,
-      shift: fact.shift,
-      comment: fact.comment || '',
-    })
-    setMachineDropdownSectionId(fact.section_id)
-  }
-
-  function handleDeleteMachineFact(id: string) {
+  function handleDeleteFact(id: string) {
     if (!window.confirm('Удалить запись факта?')) return
-    runAction(() => deleteProductionMachineFact(id), 'Запись удалена')
+    startTransition(async () => {
+      const result = await deleteProductionMachineFact(id)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось удалить запись')
+        return
+      }
+      toast.success('Запись удалена')
+      router.refresh()
+    })
   }
-
-  function handleTonnageDraft(sectionId: string, field: 'tonnage' | 'comment', value: string) {
-    setTonnageDrafts((current) => ({
-      ...current,
-      [sectionId]: {
-        tonnage: current[sectionId]?.tonnage || '',
-        comment: current[sectionId]?.comment || '',
-        [field]: value,
-      },
-    }))
-  }
-
-  function handleSaveTonnage(row: TonnageRow) {
-    if (!data.selectedFactoryId) return
-    const draft = tonnageDrafts[row.section.id] || { tonnage: '', comment: '' }
-    runAction(
-      () => saveProductionTonnageFact({
-        id: row.fact?.id,
-        factory_id: data.selectedFactoryId!,
-        fact_date: data.selectedDate,
-        section_id: row.section.id,
-        tonnage: Number(draft.tonnage || 0),
-        comment: draft.comment,
-      }),
-      'Тоннаж сохранен',
-    )
-  }
-
-  function handleDeleteTonnage(row: TonnageRow) {
-    if (!row.fact?.id) return
-    if (!window.confirm('Удалить тоннаж по подучастку?')) return
-    runAction(() => deleteProductionTonnageFact(row.fact!.id), 'Тоннаж удален')
-  }
-
-  const selectedFactory = data.factories.find((factory) => factory.id === data.selectedFactoryId)
-  const readOnlyLabel = !data.canEditSelectedDate && !data.isDirector ? 'Только просмотр: дата старше 7 дней' : null
 
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-4 shadow-sm">
+      <section className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-4 shadow-sm">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <div className="flex items-center gap-2 text-sm text-[#64748B]">
@@ -731,15 +296,10 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
         </div>
 
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <KpiCard icon={ClipboardCheck} label="Записей машин" value={String(data.stats.machineFactCount)} note={`${data.stats.uniqueMachineCount} машин`} />
-          <KpiCard icon={CalendarDays} label="Смены" value={`${data.stats.dayShiftCount} / ${data.stats.nightShiftCount}`} note="день / ночь" />
+          <KpiCard icon={Users} label="Машины в факте" value={String(data.stats.uniqueMachineCount)} note={`${data.stats.machineFactCount} записей`} />
+          <KpiCard icon={Clock3} label="Смены" value={`${data.stats.dayShiftCount} / ${data.stats.nightShiftCount}`} note="день / ночь" />
           <KpiCard icon={Gauge} label="Тоннаж" value={`${formatNumber(data.stats.totalTonnage, 3)} т`} note={`вчера ${formatNumber(data.stats.previousTotalTonnage, 3)} т`} />
-          <KpiCard
-            icon={data.stats.tonnageDelta >= 0 ? TrendingUp : TrendingDown}
-            label="Динамика"
-            value={`${data.stats.tonnageDelta >= 0 ? '+' : ''}${formatNumber(data.stats.tonnageDelta, 3)} т`}
-            note="к предыдущему дню"
-          />
+          <KpiCard icon={Ship} label="Отгружено" value={String(shippingMachinesForDate.length)} note="машин за дату" />
           <div className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
             <div className="text-sm text-[#64748B]">Статус даты</div>
             <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-[#12315F]">
@@ -748,584 +308,270 @@ export function ProductionFactPage({ data, activeTab }: ProductionFactPageProps)
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="flex flex-wrap gap-2 rounded-lg border border-[#E2E8F0] bg-white p-1 shadow-sm">
-        <Button
-          type="button"
-          variant={activeTab === 'machines' ? 'default' : 'ghost'}
-          className={cn('h-9 px-4', activeTab === 'machines' ? 'bg-[#1B3A6B]' : 'text-[#334155]')}
-          onClick={() => updateQuery({ tab: 'machines' })}
-        >
-          <Factory className="size-4" />
-          Факт машины в работе
-        </Button>
-        <Button
-          type="button"
-          variant={activeTab === 'tonnage' ? 'default' : 'ghost'}
-          className={cn('h-9 px-4', activeTab === 'tonnage' ? 'bg-[#1B3A6B]' : 'text-[#334155]')}
-          onClick={() => updateQuery({ tab: 'tonnage' })}
-        >
-          <Gauge className="size-4" />
-          Факт тоннажа
-        </Button>
-      </div>
-
-      {activeTab === 'machines' ? (
-        <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)] 2xl:grid-cols-[270px_minmax(0,1fr)_360px]">
-          <aside className="rounded-lg border border-[#DBEAFE] bg-white p-3 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-[#12315F]">Дни месяца</div>
-                <div className="mt-1 text-xs text-[#64748B]">{formatDateLong(data.productionMonth)}</div>
-              </div>
-              <Badge variant="outline" className="border-[#DBEAFE] text-[#1E40AF]">{monthDays.length} дней</Badge>
-            </div>
-            {!selectedDateInProductionMonth ? (
-              <div className="mt-3 rounded-md border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2 text-xs text-[#92400E]">
-                Выбранная дата вне месяца. Нажмите день ниже, чтобы открыть ввод за этот день.
-              </div>
-            ) : null}
-            <div className="mt-3 grid max-h-[360px] gap-2 overflow-y-auto overscroll-contain pr-1 sm:grid-cols-4 lg:max-h-[420px] lg:grid-cols-1">
-              {monthDays.map((day) => {
-                const isSelected = day === data.selectedDate
-                const isToday = day === todayDate
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    onClick={() => updateQuery({ date: day })}
-                    className={cn(
-                      'min-h-14 rounded-md border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E40AF]',
-                      isSelected
-                        ? 'border-[#1E40AF] bg-[#EFF6FF] text-[#12315F] shadow-sm'
-                        : 'border-[#DBEAFE] bg-white text-[#334155] hover:bg-[#F8FAFC]',
-                      isToday && !isSelected ? 'border-[#D97706]' : '',
-                    )}
-                  >
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="text-lg font-semibold leading-none tabular-nums">{day.slice(8)}</span>
-                      {isSelected ? <CheckCircle2 className="size-4 text-[#1E40AF]" /> : null}
-                    </span>
-                    <span className="mt-1 block text-xs capitalize text-[#64748B]">{formatWeekdayShort(day)}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </aside>
-
-          <section className="space-y-4">
-            <div className="overflow-hidden rounded-lg border border-[#E2E8F0] bg-white shadow-sm">
-              <div className="flex flex-col gap-3 border-b border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-[#12315F]">
-                    <CalendarDays className="size-4 text-[#1E40AF]" />
-                    {formatDateLong(data.selectedDate)}
-                  </div>
-                  <div className="mt-1 text-xs text-[#64748B]">
-                    {machineOptions.length} машин в месяце · {activeFactSections.length} строк ввода · {data.machineFacts.length} записей за день
-                  </div>
-                </div>
-                <Button type="button" variant="outline" onClick={handleCopyYesterday} disabled={isPending || !data.canEditSelectedDate || !data.selectedFactoryId}>
-                  <Copy className="size-4" />
-                  Копировать вчера
-                </Button>
-              </div>
-
-              {machineEntryGroups.length === 0 ? (
-                <div className="px-4 py-10 text-center text-sm text-[#64748B]">
-                  Нет активных участков для ввода факта.
-                </div>
-              ) : (
-                <div className="divide-y divide-[#E2E8F0]">
-                  {machineEntryGroups.map((group) => (
-                    <div key={group.parent?.id || 'without-section'}>
-                      <div className="flex flex-wrap items-center justify-between gap-2 bg-[#F8FAFC] px-4 py-2">
-                        <div className="text-sm font-semibold text-[#12315F]">{group.parent?.name || 'Без участка'}</div>
-                        <div className="text-xs text-[#64748B]">{groupEntryCountLabel(group.sections)}</div>
-                      </div>
-                      <div className="divide-y divide-[#E2E8F0]">
-                        {group.sections.map((section) => {
-                          const facts = machineFactsBySection.get(section.id) || []
-                          const isActiveEditor = machineForm.section_id === section.id
-                          const canEditRow = data.canEditSelectedDate && Boolean(data.selectedFactoryId)
-                          const selectedMachineIds = isActiveEditor ? machineForm.machine_ids : []
-                          const selectedMachineCount = selectedMachineIds.length
-                          const selectedMachineText = machineSelectionLabel(machineOptions, selectedMachineIds)
-                          return (
-                            <div
-                              key={section.id}
-                              className={cn(
-                                'grid gap-3 px-4 py-3 transition-colors xl:grid-cols-[minmax(150px,0.7fr)_minmax(180px,0.8fr)_minmax(0,2.2fr)] xl:items-start',
-                                isActiveEditor ? 'bg-[#EFF6FF]' : 'bg-white hover:bg-[#F8FAFC]',
-                              )}
-                            >
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold text-[#111827]">{sectionEntryTitle(section)}</div>
-                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#64748B]">
-                                  <span>{sectionEntrySubtitle(section, group.parent)}</span>
-                                  {!isActiveSection(section) ? <Badge variant="outline">Архив</Badge> : null}
-                                </div>
-                              </div>
-
-                              <div className="min-w-0">
-                                <div className="text-xs font-medium uppercase text-[#64748B]">Записи</div>
-                                {facts.length === 0 ? (
-                                  <div className="mt-1 text-sm text-[#94A3B8]">Нет записей</div>
-                                ) : (
-                                  <div className="mt-1 flex flex-wrap gap-1.5">
-                                    {facts.map((fact) => (
-                                      <span key={fact.id} className="inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-md border border-[#DBEAFE] bg-white px-2 py-1 text-xs text-[#334155]">
-                                        <span className="max-w-[160px] truncate font-medium text-[#12315F]">{fact.machine?.name || 'Машина не найдена'}</span>
-                                        <span className="text-[#64748B]">{shiftLabel(fact.shift)}</span>
-                                        <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleEditMachineFact(fact)} disabled={!fact.canEdit || isPending}>
-                                          <Pencil className="size-3" />
-                                          <span className="sr-only">Редактировать</span>
-                                        </Button>
-                                        <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleDeleteMachineFact(fact.id)} disabled={!fact.canEdit || isPending}>
-                                          <Trash2 className="size-3" />
-                                          <span className="sr-only">Удалить</span>
-                                        </Button>
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-
-                              <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(180px,1fr)_120px] xl:grid-cols-[minmax(180px,1fr)_120px_minmax(160px,1fr)_auto] xl:items-end">
-                                <div className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span>Машины</span>
-                                    <span className="text-xs font-normal text-[#64748B]">{selectedMachineCount} выбрано</span>
-                                  </div>
-                                  <div className="relative">
-                                    <button
-                                      type="button"
-                                      disabled={!canEditRow || machineOptions.length === 0}
-                                      aria-expanded={machineDropdownSectionId === section.id}
-                                      aria-haspopup="listbox"
-                                      aria-label={`Выбрать машины для ${section.name}`}
-                                      className={cn(
-                                        'inline-flex h-9 w-full items-center justify-between rounded-lg border border-input bg-white px-3 text-left text-sm font-normal text-[#1B3A6B] shadow-sm transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF] disabled:cursor-not-allowed disabled:opacity-50',
-                                        selectedMachineCount === 0 && 'text-[#94A3B8]',
-                                      )}
-                                      onClick={() => {
-                                        if (machineDropdownSectionId === section.id) {
-                                          setMachineDropdownSectionId(null)
-                                          return
-                                        }
-                                        updateMachineDraftForSection(section, group.parent, {})
-                                        setMachineDropdownSectionId(section.id)
-                                      }}
-                                    >
-                                      <span className="min-w-0 flex-1 truncate">{selectedMachineText}</span>
-                                      <ChevronDown className="ml-2 size-4 shrink-0 text-[#64748B]" />
-                                    </button>
-                                    {machineDropdownSectionId === section.id ? (
-                                      <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-[#E2E8F0] bg-white p-1 shadow-lg" role="group" aria-label={`Машины для ${section.name}`}>
-                                        {machineOptions.map((machine) => {
-                                          const checked = selectedMachineIds.includes(machine.id)
-                                          return (
-                                            <button
-                                              key={machine.id}
-                                              type="button"
-                                              role="checkbox"
-                                              aria-checked={checked}
-                                              className={cn(
-                                                'flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF]',
-                                                checked && 'bg-[#EFF6FF] text-[#12315F]',
-                                              )}
-                                              onClick={() => toggleMachineForSection(section, group.parent, machine.id, !checked)}
-                                            >
-                                              <span
-                                                className={cn(
-                                                  'flex size-4 shrink-0 items-center justify-center rounded border border-[#CBD5E1] bg-white text-white transition-colors',
-                                                  checked && 'border-[#1E40AF] bg-[#1E40AF]',
-                                                )}
-                                                aria-hidden="true"
-                                              >
-                                                {checked ? <Check className="size-3" /> : null}
-                                              </span>
-                                              <span className="min-w-0 flex-1 truncate">
-                                                {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
-                                              </span>
-                                            </button>
-                                          )
-                                        })}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                </div>
-
-                                <label className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
-                                  <span>Смена</span>
-                                  <select
-                                    className={selectClassName}
-                                    value={isActiveEditor ? machineForm.shift : 'day'}
-                                    onChange={(event) => updateMachineDraftForSection(section, group.parent, { shift: event.target.value as ProductionFactShift })}
-                                    disabled={!canEditRow}
-                                    aria-label={`Смена для ${section.name}`}
-                                  >
-                                    <option value="day">День</option>
-                                    <option value="night">Ночь</option>
-                                  </select>
-                                </label>
-
-                                <label className="min-w-0 space-y-1 text-sm font-medium text-[#334155]">
-                                  <span>Комментарий</span>
-                                  <Input
-                                    value={isActiveEditor ? machineForm.comment : ''}
-                                    onChange={(event) => updateMachineDraftForSection(section, group.parent, { comment: event.target.value })}
-                                    disabled={!canEditRow}
-                                    aria-label={`Комментарий для ${section.name}`}
-                                  />
-                                </label>
-
-                                <div className="flex flex-wrap gap-2 md:col-span-2 xl:col-span-1 xl:flex-nowrap xl:justify-end">
-                                  <Button type="button" className="min-w-28" onClick={() => handleMachineSave(section, group.parent)} disabled={isPending || !canEditRow || selectedMachineCount === 0}>
-                                    <Save className="size-4" />
-                                    {isActiveEditor && machineForm.id
-                                      ? (selectedMachineCount > 1 ? `Сохранить ${selectedMachineCount}` : 'Обновить')
-                                      : (selectedMachineCount > 1 ? `Добавить ${selectedMachineCount}` : 'Добавить')}
-                                  </Button>
-                                  {isActiveEditor ? (
-                                    <Button type="button" variant="outline" onClick={() => {
-                                      setMachineForm(emptyMachineForm)
-                                      setMachineDropdownSectionId(null)
-                                    }}>
-                                      Сброс
-                                    </Button>
-                                  ) : null}
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-
-          <div className="lg:col-span-2 2xl:col-span-1">
-            <SectionManager
-              parentSections={parentSections}
-              childSectionsByParent={childSectionsByParent}
-              canEdit={data.canEditSelectedDate && Boolean(data.selectedFactoryId)}
-              isPending={isPending}
-              sectionName={sectionName}
-              sectionOrder={sectionOrder}
-              sectionStageType={sectionStageType}
-              subsectionName={subsectionName}
-              subsectionParentId={subsectionParentId}
-              subsectionOrder={subsectionOrder}
-              subsectionStageType={subsectionStageType}
-              onSectionNameChange={setSectionName}
-              onSectionOrderChange={setSectionOrder}
-              onSectionStageTypeChange={setSectionStageType}
-              onSubsectionNameChange={setSubsectionName}
-              onSubsectionParentChange={setSubsectionParentId}
-              onSubsectionOrderChange={setSubsectionOrder}
-              onSubsectionStageTypeChange={setSubsectionStageType}
-              onAddSection={handleAddSection}
-              onAddSubsection={handleAddSubsection}
-              onStageTypeChange={handleSectionStageChange}
-              onRename={handleRenameSection}
-              onArchive={handleArchiveSection}
-            />
+      <section className="space-y-4 rounded-lg border border-[#E2E8F0] bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold text-[#12315F]">
+            <PackageCheck className="size-4 text-[#1E40AF]" />
+            Ввод за {formatDateLong(data.selectedDate)}
+          </div>
+          <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+            {availableStages.map((stage) => (
+              <button
+                key={stage.definition.key}
+                type="button"
+                onClick={() => handleStageSelect(stage.definition.key)}
+                className={cn(
+                  'min-h-10 rounded-md border px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E40AF]',
+                  selectedStageDefinition.key === stage.definition.key
+                    ? 'border-[#1E40AF] bg-[#EFF6FF] text-[#12315F] shadow-sm'
+                    : 'border-[#DBEAFE] bg-white text-[#334155] hover:bg-[#F8FAFC]',
+                )}
+              >
+                {stage.definition.label}
+              </button>
+            ))}
           </div>
         </div>
-      ) : (
-        <section className="space-y-4">
-          <div className="grid gap-3 lg:grid-cols-3">
-            {tonnageTotalsByParent.map((total) => {
-              const delta = total.current - total.previous
-              return (
-                <div key={total.parent?.id || 'without'} className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-3 shadow-sm">
-                  <div className="text-sm font-medium text-[#334155]">{total.parent?.name || 'Без участка'}</div>
-                  <div className="mt-2 text-2xl font-semibold text-[#12315F]">{formatNumber(total.current, 3)} т</div>
-                  <div className={cn('mt-1 flex items-center gap-1 text-xs', delta >= 0 ? 'text-[#15803D]' : 'text-[#B91C1C]')}>
-                    {delta >= 0 ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
-                    {delta >= 0 ? '+' : ''}{formatNumber(delta, 3)} т к предыдущему дню
-                  </div>
+
+        <div className="grid gap-3 lg:grid-cols-[minmax(190px,0.8fr)_minmax(250px,1.4fr)_120px_minmax(130px,0.6fr)_minmax(180px,1fr)_auto] lg:items-end">
+          <label className="space-y-1 text-sm font-medium text-[#334155]">
+            <span>{selectedStageDefinition.key === 'assembly' ? 'Подучасток' : 'Участок'}</span>
+            <select
+              className={selectClassName}
+              value={selectedSection?.id || ''}
+              onChange={(event) => setSelectedSectionId(event.target.value)}
+              disabled={availableSections.length <= 1 || !canEdit}
+            >
+              {availableSections.map((section) => (
+                <option key={section.section!.id} value={section.section!.id}>{section.label}</option>
+              ))}
+            </select>
+          </label>
+
+          <div className="space-y-1 text-sm font-medium text-[#334155]">
+            <div className="flex items-center justify-between gap-2">
+              <span>Машины</span>
+              <span className="text-xs font-normal text-[#64748B]">{selectedMachineIds.length} выбрано</span>
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                disabled={!canEdit || data.machineOptions.length === 0}
+                aria-expanded={machineDropdownOpen}
+                aria-haspopup="listbox"
+                className={cn(
+                  'inline-flex h-9 w-full items-center justify-between rounded-md border border-input bg-white px-3 text-left text-sm font-normal text-[#1B3A6B] shadow-sm transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF] disabled:cursor-not-allowed disabled:opacity-50',
+                  selectedMachineIds.length === 0 && 'text-[#94A3B8]',
+                )}
+                onClick={() => setMachineDropdownOpen((open) => !open)}
+              >
+                <span className="min-w-0 flex-1 truncate">{selectedMachineText}</span>
+                <ChevronDown className="ml-2 size-4 shrink-0 text-[#64748B]" />
+              </button>
+              {machineDropdownOpen ? (
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-[#E2E8F0] bg-white p-1 shadow-lg" role="group" aria-label="Машины">
+                  {data.machineOptions.map((machine) => {
+                    const checked = selectedMachineIds.includes(machine.id)
+                    return (
+                      <button
+                        key={machine.id}
+                        type="button"
+                        role="checkbox"
+                        aria-checked={checked}
+                        className={cn(
+                          'flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF]',
+                          checked && 'bg-[#EFF6FF] text-[#12315F]',
+                        )}
+                        onClick={() => toggleMachine(machine.id)}
+                      >
+                        <span
+                          className={cn(
+                            'flex size-4 shrink-0 items-center justify-center rounded border border-[#CBD5E1] bg-white text-white transition-colors',
+                            checked && 'border-[#1E40AF] bg-[#1E40AF]',
+                          )}
+                          aria-hidden="true"
+                        >
+                          {checked ? <Check className="size-3" /> : null}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">
+                          {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
+                        </span>
+                        <span className="shrink-0 text-xs text-[#64748B]">{formatNumber(machine.total_weight, 2)} т</span>
+                      </button>
+                    )
+                  })}
                 </div>
-              )
-            })}
+              ) : null}
+            </div>
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-[#E2E8F0] bg-white shadow-sm">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-[#F8FAFC]">
-                  <TableHead className="min-w-[240px]">Материал / участок</TableHead>
-                  <TableHead className="w-[170px]">Тоннаж, т</TableHead>
-                  <TableHead className="w-[150px]">Вчера</TableHead>
-                  <TableHead className="w-[150px]">Динамика</TableHead>
-                  <TableHead>Комментарий</TableHead>
-                  <TableHead>Создал / изменил</TableHead>
-                  <TableHead className="text-right">Действия</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tonnageRows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="py-10 text-center text-[#64748B]">Нет участков для ввода тоннажа</TableCell>
-                  </TableRow>
-                ) : tonnageRows.map((row) => {
-                  const draft = tonnageDrafts[row.section.id] || { tonnage: '', comment: '' }
-                  const canEdit = row.fact ? row.fact.canEdit : data.canEditSelectedDate
-                  return (
-                    <TableRow key={row.section.id}>
-                      <TableCell>
-                        <SectionPath parent={row.parentSection} section={row.section} />
-                        {!isActiveSection(row.section) ? <Badge variant="outline" className="mt-1">Архив</Badge> : null}
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          step="0.001"
-                          min="0"
-                          value={draft.tonnage}
-                          onChange={(event) => handleTonnageDraft(row.section.id, 'tonnage', event.target.value)}
-                          disabled={!canEdit || isPending}
-                        />
-                      </TableCell>
-                      <TableCell>{formatNumber(row.previousTonnage, 3)} т</TableCell>
-                      <TableCell>
-                        <span className={cn('inline-flex items-center gap-1 text-sm font-medium', row.deltaTonnage >= 0 ? 'text-[#15803D]' : 'text-[#B91C1C]')}>
-                          {row.deltaTonnage >= 0 ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
-                          {row.deltaTonnage >= 0 ? '+' : ''}{formatNumber(row.deltaTonnage, 3)}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          value={draft.comment}
-                          onChange={(event) => handleTonnageDraft(row.section.id, 'comment', event.target.value)}
-                          disabled={!canEdit || isPending}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        {row.fact ? (
-                          <div className="text-sm text-[#334155]">
-                            <div>{row.fact.createdByName || '—'} · {formatDateTime(row.fact.created_at)}</div>
-                            <div className="text-xs text-[#64748B]">{row.fact.updatedByName || '—'} · {formatDateTime(row.fact.updated_at)}</div>
-                          </div>
-                        ) : <span className="text-[#94A3B8]">—</span>}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button type="button" size="icon-sm" variant="ghost" onClick={() => handleSaveTonnage(row)} disabled={!canEdit || isPending}>
-                            <Save className="size-4" />
-                            <span className="sr-only">Сохранить</span>
-                          </Button>
-                          {row.fact ? (
-                            <Button type="button" size="icon-sm" variant="ghost" onClick={() => handleDeleteTonnage(row)} disabled={!canEdit || isPending}>
-                              <Trash2 className="size-4" />
-                              <span className="sr-only">Удалить</span>
-                            </Button>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
+          <label className="space-y-1 text-sm font-medium text-[#334155]">
+            <span>Смена</span>
+            <select
+              className={selectClassName}
+              value={shift}
+              onChange={(event) => setShift(event.target.value as ProductionFactShift)}
+              disabled={!canEdit || isShippingStage}
+            >
+              <option value="day">День</option>
+              <option value="night">Ночь</option>
+            </select>
+          </label>
+
+          {!isShippingStage ? (
+            <label className="space-y-1 text-sm font-medium text-[#334155]">
+              <span>Тоннаж, т</span>
+              <Input
+                type="number"
+                min="0"
+                step="0.001"
+                value={tonnageValue}
+                onChange={(event) => {
+                  if (!selectedSection) return
+                  setTonnageDrafts((current) => ({ ...current, [selectedSection.id]: event.target.value }))
+                }}
+                disabled={!canEdit}
+              />
+            </label>
+          ) : (
+            <div className="rounded-md border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-2 text-sm text-[#1E3A8A]">
+              Тоннаж не нужен
+            </div>
+          )}
+
+          <label className="space-y-1 text-sm font-medium text-[#334155]">
+            <span>Комментарий</span>
+            <Input value={comment} onChange={(event) => setComment(event.target.value)} disabled={!canEdit} />
+          </label>
+
+          <Button type="button" onClick={handleSave} disabled={!canEdit || isPending || selectedMachineIds.length === 0 || !selectedSection} className="min-w-28">
+            <Save className="size-4" />
+            Сохранить
+          </Button>
+        </div>
+
+        {duplicateSelectedCount > 0 && !isShippingStage ? (
+          <div className="rounded-md border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2 text-sm text-[#92400E]">
+            {duplicateSelectedCount} выбранных машин уже есть в этом участке и смене. При сохранении они будут пропущены.
           </div>
-        </section>
-      )}
+        ) : null}
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="overflow-hidden rounded-lg border border-[#E2E8F0] bg-white shadow-sm">
+          <div className="border-b border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+            <div className="text-sm font-semibold text-[#12315F]">Записи выбранного участка</div>
+            <div className="mt-1 text-xs text-[#64748B]">
+              {selectedStageDefinition.label} · {sectionLabel(selectedSection, selectedStageDefinition.label)}
+            </div>
+          </div>
+
+          {isShippingStage ? (
+            <ShippingList machines={shippingMachinesForDate} />
+          ) : (
+            <div className="divide-y divide-[#E2E8F0]">
+              <div className="px-4 py-3">
+                <div className="text-xs font-medium uppercase text-[#64748B]">Машины</div>
+                {factsForSelectedSection.length === 0 ? (
+                  <div className="mt-2 text-sm text-[#94A3B8]">Записей пока нет</div>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {factsForSelectedSection.map((fact) => (
+                      <span key={fact.id} className="inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-md border border-[#DBEAFE] bg-white px-2 py-1 text-xs text-[#334155]">
+                        <span className="max-w-[180px] truncate font-medium text-[#12315F]">{fact.machine?.name || 'Машина не найдена'}</span>
+                        <span className="text-[#64748B]">{shiftLabel(fact.shift)}</span>
+                        <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleDeleteFact(fact.id)} disabled={!fact.canEdit || isPending}>
+                          <Trash2 className="size-3" />
+                          <span className="sr-only">Удалить</span>
+                        </Button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="grid gap-3 px-4 py-3 md:grid-cols-3">
+                <Metric label="Тоннаж участка" value={`${formatNumber(Number(selectedTonnageFact?.tonnage || 0), 3)} т`} />
+                <Metric label="Вчера" value={`${formatNumber(Number(selectedTonnageFact?.previousTonnage || 0), 3)} т`} />
+                <Metric label="Изменено" value={selectedTonnageFact ? formatDateTime(selectedTonnageFact.updated_at) : '—'} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <aside className="rounded-lg border border-[#E2E8F0] bg-white p-4 shadow-sm">
+          <div className="text-sm font-semibold text-[#12315F]">Состояние дня</div>
+          <div className="mt-3 space-y-2">
+            {dayOverviewRows.map((row) => (
+              <div key={row.key} className="rounded-md border border-[#E2E8F0] px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-[#111827]">{row.stageLabel}</div>
+                    <div className="truncate text-xs text-[#64748B]">{row.sectionLabel}</div>
+                  </div>
+                  <Badge variant="outline" className="border-[#DBEAFE] text-[#1E40AF]">{row.facts.length}</Badge>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-[#64748B]">
+                  <span>{formatNumber(row.tonnage, 3)} т</span>
+                  <span>{row.facts.filter((fact) => fact.shift === 'day').length}/{row.facts.filter((fact) => fact.shift === 'night').length}</span>
+                </div>
+              </div>
+            ))}
+            <div className="rounded-md border border-[#E2E8F0] px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-medium text-[#111827]">Отгрузка</div>
+                <Badge variant="outline" className="border-[#DBEAFE] text-[#1E40AF]">{shippingMachinesForDate.length}</Badge>
+              </div>
+              <div className="mt-2 text-xs text-[#64748B]">машин с фактом отгрузки за дату</div>
+            </div>
+          </div>
+        </aside>
+      </section>
     </div>
   )
 }
 
-function SectionManager({
-  parentSections,
-  childSectionsByParent,
-  canEdit,
-  isPending,
-  sectionName,
-  sectionOrder,
-  sectionStageType,
-  subsectionName,
-  subsectionParentId,
-  subsectionOrder,
-  subsectionStageType,
-  onSectionNameChange,
-  onSectionOrderChange,
-  onSectionStageTypeChange,
-  onSubsectionNameChange,
-  onSubsectionParentChange,
-  onSubsectionOrderChange,
-  onSubsectionStageTypeChange,
-  onAddSection,
-  onAddSubsection,
-  onStageTypeChange,
-  onRename,
-  onArchive,
-}: {
-  parentSections: ProductionFactSection[]
-  childSectionsByParent: Map<string, ProductionFactSection[]>
-  canEdit: boolean
-  isPending: boolean
-  sectionName: string
-  sectionOrder: string
-  sectionStageType: SectionStageSelectValue
-  subsectionName: string
-  subsectionParentId: string
-  subsectionOrder: string
-  subsectionStageType: SectionStageSelectValue
-  onSectionNameChange: (value: string) => void
-  onSectionOrderChange: (value: string) => void
-  onSectionStageTypeChange: (value: SectionStageSelectValue) => void
-  onSubsectionNameChange: (value: string) => void
-  onSubsectionParentChange: (value: string) => void
-  onSubsectionOrderChange: (value: string) => void
-  onSubsectionStageTypeChange: (value: SectionStageSelectValue) => void
-  onAddSection: (event: FormEvent<HTMLFormElement>) => void
-  onAddSubsection: (event: FormEvent<HTMLFormElement>) => void
-  onStageTypeChange: (section: ProductionFactSection, value: SectionStageSelectValue) => void
-  onRename: (section: ProductionFactSection) => void
-  onArchive: (section: ProductionFactSection) => void
-}) {
-  const activeParents = parentSections.filter(isActiveSection)
+function KpiCard({ icon: Icon, label, value, note }: { icon: ElementType; label: string; value: string; note: string }) {
+  return (
+    <div className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm text-[#64748B]">{label}</div>
+        <Icon className="size-4 text-[#1E40AF]" />
+      </div>
+      <div className="mt-2 text-2xl font-semibold text-[#12315F]">{value}</div>
+      <div className="mt-1 text-xs text-[#64748B]">{note}</div>
+    </div>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2">
+      <div className="text-xs text-[#64748B]">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-[#12315F]">{value}</div>
+    </div>
+  )
+}
+
+function ShippingList({ machines }: { machines: ProductionFactMachineOption[] }) {
+  if (machines.length === 0) {
+    return <div className="px-4 py-10 text-center text-sm text-[#64748B]">За выбранную дату факта отгрузки пока нет</div>
+  }
 
   return (
-    <aside className="space-y-4 rounded-lg border border-[#E2E8F0] bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <h2 className="text-base font-semibold text-[#12315F]">Участки</h2>
-          <div className="text-xs text-[#64748B]">{activeParents.length} активных</div>
-        </div>
-        <Badge variant="outline">2 уровня</Badge>
-      </div>
-
-      <form onSubmit={onAddSection} className="space-y-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_72px] gap-2">
-          <Input placeholder="Участок" value={sectionName} onChange={(event) => onSectionNameChange(event.target.value)} disabled={!canEdit || isPending} />
-          <Input type="number" value={sectionOrder} onChange={(event) => onSectionOrderChange(event.target.value)} disabled={!canEdit || isPending} />
-        </div>
-        <label className="space-y-1 text-xs font-medium text-[#475569]">
-          <span>Связанный этап</span>
-          <select className={selectClassName} value={sectionStageType} onChange={(event) => onSectionStageTypeChange(event.target.value as SectionStageSelectValue)} disabled={!canEdit || isPending}>
-            {sectionStageOptions.map((option) => (
-              <option key={option.value || 'none'} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <Button type="submit" variant="outline" size="sm" className="w-full" disabled={!canEdit || isPending || !sectionName.trim()}>
-          <Plus className="size-4" />
-          Участок
-        </Button>
-      </form>
-
-      <form onSubmit={onAddSubsection} className="space-y-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-3">
-        <select className={selectClassName} value={subsectionParentId} onChange={(event) => onSubsectionParentChange(event.target.value)} disabled={!canEdit || isPending}>
-          <option value="">Участок</option>
-          {activeParents.map((section) => (
-            <option key={section.id} value={section.id}>{section.name}</option>
-          ))}
-        </select>
-        <div className="grid grid-cols-[minmax(0,1fr)_72px] gap-2">
-          <Input placeholder="Подучасток" value={subsectionName} onChange={(event) => onSubsectionNameChange(event.target.value)} disabled={!canEdit || isPending} />
-          <Input type="number" value={subsectionOrder} onChange={(event) => onSubsectionOrderChange(event.target.value)} disabled={!canEdit || isPending} />
-        </div>
-        <label className="space-y-1 text-xs font-medium text-[#475569]">
-          <span>Связанный этап</span>
-          <select className={selectClassName} value={subsectionStageType} onChange={(event) => onSubsectionStageTypeChange(event.target.value as SectionStageSelectValue)} disabled={!canEdit || isPending}>
-            {sectionStageOptions.map((option) => (
-              <option key={option.value || 'none'} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <Button type="submit" variant="outline" size="sm" className="w-full" disabled={!canEdit || isPending || !subsectionName.trim() || !subsectionParentId}>
-          <Plus className="size-4" />
-          Подучасток
-        </Button>
-      </form>
-
-      <div className="max-h-[620px] space-y-3 overflow-y-auto pr-1">
-        {parentSections.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-[#CBD5E1] p-4 text-sm text-[#64748B]">Участков пока нет</div>
-        ) : parentSections.map((section) => {
-          const children = childSectionsByParent.get(section.id) || []
-          const sectionIsCutting = isEffectiveCuttingSection(section)
-          return (
-            <div key={section.id} className={cn('rounded-lg border p-3', isActiveSection(section) ? 'border-[#E2E8F0]' : 'border-[#E2E8F0] bg-[#F8FAFC] opacity-75')}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="truncate font-medium text-[#111827]">{section.name}</span>
-                    {sectionIsCutting ? <Badge variant="outline" className="border-[#DBEAFE] text-[#1E40AF]">Заготовка</Badge> : null}
-                  </div>
-                  <div className="text-xs text-[#64748B]">Порядок {section.sort_order}</div>
-                </div>
-                <div className="flex gap-1">
-                  <Button type="button" variant="ghost" size="icon-xs" onClick={() => onRename(section)} disabled={!canEdit || isPending || !isActiveSection(section)}>
-                    <Pencil className="size-3" />
-                    <span className="sr-only">Переименовать</span>
-                  </Button>
-                  <Button type="button" variant="ghost" size="icon-xs" onClick={() => onArchive(section)} disabled={!canEdit || isPending || !isActiveSection(section)}>
-                    <Archive className="size-3" />
-                    <span className="sr-only">Архив</span>
-                  </Button>
-                </div>
-              </div>
-              <label className="mt-2 block space-y-1 text-xs font-medium text-[#475569]">
-                <span>Связанный этап</span>
-                <select
-                  className={selectClassName}
-                  value={getSectionStageValue(section)}
-                  onChange={(event) => onStageTypeChange(section, event.target.value as SectionStageSelectValue)}
-                  disabled={!canEdit || isPending || !isActiveSection(section)}
-                >
-                  {sectionStageOptions.map((option) => (
-                    <option key={option.value || 'none'} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-              <div className="mt-2 space-y-1">
-                {children.map((child) => {
-                  const childIsCutting = isEffectiveCuttingSection(child, section)
-                  const inheritedCutting = child.production_stage_type !== 'cutting' && section.production_stage_type === 'cutting'
-                  return (
-                  <div key={child.id} className={cn('grid gap-2 rounded-md px-2 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_130px_auto]', isActiveSection(child) ? 'bg-[#F8FAFC]' : 'bg-[#F1F5F9] text-[#64748B]')}>
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="truncate">{child.name}</span>
-                        {childIsCutting ? <Badge variant="outline" className="border-[#DBEAFE] text-[#1E40AF]">{inheritedCutting ? 'Заготовка от участка' : 'Заготовка'}</Badge> : null}
-                      </div>
-                    </div>
-                    <select
-                      className={selectClassName}
-                      value={getSectionStageValue(child)}
-                      onChange={(event) => onStageTypeChange(child, event.target.value as SectionStageSelectValue)}
-                      disabled={!canEdit || isPending || !isActiveSection(child)}
-                    >
-                      {sectionStageOptions.map((option) => (
-                        <option key={option.value || 'none'} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                    <div className="flex items-center gap-1">
-                      {!isActiveSection(child) ? <Badge variant="outline">Архив</Badge> : null}
-                      <Button type="button" variant="ghost" size="icon-xs" onClick={() => onRename(child)} disabled={!canEdit || isPending || !isActiveSection(child)}>
-                        <Pencil className="size-3" />
-                        <span className="sr-only">Переименовать</span>
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon-xs" onClick={() => onArchive(child)} disabled={!canEdit || isPending || !isActiveSection(child)}>
-                        <Archive className="size-3" />
-                        <span className="sr-only">Архив</span>
-                      </Button>
-                    </div>
-                  </div>
-                  )
-                })}
-              </div>
+    <div className="divide-y divide-[#E2E8F0]">
+      {machines.map((machine) => (
+        <div key={machine.id} className="flex items-center justify-between gap-3 px-4 py-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-[#12315F]">
+              {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
             </div>
-          )
-        })}
-      </div>
-    </aside>
+            <div className="mt-1 text-xs text-[#64748B]">{formatNumber(machine.total_weight, 2)} т</div>
+          </div>
+          <Badge variant="outline" className="border-[#BBF7D0] bg-[#F0FDF4] text-[#15803D]">Отгружена</Badge>
+        </div>
+      ))}
+    </div>
   )
 }

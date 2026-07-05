@@ -22,6 +22,7 @@ const routeMap: Record<string, string> = {
   "notifications": "Уведомления",
   "admin": "Админ",
   "settings": "Настройки",
+  "production-fact": "Факт производства",
   "access": "Управление доступом",
   "departments": "Отделы и структура",
   "users": "Пользователи",

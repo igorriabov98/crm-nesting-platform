@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Bot, Building2, Send, Settings, ShieldCheck, Users } from 'lucide-react'
+import { Bot, Building2, Factory, Send, Settings, ShieldCheck, Users } from 'lucide-react'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -89,6 +89,14 @@ export default async function AdminSettingsPage() {
       href: ROUTES.ADMIN_COMPANY_SETTINGS,
       buttonLabel: 'Открыть настройки компании',
       icon: Building2,
+    },
+    canViewSettingsContent && canViewResource(permissions, 'production_fact_settings') && {
+      key: 'production-fact',
+      title: 'Настройки факта производства',
+      description: 'Стандартные участки, подучастки и привязка заготовки к складской логике.',
+      href: ROUTES.ADMIN_PRODUCTION_FACT_SETTINGS,
+      buttonLabel: 'Открыть настройки факта',
+      icon: Factory,
     },
   ].filter(Boolean) as SettingsCard[]
 
