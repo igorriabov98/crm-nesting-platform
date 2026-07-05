@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -9,6 +9,7 @@ import { useRole } from '@/lib/hooks/useRole'
 import { differenceInDays, isPast, format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { Loader2, PackagePlus, Plus, Trash2, Truck } from 'lucide-react'
+import { CHAIN_CORD_SUBTYPE_LABELS, ORDER_STATUS_LABELS, PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import {
   createSupplyItem,
   updateSupplyItem,
@@ -27,20 +28,219 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
-import type { MachineDetails, SupplyItem } from '@/lib/types'
+import type { MachineDetails, OrderItemStatus, RequestStatus, SupplyItem } from '@/lib/types'
+import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 
 interface SupplyTabProps {
   machine: MachineDetails
+  requestData?: TechnologistRequestPayload | null
 }
 
-export function SupplyTab({ machine }: SupplyTabProps) {
+type RequestMaterialRow = {
+  id: string
+  section: string
+  name: string
+  details: string
+  quantity: string
+  secondaryQuantity?: string
+  orderStatus: OrderItemStatus
+  orderedAt: string | null
+  deliveredAt: string | null
+  customDeliveryDate: string | null
+}
+
+const orderStatusBadgeClassName: Record<OrderItemStatus, string> = {
+  pending: 'border-amber-200 bg-amber-50 text-amber-700',
+  ordered: 'border-blue-200 bg-blue-50 text-blue-700',
+  delivered: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+}
+
+function formatAmountValue(value: number | string | null | undefined, maximumFractionDigits = 2) {
+  if (value === null || value === undefined || value === '') return '—'
+  const number = Number(value)
+  if (!Number.isFinite(number)) return String(value)
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits }).format(number)
+}
+
+function formatQuantity(value: number | string | null | undefined, unit: string) {
+  return `${formatAmountValue(value)} ${unit}`
+}
+
+function compactDetails(parts: Array<string | number | null | undefined | false>) {
+  return parts.filter((part) => part !== null && part !== undefined && part !== false && String(part).trim()).join(' · ')
+}
+
+function materialName(row: { materials?: { name?: string | null } | null }, fallback: string | null | undefined, defaultName: string) {
+  return row.materials?.name || fallback || defaultName
+}
+
+function stageNote(row: RequestMaterialRow, requestStatus: RequestStatus) {
+  if (row.orderStatus === 'delivered') return row.deliveredAt ? `Доставлено ${formatDate(row.deliveredAt)}` : 'Поставка закрыта'
+  if (row.orderStatus === 'ordered') return row.orderedAt ? `Заказано ${formatDate(row.orderedAt)}` : 'Заказ размещён'
+  if (row.customDeliveryDate) return `План: ${formatDate(row.customDeliveryDate)}`
+  if (requestStatus === 'submitted_to_supply') return 'В работе у снабжения'
+  if (requestStatus === 'completed') return 'Заявка завершена'
+  return 'Заявка ещё не передана в снабжение'
+}
+
+function formatDate(dateString: string | null) {
+  if (!dateString) return '—'
+  return format(new Date(dateString), 'dd.MM.yyyy', { locale: ru })
+}
+
+function buildRequestMaterialRows(requestData?: TechnologistRequestPayload | null): RequestMaterialRow[] {
+  if (!requestData) return []
+
+  return [
+    ...requestData.sheetMetal.map((row) => ({
+      id: row.id,
+      section: 'Листовой',
+      name: materialName(row, row.material_name, 'Листовой металл'),
+      details: compactDetails([
+        row.material_grade,
+        row.sheet_size,
+        row.thickness_mm ? `${formatAmountValue(row.thickness_mm)} мм` : null,
+      ]),
+      quantity: formatQuantity(row.remainder_qty ?? row.quantity_sheets, 'шт'),
+      secondaryQuantity: formatQuantity(row.weight_order_kg, 'кг'),
+      orderStatus: row.order_status,
+      orderedAt: row.ordered_at,
+      deliveredAt: row.delivered_at,
+      customDeliveryDate: row.custom_delivery_date,
+    })),
+    ...requestData.roundTube.map((row) => ({
+      id: row.id,
+      section: 'Круг / труба',
+      name: materialName(row, row.material_name, 'Круг / труба'),
+      details: row.piece_count || '—',
+      quantity: formatQuantity(row.order_kg, 'кг'),
+      secondaryQuantity: formatQuantity(row.order_meters, 'м'),
+      orderStatus: row.order_status,
+      orderedAt: row.ordered_at,
+      deliveredAt: row.delivered_at,
+      customDeliveryDate: row.custom_delivery_date,
+    })),
+    ...requestData.circles.map((row) => ({
+      id: row.id,
+      section: 'Круг',
+      name: materialName(row, row.steel_grade, 'Круг'),
+      details: compactDetails([
+        row.diameter_mm ? `Ø ${formatAmountValue(row.diameter_mm)} мм` : null,
+        row.is_calibrated ? 'Калиброванный' : null,
+      ]),
+      quantity: formatQuantity(row.remainder_mm, 'мм'),
+      secondaryQuantity: row.calculated_weight_kg ? formatQuantity(row.calculated_weight_kg, 'кг') : undefined,
+      orderStatus: row.order_status,
+      orderedAt: row.ordered_at,
+      deliveredAt: row.delivered_at,
+      customDeliveryDate: row.custom_delivery_date,
+    })),
+    ...requestData.pipes.map((row) => ({
+      id: row.id,
+      section: 'Труба',
+      name: materialName(row, PIPE_SUBTYPE_LABELS[row.pipe_type] || row.pipe_type, 'Труба'),
+      details: compactDetails([
+        row.size,
+        row.wall_thickness_mm ? `стенка ${formatAmountValue(row.wall_thickness_mm)} мм` : null,
+        row.diameter_mm ? `Ø ${formatAmountValue(row.diameter_mm)} мм` : null,
+      ]),
+      quantity: row.pipe_type === 'wire'
+        ? formatQuantity(row.remainder_kg, 'кг')
+        : formatQuantity(row.remainder_length_mm, 'мм'),
+      secondaryQuantity: row.remainder_qty ? formatQuantity(row.remainder_qty, 'шт') : undefined,
+      orderStatus: row.order_status,
+      orderedAt: row.ordered_at,
+      deliveredAt: row.delivered_at,
+      customDeliveryDate: row.custom_delivery_date,
+    })),
+    ...requestData.knives.map((row) => ({
+      id: row.id,
+      section: 'Ножи',
+      name: materialName(row, row.knife_type, 'Нож'),
+      details: compactDetails([
+        row.steel_grade,
+        row.length_mm ? `${formatAmountValue(row.length_mm)} мм` : null,
+        row.width_mm ? `${formatAmountValue(row.width_mm)} мм` : null,
+        row.height_mm ? `${formatAmountValue(row.height_mm)} мм` : null,
+      ]),
+      quantity: row.remainder_meters > 0
+        ? formatQuantity(row.remainder_meters, 'м')
+        : formatQuantity(row.to_order_mm, 'мм'),
+      secondaryQuantity: row.remainder_qty ? formatQuantity(row.remainder_qty, 'шт') : undefined,
+      orderStatus: row.order_status,
+      orderedAt: row.ordered_at,
+      deliveredAt: row.delivered_at,
+      customDeliveryDate: row.custom_delivery_date,
+    })),
+    ...requestData.components.map((row) => ({
+      id: row.id,
+      section: 'Комплектация',
+      name: materialName(row, row.component_name, 'Комплектующая'),
+      details: compactDetails([
+        row.specification,
+        row.diameter_mm ? `Ø ${formatAmountValue(row.diameter_mm)} мм` : null,
+      ]),
+      quantity: formatQuantity(row.to_order ?? Math.max(Number(row.quantity_needed || 0) - Number(row.stock_remainder || 0), 0), row.unit || 'шт'),
+      secondaryQuantity: `Потребность: ${formatQuantity(row.quantity_needed, row.unit || 'шт')}`,
+      orderStatus: row.order_status,
+      orderedAt: row.ordered_at,
+      deliveredAt: row.delivered_at,
+      customDeliveryDate: row.custom_delivery_date,
+    })),
+    ...requestData.paint.map((row) => ({
+      id: row.id,
+      section: 'Краска',
+      name: materialName(row, row.paint_type, 'Краска'),
+      details: compactDetails([
+        row.ral_code,
+        row.finish,
+      ]),
+      quantity: formatQuantity(row.remainder_kg ?? row.to_order_kg, 'кг'),
+      secondaryQuantity: formatQuantity(row.area_m2, 'м²'),
+      orderStatus: row.order_status,
+      orderedAt: row.ordered_at,
+      deliveredAt: row.delivered_at,
+      customDeliveryDate: row.custom_delivery_date,
+    })),
+    ...requestData.meshItems.map((row) => ({
+      id: row.id,
+      section: 'Сетка',
+      name: materialName(row, row.description, 'Сетка'),
+      details: compactDetails([
+        row.length_mm ? `${formatAmountValue(row.length_mm)} мм` : null,
+        row.width_mm ? `${formatAmountValue(row.width_mm)} мм` : null,
+      ]),
+      quantity: formatQuantity(row.remainder_qty, 'шт'),
+      orderStatus: row.order_status,
+      orderedAt: row.ordered_at,
+      deliveredAt: row.delivered_at,
+      customDeliveryDate: row.custom_delivery_date,
+    })),
+    ...requestData.chainCords.map((row) => ({
+      id: row.id,
+      section: 'Цепь / шнур',
+      name: materialName(row, CHAIN_CORD_SUBTYPE_LABELS[row.item_type] || row.item_type, 'Цепь / шнур'),
+      details: row.parameters || '—',
+      quantity: formatQuantity(row.remainder_meters, 'м'),
+      orderStatus: row.order_status,
+      orderedAt: row.ordered_at,
+      deliveredAt: row.delivered_at,
+      customDeliveryDate: row.custom_delivery_date,
+    })),
+  ]
+}
+
+export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
   const { isDirector, isEngineer, isTechnologist, isSupplyManager } = useRole()
   const [isCreating, setIsCreating] = useState(false)
 
   const items = machine.supply_items || []
+  const requestMaterialRows = useMemo(() => buildRequestMaterialRows(requestData), [requestData])
   const receivedCount = items.filter((i) => i.status === 'received').length
-  const totalCount = items.length
+    + requestMaterialRows.filter((item) => item.orderStatus === 'delivered').length
+  const totalCount = items.length + requestMaterialRows.length
   const percent = totalCount > 0 ? Math.round((receivedCount / totalCount) * 100) : 0
+  const showManualItems = items.length > 0 || requestMaterialRows.length === 0
 
   const canCreate = isDirector || isTechnologist || isSupplyManager
 
@@ -105,7 +305,7 @@ export function SupplyTab({ machine }: SupplyTabProps) {
       <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
         <div className="min-w-0">
           <p className="text-sm font-medium text-slate-700">
-            Получено <span className="font-bold tabular-nums text-blue-950">{receivedCount}</span> из <span className="font-bold tabular-nums text-blue-950">{totalCount}</span> позиций
+            Получено <span className="font-bold tabular-nums text-blue-950">{receivedCount}</span> из <span className="font-bold tabular-nums text-blue-950">{totalCount}</span> материалов
           </p>
           <Progress value={percent} className="mt-3 h-2.5 bg-slate-100" indicatorClassName="bg-blue-950" />
         </div>
@@ -115,6 +315,85 @@ export function SupplyTab({ machine }: SupplyTabProps) {
         </div>
       </div>
 
+      {requestMaterialRows.length > 0 && requestData && (
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="font-semibold text-slate-950">Материалы из заявки</h3>
+            </div>
+            <Badge variant="outline" className="w-fit border-blue-200 bg-blue-50 text-blue-800">
+              {requestMaterialRows.length} поз.
+            </Badge>
+          </div>
+
+          <div className="hidden overflow-x-auto lg:block">
+            <table className="w-full min-w-[920px] text-left text-sm">
+              <thead className="bg-white text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="w-10 px-3 py-3">#</th>
+                  <th className="min-w-[120px] px-3 py-3">Раздел</th>
+                  <th className="min-w-[260px] px-3 py-3">Материал</th>
+                  <th className="min-w-[150px] px-3 py-3">Количество</th>
+                  <th className="min-w-[170px] px-3 py-3">Этап</th>
+                  <th className="min-w-[170px] px-3 py-3">Дата / план</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {requestMaterialRows.map((item, index) => (
+                  <tr key={item.id} className="bg-white hover:bg-slate-50">
+                    <td className="px-3 py-3 text-slate-400">{index + 1}</td>
+                    <td className="px-3 py-3 text-slate-600">{item.section}</td>
+                    <td className="px-3 py-3">
+                      <div className="font-semibold text-blue-950">{item.name}</div>
+                      <div className="mt-1 text-xs text-slate-500">{item.details || '—'}</div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="font-medium tabular-nums text-slate-900">{item.quantity}</div>
+                      {item.secondaryQuantity && <div className="mt-1 text-xs tabular-nums text-slate-500">{item.secondaryQuantity}</div>}
+                    </td>
+                    <td className="px-3 py-3">
+                      <Badge variant="outline" className={orderStatusBadgeClassName[item.orderStatus]}>
+                        {ORDER_STATUS_LABELS[item.orderStatus]}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-3 text-slate-600">{stageNote(item, requestData.request.status)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="space-y-3 p-3 lg:hidden">
+            {requestMaterialRows.map((item, index) => (
+              <article key={item.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">{item.section} · {index + 1}</div>
+                    <div className="mt-1 break-words font-semibold text-blue-950">{item.name}</div>
+                    <div className="mt-1 text-xs text-slate-500">{item.details || '—'}</div>
+                  </div>
+                  <Badge variant="outline" className={cn('shrink-0', orderStatusBadgeClassName[item.orderStatus])}>
+                    {ORDER_STATUS_LABELS[item.orderStatus]}
+                  </Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <span className="block text-xs text-slate-500">Количество</span>
+                    <span className="mt-1 block font-semibold tabular-nums text-slate-900">{item.quantity}</span>
+                    {item.secondaryQuantity && <span className="mt-0.5 block text-xs tabular-nums text-slate-500">{item.secondaryQuantity}</span>}
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <span className="block text-xs text-slate-500">Этап</span>
+                    <span className="mt-1 block font-medium text-slate-900">{stageNote(item, requestData.request.status)}</span>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {showManualItems && (
       <div className="hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm lg:block">
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
@@ -294,7 +573,9 @@ export function SupplyTab({ machine }: SupplyTabProps) {
           </tbody>
         </table>
       </div>
+      )}
 
+      {showManualItems && (
       <div className="space-y-3 lg:hidden">
         {items.length === 0 ? (
           <div className="flex min-h-52 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center shadow-sm">
@@ -405,6 +686,7 @@ export function SupplyTab({ machine }: SupplyTabProps) {
           })
         )}
       </div>
+      )}
     </div>
   )
 }

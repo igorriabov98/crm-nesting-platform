@@ -65,6 +65,8 @@ interface MachineDetailProps {
   canManageNesting?: boolean
 }
 
+const machineTabTriggerClassName = 'min-h-11 w-full min-w-0 gap-1.5 whitespace-normal rounded-xl px-2 text-center text-xs font-medium leading-tight text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm sm:text-sm'
+
 function DocumentReadinessIndicator({ missingFields }: { missingFields: string[] }) {
   const isReady = missingFields.length === 0
 
@@ -361,45 +363,48 @@ export function MachineDetail({
       <MachineActivityPanel machineId={machine.id} activity={activity} />
 
       <Tabs defaultValue="items" className="mt-6 w-full">
-        <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <TabsList className={cn(
+          'grid h-auto w-full grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm sm:grid-cols-3',
+          showInvoiceTab ? 'lg:grid-cols-7' : 'lg:grid-cols-6'
+        )}>
           <TabsTrigger 
             value="items" 
-            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            className={machineTabTriggerClassName}
           >
             <Package className="h-4 w-4" aria-hidden="true" />
             Товары
           </TabsTrigger>
           <TabsTrigger 
             value="production" 
-            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            className={machineTabTriggerClassName}
           >
             <Factory className="h-4 w-4" aria-hidden="true" />
             Производство
           </TabsTrigger>
           <TabsTrigger
             value="outsourcing"
-            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            className={machineTabTriggerClassName}
           >
             <Truck className="h-4 w-4" aria-hidden="true" />
             Аутсорсинг
           </TabsTrigger>
           <TabsTrigger 
             value="supply" 
-            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            className={machineTabTriggerClassName}
           >
             <Truck className="h-4 w-4" aria-hidden="true" />
             Снабжение
           </TabsTrigger>
           <TabsTrigger 
             value="expenses" 
-            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            className={machineTabTriggerClassName}
           >
             <WalletCards className="h-4 w-4" aria-hidden="true" />
             Расходы
           </TabsTrigger>
           <TabsTrigger 
             value="packing" 
-            className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            className={machineTabTriggerClassName}
           >
             <ClipboardList className="h-4 w-4" aria-hidden="true" />
             Настройки машины
@@ -407,7 +412,7 @@ export function MachineDetail({
           {showInvoiceTab && (
             <TabsTrigger 
               value="invoice" 
-              className="min-h-11 shrink-0 gap-2 rounded-xl px-3.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              className={machineTabTriggerClassName}
             >
               <FileText className="h-4 w-4" aria-hidden="true" />
               Инвойс
@@ -432,7 +437,7 @@ export function MachineDetail({
             )}
           </TabsContent>
           <TabsContent value="supply" className="outline-none">
-            <SupplyTab machine={machine} />
+            <SupplyTab machine={machine} requestData={requestData} />
           </TabsContent>
           <TabsContent value="expenses" className="outline-none">
             <ExpensesTab machine={machine} />
