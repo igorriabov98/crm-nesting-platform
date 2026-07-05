@@ -36,11 +36,24 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     ? (project.strategy as NestingParams['strategy'])
     : 'minWaste';
   const sheetMetalParts = project.parts.filter((part) => part.isSheetMetal);
+  const excludedParts = project.parts
+    .filter((part) => !part.isSheetMetal)
+    .map((part) => ({
+      partId: part.id,
+      name: normalizeCadText(part.name),
+      quantity: part.quantity * project.quantity,
+      reason: buildExcludedFromNestingReason(part),
+    }));
   type PartWithKnownThickness = (typeof sheetMetalParts)[number] & { thickness: number };
   const partsWithKnownThickness = sheetMetalParts.filter(
     (part): part is PartWithKnownThickness => typeof part.thickness === 'number'
   );
   const partsWithoutThickness = sheetMetalParts.filter((part) => part.thickness === null);
+  const expectedParts = project.parts.map((part) => ({
+    id: part.id,
+    name: normalizeCadText(part.name),
+    quantity: part.quantity * project.quantity,
+  }));
 
   if (sheetMetalParts.length === 0) {
     throw new Error('Нет листовых деталей для раскладки');
@@ -71,13 +84,17 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   }
 
   const allSheetResults: NestingResult['sheets'] = [];
-  const allUnplaced: NestingResult['unplacedParts'] = [];
-  let totalParts = 0;
+  const allUnplaced: NestingResult['unplacedParts'] = excludedParts.flatMap((part) =>
+    Array.from({ length: part.quantity }, (_, index) => ({
+      partId: part.partId,
+      name: `${part.name} (#${index + 1}) - ${part.reason}`,
+    }))
+  );
+  const totalParts = expectedParts.reduce((sum, part) => sum + part.quantity, 0);
   let placedParts = 0;
 
   for (const part of partsWithoutThickness) {
     const quantity = part.quantity * project.quantity;
-    totalParts += quantity;
     for (let index = 1; index <= quantity; index += 1) {
       allUnplaced.push({ partId: part.id, name: `${part.name} (#${index}) - толщина не определена` });
     }
@@ -116,8 +133,6 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     }
 
     const groupParams = await resolveNestingParams({ material, thickness });
-    const groupTotalParts = Array.from(quantities.values()).reduce((sum, quantity) => sum + quantity, 0);
-    totalParts += groupTotalParts;
 
     const requirements = buildSheetRequirements(nestingParts, quantities);
     const sheets = await findSuitableSheets(material, thickness, requirements, groupParams.margin);
@@ -170,17 +185,28 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   };
   const validationReport = validateLayout(
     result.sheets,
-    sheetMetalParts.map((part) => ({
-      id: part.id,
-      name: normalizeCadText(part.name),
-      quantity: part.quantity * project.quantity,
-    })),
-    { unplacedParts: result.unplacedParts }
+    expectedParts,
+    { unplacedParts: result.unplacedParts, excludedParts }
   );
 
   await saveResults(projectId, result, validationReport);
 
   return result;
+}
+
+function buildExcludedFromNestingReason(part: {
+  classificationMethod: string | null;
+  classificationWarning: string | null;
+}): string {
+  if (part.classificationMethod === 'manual') {
+    return 'ручная метка "Профиль/круг — не для листового раскроя"';
+  }
+
+  if (part.classificationMethod === 'pdf_bom') {
+    return 'PDF/BOM указал профиль/круг — не для листового раскроя';
+  }
+
+  return part.classificationWarning || 'автоматическая классификация как не листовая деталь';
 }
 
 async function findSuitableSheets(

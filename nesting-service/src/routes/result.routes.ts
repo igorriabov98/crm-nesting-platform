@@ -138,13 +138,20 @@ export async function resultRoutes(app: FastifyInstance) {
       };
     });
 
-    const sheetMetalParts = project.parts.filter((part) => part.isSheetMetal);
-    const totalParts = sheetMetalParts.reduce((sum, part) => sum + part.quantity * project.quantity, 0);
+    const totalParts = project.parts.reduce((sum, part) => sum + part.quantity * project.quantity, 0);
     const unplacedParts: { partId: string; name: string }[] = [];
 
-    for (const part of sheetMetalParts) {
+    for (const part of project.parts) {
       const required = part.quantity * project.quantity;
       const placed = placedByPartId.get(part.id) ?? 0;
+
+      if (!part.isSheetMetal) {
+        const reason = buildExcludedFromNestingReason(part);
+        for (let index = 1; index <= required; index += 1) {
+          unplacedParts.push({ partId: part.id, name: `${normalizeCadText(part.name)} (#${index}) - ${reason}` });
+        }
+        continue;
+      }
 
       for (let index = placed + 1; index <= required; index += 1) {
         unplacedParts.push({ partId: part.id, name: `${normalizeCadText(part.name)} (#${index})` });
@@ -210,6 +217,21 @@ export async function resultRoutes(app: FastifyInstance) {
       },
     };
   });
+}
+
+function buildExcludedFromNestingReason(part: {
+  classificationMethod: string | null;
+  classificationWarning: string | null;
+}): string {
+  if (part.classificationMethod === 'manual') {
+    return 'ручная метка "Профиль/круг — не для листового раскроя"';
+  }
+
+  if (part.classificationMethod === 'pdf_bom') {
+    return 'PDF/BOM указал профиль/круг — не для листового раскроя';
+  }
+
+  return part.classificationWarning || 'автоматическая классификация как не листовая деталь';
 }
 
 function readPlacements(value: unknown): PlacementForResult[] {

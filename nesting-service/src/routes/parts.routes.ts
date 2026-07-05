@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { NotFoundError, ValidationError } from '../lib/errors';
 import { normalizeCadText } from '../lib/text-encoding';
@@ -108,6 +109,16 @@ export async function partsRoutes(app: FastifyInstance) {
     await getProjectStatusOrThrow(id);
 
     const data = updatePartSchema.parse(request.body ?? {});
+    const updateData: Prisma.PartUpdateInput = { ...data };
+    if (data.isSheetMetal !== undefined) {
+      updateData.classificationMethod = 'manual';
+      updateData.classificationWarning = data.isSheetMetal
+        ? null
+        : 'Ручная метка: профиль/круг — не для листового раскроя';
+      if (!data.isSheetMetal) {
+        updateData.hasBends = false;
+      }
+    }
     const part = await prisma.part.findFirst({
       where: { id: partId, projectId: id },
       select: { id: true },
@@ -117,11 +128,17 @@ export async function partsRoutes(app: FastifyInstance) {
       throw new NotFoundError('Деталь', partId);
     }
 
-    const needsUnfoldRecalculation = data.material !== undefined || data.thickness !== undefined;
+    const needsUnfoldRecalculation =
+      data.material !== undefined ||
+      data.thickness !== undefined ||
+      data.isSheetMetal !== undefined ||
+      data.steelTypeId !== undefined ||
+      data.steelTypeName !== undefined ||
+      data.steelTypeRaw !== undefined;
     const updated = await prisma.$transaction(async (tx) => {
       const nextPart = await tx.part.update({
         where: { id: partId },
-        data,
+        data: updateData,
         select: partListSelect,
       });
 

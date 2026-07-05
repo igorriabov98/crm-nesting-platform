@@ -52,6 +52,19 @@ const explicitUnplacedReport = validateLayout(
 );
 assert.equal(explicitUnplacedReport.valid, true, 'explicit unplaced list should satisfy quantity invariant');
 
+const excludedReport = validateLayout(
+  [sheet([part('a', 10, 10, 20, 20)])],
+  [
+    { id: 'a', name: 'A', quantity: 1 },
+    { id: 'b', name: 'B', quantity: 1 },
+  ],
+  {
+    unplacedParts: [{ partId: 'b', name: 'B (#1) - ручная метка' }],
+    excludedParts: [{ partId: 'b', name: 'B', quantity: 1, reason: 'ручная метка' }],
+  }
+);
+assertViolation(excludedReport, 'EXCLUDED_FROM_NESTING');
+
 console.log('[layout-validator] all tests passed');
 
 function assertViolation(report: ReturnType<typeof validateLayout>, type: LayoutViolationType): void {

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import type { BOMEntry, BOMPartType, DetailEntry, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
+import { mergeUnfoldingWarning, resolveUnfolding } from './unfolding-extraction';
 
 type OpenRouterResponse = {
   choices?: Array<{
@@ -71,6 +72,9 @@ const systemPrompt = `Ты — опытный технолог на произв
 - notes: важные примечания
 
 ВАЖНО:
+- Приоритет для развёртки: явная строка примечаний "Развертка AхB мм" / "Развёртка A×B мм"; десятичная запятая допустима.
+- Числа в стандарте рядом со словом ГОСТ, например "ГОСТ 19903-90", никогда не являются развёрткой.
+- Если это групповой чертёж с таблицей исполнений, верни отдельную detail-запись для каждого исполнения с его размерами развёртки из таблицы.
 - Если таблица дублируется на нескольких страницах — объедини, не дублируй записи
 - Материал S235JRG2, S235, S355, Ст3пс, Ст3сп -> "Сталь"
 - Материал 12Х18Н10Т, 08Х18Н10, AISI 304, 304, 316 -> "Нержавейка"
@@ -466,7 +470,6 @@ function parseBOMGeometry(description: string): {
     .replace(/[×х]/gi, 'x')
     .replace(/[‐‑‒–—−]/g, '-')
     .replace(/,/g, '.');
-  const lower = normalized.toLowerCase();
   const partType = normalizePartType(null, normalized) ?? 'other';
   const numbers = Array.from(normalized.matchAll(/\d+(?:\.\d+)?/g)).map((match) => Number(match[0]));
   const pnThickness = normalizePositiveNumber(normalized.match(/\bпн\s*-\s*(\d+(?:[,.]\d+)?)/i)?.[1]);
@@ -542,7 +545,19 @@ function normalizeDetailEntry(entry: unknown): DetailEntry | null {
   const materialFull = String(entry.material_full ?? entry.materialFull ?? '').trim();
   const materialType = normalizeMaterialType(String(entry.material_type ?? entry.materialType ?? materialFull));
   const bendInfo = String(entry.bend_info ?? entry.bendInfo ?? '').trim();
-  const notes = [entry.notes, bendInfo].map((value) => String(value ?? '').trim()).filter(Boolean).join('; ');
+  const baseNotes = [entry.notes, bendInfo].map((value) => String(value ?? '').trim()).filter(Boolean).join('; ');
+  const textForUnfolding = [
+    entry.notes,
+    entry.description,
+    entry.name,
+    materialFull,
+    bendInfo,
+  ].map((value) => String(value ?? '').trim()).filter(Boolean).join('\n');
+  const unfolding = resolveUnfolding({
+    text: textForUnfolding,
+    providedWidth: normalizePositiveNumber(entry.unfolding_width ?? entry.unfoldingWidth),
+    providedHeight: normalizePositiveNumber(entry.unfolding_height ?? entry.unfoldingHeight),
+  });
 
   return {
     designation: String(entry.designation || '').trim(),
@@ -551,11 +566,11 @@ function normalizeDetailEntry(entry: unknown): DetailEntry | null {
     materialType,
     materialGrade: String(entry.material_grade ?? entry.materialGrade ?? '').trim(),
     thicknessMm: normalizePositiveNumber(entry.thickness_mm ?? entry.thicknessMm) ?? 0,
-    unfoldingWidth: normalizePositiveNumber(entry.unfolding_width ?? entry.unfoldingWidth),
-    unfoldingHeight: normalizePositiveNumber(entry.unfolding_height ?? entry.unfoldingHeight),
+    unfoldingWidth: unfolding.width,
+    unfoldingHeight: unfolding.height,
     massKg: normalizePositiveNumber(entry.mass_kg ?? entry.massKg),
     isSheetMetal: normalizeBoolean(entry.is_sheet_metal ?? entry.isSheetMetal),
-    notes,
+    notes: mergeUnfoldingWarning(baseNotes, unfolding.warnings),
   };
 }
 

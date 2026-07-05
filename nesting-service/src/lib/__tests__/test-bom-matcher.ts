@@ -289,6 +289,47 @@ assert.equal(lugCounts.get('BL 20 x 65 x 230'), 4);
 assert.equal(lugMatches.find((match) => match.bomName === 'BL 20 x 90 x 160')?.suggestedUnfoldingWidth, 90);
 assert.equal(lugMatches.find((match) => match.bomName === 'BL 20 x 65 x 230')?.suggestedUnfoldingHeight, 230);
 
+const sheetSortamentAngleMatches = matchBOMToParts(
+  [createBom({
+    designation: 'СТВ-300.00.010-01',
+    name: 'Уголок',
+    partType: 'angle',
+    thicknessMm: 3,
+    quantity: 1,
+  })],
+  [createPart({
+    id: 'ugolok-sheet',
+    name: 'СТВ-300.00.010 Уголок_-01',
+    thickness: 3,
+    isSheetMetal: false,
+    bboxSizeX: 3,
+    bboxSizeY: 54.6,
+    bboxSizeZ: 1150,
+  })],
+  [createDetail({
+    designation: 'СТВ-300.00.010-01',
+    name: 'Уголок',
+    materialFull: 'Лист Б-ПН-3 ГОСТ 19903-90 Ст3пс ГОСТ 16523-97',
+    thicknessMm: 3,
+    unfoldingWidth: 1150,
+    unfoldingHeight: 54.6,
+    isSheetMetal: false,
+    notes: 'Исполнение -01, развёртка 1150х54,6 мм',
+  })]
+);
+
+assert.equal(sheetSortamentAngleMatches[0].matchType, 'designation');
+assert.equal(sheetSortamentAngleMatches[0].suggestedIsSheetMetal, true);
+assert.equal(sheetSortamentAngleMatches[0].suggestedUnfoldingWidth, 1150);
+assert.equal(sheetSortamentAngleMatches[0].suggestedUnfoldingHeight, 54.6);
+
+const explicitChannelMatches = matchBOMToParts(
+  [createBom({ description: 'U 80 - 690', partType: 'channel', widthMm: 80, heightMm: 690, quantity: 1 })],
+  [createPart({ id: 'real-channel', name: 'Швеллер 80', thickness: 5, width: 80, height: 690, isSheetMetal: true })]
+);
+
+assert.equal(explicitChannelMatches[0].suggestedIsSheetMetal, false);
+
 console.log('[bom-matcher] all tests passed');
 
 function createBom(input: Partial<BOMEntry>): BOMEntry {
