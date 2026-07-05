@@ -186,11 +186,24 @@ function parseJson(raw: string, label: string) {
 function materializeFixture(tempDir: string, prefix: string, extension: string) {
   const pathValue = process.env[`${prefix}_PATH`];
   if (pathValue) return pathValue;
-  const base64 = process.env[`${prefix}_BASE64`];
+  const base64 = readBase64Env(prefix);
   if (!base64) throw new Error(`${prefix}_PATH or ${prefix}_BASE64 is required`);
   const filePath = path.join(tempDir, `${prefix.toLowerCase()}${extension}`);
   writeFileSync(filePath, Buffer.from(base64, 'base64'));
   return filePath;
+}
+
+function readBase64Env(prefix: string) {
+  const direct = process.env[`${prefix}_BASE64`];
+  if (direct) return direct;
+
+  const chunks: string[] = [];
+  for (let index = 1; index <= 20; index += 1) {
+    const chunk = process.env[`${prefix}_BASE64_${index}`];
+    if (!chunk) break;
+    chunks.push(chunk);
+  }
+  return chunks.length > 0 ? chunks.join('') : null;
 }
 
 function crmJsonHeaders() {
