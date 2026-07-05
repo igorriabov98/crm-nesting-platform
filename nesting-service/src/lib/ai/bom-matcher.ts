@@ -792,6 +792,7 @@ function buildMatchResult(
         referenceDimsMm: getPartBBoxDims(part),
       })
     : null;
+  const detailHasUnfolding = Boolean(detailUnfolding?.width && detailUnfolding.height);
 
   const suggestedMaterial = detail?.materialType || bomEntry?.materialType || (bomEntry ? normalizeMaterial(bomEntry.material) : null);
   if (suggestedMaterial && suggestedMaterial !== part.material) {
@@ -816,7 +817,7 @@ function buildMatchResult(
       result.suggestedThickness = detail.thicknessMm;
     }
 
-    if (detailUnfolding?.width && detailUnfolding.height) {
+    if (detailHasUnfolding && detailUnfolding) {
       result.suggestedUnfoldingWidth = detailUnfolding.width;
       result.suggestedUnfoldingHeight = detailUnfolding.height;
     }
@@ -826,8 +827,8 @@ function buildMatchResult(
     }
 
     if (detail.isSheetMetal || sheetMaterialSignal) {
-      result.suggestedHasBends = detailUnfolding?.width && detailUnfolding.height
-        ? computeSheetHasBends(part, detail.thicknessMm, detailUnfolding.width, detailUnfolding.height)
+      result.suggestedHasBends = detailHasUnfolding && detailUnfolding
+        ? computeSheetHasBends(part, detail.thicknessMm, detailUnfolding.width!, detailUnfolding.height!)
         : part.hasBends;
     }
 
@@ -867,7 +868,7 @@ function buildMatchResult(
         result.suggestedUnfoldingHeight = bomEntry.heightMm;
         result.suggestedHasBends = computeSheetHasBends(part, bomEntry.thicknessMm, bomEntry.widthMm, bomEntry.heightMm);
       }
-    } else if (isExplicitNonSheetProfile(bomEntry)) {
+    } else if (isExplicitNonSheetProfile(bomEntry) && !detail?.isSheetMetal && !detailHasUnfolding && !sheetMaterialSignal) {
       result.suggestedIsSheetMetal = false;
       result.suggestedHasBends = false;
     }
@@ -960,10 +961,18 @@ export function normalizeMaterial(raw: string): string {
 }
 
 export function extractDesignationKey(str: string): string | null {
-  const match = str.match(/(\d{3}\.\d{2}\.\d{3})(?:[_\s-]*(\d{2,3}))?/);
-  if (!match) return null;
-  const base = match[1];
-  const suffix = match[2];
+  const normalized = str.replace(/[‐‑‒–—−]/g, '-');
+  const match = normalized.match(/(\d{3}\.\d{2}\.\d{3})(?:[_\s-]*(\d{2,3}))?/);
+  if (match) {
+    const base = match[1];
+    const suffix = match[2];
+    return suffix ? `${base}-${suffix}` : base;
+  }
+
+  const prefixed = normalized.match(/([A-Za-zА-Яа-яЁё]{2,}[\s-]*\d{2,3}\.\d{3})(?:[_\s-]*(\d{2,3}))?/u);
+  if (!prefixed) return null;
+  const base = prefixed[1].replace(/\s+/g, '').toUpperCase();
+  const suffix = prefixed[2];
   return suffix ? `${base}-${suffix}` : base;
 }
 

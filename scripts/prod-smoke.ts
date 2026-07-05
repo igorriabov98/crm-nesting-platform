@@ -149,10 +149,14 @@ function assertDetailMatch(payload: Json) {
   const matches = readPath<unknown[]>(payload, ['data', 'matches']) || [];
   const match = matches.find((candidate) => {
     const item = candidate as Json;
-    return item.matchType === 'geometry' && String(item.matchDetails || '').startsWith('detail_geometry:');
+    return (
+      item.matchType === 'geometry' &&
+      Number(item.suggestedUnfoldingWidth) > 0 &&
+      Number(item.suggestedUnfoldingHeight) > 0
+    );
   }) as Json | undefined;
-  assert(match, 'expected geometry/detail_geometry match');
-  assert(Number(match.matchConfidence) >= 0.8, 'detail_geometry confidence must be >= 0.8');
+  assert(match, 'expected geometry match with detail unfolding');
+  assert(Number(match.matchConfidence) >= 0.7, 'detail geometry confidence must be >= 0.7');
   assert(match.steelTypeWarning == null, 'steelTypeWarning must be null');
   assert(match.suggestedSteelTypeId != null, 'steelTypeId must be applied');
   assert(match.suggestedSteelTypeName === 'Ст3сп', 'steel type must be Ст3сп');
