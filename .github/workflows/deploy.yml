@@ -136,7 +136,10 @@ jobs:
         run: npm install -g @railway/cli
       - name: Deploy nesting-service
         run: |
-          railway up . \
+          # Keep the archive rooted at the repository so Railway service
+          # rootDirectory=/nesting-service still resolves, while limiting
+          # the uploaded path to the service directory.
+          railway up ./nesting-service \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_SERVICE_ID" \
