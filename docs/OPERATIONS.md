@@ -20,9 +20,18 @@ Use this table shape in release reports:
 | --- | --- | --- |
 | `origin/main` | GitHub `main` at the release SHA | `git log origin/main --oneline -3` |
 | Railway production | Deployment SHA equals `origin/main` | `railway deployment list --service <service> --limit 1 --json` |
-| Vercel production | Production deployment built from the same SHA | `vercel inspect <deployment> --format=json` plus GitHub commit status |
+| Vercel production | Production deployment serves the release SHA | `curl -fsS https://crm-nesting-platform.vercel.app/api/version | jq -r '.sha'` |
 | Prod DB schema | Prisma migrations applied, pending 0 | `npx prisma migrate status --schema nesting-service/prisma/schema.prisma` |
 | Prod DB seed | Steel catalog contains required rows | `steel_types` count and exact names such as `Ст3сп`, `09Г2С` |
+
+`/api/version` is intentionally public and returns only `{ "sha": "..." }`.
+It is the canonical proof for Vercel CLI deploys because CLI deployments do not
+always expose Git metadata through `vercel inspect`.
+
+Railway currently exposes a live `/health` endpoint, but its `commit` field is a
+known non-critical tail and can be `null`. Until that is wired to a service
+version value, use the deploy workflow log or `railway deployment list` message
+(`GitHub Actions <sha>`) as the Railway SHA proof.
 
 ## Backups
 
