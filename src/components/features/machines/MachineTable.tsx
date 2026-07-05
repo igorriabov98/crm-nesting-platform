@@ -62,7 +62,6 @@ type SalesPlanFilters = {
   status: string
   material: string
   confirmation: string
-  invoice: string
 }
 
 type SalesPlanSort =
@@ -79,7 +78,6 @@ const initialFilters: SalesPlanFilters = {
   status: 'all',
   material: 'all',
   confirmation: 'all',
-  invoice: 'all',
 }
 
 const coatingFilterLabels: Record<string, string> = {
@@ -102,14 +100,6 @@ const confirmationFilterLabels: Record<string, string> = {
   unconfirmed: 'Не подтверждённые',
 }
 
-const invoiceFilterLabels: Record<string, string> = {
-  all: 'Любой инвойс',
-  paid: 'Оплачено',
-  not_paid: 'Ожидает оплаты',
-  overdue: 'Просрочено',
-  none: 'Нет инвойса',
-}
-
 const sortLabels: Record<SalesPlanSort, string> = {
   newest: 'Сначала новые',
   oldest: 'Сначала старые',
@@ -118,6 +108,8 @@ const sortLabels: Record<SalesPlanSort, string> = {
   cost_desc: 'По стоимости',
   weight_desc: 'По весу',
 }
+
+const filterTriggerClassName = 'h-10 w-full justify-between border-slate-200 bg-white text-slate-700'
 
 function invoiceRows(invoice: MachineListItem['invoice']): MachineTableInvoice[] {
   return Array.isArray(invoice) ? invoice : invoice ? [invoice] : []
@@ -427,13 +419,6 @@ export function MachineTable({
       || (filters.confirmation === 'confirmed' && machine.is_confirmed)
       || (filters.confirmation === 'unconfirmed' && !machine.is_confirmed)
 
-    let matchesInvoice = true
-    if (canViewInvoice && filters.invoice !== 'all') {
-      const invoices = invoiceRows(machine.invoice)
-      const invoiceStatus = invoices[0]?.status || 'none'
-      matchesInvoice = invoiceStatus === filters.invoice
-    }
-
     return matchesSearch
       && matchesFactory
       && matchesProductionMonth
@@ -441,8 +426,7 @@ export function MachineTable({
       && matchesStatus
       && matchesMaterial
       && matchesConfirmation
-      && matchesInvoice
-  }), [canViewInvoice, filters, machines, normalizedSearch, selectedFactoryFilter, selectedProductionMonthFilter])
+  }), [filters, machines, normalizedSearch, selectedFactoryFilter, selectedProductionMonthFilter])
 
   const sortedMachines = useMemo(() => [...filteredMachines].sort((left, right) => {
     if (sort === 'oldest') return new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
@@ -469,9 +453,8 @@ export function MachineTable({
     if (filters.status !== 'all') items.push({ key: 'status', label: progressLabelMap.get(filters.status) || filters.status })
     if (filters.material !== 'all') items.push({ key: 'material', label: materialFilterLabels[filters.material] })
     if (filters.confirmation !== 'all') items.push({ key: 'confirmation', label: confirmationFilterLabels[filters.confirmation] })
-    if (canViewInvoice && filters.invoice !== 'all') items.push({ key: 'invoice', label: invoiceFilterLabels[filters.invoice] })
     return items
-  }, [canViewInvoice, filters, progressLabelMap])
+  }, [filters, progressLabelMap])
 
   const hasAnyFilters = activeClientFilters.length > 0
     || selectedFactoryFilter !== 'all'
@@ -569,8 +552,8 @@ export function MachineTable({
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <label className="relative md:col-span-2">
+          <div className="mt-4 space-y-3">
+            <label className="relative block">
               <span className="sr-only">Поиск машин</span>
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
@@ -581,105 +564,92 @@ export function MachineTable({
               />
             </label>
 
-            <Select value={selectedFactoryFilter} onValueChange={(value) => updateFactoryFilter(value || 'all')}>
-              <SelectTrigger className="h-11 border-slate-200 bg-white text-slate-700">
-                <SelectValue>{selectedFactoryLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Все заводы</SelectItem>
-                <SelectItem value="no_factory">Без завода</SelectItem>
-                {factories.map((factory) => (
-                  <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select
-              value={selectedProductionMonthFilter}
-              onValueChange={(value) => updateProductionMonthFilter(value || 'all')}
-            >
-              <SelectTrigger className="h-11 border-slate-200 bg-white text-slate-700">
-                <SelectValue>{selectedMonthLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Все месяцы</SelectItem>
-                {availableProductionMonthOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-            <Select value={filters.status} onValueChange={(value) => updateFilter('status', value || 'all')}>
-              <SelectTrigger className="h-10 border-slate-200 bg-white text-slate-700">
-                <SelectValue>{filters.status === 'all' ? 'Все статусы' : progressLabelMap.get(filters.status) || filters.status}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Все статусы</SelectItem>
-                {progressOptions.map(({ value, label }) => (
-                  <SelectItem key={value} value={value}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={filters.material} onValueChange={(value) => updateFilter('material', value || 'all')}>
-              <SelectTrigger className="h-10 border-slate-200 bg-white text-slate-700">
-                <SelectValue>{materialFilterLabels[filters.material]}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(materialFilterLabels).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={filters.coating} onValueChange={(value) => updateFilter('coating', value || 'all')}>
-              <SelectTrigger className="h-10 border-slate-200 bg-white text-slate-700">
-                <SelectValue>{coatingFilterLabels[filters.coating]}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(coatingFilterLabels).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={filters.confirmation} onValueChange={(value) => updateFilter('confirmation', value || 'all')}>
-              <SelectTrigger className="h-10 border-slate-200 bg-white text-slate-700">
-                <SelectValue>{confirmationFilterLabels[filters.confirmation]}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(confirmationFilterLabels).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {canViewInvoice && (
-              <Select value={filters.invoice} onValueChange={(value) => updateFilter('invoice', value || 'all')}>
-                <SelectTrigger className="h-10 border-slate-200 bg-white text-slate-700">
-                  <SelectValue>{invoiceFilterLabels[filters.invoice]}</SelectValue>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Select value={selectedFactoryFilter} onValueChange={(value) => updateFactoryFilter(value || 'all')}>
+                <SelectTrigger className={filterTriggerClassName}>
+                  <SelectValue>{selectedFactoryLabel}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(invoiceFilterLabels).map(([value, label]) => (
+                  <SelectItem value="all">Все заводы</SelectItem>
+                  <SelectItem value="no_factory">Без завода</SelectItem>
+                  {factories.map((factory) => (
+                    <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={selectedProductionMonthFilter}
+                onValueChange={(value) => updateProductionMonthFilter(value || 'all')}
+              >
+                <SelectTrigger className={filterTriggerClassName}>
+                  <SelectValue>{selectedMonthLabel}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все месяцы</SelectItem>
+                  {availableProductionMonthOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filters.status} onValueChange={(value) => updateFilter('status', value || 'all')}>
+                <SelectTrigger className={filterTriggerClassName}>
+                  <SelectValue>{filters.status === 'all' ? 'Все статусы' : progressLabelMap.get(filters.status) || filters.status}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все статусы</SelectItem>
+                  {progressOptions.map(({ value, label }) => (
                     <SelectItem key={value} value={value}>{label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            )}
 
-            <Select value={sort} onValueChange={(value) => setSort((value || 'newest') as SalesPlanSort)}>
-              <SelectTrigger className="h-10 border-slate-200 bg-white text-slate-700">
-                <ArrowDownAZ className="mr-2 h-4 w-4 text-slate-400" />
-                <SelectValue>{sortLabels[sort]}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(sortLabels).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <Select value={filters.material} onValueChange={(value) => updateFilter('material', value || 'all')}>
+                <SelectTrigger className={filterTriggerClassName}>
+                  <SelectValue>{materialFilterLabels[filters.material]}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(materialFilterLabels).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filters.coating} onValueChange={(value) => updateFilter('coating', value || 'all')}>
+                <SelectTrigger className={filterTriggerClassName}>
+                  <SelectValue>{coatingFilterLabels[filters.coating]}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(coatingFilterLabels).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={filters.confirmation} onValueChange={(value) => updateFilter('confirmation', value || 'all')}>
+                <SelectTrigger className={filterTriggerClassName}>
+                  <SelectValue>{confirmationFilterLabels[filters.confirmation]}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(confirmationFilterLabels).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={sort} onValueChange={(value) => setSort((value || 'newest') as SalesPlanSort)}>
+                <SelectTrigger className={filterTriggerClassName}>
+                  <ArrowDownAZ className="mr-2 h-4 w-4 text-slate-400" />
+                  <SelectValue>{sortLabels[sort]}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(sortLabels).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {(hasAnyFilters || sort !== 'newest') && (
