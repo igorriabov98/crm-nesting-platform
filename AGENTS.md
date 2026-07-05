@@ -23,3 +23,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 5. ПОСЛЕ MERGE В MAIN: `git log origin/main --oneline -3` в отчёт как доказательство, что коммиты реально в `origin/main`.
 6. Секция "Запрещено без явного подтверждения оператора" действует поверх всего: push, deploy, миграции, изменение env, удаление данных.
 7. Каждый отчёт агента заканчивается блоком: ветка, HEAD SHA, что в origin (запушено/нет), что в проде (задеплоено/нет).
+
+## CI/CD и операционный цикл
+
+Подробный цикл PR -> CI -> merge -> ручной deploy workflow -> production smoke описан в [docs/OPERATIONS.md](./docs/OPERATIONS.md). Эти правила дополняют ограничения выше: настройки Railway, Vercel и GitHub branch protection меняются только после отдельного подтверждения оператора.

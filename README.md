@@ -2,7 +2,7 @@
 
 This repository publishes the CRM and the nesting service together.
 
-Operational rules for parallel work, main merges, and deployments are documented in [AGENTS.md](./AGENTS.md).
+Operational rules for parallel work, main merges, and deployments are documented in [AGENTS.md](./AGENTS.md). The CI/deploy/smoke release cycle is documented in [docs/OPERATIONS.md](./docs/OPERATIONS.md).
 
 ## Structure
 
