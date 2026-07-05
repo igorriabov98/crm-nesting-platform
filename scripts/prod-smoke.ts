@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -7,15 +7,17 @@ import { createClient } from '@supabase/supabase-js';
 
 type Json = Record<string, unknown>;
 
-const crmUrl = stripTrailingSlash(process.env.PROD_CRM_URL || 'https://crm-nesting-platform.vercel.app');
-const nestingUrl = stripTrailingSlash(process.env.PROD_NESTING_URL || 'https://crm-nesting-platform-production.up.railway.app');
-const serviceSecret = requiredEnv('NESTING_SERVICE_SECRET');
-const oldProjectId = requiredEnv('SMOKE_OLD_PROJECT_ID');
+const crmUrl = stripTrailingSlash(process.env.PROD_CRM_URL || '');
+const nestingUrl = stripTrailingSlash(process.env.PROD_NESTING_URL || '');
+const serviceSecret = process.env.NESTING_SERVICE_SECRET || '';
+const oldProjectId = process.env.SMOKE_OLD_PROJECT_ID || '';
 const pollAttempts = Number(process.env.SMOKE_POLL_ATTEMPTS || 60);
 const pollSeconds = Number(process.env.SMOKE_POLL_SECONDS || 5);
 let crmCookie = '';
 
 async function main() {
+  validateSmokeEnv();
+
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'prod-smoke-'));
   try {
     console.log(`[smoke] CRM=${crmUrl}`);
@@ -199,13 +201,18 @@ function readBase64Env(prefix: string) {
   const direct = process.env[`${prefix}_BASE64`];
   if (direct) return direct;
 
+  const chunks = getBase64Chunks(prefix);
+  return chunks.length > 0 ? chunks.join('') : null;
+}
+
+function getBase64Chunks(prefix: string) {
   const chunks: string[] = [];
   for (let index = 1; index <= 20; index += 1) {
     const chunk = process.env[`${prefix}_BASE64_${index}`];
     if (!chunk) break;
     chunks.push(chunk);
   }
-  return chunks.length > 0 ? chunks.join('') : null;
+  return chunks;
 }
 
 function crmJsonHeaders() {
@@ -336,6 +343,111 @@ function safeRead(filePath: string) {
 
 function stripTrailingSlash(value: string) {
   return value.replace(/\/+$/, '');
+}
+
+function validateSmokeEnv() {
+  const problems: string[] = [];
+
+  logEnvShape('PROD_CRM_URL', process.env.PROD_CRM_URL || '', true);
+  logEnvShape('PROD_NESTING_URL', process.env.PROD_NESTING_URL || '', true);
+  logEnvShape('NEXT_PUBLIC_SUPABASE_URL', process.env.NEXT_PUBLIC_SUPABASE_URL || '', true);
+  logEnvShape('NEXT_PUBLIC_SUPABASE_ANON_KEY', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '', false);
+  logEnvShape('SMOKE_USER_EMAIL', process.env.SMOKE_USER_EMAIL || '', true);
+  logEnvShape('NESTING_SERVICE_SECRET', process.env.NESTING_SERVICE_SECRET || '', false);
+  logEnvShape('SMOKE_USER_PASSWORD', process.env.SMOKE_USER_PASSWORD || '', false);
+  logEnvShape('SMOKE_OLD_PROJECT_ID', process.env.SMOKE_OLD_PROJECT_ID || '', false);
+  logFixtureShape('SMOKE_ETALON03_STEP');
+  logFixtureShape('SMOKE_ETALON03_PDF');
+
+  requireHttpsUrl('PROD_CRM_URL', problems);
+  requireHttpsUrl('PROD_NESTING_URL', problems);
+  requireHttpsUrl('NEXT_PUBLIC_SUPABASE_URL', problems);
+  requireNonEmpty('NEXT_PUBLIC_SUPABASE_ANON_KEY', problems);
+  requireNonEmpty('NESTING_SERVICE_SECRET', problems);
+  requireNonEmpty('SMOKE_OLD_PROJECT_ID', problems);
+  requireNonEmpty('SMOKE_USER_EMAIL', problems);
+  requireNonEmpty('SMOKE_USER_PASSWORD', problems);
+  requireFixture('SMOKE_ETALON03_STEP', problems);
+  requireFixture('SMOKE_ETALON03_PDF', problems);
+  requirePositiveInteger('SMOKE_POLL_ATTEMPTS', problems);
+  requirePositiveInteger('SMOKE_POLL_SECONDS', problems);
+
+  if (problems.length > 0) {
+    throw new Error(`Invalid smoke environment:\n${problems.map((problem) => `- ${problem}`).join('\n')}`);
+  }
+}
+
+function requireHttpsUrl(name: string, problems: string[]) {
+  const value = process.env[name] || '';
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') {
+      problems.push(`${name}: expected https:// URL, got ${envShape(value, true)}`);
+    }
+  } catch {
+    problems.push(`${name}: expected https:// URL, got ${envShape(value, true)}`);
+  }
+}
+
+function requireNonEmpty(name: string, problems: string[]) {
+  const value = process.env[name] || '';
+  if (!value.trim()) {
+    problems.push(`${name}: required, got ${envShape(value, false)}`);
+  }
+}
+
+function requireFixture(prefix: string, problems: string[]) {
+  const pathValue = process.env[`${prefix}_PATH`];
+  if (pathValue) {
+    if (!existsSync(pathValue)) {
+      problems.push(`${prefix}_PATH: file does not exist`);
+    }
+    return;
+  }
+
+  if (process.env[`${prefix}_BASE64`]) return;
+
+  const chunks = getBase64Chunks(prefix);
+  if (chunks.length > 0) return;
+
+  problems.push(`${prefix}: ${prefix}_PATH or ${prefix}_BASE64/_BASE64_N chunks are required`);
+}
+
+function requirePositiveInteger(name: string, problems: string[]) {
+  const value = process.env[name];
+  if (!value) return;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    problems.push(`${name}: expected positive integer, got ${envShape(value, false)}`);
+  }
+}
+
+function logEnvShape(name: string, value: string, revealEdges: boolean) {
+  console.log(`[env ${name}] ${envShape(value, revealEdges)}`);
+}
+
+function logFixtureShape(prefix: string) {
+  const pathValue = process.env[`${prefix}_PATH`];
+  if (pathValue) {
+    console.log(`[env ${prefix}] source=path len=${pathValue.length} exists=${existsSync(pathValue)}`);
+    return;
+  }
+
+  const direct = process.env[`${prefix}_BASE64`];
+  if (direct) {
+    console.log(`[env ${prefix}] source=base64 len=${direct.length}`);
+    return;
+  }
+
+  const chunks = getBase64Chunks(prefix);
+  const totalLen = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  console.log(`[env ${prefix}] source=${chunks.length > 0 ? 'chunks' : 'missing'} chunks=${chunks.length} len=${totalLen}`);
+}
+
+function envShape(value: string, revealEdges: boolean) {
+  const prefix = revealEdges ? value.slice(0, 8) : '(hidden)';
+  const suffix = revealEdges ? value.slice(-12) : '(hidden)';
+  return `len=${value.length} prefix=${prefix || '(empty)'} suffix=${suffix || '(empty)'}`;
 }
 
 function requiredEnv(name: string) {
