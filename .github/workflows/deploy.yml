@@ -55,9 +55,12 @@ jobs:
           - VERCEL_PROJECT_ID
           - VERCEL_ORG_ID
           - PROD_CRM_URL
-          - PROD_CRM_COOKIE
           - PROD_NESTING_URL
           - NESTING_SERVICE_SECRET
+          - NEXT_PUBLIC_SUPABASE_URL
+          - NEXT_PUBLIC_SUPABASE_ANON_KEY
+          - SMOKE_USER_EMAIL
+          - SMOKE_USER_PASSWORD
           - SMOKE_OLD_PROJECT_ID
           - SMOKE_ETALON03_STEP_BASE64 or SMOKE_ETALON03_STEP_PATH on self-hosted runners
           - SMOKE_ETALON03_PDF_BASE64 or SMOKE_ETALON03_PDF_PATH on self-hosted runners
@@ -200,9 +203,12 @@ jobs:
     environment: production
     env:
       PROD_CRM_URL: ${{ secrets.PROD_CRM_URL }}
-      PROD_CRM_COOKIE: ${{ secrets.PROD_CRM_COOKIE }}
       PROD_NESTING_URL: ${{ secrets.PROD_NESTING_URL }}
       NESTING_SERVICE_SECRET: ${{ secrets.NESTING_SERVICE_SECRET }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SMOKE_USER_EMAIL: ${{ secrets.SMOKE_USER_EMAIL }}
+      SMOKE_USER_PASSWORD: ${{ secrets.SMOKE_USER_PASSWORD }}
       SMOKE_OLD_PROJECT_ID: ${{ secrets.SMOKE_OLD_PROJECT_ID }}
       SMOKE_ETALON03_STEP_BASE64: ${{ secrets.SMOKE_ETALON03_STEP_BASE64 }}
       SMOKE_ETALON03_PDF_BASE64: ${{ secrets.SMOKE_ETALON03_PDF_BASE64 }}
