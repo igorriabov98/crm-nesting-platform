@@ -158,6 +158,58 @@ assert.equal(suffixMatches[0].suggestedThickness, null);
 assert.equal(suffixMatches[0].suggestedUnfoldingWidth, 725);
 assert.equal(suffixMatches[0].suggestedUnfoldingHeight, 55);
 
+const prefixedDetailMatches = matchBOMToParts(
+  [createBom({
+    designation: 'ЭТЛ-03.001',
+    description: 'Уголок гнутый s2 x 50 x 40 - 100',
+    partType: 'angle',
+    thicknessMm: 2,
+    widthMm: 50,
+    heightMm: 100,
+    quantity: 6,
+    massKg: 0.135,
+    materialGrade: 'Ст3сп',
+    steelTypeRaw: 'Ст3сп',
+    steelTypeId: 'steel-st3sp',
+    steelTypeName: 'Ст3сп',
+  })],
+  [createPart({
+    id: 'etalon-03-angle',
+    name: 'ci-smoke-angle',
+    thickness: 2,
+    width: 85.97,
+    height: 100,
+    bboxSizeX: 2,
+    bboxSizeY: 50,
+    bboxSizeZ: 100,
+    meshVolume: 17197.45,
+    isSheetMetal: false,
+  })],
+  [createDetail({
+    designation: 'ЭТЛ-03.001',
+    name: 'Уголок гнутый',
+    materialFull: 'Ст3сп',
+    materialGrade: 'Ст3сп',
+    thicknessMm: 2,
+    unfoldingWidth: 85.97,
+    unfoldingHeight: 100,
+    massKg: 0.135,
+    isSheetMetal: true,
+    notes: 'Развёртка 85.97 × 100',
+  })],
+  [{ id: 'steel-st3sp', name: 'Ст3сп', densityKgMm3: 0.00000785 }]
+);
+
+assert.equal(prefixedDetailMatches[0].matchType, 'geometry');
+assert.equal(prefixedDetailMatches[0].bomDesignation, 'ЭТЛ-03.001');
+assert.equal(prefixedDetailMatches[0].suggestedIsSheetMetal, true);
+assert.equal(prefixedDetailMatches[0].suggestedHasBends, true);
+assert.equal(prefixedDetailMatches[0].suggestedSteelTypeId, 'steel-st3sp');
+assert.equal(prefixedDetailMatches[0].suggestedUnfoldingWidth, 85.97);
+assert.equal(prefixedDetailMatches[0].suggestedUnfoldingHeight, 100);
+assert.equal(prefixedDetailMatches[0].suggestedQuantity, 6);
+assert.ok(prefixedDetailMatches[0].matchConfidence >= 0.7);
+
 const geometryBom = [
   createBom({ description: 'BL 3 x 995 x 2318', partType: 'sheet', thicknessMm: 3, widthMm: 995, heightMm: 2318, quantity: 1, massKg: 54.41 }),
   createBom({ description: 'BL 2 x 702 x 1656', partType: 'sheet', thicknessMm: 2, widthMm: 702, heightMm: 1656, quantity: 2, massKg: 14.93 }),
