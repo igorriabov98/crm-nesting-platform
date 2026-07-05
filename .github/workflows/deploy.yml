@@ -136,15 +136,17 @@ jobs:
         run: npm install -g @railway/cli
       - name: Deploy nesting-service
         run: |
-          # Keep the archive rooted at the repository so Railway service
-          # rootDirectory=/nesting-service still resolves, while limiting
-          # the uploaded path to the service directory.
-          railway up ./nesting-service \
+          # Do not pass "." or "./nesting-service": Railway CLI 5.23.x can
+          # fail with "prefix not found" when an explicit path is passed.
+          # With no path, Railway uploads the checkout root and the service
+          # rootDirectory=/nesting-service selects the Dockerfile/config.
+          railway up \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_SERVICE_ID" \
             --detach \
             --ci \
+            --verbose \
             --message "GitHub Actions ${GITHUB_SHA}"
       - name: Wait for Railway success
         run: |
