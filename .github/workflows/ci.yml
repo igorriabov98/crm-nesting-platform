@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_call:
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            nesting-service/package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install nesting-service dependencies
+        run: npm ci
+        working-directory: nesting-service
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: nesting-service
+      - name: Typecheck root
+        run: npx tsc --noEmit
+      - name: Typecheck nesting-service
+        run: npx tsc --noEmit
+        working-directory: nesting-service
+      - name: Build nesting-service
+        run: npm run build
+        working-directory: nesting-service
+
+  root-build:
+    name: root build
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
+      SUPABASE_SERVICE_ROLE_KEY: dummy
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NESTING_SERVICE_URL: http://localhost:4000
+      NESTING_SERVICE_SECRET: dummy
+      TELEGRAM_BOT_TOKEN: dummy
+      TELEGRAM_WEBHOOK_SECRET: dummy
+      MEETING_REMINDER_CRON_SECRET: dummy
+      CRON_SECRET: dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Build root
+        run: npm run build
+
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: nesting-service/package-lock.json
+      - name: Install nesting-service dependencies
+        run: npm ci
+        working-directory: nesting-service
+      - name: Generate fixtures
+        run: npm run fixtures
+        working-directory: nesting-service
+      - name: Fixtures are stable
+        run: git diff --exit-code -- nesting-service/src/lib/__tests__/fixtures/
+      - name: Phase 0
+        run: npm run test:phase0
+        working-directory: nesting-service
+      - name: Phase 1
+        run: npm run test:phase1
+        working-directory: nesting-service
+      - name: Phase 2
+        run: npm run test:phase2
+        working-directory: nesting-service
+      - name: All nesting-service tests
+        run: npm run test:all
+        working-directory: nesting-service
