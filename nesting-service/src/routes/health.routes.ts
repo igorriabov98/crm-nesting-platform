@@ -17,6 +17,7 @@ type HealthQueueStats = {
 };
 
 const VERSION = '1.0.0';
+const COMMIT_SHA = process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? null;
 const CHECK_TIMEOUT_MS = 1500;
 
 function timeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -88,12 +89,17 @@ export async function healthRoutes(app: FastifyInstance) {
         queues,
       },
       version: VERSION,
+      commit: COMMIT_SHA,
     };
   };
 
   app.get('/health', async (_request, reply) => {
     const health = await inspect();
-    return reply.status(health.status === 'down' ? 503 : 200).send({ status: health.status });
+    return reply.status(health.status === 'down' ? 503 : 200).send({
+      status: health.status,
+      version: health.version,
+      commit: health.commit,
+    });
   });
 
   app.get('/api/health', async (_request, reply) => {
