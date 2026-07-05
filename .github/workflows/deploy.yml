@@ -232,56 +232,37 @@ jobs:
         run: npm ci
       - name: Pull Vercel production settings
         run: npx vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
-      - name: Build Vercel output
-        shell: bash
+      - name: Deploy Vercel production
         run: |
-          env_file=".vercel/.env.production.local"
-          test -f "$env_file"
-
-          node -e '
-            const fs = require("node:fs");
-            const text = fs.readFileSync(".vercel/.env.production.local", "utf8");
-            const keys = [];
-
-            for (const line of text.split(/\r?\n/)) {
-              const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-              if (!match) continue;
-
-              keys.push(match[1]);
-
-              let value = match[2].trim();
-              if (value.startsWith("\"") && value.endsWith("\"")) {
-                value = value.slice(1, -1);
-              }
-
-              if (value) console.log(`::add-mask::${value}`);
-            }
-
-            const required = ["SUPABASE_SERVICE_ROLE_KEY"];
-            const missing = required.filter((key) => !keys.includes(key));
-
-            console.log(`Pulled Vercel env keys: ${keys.length}`);
-            console.log(`Required pulled env present: ${required.filter((key) => keys.includes(key)).join(", ") || "(none)"}`);
-
-            if (missing.length) {
-              console.error(`Missing pulled Vercel env keys: ${missing.join(", ")}`);
-              process.exit(1);
-            }
-          '
-
-          set -a
-          source "$env_file"
-          set +a
-
-          npx vercel build --prod --token "$VERCEL_TOKEN"
-      - name: Deploy Vercel output
-        run: |
-          npx vercel deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN" \
+          npx vercel deploy --prod --yes --token "$VERCEL_TOKEN" \
             --meta githubCommitSha="$GITHUB_SHA" \
             --meta githubCommitRef="$GITHUB_REF_NAME" > vercel-url.txt
           cat vercel-url.txt
       - name: Inspect Vercel deployment
-        run: npx vercel inspect "$(cat vercel-url.txt)" --wait --timeout 10m --format=json --token "$VERCEL_TOKEN" > vercel-inspect.json
+        run: |
+          npx vercel inspect "$(cat vercel-url.txt)" --wait --timeout 10m --format=json --token "$VERCEL_TOKEN" > vercel-inspect.json
+          node - <<'NODE'
+          const fs = require('node:fs');
+
+          const deployment = JSON.parse(fs.readFileSync('vercel-inspect.json', 'utf8'));
+          const expectedSha = process.env.GITHUB_SHA;
+          const actualSha =
+            deployment?.meta?.githubCommitSha ??
+            deployment?.gitSource?.sha ??
+            deployment?.githubCommitSha ??
+            null;
+
+          console.log(JSON.stringify({
+            deploymentId: deployment?.uid ?? deployment?.id ?? null,
+            state: deployment?.readyState ?? deployment?.state ?? null,
+            githubCommitSha: actualSha,
+          }, null, 2));
+
+          if (actualSha !== expectedSha) {
+            console.error(`Vercel deployment SHA mismatch: expected ${expectedSha}, got ${actualSha ?? '(missing)'}`);
+            process.exit(1);
+          }
+          NODE
 
   smoke:
     name: production smoke
