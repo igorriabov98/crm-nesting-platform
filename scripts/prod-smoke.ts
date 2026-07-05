@@ -3,16 +3,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import JSZip from 'jszip';
+import { createClient } from '@supabase/supabase-js';
 
 type Json = Record<string, unknown>;
 
 const crmUrl = stripTrailingSlash(process.env.PROD_CRM_URL || 'https://crm-nesting-platform.vercel.app');
 const nestingUrl = stripTrailingSlash(process.env.PROD_NESTING_URL || 'https://crm-nesting-platform-production.up.railway.app');
 const serviceSecret = requiredEnv('NESTING_SERVICE_SECRET');
-const crmCookie = requiredEnv('PROD_CRM_COOKIE');
 const oldProjectId = requiredEnv('SMOKE_OLD_PROJECT_ID');
 const pollAttempts = Number(process.env.SMOKE_POLL_ATTEMPTS || 60);
 const pollSeconds = Number(process.env.SMOKE_POLL_SECONDS || 5);
+let crmCookie = '';
 
 async function main() {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'prod-smoke-'));
@@ -21,6 +22,7 @@ async function main() {
     console.log(`[smoke] nesting=${nestingUrl}`);
 
     await readJson('health', `${nestingUrl}/health`);
+    crmCookie = await createCrmAuthCookie();
 
     const oldStatus = await readJson('old project status', serviceUrl(`/api/projects/${oldProjectId}/status`), { headers: serviceHeaders() });
     assertField(oldStatus, ['status'], 'done', 'old project status must be done');
@@ -211,6 +213,74 @@ function crmJsonHeaders() {
     'Content-Type': 'application/json',
     Cookie: crmCookie,
   };
+}
+
+async function createCrmAuthCookie() {
+  const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL');
+  const supabaseAnonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  const email = requiredEnv('SMOKE_USER_EMAIL');
+  const password = requiredEnv('SMOKE_USER_PASSWORD');
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false,
+    },
+  });
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error || !data.session) {
+    throw new Error(`smoke user login failed: ${error?.message || 'session missing'}`);
+  }
+
+  const cookieName = `sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token`;
+  const sessionValue = JSON.stringify(data.session);
+  const encoded = `base64-${base64UrlEncode(sessionValue)}`;
+  const chunks = createCookieChunks(cookieName, encoded);
+  console.log(`[smoke] authenticated smoke user; auth cookie chunks=${chunks.length}`);
+  return chunks.map((chunk) => `${chunk.name}=${encodeURIComponent(chunk.value)}`).join('; ');
+}
+
+function createCookieChunks(key: string, value: string) {
+  const chunkSize = 3180;
+  const encodedValue = encodeURIComponent(value);
+  if (encodedValue.length <= chunkSize) return [{ name: key, value }];
+
+  const chunks: string[] = [];
+  let remaining = encodedValue;
+  while (remaining.length > 0) {
+    let head = remaining.slice(0, chunkSize);
+    const lastEscapePos = head.lastIndexOf('%');
+    if (lastEscapePos > chunkSize - 3) {
+      head = head.slice(0, lastEscapePos);
+    }
+
+    let decodedHead = '';
+    while (head.length > 0) {
+      try {
+        decodedHead = decodeURIComponent(head);
+        break;
+      } catch (error) {
+        if (error instanceof URIError && head.at(-3) === '%' && head.length > 3) {
+          head = head.slice(0, head.length - 3);
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    chunks.push(decodedHead);
+    remaining = remaining.slice(head.length);
+  }
+  return chunks.map((chunk, index) => ({ name: `${key}.${index}`, value: chunk }));
+}
+
+function base64UrlEncode(value: string) {
+  return Buffer.from(value, 'utf8')
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
 }
 
 function serviceHeaders() {

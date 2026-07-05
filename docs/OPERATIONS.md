@@ -64,11 +64,16 @@ For `deploy.yml` with `dry_run=false`, configure these secrets on the `productio
 - `VERCEL_PROJECT_ID`
 - `VERCEL_ORG_ID`
 - `PROD_CRM_URL`
-- `PROD_CRM_COOKIE`
 - `PROD_NESTING_URL`
 - `NESTING_SERVICE_SECRET`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SMOKE_USER_EMAIL`
+- `SMOKE_USER_PASSWORD`
 - `SMOKE_OLD_PROJECT_ID`
 - `SMOKE_ETALON03_STEP_BASE64` or numbered chunks `SMOKE_ETALON03_STEP_BASE64_1`, `_2`, ...; self-hosted runners may use `SMOKE_ETALON03_STEP_PATH`
 - `SMOKE_ETALON03_PDF_BASE64` or numbered chunks `SMOKE_ETALON03_PDF_BASE64_1`, `_2`, ...; self-hosted runners may use `SMOKE_ETALON03_PDF_PATH`
 
-The cookie secret is a full authenticated CRM `Cookie` header for a smoke user with nesting access. Rotate it when the user/session changes.
+The smoke user must exist in Supabase Auth and in `public.users` with a role that can access nesting. Use `technologist` unless a smoke scenario explicitly needs director-only routes.
+
+For one-time smoke user creation or password rotation, run `npm run smoke:user:create` with `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SMOKE_USER_EMAIL`, and `SMOKE_USER_PASSWORD` in the shell. This writes to Supabase Auth and `public.users`; do it only after explicit operator confirmation.
