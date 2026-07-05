@@ -99,6 +99,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const [isPending, startTransition] = useTransition()
+  const [isFilterPending, startFilterTransition] = useTransition()
   const resolvedStages = useMemo(() => resolveProductionFactStandardStages(data.sections), [data.sections])
   const availableStages = useMemo(
     () => resolvedStages.filter((stage) => stage.parent && stage.sections.some((section) => section.section)),
@@ -162,14 +163,24 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
     return rows
   }, [data.machineFacts, data.tonnageFacts, resolvedStages])
 
-  function updateQuery(updates: Partial<Record<'factory' | 'date' | 'productionMonth', string | null>>) {
+  function updateQuery(
+    updates: Partial<Record<'factory' | 'date' | 'productionMonth', string | null>>,
+    options: { replace?: boolean } = {},
+  ) {
     const params = new URLSearchParams(searchParams.toString())
     for (const [key, value] of Object.entries(updates)) {
       if (value) params.set(key, value)
       else params.delete(key)
     }
     const query = params.toString()
-    router.push(query ? `${pathname}?${query}` : pathname)
+    const href = query ? `${pathname}?${query}` : pathname
+    startFilterTransition(() => {
+      if (options.replace) {
+        router.replace(href, { scroll: false })
+      } else {
+        router.push(href, { scroll: false })
+      }
+    })
   }
 
   function toggleMachine(machineId: string) {
@@ -258,14 +269,14 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
             <h1 className="mt-1 text-2xl font-semibold tracking-normal text-[#12315F]">Факт производства</h1>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[720px]">
+          <div className="grid gap-3 sm:grid-cols-2 xl:min-w-[520px]">
             <label className="space-y-1 text-sm font-medium text-[#334155]">
               <span>Завод</span>
               <select
                 className={selectClassName}
                 value={data.selectedFactoryId || ''}
-                onChange={(event) => updateQuery({ factory: event.target.value })}
-                disabled={data.factories.length <= 1}
+                onChange={(event) => updateQuery({ factory: event.target.value }, { replace: true })}
+                disabled={data.factories.length <= 1 || isFilterPending}
               >
                 {data.factories.map((factory) => (
                   <option key={factory.id} value={factory.id}>{factory.name}</option>
@@ -273,19 +284,12 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
               </select>
             </label>
             <label className="space-y-1 text-sm font-medium text-[#334155]">
-              <span>Дата факта</span>
-              <Input
-                type="date"
-                value={data.selectedDate}
-                onChange={(event) => updateQuery({ date: event.target.value })}
-              />
-            </label>
-            <label className="space-y-1 text-sm font-medium text-[#334155]">
               <span>Месяц машин</span>
               <select
                 className={selectClassName}
                 value={data.productionMonth}
-                onChange={(event) => updateQuery({ productionMonth: event.target.value, date: event.target.value })}
+                onChange={(event) => updateQuery({ productionMonth: event.target.value }, { replace: true })}
+                disabled={isFilterPending}
               >
                 {data.productionMonthOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
@@ -312,9 +316,20 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
 
       <section className="space-y-4 rounded-lg border border-[#E2E8F0] bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-sm font-semibold text-[#12315F]">
-            <PackageCheck className="size-4 text-[#1E40AF]" />
-            Ввод за {formatDateLong(data.selectedDate)}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex items-center gap-2 text-sm font-semibold text-[#12315F]">
+              <PackageCheck className="size-4 text-[#1E40AF]" />
+              Ввод за {formatDateLong(data.selectedDate)}
+            </div>
+            <label className="w-full space-y-1 text-sm font-medium text-[#334155] sm:w-[220px]">
+              <span>Дата факта</span>
+              <Input
+                type="date"
+                value={data.selectedDate}
+                onChange={(event) => updateQuery({ date: event.target.value }, { replace: true })}
+                disabled={isFilterPending}
+              />
+            </label>
           </div>
           <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
             {availableStages.map((stage) => (
