@@ -8,6 +8,7 @@ export type LayoutViolationType =
   | 'gap'
   | 'out_of_bounds'
   | 'quantity'
+  | 'EXCLUDED_FROM_NESTING'
   | 'hole_outside'
   | 'part_in_hole';
 
@@ -36,6 +37,7 @@ export type LayoutValidationPart = {
 
 export type LayoutValidationParams = {
   unplacedParts?: Array<{ partId: string; name?: string }>;
+  excludedParts?: Array<{ partId: string; name: string; quantity: number; reason: string }>;
   toleranceMm?: number;
 };
 
@@ -75,6 +77,7 @@ export function validateLayout(
     validatePairs(shapes, sheet, sheetIndex, tolerance, violations);
   }
 
+  validateExcludedParts(params.excludedParts ?? [], violations);
   validateQuantities(parts, placedCounts, params.unplacedParts ?? [], violations);
 
   return {
@@ -230,6 +233,21 @@ function validateQuantities(
       expected: part.quantity,
       actual,
       message: `Количество детали ${part.name}: ожидалось ${part.quantity}, учтено ${actual}`,
+    });
+  }
+}
+
+function validateExcludedParts(
+  excludedParts: Array<{ partId: string; name: string; quantity: number; reason: string }>,
+  violations: LayoutViolation[]
+): void {
+  for (const part of excludedParts) {
+    violations.push({
+      type: 'EXCLUDED_FROM_NESTING',
+      partIds: [part.partId],
+      expected: part.quantity,
+      actual: 0,
+      message: `Деталь ${part.name} исключена из листового раскроя: ${part.reason}`,
     });
   }
 }

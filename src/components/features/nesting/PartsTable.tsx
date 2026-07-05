@@ -59,7 +59,9 @@ function classificationMethodLabel(method: string | null | undefined) {
     case 'bbox':
       return 'bbox'
     case 'pdf_bom':
-      return 'PDF'
+      return 'авто'
+    case 'manual':
+      return 'ручн.'
     default:
       return null
   }
@@ -76,7 +78,9 @@ function classificationMethodTitle(method: string | null | undefined) {
     case 'bbox':
       return 'Классификация по bounding box'
     case 'pdf_bom':
-      return 'Листовая деталь подтверждена PDF/BOM'
+      return 'Авто-метка из PDF/BOM'
+    case 'manual':
+      return 'Ручная метка оператора'
     default:
       return ''
   }
@@ -363,10 +367,10 @@ export function PartsTable({
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Select
-                      value={part.material}
-                      disabled={disabled || !part.isSheetMetal}
-                      onValueChange={(value) => value && savePart(part, { material: value })}
+	                    <Select
+	                      value={part.material}
+	                      disabled={disabled}
+	                      onValueChange={(value) => value && savePart(part, { material: value })}
                     >
                       <SelectTrigger className="w-[150px] bg-white">
                         <SelectValue>{part.material}</SelectValue>
@@ -379,10 +383,10 @@ export function PartsTable({
                     </Select>
                   </TableCell>
                   <TableCell>
-                    <Select
-                      value={part.steelTypeId || noSteelTypeValue}
-                      disabled={disabled || !part.isSheetMetal || steelTypes.length === 0}
-                      onValueChange={(value) => saveSteelType(part, value)}
+	                    <Select
+	                      value={part.steelTypeId || noSteelTypeValue}
+	                      disabled={disabled || steelTypes.length === 0}
+	                      onValueChange={(value) => saveSteelType(part, value)}
                     >
                       <SelectTrigger className="w-[150px] bg-white">
                         <SelectValue>{part.steelTypeName || 'Не выбран'}</SelectValue>
@@ -434,7 +438,7 @@ export function PartsTable({
                               : 'bg-slate-100 text-slate-600'
                         }
                       >
-                        {part.isSheetMetal ? 'Листовая' : pdfNonSheet ? 'Профиль/круг' : 'Не листовая'}
+	                        {part.isSheetMetal ? 'Листовая' : 'Профиль/круг'}
                       </Badge>
                     </button>
                     {pdfNonSheet ? (

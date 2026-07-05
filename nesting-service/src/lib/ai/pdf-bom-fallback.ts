@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import pdfParse from 'pdf-parse';
-import type { BOMEntry, BOMPartType } from './types';
+import type { BOMEntry, BOMPartType, DetailEntry } from './types';
+import { mergeUnfoldingWarning, resolveUnfolding } from './unfolding-extraction';
 
 type ParsedBOMLine = {
   position?: string;
@@ -22,6 +23,16 @@ export async function extractDeterministicBOMFromPdf(pdfFilePath: string): Promi
   const buffer = await fs.readFile(pdfFilePath);
   const parsed = await pdfParse(buffer);
   return parseDeterministicBOMText(parsed.text || '');
+}
+
+export async function extractDeterministicPdfDataFromPdf(pdfFilePath: string): Promise<{ bom: BOMEntry[]; details: DetailEntry[] }> {
+  const buffer = await fs.readFile(pdfFilePath);
+  const parsed = await pdfParse(buffer);
+  const text = parsed.text || '';
+  return {
+    bom: parseDeterministicBOMText(text),
+    details: parseDeterministicDetailText(text),
+  };
 }
 
 export function parseDeterministicBOMText(text: string): BOMEntry[] {
@@ -64,6 +75,78 @@ export function mergeDeterministicBOM(aiBom: BOMEntry[], deterministicBom: BOMEn
   }
 
   return order.map((key) => entries.get(key)!).filter(Boolean);
+}
+
+export function parseDeterministicDetailText(text: string): DetailEntry[] {
+  const details = new Map<string, DetailEntry>();
+  const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  let currentDesignation = '';
+  let currentName = '';
+  let currentMaterialFull = '';
+  let inExecutionTable = false;
+
+  for (const line of lines) {
+    const designation = extractDetailDesignation(line);
+    if (designation) {
+      currentDesignation = designation;
+      currentName = extractDetailName(line, designation) || currentName;
+    }
+
+    if (isSheetMaterialLine(line)) {
+      currentMaterialFull = line;
+    }
+
+    if (/исполн/i.test(line) && /разв[её]рт/i.test(line)) {
+      inExecutionTable = true;
+    }
+
+    const explicit = resolveUnfolding({ text: line });
+    if (explicit.width && explicit.height) {
+      const detail = createDetailEntry({
+        designation: currentDesignation || `unfolding-${details.size + 1}`,
+        name: currentName,
+        materialFull: currentMaterialFull,
+        notes: line,
+        unfoldingWidth: explicit.width,
+        unfoldingHeight: explicit.height,
+        warnings: explicit.warnings,
+      });
+      details.set(normalizeDetailKey(detail.designation), mergeDetailEntry(details.get(normalizeDetailKey(detail.designation)), detail));
+      continue;
+    }
+
+    if (inExecutionTable) {
+      const row = parseExecutionUnfoldingRow(line, currentDesignation, currentName, currentMaterialFull);
+      if (row) {
+        details.set(normalizeDetailKey(row.designation), mergeDetailEntry(details.get(normalizeDetailKey(row.designation)), row));
+      } else if (/^\S+\s+\S+/.test(line) && !/[xх×]\s*\d/u.test(line) && !/исполн/i.test(line)) {
+        inExecutionTable = false;
+      }
+    }
+  }
+
+  return Array.from(details.values());
+}
+
+export function mergeDeterministicDetails(aiDetails: DetailEntry[], deterministicDetails: DetailEntry[]): DetailEntry[] {
+  if (deterministicDetails.length === 0) return aiDetails;
+
+  const details = new Map<string, DetailEntry>();
+  const order: string[] = [];
+
+  for (const detail of aiDetails) {
+    const key = normalizeDetailKey(detail.designation);
+    if (!details.has(key)) order.push(key);
+    details.set(key, detail);
+  }
+
+  for (const detail of deterministicDetails) {
+    const key = normalizeDetailKey(detail.designation);
+    if (!details.has(key)) order.push(key);
+    details.set(key, mergeDetailEntry(details.get(key), detail));
+  }
+
+  return order.map((key) => details.get(key)!).filter(Boolean);
 }
 
 function parseMaterialLine(line: string): ParsedBOMLine | null {
@@ -232,6 +315,33 @@ function createBOMEntry(input: ParsedBOMLine): BOMEntry {
   };
 }
 
+function createDetailEntry(input: {
+  designation: string;
+  name: string;
+  materialFull: string;
+  notes: string;
+  unfoldingWidth: number;
+  unfoldingHeight: number;
+  warnings?: string[];
+}): DetailEntry {
+  const materialGrade = extractMaterialGrade(input.materialFull);
+  const thicknessMm = extractSheetThickness(input.materialFull) ?? 0;
+
+  return {
+    designation: input.designation,
+    name: input.name || input.designation,
+    materialFull: input.materialFull,
+    materialType: input.materialFull ? 'Сталь' : '',
+    materialGrade,
+    thicknessMm,
+    unfoldingWidth: input.unfoldingWidth,
+    unfoldingHeight: input.unfoldingHeight,
+    massKg: null,
+    isSheetMetal: true,
+    notes: mergeUnfoldingWarning(input.notes, input.warnings ?? []),
+  };
+}
+
 function mergeBOMEntry(base: BOMEntry, override: BOMEntry): BOMEntry {
   return {
     ...base,
@@ -252,6 +362,24 @@ function mergeBOMEntry(base: BOMEntry, override: BOMEntry): BOMEntry {
     steelTypeRaw: override.steelTypeRaw ?? base.steelTypeRaw,
     quantity: override.quantity || base.quantity,
     thickness: override.thickness ?? base.thickness,
+    notes: mergeNotes(base.notes, override.notes),
+  };
+}
+
+function mergeDetailEntry(base: DetailEntry | undefined, override: DetailEntry): DetailEntry {
+  if (!base) return override;
+
+  return {
+    ...base,
+    name: override.name || base.name,
+    materialFull: override.materialFull || base.materialFull,
+    materialType: override.materialType || base.materialType,
+    materialGrade: override.materialGrade || base.materialGrade,
+    thicknessMm: override.thicknessMm || base.thicknessMm,
+    unfoldingWidth: override.unfoldingWidth ?? base.unfoldingWidth,
+    unfoldingHeight: override.unfoldingHeight ?? base.unfoldingHeight,
+    massKg: override.massKg ?? base.massKg,
+    isSheetMetal: override.isSheetMetal || base.isSheetMetal,
     notes: mergeNotes(base.notes, override.notes),
   };
 }
@@ -304,6 +432,80 @@ function buildBOMKey(entry: Pick<BOMEntry, 'articleNumber' | 'description' | 'pa
 
 function normalizeLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+function extractDetailDesignation(line: string): string {
+  const match = line.match(/(?:^|\s)((?=[A-ZА-ЯЁ0-9.-]*\d)[A-ZА-ЯЁ]{2,}[-.0-9A-ZА-ЯЁ]+(?:-\d{1,3})?)(?=\s|$)/u);
+  const value = match?.[1] ?? '';
+  return /^(?:ГОСТ|БТ?-ПН)/iu.test(value) ? '' : value;
+}
+
+function extractDetailName(line: string, designation: string): string {
+  return line.replace(designation, '').replace(/\s+/g, ' ').trim();
+}
+
+function parseExecutionUnfoldingRow(
+  line: string,
+  currentDesignation: string,
+  currentName: string,
+  currentMaterialFull: string
+): DetailEntry | null {
+  if (/гост/i.test(line)) return null;
+
+  const match = line.match(/(?:^|\s)([-\w.а-яёА-ЯЁ]+)?\s+(\d{1,5}(?:[,.]\d+)?)\s*[xх×]\s*(\d{1,5}(?:[,.]\d+)?)(?:\s|$)/u);
+  if (!match) return null;
+
+  const width = normalizePositiveNumber(match[2]);
+  const height = normalizePositiveNumber(match[3]);
+  if (!width || !height) return null;
+
+  const suffix = match[1] ?? '';
+  const designation = buildExecutionDesignation(currentDesignation, suffix);
+  const resolved = resolveUnfolding({
+    providedWidth: width,
+    providedHeight: height,
+    text: line,
+  });
+  if (!resolved.width || !resolved.height) return null;
+
+  return createDetailEntry({
+    designation,
+    name: currentName,
+    materialFull: currentMaterialFull,
+    notes: line,
+    unfoldingWidth: resolved.width,
+    unfoldingHeight: resolved.height,
+    warnings: resolved.warnings,
+  });
+}
+
+function buildExecutionDesignation(baseDesignation: string, suffix: string): string {
+  const cleanSuffix = suffix.trim();
+  if (!baseDesignation) return cleanSuffix || 'execution';
+  if (!cleanSuffix) return baseDesignation;
+  if (/^-\d{1,3}$/.test(cleanSuffix)) {
+    return `${baseDesignation.replace(/-\d{1,3}$/, '')}${cleanSuffix}`;
+  }
+  if (/^\d{1,3}$/.test(cleanSuffix)) {
+    return `${baseDesignation.replace(/-\d{1,3}$/, '')}-${cleanSuffix.padStart(2, '0')}`;
+  }
+  return cleanSuffix;
+}
+
+function normalizeDetailKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isSheetMaterialLine(value: string): boolean {
+  return /(?:\bлист\b|бт?\s*-\s*пн|sheet|blech)/iu.test(value);
+}
+
+function extractSheetThickness(value: string): number | null {
+  return normalizePositiveNumber(value.match(/\bбт?\s*-\s*пн\s*-\s*(\d+(?:[,.]\d+)?)/iu)?.[1]);
+}
+
+function extractMaterialGrade(value: string): string {
+  return lastMatch(value, /(?:Ст3сп|Ст3пс|09Г2С|12Х18Н10Т|AISI\s*304|AISI\s*430|40Х|65Г)\b/giu) ?? '';
 }
 
 function normalizeDescription(value: string): string {

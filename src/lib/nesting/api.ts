@@ -3,7 +3,7 @@ import type { NestingStatus } from './status'
 
 export type { NestingStatus } from './status'
 export type NestingStrategy = 'minWaste' | 'remnant' | 'minSheets'
-export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom'
+export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom' | 'manual'
 export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
 export type NestingMaterial = 'Сталь' | 'Нержавейка' | 'Алюминий'
 
@@ -24,6 +24,7 @@ export type LayoutViolationType =
   | 'gap'
   | 'out_of_bounds'
   | 'quantity'
+  | 'EXCLUDED_FROM_NESTING'
   | 'hole_outside'
   | 'part_in_hole'
 

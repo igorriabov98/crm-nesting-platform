@@ -157,12 +157,20 @@ function buildResultJson(project: Prisma.NestingProjectGetPayload<{
       remnantGeom: sheet.remnantGeom,
     };
   });
-  const sheetMetalParts = project.parts.filter((part) => part.isSheetMetal);
-  const totalParts = sheetMetalParts.reduce((sum, part) => sum + part.quantity * project.quantity, 0);
+  const totalParts = project.parts.reduce((sum, part) => sum + part.quantity * project.quantity, 0);
   const placedParts = Array.from(placedByPartId.values()).reduce((sum, count) => sum + count, 0);
-  const unplacedParts = sheetMetalParts.flatMap((part) => {
+  const unplacedParts = project.parts.flatMap((part) => {
     const required = part.quantity * project.quantity;
     const placed = placedByPartId.get(part.id) ?? 0;
+
+    if (!part.isSheetMetal) {
+      const reason = buildExcludedFromNestingReason(part);
+      return Array.from({ length: required }, (_, index) => ({
+        partId: part.id,
+        name: `${normalizeCadText(part.name)} (#${index + 1}) - ${reason}`,
+      }));
+    }
+
     return Array.from({ length: Math.max(required - placed, 0) }, (_, index) => ({
       partId: part.id,
       name: `${normalizeCadText(part.name)} (#${placed + index + 1})`,
@@ -328,7 +336,7 @@ function buildSummaryMarkdown(
     `- Project: ${project.id}`,
     `- Status: ${project.status}`,
     `- Sheets: ${resultJson.totalSheets}`,
-    `- Parts: ${resultJson.placedParts}/${resultJson.totalParts}`,
+    `- Parts: ${resultJson.placedParts}/${resultJson.totalParts}${resultJson.placedParts < resultJson.totalParts ? ' PROBLEM: not all project parts are placed' : ''}`,
     `- Average utilization: ${resultJson.avgUtilization}%`,
     `- Waste: ${resultJson.totalWaste}%`,
     `- Validation violations: ${violations}`,
@@ -348,6 +356,21 @@ function buildSummaryMarkdown(
     '- summary.md',
     '',
   ].join('\n');
+}
+
+function buildExcludedFromNestingReason(part: {
+  classificationMethod: string | null;
+  classificationWarning: string | null;
+}): string {
+  if (part.classificationMethod === 'manual') {
+    return 'ручная метка "Профиль/круг — не для листового раскроя"';
+  }
+
+  if (part.classificationMethod === 'pdf_bom') {
+    return 'PDF/BOM указал профиль/круг — не для листового раскроя';
+  }
+
+  return part.classificationWarning || 'автоматическая классификация как не листовая деталь';
 }
 
 function renderSheetSvg(geometry: SheetExportGeometry): string {

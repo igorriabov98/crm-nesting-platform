@@ -1,5 +1,6 @@
 import { normalizeSteelTypeName } from './steel-types';
 import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, SteelTypeCatalogItem } from './types';
+import { mergeUnfoldingWarning, resolveUnfolding } from './unfolding-extraction';
 
 type MatchType = MatchResult['matchType'];
 type GeometryScore = {
@@ -782,6 +783,15 @@ function buildMatchResult(
     detailNotes: '',
     autoApplied: false,
   };
+  const sheetMaterialSignal = hasSheetMaterialSignal(detail, bomEntry);
+  const detailUnfolding = detail
+    ? resolveUnfolding({
+        text: [detail.notes, detail.materialFull, detail.name, bomEntry?.description].filter(Boolean).join('\n'),
+        providedWidth: detail.unfoldingWidth,
+        providedHeight: detail.unfoldingHeight,
+        referenceDimsMm: getPartBBoxDims(part),
+      })
+    : null;
 
   const suggestedMaterial = detail?.materialType || bomEntry?.materialType || (bomEntry ? normalizeMaterial(bomEntry.material) : null);
   if (suggestedMaterial && suggestedMaterial !== part.material) {
@@ -806,23 +816,23 @@ function buildMatchResult(
       result.suggestedThickness = detail.thicknessMm;
     }
 
-    if (detail.unfoldingWidth && detail.unfoldingHeight) {
-      result.suggestedUnfoldingWidth = detail.unfoldingWidth;
-      result.suggestedUnfoldingHeight = detail.unfoldingHeight;
+    if (detailUnfolding?.width && detailUnfolding.height) {
+      result.suggestedUnfoldingWidth = detailUnfolding.width;
+      result.suggestedUnfoldingHeight = detailUnfolding.height;
     }
 
-    if (detail.isSheetMetal && !part.isSheetMetal) {
+    if ((detail.isSheetMetal || sheetMaterialSignal) && !part.isSheetMetal) {
       result.suggestedIsSheetMetal = true;
     }
 
-    if (detail.isSheetMetal) {
-      result.suggestedHasBends = detail.unfoldingWidth && detail.unfoldingHeight
-        ? computeSheetHasBends(part, detail.thicknessMm, detail.unfoldingWidth, detail.unfoldingHeight)
+    if (detail.isSheetMetal || sheetMaterialSignal) {
+      result.suggestedHasBends = detailUnfolding?.width && detailUnfolding.height
+        ? computeSheetHasBends(part, detail.thicknessMm, detailUnfolding.width, detailUnfolding.height)
         : part.hasBends;
     }
 
     result.suggestedMassKg = detail.massKg;
-    result.detailNotes = detail.notes;
+    result.detailNotes = mergeUnfoldingWarning(detail.notes, detailUnfolding?.warnings ?? []);
   } else if ((bomEntry?.thicknessMm || bomEntry?.thickness) && Math.abs((bomEntry.thicknessMm ?? bomEntry.thickness ?? 0) - getStepThickness(part)) > 0.1) {
     result.suggestedThickness = bomEntry.thicknessMm ?? bomEntry.thickness;
   }
@@ -847,7 +857,7 @@ function buildMatchResult(
       result.suggestedQuantity = suggestedQuantity;
     }
 
-    if (bomEntry.partType === 'sheet') {
+    if (bomEntry.partType === 'sheet' || sheetMaterialSignal) {
       result.suggestedIsSheetMetal = true;
       if (bomEntry.thicknessMm && Math.abs(bomEntry.thicknessMm - getStepThickness(part)) > 0.1) {
         result.suggestedThickness = bomEntry.thicknessMm;
@@ -857,7 +867,7 @@ function buildMatchResult(
         result.suggestedUnfoldingHeight = bomEntry.heightMm;
         result.suggestedHasBends = computeSheetHasBends(part, bomEntry.thicknessMm, bomEntry.widthMm, bomEntry.heightMm);
       }
-    } else if (bomEntry.partType !== 'other') {
+    } else if (isExplicitNonSheetProfile(bomEntry)) {
       result.suggestedIsSheetMetal = false;
       result.suggestedHasBends = false;
     }
@@ -868,6 +878,27 @@ function buildMatchResult(
   }
 
   return result;
+}
+
+function hasSheetMaterialSignal(detail: DetailEntry | null, bomEntry: BOMEntry | null): boolean {
+  const sources = [
+    detail?.materialFull,
+    detail?.notes,
+    bomEntry?.description,
+    bomEntry?.name,
+    bomEntry?.material,
+    bomEntry?.materialGrade,
+    bomEntry?.norm,
+    bomEntry?.notes,
+  ].filter((value): value is string => Boolean(value));
+
+  return sources.some((source) => /(?:\bлист\b|бт?\s*-\s*пн|sheet|blech)/iu.test(source));
+}
+
+function isExplicitNonSheetProfile(bomEntry: BOMEntry): boolean {
+  if (bomEntry.partType === 'other' || bomEntry.partType === 'sheet') return false;
+  if (hasSheetMaterialSignal(null, bomEntry)) return false;
+  return true;
 }
 
 function getDistributedSuggestedQuantity(

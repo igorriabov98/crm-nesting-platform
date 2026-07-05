@@ -5,7 +5,7 @@ import { analyzePDF, parsePDFAnalysisResponse } from './openrouter';
 import { estimateCost, getAISettingsView, recordAIUsage } from './settings';
 import { matchBOMToParts } from './bom-matcher';
 import { applyDimensionGuard, applyThicknessGuard } from './dimension-guard';
-import { extractDeterministicBOMFromPdf, mergeDeterministicBOM } from './pdf-bom-fallback';
+import { extractDeterministicPdfDataFromPdf, mergeDeterministicBOM, mergeDeterministicDetails } from './pdf-bom-fallback';
 import { resolveBOMSteelTypes } from './steel-types';
 import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
 
@@ -35,9 +35,10 @@ export async function analyzeProjectPdf(input: {
     return buildFailedResult(pdfResult);
   }
 
-  const deterministicBom = await loadDeterministicBom(input.pdfFilePath);
-  const extractedBom = mergeDeterministicBOM(pdfResult.bom, deterministicBom);
+  const deterministicPdfData = await loadDeterministicPdfData(input.pdfFilePath);
+  const extractedBom = mergeDeterministicBOM(pdfResult.bom, deterministicPdfData.bom);
   const bom = resolveBOMSteelTypes(extractedBom, input.steelTypes ?? []);
+  const details = mergeDeterministicDetails(pdfResult.details, deterministicPdfData.details);
   const parts = await prisma.part.findMany({
     where: { projectId: input.projectId },
     select: {
@@ -62,7 +63,7 @@ export async function analyzeProjectPdf(input: {
       hasBends: true,
     },
   });
-  const matches = matchBOMToParts(bom, parts, pdfResult.details, input.steelTypes ?? []);
+  const matches = matchBOMToParts(bom, parts, details, input.steelTypes ?? []);
   const partsById = new Map(parts.map((part) => [part.id, part]));
   const finalMatches = input.autoApply === false ? matches : await autoApplyMatches(input.projectId, matches, partsById);
   const unmatchedBom = getUnmatchedBom(bom, finalMatches);
@@ -81,7 +82,7 @@ export async function analyzeProjectPdf(input: {
   await persistProjectSpecification({
     projectId: input.projectId,
     bom,
-    details: pdfResult.details,
+    details,
     matches: finalMatches,
     unmatchedBom,
     tokensUsed: pdfResult.tokensUsed,
@@ -94,7 +95,7 @@ export async function analyzeProjectPdf(input: {
   return {
     success: true,
     bom,
-    details: pdfResult.details,
+    details,
     matches: finalMatches,
     unmatchedBom,
     tokensUsed: pdfResult.tokensUsed,
@@ -220,17 +221,17 @@ async function autoApplyMatches(
   return nextMatches;
 }
 
-async function loadDeterministicBom(pdfFilePath: string): Promise<BOMEntry[]> {
+async function loadDeterministicPdfData(pdfFilePath: string): Promise<{ bom: BOMEntry[]; details: DetailEntry[] }> {
   try {
-    const bom = await extractDeterministicBOMFromPdf(pdfFilePath);
-    if (bom.length > 0) {
-      console.log(`[ai] deterministic PDF BOM parsed: ${bom.length} entries`);
+    const data = await extractDeterministicPdfDataFromPdf(pdfFilePath);
+    if (data.bom.length > 0 || data.details.length > 0) {
+      console.log(`[ai] deterministic PDF parsed: ${data.bom.length} BOM entries, ${data.details.length} detail entries`);
     }
-    return bom;
+    return data;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[ai] deterministic PDF BOM fallback failed: ${message}`);
-    return [];
+    console.warn(`[ai] deterministic PDF fallback failed: ${message}`);
+    return { bom: [], details: [] };
   }
 }
 
