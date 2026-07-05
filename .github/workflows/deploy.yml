@@ -1,0 +1,212 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate deploy workflow without migrations, deploys, or smoke.
+        type: boolean
+        default: true
+
+jobs:
+  validate-ref:
+    name: validate main ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy only from main
+        run: |
+          test "${GITHUB_REF_NAME}" = "main"
+          echo "deploy SHA=${GITHUB_SHA}"
+
+  ci:
+    name: checks and tests
+    needs: validate-ref
+    uses: ./.github/workflows/ci.yml
+
+  dry-run:
+    name: dry run
+    runs-on: ubuntu-latest
+    needs: ci
+    if: ${{ inputs.dry_run == true }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate main ref
+        run: |
+          test "${GITHUB_REF_NAME}" = "main"
+          echo "dry-run SHA=${GITHUB_SHA}"
+      - name: Required production secrets
+        run: |
+          cat <<'EOF'
+          Required GitHub environment secrets for dry_run=false:
+          - DATABASE_URL
+          - SUPABASE_DB_URL
+          - RAILWAY_TOKEN
+          - RAILWAY_PROJECT_ID
+          - RAILWAY_ENVIRONMENT_ID
+          - RAILWAY_SERVICE_ID
+          - VERCEL_TOKEN
+          - VERCEL_PROJECT_ID
+          - VERCEL_ORG_ID
+          - PROD_CRM_URL
+          - PROD_CRM_COOKIE
+          - PROD_NESTING_URL
+          - NESTING_SERVICE_SECRET
+          - SMOKE_OLD_PROJECT_ID
+          - SMOKE_ETALON03_STEP_BASE64 or SMOKE_ETALON03_STEP_PATH on self-hosted runners
+          - SMOKE_ETALON03_PDF_BASE64 or SMOKE_ETALON03_PDF_PATH on self-hosted runners
+          EOF
+
+  prisma:
+    name: prisma migrations
+    runs-on: ubuntu-latest
+    needs: ci
+    if: ${{ inputs.dry_run == false }}
+    environment: production
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: nesting-service/package-lock.json
+      - name: Install nesting-service dependencies
+        run: npm ci
+        working-directory: nesting-service
+      - name: Prisma migrate status before deploy
+        run: npx prisma migrate status --schema prisma/schema.prisma || true
+        working-directory: nesting-service
+      - name: Prisma migrate deploy
+        run: npx prisma migrate deploy --schema prisma/schema.prisma
+        working-directory: nesting-service
+      - name: Prisma migrate status after deploy
+        run: npx prisma migrate status --schema prisma/schema.prisma
+        working-directory: nesting-service
+
+  supabase:
+    name: supabase SQL migrations
+    runs-on: ubuntu-latest
+    needs: prisma
+    if: ${{ inputs.dry_run == false }}
+    environment: production
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply Supabase migrations through ledger
+        run: npm run supabase:migrate
+
+  railway:
+    name: railway deploy
+    runs-on: ubuntu-latest
+    needs: supabase
+    if: ${{ inputs.dry_run == false }}
+    environment: production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+      RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+      RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+      - name: Deploy nesting-service
+        run: |
+          railway up ./nesting-service \
+            --path-as-root \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --detach \
+            --ci \
+            --message "GitHub Actions ${GITHUB_SHA}"
+      - name: Wait for Railway success
+        run: |
+          for i in {1..60}; do
+            railway deployment list --project "$RAILWAY_PROJECT_ID" --environment "$RAILWAY_ENVIRONMENT_ID" --service "$RAILWAY_SERVICE_ID" --limit 1 --json > railway-deployments.json
+            node - <<'NODE'
+          const fs = require('node:fs');
+          const [latest] = JSON.parse(fs.readFileSync('railway-deployments.json', 'utf8'));
+          console.log(JSON.stringify({ id: latest?.id, status: latest?.status, commitHash: latest?.meta?.commitHash }, null, 2));
+          if (latest?.status === 'SUCCESS') process.exit(0);
+          if (['FAILED', 'CRASHED', 'REMOVED'].includes(latest?.status)) process.exit(2);
+          process.exit(1);
+          NODE
+            code=$?
+            if [ "$code" = "0" ]; then exit 0; fi
+            if [ "$code" = "2" ]; then exit 1; fi
+            sleep 10
+          done
+          exit 1
+
+  vercel:
+    name: vercel deploy
+    runs-on: ubuntu-latest
+    needs: railway
+    if: ${{ inputs.dry_run == false }}
+    environment: production
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Pull Vercel production settings
+        run: npx vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+      - name: Build Vercel output
+        run: npx vercel build --prod --token "$VERCEL_TOKEN"
+      - name: Deploy Vercel output
+        run: |
+          npx vercel deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN" \
+            --meta githubCommitSha="$GITHUB_SHA" \
+            --meta githubCommitRef="$GITHUB_REF_NAME" > vercel-url.txt
+          cat vercel-url.txt
+      - name: Inspect Vercel deployment
+        run: npx vercel inspect "$(cat vercel-url.txt)" --wait --timeout 10m --format=json --token "$VERCEL_TOKEN" > vercel-inspect.json
+
+  smoke:
+    name: production smoke
+    runs-on: ubuntu-latest
+    needs: vercel
+    if: ${{ inputs.dry_run == false }}
+    environment: production
+    env:
+      PROD_CRM_URL: ${{ secrets.PROD_CRM_URL }}
+      PROD_CRM_COOKIE: ${{ secrets.PROD_CRM_COOKIE }}
+      PROD_NESTING_URL: ${{ secrets.PROD_NESTING_URL }}
+      NESTING_SERVICE_SECRET: ${{ secrets.NESTING_SERVICE_SECRET }}
+      SMOKE_OLD_PROJECT_ID: ${{ secrets.SMOKE_OLD_PROJECT_ID }}
+      SMOKE_ETALON03_STEP_BASE64: ${{ secrets.SMOKE_ETALON03_STEP_BASE64 }}
+      SMOKE_ETALON03_PDF_BASE64: ${{ secrets.SMOKE_ETALON03_PDF_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Run production smoke
+        run: npm run smoke:prod

@@ -26,6 +26,7 @@ type Deletable = {
 type Point3 = [number, number, number];
 
 const FIXTURE_DIR = path.resolve(__dirname, '../src/lib/__tests__/fixtures');
+const FIXED_STEP_TIMESTAMP = '2026-01-01T00:00:00';
 
 async function main(): Promise<void> {
   const oc = await getOCC();
@@ -602,7 +603,7 @@ function writeStep(oc: OpenCascadeInstance, shape: TopoDS_Shape, outputPath: str
     }
 
     const bytes = oc.FS.readFile(internalPath) as Uint8Array;
-    const content = Buffer.from(bytes).toString('utf8').replace(/[ \t]+$/gm, '');
+    const content = normalizeStepFixture(Buffer.from(bytes).toString('utf8'));
     fs.writeFileSync(outputPath, content, 'utf8');
     oc.FS.unlink(internalPath);
   } finally {
@@ -610,6 +611,12 @@ function writeStep(oc: OpenCascadeInstance, shape: TopoDS_Shape, outputPath: str
     safeDelete(writer);
     safeDelete(shape);
   }
+}
+
+function normalizeStepFixture(content: string): string {
+  return content
+    .replace(/FILE_NAME\(([^,]+),'[^']*'/, `FILE_NAME($1,'${FIXED_STEP_TIMESTAMP}'`)
+    .replace(/[ \t]+$/gm, '');
 }
 
 function safeDelete(value: Deletable | null | undefined): void {

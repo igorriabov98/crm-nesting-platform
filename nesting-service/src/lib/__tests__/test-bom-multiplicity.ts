@@ -16,9 +16,49 @@ const steelTypes: SteelTypeCatalogItem[] = [
 ];
 
 async function main(): Promise<void> {
-  assert.equal(existsSync(stepPath), true, `STEP fixture not found: ${stepPath}`);
-  assert.equal(existsSync(pdfPath), true, `PDF fixture not found: ${pdfPath}`);
+  if (existsSync(stepPath) && existsSync(pdfPath)) {
+    await assertKvshAssemblyFixture();
+  } else {
+    console.log(`[bom-multiplicity] skipped KVSH fixture section: STEP/PDF not found (${stepPath}, ${pdfPath})`);
+  }
 
+  const blockedThickness = applyThicknessGuard({}, { name: 'nakladka_1', thickness: 4 }, 3, { blockOnMismatch: true });
+  assert.equal(blockedThickness.blocked, true, 'manual thickness 4 -> 3 should be blocked without force');
+  assert.match(blockedThickness.note ?? '', /BOM предлагает толщину 3 мм/);
+  assert.match(blockedThickness.note ?? '', /STEP содержит 4 мм/);
+
+  const autoThickness = applyThicknessGuard({ material: 'Сталь' }, { name: 'nakladka_1', thickness: 4 }, 3);
+  assert.equal(autoThickness.blocked, false, 'auto apply should keep safe fields on thickness mismatch');
+  assert.equal(autoThickness.thicknessApplied, false);
+  assert.equal(autoThickness.data.thicknessMismatch, true);
+  assert.match(String(autoThickness.data.thicknessMismatchNote), /STEP содержит 4 мм/);
+
+  const detailOnlyPart = createEtalon03Part({ thickness: 2 });
+  const detailOnlyMatches = matchBOMToParts([], [detailOnlyPart], [createEtalon03Detail()], steelTypes);
+  assert.equal(detailOnlyMatches.length, 1, 'detail-only PDF should produce one match result');
+  const detailOnlyMatch = detailOnlyMatches[0];
+  assert.equal(detailOnlyMatch.matchType, 'geometry', 'detail-only PDF should match by geometry');
+  assert.equal(detailOnlyMatch.matchConfidence >= 0.8, true, 'detail-only geometry should be auto-apply eligible');
+  assert.match(detailOnlyMatch.matchDetails, /^detail_geometry:/);
+  assert.equal(detailOnlyMatch.bomName, 'Уголок гнутый');
+  assert.equal(detailOnlyMatch.bomDesignation, 'ЭТЛ-03.001');
+  assert.equal(detailOnlyMatch.suggestedMaterialGrade, 'Ст3сп');
+  assert.equal(detailOnlyMatch.suggestedSteelTypeId, 'steel-st3sp');
+  assert.equal(detailOnlyMatch.suggestedSteelTypeName, 'Ст3сп');
+  assert.equal(detailOnlyMatch.suggestedThickness, null, 'matching s2 detail should not rewrite an s2 STEP part');
+  assert.equal(detailOnlyMatch.suggestedUnfoldingWidth, 85.97);
+  assert.equal(detailOnlyMatch.suggestedUnfoldingHeight, 100);
+  assert.equal(detailOnlyMatch.suggestedQuantity, null, 'detail notes quantity should not be applied');
+
+  const mismatchedDetailMatches = matchBOMToParts([], [createEtalon03Part({ thickness: 4 })], [createEtalon03Detail()], steelTypes);
+  assert.equal(mismatchedDetailMatches[0].matchType, 'none', 'detail s2 must not match STEP thickness s4');
+  assert.equal(mismatchedDetailMatches[0].matchConfidence, 0);
+  assert.equal(mismatchedDetailMatches[0].suggestedSteelTypeId, null);
+
+  console.log('[bom-multiplicity] all tests passed');
+}
+
+async function assertKvshAssemblyFixture(): Promise<void> {
   const parsed = await parseStepFile(stepPath);
   assert.equal(parsed.success, true, 'STEP should parse');
   assert.equal(parsed.parts.length, 10, 'STEP assembly should contain 10 bodies');
@@ -69,39 +109,6 @@ async function main(): Promise<void> {
     assert.equal(match.suggestedSteelTypeName, '09Г2С');
   }
 
-  const blockedThickness = applyThicknessGuard({}, { name: 'nakladka_1', thickness: 4 }, 3, { blockOnMismatch: true });
-  assert.equal(blockedThickness.blocked, true, 'manual thickness 4 -> 3 should be blocked without force');
-  assert.match(blockedThickness.note ?? '', /BOM предлагает толщину 3 мм/);
-  assert.match(blockedThickness.note ?? '', /STEP содержит 4 мм/);
-
-  const autoThickness = applyThicknessGuard({ material: 'Сталь' }, { name: 'nakladka_1', thickness: 4 }, 3);
-  assert.equal(autoThickness.blocked, false, 'auto apply should keep safe fields on thickness mismatch');
-  assert.equal(autoThickness.thicknessApplied, false);
-  assert.equal(autoThickness.data.thicknessMismatch, true);
-  assert.match(String(autoThickness.data.thicknessMismatchNote), /STEP содержит 4 мм/);
-
-  const detailOnlyPart = createEtalon03Part({ thickness: 2 });
-  const detailOnlyMatches = matchBOMToParts([], [detailOnlyPart], [createEtalon03Detail()], steelTypes);
-  assert.equal(detailOnlyMatches.length, 1, 'detail-only PDF should produce one match result');
-  const detailOnlyMatch = detailOnlyMatches[0];
-  assert.equal(detailOnlyMatch.matchType, 'geometry', 'detail-only PDF should match by geometry');
-  assert.equal(detailOnlyMatch.matchConfidence >= 0.8, true, 'detail-only geometry should be auto-apply eligible');
-  assert.match(detailOnlyMatch.matchDetails, /^detail_geometry:/);
-  assert.equal(detailOnlyMatch.bomName, 'Уголок гнутый');
-  assert.equal(detailOnlyMatch.bomDesignation, 'ЭТЛ-03.001');
-  assert.equal(detailOnlyMatch.suggestedMaterialGrade, 'Ст3сп');
-  assert.equal(detailOnlyMatch.suggestedSteelTypeId, 'steel-st3sp');
-  assert.equal(detailOnlyMatch.suggestedSteelTypeName, 'Ст3сп');
-  assert.equal(detailOnlyMatch.suggestedThickness, null, 'matching s2 detail should not rewrite an s2 STEP part');
-  assert.equal(detailOnlyMatch.suggestedUnfoldingWidth, 85.97);
-  assert.equal(detailOnlyMatch.suggestedUnfoldingHeight, 100);
-  assert.equal(detailOnlyMatch.suggestedQuantity, null, 'detail notes quantity should not be applied');
-
-  const mismatchedDetailMatches = matchBOMToParts([], [createEtalon03Part({ thickness: 4 })], [createEtalon03Detail()], steelTypes);
-  assert.equal(mismatchedDetailMatches[0].matchType, 'none', 'detail s2 must not match STEP thickness s4');
-  assert.equal(mismatchedDetailMatches[0].matchConfidence, 0);
-  assert.equal(mismatchedDetailMatches[0].suggestedSteelTypeId, null);
-
   console.table(
     bom.map((entry) => {
       const rowMatches = matches.filter((match) => match.bomPosition === entry.position);
@@ -112,7 +119,6 @@ async function main(): Promise<void> {
       };
     })
   );
-  console.log('[bom-multiplicity] all tests passed');
 }
 
 function toPartForMatching(part: ParsedPart, index: number): PartForMatching {

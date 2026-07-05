@@ -8,7 +8,9 @@
     "build": "node node_modules/next/dist/bin/next build --webpack",
     "prestart": "node scripts/ensure-nesting-service.mjs",
     "start": "node node_modules/next/dist/bin/next start",
-    "lint": "node node_modules/eslint/bin/eslint.js"
+    "lint": "node node_modules/eslint/bin/eslint.js",
+    "smoke:prod": "tsx scripts/prod-smoke.ts",
+    "supabase:migrate": "tsx scripts/apply-supabase-migrations.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
@@ -45,6 +47,7 @@
     "eslint-config-next": "16.2.9",
     "shadcn": "4.2.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.0",
     "typescript": "^5"
   },
   "overrides": {
