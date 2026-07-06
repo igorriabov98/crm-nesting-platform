@@ -107,10 +107,10 @@ export const GanttBar = React.memo(function GanttBar({
     ? normalizeNightShiftDates(stage.night_shift_dates, stage.night_shift_date)
     : []
   const nightMarkers = nightShiftDates.flatMap((date) => {
-    const nightDate = new Date(date)
+    const nightDate = new Date(`${date}T00:00:00`)
     const { left: nLeft } = barGeometry(nightDate, nightDate, rangeStart, scale, unitWidth)
     const markerLeft = nLeft - left
-    return markerLeft >= 0 && markerLeft < width ? [{ date, left: markerLeft }] : []
+    return Number.isFinite(markerLeft) ? [{ date, left: markerLeft }] : []
   })
 
   const durationDays = Math.max(
@@ -153,6 +153,19 @@ export const GanttBar = React.memo(function GanttBar({
       data-stage-status={visibleStatus}
       data-stage-type={stage.stage_type}
     >
+      {nightMarkers.map((marker) => (
+        <div
+          key={`night-${marker.date}`}
+          className="pointer-events-none absolute top-1/2 h-[22px] -translate-y-1/2 opacity-75 ring-1 ring-white/70"
+          style={{
+            left: marker.left,
+            width: unitWidth,
+            backgroundColor: NIGHT_SHIFT_COLOR,
+            zIndex: 8,
+          }}
+        />
+      ))}
+
       {isSingleDateStage ? (
         <div
           className={cn(
@@ -191,18 +204,6 @@ export const GanttBar = React.memo(function GanttBar({
             backgroundColor: isPlanned ? hexToRgba(color, 0.16) : color,
           }}
         >
-          {nightMarkers.map((marker) => (
-            <div
-              key={marker.date}
-              className="absolute top-0 bottom-0 opacity-75"
-              style={{
-                left: marker.left,
-                width: unitWidth,
-                backgroundColor: NIGHT_SHIFT_COLOR,
-              }}
-            />
-          ))}
-
           <div
             className="pointer-events-none absolute inset-0"
             style={{
