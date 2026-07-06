@@ -57,6 +57,12 @@ const orderStatusBadgeClassName: Record<OrderItemStatus, string> = {
   delivered: 'border-emerald-200 bg-emerald-50 text-emerald-700',
 }
 
+const MATERIAL_TYPE_LABELS = {
+  undefined: 'Не определён',
+  standard: 'Стандартный',
+  non_standard: 'Нестандартный',
+} satisfies Record<MaterialType, string>
+
 function formatAmountValue(value: number | string | null | undefined, maximumFractionDigits = 2) {
   if (value === null || value === undefined || value === '') return '—'
   const number = Number(value)
@@ -247,6 +253,7 @@ export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
 
   const canEditMaterialType = isDirector || isTechnologist
   const materialTypeValue = (machine.material_type || 'undefined') as MaterialType
+  const materialTypeLabel = MATERIAL_TYPE_LABELS[materialTypeValue] ?? MATERIAL_TYPE_LABELS['undefined']
 
   const handleUpdate = async (itemId: string, field: string, value: string | number | boolean | null) => {
     return updateSupplyItem(itemId, { [field]: value }, machine.id)
@@ -314,12 +321,12 @@ export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
             disabled={!canEditMaterialType || isUpdatingMaterialType}
           >
             <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
-              <SelectValue placeholder="Не определён" />
+              <SelectValue>{materialTypeLabel}</SelectValue>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="undefined">Не определён</SelectItem>
-              <SelectItem value="standard">Стандартный</SelectItem>
-              <SelectItem value="non_standard">Нестандартный</SelectItem>
+              <SelectItem value="undefined">{MATERIAL_TYPE_LABELS['undefined']}</SelectItem>
+              <SelectItem value="standard">{MATERIAL_TYPE_LABELS.standard}</SelectItem>
+              <SelectItem value="non_standard">{MATERIAL_TYPE_LABELS.non_standard}</SelectItem>
             </SelectContent>
           </Select>
         </div>
