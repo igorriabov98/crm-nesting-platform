@@ -1,4 +1,4 @@
-import type { PlacedPart, Point2D, SheetResult } from '../nesting/types';
+import type { PlacedPart, Point2D, SheetResult, UnplacedPart, UnplacedReasonCode } from '../nesting/types';
 
 const DEFAULT_TOLERANCE_MM = 0.01;
 const GEOMETRY_EPSILON_MM = 0.0001;
@@ -9,6 +9,10 @@ export type LayoutViolationType =
   | 'out_of_bounds'
   | 'quantity'
   | 'EXCLUDED_FROM_NESTING'
+  | 'NO_SHEET_AVAILABLE'
+  | 'MISSING_THICKNESS'
+  | 'NESTING_FAILED'
+  | 'UNPLACED_WITHOUT_REASON'
   | 'hole_outside'
   | 'part_in_hole';
 
@@ -20,6 +24,13 @@ export type LayoutViolation = {
   amountMm?: number;
   expected?: number;
   actual?: number;
+  reasonCode?: UnplacedReasonCode;
+  reason?: string;
+  material?: string | null;
+  steelTypeName?: string | null;
+  thickness?: number | null;
+  requiredWidth?: number | null;
+  requiredHeight?: number | null;
   message: string;
 };
 
@@ -36,7 +47,7 @@ export type LayoutValidationPart = {
 };
 
 export type LayoutValidationParams = {
-  unplacedParts?: Array<{ partId: string; name?: string }>;
+  unplacedParts?: UnplacedPart[];
   excludedParts?: Array<{ partId: string; name: string; quantity: number; reason: string }>;
   toleranceMm?: number;
 };
@@ -78,6 +89,7 @@ export function validateLayout(
   }
 
   validateExcludedParts(params.excludedParts ?? [], violations);
+  validateUnplacedParts(params.unplacedParts ?? [], violations);
   validateQuantities(parts, placedCounts, params.unplacedParts ?? [], violations);
 
   return {
@@ -215,7 +227,7 @@ function validatePartInHole(
 function validateQuantities(
   parts: LayoutValidationPart[],
   placedCounts: Map<string, number>,
-  unplacedParts: Array<{ partId: string; name?: string }>,
+  unplacedParts: UnplacedPart[],
   violations: LayoutViolation[]
 ): void {
   const unplacedCounts = new Map<string, number>();
@@ -237,6 +249,30 @@ function validateQuantities(
   }
 }
 
+function validateUnplacedParts(
+  unplacedParts: UnplacedPart[],
+  violations: LayoutViolation[]
+): void {
+  for (const part of unplacedParts) {
+    if (part.reasonCode === 'EXCLUDED') continue;
+
+    const type = reasonCodeToViolationType(part.reasonCode);
+    const reason = part.reason?.trim() || 'причина не указана';
+    violations.push({
+      type,
+      partIds: [part.partId],
+      reasonCode: part.reasonCode,
+      reason,
+      material: part.material ?? null,
+      steelTypeName: part.steelTypeName ?? null,
+      thickness: part.thickness ?? null,
+      requiredWidth: part.requiredWidth ?? null,
+      requiredHeight: part.requiredHeight ?? null,
+      message: `${part.name || part.partId}: ${reason}`,
+    });
+  }
+}
+
 function validateExcludedParts(
   excludedParts: Array<{ partId: string; name: string; quantity: number; reason: string }>,
   violations: LayoutViolation[]
@@ -249,6 +285,21 @@ function validateExcludedParts(
       actual: 0,
       message: `Деталь ${part.name} исключена из листового раскроя: ${part.reason}`,
     });
+  }
+}
+
+function reasonCodeToViolationType(reasonCode: UnplacedReasonCode): LayoutViolationType {
+  switch (reasonCode) {
+    case 'NO_SHEET_AVAILABLE':
+      return 'NO_SHEET_AVAILABLE';
+    case 'MISSING_THICKNESS':
+      return 'MISSING_THICKNESS';
+    case 'NESTING_FAILED':
+      return 'NESTING_FAILED';
+    case 'EXCLUDED':
+      return 'EXCLUDED_FROM_NESTING';
+    case 'UNPLACED_WITHOUT_REASON':
+      return 'UNPLACED_WITHOUT_REASON';
   }
 }
 

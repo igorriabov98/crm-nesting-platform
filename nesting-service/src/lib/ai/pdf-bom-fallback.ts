@@ -260,7 +260,7 @@ function buildCandidateSegments(text: string): string[] {
 
 function descriptionPattern(): RegExp {
   const number = String.raw`\d{1,5}(?:[,.]\d+)?`;
-  return new RegExp(String.raw`(?:BL\s+${number}\s*x\s*${number}\s*x\s*${number}|U\s+${number}(?:\s*x\s*${number})?\s*-\s*${number}|RU\s+${number}\s*-\s*${number})\b`, 'gi');
+  return new RegExp(String.raw`(?:BL\s+${number}\s*x\s*${number}\s*x\s*${number}|U\s+${number}(?:\s*x\s*${number})?\s*-\s*${number}|RU\s+${number}\s*-\s*${number}|RO\s+${number}(?:\s*x\s*${number})?\s*-\s*${number})\b`, 'gi');
 }
 
 function parseQuantity(beforeDescription: string, afterDescription: string, articleAtStart: boolean): number {
@@ -414,6 +414,10 @@ function parseDescriptionGeometry(description: string): {
 
   if (lower.startsWith('u')) {
     return { partType: 'channel', thicknessMm: null, widthMm: numbers[0] ?? null, heightMm: numbers[numbers.length - 1] ?? null };
+  }
+
+  if (lower.startsWith('ro')) {
+    return { partType: 'tube', thicknessMm: null, widthMm: numbers[0] ?? null, heightMm: numbers[numbers.length - 1] ?? null };
   }
 
   return { partType: 'other', thicknessMm: null, widthMm: null, heightMm: null };

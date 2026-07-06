@@ -162,6 +162,19 @@ function findBestMatch(
     rejectedDetails.push(buildThicknessRejectedDetails(part, designationMatch.bomEntry, designationMatch.detail));
   }
 
+  const profileGeometryMatch = findProfileGeometryMatch(part, bom);
+  if (profileGeometryMatch) {
+    const bomKey = extractDesignationKey(profileGeometryMatch.entry.designation);
+    const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
+    return {
+      bomEntry: profileGeometryMatch.entry,
+      detail,
+      matchType: 'geometry',
+      matchConfidence: profileGeometryMatch.confidence,
+      matchDetails: profileGeometryMatch.details,
+    };
+  }
+
   const nameMatch = findNameMatch(part, bom, rejectedDetails);
   if (nameMatch) {
     const bomKey = extractDesignationKey(nameMatch.entry.designation);
@@ -311,6 +324,41 @@ function findGeometryMatch(
   return bestMatch;
 }
 
+function findProfileGeometryMatch(
+  part: PartForMatching,
+  bom: BOMEntry[]
+): { entry: BOMEntry; confidence: number; details: string } | null {
+  const stepDims = getPartBBoxDims(part);
+  const stepType = classifyPartType(part, stepDims);
+  if (!isProfilePartType(stepType)) return null;
+
+  let bestMatch: { entry: BOMEntry; confidence: number; details: string; strongMatches: number } | null = null;
+
+  for (const entry of bom) {
+    if (!isExplicitNonSheetProfile(entry)) continue;
+    const bomDims = getBOMDimensions(entry);
+    if (!profilePartTypesCompatible(stepType, bomDims.partType)) continue;
+
+    const geometry = profileGeometryMatchScore(part, entry, stepType, stepDims);
+    if (geometry.score < 0.75 || geometry.strongMatches < 2) continue;
+
+    if (
+      !bestMatch ||
+      geometry.score > bestMatch.confidence ||
+      (geometry.score === bestMatch.confidence && quantityScore(part, entry) > quantityScore(part, bestMatch.entry))
+    ) {
+      bestMatch = {
+        entry,
+        confidence: geometry.score,
+        details: geometry.details.join('; '),
+        strongMatches: geometry.strongMatches,
+      };
+    }
+  }
+
+  return bestMatch;
+}
+
 function findDetailMatch(
   part: PartForMatching,
   details: DetailEntry[],
@@ -345,6 +393,66 @@ function findDetailMatch(
   }
 
   return bestMatch;
+}
+
+function profileGeometryMatchScore(
+  part: PartForMatching,
+  bom: BOMEntry,
+  stepType: BOMEntry['partType'],
+  stepDims: number[]
+): GeometryScore {
+  const details: string[] = [];
+  let score = 0;
+  let strongMatches = 0;
+  const bomDims = getBOMDimensions(bom);
+  const usedStepDims = new Set<number>();
+  const characteristicDim = bomDims.widthMm;
+  const lengthDim = bomDims.heightMm;
+
+  if (characteristicDim) {
+    const best = findClosestDim(characteristicDim, stepDims, usedStepDims);
+    if (best && best.diff <= 0.15) {
+      usedStepDims.add(best.index);
+      score += 0.45;
+      strongMatches += 1;
+      details.push(`dim: profile size BOM=${formatNumber(characteristicDim)} ~= STEP=${formatNumber(stepDims[best.index])}`);
+    }
+  }
+
+  if (lengthDim) {
+    const best = findClosestDim(lengthDim, stepDims, usedStepDims);
+    if (best && best.diff <= 0.15) {
+      usedStepDims.add(best.index);
+      score += 0.45;
+      strongMatches += 1;
+      details.push(`dim: profile length BOM=${formatNumber(lengthDim)} ~= STEP=${formatNumber(stepDims[best.index])}`);
+    }
+  }
+
+  if (profilePartTypesCompatible(stepType, bomDims.partType)) {
+    score += 0.1;
+    details.push(`type: ${bomDims.partType}`);
+  }
+
+  if (bom.quantity > 0 && part.quantity > 0 && bom.quantity === part.quantity) {
+    score += 0.05;
+    details.push(`qty: ${bom.quantity}`);
+  }
+
+  if (bom.massKg && bom.massKg > 0 && part.meshVolume && part.meshVolume > 0) {
+    const stepMassKg = part.meshVolume * 7.85 / 1e6;
+    if (sizeMatch(bom.massKg, stepMassKg, 0.25)) {
+      score += 0.05;
+      strongMatches += 1;
+      details.push(`mass: BOM=${formatNumber(bom.massKg)}kg ~= STEP=${formatNumber(stepMassKg)}kg`);
+    }
+  }
+
+  return {
+    score: Math.min(1, score),
+    details,
+    strongMatches,
+  };
 }
 
 function detailGeometryMatchScore(part: PartForMatching, detail: DetailEntry): GeometryScore {
@@ -949,6 +1057,15 @@ function isExplicitNonSheetProfile(bomEntry: BOMEntry): boolean {
   if (bomEntry.partType === 'other' || bomEntry.partType === 'sheet') return false;
   if (hasSheetMaterialSignal(null, bomEntry)) return false;
   return true;
+}
+
+function isProfilePartType(partType: BOMEntry['partType']): boolean {
+  return partType === 'channel' || partType === 'round_bar' || partType === 'tube' || partType === 'flat_bar';
+}
+
+function profilePartTypesCompatible(stepType: BOMEntry['partType'], bomType: BOMEntry['partType']): boolean {
+  if (stepType === 'round_bar') return bomType === 'round_bar';
+  return bomType === 'channel' || bomType === 'tube' || bomType === 'flat_bar';
 }
 
 function getDistributedSuggestedQuantity(

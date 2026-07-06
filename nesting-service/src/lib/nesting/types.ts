@@ -72,6 +72,25 @@ export interface SheetResult {
   remnant: RemnantInfo | null;
 }
 
+export type UnplacedReasonCode =
+  | 'EXCLUDED'
+  | 'NO_SHEET_AVAILABLE'
+  | 'MISSING_THICKNESS'
+  | 'NESTING_FAILED'
+  | 'UNPLACED_WITHOUT_REASON';
+
+export interface UnplacedPart {
+  partId: string;
+  name: string;
+  reasonCode: UnplacedReasonCode;
+  reason: string;
+  material?: string | null;
+  steelTypeName?: string | null;
+  thickness?: number | null;
+  requiredWidth?: number | null;
+  requiredHeight?: number | null;
+}
+
 export interface RemnantInfo {
   id: string;
   x: number;
@@ -96,7 +115,7 @@ export interface RemnantCandidate {
 
 export interface NestingResult {
   sheets: SheetResult[];
-  unplacedParts: { partId: string; name: string }[];
+  unplacedParts: UnplacedPart[];
   totalParts: number;
   placedParts: number;
   totalSheets: number;

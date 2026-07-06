@@ -48,9 +48,23 @@ assert.equal(missingReport.violations[0].actual, 1);
 const explicitUnplacedReport = validateLayout(
   [sheet([part('a', 10, 10, 20, 20)])],
   [{ id: 'a', name: 'A', quantity: 2 }],
-  { unplacedParts: [{ partId: 'a', name: 'A (#2)' }] }
+  {
+    unplacedParts: [{
+      partId: 'a',
+      name: 'A (#2) - нет листа: материал Сталь/S235, t=20, мин. размер 160x90',
+      reasonCode: 'NO_SHEET_AVAILABLE',
+      reason: 'нет листа: материал Сталь/S235, t=20, мин. размер 160x90',
+      material: 'Сталь',
+      steelTypeName: 'S235',
+      thickness: 20,
+      requiredWidth: 160,
+      requiredHeight: 90,
+    }],
+  }
 );
-assert.equal(explicitUnplacedReport.valid, true, 'explicit unplaced list should satisfy quantity invariant');
+assertViolation(explicitUnplacedReport, 'NO_SHEET_AVAILABLE');
+assertNoViolation(explicitUnplacedReport, 'quantity');
+assert.equal(explicitUnplacedReport.violations[0].reason, 'нет листа: материал Сталь/S235, t=20, мин. размер 160x90');
 
 const excludedReport = validateLayout(
   [sheet([part('a', 10, 10, 20, 20)])],
@@ -59,11 +73,94 @@ const excludedReport = validateLayout(
     { id: 'b', name: 'B', quantity: 1 },
   ],
   {
-    unplacedParts: [{ partId: 'b', name: 'B (#1) - ручная метка' }],
+    unplacedParts: [{
+      partId: 'b',
+      name: 'B (#1) - ручная метка',
+      reasonCode: 'EXCLUDED',
+      reason: 'ручная метка',
+    }],
     excludedParts: [{ partId: 'b', name: 'B', quantity: 1, reason: 'ручная метка' }],
   }
 );
 assertViolation(excludedReport, 'EXCLUDED_FROM_NESTING');
+assertNoViolation(excludedReport, 'quantity');
+
+const unexplainedReport = validateLayout(
+  [sheet([part('a', 10, 10, 20, 20)])],
+  [{ id: 'a', name: 'A', quantity: 2 }],
+  {
+    unplacedParts: [{
+      partId: 'a',
+      name: 'A (#2)',
+      reasonCode: 'UNPLACED_WITHOUT_REASON',
+      reason: '',
+    }],
+  }
+);
+assertViolation(unexplainedReport, 'UNPLACED_WITHOUT_REASON');
+assertNoViolation(unexplainedReport, 'quantity');
+
+const skmWithoutT20Report = validateLayout(
+  [sheet(Array.from({ length: 9 }, (_, index) => part(`placed-${index + 1}`, 10 + index * 25, 10, 20, 20)), { width: 260 })],
+  [
+    { id: 'placed-1', name: 'Placed 1', quantity: 1 },
+    { id: 'placed-2', name: 'Placed 2', quantity: 1 },
+    { id: 'placed-3', name: 'Placed 3', quantity: 1 },
+    { id: 'placed-4', name: 'Placed 4', quantity: 1 },
+    { id: 'placed-5', name: 'Placed 5', quantity: 1 },
+    { id: 'placed-6', name: 'Placed 6', quantity: 1 },
+    { id: 'placed-7', name: 'Placed 7', quantity: 1 },
+    { id: 'placed-8', name: 'Placed 8', quantity: 1 },
+    { id: 'placed-9', name: 'Placed 9', quantity: 1 },
+    { id: 'excluded', name: 'Kufe', quantity: 4 },
+    { id: 'oese', name: 'Oese', quantity: 2 },
+  ],
+  {
+    unplacedParts: [
+      ...Array.from({ length: 4 }, (_, index) => ({
+        partId: 'excluded',
+        name: `Kufe (#${index + 1}) - PDF/BOM указал профиль/круг — не для листового раскроя`,
+        reasonCode: 'EXCLUDED' as const,
+        reason: 'PDF/BOM указал профиль/круг — не для листового раскроя',
+      })),
+      ...Array.from({ length: 2 }, (_, index) => ({
+        partId: 'oese',
+        name: `Oese (#${index + 1}) - нет листа: материал Сталь/S235, t=20, мин. размер 160x90`,
+        reasonCode: 'NO_SHEET_AVAILABLE' as const,
+        reason: 'нет листа: материал Сталь/S235, t=20, мин. размер 160x90',
+        material: 'Сталь',
+        steelTypeName: 'S235',
+        thickness: 20,
+        requiredWidth: 160,
+        requiredHeight: 90,
+      })),
+    ],
+    excludedParts: [{ partId: 'excluded', name: 'Kufe', quantity: 4, reason: 'PDF/BOM указал профиль/круг — не для листового раскроя' }],
+  }
+);
+assert.equal(countViolations(skmWithoutT20Report, 'NO_SHEET_AVAILABLE'), 2);
+assert.equal(countViolations(skmWithoutT20Report, 'EXCLUDED_FROM_NESTING'), 1);
+assertNoViolation(skmWithoutT20Report, 'quantity');
+assertNoViolation(skmWithoutT20Report, 'UNPLACED_WITHOUT_REASON');
+
+const skmWithT20Report = validateLayout(
+  [sheet(Array.from({ length: 11 }, (_, index) => part(`placed-${index + 1}`, 10 + (index % 6) * 25, 10 + Math.floor(index / 6) * 25, 20, 20)), { width: 180, height: 90 })],
+  [
+    ...Array.from({ length: 11 }, (_, index) => ({ id: `placed-${index + 1}`, name: `Placed ${index + 1}`, quantity: 1 })),
+    { id: 'excluded', name: 'Kufe', quantity: 4 },
+  ],
+  {
+    unplacedParts: Array.from({ length: 4 }, (_, index) => ({
+      partId: 'excluded',
+      name: `Kufe (#${index + 1}) - PDF/BOM указал профиль/круг — не для листового раскроя`,
+      reasonCode: 'EXCLUDED' as const,
+      reason: 'PDF/BOM указал профиль/круг — не для листового раскроя',
+    })),
+    excludedParts: [{ partId: 'excluded', name: 'Kufe', quantity: 4, reason: 'PDF/BOM указал профиль/круг — не для листового раскроя' }],
+  }
+);
+assert.equal(countViolations(skmWithT20Report, 'NO_SHEET_AVAILABLE'), 0);
+assertNoViolation(skmWithT20Report, 'quantity');
 
 console.log('[layout-validator] all tests passed');
 
@@ -72,11 +169,19 @@ function assertViolation(report: ReturnType<typeof validateLayout>, type: Layout
   assert.ok(report.violations.some((violation) => violation.type === type), `expected ${type} violation`);
 }
 
-function sheet(placements: PlacedPart[], overrides: Partial<Pick<SheetResult, 'usedGap' | 'usedMargin'>> = {}): SheetResult {
+function assertNoViolation(report: ReturnType<typeof validateLayout>, type: LayoutViolationType): void {
+  assert.equal(report.violations.some((violation) => violation.type === type), false, `did not expect ${type} violation`);
+}
+
+function countViolations(report: ReturnType<typeof validateLayout>, type: LayoutViolationType): number {
+  return report.violations.filter((violation) => violation.type === type).length;
+}
+
+function sheet(placements: PlacedPart[], overrides: Partial<Pick<SheetResult, 'usedGap' | 'usedMargin' | 'width' | 'height'>> = {}): SheetResult {
   return {
     sheetOptionId: 'sheet-1',
-    width: 100,
-    height: 80,
+    width: overrides.width ?? 100,
+    height: overrides.height ?? 80,
     material: 'Сталь',
     steelTypeId: null,
     steelTypeName: null,
