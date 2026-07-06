@@ -11,7 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ROUTES } from '@/lib/constants/routes'
-import type { AIAnalysisResponse, AIMatchResult, AIStatus, NestingPart } from '@/lib/nesting/api'
+import type { AIAnalysisResponse, AIMatchResult, AIStatus, NestingPart, PartType } from '@/lib/nesting/api'
 
 type ApplyMatchPayload = {
   partId: string
@@ -22,6 +22,7 @@ type ApplyMatchPayload = {
   quantity?: number
   thickness?: number
   isSheetMetal?: boolean
+  partType?: PartType
   hasBends?: boolean
   unfoldingWidth?: number
   unfoldingHeight?: number
@@ -339,6 +340,7 @@ export function AIAnalysisPanel({
                           <TableHead>Деталь</TableHead>
                           <TableHead>BOM совпал</TableHead>
                           <TableHead>Метод</TableHead>
+                          <TableHead>Тип</TableHead>
                           <TableHead>Детали</TableHead>
                           <TableHead>Материал</TableHead>
                           <TableHead>Тип стали</TableHead>
@@ -383,6 +385,17 @@ export function AIAnalysisPanel({
                                 <Badge variant={match.matchType === 'geometry' ? 'default' : 'outline'}>
                                   {matchTypeLabel(match.matchType)}
                                 </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {match.suggestedPartType ? (
+                                applied ? (
+                                  `Применено: ${partTypeLabel(match.suggestedPartType)}`
+                                ) : (
+                                  <ChangeText from={partTypeLabel(part?.partType)} to={partTypeLabel(match.suggestedPartType)} />
+                                )
+                              ) : (
+                                <OkText value={partTypeLabel(part?.partType)} />
                               )}
                             </TableCell>
                             <TableCell className="max-w-[240px]">
@@ -643,6 +656,7 @@ function matchToApplyPayload(match: AIMatchResult): ApplyMatchPayload {
     quantity: match.suggestedQuantity || undefined,
     thickness: match.suggestedThickness || undefined,
     isSheetMetal: match.suggestedIsSheetMetal ?? undefined,
+    partType: match.suggestedPartType ?? undefined,
     hasBends: match.suggestedHasBends ?? undefined,
     unfoldingWidth: match.suggestedUnfoldingWidth || undefined,
     unfoldingHeight: match.suggestedUnfoldingHeight || undefined,
@@ -676,6 +690,7 @@ function countSuggestedFields(match: AIMatchResult) {
   if (typeof match.suggestedThickness === 'number') count += 1
   if (typeof match.suggestedQuantity === 'number') count += 1
   if (typeof match.suggestedIsSheetMetal === 'boolean') count += 1
+  if (match.suggestedPartType) count += 1
   if (typeof match.suggestedHasBends === 'boolean') count += 1
   if (typeof match.suggestedUnfoldingWidth === 'number' && typeof match.suggestedUnfoldingHeight === 'number') count += 1
   return count
@@ -694,7 +709,7 @@ function buildForceConfirmText(match: AIMatchResult, part: NestingPart | undefin
     lines.push('Размеры детали будут заменены значениями из чертежа.')
   }
 
-  if (part && typeof match.suggestedThickness === 'number') {
+  if (part && typeof part.thickness === 'number' && typeof match.suggestedThickness === 'number') {
     const thicknessDiff = percentDelta(part.thickness, match.suggestedThickness)
     lines.push(`Толщина PDF: ${formatThickness(match.suggestedThickness)}`)
     lines.push(`Толщина STEP: ${formatThickness(part.thickness)}`)
@@ -755,6 +770,19 @@ function matchTypeLabel(type: AIMatchResult['matchType']) {
   }
 }
 
+function partTypeLabel(type: PartType | null | undefined) {
+  switch (type) {
+    case 'SHEET':
+      return 'Листовая'
+    case 'PROFILE':
+      return 'Профиль'
+    case 'PURCHASED':
+      return 'Покупная'
+    default:
+      return '—'
+  }
+}
+
 function hasSuggestion(match: AIMatchResult) {
   return Boolean(
     match.suggestedMaterial ||
@@ -762,6 +790,7 @@ function hasSuggestion(match: AIMatchResult) {
       match.suggestedSteelTypeId ||
       match.suggestedSteelTypeRaw ||
       match.suggestedThickness ||
+      match.suggestedPartType ||
       match.suggestedUnfoldingWidth ||
       match.suggestedUnfoldingHeight ||
       typeof match.suggestedIsSheetMetal === 'boolean' ||

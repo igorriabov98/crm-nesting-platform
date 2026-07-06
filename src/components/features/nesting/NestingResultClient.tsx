@@ -81,7 +81,7 @@ export function NestingResultClient({
 
       <FutureFillPanel context={currentFutureFillContext} />
 
-      <UnplacedPartsList parts={result.unplacedParts} />
+      <UnplacedPartsList parts={currentResult.unplacedParts} />
 
       <SheetTabs sheets={currentResult.sheets} activeIndex={activeSheetIndex} onChange={handleSheetChange} />
 

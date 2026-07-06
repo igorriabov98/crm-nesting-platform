@@ -23,6 +23,7 @@ import {
 import { readBrepPartContours, type BrepContourResult, type BrepPartContour, type KFactorResolver } from './brep/brep-reader';
 import { extractStepOccurrenceNames } from './step-source-names';
 import { normalizeCadText } from './text-encoding';
+import { inferPartTypeFromGeometry, type PartType } from './part-type';
 
 interface OcctNode {
   name?: string;
@@ -59,6 +60,7 @@ export interface ParsedPart {
   holes: Point2D[][];
   contourSource: ContourSource;
   isSheetMetal: boolean;
+  partType: PartType;
   hasBends: boolean;
   confidence: number;
   classificationMethod: ClassificationMethod;
@@ -241,9 +243,9 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
 
     return {
       success: true,
-      parts,
+      parts: normalizeCloneClassifications(parts),
       totalMeshes: meshes.length,
-      sheetMetalCount: parts.filter((part) => part.isSheetMetal).length,
+      sheetMetalCount: parts.filter((part) => part.partType === 'SHEET').length,
       brepOk: brepFlat,
       brepFlat,
       brepUnfolded,
@@ -409,10 +411,25 @@ function processMesh(
         meshVolume,
         meshArea,
       });
-  if (fallbackThickness.warning) {
+  const maxBBoxDim = Math.max(boundingBox.sizeX, boundingBox.sizeY, boundingBox.sizeZ);
+  const hasBends = exactContour?.source === 'UNFOLDED_BREP' ? true : exactContour ? false : classification.hasBends;
+  const hasLargeExactSheetContour =
+    exactContour?.source === 'EXACT_BREP' &&
+    fallbackThickness.thickness !== null &&
+    maxBBoxDim >= 50;
+  const isSheetMetal = hasBends || classification.isSheetMetal || hasLargeExactSheetContour;
+  const partType = inferPartTypeFromGeometry({
+    isSheetMetal,
+    hasBends,
+    bboxSizeX: boundingBox.sizeX,
+    bboxSizeY: boundingBox.sizeY,
+    bboxSizeZ: boundingBox.sizeZ,
+  });
+
+  if (fallbackThickness.warning && partType === 'SHEET') {
     warnings.push(fallbackThickness.warning);
   }
-  const classificationWarning = warnings.length > 0 ? warnings.join('; ') : null;
+  const classificationWarning = partType === 'SHEET' && warnings.length > 0 ? warnings.join('; ') : null;
   if (!exactContour && classificationWarning) {
     errors.push(`${name}: ${classificationWarning}`);
   }
@@ -428,8 +445,9 @@ function processMesh(
     contour,
     holes,
     contourSource: contourSource ?? 'CONVEX_HULL',
-    isSheetMetal: exactContour ? true : classification.isSheetMetal,
-    hasBends: exactContour?.source === 'UNFOLDED_BREP' ? true : exactContour ? false : classification.hasBends,
+    isSheetMetal: partType === 'SHEET',
+    partType,
+    hasBends: partType === 'SHEET' && hasBends,
     confidence: exactContour ? 0.98 : classification.confidence,
     classificationMethod: classification.method,
     classificationWarning: exactContour ? (brepResult?.warnings.join('; ') || null) : classificationWarning,
@@ -442,6 +460,75 @@ function processMesh(
     kFactor: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.kFactor : null,
     kFactorDefaulted: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.kFactorDefaulted : false,
   };
+}
+
+function normalizeCloneClassifications(parts: ParsedPart[]): ParsedPart[] {
+  const groups = new Map<string, ParsedPart[]>();
+
+  for (const part of parts) {
+    const key = buildCloneSignature(part);
+    const group = groups.get(key) ?? [];
+    group.push(part);
+    groups.set(key, group);
+  }
+
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+
+    const partType = resolveClonePartType(group);
+    const thickness = resolveCloneThickness(group);
+
+    for (let index = 0; index < group.length; index += 1) {
+      const part = group[index];
+      Object.assign(part, {
+        partType,
+        isSheetMetal: partType === 'SHEET',
+        hasBends: partType === 'SHEET' && part.hasBends,
+        thickness,
+        classificationWarning: partType === 'SHEET' ? part.classificationWarning : null,
+      });
+    }
+  }
+
+  return parts;
+}
+
+function buildCloneSignature(part: ParsedPart): string {
+  const dims = [part.boundingBox.sizeX, part.boundingBox.sizeY, part.boundingBox.sizeZ]
+    .map((value) => quantize(value, 0.5))
+    .sort((a, b) => a - b)
+    .join('x');
+
+  return [
+    normalizeCadText(part.name).toLowerCase(),
+    dims,
+    quantize(part.meshVolume, 1),
+    quantize(part.meshArea, 1),
+    part.facesCount,
+  ].join('|');
+}
+
+function resolveClonePartType(group: ParsedPart[]): PartType {
+  if (group.some((part) => part.partType === 'SHEET')) return 'SHEET';
+  if (group.some((part) => part.partType === 'PURCHASED')) return 'PURCHASED';
+  return 'PROFILE';
+}
+
+function resolveCloneThickness(group: ParsedPart[]): number | null {
+  const counts = new Map<number, number>();
+
+  for (const part of group) {
+    if (typeof part.thickness !== 'number' || !Number.isFinite(part.thickness) || part.thickness <= 0) continue;
+    const rounded = Math.round(part.thickness * 100) / 100;
+    counts.set(rounded, (counts.get(rounded) ?? 0) + 1);
+  }
+
+  const sorted = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0] - right[0]);
+  return sorted[0]?.[0] ?? null;
+}
+
+function quantize(value: number, tolerance: number): number {
+  return Math.round(value / tolerance) * tolerance;
 }
 
 function estimateFallbackThickness(input: {

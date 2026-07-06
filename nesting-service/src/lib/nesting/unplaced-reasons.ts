@@ -144,6 +144,8 @@ function typeToReasonCode(type: string): UnplacedReasonCode {
   if (type === 'NO_SHEET_AVAILABLE') return 'NO_SHEET_AVAILABLE';
   if (type === 'MISSING_THICKNESS') return 'MISSING_THICKNESS';
   if (type === 'NESTING_FAILED') return 'NESTING_FAILED';
+  if (type === 'EXCLUDED_PROFILE') return 'EXCLUDED_PROFILE';
+  if (type === 'EXCLUDED_PURCHASED') return 'EXCLUDED_PURCHASED';
   return 'UNPLACED_WITHOUT_REASON';
 }
 
@@ -156,6 +158,8 @@ function defaultReason(reasonCode: UnplacedReasonCode): string {
     case 'NESTING_FAILED':
       return 'не удалось разместить на доступных листах';
     case 'EXCLUDED':
+    case 'EXCLUDED_PROFILE':
+    case 'EXCLUDED_PURCHASED':
       return 'исключено из листового раскроя';
     case 'UNPLACED_WITHOUT_REASON':
       return 'причина не указана';

@@ -1,6 +1,7 @@
 import { normalizeSteelTypeName, resolveCatalogSteelType as resolveSteelTypeCatalogEntry } from './steel-types';
-import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, SteelTypeCatalogItem } from './types';
+import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PartType, SteelTypeCatalogItem } from './types';
 import { mergeUnfoldingWarning, resolveUnfolding } from './unfolding-extraction';
+import { isProfileBomPartType, isPurchasedBomSection, isSheetPartType, normalizePartType, partTypeFromLegacySheetFlag } from '../part-type';
 
 type MatchType = MatchResult['matchType'];
 type GeometryScore = {
@@ -103,19 +104,15 @@ function clusterIdenticalParts(parts: PartForMatching[]): PartGroup[] {
 
 function buildPartClusterKey(part: PartForMatching): string {
   const dims = getPartBBoxDims(part).map((dim) => quantize(dim, DIMENSION_CLUSTER_TOLERANCE_MM)).join('x');
-  const thickness = quantize(getStepThickness(part), THICKNESS_TOLERANCE_MM);
   const volume = quantize(part.meshVolume ?? 0, 1);
   const area = quantize(part.meshArea ?? 0, 1);
   const contour = buildContourSignature(part.contour);
 
   return [
-    thickness,
     dims,
     volume,
     area,
     part.facesCount ?? 0,
-    part.isSheetMetal ? 'sheet' : 'solid',
-    part.hasBends ? 'bends' : 'flat',
     contour,
   ].join('|');
 }
@@ -677,7 +674,7 @@ function getPartBBoxDims(part: PartForMatching): number[] {
   }
 
   return [part.thickness, part.width, part.height]
-    .filter((value) => Number.isFinite(value) && value > 0)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
     .sort((a, b) => a - b);
 }
 
@@ -720,11 +717,11 @@ function getPartWallThickness(part: PartForMatching): number {
     }
   }
 
-  return part.thickness;
+  return getStepThickness(part);
 }
 
 function getStepThickness(part: PartForMatching): number {
-  return part.thickness;
+  return typeof part.thickness === 'number' ? part.thickness : 0;
 }
 
 function isThicknessCompatibleWithCandidate(
@@ -732,6 +729,8 @@ function isThicknessCompatibleWithCandidate(
   bomEntry: BOMEntry | null,
   detail: DetailEntry | null
 ): boolean {
+  const candidatePartType = resolveCandidatePartType(bomEntry, detail);
+  if (candidatePartType && candidatePartType !== 'SHEET') return true;
   const candidateThickness = getCandidateThickness(bomEntry, detail);
   if (!candidateThickness) return true;
   return thicknessMatch(candidateThickness, getStepThickness(part));
@@ -800,6 +799,10 @@ function classifyPartType(part: PartForMatching, stepDims: number[]): BOMEntry['
 
   if (isSheetLikeGeometry(part, stepDims)) {
     return 'sheet';
+  }
+
+  if (name.includes('уголок') || name.includes('angle') || name.includes('winkel')) {
+    return 'angle';
   }
 
   if (minD && maxD && minD / maxD < 0.12 && !part.isSheetMetal) {
@@ -913,6 +916,8 @@ function buildMatchResult(
   steelTypes: SteelTypeCatalogItem[],
   assignedGroupSize: number
 ): MatchResult {
+  const candidatePartType = resolveCandidatePartType(bomEntry, detail);
+  const currentPartType = getCurrentPartType(part);
   const result: MatchResult = {
     partId: part.id,
     partName: part.name,
@@ -927,12 +932,13 @@ function buildMatchResult(
     suggestedSteelTypeId: null,
     suggestedSteelTypeName: null,
     suggestedSteelTypeRaw: null,
-    steelTypeWarning: bomEntry?.steelTypeWarning || null,
+    steelTypeWarning: candidatePartType && candidatePartType !== 'SHEET' ? null : bomEntry?.steelTypeWarning || null,
     suggestedQuantity: null,
     suggestedThickness: null,
     suggestedUnfoldingWidth: null,
     suggestedUnfoldingHeight: null,
     suggestedIsSheetMetal: null,
+    suggestedPartType: null,
     suggestedHasBends: null,
     suggestedMassKg: null,
     thicknessMismatch: false,
@@ -979,7 +985,7 @@ function buildMatchResult(
       result.suggestedUnfoldingHeight = detailUnfolding.height;
     }
 
-    if ((detail.isSheetMetal || sheetMaterialSignal) && !part.isSheetMetal) {
+    if ((detail.isSheetMetal || sheetMaterialSignal) && !isSheetPartType(currentPartType, part.isSheetMetal)) {
       result.suggestedIsSheetMetal = true;
     }
 
@@ -1035,7 +1041,50 @@ function buildMatchResult(
     }
   }
 
+  applyPartTypeSuggestion(result, candidatePartType, currentPartType);
+
   return result;
+}
+
+function applyPartTypeSuggestion(result: MatchResult, candidatePartType: PartType | null, currentPartType: PartType): void {
+  if (!candidatePartType) return;
+
+  if (candidatePartType !== currentPartType) {
+    result.suggestedPartType = candidatePartType;
+  }
+
+  if (candidatePartType === 'SHEET') {
+    result.suggestedIsSheetMetal = currentPartType === 'SHEET' ? result.suggestedIsSheetMetal : true;
+    return;
+  }
+
+  result.suggestedIsSheetMetal = false;
+  result.suggestedHasBends = false;
+  result.suggestedThickness = null;
+  result.suggestedUnfoldingWidth = null;
+  result.suggestedUnfoldingHeight = null;
+  result.thicknessMismatch = false;
+  result.thicknessMismatchNote = null;
+  result.steelTypeWarning = null;
+  result.suggestedSteelTypeId = null;
+  result.suggestedSteelTypeName = null;
+}
+
+function getCurrentPartType(part: PartForMatching): PartType {
+  return normalizePartType(part.partType, partTypeFromLegacySheetFlag(part.isSheetMetal));
+}
+
+function resolveCandidatePartType(bomEntry: BOMEntry | null, detail: DetailEntry | null): PartType | null {
+  const sheetMaterialSignal = hasSheetMaterialSignal(detail, bomEntry);
+
+  if (bomEntry) {
+    if (isPurchasedBomSection(bomEntry.bomSection)) return 'PURCHASED';
+    if (bomEntry.partType === 'sheet' || sheetMaterialSignal) return 'SHEET';
+  }
+
+  if (detail?.isSheetMetal || sheetMaterialSignal) return 'SHEET';
+  if (bomEntry && isExplicitNonSheetProfile(bomEntry)) return 'PROFILE';
+  return null;
 }
 
 function hasSheetMaterialSignal(detail: DetailEntry | null, bomEntry: BOMEntry | null): boolean {
@@ -1054,17 +1103,18 @@ function hasSheetMaterialSignal(detail: DetailEntry | null, bomEntry: BOMEntry |
 }
 
 function isExplicitNonSheetProfile(bomEntry: BOMEntry): boolean {
-  if (bomEntry.partType === 'other' || bomEntry.partType === 'sheet') return false;
+  if (!isProfileBomPartType(bomEntry.partType)) return false;
   if (hasSheetMaterialSignal(null, bomEntry)) return false;
   return true;
 }
 
 function isProfilePartType(partType: BOMEntry['partType']): boolean {
-  return partType === 'channel' || partType === 'round_bar' || partType === 'tube' || partType === 'flat_bar';
+  return partType === 'channel' || partType === 'round_bar' || partType === 'tube' || partType === 'flat_bar' || partType === 'angle';
 }
 
 function profilePartTypesCompatible(stepType: BOMEntry['partType'], bomType: BOMEntry['partType']): boolean {
   if (stepType === 'round_bar') return bomType === 'round_bar';
+  if (stepType === 'angle') return bomType === 'angle';
   return bomType === 'channel' || bomType === 'tube' || bomType === 'flat_bar';
 }
 

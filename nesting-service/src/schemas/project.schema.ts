@@ -61,13 +61,14 @@ export const createStorageBatchProjectSchema = z.object({
 });
 
 export const updatePartSchema = z.object({
-  material: z.enum(['Сталь', 'Нержавейка', 'Алюминий']).optional(),
+  material: z.string().trim().min(1).max(120).optional(),
   steelTypeId: z.string().min(1).nullable().optional(),
   steelTypeName: z.string().min(1).nullable().optional(),
-  steelTypeRaw: z.string().min(1).nullable().optional(),
+  steelTypeRaw: z.string().trim().min(1).max(120).nullable().optional(),
   quantity: z.number().int().min(1).optional(),
   grainLock: z.boolean().optional(),
   isSheetMetal: z.boolean().optional(),
+  partType: z.enum(['SHEET', 'PROFILE', 'PURCHASED']).optional(),
   thickness: z.coerce.number().positive().max(50).optional(),
   hasBends: z.boolean().optional(),
 }).strict();

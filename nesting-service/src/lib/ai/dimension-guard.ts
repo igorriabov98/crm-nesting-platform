@@ -8,7 +8,7 @@ type DimensionedPart = {
 
 type ThicknessedPart = {
   name?: string | null;
-  thickness: number;
+  thickness: number | null;
 };
 
 type DimensionGuardOptions = {
@@ -195,7 +195,7 @@ export function buildThicknessMismatchNote(part: ThicknessedPart, newThickness: 
 
   return [
     `${partName}BOM предлагает толщину ${formatDimension(newThickness)} мм`,
-    `STEP содержит ${formatDimension(part.thickness)} мм`,
+    `STEP содержит ${typeof part.thickness === 'number' ? formatDimension(part.thickness) : '—'} мм`,
     `допуск ${formatDimension(THICKNESS_MISMATCH_TOLERANCE_MM)} мм`,
   ].join('; ');
 }

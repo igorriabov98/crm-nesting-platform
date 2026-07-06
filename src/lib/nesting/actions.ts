@@ -7,6 +7,7 @@ import {
   getParts,
   startCalculation,
   updatePart,
+  type PartType,
   type NestingStrategy,
 } from '@/lib/nesting/api'
 import { assertCanAccessNestingProject } from '@/lib/nesting/project-access'
@@ -33,6 +34,7 @@ export async function updateNestingPart(
     quantity: number
     grainLock: boolean
     isSheetMetal: boolean
+    partType: PartType
     thickness: number
     hasBends: boolean
   }>

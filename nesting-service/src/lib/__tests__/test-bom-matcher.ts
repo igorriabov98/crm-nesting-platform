@@ -405,6 +405,49 @@ const explicitChannelMatches = matchBOMToParts(
 );
 
 assert.equal(explicitChannelMatches[0].suggestedIsSheetMetal, false);
+assert.equal(explicitChannelMatches[0].suggestedPartType, 'PROFILE');
+
+const purchasedPlugMatches = matchBOMToParts(
+  [createBom({
+    position: '19',
+    name: 'Заглушка пластмассовая 15мм',
+    bomSection: 'Прочие изделия',
+    partType: 'other',
+    quantity: 2,
+  })],
+  [
+    createPart({
+      id: 'plug-a',
+      name: 'Заглушка пластмассовая 15мм',
+      thickness: 5,
+      bboxSizeX: 20,
+      bboxSizeY: 20,
+      bboxSizeZ: 5,
+      isSheetMetal: true,
+      partType: 'SHEET',
+    }),
+    createPart({
+      id: 'plug-b',
+      name: 'Заглушка пластмассовая 15мм',
+      thickness: null,
+      bboxSizeX: 20,
+      bboxSizeY: 20,
+      bboxSizeZ: 5,
+      isSheetMetal: false,
+      partType: 'PROFILE',
+    }),
+  ]
+);
+
+assert.equal(purchasedPlugMatches.length, 2);
+assert.equal(purchasedPlugMatches[0].matchType, 'exact');
+assert.equal(purchasedPlugMatches[1].matchType, 'exact');
+assert.equal(purchasedPlugMatches[0].suggestedPartType, 'PURCHASED');
+assert.equal(purchasedPlugMatches[1].suggestedPartType, 'PURCHASED');
+assert.equal(purchasedPlugMatches[0].suggestedThickness, null);
+assert.equal(purchasedPlugMatches[1].suggestedThickness, null);
+assert.equal(purchasedPlugMatches[0].steelTypeWarning, null);
+assert.equal(purchasedPlugMatches[1].steelTypeWarning, null);
 
 const skmProfileBom = [
   createBom({ position: '4', description: 'BL 6 x 75 x 280', partType: 'sheet', thicknessMm: 6, widthMm: 75, heightMm: 280, quantity: 4, materialGrade: 'S235JRG2', materialType: 'Сталь' }),
@@ -443,6 +486,7 @@ function createBom(input: Partial<BOMEntry>): BOMEntry {
     articleNumber: input.articleNumber ?? '',
     position: input.position ?? '',
     designation: input.designation ?? '',
+    bomSection: input.bomSection ?? '',
     description: input.description ?? input.name ?? '',
     partType: input.partType ?? 'other',
     thicknessMm: input.thicknessMm ?? input.thickness ?? null,
@@ -473,7 +517,7 @@ function createPart(input: Partial<PartForMatching> & { id: string; name: string
     steelTypeName: input.steelTypeName ?? null,
     steelTypeRaw: input.steelTypeRaw ?? null,
     quantity: input.quantity ?? 1,
-    thickness: input.thickness ?? 2,
+    thickness: input.thickness === undefined ? 2 : input.thickness,
     width: input.width ?? 100,
     height: input.height ?? 100,
     bboxSizeX: input.bboxSizeX ?? null,
@@ -483,6 +527,7 @@ function createPart(input: Partial<PartForMatching> & { id: string; name: string
     meshArea: input.meshArea ?? null,
     facesCount: input.facesCount ?? null,
     isSheetMetal: input.isSheetMetal ?? true,
+    partType: input.partType ?? (input.isSheetMetal === false ? 'PROFILE' : 'SHEET'),
     hasBends: input.hasBends ?? false,
   };
 }

@@ -2,10 +2,12 @@ import * as fs from 'node:fs/promises';
 import pdfParse from 'pdf-parse';
 import type { BOMEntry, BOMPartType, DetailEntry } from './types';
 import { mergeUnfoldingWarning, resolveUnfolding } from './unfolding-extraction';
+import { normalizeCadText } from '../text-encoding';
 
 type ParsedBOMLine = {
   position?: string;
   articleNumber: string;
+  bomSection: string;
   description: string;
   designation: string;
   quantity: number;
@@ -37,20 +39,33 @@ export async function extractDeterministicPdfDataFromPdf(pdfFilePath: string): P
 
 export function parseDeterministicBOMText(text: string): BOMEntry[] {
   const entries = new Map<string, BOMEntry>();
+  const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  let currentSection = '';
+
+  for (const line of lines) {
+    const section = detectBomSection(line);
+    if (section) {
+      currentSection = section;
+      continue;
+    }
+
+    const parsed =
+      parseRussianAssemblyLine(line, currentSection) ??
+      parseRussianSpecTableLine(line, currentSection) ??
+      parseMaterialLine(line, currentSection);
+    if (!parsed) continue;
+
+    addEntry(entries, createBOMEntry(parsed));
+  }
+
   const candidates = buildCandidateSegments(text);
 
   for (const rawLine of candidates) {
     const line = normalizeLine(rawLine);
-    const parsed = parseRussianAssemblyLine(line) ?? parseMaterialLine(line);
+    const parsed = parseRussianAssemblyLine(line, '') ?? parseMaterialLine(line, '');
     if (!parsed) continue;
 
-    const entry = createBOMEntry(parsed);
-    const key = buildBOMKey(entry);
-    const existing = entries.get(key);
-    if (existing && normalizeDescription(existing.description) !== normalizeDescription(entry.description)) {
-      continue;
-    }
-    entries.set(key, existing ? mergeBOMEntry(existing, entry) : entry);
+    addEntry(entries, createBOMEntry(parsed));
   }
 
   return Array.from(entries.values());
@@ -149,7 +164,7 @@ export function mergeDeterministicDetails(aiDetails: DetailEntry[], deterministi
   return order.map((key) => details.get(key)!).filter(Boolean);
 }
 
-function parseMaterialLine(line: string): ParsedBOMLine | null {
+function parseMaterialLine(line: string, bomSection: string): ParsedBOMLine | null {
   const articleMatches = Array.from(line.matchAll(/7\d{10,}/g));
   if (articleMatches.length > 1) return null;
   const articleMatch = articleMatches[articleMatches.length - 1];
@@ -181,6 +196,7 @@ function parseMaterialLine(line: string): ParsedBOMLine | null {
   return {
     position: '',
     articleNumber,
+    bomSection,
     description,
     designation,
     quantity,
@@ -195,7 +211,7 @@ function parseMaterialLine(line: string): ParsedBOMLine | null {
   };
 }
 
-function parseRussianAssemblyLine(line: string): ParsedBOMLine | null {
+function parseRussianAssemblyLine(line: string, bomSection: string): ParsedBOMLine | null {
   const thicknessMatch = line.match(/\s[sS]\s*(\d+(?:[,.]\d+)?)\s*$/);
   if (!thicknessMatch) return null;
 
@@ -224,6 +240,7 @@ function parseRussianAssemblyLine(line: string): ParsedBOMLine | null {
   return {
     position,
     articleNumber: '',
+    bomSection,
     description: name,
     designation,
     quantity,
@@ -236,6 +253,96 @@ function parseRussianAssemblyLine(line: string): ParsedBOMLine | null {
     widthMm: null,
     heightMm: null,
   };
+}
+
+function parseRussianSpecTableLine(line: string, bomSection: string): ParsedBOMLine | null {
+  if (!bomSection || !isSpecItemSection(bomSection)) return null;
+
+  const normalized = line
+    .replace(/\s+/g, ' ')
+    .replace(/(Заглушка)(пластмассовая)/giu, '$1 $2')
+    .trim();
+  const designationMatch = normalized.match(/^(?:[A-ZА-Я]\d*)?(\d{1,3})([A-ZА-ЯЁ]+[A-ZА-ЯЁ]*\.\d+\.\d+\.\d+(?:-\d{1,3})?)(.+?)(\d{1,3})$/u);
+
+  if (designationMatch) {
+    const position = designationMatch[1];
+    const designation = designationMatch[2];
+    const name = repairSpecName(designationMatch[3]);
+    const quantity = normalizePositiveNumber(designationMatch[4]);
+    if (!name || !quantity) return null;
+
+    return {
+      position,
+      articleNumber: '',
+      bomSection,
+      description: name,
+      designation,
+      quantity: Math.max(1, Math.round(quantity)),
+      massKg: null,
+      materialGrade: '',
+      materialType: '',
+      norm: '',
+      partType: 'other',
+      thicknessMm: null,
+      widthMm: null,
+      heightMm: null,
+    };
+  }
+
+  const simpleMatch = normalized.match(/^(\d{1,3})(.+?)(\d{1,3})$/u);
+  if (!simpleMatch) return null;
+
+  const position = simpleMatch[1];
+  const name = repairSpecName(simpleMatch[2]);
+  const quantity = normalizePositiveNumber(simpleMatch[3]);
+  if (!name || !quantity || name.length < 3 || !/[A-Za-zА-Яа-яЁё]/u.test(name)) return null;
+
+  return {
+    position,
+    articleNumber: '',
+    bomSection,
+    description: name,
+    designation: '',
+    quantity: Math.max(1, Math.round(quantity)),
+    massKg: null,
+    materialGrade: '',
+    materialType: '',
+    norm: '',
+    partType: 'other',
+    thicknessMm: null,
+    widthMm: null,
+    heightMm: null,
+  };
+}
+
+function detectBomSection(line: string): string | null {
+  const normalized = line.toLowerCase();
+  if (/прочие изделия/.test(normalized)) return 'Прочие изделия';
+  if (/стандартные изделия/.test(normalized)) return 'Стандартные изделия';
+  if (/\b(?:zukaufteile|kaufteile)\b/i.test(line)) return line.trim();
+  if (/^\s*детали\s*$/iu.test(line)) return 'Детали';
+  if (/^\s*документация\s*$/iu.test(line)) return 'Документация';
+  return null;
+}
+
+function isSpecItemSection(section: string): boolean {
+  return /^(?:Детали|Прочие изделия|Стандартные изделия)$/iu.test(section) || /\b(?:zukaufteile|kaufteile)\b/i.test(section);
+}
+
+function repairSpecName(value: string): string {
+  return normalizeLine(value)
+    .replace(/(Заглушка)(пластмассовая)/giu, '$1 $2')
+    .replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2')
+    .trim();
+}
+
+function addEntry(entries: Map<string, BOMEntry>, entry: BOMEntry): void {
+  const key = buildBOMKey(entry);
+  const existing = entries.get(key);
+  if (existing && normalizeDescription(existing.description) !== normalizeDescription(entry.description)) {
+    return;
+  }
+  entries.set(key, existing ? mergeBOMEntry(existing, entry) : entry);
 }
 
 function standardSteelPattern(): RegExp {
@@ -293,6 +400,7 @@ function createBOMEntry(input: ParsedBOMLine): BOMEntry {
   return {
     articleNumber: input.articleNumber,
     position: input.position ?? '',
+    bomSection: input.bomSection,
     designation: input.designation,
     description: input.description,
     partType: input.partType,
@@ -347,6 +455,7 @@ function mergeBOMEntry(base: BOMEntry, override: BOMEntry): BOMEntry {
     ...base,
     position: override.position || base.position,
     articleNumber: override.articleNumber || base.articleNumber,
+    bomSection: override.bomSection || base.bomSection,
     designation: override.designation || base.designation,
     description: override.description || base.description,
     partType: override.partType !== 'other' ? override.partType : base.partType,
@@ -435,7 +544,7 @@ function buildBOMKey(entry: Pick<BOMEntry, 'articleNumber' | 'description' | 'pa
 }
 
 function normalizeLine(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
+  return normalizeCadText(value).replace(/\s+/g, ' ').trim();
 }
 
 function extractDetailDesignation(line: string): string {
@@ -505,7 +614,7 @@ function isSheetMaterialLine(value: string): boolean {
 }
 
 function extractSheetThickness(value: string): number | null {
-  return normalizePositiveNumber(value.match(/\bбт?\s*-\s*пн\s*-\s*(\d+(?:[,.]\d+)?)/iu)?.[1]);
+  return normalizePositiveNumber(value.match(/бт?\s*-\s*пн\s*-\s*(\d+(?:[,.]\d+)?)/iu)?.[1]);
 }
 
 function extractMaterialGrade(value: string): string {

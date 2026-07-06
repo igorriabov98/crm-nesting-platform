@@ -6,6 +6,7 @@ export type NestingStrategy = 'minWaste' | 'remnant' | 'minSheets'
 export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heuristic' | 'pdf_bom' | 'manual'
 export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
 export type NestingMaterial = 'Сталь' | 'Нержавейка' | 'Алюминий'
+export type PartType = 'SHEET' | 'PROFILE' | 'PURCHASED'
 
 export interface NestingParseReport {
   brepFlat: number
@@ -25,6 +26,8 @@ export type LayoutViolationType =
   | 'out_of_bounds'
   | 'quantity'
   | 'EXCLUDED_FROM_NESTING'
+  | 'EXCLUDED_PROFILE'
+  | 'EXCLUDED_PURCHASED'
   | 'NO_SHEET_AVAILABLE'
   | 'MISSING_THICKNESS'
   | 'NESTING_FAILED'
@@ -34,6 +37,8 @@ export type LayoutViolationType =
 
 export type UnplacedReasonCode =
   | 'EXCLUDED'
+  | 'EXCLUDED_PROFILE'
+  | 'EXCLUDED_PURCHASED'
   | 'NO_SHEET_AVAILABLE'
   | 'MISSING_THICKNESS'
   | 'NESTING_FAILED'
@@ -54,6 +59,7 @@ export interface LayoutViolation {
   thickness?: number | null
   requiredWidth?: number | null
   requiredHeight?: number | null
+  severity?: 'info' | 'warning'
   message: string
 }
 
@@ -93,7 +99,7 @@ export interface NestingPart {
   sourceMachineItemId?: string | null
   sourceProductId?: string | null
   name: string
-  thickness: number
+  thickness: number | null
   material: NestingMaterial | string
   steelTypeId: string | null
   steelTypeName: string | null
@@ -110,6 +116,7 @@ export interface NestingPart {
   contourStale: boolean
   quantity: number
   isSheetMetal: boolean
+  partType: PartType
   grainLock: boolean
   hasBends: boolean
   bendCount: number
@@ -221,6 +228,9 @@ export interface NestingResult {
   }>
   totalParts: number
   placedParts: number
+  profileParts: number
+  purchasedParts: number
+  noSheetParts: number
   totalSheets: number
   avgUtilization: number
   totalWaste: number
@@ -232,6 +242,7 @@ export interface BOMEntry {
   position: string
   designation: string
   description: string
+  bomSection: string
   partType: 'sheet' | 'channel' | 'angle' | 'round_bar' | 'tube' | 'flat_bar' | 'other'
   thicknessMm: number | null
   widthMm: number | null
@@ -285,6 +296,7 @@ export interface AIMatchResult {
   suggestedUnfoldingWidth: number | null
   suggestedUnfoldingHeight: number | null
   suggestedIsSheetMetal: boolean | null
+  suggestedPartType: PartType | null
   suggestedHasBends: boolean | null
   suggestedMassKg: number | null
   thicknessMismatch: boolean
@@ -466,6 +478,7 @@ export async function updatePart(
     quantity: number
     grainLock: boolean
     isSheetMetal: boolean
+    partType: PartType
     thickness: number
     hasBends: boolean
   }>
@@ -564,6 +577,7 @@ export async function applyProjectBOM(
     quantity?: number
     thickness?: number
     isSheetMetal?: boolean
+    partType?: PartType
     hasBends?: boolean
     unfoldingWidth?: number
     unfoldingHeight?: number

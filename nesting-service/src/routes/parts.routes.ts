@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { NotFoundError, ValidationError } from '../lib/errors';
 import { normalizeCadText } from '../lib/text-encoding';
+import { normalizePartType, partTypeFromLegacySheetFlag } from '../lib/part-type';
 import { idParamSchema } from '../schemas/common.schema';
 import { projectPartParamsSchema, updatePartSchema } from '../schemas/project.schema';
 
@@ -34,6 +35,7 @@ const partListSelect = {
   contourStale: true,
   quantity: true,
   isSheetMetal: true,
+  partType: true,
   grainLock: true,
   hasBends: true,
   bendCount: true,
@@ -112,13 +114,22 @@ export async function partsRoutes(app: FastifyInstance) {
 
     const data = updatePartSchema.parse(request.body ?? {});
     const updateData: Prisma.PartUpdateInput = { ...data };
-    if (data.isSheetMetal !== undefined) {
+    const nextPartType = data.partType
+      ? normalizePartType(data.partType)
+      : data.isSheetMetal !== undefined
+        ? partTypeFromLegacySheetFlag(data.isSheetMetal)
+        : null;
+
+    if (nextPartType) {
+      updateData.partType = nextPartType;
+      updateData.isSheetMetal = nextPartType === 'SHEET';
       updateData.classificationMethod = 'manual';
-      updateData.classificationWarning = data.isSheetMetal
-        ? null
-        : 'Ручная метка: профиль/круг — не для листового раскроя';
-      if (!data.isSheetMetal) {
+      updateData.classificationWarning = null;
+      if (nextPartType !== 'SHEET') {
         updateData.hasBends = false;
+        updateData.grainLock = false;
+        updateData.thicknessMismatch = false;
+        updateData.thicknessMismatchNote = null;
       }
     }
     const part = await prisma.part.findFirst({
@@ -134,6 +145,7 @@ export async function partsRoutes(app: FastifyInstance) {
       data.material !== undefined ||
       data.thickness !== undefined ||
       data.isSheetMetal !== undefined ||
+      data.partType !== undefined ||
       data.steelTypeId !== undefined ||
       data.steelTypeName !== undefined ||
       data.steelTypeRaw !== undefined;
