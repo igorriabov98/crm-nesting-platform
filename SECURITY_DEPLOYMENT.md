@@ -14,6 +14,7 @@ Set these variables for both Preview and Production without printing secret valu
 - `TELEGRAM_BOT_TOKEN` if the token is not stored in `app_settings`
 - `TELEGRAM_WEBHOOK_SECRET`
 - `MEETING_REMINDER_CRON_SECRET` or `CRON_SECRET`
+- `TASKS_CRON_SECRET` or `CRON_SECRET` if `/api/tasks/due` is called by an external cron
 
 After changing Vercel environment variables, redeploy the app. Existing deployments do not pick up changed env vars.
 
@@ -37,6 +38,15 @@ The meeting reminder endpoint accepts:
 - or `x-cron-secret: <MEETING_REMINDER_CRON_SECRET>`
 
 Do not schedule this endpoint until the secret is present in Vercel Production.
+
+## Vercel cron / due tasks
+
+The due tasks endpoint accepts:
+
+- `Authorization: Bearer <TASKS_CRON_SECRET>`
+- or `x-cron-secret: <TASKS_CRON_SECRET>`
+
+The database migration also schedules the transport-cost sync through `pg_cron`; this endpoint is for external or manual protected runs.
 
 ## Supabase database
 
@@ -67,5 +77,6 @@ The function accepts either `Authorization: Bearer <secret>` or `x-cron-secret: 
 - Vercel production URL returns `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`.
 - `/api/telegram/webhook` returns 401 without the Telegram secret header.
 - `/api/meetings/reminders` returns 401 without the cron secret and 503 if the secret is missing in env.
+- `/api/tasks/due` returns 401 without the cron secret and 503 if the secret is missing in env.
 - Nesting `status`, `result`, and `dxf` routes reject users without the nesting role.
 - Direct Supabase REST mutations to materials, inventory, request sections, steel types, suppliers, and supply schedules are denied for roles outside the new RLS policies.

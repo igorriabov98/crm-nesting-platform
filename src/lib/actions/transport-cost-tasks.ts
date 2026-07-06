@@ -1,4 +1,5 @@
 import type { Database } from '@/lib/types/database'
+import { isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 
 type TaskStatus = Database['public']['Enums']['task_status']
 type UserRole = Database['public']['Enums']['user_role']
@@ -10,7 +11,9 @@ type LooseQuery = PromiseLike<DbResult> & {
   update: (values: Record<string, unknown>) => LooseQuery
   insert: (values: Record<string, unknown>) => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
+  lte: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
+  or: (filters: string) => LooseQuery
   single: () => Promise<DbResult>
 }
 type LooseDb = {
@@ -30,8 +33,14 @@ type ShippingStageDate = {
   planned_date_end: string | null
 }
 
+type TransportExpenseRow = {
+  category: string | null
+  amount: number | string | null
+}
+
 type TransportTaskRow = {
   id: string
+  machine_id?: string | null
   assigned_to: string
   status: TaskStatus
 }
@@ -63,6 +72,10 @@ function addDays(value: string, days: number) {
   return date.toISOString().slice(0, 10)
 }
 
+function todayDateOnly() {
+  return new Date().toISOString().slice(0, 10)
+}
+
 function formatDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
   return match ? `${match[3]}.${match[2]}.${match[1]}` : value
@@ -77,6 +90,20 @@ async function cancelOpenTransportTasks(db: LooseDb, machineId: string) {
     .in('status', ['pending', 'in_progress'])
 
   if (error) throw new Error(error.message || 'Не удалось отменить задачу по транспорту')
+}
+
+async function hasTransportCost(db: LooseDb, machineId: string) {
+  const { data, error } = await db
+    .from('machine_expenses')
+    .select('category, amount')
+    .eq('machine_id', machineId)
+
+  if (error) throw new Error(error.message || 'Не удалось проверить стоимость транспорта')
+
+  return ((data || []) as TransportExpenseRow[]).some((expense) => (
+    isTransportExpenseCategory(expense.category) &&
+    Number(expense.amount || 0) > 0
+  ))
 }
 
 async function resolveTransportTaskDate(db: LooseDb, machineId: string, fallbackDate: string | null) {
@@ -134,6 +161,11 @@ async function syncTransportCostTaskInternal(client: unknown, machineId: string)
     return
   }
 
+  if (await hasTransportCost(db, machineId)) {
+    await cancelOpenTransportTasks(db, machineId)
+    return
+  }
+
   const shippingDate = await resolveTransportTaskDate(db, machineId, machine.desired_shipping_date)
   if (!shippingDate) {
     await cancelOpenTransportTasks(db, machineId)
@@ -142,6 +174,11 @@ async function syncTransportCostTaskInternal(client: unknown, machineId: string)
 
   const assignedTo = await resolveTransportAssignee(db, machine.created_by)
   const deadline = addDays(shippingDate, -7)
+  if (todayDateOnly() < deadline) {
+    await cancelOpenTransportTasks(db, machineId)
+    return
+  }
+
   const machineName = machine.name || 'Машина'
   const now = new Date().toISOString()
   const taskPayload = {
@@ -212,5 +249,62 @@ export async function syncTransportCostTask(client: unknown, machineId: string) 
   } catch (error) {
     if (isMissingTransportTaskTypeError(error)) return
     throw error
+  }
+}
+
+export async function syncDueTransportCostTasks(client: unknown) {
+  const db = dbFrom(client)
+  const dueLimit = addDays(todayDateOnly(), 7)
+
+  const [machinesByShippingDate, shippingStages, openTasks] = await Promise.all([
+    db
+      .from('machines')
+      .select('id')
+      .eq('is_archived', false)
+      .lte('desired_shipping_date', dueLimit),
+    db
+      .from('production_stages')
+      .select('machine_id')
+      .eq('stage_type', 'shipping')
+      .or(`planned_date_end.lte.${dueLimit},date_end.lte.${dueLimit}`),
+    db
+      .from('tasks')
+      .select('machine_id')
+      .eq('task_type', TRANSPORT_TASK_TYPE)
+      .in('status', ['pending', 'in_progress']),
+  ])
+
+  if (machinesByShippingDate.error) throw new Error(machinesByShippingDate.error.message || 'Не удалось найти машины к отгрузке')
+  if (shippingStages.error) throw new Error(shippingStages.error.message || 'Не удалось найти этапы отгрузки')
+  if (openTasks.error) throw new Error(openTasks.error.message || 'Не удалось проверить открытые транспортные задачи')
+
+  const machineIds = new Set<string>()
+  for (const row of (machinesByShippingDate.data || []) as Array<{ id?: string | null }>) {
+    if (row.id) machineIds.add(row.id)
+  }
+  for (const row of (shippingStages.data || []) as Array<{ machine_id?: string | null }>) {
+    if (row.machine_id) machineIds.add(row.machine_id)
+  }
+  for (const row of (openTasks.data || []) as TransportTaskRow[]) {
+    if (row.machine_id) machineIds.add(row.machine_id)
+  }
+
+  const errors: Array<{ machineId: string; error: string }> = []
+  let synced = 0
+
+  for (const machineId of machineIds) {
+    try {
+      await syncTransportCostTask(client, machineId)
+      synced += 1
+    } catch (error) {
+      errors.push({ machineId, error: getErrorMessage(error) })
+    }
+  }
+
+  return {
+    checked: machineIds.size,
+    synced,
+    machineIds: Array.from(machineIds),
+    errors,
   }
 }

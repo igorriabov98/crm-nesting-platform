@@ -110,6 +110,7 @@ const DIRECTOR_ROLES: UserRole[] = [
 ]
 const CUTTING_ROLLBACK_TASK_TYPE = 'production_cutting_rollback_review' as const
 const PRODUCTION_PLAN_DATE_CHANGE_TASK_TYPE = 'production_plan_date_change_approval' as const
+const MATERIAL_TYPE_SELECTION_TASK_TYPE = 'material_type_selection' as const
 
 async function getCurrentUser() {
   const { supabase, userId, user, role, factoryId } = await getCurrentUserContext()
@@ -1035,7 +1036,7 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
         product_project_id,
         task_type,
         status,
-        machine:machines(id, name, factory_id),
+        machine:machines(id, name, factory_id, material_type),
         product_project:product_projects(id, title, status, created_by)
       `)
       .eq('id', taskId)
@@ -1048,7 +1049,7 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       product_project_id: string | null
       task_type: TaskType
       status: TaskStatus
-      machine: { id: string; name: string | null; factory_id: string | null } | null
+      machine: { id: string; name: string | null; factory_id: string | null; material_type?: string | null } | null
       product_project: { id: string; title: string; status: ProductProject['status']; created_by: string | null } | null
     }
 
@@ -1092,6 +1093,14 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       if (!hasSubmittedRequest) {
         throw new Error('Нельзя завершить задачу технолога без переданной заявки. Передайте заявку в снабжение или завершите задачу с указанием причины.')
       }
+    }
+
+    if (
+      status === 'completed' &&
+      taskRow.task_type === MATERIAL_TYPE_SELECTION_TASK_TYPE &&
+      (!taskRow.machine?.material_type || taskRow.machine.material_type === 'undefined')
+    ) {
+      throw new Error('Выберите тип материала во вкладке «Снабжение»: стандартный или нестандартный.')
     }
 
     if (
