@@ -69,6 +69,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   technologist_request: 'Заявка технолога',
   engineer_confirm: 'Чертежи',
   material_type_selection: 'Тип материала',
+  machine_layout: 'Расстановка машины',
   agenda_pool_distribution: 'Пул повесток',
   meeting_unresolved_agenda: 'Повестка собрания',
   meeting_action_item: 'Задача собрания',
@@ -198,8 +199,11 @@ function formatTaskDate(value: string | null | undefined) {
 
 function getTaskTarget(task: TaskWithRelations) {
   if (task.machine) {
+    const tabQuery = task.task_type === 'machine_layout' || task.task_type === 'material_type_selection'
+      ? '?tab=technologist'
+      : ''
     return {
-      href: `${ROUTES.SALES_PLAN}/${task.machine.id}`,
+      href: `${ROUTES.SALES_PLAN}/${task.machine.id}${tabQuery}`,
       label: task.machine.name,
       kind: 'Машина',
     }
@@ -238,6 +242,7 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (isCuttingRollbackTask(taskType)) return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (isProductionPlanDateChangeTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (taskType === 'material_type_selection') return 'border-cyan-200 bg-cyan-50 text-cyan-700 shadow-sm'
+  if (taskType === 'machine_layout') return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (taskType === 'outsourcing_transport') return 'border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }

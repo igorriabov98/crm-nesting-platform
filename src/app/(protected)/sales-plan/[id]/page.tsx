@@ -4,6 +4,7 @@ import { getMachine } from '@/app/(protected)/sales-plan/actions'
 import { getTasksByMachine } from '@/lib/actions/tasks'
 import { getRequest } from '@/lib/actions/technologist-requests'
 import { getMachineItemNestingStates } from '@/lib/actions/machine-item-nesting'
+import { getMachineLayout } from '@/lib/actions/machine-layout'
 import { getMachineActivity, type MachineActivityPayload } from '@/lib/actions/machine-activity'
 import { getMachineOutsourcingData } from '@/lib/actions/outsourcing'
 import { getCurrentUserContext } from '@/lib/auth/current-user'
@@ -29,6 +30,7 @@ export default async function MachineDetailPage({
     { data: machine, error },
     { data: tasks },
     { data: requestData },
+    layoutResult,
     nestingStatesResult,
     activityResult,
     outsourcingResult,
@@ -37,6 +39,7 @@ export default async function MachineDetailPage({
     getMachine(id),
     getTasksByMachine(id),
     getRequest(id),
+    getMachineLayout(id),
     getMachineItemNestingStates(id),
     getMachineActivity(id),
     getMachineOutsourcingData(id),
@@ -62,6 +65,7 @@ export default async function MachineDetailPage({
         factories={factories || []}
         tasks={tasks || []}
         requestData={requestData}
+        layoutData={layoutResult.success ? layoutResult.data || null : null}
         nestingStates={nestingStatesResult.success ? nestingStatesResult.data || [] : []}
         activity={activity}
         outsourcingData={outsourcingResult.data}

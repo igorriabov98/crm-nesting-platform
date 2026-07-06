@@ -111,6 +111,7 @@ const DIRECTOR_ROLES: UserRole[] = [
 const CUTTING_ROLLBACK_TASK_TYPE = 'production_cutting_rollback_review' as const
 const PRODUCTION_PLAN_DATE_CHANGE_TASK_TYPE = 'production_plan_date_change_approval' as const
 const MATERIAL_TYPE_SELECTION_TASK_TYPE = 'material_type_selection' as const
+const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
 
 async function getCurrentUser() {
   const { supabase, userId, user, role, factoryId } = await getCurrentUserContext()
@@ -295,6 +296,20 @@ async function hasSubmittedTechnologistRequest(db: LooseSupabaseClient, machineI
 
   if (error) throw new Error(error.message || 'Не удалось проверить заявку технолога')
   return ((data || []) as { id: string }[]).length > 0
+}
+
+async function hasCompletedMachineLayoutPdf(db: LooseSupabaseClient, taskId: string) {
+  const { data, error } = await db
+    .from('machine_layout_requests')
+    .select('id, pdf_file_path')
+    .eq('task_id', taskId)
+    .eq('status', 'completed')
+    .order('version_no', { ascending: false })
+    .limit(1)
+
+  if (error) throw new Error(error.message || 'Не удалось проверить PDF расстановки')
+  const request = ((data || []) as Array<{ id: string; pdf_file_path: string | null }>)[0] || null
+  return Boolean(request?.pdf_file_path)
 }
 
 class TaskBusinessError extends Error {
@@ -1100,7 +1115,14 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       taskRow.task_type === MATERIAL_TYPE_SELECTION_TASK_TYPE &&
       (!taskRow.machine?.material_type || taskRow.machine.material_type === 'undefined')
     ) {
-      throw new Error('Выберите тип материала во вкладке «Снабжение»: стандартный или нестандартный.')
+      throw new Error('Выберите тип материала во вкладке «Технолог»: стандартный или нестандартный.')
+    }
+
+    if (status === 'completed' && taskRow.task_type === MACHINE_LAYOUT_TASK_TYPE) {
+      const hasPdf = await hasCompletedMachineLayoutPdf(db, taskId)
+      if (!hasPdf) {
+        throw new Error('Задача расстановки закрывается автоматически после загрузки PDF во вкладке «Технолог».')
+      }
     }
 
     if (

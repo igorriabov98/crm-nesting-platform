@@ -1,0 +1,646 @@
+"use server"
+
+import { randomUUID } from 'node:crypto'
+import { revalidatePath } from 'next/cache'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { DIRECTOR_ROLES } from '@/lib/constants/roles'
+import { ROUTES } from '@/lib/constants/routes'
+import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
+import type { Database } from '@/lib/types/database'
+import type { MachineLayoutRequest, TaskStatus, UserRole } from '@/lib/types'
+
+type DbError = { message?: string; code?: string } | null
+type DbResult = { data: unknown; error: DbError }
+type LooseQuery = PromiseLike<DbResult> & {
+  select: (columns?: string) => LooseQuery
+  insert: (values: unknown) => LooseQuery
+  update: (values: Record<string, unknown>) => LooseQuery
+  eq: (column: string, value: unknown) => LooseQuery
+  in: (column: string, values: unknown[]) => LooseQuery
+  order: (column: string, options?: { ascending?: boolean }) => LooseQuery
+  limit: (count: number) => LooseQuery
+  single: () => Promise<DbResult>
+  maybeSingle: () => Promise<DbResult>
+}
+type LooseDb = { from: (table: string) => LooseQuery }
+
+type MachineLayoutRequestInsert = Database['public']['Tables']['machine_layout_requests']['Insert']
+type MachineLayoutRequestUpdate = Database['public']['Tables']['machine_layout_requests']['Update']
+type TaskInsert = Database['public']['Tables']['tasks']['Insert']
+type TaskUpdate = Database['public']['Tables']['tasks']['Update']
+
+type ActionResult<T> = {
+  success: boolean
+  data?: T
+  error?: string
+}
+
+type DrawingFileSource = 'product' | 'project'
+
+export type MachineLayoutSnapshotItem = {
+  machineItemId: string
+  productId: string | null
+  productProjectId: string | null
+  productProjectVersionId: string | null
+  productName: string
+  drawingNumber: string
+  quantity: number
+  sortOrder: number
+  drawingFileSource: DrawingFileSource | null
+  drawingFileId: string | null
+  drawingFileName: string | null
+  drawingUrl: string | null
+}
+
+export type MachineLayoutDiffItem = {
+  type: 'added' | 'removed' | 'changed'
+  item: MachineLayoutSnapshotItem
+  previousItem?: MachineLayoutSnapshotItem | null
+  changes: Array<'productName' | 'drawingNumber' | 'quantity'>
+}
+
+export type MachineLayoutVersion = {
+  id: string
+  machineId: string
+  taskId: string | null
+  versionNo: number
+  status: 'requested' | 'completed'
+  requestedBy: string | null
+  assignedTo: string | null
+  items: MachineLayoutSnapshotItem[]
+  diff: MachineLayoutDiffItem[]
+  pdfFileName: string | null
+  pdfUrl: string | null
+  uploadedAt: string | null
+  completedAt: string | null
+  createdAt: string
+}
+
+export type MachineLayoutPayload = {
+  currentItems: MachineLayoutSnapshotItem[]
+  latest: MachineLayoutVersion | null
+  versions: MachineLayoutVersion[]
+}
+
+type MachineItemRow = {
+  id: string
+  product_id: string | null
+  product_project_id: string | null
+  product_project_version_id: string | null
+  product_name: string | null
+  drawing_number: string | null
+  quantity: number | string | null
+  is_sample: boolean | null
+  sort_order: number | null
+}
+
+type MachineRow = {
+  id: string
+  name: string | null
+  created_by: string | null
+  is_archived: boolean | null
+  machine_items?: MachineItemRow[] | null
+}
+
+type ProductFileRow = {
+  id: string
+  product_id?: string | null
+  project_id?: string | null
+  version_id?: string | null
+  file_kind: string
+  file_name: string
+}
+
+type TaskRow = {
+  id: string
+  status: TaskStatus
+}
+
+const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
+const SETTINGS_ID = '00000000-0000-0000-0000-000000000001'
+const MAX_PDF_SIZE = 50 * 1024 * 1024
+
+const REQUEST_ROLES: UserRole[] = ['sales_manager', ...DIRECTOR_ROLES]
+const UPLOAD_ROLES: UserRole[] = ['technologist', ...DIRECTOR_ROLES]
+
+function dbFrom(client: unknown): LooseDb {
+  return client as LooseDb
+}
+
+function assertRole(role: UserRole, allowed: UserRole[], message = 'Недостаточно прав') {
+  if (!allowed.includes(role)) throw new Error(message)
+}
+
+function datePlusDays(days: number) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+function normalizeQuantity(value: unknown) {
+  const number = Number(value || 0)
+  return Number.isFinite(number) ? number : 0
+}
+
+function isDrawingFile(file: ProductFileRow) {
+  const name = file.file_name.toLowerCase()
+  return file.file_kind === 'drawing' || file.file_kind === 'pdf' || name.endsWith('.pdf')
+}
+
+function chooseDrawingFile(files: ProductFileRow[]) {
+  return files
+    .filter(isDrawingFile)
+    .sort((left, right) => {
+      const leftRank = left.file_kind === 'drawing' ? 0 : left.file_kind === 'pdf' ? 1 : 2
+      const rightRank = right.file_kind === 'drawing' ? 0 : right.file_kind === 'pdf' ? 1 : 2
+      return leftRank - rightRank || left.file_name.localeCompare(right.file_name, 'ru')
+    })[0] || null
+}
+
+function drawingUrl(item: Pick<MachineLayoutSnapshotItem, 'drawingFileSource' | 'drawingFileId'>) {
+  if (!item.drawingFileSource || !item.drawingFileId) return null
+  return `/api/machine-layout/drawings/${item.drawingFileSource}/${item.drawingFileId}`
+}
+
+function normalizeStoredItem(raw: unknown): MachineLayoutSnapshotItem | null {
+  if (!raw || typeof raw !== 'object') return null
+  const item = raw as Partial<MachineLayoutSnapshotItem>
+  const machineItemId = typeof item.machineItemId === 'string' ? item.machineItemId : null
+  if (!machineItemId) return null
+  const source = item.drawingFileSource === 'product' || item.drawingFileSource === 'project'
+    ? item.drawingFileSource
+    : null
+  const normalized = {
+    machineItemId,
+    productId: typeof item.productId === 'string' ? item.productId : null,
+    productProjectId: typeof item.productProjectId === 'string' ? item.productProjectId : null,
+    productProjectVersionId: typeof item.productProjectVersionId === 'string' ? item.productProjectVersionId : null,
+    productName: typeof item.productName === 'string' ? item.productName : '',
+    drawingNumber: typeof item.drawingNumber === 'string' ? item.drawingNumber : '',
+    quantity: normalizeQuantity(item.quantity),
+    sortOrder: normalizeQuantity(item.sortOrder),
+    drawingFileSource: source,
+    drawingFileId: typeof item.drawingFileId === 'string' ? item.drawingFileId : null,
+    drawingFileName: typeof item.drawingFileName === 'string' ? item.drawingFileName : null,
+    drawingUrl: null,
+  } satisfies MachineLayoutSnapshotItem
+  return { ...normalized, drawingUrl: drawingUrl(normalized) }
+}
+
+function normalizeStoredItems(value: unknown): MachineLayoutSnapshotItem[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map(normalizeStoredItem)
+    .filter((item): item is MachineLayoutSnapshotItem => Boolean(item))
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.productName.localeCompare(right.productName, 'ru'))
+}
+
+async function loadMachine(db: LooseDb, machineId: string) {
+  const { data, error } = await db
+    .from('machines')
+    .select(`
+      id,
+      name,
+      created_by,
+      is_archived,
+      machine_items(
+        id,
+        product_id,
+        product_project_id,
+        product_project_version_id,
+        product_name,
+        drawing_number,
+        quantity,
+        is_sample,
+        sort_order
+      )
+    `)
+    .eq('id', machineId)
+    .single()
+
+  if (error || !data) throw new Error(error?.message || 'Машина не найдена')
+  return data as MachineRow
+}
+
+async function resolveDrawingFiles(db: LooseDb, items: MachineItemRow[]) {
+  const productIds = Array.from(new Set(items.map((item) => item.product_id).filter((id): id is string => Boolean(id))))
+  const versionIds = Array.from(new Set(items.map((item) => item.product_project_version_id).filter((id): id is string => Boolean(id))))
+
+  const productFileByProductId = new Map<string, ProductFileRow>()
+  const projectFileByVersionId = new Map<string, ProductFileRow>()
+
+  if (productIds.length > 0) {
+    const { data, error } = await db
+      .from('product_files')
+      .select('id, product_id, file_kind, file_name')
+      .in('product_id', productIds)
+
+    if (error) throw new Error(error.message || 'Не удалось загрузить чертежи товаров')
+    const grouped = new Map<string, ProductFileRow[]>()
+    for (const file of (data || []) as ProductFileRow[]) {
+      if (!file.product_id) continue
+      grouped.set(file.product_id, [...(grouped.get(file.product_id) || []), file])
+    }
+    for (const [productId, files] of grouped.entries()) {
+      const file = chooseDrawingFile(files)
+      if (file) productFileByProductId.set(productId, file)
+    }
+  }
+
+  if (versionIds.length > 0) {
+    const { data, error } = await db
+      .from('product_project_files')
+      .select('id, project_id, version_id, file_kind, file_name')
+      .in('version_id', versionIds)
+
+    if (error) throw new Error(error.message || 'Не удалось загрузить чертежи проектов')
+    const grouped = new Map<string, ProductFileRow[]>()
+    for (const file of (data || []) as ProductFileRow[]) {
+      if (!file.version_id) continue
+      grouped.set(file.version_id, [...(grouped.get(file.version_id) || []), file])
+    }
+    for (const [versionId, files] of grouped.entries()) {
+      const file = chooseDrawingFile(files)
+      if (file) projectFileByVersionId.set(versionId, file)
+    }
+  }
+
+  return { productFileByProductId, projectFileByVersionId }
+}
+
+async function buildCurrentSnapshot(db: LooseDb, machine: MachineRow) {
+  const goods = (machine.machine_items || [])
+    .filter((item) => !item.is_sample)
+    .sort((left, right) => (left.sort_order ?? 0) - (right.sort_order ?? 0))
+
+  const { productFileByProductId, projectFileByVersionId } = await resolveDrawingFiles(db, goods)
+
+  return goods.map((item, index) => {
+    const projectFile = item.product_project_version_id
+      ? projectFileByVersionId.get(item.product_project_version_id) || null
+      : null
+    const productFile = item.product_id
+      ? productFileByProductId.get(item.product_id) || null
+      : null
+    const file = projectFile || productFile
+    const source: DrawingFileSource | null = projectFile ? 'project' : productFile ? 'product' : null
+    const snapshot = {
+      machineItemId: item.id,
+      productId: item.product_id,
+      productProjectId: item.product_project_id,
+      productProjectVersionId: item.product_project_version_id,
+      productName: item.product_name || 'Без названия',
+      drawingNumber: item.drawing_number || '',
+      quantity: normalizeQuantity(item.quantity),
+      sortOrder: item.sort_order ?? index,
+      drawingFileSource: source,
+      drawingFileId: file?.id || null,
+      drawingFileName: file?.file_name || null,
+      drawingUrl: null,
+    } satisfies MachineLayoutSnapshotItem
+
+    return { ...snapshot, drawingUrl: drawingUrl(snapshot) }
+  })
+}
+
+function buildDiff(current: MachineLayoutSnapshotItem[], previous: MachineLayoutSnapshotItem[]) {
+  const previousById = new Map(previous.map((item) => [item.machineItemId, item]))
+  const currentById = new Map(current.map((item) => [item.machineItemId, item]))
+  const diff: MachineLayoutDiffItem[] = []
+
+  for (const item of current) {
+    const previousItem = previousById.get(item.machineItemId)
+    if (!previousItem) {
+      diff.push({ type: 'added', item, previousItem: null, changes: [] })
+      continue
+    }
+
+    const changes: MachineLayoutDiffItem['changes'] = []
+    if (item.productName !== previousItem.productName) changes.push('productName')
+    if (item.drawingNumber !== previousItem.drawingNumber) changes.push('drawingNumber')
+    if (item.quantity !== previousItem.quantity) changes.push('quantity')
+    if (changes.length > 0) {
+      diff.push({ type: 'changed', item, previousItem, changes })
+    }
+  }
+
+  for (const item of previous) {
+    if (!currentById.has(item.machineItemId)) {
+      diff.push({ type: 'removed', item, previousItem: item, changes: [] })
+    }
+  }
+
+  return diff
+}
+
+function normalizeVersion(row: MachineLayoutRequest, diff: MachineLayoutDiffItem[]): MachineLayoutVersion {
+  const items = normalizeStoredItems(row.item_snapshot)
+  return {
+    id: row.id,
+    machineId: row.machine_id,
+    taskId: row.task_id,
+    versionNo: row.version_no,
+    status: row.status,
+    requestedBy: row.requested_by,
+    assignedTo: row.assigned_to,
+    items,
+    diff,
+    pdfFileName: row.pdf_file_name,
+    pdfUrl: row.pdf_file_path ? `/api/machine-layout/files/${row.id}` : null,
+    uploadedAt: row.uploaded_at,
+    completedAt: row.completed_at,
+    createdAt: row.created_at,
+  }
+}
+
+function serializeSnapshotItem(item: MachineLayoutSnapshotItem) {
+  return {
+    machineItemId: item.machineItemId,
+    productId: item.productId,
+    productProjectId: item.productProjectId,
+    productProjectVersionId: item.productProjectVersionId,
+    productName: item.productName,
+    drawingNumber: item.drawingNumber,
+    quantity: item.quantity,
+    sortOrder: item.sortOrder,
+    drawingFileSource: item.drawingFileSource,
+    drawingFileId: item.drawingFileId,
+    drawingFileName: item.drawingFileName,
+  }
+}
+
+async function loadLayoutPayload(db: LooseDb, machineId: string): Promise<MachineLayoutPayload> {
+  const machine = await loadMachine(db, machineId)
+  const currentItems = await buildCurrentSnapshot(db, machine)
+  const { data, error } = await db
+    .from('machine_layout_requests')
+    .select('*')
+    .eq('machine_id', machineId)
+    .order('version_no', { ascending: false })
+
+  if (error) throw new Error(error.message || 'Не удалось загрузить расстановки машины')
+
+  const rows = ((data || []) as MachineLayoutRequest[])
+  const rowsAsc = [...rows].sort((left, right) => left.version_no - right.version_no)
+  const diffById = new Map<string, MachineLayoutDiffItem[]>()
+
+  for (let index = 0; index < rowsAsc.length; index += 1) {
+    const current = normalizeStoredItems(rowsAsc[index].item_snapshot)
+    const previous = index > 0 ? normalizeStoredItems(rowsAsc[index - 1].item_snapshot) : []
+    diffById.set(rowsAsc[index].id, index > 0 ? buildDiff(current, previous) : [])
+  }
+
+  const versions = rows.map((row) => normalizeVersion(row, diffById.get(row.id) || []))
+  return {
+    currentItems,
+    latest: versions[0] || null,
+    versions,
+  }
+}
+
+async function resolveConfiguredTechnologist(db: LooseDb) {
+  const { data: settingsData, error: settingsError } = await db
+    .from('company_settings')
+    .select('auto_task_technologist_user_id')
+    .eq('id', SETTINGS_ID)
+    .single()
+
+  if (settingsError) throw new Error(settingsError.message || 'Не удалось загрузить ответственного технолога')
+  const configuredId = (settingsData as { auto_task_technologist_user_id?: string | null } | null)
+    ?.auto_task_technologist_user_id || null
+  if (!configuredId) throw new Error('В настройках компании выберите ответственного технолога')
+
+  const { data: userData, error: userError } = await db
+    .from('users')
+    .select('id, is_active, role')
+    .eq('id', configuredId)
+    .single()
+
+  if (userError || !userData) throw new Error('Ответственный технолог из настроек не найден')
+  const user = userData as { id: string; is_active: boolean | null; role: UserRole | null }
+  if (user.is_active === false || user.role !== 'technologist') {
+    throw new Error('Ответственный технолог из настроек неактивен или имеет другую роль')
+  }
+
+  return user.id
+}
+
+async function upsertLayoutTask(db: LooseDb, input: {
+  machineId: string
+  machineName: string
+  assignedTo: string
+}) {
+  const now = new Date().toISOString()
+  const deadline = datePlusDays(2)
+  const taskPayload = {
+    machine_id: input.machineId,
+    assigned_to: input.assignedTo,
+    task_type: MACHINE_LAYOUT_TASK_TYPE,
+    title: 'Сделать расстановку изделий в машине',
+    description: `Сделайте расстановку изделий в машине ${input.machineName} и загрузите PDF во вкладке "Технолог".`,
+    status: 'pending' satisfies TaskStatus,
+    start_date: now.slice(0, 10),
+    deadline,
+    completed_at: null,
+    notified_at: null,
+    telegram_error: null,
+    updated_at: now,
+  } satisfies TaskInsert & TaskUpdate
+
+  const { data: existingData, error: existingError } = await db
+    .from('tasks')
+    .select('id, status')
+    .eq('machine_id', input.machineId)
+    .eq('assigned_to', input.assignedTo)
+    .eq('task_type', MACHINE_LAYOUT_TASK_TYPE)
+    .in('status', ['pending', 'in_progress'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  if (existingError) throw new Error(existingError.message || 'Не удалось проверить задачу расстановки')
+  const existing = ((existingData || []) as TaskRow[])[0] || null
+
+  if (existing) {
+    const { error } = await db
+      .from('tasks')
+      .update({
+        ...taskPayload,
+        status: existing.status === 'in_progress' ? 'in_progress' : 'pending',
+      })
+      .eq('id', existing.id)
+
+    if (error) throw new Error(error.message || 'Не удалось обновить задачу расстановки')
+    return existing.id
+  }
+
+  const { data: insertedData, error: insertError } = await db
+    .from('tasks')
+    .insert(taskPayload)
+    .select('id')
+    .single()
+
+  if (insertError || !insertedData) throw new Error(insertError?.message || 'Не удалось создать задачу расстановки')
+  return (insertedData as { id: string }).id
+}
+
+function assertPdfFile(file: File) {
+  if (!file || file.size === 0) throw new Error('Выберите PDF расстановки')
+  const name = file.name.toLowerCase()
+  if (file.size > MAX_PDF_SIZE) throw new Error('PDF расстановки не должен превышать 50 МБ')
+  if (file.type !== 'application/pdf' && !name.endsWith('.pdf')) {
+    throw new Error('Загрузите файл в формате PDF')
+  }
+}
+
+function fileExtension(name: string) {
+  const match = name.match(/\.([A-Za-z0-9]{1,12})$/)
+  return match ? `.${match[1].toLowerCase()}` : '.pdf'
+}
+
+function revalidateLayout(machineId: string) {
+  revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+  revalidatePath(ROUTES.TASKS)
+}
+
+export async function getMachineLayout(machineId: string): Promise<ActionResult<MachineLayoutPayload>> {
+  try {
+    await getCurrentUserContext()
+    const db = dbFrom(createAdminClient())
+    const data = await loadLayoutPayload(db, machineId)
+    return { success: true, data }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function requestMachineLayout(machineId: string): Promise<ActionResult<MachineLayoutPayload>> {
+  try {
+    const { userId, role } = await getCurrentUserContext()
+    assertRole(role, REQUEST_ROLES, 'Запрос на расстановку может отправить менеджер или директор')
+
+    const db = dbFrom(createAdminClient())
+    const machine = await loadMachine(db, machineId)
+    if (machine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
+
+    const snapshot = await buildCurrentSnapshot(db, machine)
+    if (snapshot.length === 0) throw new Error('Добавьте хотя бы один товар перед запросом расстановки')
+
+    const assignedTo = await resolveConfiguredTechnologist(db)
+    const taskId = await upsertLayoutTask(db, {
+      machineId,
+      machineName: machine.name || 'машина',
+      assignedTo,
+    })
+
+    const { data: latestData, error: latestError } = await db
+      .from('machine_layout_requests')
+      .select('version_no')
+      .eq('machine_id', machineId)
+      .order('version_no', { ascending: false })
+      .limit(1)
+
+    if (latestError) throw new Error(latestError.message || 'Не удалось проверить версии расстановки')
+    const latestVersion = ((latestData || []) as Array<{ version_no: number }>)[0]?.version_no || 0
+
+    const payload = {
+      machine_id: machineId,
+      task_id: taskId,
+      requested_by: userId,
+      assigned_to: assignedTo,
+      version_no: latestVersion + 1,
+      status: 'requested',
+      item_snapshot: snapshot.map(serializeSnapshotItem),
+    } satisfies MachineLayoutRequestInsert
+
+    const { error: insertError } = await db.from('machine_layout_requests').insert(payload)
+    if (insertError) throw new Error(insertError.message || 'Не удалось создать версию расстановки')
+
+    await dispatchPendingTelegramDeliveries({ machineId, userId: assignedTo })
+    revalidateLayout(machineId)
+    const data = await loadLayoutPayload(db, machineId)
+    return { success: true, data }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function uploadMachineLayoutPdf(formData: FormData): Promise<ActionResult<MachineLayoutPayload>> {
+  let uploadedPath: string | null = null
+
+  try {
+    const { userId, role } = await getCurrentUserContext()
+    assertRole(role, UPLOAD_ROLES, 'PDF расстановки может загрузить технолог или директор')
+
+    const requestId = String(formData.get('request_id') || '')
+    const file = formData.get('file')
+    if (!requestId) throw new Error('Не найдена версия расстановки')
+    if (!(file instanceof File)) throw new Error('Выберите PDF расстановки')
+    assertPdfFile(file)
+
+    const admin = createAdminClient()
+    const db = dbFrom(admin)
+
+    const { data: requestData, error: requestError } = await db
+      .from('machine_layout_requests')
+      .select('id, machine_id, task_id, assigned_to, status, version_no')
+      .eq('id', requestId)
+      .single()
+
+    if (requestError || !requestData) throw new Error(requestError?.message || 'Версия расстановки не найдена')
+    const request = requestData as Pick<MachineLayoutRequest, 'id' | 'machine_id' | 'task_id' | 'assigned_to' | 'status' | 'version_no'>
+    if (request.status === 'completed') throw new Error('Эта версия уже закрыта. Создайте новый запрос на расстановку.')
+    if (!DIRECTOR_ROLES.includes(role) && request.assigned_to !== userId) {
+      throw new Error('Загрузить PDF может только назначенный технолог')
+    }
+
+    const now = new Date().toISOString()
+    uploadedPath = `machine-layouts/${request.machine_id}/${request.version_no}-${Date.now()}-${randomUUID()}${fileExtension(file.name)}`
+    const { error: uploadError } = await admin.storage.from('product-files').upload(uploadedPath, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || 'application/pdf',
+    })
+    if (uploadError) throw new Error(uploadError.message || 'Не удалось загрузить PDF')
+
+    const updatePayload = {
+      status: 'completed',
+      pdf_file_name: file.name,
+      pdf_file_path: uploadedPath,
+      pdf_mime_type: file.type || 'application/pdf',
+      pdf_file_size: file.size,
+      uploaded_by: userId,
+      uploaded_at: now,
+      completed_at: now,
+      updated_at: now,
+    } satisfies MachineLayoutRequestUpdate
+
+    const { error: updateError } = await db
+      .from('machine_layout_requests')
+      .update(updatePayload)
+      .eq('id', request.id)
+    if (updateError) throw new Error(updateError.message || 'Не удалось сохранить PDF расстановки')
+
+    if (request.task_id) {
+      const { error: taskError } = await db
+        .from('tasks')
+        .update({
+          status: 'completed',
+          completed_at: now,
+          updated_at: now,
+        } satisfies TaskUpdate)
+        .eq('id', request.task_id)
+      if (taskError) throw new Error(taskError.message || 'Не удалось закрыть задачу расстановки')
+    }
+
+    revalidateLayout(request.machine_id)
+    const data = await loadLayoutPayload(db, request.machine_id)
+    return { success: true, data }
+  } catch (error) {
+    if (uploadedPath) {
+      await createAdminClient().storage.from('product-files').remove([uploadedPath]).catch(() => undefined)
+    }
+    return { success: false, error: getErrorMessage(error) }
+  }
+}

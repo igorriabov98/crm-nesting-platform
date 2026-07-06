@@ -1,12 +1,9 @@
 "use client"
 
-import React, { useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { toast } from 'sonner'
+import React, { useMemo } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { InlineEdit } from '@/components/features/shared/InlineEdit'
-import { MachineRequestPanel } from '@/components/features/machines/MachineRequestPanel'
 import { useRole } from '@/lib/hooks/useRole'
 import { differenceInDays, isPast, format } from 'date-fns'
 import { ru } from 'date-fns/locale'
@@ -16,7 +13,6 @@ import {
   updateSupplyItem,
   deleteSupplyItem
 } from '@/lib/actions/supply'
-import { updateMachineMaterialType } from '@/app/(protected)/sales-plan/actions'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,16 +25,13 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Progress } from '@/components/ui/progress'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import type { MachineDetails, MaterialType, OrderItemStatus, RequestStatus, SupplyItem } from '@/lib/types'
+import type { MachineDetails, OrderItemStatus, RequestStatus, SupplyItem } from '@/lib/types'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 
 interface SupplyTabProps {
   machine: MachineDetails
   requestData?: TechnologistRequestPayload | null
-  canManageTechnologistRequests?: boolean
-  canViewSupplyRequest?: boolean
 }
 
 type RequestMaterialRow = {
@@ -59,12 +52,6 @@ const orderStatusBadgeClassName: Record<OrderItemStatus, string> = {
   ordered: 'border-blue-200 bg-blue-50 text-blue-700',
   delivered: 'border-emerald-200 bg-emerald-50 text-emerald-700',
 }
-
-const MATERIAL_TYPE_LABELS = {
-  undefined: 'Не определён',
-  standard: 'Стандартный',
-  non_standard: 'Нестандартный',
-} satisfies Record<MaterialType, string>
 
 function formatAmountValue(value: number | string | null | undefined, maximumFractionDigits = 2) {
   if (value === null || value === undefined || value === '') return '—'
@@ -244,12 +231,8 @@ function buildRequestMaterialRows(requestData?: TechnologistRequestPayload | nul
 export function SupplyTab({
   machine,
   requestData = null,
-  canManageTechnologistRequests = false,
-  canViewSupplyRequest = false,
 }: SupplyTabProps) {
-  const router = useRouter()
   const { isDirector, isEngineer, isTechnologist, isSupplyManager } = useRole()
-  const [isUpdatingMaterialType, setIsUpdatingMaterialType] = useState(false)
 
   const items = machine.supply_items || []
   const requestMaterialRows = useMemo(() => buildRequestMaterialRows(requestData), [requestData])
@@ -259,30 +242,12 @@ export function SupplyTab({
   const percent = totalCount > 0 ? Math.round((receivedCount / totalCount) * 100) : 0
   const showManualItems = items.length > 0 || requestMaterialRows.length === 0
 
-  const canEditMaterialType = isDirector || isTechnologist
-  const materialTypeValue = (machine.material_type || 'undefined') as MaterialType
-  const materialTypeLabel = MATERIAL_TYPE_LABELS[materialTypeValue] ?? MATERIAL_TYPE_LABELS['undefined']
-
   const handleUpdate = async (itemId: string, field: string, value: string | number | boolean | null) => {
     return updateSupplyItem(itemId, { [field]: value }, machine.id)
   }
 
   const handleDelete = async (itemId: string) => {
     return deleteSupplyItem(itemId, machine.id)
-  }
-
-  const handleMaterialTypeChange = async (value: MaterialType | null) => {
-    if (!value) return
-    const nextValue = value
-    setIsUpdatingMaterialType(true)
-    const result = await updateMachineMaterialType(machine.id, nextValue)
-    setIsUpdatingMaterialType(false)
-    if (!result.success) {
-      toast.error(result.error || 'Не удалось обновить тип материала')
-      return
-    }
-    toast.success('Тип материала обновлён')
-    router.refresh()
   }
 
   const statusOptions = [
@@ -321,31 +286,7 @@ export function SupplyTab({
             <p className="mt-1 text-sm text-slate-500">Контроль заказа, сроков и подтверждения поставки.</p>
           </div>
         </div>
-        <div className="w-full sm:w-72">
-          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Тип материала</span>
-          <Select
-            value={materialTypeValue}
-            onValueChange={handleMaterialTypeChange}
-            disabled={!canEditMaterialType || isUpdatingMaterialType}
-          >
-            <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
-              <SelectValue>{materialTypeLabel}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="undefined">{MATERIAL_TYPE_LABELS['undefined']}</SelectItem>
-              <SelectItem value="standard">{MATERIAL_TYPE_LABELS.standard}</SelectItem>
-              <SelectItem value="non_standard">{MATERIAL_TYPE_LABELS.non_standard}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
       </div>
-
-      <MachineRequestPanel
-        machineId={machine.id}
-        requestData={requestData}
-        canManageTechnologistRequests={canManageTechnologistRequests}
-        canViewSupplyRequest={canViewSupplyRequest}
-      />
 
       <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
         <div className="min-w-0">

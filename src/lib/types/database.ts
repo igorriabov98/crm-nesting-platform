@@ -720,6 +720,65 @@ export type Database = {
           updated_at?: string
         }
       }
+      machine_layout_requests: {
+        Row: {
+          id: string
+          machine_id: string
+          task_id: string | null
+          requested_by: string | null
+          assigned_to: string | null
+          version_no: number
+          status: 'requested' | 'completed'
+          item_snapshot: Json
+          pdf_file_name: string | null
+          pdf_file_path: string | null
+          pdf_mime_type: string | null
+          pdf_file_size: number | null
+          uploaded_by: string | null
+          uploaded_at: string | null
+          completed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          machine_id: string
+          task_id?: string | null
+          requested_by?: string | null
+          assigned_to?: string | null
+          version_no: number
+          status?: 'requested' | 'completed'
+          item_snapshot?: Json
+          pdf_file_name?: string | null
+          pdf_file_path?: string | null
+          pdf_mime_type?: string | null
+          pdf_file_size?: number | null
+          uploaded_by?: string | null
+          uploaded_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          machine_id?: string
+          task_id?: string | null
+          requested_by?: string | null
+          assigned_to?: string | null
+          version_no?: number
+          status?: 'requested' | 'completed'
+          item_snapshot?: Json
+          pdf_file_name?: string | null
+          pdf_file_path?: string | null
+          pdf_mime_type?: string | null
+          pdf_file_size?: number | null
+          uploaded_by?: string | null
+          uploaded_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       nesting_batches: {
         Row: {
           id: string
@@ -4005,7 +4064,7 @@ export type Database = {
       outsourcing_transport_plan_state: 'preliminary' | 'confirmed'
       outsourcing_transport_need_status: 'open' | 'linked' | 'completed' | 'cancelled'
       outsourcing_transport_order_status: 'needed' | 'found' | 'in_transit' | 'completed' | 'cancelled'
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'outsourcing_transport'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'outsourcing_transport'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'

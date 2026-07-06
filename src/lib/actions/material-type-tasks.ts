@@ -166,7 +166,7 @@ async function syncMaterialTypeTaskInternal(client: unknown, machineId: string) 
     assigned_to: assignedTo,
     task_type: MATERIAL_TYPE_TASK_TYPE,
     title: `Определить тип материала: ${machineName}`,
-    description: 'Во вкладке "Снабжение" выберите тип материала: стандартный или нестандартный.',
+    description: 'Во вкладке "Технолог" выберите тип материала: стандартный или нестандартный.',
     status: 'pending' satisfies TaskStatus,
     start_date: today,
     deadline: today,

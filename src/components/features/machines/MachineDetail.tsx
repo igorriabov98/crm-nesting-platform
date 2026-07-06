@@ -1,10 +1,10 @@
 "use client"
 
 import React, { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, ClipboardList, Edit, Factory, FileText, MoreHorizontal, Package, Trash2, Truck, WalletCards } from 'lucide-react'
+import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, ClipboardList, Edit, Factory, FileText, MoreHorizontal, Package, Trash2, Truck, WalletCards, Wrench } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -26,6 +26,7 @@ import { ExpensesTab } from './tabs/ExpensesTab'
 import { PackingListTab } from './tabs/PackingListTab'
 import { ProductionTab } from './tabs/ProductionTab'
 import { SupplyTab } from './tabs/SupplyTab'
+import { TechnologistTab } from './tabs/TechnologistTab'
 import { InvoiceTab } from './tabs/InvoiceTab'
 import { OutsourcingTab } from '@/components/features/outsourcing/OutsourcingTab'
 import { MachineTasksPanel } from './MachineTasksPanel'
@@ -45,6 +46,7 @@ import type { FactorySummary, MachineDetails, UserRole } from '@/lib/types'
 import type { TaskWithRelations } from '@/lib/actions/tasks'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 import type { MachineItemNestingState } from '@/lib/actions/machine-item-nesting'
+import type { MachineLayoutPayload } from '@/lib/actions/machine-layout'
 import type { MachineActivityPayload } from '@/lib/actions/machine-activity'
 import type { MachineOutsourcingData } from '@/lib/actions/outsourcing'
 import { ROUTES } from '@/lib/constants/routes'
@@ -56,6 +58,7 @@ interface MachineDetailProps {
   factories: FactorySummary[]
   tasks?: TaskWithRelations[]
   requestData?: TechnologistRequestPayload | null
+  layoutData?: MachineLayoutPayload | null
   nestingStates?: MachineItemNestingState[]
   activity: MachineActivityPayload
   outsourcingData?: MachineOutsourcingData | null
@@ -65,6 +68,7 @@ interface MachineDetailProps {
 }
 
 const machineTabTriggerClassName = 'min-h-11 w-full min-w-0 gap-1.5 whitespace-normal rounded-xl px-2 text-center text-xs font-medium leading-tight text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm sm:text-sm'
+const MACHINE_TAB_VALUES = ['items', 'technologist', 'production', 'outsourcing', 'supply', 'expenses', 'packing', 'invoice']
 
 function DocumentReadinessIndicator({ missingFields }: { missingFields: string[] }) {
   const isReady = missingFields.length === 0
@@ -106,6 +110,7 @@ export function MachineDetail({
   factories,
   tasks = [],
   requestData = null,
+  layoutData = null,
   nestingStates = [],
   activity,
   outsourcingData = null,
@@ -114,6 +119,7 @@ export function MachineDetail({
   canManageNesting = false,
 }: MachineDetailProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { role, isDirector } = useRole()
   
   const [isEditOpen, setIsEditOpen] = useState(false)
@@ -127,6 +133,10 @@ export function MachineDetail({
   const canEditConfirmation = canEdit
   const canDelete = isDirector
   const showInvoiceTab = role && INVOICE_VISIBLE_ROLES.includes(role as UserRole)
+  const tabParam = searchParams.get('tab')
+  const defaultTab = tabParam && MACHINE_TAB_VALUES.includes(tabParam) && (tabParam !== 'invoice' || showInvoiceTab)
+    ? tabParam
+    : 'items'
 
   const createdDate = format(new Date(machine.created_at), 'dd.MM.yyyy', { locale: ru })
   const desiredShipping = getDesiredShippingInfo(machine.desired_shipping_date)
@@ -354,10 +364,10 @@ export function MachineDetail({
 
       <MachineActivityPanel machineId={machine.id} activity={activity} />
 
-      <Tabs defaultValue="items" className="mt-6 w-full">
+      <Tabs defaultValue={defaultTab} className="mt-6 w-full">
         <TabsList className={cn(
           'grid !h-auto w-full grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm sm:grid-cols-3',
-          showInvoiceTab ? 'lg:grid-cols-7' : 'lg:grid-cols-6'
+          showInvoiceTab ? 'lg:grid-cols-8' : 'lg:grid-cols-7'
         )}>
           <TabsTrigger 
             value="items" 
@@ -365,6 +375,13 @@ export function MachineDetail({
           >
             <Package className="h-4 w-4" aria-hidden="true" />
             Товары
+          </TabsTrigger>
+          <TabsTrigger
+            value="technologist"
+            className={machineTabTriggerClassName}
+          >
+            <Wrench className="h-4 w-4" aria-hidden="true" />
+            Технолог
           </TabsTrigger>
           <TabsTrigger 
             value="production" 
@@ -416,6 +433,15 @@ export function MachineDetail({
           <TabsContent value="items" className="outline-none">
             <ItemsTab machine={machine} tasks={tasks} nestingStates={nestingStates} canManageNesting={canManageNesting} />
           </TabsContent>
+          <TabsContent value="technologist" className="outline-none">
+            <TechnologistTab
+              machine={machine}
+              requestData={requestData}
+              layoutData={layoutData}
+              canManageTechnologistRequests={canManageTechnologistRequests}
+              canViewSupplyRequest={canViewSupplyRequest}
+            />
+          </TabsContent>
           <TabsContent value="production" className="outline-none">
             <ProductionTab machine={machine} />
           </TabsContent>
@@ -429,12 +455,7 @@ export function MachineDetail({
             )}
           </TabsContent>
           <TabsContent value="supply" className="outline-none">
-            <SupplyTab
-              machine={machine}
-              requestData={requestData}
-              canManageTechnologistRequests={canManageTechnologistRequests}
-              canViewSupplyRequest={canViewSupplyRequest}
-            />
+            <SupplyTab machine={machine} requestData={requestData} />
           </TabsContent>
           <TabsContent value="expenses" className="outline-none">
             <ExpensesTab machine={machine} />
