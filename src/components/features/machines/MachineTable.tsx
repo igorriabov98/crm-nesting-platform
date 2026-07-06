@@ -747,7 +747,7 @@ export function MachineTable({
                         <tr key={machine.id} className="group">
                           <td className={cn(
                             'sticky left-0 z-20 border-b border-r border-slate-100 bg-white px-4 py-4 align-top shadow-[8px_0_18px_-18px_rgba(15,23,42,0.7)] group-hover:bg-blue-50/40',
-                            !machine.is_confirmed && 'bg-amber-50/70 group-hover:bg-amber-50'
+                            !machine.is_confirmed && 'bg-amber-50 group-hover:bg-amber-50'
                           )}>
                             <Link
                               href={`${ROUTES.SALES_PLAN}/${machine.id}`}
