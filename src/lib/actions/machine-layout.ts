@@ -124,6 +124,7 @@ const MAX_PDF_SIZE = 50 * 1024 * 1024
 
 const REQUEST_ROLES: UserRole[] = ['sales_manager', ...DIRECTOR_ROLES]
 const UPLOAD_ROLES: UserRole[] = ['technologist', ...DIRECTOR_ROLES]
+const LAYOUT_ASSIGNEE_ROLES: UserRole[] = UPLOAD_ROLES
 
 function dbFrom(client: unknown): LooseDb {
   return client as LooseDb
@@ -405,26 +406,39 @@ async function resolveConfiguredTechnologist(db: LooseDb) {
     .from('company_settings')
     .select('auto_task_technologist_user_id')
     .eq('id', SETTINGS_ID)
-    .single()
+    .maybeSingle()
 
   if (settingsError) throw new Error(settingsError.message || 'Не удалось загрузить ответственного технолога')
   const configuredId = (settingsData as { auto_task_technologist_user_id?: string | null } | null)
     ?.auto_task_technologist_user_id || null
-  if (!configuredId) throw new Error('В настройках компании выберите ответственного технолога')
 
-  const { data: userData, error: userError } = await db
-    .from('users')
-    .select('id, is_active, role')
-    .eq('id', configuredId)
-    .single()
+  if (configuredId) {
+    const { data: userData, error: userError } = await db
+      .from('users')
+      .select('id, is_active, role')
+      .eq('id', configuredId)
+      .maybeSingle()
 
-  if (userError || !userData) throw new Error('Ответственный технолог из настроек не найден')
-  const user = userData as { id: string; is_active: boolean | null; role: UserRole | null }
-  if (user.is_active === false || user.role !== 'technologist') {
-    throw new Error('Ответственный технолог из настроек неактивен или имеет другую роль')
+    if (userError) throw new Error(userError.message || 'Не удалось проверить ответственного технолога')
+    const user = userData as { id: string; is_active: boolean | null; role: UserRole | null } | null
+    if (user && user.is_active !== false && user.role && LAYOUT_ASSIGNEE_ROLES.includes(user.role)) {
+      return user.id
+    }
   }
 
-  return user.id
+  const { data: fallbackData, error: fallbackError } = await db
+    .from('users')
+    .select('id')
+    .eq('role', 'technologist')
+    .eq('is_active', true)
+    .order('full_name', { ascending: true })
+    .limit(1)
+
+  if (fallbackError) throw new Error(fallbackError.message || 'Не удалось найти активного технолога')
+  const fallbackId = ((fallbackData || []) as Array<{ id: string }>)[0]?.id || null
+  if (!fallbackId) throw new Error('В настройках компании выберите ответственного технолога или добавьте активного пользователя с ролью технолога')
+
+  return fallbackId
 }
 
 async function upsertLayoutTask(db: LooseDb, input: {
