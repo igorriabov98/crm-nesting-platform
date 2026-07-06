@@ -28,7 +28,6 @@ export default async function MachineDetailPage({
   const permissions = permissionDetails.permissions
   const [
     { data: machine, error },
-    { data: tasks },
     { data: requestData },
     layoutResult,
     nestingStatesResult,
@@ -37,7 +36,6 @@ export default async function MachineDetailPage({
     { data: factories },
   ] = await Promise.all([
     getMachine(id),
-    getTasksByMachine(id),
     getRequest(id),
     getMachineLayout(id),
     getMachineItemNestingStates(id),
@@ -49,6 +47,8 @@ export default async function MachineDetailPage({
   if (error || !machine) {
     notFound()
   }
+
+  const { data: tasks } = await getTasksByMachine(id)
 
   const activity: MachineActivityPayload = activityResult.data || {
     updates: [],

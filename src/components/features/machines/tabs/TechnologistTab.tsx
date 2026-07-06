@@ -56,6 +56,9 @@ function formatQuantity(value: number) {
 
 function LayoutStatusBadge({ version }: { version: MachineLayoutVersion | null }) {
   if (!version) return <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">Нет запроса</Badge>
+  if (version.isSupersededBeforePdf) {
+    return <Badge variant="outline" className="border-slate-200 bg-slate-100 text-slate-600">Номенклатура изменилась</Badge>
+  }
   if (version.status === 'completed') {
     return <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">PDF загружен</Badge>
   }
@@ -159,7 +162,11 @@ function VersionHistory({ versions }: { versions: MachineLayoutVersion[] }) {
               <div className="font-medium text-slate-900">Версия {version.versionNo}</div>
               <div className="text-sm text-slate-500">
                 Запрос: {formatDateTime(version.createdAt)}
-                {version.completedAt ? ` · PDF: ${formatDateTime(version.completedAt)}` : ''}
+                {version.isSupersededBeforePdf && version.completedAt
+                  ? ` · Закрыта: номенклатура изменилась ${formatDateTime(version.completedAt)}`
+                  : version.completedAt
+                  ? ` · PDF: ${formatDateTime(version.completedAt)}`
+                  : ''}
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">

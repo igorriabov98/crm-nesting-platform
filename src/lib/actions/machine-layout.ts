@@ -67,6 +67,7 @@ export type MachineLayoutVersion = {
   taskId: string | null
   versionNo: number
   status: 'requested' | 'completed'
+  isSupersededBeforePdf: boolean
   requestedBy: string | null
   assignedTo: string | null
   items: MachineLayoutSnapshotItem[]
@@ -116,6 +117,7 @@ type ProductFileRow = {
 type TaskRow = {
   id: string
   status: TaskStatus
+  assigned_to: string
 }
 
 const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
@@ -336,6 +338,32 @@ function buildDiff(current: MachineLayoutSnapshotItem[], previous: MachineLayout
   return diff
 }
 
+function snapshotComparableItem(item: MachineLayoutSnapshotItem) {
+  return [
+    item.machineItemId,
+    item.productId || '',
+    item.productProjectId || '',
+    item.productProjectVersionId || '',
+    item.productName,
+    item.drawingNumber,
+    item.quantity,
+    item.sortOrder,
+    item.drawingFileSource || '',
+    item.drawingFileId || '',
+  ].join('|')
+}
+
+function snapshotsEqual(left: MachineLayoutSnapshotItem[], right: MachineLayoutSnapshotItem[]) {
+  if (left.length !== right.length) return false
+  const leftKeys = left.map(snapshotComparableItem).sort()
+  const rightKeys = right.map(snapshotComparableItem).sort()
+  return leftKeys.every((key, index) => key === rightKeys[index])
+}
+
+function isPreparedLayout(row: MachineLayoutRequest) {
+  return row.status === 'completed' && Boolean(row.pdf_file_path)
+}
+
 function normalizeVersion(row: MachineLayoutRequest, diff: MachineLayoutDiffItem[]): MachineLayoutVersion {
   const items = normalizeStoredItems(row.item_snapshot)
   return {
@@ -344,6 +372,7 @@ function normalizeVersion(row: MachineLayoutRequest, diff: MachineLayoutDiffItem
     taskId: row.task_id,
     versionNo: row.version_no,
     status: row.status,
+    isSupersededBeforePdf: row.status === 'completed' && !row.pdf_file_path,
     requestedBy: row.requested_by,
     assignedTo: row.assigned_to,
     items,
@@ -372,9 +401,7 @@ function serializeSnapshotItem(item: MachineLayoutSnapshotItem) {
   }
 }
 
-async function loadLayoutPayload(db: LooseDb, machineId: string): Promise<MachineLayoutPayload> {
-  const machine = await loadMachine(db, machineId)
-  const currentItems = await buildCurrentSnapshot(db, machine)
+async function loadLayoutRows(db: LooseDb, machineId: string) {
   const { data, error } = await db
     .from('machine_layout_requests')
     .select('*')
@@ -382,15 +409,29 @@ async function loadLayoutPayload(db: LooseDb, machineId: string): Promise<Machin
     .order('version_no', { ascending: false })
 
   if (error) throw new Error(error.message || 'Не удалось загрузить расстановки машины')
+  return (data || []) as MachineLayoutRequest[]
+}
 
-  const rows = ((data || []) as MachineLayoutRequest[])
+async function loadLayoutPayload(db: LooseDb, machineId: string): Promise<MachineLayoutPayload> {
+  const machine = await loadMachine(db, machineId)
+  const currentItems = await buildCurrentSnapshot(db, machine)
+  const rows = machine.is_archived
+    ? await loadLayoutRows(db, machineId)
+    : await syncOpenLayoutRequest(db, machine, currentItems, await loadLayoutRows(db, machineId))
+
   const rowsAsc = [...rows].sort((left, right) => left.version_no - right.version_no)
   const diffById = new Map<string, MachineLayoutDiffItem[]>()
+  let previousItems: MachineLayoutSnapshotItem[] = []
+  let previousPreparedItems: MachineLayoutSnapshotItem[] = []
 
   for (let index = 0; index < rowsAsc.length; index += 1) {
     const current = normalizeStoredItems(rowsAsc[index].item_snapshot)
-    const previous = index > 0 ? normalizeStoredItems(rowsAsc[index - 1].item_snapshot) : []
-    diffById.set(rowsAsc[index].id, index > 0 ? buildDiff(current, previous) : [])
+    const baseline = previousPreparedItems.length > 0
+      ? previousPreparedItems
+      : previousItems
+    diffById.set(rowsAsc[index].id, baseline.length > 0 ? buildDiff(current, baseline) : [])
+    if (isPreparedLayout(rowsAsc[index])) previousPreparedItems = current
+    previousItems = current
   }
 
   const versions = rows.map((row) => normalizeVersion(row, diffById.get(row.id) || []))
@@ -463,9 +504,33 @@ async function upsertLayoutTask(db: LooseDb, input: {
     updated_at: now,
   } satisfies TaskInsert & TaskUpdate
 
+  const { data: activeData, error: activeError } = await db
+    .from('tasks')
+    .select('id, status, assigned_to')
+    .eq('machine_id', input.machineId)
+    .eq('task_type', MACHINE_LAYOUT_TASK_TYPE)
+    .in('status', ['pending', 'in_progress'])
+    .order('created_at', { ascending: false })
+
+  if (activeError) throw new Error(activeError.message || 'Не удалось проверить задачу расстановки')
+
+  const activeTasks = (activeData || []) as TaskRow[]
+  const staleTaskIds = activeTasks
+    .filter((task) => task.assigned_to !== input.assignedTo)
+    .map((task) => task.id)
+
+  if (staleTaskIds.length > 0) {
+    const { error } = await db
+      .from('tasks')
+      .update({ status: 'cancelled', updated_at: now } satisfies TaskUpdate)
+      .in('id', staleTaskIds)
+
+    if (error) throw new Error(error.message || 'Не удалось отменить старые задачи расстановки')
+  }
+
   const { data: existingData, error: existingError } = await db
     .from('tasks')
-    .select('id, status')
+    .select('id, status, assigned_to')
     .eq('machine_id', input.machineId)
     .eq('assigned_to', input.assignedTo)
     .eq('task_type', MACHINE_LAYOUT_TASK_TYPE)
@@ -498,17 +563,106 @@ async function upsertLayoutTask(db: LooseDb, input: {
   return (insertedData as { id: string }).id
 }
 
-async function findOpenLayoutRequest(db: LooseDb, machineId: string) {
-  const { data, error } = await db
-    .from('machine_layout_requests')
-    .select('id, version_no')
-    .eq('machine_id', machineId)
-    .eq('status', 'requested')
-    .order('version_no', { ascending: false })
-    .limit(1)
+async function createLayoutRequest(db: LooseDb, input: {
+  machineId: string
+  taskId: string
+  requestedBy: string | null
+  assignedTo: string
+  versionNo: number
+  snapshot: MachineLayoutSnapshotItem[]
+}) {
+  const payload = {
+    machine_id: input.machineId,
+    task_id: input.taskId,
+    requested_by: input.requestedBy,
+    assigned_to: input.assignedTo,
+    version_no: input.versionNo,
+    status: 'requested',
+    item_snapshot: input.snapshot.map(serializeSnapshotItem),
+  } satisfies MachineLayoutRequestInsert
 
-  if (error) throw new Error(error.message || 'Не удалось проверить текущую расстановку')
-  return ((data || []) as Array<{ id: string; version_no: number }>)[0] || null
+  const { error } = await db.from('machine_layout_requests').insert(payload)
+  if (error) throw new Error(error.message || 'Не удалось создать версию расстановки')
+}
+
+async function closeOpenLayoutRequests(db: LooseDb, openRows: MachineLayoutRequest[]) {
+  const ids = openRows.map((row) => row.id)
+  if (ids.length === 0) return
+
+  const now = new Date().toISOString()
+  const { error } = await db
+    .from('machine_layout_requests')
+    .update({
+      status: 'completed',
+      task_id: null,
+      completed_at: now,
+      updated_at: now,
+    } satisfies MachineLayoutRequestUpdate)
+    .in('id', ids)
+
+  if (error) throw new Error(error.message || 'Не удалось закрыть устаревшую расстановку')
+}
+
+async function syncOpenLayoutRequest(
+  db: LooseDb,
+  machine: MachineRow,
+  currentItems: MachineLayoutSnapshotItem[],
+  rows: MachineLayoutRequest[],
+) {
+  if (currentItems.length === 0) return rows
+
+  const openRows = rows
+    .filter((row) => row.status === 'requested')
+    .sort((left, right) => right.version_no - left.version_no)
+  if (openRows.length === 0) return rows
+
+  const latestOpen = openRows[0]
+  const latestOpenItems = normalizeStoredItems(latestOpen.item_snapshot)
+  const assignedTo = await resolveConfiguredTechnologist(db)
+
+  if (snapshotsEqual(currentItems, latestOpenItems)) {
+    if (latestOpen.assigned_to === assignedTo) return rows
+
+    const taskId = await upsertLayoutTask(db, {
+      machineId: machine.id,
+      machineName: machine.name || 'машина',
+      assignedTo,
+    })
+
+    const { error } = await db
+      .from('machine_layout_requests')
+      .update({
+        task_id: taskId,
+        assigned_to: assignedTo,
+        updated_at: new Date().toISOString(),
+      } satisfies MachineLayoutRequestUpdate)
+      .eq('id', latestOpen.id)
+
+    if (error) throw new Error(error.message || 'Не удалось обновить ответственного за расстановку')
+    await dispatchPendingTelegramDeliveries({ machineId: machine.id, userId: assignedTo })
+    return loadLayoutRows(db, machine.id)
+  }
+
+  await closeOpenLayoutRequests(db, openRows)
+
+  const taskId = await upsertLayoutTask(db, {
+    machineId: machine.id,
+    machineName: machine.name || 'машина',
+    assignedTo,
+  })
+  const nextVersionNo = Math.max(0, ...rows.map((row) => row.version_no)) + 1
+
+  await createLayoutRequest(db, {
+    machineId: machine.id,
+    taskId,
+    requestedBy: latestOpen.requested_by,
+    assignedTo,
+    versionNo: nextVersionNo,
+    snapshot: currentItems,
+  })
+  await dispatchPendingTelegramDeliveries({ machineId: machine.id, userId: assignedTo })
+
+  return loadLayoutRows(db, machine.id)
 }
 
 function assertPdfFile(file: File) {
@@ -553,9 +707,18 @@ export async function requestMachineLayout(machineId: string): Promise<ActionRes
     const snapshot = await buildCurrentSnapshot(db, machine)
     if (snapshot.length === 0) throw new Error('Добавьте хотя бы один товар перед запросом расстановки')
 
-    const openRequest = await findOpenLayoutRequest(db, machineId)
-    if (openRequest) {
-      throw new Error(`Расстановка версии ${openRequest.version_no} уже ожидает PDF. Загрузите PDF перед новым запросом.`)
+    const rows = await loadLayoutRows(db, machineId)
+    const openRows = rows
+      .filter((row) => row.status === 'requested')
+      .sort((left, right) => right.version_no - left.version_no)
+    const latestOpen = openRows[0] || null
+
+    if (latestOpen && snapshotsEqual(snapshot, normalizeStoredItems(latestOpen.item_snapshot))) {
+      throw new Error(`Расстановка версии ${latestOpen.version_no} уже ожидает PDF. Загрузите PDF перед новым запросом.`)
+    }
+
+    if (openRows.length > 0) {
+      await closeOpenLayoutRequests(db, openRows)
     }
 
     const assignedTo = await resolveConfiguredTechnologist(db)
@@ -565,28 +728,14 @@ export async function requestMachineLayout(machineId: string): Promise<ActionRes
       assignedTo,
     })
 
-    const { data: latestData, error: latestError } = await db
-      .from('machine_layout_requests')
-      .select('version_no')
-      .eq('machine_id', machineId)
-      .order('version_no', { ascending: false })
-      .limit(1)
-
-    if (latestError) throw new Error(latestError.message || 'Не удалось проверить версии расстановки')
-    const latestVersion = ((latestData || []) as Array<{ version_no: number }>)[0]?.version_no || 0
-
-    const payload = {
-      machine_id: machineId,
-      task_id: taskId,
-      requested_by: userId,
-      assigned_to: assignedTo,
-      version_no: latestVersion + 1,
-      status: 'requested',
-      item_snapshot: snapshot.map(serializeSnapshotItem),
-    } satisfies MachineLayoutRequestInsert
-
-    const { error: insertError } = await db.from('machine_layout_requests').insert(payload)
-    if (insertError) throw new Error(insertError.message || 'Не удалось создать версию расстановки')
+    await createLayoutRequest(db, {
+      machineId,
+      taskId,
+      requestedBy: userId,
+      assignedTo,
+      versionNo: Math.max(0, ...rows.map((row) => row.version_no)) + 1,
+      snapshot,
+    })
 
     await dispatchPendingTelegramDeliveries({ machineId, userId: assignedTo })
     revalidateLayout(machineId)
