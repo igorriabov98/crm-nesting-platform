@@ -15,6 +15,11 @@ assert.equal(
   true,
   'rotated dimensions with matching area/aspect should pass'
 );
+const rotatedSafe = applyDimensionGuard({}, { name: 'Ножка СТВ-300', width: 100, height: 136.2 }, 135.59, 100);
+assert.equal(rotatedSafe.dimensionsApplied, true);
+assert.equal(rotatedSafe.mismatch, false);
+assert.equal(rotatedSafe.data.width, 100);
+assert.equal(rotatedSafe.data.height, 135.59);
 assert.equal(
   isDimensionChangeSafe({ name: 'Ванна СТВ-300', width: 1100, height: 650 }, 1340, 890),
   false,

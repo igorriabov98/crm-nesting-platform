@@ -61,6 +61,7 @@ export async function analyzeProjectPdf(input: {
       thickness: true,
       width: true,
       height: true,
+      contourStale: true,
       contour: true,
       bboxSizeX: true,
       bboxSizeY: true,
@@ -200,6 +201,9 @@ async function autoApplyMatches(
       : null;
     if (dimensionGuard) {
       Object.assign(data, dimensionGuard.data);
+      if (dimensionGuard.dimensionsApplied) {
+        data.contourStale = false;
+      }
     }
     if (dimensionGuard?.mismatch) {
       match.applyStatus = 'needs_force';

@@ -70,11 +70,12 @@ export function applyDimensionGuard<T extends Record<string, unknown>>(
   }
 
   if (isDimensionChangeSafe(part, newWidth, newHeight) || options.force === true) {
+    const oriented = orientDimensionsLikePart(part, newWidth, newHeight);
     return {
       data: {
         ...data,
-        width: newWidth,
-        height: newHeight,
+        width: oriented.width,
+        height: oriented.height,
         dimensionMismatch: false,
         mismatchNote: null,
       },
@@ -213,6 +214,19 @@ function normalizedAspect(width: number, height: number): number {
   }
 
   return Math.max(width, height) / Math.min(width, height);
+}
+
+function orientDimensionsLikePart(part: DimensionedPart, newWidth: number, newHeight: number): { width: number; height: number } {
+  const directDelta = sidePairDelta(part.width, part.height, newWidth, newHeight);
+  const swappedDelta = sidePairDelta(part.width, part.height, newHeight, newWidth);
+
+  return swappedDelta < directDelta
+    ? { width: newHeight, height: newWidth }
+    : { width: newWidth, height: newHeight };
+}
+
+function sidePairDelta(currentWidth: number, currentHeight: number, nextWidth: number, nextHeight: number): number {
+  return ratioDelta(currentWidth, nextWidth) + ratioDelta(currentHeight, nextHeight);
 }
 
 function isPositiveFinite(value: unknown): value is number {

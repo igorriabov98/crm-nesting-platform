@@ -20,6 +20,7 @@ export type AIApplySnapshot = {
   quantity: number;
   width: number;
   height: number;
+  contourStale: boolean;
   isSheetMetal: boolean;
   hasBends: boolean;
   classificationMethod: string | null;
@@ -38,6 +39,7 @@ export type SnapshotPart = {
   quantity: number;
   width: number;
   height: number;
+  contourStale?: boolean | null;
   isSheetMetal: boolean;
   hasBends: boolean;
   classificationMethod: string | null;
@@ -57,6 +59,7 @@ export function buildAIApplySnapshot(
     quantity: part.quantity,
     width: part.width,
     height: part.height,
+    contourStale: part.contourStale === true,
     isSheetMetal: part.isSheetMetal,
     hasBends: part.hasBends,
     classificationMethod: part.classificationMethod,
@@ -91,6 +94,7 @@ export function parseAIApplySnapshot(value: unknown): AIApplySnapshot | null {
     quantity: candidate.quantity,
     width: candidate.width,
     height: candidate.height,
+    contourStale: candidate.contourStale === true,
     isSheetMetal: candidate.isSheetMetal,
     hasBends: candidate.hasBends === true,
     classificationMethod: typeof candidate.classificationMethod === 'string' ? candidate.classificationMethod : null,
@@ -111,6 +115,7 @@ export function buildRestorePartData(snapshot: AIApplySnapshot): Prisma.PartUpda
     quantity: snapshot.quantity,
     width: snapshot.width,
     height: snapshot.height,
+    contourStale: snapshot.contourStale,
     isSheetMetal: snapshot.isSheetMetal,
     hasBends: snapshot.hasBends,
     classificationMethod: snapshot.classificationMethod,

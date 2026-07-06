@@ -31,6 +31,7 @@ const partListSelect = {
   meshArea: true,
   facesCount: true,
   contourSource: true,
+  contourStale: true,
   quantity: true,
   isSheetMetal: true,
   grainLock: true,

@@ -90,7 +90,7 @@ export function AIAnalysisPanel({
       setSelected(Object.fromEntries(
         (result?.matches || [])
           .filter((match) => isProposed(match))
-          .map((match) => [match.partId, true])
+          .map((match) => [match.partId, isDefaultSelected(match)])
       ))
     } catch (error) {
       setSpecificationError(error instanceof Error ? error.message : 'Не удалось загрузить PDF-спецификацию')
@@ -138,7 +138,7 @@ export function AIAnalysisPanel({
       setSelected(Object.fromEntries(
         result.matches
           .filter((match) => isProposed(match))
-          .map((match) => [match.partId, true])
+          .map((match) => [match.partId, isDefaultSelected(match)])
       ))
       await onReloadParts()
       await loadSpecification()
@@ -550,7 +550,7 @@ export function AIAnalysisPanel({
                 )}
 
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={applySelected} disabled={isApplying || selectedProposedMatches.length === 0}>
+                  <Button type="button" onClick={applySelected} disabled={isApplying || proposedMatches.length === 0}>
                     {isApplying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Применить выбранные
                   </Button>
@@ -623,6 +623,10 @@ function ApplyStatusBadge({ match }: { match: AIMatchResult }) {
   }
 
   if (hasSuggestion(match)) {
+    if (match.matchConfidence < 0.8) {
+      return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Низкая уверенность</Badge>
+    }
+
     return <Badge variant="outline">Предложено</Badge>
   }
 
@@ -659,6 +663,10 @@ function canForce(match: AIMatchResult, part: NestingPart | undefined) {
   const hasBlockedThickness = match.thicknessMismatch && typeof match.suggestedThickness === 'number'
   const hasBlockedDimensions = part.dimensionMismatch && typeof match.suggestedUnfoldingWidth === 'number' && typeof match.suggestedUnfoldingHeight === 'number'
   return match.applyStatus === 'needs_force' || hasBlockedThickness || hasBlockedDimensions
+}
+
+function isDefaultSelected(match: AIMatchResult) {
+  return match.matchConfidence >= 0.8
 }
 
 function countSuggestedFields(match: AIMatchResult) {

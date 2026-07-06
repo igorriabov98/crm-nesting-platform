@@ -158,9 +158,28 @@ function selectStartFlange(
   return endpoints.sort(
     (left, right) =>
       left.width - right.width ||
-      left.holes.length - right.holes.length ||
+      left.length - right.length ||
+      compareVec(left.uAxis, right.uAxis) ||
+      compareVec(left.vAxis, right.vAxis) ||
+      compareVec(left.localOrigin, right.localOrigin) ||
       left.id - right.id
   )[0];
+}
+
+function compareVec(
+  left: { x: number; y: number; z: number },
+  right: { x: number; y: number; z: number }
+): number {
+  return (
+    compareNumber(left.x, right.x) ||
+    compareNumber(left.y, right.y) ||
+    compareNumber(left.z, right.z)
+  );
+}
+
+function compareNumber(left: number, right: number): number {
+  const delta = left - right;
+  return Math.abs(delta) <= 1e-6 ? 0 : delta;
 }
 
 function shouldFlipFlangeForUnfold(item: OrderedFlange): boolean {
