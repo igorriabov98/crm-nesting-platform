@@ -68,6 +68,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   supply_start: 'Снабжение',
   technologist_request: 'Заявка технолога',
   engineer_confirm: 'Чертежи',
+  material_type_selection: 'Тип материала',
   agenda_pool_distribution: 'Пул повесток',
   meeting_unresolved_agenda: 'Повестка собрания',
   meeting_action_item: 'Задача собрания',
@@ -236,6 +237,7 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (isSupplyReceiptTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (isCuttingRollbackTask(taskType)) return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (isProductionPlanDateChangeTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
+  if (taskType === 'material_type_selection') return 'border-cyan-200 bg-cyan-50 text-cyan-700 shadow-sm'
   if (taskType === 'outsourcing_transport') return 'border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }

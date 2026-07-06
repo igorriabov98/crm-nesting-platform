@@ -1,20 +1,21 @@
 "use client"
 
 import React, { useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { InlineEdit } from '@/components/features/shared/InlineEdit'
 import { useRole } from '@/lib/hooks/useRole'
 import { differenceInDays, isPast, format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { Loader2, PackagePlus, Plus, Trash2, Truck } from 'lucide-react'
+import { PackagePlus, Trash2, Truck } from 'lucide-react'
 import { CHAIN_CORD_SUBTYPE_LABELS, ORDER_STATUS_LABELS, PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import {
-  createSupplyItem,
   updateSupplyItem,
   deleteSupplyItem
 } from '@/lib/actions/supply'
+import { updateMachineMaterialType } from '@/app/(protected)/sales-plan/actions'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,8 +28,9 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Progress } from '@/components/ui/progress'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import type { MachineDetails, OrderItemStatus, RequestStatus, SupplyItem } from '@/lib/types'
+import type { MachineDetails, MaterialType, OrderItemStatus, RequestStatus, SupplyItem } from '@/lib/types'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 
 interface SupplyTabProps {
@@ -231,8 +233,9 @@ function buildRequestMaterialRows(requestData?: TechnologistRequestPayload | nul
 }
 
 export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
+  const router = useRouter()
   const { isDirector, isEngineer, isTechnologist, isSupplyManager } = useRole()
-  const [isCreating, setIsCreating] = useState(false)
+  const [isUpdatingMaterialType, setIsUpdatingMaterialType] = useState(false)
 
   const items = machine.supply_items || []
   const requestMaterialRows = useMemo(() => buildRequestMaterialRows(requestData), [requestData])
@@ -242,7 +245,8 @@ export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
   const percent = totalCount > 0 ? Math.round((receivedCount / totalCount) * 100) : 0
   const showManualItems = items.length > 0 || requestMaterialRows.length === 0
 
-  const canCreate = isDirector || isTechnologist || isSupplyManager
+  const canEditMaterialType = isDirector || isTechnologist
+  const materialTypeValue = (machine.material_type || 'undefined') as MaterialType
 
   const handleUpdate = async (itemId: string, field: string, value: string | number | boolean | null) => {
     return updateSupplyItem(itemId, { [field]: value }, machine.id)
@@ -252,10 +256,18 @@ export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
     return deleteSupplyItem(itemId, machine.id)
   }
 
-  const handleAdd = async () => {
-    setIsCreating(true)
-    await createSupplyItem(machine.id, { nomenclature: 'Новая позиция' })
-    setIsCreating(false)
+  const handleMaterialTypeChange = async (value: MaterialType | null) => {
+    if (!value) return
+    const nextValue = value
+    setIsUpdatingMaterialType(true)
+    const result = await updateMachineMaterialType(machine.id, nextValue)
+    setIsUpdatingMaterialType(false)
+    if (!result.success) {
+      toast.error(result.error || 'Не удалось обновить тип материала')
+      return
+    }
+    toast.success('Тип материала обновлён')
+    router.refresh()
   }
 
   const statusOptions = [
@@ -294,12 +306,23 @@ export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
             <p className="mt-1 text-sm text-slate-500">Контроль заказа, сроков и подтверждения поставки.</p>
           </div>
         </div>
-        {canCreate && (
-          <Button onClick={handleAdd} disabled={isCreating} className="min-h-11 bg-blue-950 text-white hover:bg-blue-900">
-            {isCreating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-            Добавить позицию
-          </Button>
-        )}
+        <div className="w-full sm:w-72">
+          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Тип материала</span>
+          <Select
+            value={materialTypeValue}
+            onValueChange={handleMaterialTypeChange}
+            disabled={!canEditMaterialType || isUpdatingMaterialType}
+          >
+            <SelectTrigger className="h-11 border-slate-200 bg-slate-50">
+              <SelectValue placeholder="Не определён" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="undefined">Не определён</SelectItem>
+              <SelectItem value="standard">Стандартный</SelectItem>
+              <SelectItem value="non_standard">Нестандартный</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
@@ -583,7 +606,7 @@ export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
               <PackagePlus className="h-5 w-5" aria-hidden="true" />
             </div>
             <h3 className="mt-3 font-semibold text-slate-950">Позиции снабжения не добавлены</h3>
-            <p className="mt-1 max-w-sm text-sm leading-6 text-slate-500">Добавьте первую позицию, чтобы контролировать заказ и сроки поставки.</p>
+            <p className="mt-1 max-w-sm text-sm leading-6 text-slate-500">Материалы появятся здесь после передачи заявки в снабжение.</p>
           </div>
         ) : (
           items.map((item: SupplyItem, idx: number) => {

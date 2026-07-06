@@ -9,6 +9,7 @@ import { requirePermission } from '@/lib/permissions/server'
 import { dispatchPendingTelegramDeliveries, notifyNewTasks } from '@/lib/services/task-notifications'
 import { createMachineSchema, machineExpenseSchema, machineItemSchema, machinePackingSettingsSchema } from '@/lib/types/schemas'
 import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
+import { syncMaterialTypeTask } from '@/lib/actions/material-type-tasks'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { isMachineInConfirmedProductionPlan, notifyMachineEnteredReadyProductionPlan } from '@/lib/actions/production-plan'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
@@ -17,13 +18,14 @@ import { loadClientProductPriceLookup, resolveClientProductPrice, type ClientPri
 import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { CreateMachineInput, MachinePackingSettingsInput, UpdateMachineInput } from '@/lib/types/schemas'
-import type { CoatingType, CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, Product } from '@/lib/types'
+import type { CoatingType, CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, MaterialType, Product } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
 
 const machineItemActionSchema = machineItemSchema.strict()
 const machineItemUpdateSchema = machineItemSchema.partial().strict()
 const machineExpenseActionSchema = machineExpenseSchema.strict()
 const machineExpenseUpdateSchema = machineExpenseSchema.partial().strict()
+const materialTypeActionSchema = z.enum(['standard', 'non_standard', 'undefined'])
 const machineDocumentFieldsSchema = z.object({
   contract_id: z.string().uuid().optional().nullable(),
   specification_number: z.string().trim().min(1, 'Укажите номер инвойса / спецификации'),
@@ -1131,9 +1133,8 @@ export async function createMachine(data: CreateMachineInput) {
     await notifyProductionManagersAboutFactoryAssignment(supabase, parsed.factory_id, machineId, newMachine.name)
     await createPlanningDirectorReviewTasks(db, machineId, newMachine.name)
     await notifyMachineEnteredReadyProductionPlan(machineId, user.id)
-    if (parsed.desired_shipping_date) {
-      await syncTransportCostTask(db, machineId)
-    }
+    await syncTransportCostTask(db, machineId)
+    await syncMaterialTypeTask(db, machineId)
     await refreshMaterialUndefinedAgenda(supabase, 'undefined')
     await dispatchPendingTelegramDeliveries({ machineId })
 
@@ -1244,6 +1245,41 @@ export async function updateMachinePackingSettings(machineId: string, data: Mach
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${parsedMachineId}`)
+
+    return { success: true, error: null }
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function updateMachineMaterialType(machineId: string, materialType: MaterialType) {
+  try {
+    const { supabase, db, user } = await requireSalesPlanPermission('manage')
+    requireMachineMutationAccess(user)
+    const parsedMachineId = machineIdSchema.parse(machineId)
+    const parsedMaterialType = materialTypeActionSchema.parse(materialType)
+
+    await assertMachineNotArchived(db, parsedMachineId)
+
+    const { error } = await db
+      .from('machines')
+      .update({
+        material_type: parsedMaterialType,
+        updated_at: new Date().toISOString(),
+      } satisfies MachineUpdate)
+      .eq('id', parsedMachineId)
+
+    if (error) throw error
+
+    await syncMaterialTypeTask(db, parsedMachineId)
+    await refreshMaterialUndefinedAgenda(supabase, parsedMaterialType)
+    await notifyNewTasks(parsedMachineId)
+
+    revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(`${ROUTES.SALES_PLAN}/${parsedMachineId}`)
+    revalidatePath(ROUTES.TASKS)
+    revalidatePath(ROUTES.PRODUCTION)
+    revalidatePath(ROUTES.GANTT)
 
     return { success: true, error: null }
   } catch (error: unknown) {
@@ -1389,9 +1425,6 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
         .eq('id', id)
       
       if (error) throw error
-      if (data.desired_shipping_date !== undefined) {
-        await syncTransportCostTask(db, id)
-      }
       if (data.actual_shipping_date) {
         const promotion = await promoteShippedProjectSamplesToProducts(id)
         if (!promotion.success) throw new Error(promotion.error || 'Не удалось добавить изготовленный образец в базу продукции')
@@ -1581,6 +1614,24 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
       }
     }
 
+    if (
+      data.items !== undefined ||
+      data.deletedItemIds !== undefined ||
+      data.is_confirmed !== undefined ||
+      data.material_type !== undefined
+    ) {
+      await syncMaterialTypeTask(db, id)
+      await notifyNewTasks(id)
+    }
+
+    if (
+      data.expenses !== undefined ||
+      data.deletedExpenseIds !== undefined ||
+      data.desired_shipping_date !== undefined
+    ) {
+      await syncTransportCostTask(db, id)
+    }
+
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${id}`)
     revalidatePath(ROUTES.TASKS)
@@ -1683,6 +1734,8 @@ export async function addMachineItem(machineId: string, data: unknown) {
       const { error } = await db.from('machine_items').insert(projectSampleItemPayload(machineId, parsed, sample, 0))
       if (error) throw error
       await syncCoatingDependentProductionStages(db, machineId)
+      await syncMaterialTypeTask(db, machineId)
+      await notifyNewTasks(machineId)
       revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
       revalidatePath(ROUTES.PRODUCTION)
       revalidatePath(ROUTES.GANTT)
@@ -1706,6 +1759,8 @@ export async function addMachineItem(machineId: string, data: unknown) {
     const { error } = await db.from('machine_items').insert(productBackedItemPayload(machineId, parsed, product, priceEur, 0))
     if (error) throw error
     await syncCoatingDependentProductionStages(db, machineId)
+    await syncMaterialTypeTask(db, machineId)
+    await notifyNewTasks(machineId)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
     revalidatePath(ROUTES.PRODUCTION)
     revalidatePath(ROUTES.GANTT)
@@ -1746,6 +1801,9 @@ export async function updateMachineConfirmation(id: string, isConfirmed: boolean
       .eq('id', id)
 
     if (error) throw error
+
+    await syncMaterialTypeTask(db, id)
+    await notifyNewTasks(id)
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${id}`)
@@ -1841,6 +1899,8 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
     const { error } = await db.from('machine_items').update(updatePayload).eq('id', itemId).eq('machine_id', machineId)
     if (error) throw error
     await syncCoatingDependentProductionStages(db, machineId)
+    await syncMaterialTypeTask(db, machineId)
+    await notifyNewTasks(machineId)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
     revalidatePath(ROUTES.PRODUCTION)
     revalidatePath(ROUTES.GANTT)
@@ -1868,6 +1928,7 @@ export async function deleteMachineItem(itemId: string, machineId: string) {
     const { error } = await db.from('machine_items').delete().eq('id', itemId).eq('machine_id', machineId)
     if (error) throw error
     await syncCoatingDependentProductionStages(db, machineId)
+    await syncMaterialTypeTask(db, machineId)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
     revalidatePath(ROUTES.PRODUCTION)
     revalidatePath(ROUTES.GANTT)
@@ -1888,7 +1949,9 @@ export async function addMachineExpense(machineId: string, data: unknown) {
       ...expensePayload
     })
     if (error) throw error
+    await syncTransportCostTask(db, machineId)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+    revalidatePath(ROUTES.TASKS)
     return { success: true, error: null }
   } catch (err: unknown) { return { success: false, error: getErrorMessage(err) } }
 }
@@ -1902,7 +1965,9 @@ export async function updateMachineExpense(expenseId: string, data: unknown, mac
     const expensePayload = omitExpenseId(parsed)
     const { error } = await db.from('machine_expenses').update(expensePayload).eq('id', expenseId).eq('machine_id', machineId)
     if (error) throw error
+    await syncTransportCostTask(db, machineId)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+    revalidatePath(ROUTES.TASKS)
     return { success: true, error: null }
   } catch (err: unknown) { return { success: false, error: getErrorMessage(err) } }
 }
@@ -1914,7 +1979,9 @@ export async function deleteMachineExpense(expenseId: string, machineId: string)
     await assertMachineNotArchived(db, machineId)
     const { error } = await db.from('machine_expenses').delete().eq('id', expenseId).eq('machine_id', machineId)
     if (error) throw error
+    await syncTransportCostTask(db, machineId)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+    revalidatePath(ROUTES.TASKS)
     return { success: true, error: null }
   } catch (err: unknown) { return { success: false, error: getErrorMessage(err) } }
 }
