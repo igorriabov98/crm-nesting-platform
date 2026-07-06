@@ -151,6 +151,7 @@ function DesktopProgress({ steps }: { steps: MachineProgressStep[] }) {
   const readiness = steps.filter((step) => step.kind === 'check')
   const rest = steps.filter((step) => step.key !== 'created' && step.kind !== 'check')
   const readinessDone = readiness.every((step) => step.state === 'done')
+  const restMinWidth = Math.max(520, rest.length * 124)
   if (!created) return null
 
   return (
@@ -174,7 +175,7 @@ function DesktopProgress({ steps }: { steps: MachineProgressStep[] }) {
           ))}
         </div>
         <div className={cn('mt-4 h-0.5 w-16 shrink-0', readinessDone ? 'bg-emerald-500' : 'bg-slate-200')} />
-        <div className="flex min-w-[520px] flex-1 items-start">
+        <div className="flex flex-1 items-start" style={{ minWidth: restMinWidth }}>
           {rest.map((step, index) => (
             <div key={step.key} className="flex flex-1 items-start">
               <DesktopStep step={step} index={index + 3} />

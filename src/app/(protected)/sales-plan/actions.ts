@@ -59,6 +59,7 @@ type LooseQuery = PromiseLike<DbResult> & {
   update: (values: unknown) => LooseQuery
   delete: () => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
+  is: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
   single: () => Promise<DbResult>

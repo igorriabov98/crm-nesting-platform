@@ -8,6 +8,7 @@ import type {
   RequestStatus,
   StageType,
 } from '@/lib/types'
+import { STAGES, STAGE_ORDER } from '@/lib/constants/stages'
 
 export const MACHINE_PROGRESS_STATIC_LABELS = {
   created: 'Создана',
@@ -40,6 +41,17 @@ type ProgressProductionStage = {
   is_skipped?: boolean | null
 }
 
+export type MachineProgressOutsourcingInput = {
+  id: string
+  work_type_name?: string | null
+  position_after_stage_type?: StageType | null
+  source_stage_type?: StageType | null
+  planned_send_date?: string | null
+  planned_return_date?: string | null
+  actual_sent_at?: string | null
+  actual_returned_at?: string | null
+}
+
 export type MachineProgressMachineInput = {
   is_confirmed?: boolean | null
   actual_shipping_date?: string | null
@@ -61,6 +73,7 @@ export type MachineProgressFactInput = {
   id: string
   section_id: string
   section_name?: string | null
+  production_stage_type?: StageType | null
   fact_date: string
   shift: ProductionFactShift
   created_at?: string | null
@@ -70,6 +83,7 @@ export type MachineProgressFactInput = {
 export type MachineProgressContext = {
   request?: MachineProgressRequestInput | null
   latestFact?: MachineProgressFactInput | null
+  outsourcingOperations?: MachineProgressOutsourcingInput[] | null
 }
 
 export type MachineReadiness = {
@@ -180,6 +194,138 @@ function productionKey(fact: MachineProgressFactInput) {
   return `production:${fact.section_id}` as const
 }
 
+function productionStageKey(stageType: StageType) {
+  return `production:stage:${stageType}` as const
+}
+
+function outsourcingKey(operation: Pick<MachineProgressOutsourcingInput, 'id'>) {
+  return `production:outsourcing:${operation.id}` as const
+}
+
+function stageOrder(stageType: StageType | null | undefined) {
+  const index = stageType ? STAGE_ORDER.indexOf(stageType) : -1
+  return index >= 0 ? index : STAGE_ORDER.length
+}
+
+function stageLabel(stageType: StageType) {
+  return STAGES[stageType]?.label || stageType
+}
+
+function normalizeLabel(value: string | null | undefined) {
+  return (value || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru-RU')
+}
+
+function inferFactStageType(fact: MachineProgressFactInput | null) {
+  if (!fact) return null
+  if (fact.production_stage_type) return fact.production_stage_type
+
+  const label = normalizeLabel(fact.section_name)
+  if (!label) return null
+  if (label.includes('заготов')) return 'cutting' satisfies StageType
+  if (label.includes('цех') || label.includes('сбор') || label.includes('свар')) return 'assembly' satisfies StageType
+  if (label.includes('зачистк')) return 'cleaning' satisfies StageType
+  if (label.includes('цинк')) return 'galvanizing' satisfies StageType
+  if (label.includes('маляр') || label.includes('покрас')) return 'painting' satisfies StageType
+  if (label.includes('упаков')) return 'packaging' satisfies StageType
+  if (label.includes('отгруз')) return 'actual_shipping' satisfies StageType
+  return null
+}
+
+function isPlannedStage(stage: ProgressProductionStage) {
+  return !stage.is_skipped && stage.stage_type !== 'actual_shipping' && hasRequiredStageDates(stage)
+}
+
+function outsourcingLabel(operation: MachineProgressOutsourcingInput) {
+  const name = operation.work_type_name?.trim() || 'Аутсорсинг'
+  return normalizeLabel(name).includes('аутсорс') ? name : `Аутсорсинг: ${name}`
+}
+
+function outsourcingAnchorStage(operation: MachineProgressOutsourcingInput) {
+  return operation.position_after_stage_type || operation.source_stage_type || null
+}
+
+type ProductionProgressItem = {
+  key: MachineProgressKey
+  label: string
+  order: number
+  stageType?: StageType | null
+  outsourcing?: MachineProgressOutsourcingInput
+}
+
+function buildProductionProgressItems(
+  machine: MachineProgressMachineInput,
+  context: MachineProgressContext,
+  latestFact: MachineProgressFactInput | null,
+  latestFactStageType: StageType | null,
+) {
+  const plannedStages = (machine.production_stages || [])
+    .filter(isPlannedStage)
+    .sort((left, right) => stageOrder(left.stage_type) - stageOrder(right.stage_type))
+
+  const items: ProductionProgressItem[] = plannedStages.map((stage, index) => ({
+    key: productionStageKey(stage.stage_type),
+    label: stageLabel(stage.stage_type),
+    order: stageOrder(stage.stage_type) + index / 1000,
+    stageType: stage.stage_type,
+  }))
+
+  for (const [index, operation] of (context.outsourcingOperations || []).entries()) {
+    const anchor = outsourcingAnchorStage(operation)
+    const anchorOrder = anchor ? stageOrder(anchor) : Math.max(0, STAGE_ORDER.indexOf('shipping') - 1)
+    items.push({
+      key: outsourcingKey(operation),
+      label: outsourcingLabel(operation),
+      order: anchorOrder + 0.45 + index / 1000,
+      stageType: anchor,
+      outsourcing: operation,
+    })
+  }
+
+  if (latestFact && latestFactStageType && !items.some((item) => item.key === productionStageKey(latestFactStageType))) {
+    items.push({
+      key: productionStageKey(latestFactStageType),
+      label: stageLabel(latestFactStageType),
+      order: stageOrder(latestFactStageType),
+      stageType: latestFactStageType,
+    })
+  } else if (latestFact && !latestFactStageType) {
+    const fallbackKey = productionKey(latestFact)
+    if (!items.some((item) => item.key === fallbackKey)) {
+      items.push({
+        key: fallbackKey,
+        label: latestFact.section_name?.trim() || 'Производство',
+        order: STAGE_ORDER.length,
+      })
+    }
+  }
+
+  return items.sort((left, right) => left.order - right.order)
+}
+
+function pickActiveOutsourcing(operations: MachineProgressOutsourcingInput[]) {
+  return operations.find((operation) => hasValue(operation.actual_sent_at) && !hasValue(operation.actual_returned_at)) || null
+}
+
+function findItemOrder(items: ProductionProgressItem[], key: MachineProgressKey | undefined) {
+  if (!key) return null
+  return items.find((item) => item.key === key)?.order ?? null
+}
+
+function pickLastCompletedOutsourcing(
+  operations: MachineProgressOutsourcingInput[],
+  items: ProductionProgressItem[],
+) {
+  return operations
+    .filter((operation) => hasValue(operation.actual_returned_at))
+    .map((operation) => ({
+      operation,
+      order: findItemOrder(items, outsourcingKey(operation)),
+    }))
+    .filter((item): item is { operation: MachineProgressOutsourcingInput; order: number } => item.order !== null)
+    .sort((left, right) => left.order - right.order)
+    .at(-1)?.operation || null
+}
+
 export function resolveMachineProgress(
   machine: MachineProgressMachineInput,
   context: MachineProgressContext = {},
@@ -187,11 +333,29 @@ export function resolveMachineProgress(
   const readiness = getMachineReadiness(machine)
   const request = context.request || null
   const latestFact = context.latestFact || null
+  const latestFactStageType = inferFactStageType(latestFact)
+  const productionItems = buildProductionProgressItems(machine, context, latestFact, latestFactStageType)
+  const activeOutsourcing = pickActiveOutsourcing(context.outsourcingOperations || [])
+  const completedOutsourcing = pickLastCompletedOutsourcing(context.outsourcingOperations || [], productionItems)
   const submittedToSupply = isSubmittedToSupply(request)
   const materialReceived = isMaterialReceived(request)
   const shipped = hasValue(machine.actual_shipping_date)
-  const productionCurrentKey = latestFact ? productionKey(latestFact) : undefined
-  const productionCurrentLabel = latestFact?.section_name?.trim() || 'Производство'
+  const latestFactKey = latestFact
+    ? latestFactStageType ? productionStageKey(latestFactStageType) : productionKey(latestFact)
+    : undefined
+  const latestFactOrder = findItemOrder(productionItems, latestFactKey)
+  const completedOutsourcingKey = completedOutsourcing ? outsourcingKey(completedOutsourcing) : undefined
+  const completedOutsourcingOrder = findItemOrder(productionItems, completedOutsourcingKey)
+  let productionCurrentKey = latestFactKey
+  let productionCurrentLabel = latestFact?.section_name?.trim() || 'Производство'
+  if (completedOutsourcing && completedOutsourcingKey && (completedOutsourcingOrder ?? -1) > (latestFactOrder ?? -1)) {
+    productionCurrentKey = completedOutsourcingKey
+    productionCurrentLabel = outsourcingLabel(completedOutsourcing)
+  }
+  if (activeOutsourcing) {
+    productionCurrentKey = outsourcingKey(activeOutsourcing)
+    productionCurrentLabel = outsourcingLabel(activeOutsourcing)
+  }
   let currentKey: MachineProgressKey = 'created'
   let currentLabel = MACHINE_PROGRESS_STATIC_LABELS.created
 
@@ -204,7 +368,7 @@ export function resolveMachineProgress(
   } else if (!readiness.planned) {
     currentKey = 'planned'
     currentLabel = MACHINE_PROGRESS_STATIC_LABELS.planned
-  } else if (latestFact && productionCurrentKey) {
+  } else if (productionCurrentKey && (latestFact || activeOutsourcing || completedOutsourcing)) {
     currentKey = productionCurrentKey
     currentLabel = productionCurrentLabel
   } else if (materialReceived) {
@@ -222,7 +386,10 @@ export function resolveMachineProgress(
   const reachedWaiting = ready
   const reachedPurchasing = reachedWaiting && submittedToSupply
   const reachedMaterial = reachedPurchasing && materialReceived
-  const reachedProduction = ready && Boolean(latestFact)
+  const reachedProduction = ready && Boolean(latestFact || activeOutsourcing)
+  const activeProductionOrder = productionCurrentKey
+    ? productionItems.find((item) => item.key === productionCurrentKey)?.order ?? null
+    : null
 
   const steps: MachineProgressStep[] = [
     {
@@ -265,11 +432,18 @@ export function resolveMachineProgress(
     },
   ]
 
-  if (latestFact && productionCurrentKey) {
+  for (const item of productionItems) {
+    const outsourcing = item.outsourcing
+    const outsourcingDone = outsourcing ? hasValue(outsourcing.actual_returned_at) : false
+    const outsourcingActive = outsourcing ? hasValue(outsourcing.actual_sent_at) && !hasValue(outsourcing.actual_returned_at) : false
+    const passedByCurrentProduction = activeProductionOrder !== null && item.order < activeProductionOrder
+    const done = shipped || outsourcingDone || (!outsourcingActive && passedByCurrentProduction)
+    const active = !done && (outsourcingActive || item.key === productionCurrentKey)
+
     steps.push({
-      key: productionCurrentKey,
-      label: productionCurrentLabel,
-      state: stepState(shipped, !shipped),
+      key: item.key,
+      label: item.label,
+      state: stepState(done, active),
       kind: 'production',
     })
   }

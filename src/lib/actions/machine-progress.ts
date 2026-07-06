@@ -6,14 +6,16 @@ import {
   type MachineProgressContext,
   type MachineProgressFactInput,
   type MachineProgressMachineInput,
+  type MachineProgressOutsourcingInput,
   type MachineProgressRequestInput,
 } from '@/lib/machine-progress'
-import type { MachineProgress, OrderItemStatus, ProductionFactSection } from '@/lib/types'
+import type { MachineProgress, OrderItemStatus, ProductionFactSection, StageType } from '@/lib/types'
 
 type DbResult = { data: unknown; error: { message?: string; code?: string } | null }
 type LooseQuery = PromiseLike<DbResult> & {
   select: (columns?: string) => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
+  is: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
   single: () => Promise<DbResult>
@@ -37,8 +39,25 @@ type FactRow = {
   shift: MachineProgressFactInput['shift']
   created_at?: string | null
   updated_at?: string | null
-  section?: Pick<ProductionFactSection, 'id' | 'name'> | Pick<ProductionFactSection, 'id' | 'name'>[] | null
-  production_fact_sections?: Pick<ProductionFactSection, 'id' | 'name'> | Pick<ProductionFactSection, 'id' | 'name'>[] | null
+  section?: Pick<ProductionFactSection, 'id' | 'name' | 'production_stage_type'> | Pick<ProductionFactSection, 'id' | 'name' | 'production_stage_type'>[] | null
+  production_fact_sections?: Pick<ProductionFactSection, 'id' | 'name' | 'production_stage_type'> | Pick<ProductionFactSection, 'id' | 'name' | 'production_stage_type'>[] | null
+}
+
+type OutsourcingProgressRow = {
+  id: string
+  machine_id: string
+  work_type_id: string | null
+  position_after_stage_type: StageType | null
+  source_stage_type: StageType | null
+  planned_send_date: string | null
+  planned_return_date: string | null
+  actual_sent_at: string | null
+  actual_returned_at: string | null
+}
+
+type OutsourcingWorkTypeRow = {
+  id: string
+  name: string
 }
 
 const REQUEST_ITEM_TABLES = [
@@ -173,7 +192,7 @@ async function loadFactContexts(db: LooseDb, machineIds: string[]) {
 
   const { data, error } = await db
     .from('production_machine_facts')
-    .select('id, machine_id, section_id, fact_date, shift, created_at, updated_at, section:production_fact_sections(id, name)')
+    .select('id, machine_id, section_id, fact_date, shift, created_at, updated_at, section:production_fact_sections(id, name, production_stage_type)')
     .in('machine_id', machineIds)
     .order('fact_date', { ascending: false })
 
@@ -186,6 +205,7 @@ async function loadFactContexts(db: LooseDb, machineIds: string[]) {
       id: row.id,
       section_id: row.section_id,
       section_name: section?.name || null,
+      production_stage_type: section?.production_stage_type || null,
       fact_date: row.fact_date,
       shift: row.shift,
       created_at: row.created_at,
@@ -203,21 +223,74 @@ async function loadFactContexts(db: LooseDb, machineIds: string[]) {
   return latestByMachine
 }
 
+async function loadOutsourcingContexts(db: LooseDb, machineIds: string[]) {
+  const operationsByMachine = new Map<string, MachineProgressOutsourcingInput[]>()
+  if (machineIds.length === 0) return operationsByMachine
+
+  const { data, error } = await db
+    .from('machine_outsourcing_operations')
+    .select(`
+      id,
+      machine_id,
+      work_type_id,
+      position_after_stage_type,
+      source_stage_type,
+      planned_send_date,
+      planned_return_date,
+      actual_sent_at,
+      actual_returned_at
+    `)
+    .in('machine_id', machineIds)
+    .is('archived_at', null)
+    .order('created_at', { ascending: true })
+
+  if (error) throw new Error(error.message || 'Не удалось загрузить операции аутсорсинга')
+
+  const rows = (data || []) as OutsourcingProgressRow[]
+  const workTypeIds = uniqueValues(rows.map((row) => row.work_type_id || ''))
+  const workTypesResult = workTypeIds.length > 0
+    ? await db.from('outsourcing_work_types').select('id, name').in('id', workTypeIds)
+    : { data: [], error: null }
+
+  if (workTypesResult.error) throw new Error(workTypesResult.error.message || 'Не удалось загрузить типы аутсорсинга')
+
+  const workTypeById = new Map(((workTypesResult.data || []) as OutsourcingWorkTypeRow[]).map((row) => [row.id, row.name]))
+
+  for (const row of rows) {
+    const list = operationsByMachine.get(row.machine_id) || []
+    list.push({
+      id: row.id,
+      work_type_name: row.work_type_id ? workTypeById.get(row.work_type_id) || null : null,
+      position_after_stage_type: row.position_after_stage_type,
+      source_stage_type: row.source_stage_type,
+      planned_send_date: row.planned_send_date,
+      planned_return_date: row.planned_return_date,
+      actual_sent_at: row.actual_sent_at,
+      actual_returned_at: row.actual_returned_at,
+    })
+    operationsByMachine.set(row.machine_id, list)
+  }
+
+  return operationsByMachine
+}
+
 export async function loadMachineProgressContexts(db: LooseDb, machineIds: string[]) {
   const ids = uniqueValues(machineIds)
   const contexts = new Map<string, MachineProgressContext>()
   for (const id of ids) contexts.set(id, {})
   if (ids.length === 0) return contexts
 
-  const [requests, facts] = await Promise.all([
+  const [requests, facts, outsourcingOperations] = await Promise.all([
     loadRequestContexts(db, ids),
     loadFactContexts(db, ids),
+    loadOutsourcingContexts(db, ids),
   ])
 
   for (const id of ids) {
     contexts.set(id, {
       request: requests.get(id) || null,
       latestFact: facts.get(id) || null,
+      outsourcingOperations: outsourcingOperations.get(id) || [],
     })
   }
 
