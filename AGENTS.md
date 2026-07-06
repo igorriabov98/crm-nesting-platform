@@ -27,3 +27,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ## CI/CD и операционный цикл
 
 Подробный цикл PR -> CI -> merge -> ручной deploy workflow -> production smoke описан в [docs/OPERATIONS.md](./docs/OPERATIONS.md). Эти правила дополняют ограничения выше: настройки Railway, Vercel и GitHub branch protection меняются только после отдельного подтверждения оператора.
+
+## UI-правило для выпадающих списков
+
+Во всех выпадающих меню закрытое состояние должно показывать тот же человекочитаемый label, что и элемент в открытом списке. Нельзя оставлять технические значения enum/id вроде `standard`, `undefined` или UUID; если используется `SelectValue`, передавайте отображаемый текст явно.
