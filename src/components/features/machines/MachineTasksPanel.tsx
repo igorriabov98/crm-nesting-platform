@@ -1,6 +1,7 @@
 "use client"
 
 import { useId, useState } from 'react'
+import { isBefore, startOfToday } from 'date-fns'
 import { ChevronDown, ClipboardList } from 'lucide-react'
 
 import { TaskCards } from '@/components/features/tasks/TaskCards'
@@ -14,7 +15,50 @@ interface MachineTasksPanelProps {
 export function MachineTasksPanel({ tasks }: MachineTasksPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
   const contentId = useId()
-  const activeTasks = tasks.filter((task) => !['completed', 'cancelled'].includes(task.status)).length
+  const today = startOfToday()
+  const groupedTasks = tasks.reduce(
+    (groups, task) => {
+      if (task.status === 'completed') {
+        groups.completed.push(task)
+        return groups
+      }
+
+      if (task.status === 'cancelled') return groups
+
+      const overdue = isBefore(new Date(task.deadline), today)
+      if (overdue) {
+        groups.overdue.push(task)
+      } else {
+        groups.active.push(task)
+      }
+      return groups
+    },
+    {
+      active: [] as TaskWithRelations[],
+      overdue: [] as TaskWithRelations[],
+      completed: [] as TaskWithRelations[],
+    }
+  )
+  const activeTasks = groupedTasks.active.length + groupedTasks.overdue.length
+  const visibleTasks = activeTasks + groupedTasks.completed.length
+
+  const sections = [
+    {
+      title: 'Активные',
+      tasks: groupedTasks.active,
+      empty: 'Нет активных задач без просрочки.',
+    },
+    {
+      title: 'Просроченные',
+      tasks: groupedTasks.overdue,
+      empty: 'Просроченных задач нет.',
+    },
+    {
+      title: 'Выполнены',
+      tasks: groupedTasks.completed,
+      empty: 'Выполненных задач пока нет.',
+    },
+  ]
 
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -34,7 +78,7 @@ export function MachineTasksPanel({ tasks }: MachineTasksPanelProps) {
             <span className="mt-0.5 block text-sm text-slate-500">
               {tasks.length === 0
                 ? 'Автоматические задачи появятся здесь при необходимости.'
-                : `${activeTasks} активных из ${tasks.length}`}
+                : `${activeTasks} активных · ${groupedTasks.overdue.length} просроченных · ${groupedTasks.completed.length} выполненных`}
             </span>
           </span>
         </span>
@@ -48,7 +92,29 @@ export function MachineTasksPanel({ tasks }: MachineTasksPanelProps) {
       </button>
 
       <div id={contentId} hidden={!isOpen} className="border-t border-slate-200 p-4 sm:p-5">
-        <TaskCards tasks={tasks} compact />
+        {visibleTasks === 0 ? (
+          <TaskCards tasks={[]} compact />
+        ) : (
+          <div className="space-y-5">
+            {sections.map((section) => (
+              <section key={section.title} className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold uppercase text-slate-500">{section.title}</h3>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium tabular-nums text-slate-600">
+                    {section.tasks.length}
+                  </span>
+                </div>
+                {section.tasks.length > 0 ? (
+                  <TaskCards tasks={section.tasks} compact emptyMessage={section.empty} />
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+                    {section.empty}
+                  </div>
+                )}
+              </section>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   )

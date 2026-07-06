@@ -40,7 +40,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
 
   const stages = useMemo(() => {
     const rawStages = machine.production_stages || []
-    return [...rawStages].sort((a, b) => {
+    return rawStages.filter((stage) => stage.stage_type !== 'actual_shipping').sort((a, b) => {
       return STAGE_ORDER.indexOf(a.stage_type) - STAGE_ORDER.indexOf(b.stage_type)
     })
   }, [machine])
@@ -93,7 +93,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
   }
 
   const handleMachineDateUpdate = async (
-    field: 'desired_shipping_date' | 'planned_material_date' | 'actual_shipping_date' | 'delivery_to_client_date',
+    field: 'desired_shipping_date' | 'planned_material_date' | 'delivery_to_client_date',
     value: string | null
   ) => {
     const res = await updateMachineDate(machine.id, field, value)
@@ -198,8 +198,8 @@ export function ProductionTab({ machine }: ProductionTabProps) {
             <InlineEdit
               type="date"
               value={machine.actual_shipping_date}
-              editable={canEditProductionDates}
-              onSave={(value) => handleMachineDateUpdate('actual_shipping_date', value)}
+              editable={false}
+              onSave={async () => ({ success: true })}
               dateDisplayFormat="dd.MM.yyyy"
               fallbackText="—"
               placeholder="Дата..."
