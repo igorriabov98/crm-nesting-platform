@@ -10,6 +10,17 @@ const part = {
 assert.equal(isDimensionChangeSafe(part, 100.5, 50.5), true, 'roughly one percent dimension change should pass');
 assert.equal(isDimensionChangeSafe(part, 105, 50), false, 'five percent area/aspect mismatch should fail');
 
+assert.equal(
+  isDimensionChangeSafe({ name: 'Ножка СТВ-300', width: 100, height: 136.2 }, 135.6, 100),
+  true,
+  'rotated dimensions with matching area/aspect should pass'
+);
+assert.equal(
+  isDimensionChangeSafe({ name: 'Ванна СТВ-300', width: 1100, height: 650 }, 1340, 890),
+  false,
+  'real unfolding mismatch should still fail'
+);
+
 const blocked = applyDimensionGuard({}, part, 105, 50, { blockOnMismatch: true });
 assert.equal(blocked.blocked, true, 'manual apply should block unsafe dimensions without force');
 assert.match(blocked.note ?? '', /PDF предлагает 105 x 50 мм/);

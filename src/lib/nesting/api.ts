@@ -100,6 +100,7 @@ export interface NestingPart {
   mismatchNote: string | null
   thicknessMismatch: boolean
   thicknessMismatchNote: string | null
+  aiApplySnapshot?: unknown | null
   thumbnailSvg: string | null
   classificationMethod: ClassificationMethod | string | null
   classificationWarning: string | null
@@ -261,6 +262,11 @@ export interface AIMatchResult {
   thicknessMismatchNote: string | null
   detailNotes: string
   autoApplied: boolean
+  applyStatus?: 'suggested' | 'applied_auto' | 'applied_manual' | 'applied_forced' | 'needs_force' | 'reverted' | 'rejected'
+  appliedBy?: string | null
+  appliedAt?: string | null
+  revertedBy?: string | null
+  revertedAt?: string | null
 }
 
 export interface AIAnalysisResponse {
@@ -289,6 +295,7 @@ export interface AISettings {
   totalRequests: number
   averageRequestCost: number
   budgetWarning: boolean
+  autoApplyResults: boolean
 }
 
 export interface AIUsageHistoryItem {
@@ -312,6 +319,7 @@ export interface AIStatus {
   budgetWarning: boolean
   currentMonthUsage: number
   monthlyBudget: number
+  autoApplyResults: boolean
 }
 
 type ErrorPayload = {
@@ -479,6 +487,7 @@ export async function updateAISettings(data: Partial<{
   baseUrl: string
   maxTokens: number
   monthlyBudget: number
+  autoApplyResults: boolean
 }>): Promise<AISettings> {
   const res = await request(buildUrl('/api/ai/settings'), {
     method: 'PUT',
@@ -486,6 +495,18 @@ export async function updateAISettings(data: Partial<{
     body: JSON.stringify(data),
   }, 'Не удалось сохранить настройки AI')
   return readJson<AISettings>(res, 'Не удалось сохранить настройки AI')
+}
+
+export async function revertProjectBOM(
+  projectId: string,
+  partIds?: string[]
+): Promise<{ reverted: number }> {
+  const res = await request(buildUrl(`/api/projects/${projectId}/revert-bom`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ partIds }),
+  }, 'Не удалось отменить AI-изменения')
+  return readJson<{ reverted: number }>(res, 'Не удалось отменить AI-изменения')
 }
 
 export async function testAIConnection(): Promise<{ ok: boolean; model: string; error: string | null }> {

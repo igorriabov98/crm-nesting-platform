@@ -4,8 +4,30 @@ import { z } from 'zod';
 import { AppError, NotFoundError, ValidationError } from '../lib/errors';
 import { prisma } from '../lib/prisma';
 import { idParamSchema } from '../schemas/common.schema';
-import { analyzeProjectPdf, getProjectSpecification, markSpecificationMatchesApplied } from '../lib/ai/service';
-import { applyDimensionGuard, applyThicknessGuard } from '../lib/ai/dimension-guard';
+import {
+  analyzeProjectPdf,
+  getProjectSpecification,
+  markSpecificationMatchesApplied,
+  markSpecificationMatchesReverted,
+} from '../lib/ai/service';
+import {
+  applyDimensionGuard,
+  applyThicknessGuard,
+  buildDimensionMismatchNote,
+  buildThicknessMismatchNote,
+  isDimensionChangeSafe,
+  isThicknessChangeSafe,
+} from '../lib/ai/dimension-guard';
+import {
+  AI_RECALC_REQUIRED_MESSAGE,
+  appendForceAudit,
+  buildAIApplySnapshot,
+  buildRestorePartData,
+  hasAIApplyTrackedChange,
+  hasGeometryAffectingChange,
+  hasNestingAffectingChange,
+  parseAIApplySnapshot,
+} from '../lib/ai/apply-control';
 import {
   aiSettingsInputSchema,
   getAISettingsView,
@@ -24,10 +46,13 @@ const steelTypeSchema = z.object({
 
 const analyzePdfSchema = z.object({
   steelTypes: z.array(steelTypeSchema).optional(),
+  autoApply: z.boolean().optional(),
+  appliedBy: z.string().min(1).nullable().optional(),
 });
 
 const applyBomSchema = z.object({
   force: z.boolean().optional(),
+  appliedBy: z.string().min(1).nullable().optional(),
   matches: z.array(
     z.object({
       partId: z.string().min(1),
@@ -55,6 +80,11 @@ const applyBomSchema = z.object({
       message: 'Нужно указать хотя бы одно изменение',
     })
   ),
+});
+
+const revertBomSchema = z.object({
+  appliedBy: z.string().min(1).nullable().optional(),
+  partIds: z.array(z.string().min(1)).optional(),
 });
 
 export async function aiProjectRoutes(app: FastifyInstance) {
@@ -98,7 +128,8 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     const result = await analyzeProjectPdf({
       projectId: id,
       pdfFilePath: materialized.filePath,
-      autoApply: true,
+      autoApply: body.autoApply,
+      appliedBy: body.appliedBy ?? null,
       steelTypes: body.steelTypes,
     }).finally(() => materialized.cleanup());
 
@@ -132,12 +163,28 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     const body = applyBomSchema.parse(request.body ?? {});
     const parts = await prisma.part.findMany({
       where: { projectId: id, id: { in: body.matches.map((match) => match.partId) } },
-      select: { id: true, name: true, width: true, height: true, thickness: true },
+      select: {
+        id: true,
+        name: true,
+        material: true,
+        steelTypeId: true,
+        steelTypeName: true,
+        steelTypeRaw: true,
+        quantity: true,
+        width: true,
+        height: true,
+        thickness: true,
+        isSheetMetal: true,
+        hasBends: true,
+        classificationMethod: true,
+        classificationWarning: true,
+      },
     });
     const partsById = new Map(parts.map((part) => [part.id, part]));
     const pendingUpdates: Array<{ partId: string; data: Prisma.PartUpdateInput }> = [];
     const updatedPartIds = new Set<string>();
     let needsUnfoldRecalculation = false;
+    const appliedAt = new Date();
 
     for (const match of body.matches) {
       const part = partsById.get(match.partId);
@@ -165,6 +212,13 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         if (data.hasBends === undefined) data.hasBends = true;
       }
 
+      const forcedThicknessMismatch = body.force === true
+        && match.thickness !== undefined
+        && !isThicknessChangeSafe(part, match.thickness);
+      const forcedDimensionMismatch = body.force === true
+        && match.unfoldingWidth !== undefined
+        && match.unfoldingHeight !== undefined
+        && !isDimensionChangeSafe(part, match.unfoldingWidth, match.unfoldingHeight);
       const thicknessGuard = applyThicknessGuard(data, part, match.thickness, {
         force: body.force === true,
         blockOnMismatch: true,
@@ -189,9 +243,34 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         });
       }
 
+      if (forcedThicknessMismatch && match.thickness !== undefined) {
+        guarded.data.thicknessMismatch = true;
+        guarded.data.thicknessMismatchNote = appendForceAudit(
+          buildThicknessMismatchNote(part, match.thickness),
+          body.appliedBy,
+          appliedAt
+        );
+      }
+
+      if (forcedDimensionMismatch && match.unfoldingWidth !== undefined && match.unfoldingHeight !== undefined) {
+        guarded.data.dimensionMismatch = true;
+        guarded.data.mismatchNote = appendForceAudit(
+          buildDimensionMismatchNote(part, match.unfoldingWidth, match.unfoldingHeight),
+          body.appliedBy,
+          appliedAt
+        );
+      }
+
       if (Object.keys(guarded.data).length === 0) continue;
-      if (guarded.data.material !== undefined || guarded.data.thickness !== undefined) {
+      if (hasNestingAffectingChange(guarded.data)) {
         needsUnfoldRecalculation = true;
+      }
+      if (hasAIApplyTrackedChange(guarded.data)) {
+        guarded.data.aiApplySnapshot = buildAIApplySnapshot(part, {
+          appliedBy: body.appliedBy ?? null,
+          appliedAt,
+          forced: body.force === true,
+        }) as unknown as Prisma.InputJsonValue;
       }
 
       pendingUpdates.push({ partId: match.partId, data: guarded.data });
@@ -205,18 +284,83 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       });
     }
 
-    await markSpecificationMatchesApplied(id, updatedPartIds);
+    await markSpecificationMatchesApplied(id, updatedPartIds, {
+      status: body.force === true ? 'applied_forced' : 'applied_manual',
+      appliedBy: body.appliedBy ?? null,
+      appliedAt,
+    });
     if (needsUnfoldRecalculation) {
       await prisma.nestingProject.update({
         where: { id },
         data: {
           status: 'parsed',
-          errorMessage: 'требуется пересчёт развёртки после изменения материала/толщины',
+          errorMessage: AI_RECALC_REQUIRED_MESSAGE,
         },
       });
     }
 
     return { updated: pendingUpdates.length };
+  });
+
+  app.post('/:id/revert-bom', async (request) => {
+    const { id } = idParamSchema.parse(request.params);
+    const body = revertBomSchema.parse(request.body ?? {});
+    const parts = await prisma.part.findMany({
+      where: {
+        projectId: id,
+        ...(body.partIds && body.partIds.length > 0 ? { id: { in: body.partIds } } : {}),
+      },
+      select: {
+        id: true,
+        aiApplySnapshot: true,
+        thickness: true,
+        quantity: true,
+        width: true,
+        height: true,
+        isSheetMetal: true,
+      },
+    });
+
+    const revertedPartIds = new Set<string>();
+    let needsUnfoldRecalculation = false;
+
+    for (const part of parts) {
+      const snapshot = parseAIApplySnapshot(part.aiApplySnapshot);
+      if (!snapshot) continue;
+
+      const restoreData = buildRestorePartData(snapshot);
+      if (
+        part.thickness !== snapshot.thickness ||
+        part.quantity !== snapshot.quantity ||
+        part.width !== snapshot.width ||
+        part.height !== snapshot.height ||
+        part.isSheetMetal !== snapshot.isSheetMetal ||
+        hasGeometryAffectingChange(restoreData)
+      ) {
+        needsUnfoldRecalculation = true;
+      }
+
+      await prisma.part.update({
+        where: { id: part.id },
+        data: restoreData,
+      });
+      revertedPartIds.add(part.id);
+    }
+
+    const revertedAt = new Date();
+    await markSpecificationMatchesReverted(id, revertedPartIds, body.appliedBy ?? null, revertedAt);
+
+    if (needsUnfoldRecalculation) {
+      await prisma.nestingProject.update({
+        where: { id },
+        data: {
+          status: 'parsed',
+          errorMessage: AI_RECALC_REQUIRED_MESSAGE,
+        },
+      });
+    }
+
+    return { reverted: revertedPartIds.size };
   });
 }
 
@@ -241,6 +385,7 @@ export async function aiRoutes(app: FastifyInstance) {
       budgetWarning: settings.budgetWarning,
       currentMonthUsage: settings.currentMonthUsage,
       monthlyBudget: settings.monthlyBudget,
+      autoApplyResults: settings.autoApplyResults,
     };
   });
 

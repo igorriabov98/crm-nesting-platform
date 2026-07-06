@@ -2,6 +2,7 @@ export const DEFAULT_OPENROUTER_MODEL = 'anthropic/claude-sonnet-4-6';
 export const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 export const DEFAULT_AI_MAX_TOKENS = 4000;
 export const DEFAULT_AI_MONTHLY_BUDGET = 50;
+export const DEFAULT_AI_AUTO_APPLY_RESULTS = true;
 
 export interface OpenRouterConfig {
   apiKey: string;
@@ -115,6 +116,11 @@ export interface MatchResult {
   thicknessMismatchNote: string | null;
   detailNotes: string;
   autoApplied: boolean;
+  applyStatus?: 'suggested' | 'applied_auto' | 'applied_manual' | 'applied_forced' | 'needs_force' | 'reverted' | 'rejected';
+  appliedBy?: string | null;
+  appliedAt?: string | null;
+  revertedBy?: string | null;
+  revertedAt?: string | null;
 }
 
 export interface AISettingsView {
@@ -128,6 +134,7 @@ export interface AISettingsView {
   totalRequests: number;
   averageRequestCost: number;
   budgetWarning: boolean;
+  autoApplyResults: boolean;
 }
 
 export interface AIUsageHistoryItem {

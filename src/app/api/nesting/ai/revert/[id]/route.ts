@@ -17,13 +17,13 @@ export async function POST(
 
   try {
     const body = await request.json().catch(() => ({}))
-    const res = await fetch(`${getNestingServiceUrl()}/api/projects/${id}/apply-bom`, {
+    const res = await fetch(`${getNestingServiceUrl()}/api/projects/${id}/revert-bom`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...body, appliedBy: access.context!.userId }),
     })
-    return forwardJsonResponse(res, 'Не удалось применить предложения AI')
+    return forwardJsonResponse(res, 'Не удалось отменить AI-изменения')
   } catch (error) {
-    return serviceUnavailable(error, 'Не удалось применить предложения AI')
+    return serviceUnavailable(error, 'Не удалось отменить AI-изменения')
   }
 }

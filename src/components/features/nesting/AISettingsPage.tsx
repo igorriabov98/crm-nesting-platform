@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { AISettings, AIUsageHistoryItem } from '@/lib/nesting/api'
 
@@ -60,6 +61,7 @@ export function AISettingsPage({
   const [baseUrl, setBaseUrl] = useState(initialSettings.baseUrl)
   const [maxTokens, setMaxTokens] = useState(String(initialSettings.maxTokens))
   const [monthlyBudget, setMonthlyBudget] = useState(String(initialSettings.monthlyBudget))
+  const [autoApplyResults, setAutoApplyResults] = useState(initialSettings.autoApplyResults)
   const [testResult, setTestResult] = useState<string | null>(null)
   const [isSaving, startSaving] = useTransition()
   const [isTesting, startTesting] = useTransition()
@@ -82,6 +84,7 @@ export function AISettingsPage({
             baseUrl,
             maxTokens: Number(maxTokens),
             monthlyBudget: Number(monthlyBudget),
+            autoApplyResults,
           }),
         })
         const data = await res.json().catch(() => ({}))
@@ -212,6 +215,18 @@ export function AISettingsPage({
                   value={monthlyBudget}
                   onChange={(event) => setMonthlyBudget(event.target.value)}
                   className="bg-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-[#E8ECF0] p-3 lg:col-span-2">
+                <div className="space-y-1">
+                  <Label htmlFor="ai-auto-apply">Автоприменение AI-результатов</Label>
+                  <p className="text-sm text-[#6B7280]">ON сохраняет текущий флоу; OFF оставляет строки в статусе «Предложено».</p>
+                </div>
+                <Switch
+                  id="ai-auto-apply"
+                  checked={autoApplyResults}
+                  onCheckedChange={(checked) => setAutoApplyResults(checked === true)}
                 />
               </div>
             </div>

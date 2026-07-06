@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, Bot, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react'
+import { AlertTriangle, Bot, CheckCircle2, Info, Loader2, Undo2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -54,8 +54,24 @@ export function AIAnalysisPanel({
   const [dimensionMismatch, setDimensionMismatch] = useState<DimensionMismatchState | null>(null)
 
   const partsById = useMemo(() => new Map(parts.map((part) => [part.id, part])), [parts])
-  const selectableMatches = useMemo(() => {
-    return (analysis?.matches || []).filter((match) => hasSuggestion(match) && !match.autoApplied)
+  const proposedMatches = useMemo(() => {
+    return (analysis?.matches || []).filter((match) => isProposed(match))
+  }, [analysis])
+  const appliedMatches = useMemo(() => {
+    return (analysis?.matches || []).filter((match) => isApplied(match))
+  }, [analysis])
+  const selectedProposedMatches = useMemo(
+    () => proposedMatches.filter((match) => selected[match.partId]),
+    [proposedMatches, selected]
+  )
+  const selectedAppliedMatches = useMemo(
+    () => appliedMatches.filter((match) => selected[match.partId]),
+    [appliedMatches, selected]
+  )
+  const autoAppliedFieldCount = useMemo(() => {
+    return (analysis?.matches || [])
+      .filter((match) => match.applyStatus === 'applied_auto' || (match.autoApplied && !match.applyStatus))
+      .reduce((total, match) => total + countSuggestedFields(match), 0)
   }, [analysis])
 
   const loadSpecification = useCallback(async () => {
@@ -73,7 +89,7 @@ export function AIAnalysisPanel({
       setAnalysis(result)
       setSelected(Object.fromEntries(
         (result?.matches || [])
-          .filter((match) => hasSuggestion(match) && !match.autoApplied)
+          .filter((match) => isProposed(match))
           .map((match) => [match.partId, true])
       ))
     } catch (error) {
@@ -121,7 +137,7 @@ export function AIAnalysisPanel({
       setAnalysis(result)
       setSelected(Object.fromEntries(
         result.matches
-          .filter((match) => hasSuggestion(match) && !match.autoApplied)
+          .filter((match) => isProposed(match))
           .map((match) => [match.partId, true])
       ))
       await onReloadParts()
@@ -135,21 +151,7 @@ export function AIAnalysisPanel({
   }
 
   async function applySelected() {
-    const payload = selectableMatches
-      .filter((match) => selected[match.partId])
-      .map((match) => ({
-        partId: match.partId,
-        material: match.suggestedMaterial || undefined,
-        steelTypeId: match.suggestedSteelTypeId || undefined,
-        steelTypeName: match.suggestedSteelTypeName || undefined,
-        steelTypeRaw: match.suggestedSteelTypeRaw || undefined,
-        quantity: match.suggestedQuantity || undefined,
-        thickness: match.suggestedThickness || undefined,
-        isSheetMetal: match.suggestedIsSheetMetal ?? undefined,
-        hasBends: match.suggestedHasBends ?? undefined,
-        unfoldingWidth: match.suggestedUnfoldingWidth || undefined,
-        unfoldingHeight: match.suggestedUnfoldingHeight || undefined,
-      }))
+    const payload = selectedProposedMatches.map(matchToApplyPayload)
 
     if (payload.length === 0) {
       toast.error('Выберите хотя бы одно предложение AI')
@@ -157,6 +159,15 @@ export function AIAnalysisPanel({
     }
 
     await submitApply(payload, false)
+  }
+
+  async function forceMatch(match: AIMatchResult) {
+    const part = partsById.get(match.partId)
+    const confirmed = window.confirm(buildForceConfirmText(match, part))
+
+    if (!confirmed) return
+
+    await submitApply([matchToApplyPayload(match)], true)
   }
 
   async function applyForced() {
@@ -169,6 +180,45 @@ export function AIAnalysisPanel({
     if (!confirmed) return
 
     await submitApply(dimensionMismatch.payload, true)
+  }
+
+  async function revertMatches(partIds: string[]) {
+    if (partIds.length === 0) {
+      toast.error('Выберите хотя бы одну применённую строку')
+      return
+    }
+
+    setIsApplying(true)
+    try {
+      const res = await fetch(`/api/nesting/ai/revert/${projectId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ partIds }),
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Не удалось отменить AI-изменения')
+      }
+
+      await onReloadParts()
+      await loadSpecification()
+      setSelected({})
+      setDimensionMismatch(null)
+      toast.success(`Отменено деталей: ${data.reverted || 0}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось отменить AI-изменения')
+    } finally {
+      setIsApplying(false)
+    }
+  }
+
+  async function revertSelected() {
+    await revertMatches(selectedAppliedMatches.map((match) => match.partId))
+  }
+
+  async function revertAllApplied() {
+    await revertMatches(appliedMatches.map((match) => match.partId))
   }
 
   async function submitApply(payload: ApplyMatchPayload[], force: boolean) {
@@ -236,6 +286,11 @@ export function AIAnalysisPanel({
                   Бюджет превышен, анализ не блокируется
                 </Badge>
               )}
+              {status && (
+                <Badge variant="outline" className={status.autoApplyResults ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-700'}>
+                  Автоприменение: {status.autoApplyResults ? 'ON' : 'OFF'}
+                </Badge>
+              )}
             </div>
 
             {isLoadingSpecification && !analysis && (
@@ -262,6 +317,20 @@ export function AIAnalysisPanel({
                   {analysis.updatedAt && <span>Обновлено: {new Date(analysis.updatedAt).toLocaleString('ru-RU')}</span>}
                 </div>
 
+                {autoAppliedFieldCount > 0 && (
+                  <div className="flex flex-col gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 sm:flex-row sm:items-center sm:justify-between">
+                    <span>Применено автоматически {autoAppliedFieldCount} полей</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelected(Object.fromEntries(appliedMatches.map((match) => [match.partId, true])))}
+                    >
+                      Просмотреть/Отменить
+                    </Button>
+                  </div>
+                )}
+
                 <div className="overflow-x-auto rounded-lg border border-[#E8ECF0]">
                   <TooltipProvider>
                     <Table>
@@ -277,14 +346,17 @@ export function AIAnalysisPanel({
                           <TableHead>Развёртка</TableHead>
                           <TableHead>Кол-во</TableHead>
                           <TableHead>Статус</TableHead>
-                          <TableHead>Принять</TableHead>
+                          <TableHead>Действие</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {analysis.matches.map((match) => {
                         const part = partsById.get(match.partId)
                         const confidence = Math.round(match.matchConfidence * 100)
-                        const canSelect = hasSuggestion(match) && !match.autoApplied
+                        const applied = isApplied(match)
+                        const proposed = isProposed(match)
+                        const needsForce = canForce(match, part)
+                        const canSelect = proposed || applied
 
                         return (
                           <TableRow key={match.partId}>
@@ -332,7 +404,7 @@ export function AIAnalysisPanel({
                             </TableCell>
                             <TableCell>
                               {match.suggestedMaterial ? (
-                                match.autoApplied ? (
+                                applied ? (
                                   `Применено: ${match.suggestedMaterial}`
                                 ) : (
                                   <ChangeText from={part?.material || '—'} to={match.suggestedMaterial} />
@@ -348,7 +420,7 @@ export function AIAnalysisPanel({
                                   {match.steelTypeWarning}
                                 </span>
                               ) : match.suggestedSteelTypeName || match.suggestedSteelTypeRaw ? (
-                                match.autoApplied ? (
+                                applied ? (
                                   `Применено: ${match.suggestedSteelTypeName || match.suggestedSteelTypeRaw}`
                                 ) : (
                                   <ChangeText
@@ -367,7 +439,11 @@ export function AIAnalysisPanel({
                                     render={
                                       <span className="inline-flex items-center gap-1 text-amber-700">
                                         <AlertTriangle className="h-4 w-4" />
-                                        {formatThickness(part?.thickness)}
+                                        {match.suggestedThickness ? (
+                                          <ChangeText from={formatThickness(part?.thickness)} to={formatThickness(match.suggestedThickness)} />
+                                        ) : (
+                                          formatThickness(part?.thickness)
+                                        )}
                                       </span>
                                     }
                                   />
@@ -376,7 +452,7 @@ export function AIAnalysisPanel({
                                   </TooltipContent>
                                 </Tooltip>
                               ) : match.suggestedThickness ? (
-                                match.autoApplied ? (
+                                applied ? (
                                   `Применено: ${formatThickness(match.suggestedThickness)}`
                                 ) : (
                                   <ChangeText from={formatThickness(part?.thickness)} to={formatThickness(match.suggestedThickness)} />
@@ -388,9 +464,22 @@ export function AIAnalysisPanel({
                             <TableCell>
                               {match.suggestedUnfoldingWidth && match.suggestedUnfoldingHeight ? (
                                 <span className="inline-flex items-center gap-2">
-                                  {match.autoApplied ? 'Применено: ' : null}
-                                  {formatSize(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)}
-                                  {!match.autoApplied && <Badge variant="outline">PDF</Badge>}
+                                  {part?.dimensionMismatch && !applied ? (
+                                    <>
+                                      <AlertTriangle className="h-4 w-4 text-amber-700" />
+                                      <ChangeText
+                                        from={formatSize(part.width, part.height)}
+                                        to={formatSize(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)}
+                                      />
+                                      <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">заблокировано</Badge>
+                                    </>
+                                  ) : (
+                                    <>
+                                      {applied ? 'Применено: ' : null}
+                                      {formatSize(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)}
+                                      {!applied && <Badge variant="outline">PDF</Badge>}
+                                    </>
+                                  )}
                                 </span>
                               ) : (
                                 <span className="text-[#6B7280]">—</span>
@@ -398,29 +487,33 @@ export function AIAnalysisPanel({
                             </TableCell>
                             <TableCell>
                               {match.suggestedQuantity
-                                ? match.autoApplied ? `Применено: ${match.suggestedQuantity}` : <ChangeText from={String(part?.quantity || '—')} to={String(match.suggestedQuantity)} />
+                                ? applied ? `Применено: ${match.suggestedQuantity}` : <ChangeText from={String(part?.quantity || '—')} to={String(match.suggestedQuantity)} />
                                 : <OkText value={String(part?.quantity || '—')} />}
                             </TableCell>
                             <TableCell>
-                              {match.thicknessMismatch ? (
-                                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Толщина не изменена</Badge>
-                              ) : match.autoApplied ? (
-                                <Badge className="bg-emerald-100 text-emerald-700">Применено автоматически</Badge>
-                              ) : match.steelTypeWarning ? (
-                                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Нужен ручной тип стали</Badge>
-                              ) : hasSuggestion(match) ? (
-                                <Badge variant="outline">Есть предложение</Badge>
-                              ) : (
-                                <span className="text-[#6B7280]">Без изменений</span>
-                              )}
+                              <ApplyStatusBadge match={match} />
                             </TableCell>
                             <TableCell>
-                              {canSelect ? (
-                                <Checkbox
-                                  checked={selected[match.partId] === true}
-                                  onCheckedChange={(checked) => setSelected((current) => ({ ...current, [match.partId]: checked === true }))}
-                                />
-                              ) : null}
+                              <div className="flex flex-wrap items-center gap-2">
+                                {canSelect ? (
+                                  <Checkbox
+                                    checked={selected[match.partId] === true}
+                                    onCheckedChange={(checked) => setSelected((current) => ({ ...current, [match.partId]: checked === true }))}
+                                  />
+                                ) : null}
+                                {needsForce ? (
+                                  <Button type="button" variant="outline" size="sm" onClick={() => forceMatch(match)} disabled={isApplying}>
+                                    <AlertTriangle className="mr-1 h-3.5 w-3.5" />
+                                    Применить принудительно
+                                  </Button>
+                                ) : null}
+                                {applied ? (
+                                  <Button type="button" variant="outline" size="sm" onClick={() => revertMatches([match.partId])} disabled={isApplying}>
+                                    <Undo2 className="mr-1 h-3.5 w-3.5" />
+                                    Отменить
+                                  </Button>
+                                ) : null}
+                              </div>
                             </TableCell>
                           </TableRow>
                         )
@@ -457,11 +550,18 @@ export function AIAnalysisPanel({
                 )}
 
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={applySelected} disabled={isApplying || selectableMatches.length === 0}>
+                  <Button type="button" onClick={applySelected} disabled={isApplying || selectedProposedMatches.length === 0}>
                     {isApplying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Применить выбранные
                   </Button>
-                  <Button type="button" variant="outline" onClick={() => setSelected({})}>
+                  <Button type="button" variant="outline" onClick={revertSelected} disabled={isApplying || selectedAppliedMatches.length === 0}>
+                    <Undo2 className="mr-2 h-4 w-4" />
+                    Отменить выбранные
+                  </Button>
+                  <Button type="button" variant="outline" onClick={revertAllApplied} disabled={isApplying || appliedMatches.length === 0}>
+                    Отменить все применённые
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => setSelected({})} disabled={isApplying || (proposedMatches.length === 0 && selectedAppliedMatches.length === 0)}>
                     Отклонить все
                   </Button>
                 </div>
@@ -493,6 +593,117 @@ function OkText({ value }: { value: string }) {
   )
 }
 
+function ApplyStatusBadge({ match }: { match: AIMatchResult }) {
+  if (match.applyStatus === 'applied_forced') {
+    return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Применено принудительно</Badge>
+  }
+
+  if (match.applyStatus === 'applied_manual') {
+    return <Badge className="bg-emerald-100 text-emerald-700">Применено вручную</Badge>
+  }
+
+  if (match.applyStatus === 'applied_auto' || (match.autoApplied && !match.applyStatus)) {
+    return <Badge className="bg-emerald-100 text-emerald-700">Применено автоматически</Badge>
+  }
+
+  if (match.applyStatus === 'needs_force' || match.thicknessMismatch) {
+    return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Требует подтверждения</Badge>
+  }
+
+  if (match.applyStatus === 'reverted') {
+    return <Badge variant="outline">Отменено</Badge>
+  }
+
+  if (match.applyStatus === 'rejected') {
+    return <Badge variant="outline">Отклонено</Badge>
+  }
+
+  if (match.steelTypeWarning) {
+    return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Нужен ручной тип стали</Badge>
+  }
+
+  if (hasSuggestion(match)) {
+    return <Badge variant="outline">Предложено</Badge>
+  }
+
+  return <span className="text-[#6B7280]">Без изменений</span>
+}
+
+function matchToApplyPayload(match: AIMatchResult): ApplyMatchPayload {
+  return {
+    partId: match.partId,
+    material: match.suggestedMaterial || undefined,
+    steelTypeId: match.suggestedSteelTypeId || undefined,
+    steelTypeName: match.suggestedSteelTypeName || undefined,
+    steelTypeRaw: match.suggestedSteelTypeRaw || undefined,
+    quantity: match.suggestedQuantity || undefined,
+    thickness: match.suggestedThickness || undefined,
+    isSheetMetal: match.suggestedIsSheetMetal ?? undefined,
+    hasBends: match.suggestedHasBends ?? undefined,
+    unfoldingWidth: match.suggestedUnfoldingWidth || undefined,
+    unfoldingHeight: match.suggestedUnfoldingHeight || undefined,
+  }
+}
+
+function isApplied(match: AIMatchResult) {
+  return match.autoApplied || match.applyStatus === 'applied_auto' || match.applyStatus === 'applied_manual' || match.applyStatus === 'applied_forced'
+}
+
+function isProposed(match: AIMatchResult) {
+  return hasSuggestion(match) && !isApplied(match) && match.applyStatus !== 'needs_force' && match.applyStatus !== 'rejected'
+}
+
+function canForce(match: AIMatchResult, part: NestingPart | undefined) {
+  if (!part || !hasSuggestion(match) || isApplied(match)) return false
+
+  const hasBlockedThickness = match.thicknessMismatch && typeof match.suggestedThickness === 'number'
+  const hasBlockedDimensions = part.dimensionMismatch && typeof match.suggestedUnfoldingWidth === 'number' && typeof match.suggestedUnfoldingHeight === 'number'
+  return match.applyStatus === 'needs_force' || hasBlockedThickness || hasBlockedDimensions
+}
+
+function countSuggestedFields(match: AIMatchResult) {
+  let count = 0
+  if (match.suggestedMaterial) count += 1
+  if (match.suggestedSteelTypeId || match.suggestedSteelTypeRaw) count += 1
+  if (typeof match.suggestedThickness === 'number') count += 1
+  if (typeof match.suggestedQuantity === 'number') count += 1
+  if (typeof match.suggestedIsSheetMetal === 'boolean') count += 1
+  if (typeof match.suggestedHasBends === 'boolean') count += 1
+  if (typeof match.suggestedUnfoldingWidth === 'number' && typeof match.suggestedUnfoldingHeight === 'number') count += 1
+  return count
+}
+
+function buildForceConfirmText(match: AIMatchResult, part: NestingPart | undefined) {
+  const lines = ['Применить принудительно?', '']
+
+  if (part && typeof match.suggestedUnfoldingWidth === 'number' && typeof match.suggestedUnfoldingHeight === 'number') {
+    const areaDiff = percentDelta(part.width * part.height, match.suggestedUnfoldingWidth * match.suggestedUnfoldingHeight)
+    const aspectDiff = percentDelta(normalizedAspect(part.width, part.height), normalizedAspect(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight))
+    lines.push(`PDF: ${formatSize(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)}`)
+    lines.push(`STEP: ${formatSize(part.width, part.height)}`)
+    lines.push(`Расхождение площади: ${formatPercent(areaDiff)}, сторон: ${formatPercent(aspectDiff)}`)
+    lines.push('')
+    lines.push('Размеры детали будут заменены значениями из чертежа.')
+  }
+
+  if (part && typeof match.suggestedThickness === 'number') {
+    const thicknessDiff = percentDelta(part.thickness, match.suggestedThickness)
+    lines.push(`Толщина PDF: ${formatThickness(match.suggestedThickness)}`)
+    lines.push(`Толщина STEP: ${formatThickness(part.thickness)}`)
+    lines.push(`Расхождение толщины: ${formatPercent(thicknessDiff)}`)
+  }
+
+  if (match.thicknessMismatchNote) {
+    lines.push('')
+    lines.push(match.thicknessMismatchNote)
+  } else if (part?.mismatchNote) {
+    lines.push('')
+    lines.push(part.mismatchNote)
+  }
+
+  return lines.join('\n')
+}
+
 function formatThickness(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) ? `${formatNumber(value)} мм` : '—'
 }
@@ -503,6 +714,20 @@ function formatSize(width: number, height: number) {
 
 function formatNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, '')
+}
+
+function formatPercent(value: number) {
+  return `${formatNumber(value)}%`
+}
+
+function percentDelta(current: number, next: number) {
+  if (!Number.isFinite(current) || !Number.isFinite(next) || current <= 0 || next <= 0) return 0
+  return Math.abs(next - current) / current * 100
+}
+
+function normalizedAspect(width: number, height: number) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return 0
+  return Math.max(width, height) / Math.min(width, height)
 }
 
 function matchTypeLabel(type: AIMatchResult['matchType']) {
@@ -531,7 +756,7 @@ function hasSuggestion(match: AIMatchResult) {
       match.suggestedThickness ||
       match.suggestedUnfoldingWidth ||
       match.suggestedUnfoldingHeight ||
-      match.suggestedIsSheetMetal ||
+      typeof match.suggestedIsSheetMetal === 'boolean' ||
       typeof match.suggestedHasBends === 'boolean'
   )
 }
