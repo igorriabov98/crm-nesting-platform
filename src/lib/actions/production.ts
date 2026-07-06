@@ -28,6 +28,9 @@ type MachineDateField =
   | 'actual_material_date'
   | 'actual_shipping_date'
   | 'delivery_to_client_date'
+type ProductionMutationOptions = {
+  revalidate?: boolean
+}
 type StageForUpdate = {
   machine_id: string
   stage_type: Database['public']['Enums']['stage_type']
@@ -178,7 +181,7 @@ async function requireAuth() {
   return { supabase, user: profile as unknown as CurrentUser }
 }
 
-export async function updateProductionStage(stageId: string, data: ProductionStageUpdate) {
+export async function updateProductionStage(stageId: string, data: ProductionStageUpdate, options: ProductionMutationOptions = {}) {
   try {
     const { supabase, user } = await requireAuth()
 
@@ -306,13 +309,15 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
       }, user.id)
     }
 
-    revalidatePath(`${ROUTES.SALES_PLAN}/${stageObj.machine_id}`)
-    revalidatePath(ROUTES.PRODUCTION)
-    revalidatePath(ROUTES.GANTT)
-    revalidatePath(ROUTES.DASHBOARD)
-    revalidatePath(ROUTES.MEETINGS)
-    revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
-    revalidatePath(ROUTES.TASKS)
+    if (options.revalidate !== false) {
+      revalidatePath(`${ROUTES.SALES_PLAN}/${stageObj.machine_id}`)
+      revalidatePath(ROUTES.PRODUCTION)
+      revalidatePath(ROUTES.GANTT)
+      revalidatePath(ROUTES.DASHBOARD)
+      revalidatePath(ROUTES.MEETINGS)
+      revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
+      revalidatePath(ROUTES.TASKS)
+    }
     return { success: true }
   } catch (err: unknown) {
     return { success: false, error: getErrorMessage(err) }
@@ -323,14 +328,15 @@ export async function toggleStageSkip(stageId: string, isSkipped: boolean) {
   return updateProductionStage(stageId, { is_skipped: isSkipped })
 }
 
-export async function clearProductionStageDates(stageId: string) {
-  return updateProductionStage(stageId, { date_start: null, date_end: null })
+export async function clearProductionStageDates(stageId: string, options: ProductionMutationOptions = {}) {
+  return updateProductionStage(stageId, { date_start: null, date_end: null }, options)
 }
 
 export async function updateMachineDate(
   machineId: string,
   field: MachineDateField,
-  value: string | null
+  value: string | null,
+  options: ProductionMutationOptions = {}
 ) {
   try {
     const { supabase, user } = await requireAuth()
@@ -395,12 +401,14 @@ export async function updateMachineDate(
       if (!promotion.success) throw new Error(promotion.error || 'Не удалось добавить изготовленный образец в базу продукции')
     }
 
-    revalidatePath(ROUTES.PRODUCTION)
-    revalidatePath(ROUTES.GANTT)
-    revalidatePath(ROUTES.SALES_PLAN)
-    revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
-    revalidatePath(ROUTES.INVOICES)
-    revalidatePath(ROUTES.TASKS)
+    if (options.revalidate !== false) {
+      revalidatePath(ROUTES.PRODUCTION)
+      revalidatePath(ROUTES.GANTT)
+      revalidatePath(ROUTES.SALES_PLAN)
+      revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+      revalidatePath(ROUTES.INVOICES)
+      revalidatePath(ROUTES.TASKS)
+    }
 
     return { success: true, error: null }
   } catch (error: unknown) {
