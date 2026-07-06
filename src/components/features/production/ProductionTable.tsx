@@ -1,8 +1,7 @@
 "use client"
 
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowUpDown, Eraser, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -122,9 +121,9 @@ function SortableHeader({
 
 export function ProductionTable({ data, filters: externalFilters, onFiltersChange, hideFilters = false, visibleStageTypes }: ProductionTableProps) {
   const tableScrollRef = useRef<HTMLDivElement>(null)
-  const router = useRouter()
   const { isProductionManager, isDirector } = useRole()
   const canEdit = isProductionManager || isDirector
+  const [localData, setLocalData] = useState(data)
   const [internalFilters, setInternalFilters] = useState<ProductionFilterValues>({
     search: '',
     workshop: '',
@@ -139,6 +138,30 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
   const [tableDensity, setTableDensity] = useState<TableDensity>('normal')
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null)
   const [clearingStageId, setClearingStageId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLocalData(data)
+  }, [data])
+
+  const patchLocalStage = (stageId: string, patch: Partial<ProductionStage>) => {
+    setLocalData((current) => current.map((row) => {
+      if (!row.stages.some((stage) => stage.id === stageId)) return row
+      return {
+        ...row,
+        stages: row.stages.map((stage) => (
+          stage.id === stageId ? { ...stage, ...patch } : stage
+        )),
+      }
+    }))
+  }
+
+  const patchLocalMachine = (machineId: string, patch: Partial<ProductionRow['machine']>) => {
+    setLocalData((current) => current.map((row) => (
+      row.machine.id === machineId
+        ? { ...row, machine: { ...row.machine, ...patch } }
+        : row
+    )))
+  }
 
   const compactControls = tableDensity === 'compact'
   const displayStageTypes = useMemo(() => {
@@ -173,7 +196,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
   }
 
   const filtered = useMemo(() => {
-    return data.filter((row) => {
+    return localData.filter((row) => {
       if (filters.search) {
         const q = filters.search.toLowerCase()
         if (!row.machine.name.toLowerCase().includes(q)) return false
@@ -218,7 +241,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
 
       return true
     })
-  }, [data, filters, visibleStageTypes])
+  }, [localData, filters, visibleStageTypes])
 
   const sortedRows = useMemo(() => {
     if (!sortConfig) return filtered
@@ -246,9 +269,17 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
     : 0
 
   const handleUpdate = async (stageId: string, field: string, value: string | number | boolean | null) => {
-    const res = await updateProductionStage(stageId, { [field]: value })
-    if (res.success) router.refresh()
-    if (!res.success) toast.error(res.error || 'Ошибка сохранения')
+    const currentStage = localData.flatMap((row) => row.stages).find((stage) => stage.id === stageId)
+    const rollbackPatch = currentStage && field in currentStage
+      ? ({ [field]: currentStage[field as keyof ProductionStage] } as Partial<ProductionStage>)
+      : null
+
+    patchLocalStage(stageId, { [field]: value } as Partial<ProductionStage>)
+    const res = await updateProductionStage(stageId, { [field]: value }, { revalidate: false })
+    if (!res.success) {
+      if (rollbackPatch) patchLocalStage(stageId, rollbackPatch)
+      toast.error(res.error || 'Ошибка сохранения')
+    }
     return res
   }
 
@@ -279,23 +310,30 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
     field: 'planned_material_date' | 'actual_shipping_date',
     value: string | null
   ) => {
-    const res = await updateMachineDate(machineId, field, value)
-    if (res.success) router.refresh()
-    if (!res.success) toast.error(res.error || 'Ошибка сохранения')
+    const currentMachine = localData.find((row) => row.machine.id === machineId)?.machine
+    const rollbackPatch = currentMachine ? { [field]: currentMachine[field] } : null
+
+    patchLocalMachine(machineId, { [field]: value })
+    const res = await updateMachineDate(machineId, field, value, { revalidate: false })
+    if (!res.success) {
+      if (rollbackPatch) patchLocalMachine(machineId, rollbackPatch)
+      toast.error(res.error || 'Ошибка сохранения')
+    }
     return res
   }
 
   const handleClearStageDates = async (stage: ProductionStage) => {
+    patchLocalStage(stage.id, { date_start: null, date_end: null })
     setClearingStageId(stage.id)
     try {
-      const res = await clearProductionStageDates(stage.id)
+      const res = await clearProductionStageDates(stage.id, { revalidate: false })
       if (!res.success) {
+        patchLocalStage(stage.id, { date_start: stage.date_start, date_end: stage.date_end })
         toast.error(res.error || 'Ошибка очистки дат')
         return res
       }
 
       toast.success('Даты этапа очищены')
-      router.refresh()
       return res
     } finally {
       setClearingStageId(null)

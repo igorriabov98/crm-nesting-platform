@@ -425,6 +425,7 @@ function DateField({
   const [displayValue, setDisplayValue] = useState(value)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayValue(value)
   }, [value])
 
@@ -1785,17 +1786,26 @@ export function ProductionPlanner({
     value: string | number | boolean | null,
     options: { refresh?: boolean } = {},
   ) => {
-    const result = await updateProductionStage(stageId, { [field]: value })
+    const shouldRefresh = options.refresh === true
+    const stage = selectedProductionRow?.stages.find((item) => item.id === stageId)
+    const nextPatch = { [field]: value } as StageOptimisticPatch
+    const rollbackPatch = stage && field in stage
+      ? ({ [field]: stage[field as keyof ProductionStage] } as StageOptimisticPatch)
+      : null
+
+    updateStageOptimisticPatch(stageId, nextPatch)
+    const result = await updateProductionStage(stageId, { [field]: value }, { revalidate: shouldRefresh })
     if (result.success) {
       toast.success('Сохранено')
-      if (options.refresh !== false) {
+      if (shouldRefresh) {
         router.refresh()
       }
     } else {
+      if (rollbackPatch) updateStageOptimisticPatch(stageId, rollbackPatch)
       toast.error(result.error || 'Ошибка сохранения')
     }
     return result
-  }, [router])
+  }, [router, selectedProductionRow, updateStageOptimisticPatch])
 
   const saveStageDate = useCallback(async (
     row: ProductionRow,
@@ -1863,7 +1873,7 @@ export function ProductionPlanner({
     const nextValue = dateOnlyKey(value)
     updateMachineDateOptimisticPatch(machineId, field, nextValue)
 
-    const result = await updateMachineDate(machineId, field, nextValue)
+    const result = await updateMachineDate(machineId, field, nextValue, { revalidate: false })
     if (result.success) {
       toast.success('Сохранено')
     } else {
@@ -1911,7 +1921,7 @@ export function ProductionPlanner({
     updateStageOptimisticPatch(stage.id, { date_start: null, date_end: null })
     setClearingStageId(stage.id)
     try {
-      const result = await clearProductionStageDates(stage.id)
+      const result = await clearProductionStageDates(stage.id, { revalidate: false })
       if (result.success) {
         toast.success('Даты этапа очищены')
       } else {
