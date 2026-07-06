@@ -6,6 +6,7 @@ const materialListText = `
 70000000006505 U 80 - 690 FZ 4 690 DIN1026 S235JRG2 80009 5,971 kg 23,883 kg
 70000000006506 U 50 x 38 - 1090 FZ 1 1090 DIN1026 S235JRG2 80006 6,091 kg 6,091 kg
 70000000002584 RU 16 - 60 FZ 2 60 EN 10060 S235JRG2 80285 0,095 kg 0,190 kg
+70000000002585 RO 30 - 120 FZ 1 120 EN 10219 S235JRG2 80285 0,500 kg 0,500 kg
 70000000006504 BL 20 x 90 x 160 10461.geo FL 2 DIN EN 10130 S235JRG2 82515 1,695 kg 3,390 kg
 70000000006510 BL 20 x 65 x 230 10464.geo FL 4 DIN EN 10130 S235JRG2 82515 1,308 kg 5,233 kg
 70000000006512 BL 6 x 75 x 280 10465.geo FL 4 DIN EN 10130 S235JRG2 82508 1,000 kg 3,999 kg
@@ -16,7 +17,7 @@ const materialListText = `
 `;
 
 const parsed = parseDeterministicBOMText(materialListText);
-assert.equal(parsed.length, 9);
+assert.equal(parsed.length, 10);
 
 const support = parsed.find((entry) => entry.articleNumber === '70000000006512');
 assert.ok(support);
@@ -45,6 +46,13 @@ assert.equal(round.partType, 'round_bar');
 assert.equal(round.widthMm, 16);
 assert.equal(round.heightMm, 60);
 assert.equal(round.quantity, 2);
+
+const tube = parsed.find((entry) => entry.articleNumber === '70000000002585');
+assert.ok(tube);
+assert.equal(tube.partType, 'tube');
+assert.equal(tube.widthMm, 30);
+assert.equal(tube.heightMm, 120);
+assert.equal(tube.quantity, 1);
 
 const localPdf = '/Users/igorrabov/Downloads/10461020050000_Detail.pdf';
 main().catch((error) => {

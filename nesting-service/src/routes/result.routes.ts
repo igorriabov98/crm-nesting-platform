@@ -7,6 +7,13 @@ import { readFittedPartGeometry } from '../lib/dxf/part-geometry';
 import { ensureCCW, ensureCW, removeClosingPoint, transformContourForDxf, type DxfRotation } from '../lib/dxf/transform';
 import { prisma } from '../lib/prisma';
 import { normalizeCadText } from '../lib/text-encoding';
+import type { UnplacedPart } from '../lib/nesting/types';
+import {
+  buildUnplacedReasonQueues,
+  createUnplacedPart,
+  fallbackUnplacedReason,
+  takeUnplacedReason,
+} from '../lib/nesting/unplaced-reasons';
 import { idParamSchema } from '../schemas/common.schema';
 import { projectSheetParamsSchema } from '../schemas/project.schema';
 import { isCompletedProjectStatus } from '../lib/project-status';
@@ -140,22 +147,56 @@ export async function resultRoutes(app: FastifyInstance) {
     });
 
     const totalParts = project.parts.reduce((sum, part) => sum + part.quantity * project.quantity, 0);
-    const unplacedParts: { partId: string; name: string }[] = [];
+    const unplacedParts: UnplacedPart[] = [];
+    const unplacedReasonQueues = buildUnplacedReasonQueues(project.validationReport);
 
     for (const part of project.parts) {
       const required = part.quantity * project.quantity;
       const placed = placedByPartId.get(part.id) ?? 0;
+      const baseName = normalizeCadText(part.name);
+      const material = normalizeCadText(part.material);
 
       if (!part.isSheetMetal) {
         const reason = buildExcludedFromNestingReason(part);
         for (let index = 1; index <= required; index += 1) {
-          unplacedParts.push({ partId: part.id, name: `${normalizeCadText(part.name)} (#${index}) - ${reason}` });
+          unplacedParts.push(createUnplacedPart({
+            partId: part.id,
+            baseName,
+            copyIndex: index,
+            reasonCode: 'EXCLUDED',
+            reason,
+            material,
+            steelTypeName: part.steelTypeName,
+            thickness: part.thickness,
+            requiredWidth: part.width,
+            requiredHeight: part.height,
+          }));
         }
         continue;
       }
 
       for (let index = placed + 1; index <= required; index += 1) {
-        unplacedParts.push({ partId: part.id, name: `${normalizeCadText(part.name)} (#${index})` });
+        const reasonInfo = takeUnplacedReason(unplacedReasonQueues, part.id, {
+          ...fallbackUnplacedReason(),
+          material,
+          steelTypeName: part.steelTypeName,
+          thickness: part.thickness,
+          requiredWidth: part.width,
+          requiredHeight: part.height,
+        });
+
+        unplacedParts.push(createUnplacedPart({
+          partId: part.id,
+          baseName,
+          copyIndex: index,
+          reasonCode: reasonInfo.reasonCode,
+          reason: reasonInfo.reason,
+          material: reasonInfo.material,
+          steelTypeName: reasonInfo.steelTypeName,
+          thickness: reasonInfo.thickness,
+          requiredWidth: reasonInfo.requiredWidth,
+          requiredHeight: reasonInfo.requiredHeight,
+        }));
       }
     }
 

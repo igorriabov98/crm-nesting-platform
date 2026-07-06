@@ -8,6 +8,12 @@ import { transformContourForDxf } from '../lib/dxf/transform';
 import { validateDXF } from '../lib/dxf/validate';
 import { buildSheetExportGeometry, dxfOptionsForSheet, type SheetExportGeometry } from '../lib/export/sheet-geometry';
 import { AppError, NotFoundError, ValidationError } from '../lib/errors';
+import {
+  buildUnplacedReasonQueues,
+  createUnplacedPart,
+  fallbackUnplacedReason,
+  takeUnplacedReason,
+} from '../lib/nesting/unplaced-reasons';
 import { prisma } from '../lib/prisma';
 import { isCompletedProjectStatus } from '../lib/project-status';
 import { normalizeCadText } from '../lib/text-encoding';
@@ -159,22 +165,52 @@ function buildResultJson(project: Prisma.NestingProjectGetPayload<{
   });
   const totalParts = project.parts.reduce((sum, part) => sum + part.quantity * project.quantity, 0);
   const placedParts = Array.from(placedByPartId.values()).reduce((sum, count) => sum + count, 0);
+  const unplacedReasonQueues = buildUnplacedReasonQueues(project.validationReport);
   const unplacedParts = project.parts.flatMap((part) => {
     const required = part.quantity * project.quantity;
     const placed = placedByPartId.get(part.id) ?? 0;
+    const baseName = normalizeCadText(part.name);
+    const material = normalizeCadText(part.material);
 
     if (!part.isSheetMetal) {
       const reason = buildExcludedFromNestingReason(part);
-      return Array.from({ length: required }, (_, index) => ({
+      return Array.from({ length: required }, (_, index) => createUnplacedPart({
         partId: part.id,
-        name: `${normalizeCadText(part.name)} (#${index + 1}) - ${reason}`,
+        baseName,
+        copyIndex: index + 1,
+        reasonCode: 'EXCLUDED',
+        reason,
+        material,
+        steelTypeName: part.steelTypeName,
+        thickness: part.thickness,
+        requiredWidth: part.width,
+        requiredHeight: part.height,
       }));
     }
 
-    return Array.from({ length: Math.max(required - placed, 0) }, (_, index) => ({
-      partId: part.id,
-      name: `${normalizeCadText(part.name)} (#${placed + index + 1})`,
-    }));
+    return Array.from({ length: Math.max(required - placed, 0) }, (_, index) => {
+      const reasonInfo = takeUnplacedReason(unplacedReasonQueues, part.id, {
+        ...fallbackUnplacedReason(),
+        material,
+        steelTypeName: part.steelTypeName,
+        thickness: part.thickness,
+        requiredWidth: part.width,
+        requiredHeight: part.height,
+      });
+
+      return createUnplacedPart({
+        partId: part.id,
+        baseName,
+        copyIndex: placed + index + 1,
+        reasonCode: reasonInfo.reasonCode,
+        reason: reasonInfo.reason,
+        material: reasonInfo.material,
+        steelTypeName: reasonInfo.steelTypeName,
+        thickness: reasonInfo.thickness,
+        requiredWidth: reasonInfo.requiredWidth,
+        requiredHeight: reasonInfo.requiredHeight,
+      });
+    });
   });
 
   return {

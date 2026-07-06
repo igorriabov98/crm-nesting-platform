@@ -1,6 +1,7 @@
 import { nestOnSheetOptimized, sortPartsByStrategy } from './blf';
 import { evaluateRemnant } from './remnant-eval';
 import type { NestingParams, NestingPart, NestingResult, PlacedPart, SheetOption, SheetResult } from './types';
+import { buildNestingFailedReason } from './unplaced-reasons';
 
 const MAX_SHEETS = 50;
 
@@ -56,7 +57,25 @@ export function distributePartsToSheets(
 
   return {
     sheets: results,
-    unplacedParts: remaining.map((part) => ({ partId: part.id, name: part.name })),
+    unplacedParts: remaining.map((part) => {
+      const sheet = sortedSheets[0] ?? null;
+      const reason = buildNestingFailedReason({
+        material: sheet?.material ?? 'не указан',
+        thickness: sheet?.thickness ?? null,
+      });
+
+      return {
+        partId: part.id,
+        name: `${part.name} - ${reason}`,
+        reasonCode: 'NESTING_FAILED',
+        reason,
+        material: sheet?.material ?? null,
+        steelTypeName: null,
+        thickness: sheet?.thickness ?? null,
+        requiredWidth: part.width,
+        requiredHeight: part.height,
+      };
+    }),
     totalParts,
     placedParts,
     totalSheets: results.length,

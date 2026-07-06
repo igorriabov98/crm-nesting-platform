@@ -406,6 +406,36 @@ const explicitChannelMatches = matchBOMToParts(
 
 assert.equal(explicitChannelMatches[0].suggestedIsSheetMetal, false);
 
+const skmProfileBom = [
+  createBom({ position: '4', description: 'BL 6 x 75 x 280', partType: 'sheet', thicknessMm: 6, widthMm: 75, heightMm: 280, quantity: 4, materialGrade: 'S235JRG2', materialType: 'Сталь' }),
+  createBom({ position: '6', description: 'U 80 - 690', partType: 'channel', widthMm: 80, heightMm: 690, quantity: 2, materialGrade: 'S235JRG2', materialType: 'Сталь' }),
+  createBom({ position: '8', description: 'RU 16 - 60', partType: 'round_bar', widthMm: 16, heightMm: 60, quantity: 2, materialGrade: 'S235JRG2', materialType: 'Сталь' }),
+];
+const skmProfileMatches = matchBOMToParts(
+  skmProfileBom,
+  [
+    createPart({ id: 'support-profile', name: 'Опора', thickness: 6, quantity: 4, bboxSizeX: 75, bboxSizeY: 146.78, bboxSizeZ: 173.28, meshVolume: 124633.9, meshArea: 45967.2, isSheetMetal: false }),
+    createPart({ id: 'kufe', name: 'Kufe', thickness: 5.85, quantity: 2, bboxSizeX: 80, bboxSizeY: 45, bboxSizeZ: 690, isSheetMetal: false }),
+    createPart({ id: 'achse', name: 'Achse', thickness: 7.06, quantity: 2, bboxSizeX: 16, bboxSizeY: 16, bboxSizeZ: 60, isSheetMetal: false }),
+  ]
+);
+
+const kufeMatch = skmProfileMatches.find((match) => match.partId === 'kufe');
+assert.ok(kufeMatch);
+assert.equal(kufeMatch.bomPosition, '6');
+assert.equal(kufeMatch.bomName, 'U 80 - 690');
+assert.equal(kufeMatch.matchType, 'geometry');
+assert.ok(kufeMatch.matchConfidence >= 0.8);
+assert.equal(kufeMatch.suggestedQuantity, null);
+assert.equal(kufeMatch.suggestedMaterialGrade, 'S235JRG2');
+assert.equal(kufeMatch.suggestedIsSheetMetal, false);
+assert.equal(kufeMatch.suggestedUnfoldingWidth, null);
+assert.equal(kufeMatch.suggestedUnfoldingHeight, null);
+assert.equal(
+  skmProfileBom.filter((entry) => !skmProfileMatches.some((match) => match.matchType !== 'none' && match.bomPosition === entry.position)).length,
+  0
+);
+
 console.log('[bom-matcher] all tests passed');
 
 function createBom(input: Partial<BOMEntry>): BOMEntry {

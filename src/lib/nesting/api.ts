@@ -25,8 +25,19 @@ export type LayoutViolationType =
   | 'out_of_bounds'
   | 'quantity'
   | 'EXCLUDED_FROM_NESTING'
+  | 'NO_SHEET_AVAILABLE'
+  | 'MISSING_THICKNESS'
+  | 'NESTING_FAILED'
+  | 'UNPLACED_WITHOUT_REASON'
   | 'hole_outside'
   | 'part_in_hole'
+
+export type UnplacedReasonCode =
+  | 'EXCLUDED'
+  | 'NO_SHEET_AVAILABLE'
+  | 'MISSING_THICKNESS'
+  | 'NESTING_FAILED'
+  | 'UNPLACED_WITHOUT_REASON'
 
 export interface LayoutViolation {
   type: LayoutViolationType
@@ -36,6 +47,13 @@ export interface LayoutViolation {
   amountMm?: number
   expected?: number
   actual?: number
+  reasonCode?: UnplacedReasonCode
+  reason?: string
+  material?: string | null
+  steelTypeName?: string | null
+  thickness?: number | null
+  requiredWidth?: number | null
+  requiredHeight?: number | null
   message: string
 }
 
@@ -190,7 +208,17 @@ export interface SheetResult {
 
 export interface NestingResult {
   sheets: SheetResult[]
-  unplacedParts: { partId: string; name: string }[]
+  unplacedParts: Array<{
+    partId: string
+    name: string
+    reasonCode?: UnplacedReasonCode
+    reason?: string
+    material?: string | null
+    steelTypeName?: string | null
+    thickness?: number | null
+    requiredWidth?: number | null
+    requiredHeight?: number | null
+  }>
   totalParts: number
   placedParts: number
   totalSheets: number

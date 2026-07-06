@@ -5,6 +5,11 @@ import { polygonNetArea } from '../geometry';
 import { distributePartsToSheets } from './multi-sheet';
 import { resolveNestingParams } from './params';
 import type { NestingParams, NestingPart, NestingResult, Point2D, SheetOption } from './types';
+import {
+  buildMissingThicknessReason,
+  buildNoSheetAvailableReason,
+  createUnplacedPart,
+} from './unplaced-reasons';
 import { validateLayout, type LayoutValidationReport } from '../validation/layout-validator';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
@@ -88,6 +93,13 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     Array.from({ length: part.quantity }, (_, index) => ({
       partId: part.partId,
       name: `${part.name} (#${index + 1}) - ${part.reason}`,
+      reasonCode: 'EXCLUDED' as const,
+      reason: part.reason,
+      material: null,
+      steelTypeName: null,
+      thickness: null,
+      requiredWidth: null,
+      requiredHeight: null,
     }))
   );
   const totalParts = expectedParts.reduce((sum, part) => sum + part.quantity, 0);
@@ -95,8 +107,23 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
 
   for (const part of partsWithoutThickness) {
     const quantity = part.quantity * project.quantity;
+    const material = normalizeCadText(part.material);
+    const steelTypeName = part.steelTypeName ?? null;
+    const reason = buildMissingThicknessReason({ material, steelTypeName });
+
     for (let index = 1; index <= quantity; index += 1) {
-      allUnplaced.push({ partId: part.id, name: `${part.name} (#${index}) - толщина не определена` });
+      allUnplaced.push(createUnplacedPart({
+        partId: part.id,
+        baseName: normalizeCadText(part.name),
+        copyIndex: index,
+        reasonCode: 'MISSING_THICKNESS',
+        reason,
+        material,
+        steelTypeName,
+        thickness: null,
+        requiredWidth: part.width,
+        requiredHeight: part.height,
+      }));
     }
   }
 
@@ -141,8 +168,27 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     if (sheets.length === 0) {
       for (const part of groupParts) {
         const quantity = quantities.get(part.id) ?? 0;
+        const reason = buildNoSheetAvailableReason({
+          material,
+          steelTypeName,
+          thickness,
+          requiredWidth: part.width,
+          requiredHeight: part.height,
+        });
+
         for (let index = 1; index <= quantity; index += 1) {
-          allUnplaced.push({ partId: part.id, name: `${part.name} (#${index})` });
+          allUnplaced.push(createUnplacedPart({
+            partId: part.id,
+            baseName: normalizeCadText(part.name),
+            copyIndex: index,
+            reasonCode: 'NO_SHEET_AVAILABLE',
+            reason,
+            material,
+            steelTypeName,
+            thickness,
+            requiredWidth: part.width,
+            requiredHeight: part.height,
+          }));
         }
       }
       continue;
