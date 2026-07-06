@@ -11,6 +11,7 @@ import { STAGES } from '@/lib/constants/stages'
 import { isDirector } from '@/lib/utils/permissions'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
 import { createSystemMachineChatMessage } from '@/lib/actions/machine-activity'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { getIncomingOutsourcingPlanBlockers, syncOutsourcingTransportForProductionPlan, syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
@@ -870,9 +871,17 @@ async function applyRequestItems(db: LooseDb, items: DateChangeItemRow[]) {
 
     if (item.target_type === 'stage') {
       if (!item.production_stage_id) throw new Error('В запросе не указан этап')
+      const value = dateOnly(item.new_value)
+      const patch = item.field_name === 'night_shift_date'
+        ? {
+            night_shift_date: value,
+            night_shift_dates: normalizeNightShiftDates([], value),
+            is_night_shift: Boolean(value),
+          }
+        : { [item.field_name]: value }
       const { error } = await db
         .from('production_stages')
-        .update({ [item.field_name]: dateOnly(item.new_value) })
+        .update(patch)
         .eq('id', item.production_stage_id)
       if (error) throw new Error(error.message || 'Не удалось обновить дату этапа')
       continue

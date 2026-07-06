@@ -1465,6 +1465,7 @@ export type Database = {
           is_skipped: boolean
           is_night_shift: boolean
           night_shift_date: string | null
+          night_shift_dates: string[]
           created_at: string
           updated_at: string
         }
@@ -1480,6 +1481,7 @@ export type Database = {
           is_skipped?: boolean
           is_night_shift?: boolean
           night_shift_date?: string | null
+          night_shift_dates?: string[]
           created_at?: string
           updated_at?: string
         }
@@ -1495,6 +1497,7 @@ export type Database = {
           is_skipped?: boolean
           is_night_shift?: boolean
           night_shift_date?: string | null
+          night_shift_dates?: string[]
           created_at?: string
           updated_at?: string
         }
@@ -3942,6 +3945,7 @@ export type Database = {
           is_skipped: boolean
           is_night_shift: boolean
           night_shift_date: string | null
+          night_shift_dates: string[]
           created_at: string
           updated_at: string
           delay_days: number | null

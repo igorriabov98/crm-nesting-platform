@@ -17,6 +17,7 @@ import { clearProductionStageDates, updateMachineDate, updateProductionStage } f
 import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
 import { getDesiredShippingInfo } from '@/lib/utils/desired-shipping'
+import { formatNightShiftDates, normalizeNightShiftDates, primaryNightShiftDate } from '@/lib/utils/night-shift-dates'
 import type { ProductionRow, StageStatus } from '@/app/(protected)/production/actions'
 import type { StageType } from '@/lib/types'
 
@@ -49,18 +50,18 @@ const statusBgClass: Record<StageStatus, string> = {
 const stickyColumnWidths = [164, 70, 104, 112]
 const workshopCellClass = 'w-[50px] min-w-[50px] px-1 py-1 text-center text-xs'
 const dateCellClass = 'w-[110px] min-w-[110px] px-1 py-1 text-center text-xs'
-const nightCellClass = 'w-[40px] min-w-[40px] px-1 py-1 text-center text-xs'
+const nightCellClass = 'w-[92px] min-w-[92px] px-1 py-1 text-center text-xs'
 
 const getStageColumnWidths = (stageType: string) => {
   if (stageType === 'shipping' || stageType === 'actual_shipping') return [132]
-  if (stageType === 'painting') return stageHasWorkshop(stageType) ? [50, 110, 110, 40] : [110, 110, 40]
+  if (stageType === 'painting') return stageHasWorkshop(stageType) ? [50, 110, 110, 92] : [110, 110, 92]
   if (!stageHasWorkshop(stageType)) return [110, 110]
   return [50, 110, 110]
 }
 
 const stageColumnWidth = (stageType: string) => {
   if (stageType === 'shipping' || stageType === 'actual_shipping') return 'w-[132px] min-w-[132px]'
-  if (stageType === 'painting') return stageHasWorkshop(stageType) ? 'w-[310px] min-w-[310px]' : 'w-[260px] min-w-[260px]'
+  if (stageType === 'painting') return stageHasWorkshop(stageType) ? 'w-[362px] min-w-[362px]' : 'w-[312px] min-w-[312px]'
   if (!stageHasWorkshop(stageType)) return 'w-[220px] min-w-[220px]'
   return 'w-[270px] min-w-[270px]'
 }
@@ -191,7 +192,9 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
     if (prefix !== 'stage') return null
     const stage = row.stages.find((item) => item.stage_type === stageType)
     if (!stage) return null
-    const value = stage[field as 'date_start' | 'date_end' | 'night_shift_date']
+    const value = field === 'night_shift_date'
+      ? primaryNightShiftDate(stage.night_shift_dates, stage.night_shift_date)
+      : stage[field as 'date_start' | 'date_end']
     return value ? new Date(`${value}T00:00:00`).getTime() : null
   }
 
@@ -255,7 +258,6 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
     })
   }, [filtered, sortConfig])
 
-  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: sortedRows.length,
     getScrollElement: () => tableScrollRef.current,
@@ -647,6 +649,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                     )
 
                     if (stageType === 'painting') {
+                      const nightDates = normalizeNightShiftDates(stage.night_shift_dates, stage.night_shift_date)
                       cells.push(
                         <td key={`${stageType}_n`} className={cn(nightCellClass, bgClass, hl)}>
                           {isSkipped ? (
@@ -659,7 +662,14 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                                 onCheckedChange={(checked) => handleUpdate(stage.id, 'is_night_shift', checked === true)}
                                 className="h-3.5 w-3.5"
                               />
-                              {stage.is_night_shift && renderDateEdit(stage.night_shift_date, canEdit, (value) => handleStageDateUpdate(row, stage, 'night_shift_date', value))}
+                              {stage.is_night_shift && (
+                                <span
+                                  className="max-w-[82px] truncate rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700"
+                                  title={formatNightShiftDates(nightDates)}
+                                >
+                                  {nightDates.length > 0 ? formatNightShiftDates(nightDates) : 'ночь'}
+                                </span>
+                              )}
                             </div>
                           )}
                         </td>

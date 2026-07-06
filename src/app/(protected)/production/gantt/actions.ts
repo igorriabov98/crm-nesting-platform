@@ -3,6 +3,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
 import { differenceInCalendarDays, isPast, addDays } from 'date-fns'
+import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
 import type { StageType } from '@/lib/types'
 
 export type GanttStageStatus = 'not_planned' | 'active' | 'completed' | 'overdue'
@@ -16,6 +17,7 @@ export interface GanttStage {
   manual_overdue: boolean
   is_night_shift: boolean
   night_shift_date: string | null
+  night_shift_dates: string[]
   status: GanttStageStatus
   delay_days: number
 }
@@ -81,6 +83,7 @@ type SelectedGanttStage = RawGanttStage & {
   is_skipped: boolean | null
   is_night_shift: boolean | null
   night_shift_date: string | null
+  night_shift_dates?: string[] | null
 }
 
 type SelectedMachineItem = {
@@ -610,7 +613,7 @@ export async function getGanttData(
     machine_items(coating),
     production_stages(
       id, stage_type, workshop, date_start, date_end, manual_overdue,
-      is_skipped, is_night_shift, night_shift_date
+      is_skipped, is_night_shift, night_shift_date, night_shift_dates
     ),
     supply_items(
       id, nomenclature, planned_delivery_date, status,
@@ -624,7 +627,7 @@ export async function getGanttData(
     machine_items(coating),
     production_stages(
       id, stage_type, workshop, date_start, date_end, manual_overdue,
-      is_skipped, is_night_shift, night_shift_date
+      is_skipped, is_night_shift, night_shift_date, night_shift_dates
     ),
     supply_items(
       id, nomenclature, planned_delivery_date, status,
@@ -649,10 +652,18 @@ export async function getGanttData(
     return builtQuery.order('created_at', { ascending: false })
   }
 
-  const selectWithDeadlineLegacy = selectWithDeadline.replace(', manual_overdue', '')
-  const selectWithoutDeadlineLegacy = selectWithoutDeadline.replace(', manual_overdue', '')
+  const selectWithDeadlineLegacy = selectWithDeadline.replace(', manual_overdue', '').replace(', night_shift_dates', '')
+  const selectWithoutDeadlineLegacy = selectWithoutDeadline.replace(', manual_overdue', '').replace(', night_shift_dates', '')
+  const selectWithDeadlineNightDatesLegacy = selectWithDeadline.replace(', night_shift_dates', '')
+  const selectWithoutDeadlineNightDatesLegacy = selectWithoutDeadline.replace(', night_shift_dates', '')
 
   let { data: machines, error } = await buildQuery(selectWithDeadline)
+
+  if (error && error.message?.includes('night_shift_dates')) {
+    const fallback = await buildQuery(selectWithDeadlineNightDatesLegacy)
+    machines = fallback.data
+    error = fallback.error
+  }
 
   if (error && error.message?.includes('manual_overdue')) {
     const fallback = await buildQuery(selectWithDeadlineLegacy)
@@ -664,6 +675,12 @@ export async function getGanttData(
     const fallback = await buildQuery(selectWithoutDeadline)
     machines = fallback.data
     error = fallback.error
+
+    if (error && error.message?.includes('night_shift_dates')) {
+      const legacyFallback = await buildQuery(selectWithoutDeadlineNightDatesLegacy)
+      machines = legacyFallback.data
+      error = legacyFallback.error
+    }
 
     if (error && error.message?.includes('manual_overdue')) {
       const legacyFallback = await buildQuery(selectWithoutDeadlineLegacy)
@@ -726,6 +743,7 @@ export async function getGanttData(
         manual_overdue: Boolean(s.manual_overdue),
         is_night_shift: Boolean(s.is_night_shift),
         night_shift_date: s.night_shift_date,
+        night_shift_dates: normalizeNightShiftDates(s.night_shift_dates, s.night_shift_date),
         status,
         delay_days,
       }

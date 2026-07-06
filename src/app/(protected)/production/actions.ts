@@ -3,6 +3,7 @@
 import { getCurrentUserContext } from '@/lib/auth/current-user'
 import type { StageType } from '@/lib/types'
 import { STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
+import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
 
 export type StageStatus = 'not_planned' | 'active' | 'completed' | 'overdue' | 'skipped'
 
@@ -16,6 +17,7 @@ export type ProductionStageRow = {
   is_skipped: boolean
   is_night_shift: boolean
   night_shift_date: string | null
+  night_shift_dates: string[]
   status: StageStatus
   delay_days: number
 }
@@ -53,6 +55,7 @@ type SelectedProductionStage = {
   is_skipped: boolean | null
   is_night_shift: boolean | null
   night_shift_date: string | null
+  night_shift_dates?: string[] | null
 }
 
 type SelectedProductionMachine = {
@@ -150,7 +153,7 @@ export async function getProductionData(factoryFilter?: string | null) {
     actual_material_date, actual_shipping_date, delivery_to_client_date,
     production_stages(
       id, stage_type, workshop, date_start, date_end, manual_overdue,
-      is_skipped, is_night_shift, night_shift_date
+      is_skipped, is_night_shift, night_shift_date, night_shift_dates
     )
   `
 
@@ -170,7 +173,7 @@ export async function getProductionData(factoryFilter?: string | null) {
     production_month, production_workshop, production_queue_number,
     production_stages(
       id, stage_type, workshop, date_start, date_end, manual_overdue,
-      is_skipped, is_night_shift, night_shift_date
+      is_skipped, is_night_shift, night_shift_date, night_shift_dates
     )
   `
 
@@ -200,6 +203,12 @@ export async function getProductionData(factoryFilter?: string | null) {
 
   let { data: machines, error } = await buildQuery(selectWithDeadline)
 
+  if (error && error.message?.includes('night_shift_dates')) {
+    const fallback = await buildQuery(selectWithDeadlineLegacy)
+    machines = fallback.data
+    error = fallback.error
+  }
+
   if (error && error.message?.includes('manual_overdue')) {
     const fallback = await buildQuery(selectWithDeadlineLegacy)
     machines = fallback.data
@@ -212,6 +221,12 @@ export async function getProductionData(factoryFilter?: string | null) {
     error = fallback.error
 
     if (error && error.message?.includes('manual_overdue')) {
+      const legacyFallback = await buildQuery(selectWithoutDeadlineLegacy)
+      machines = legacyFallback.data
+      error = legacyFallback.error
+    }
+
+    if (error && error.message?.includes('night_shift_dates')) {
       const legacyFallback = await buildQuery(selectWithoutDeadlineLegacy)
       machines = legacyFallback.data
       error = legacyFallback.error
@@ -261,6 +276,7 @@ export async function getProductionData(factoryFilter?: string | null) {
         is_skipped: Boolean(s.is_skipped),
         is_night_shift: Boolean(s.is_night_shift),
         night_shift_date: s.night_shift_date,
+        night_shift_dates: normalizeNightShiftDates(s.night_shift_dates, s.night_shift_date),
         status,
         delay_days,
       }

@@ -35,9 +35,9 @@ export function GanttLegend({
         <span>Легенда</span>
         <ChevronDown className={cn("h-4 w-4 text-[#6B7280] transition-transform", open && "rotate-180")} />
       </button>
-      {open && <div className="grid gap-4 border-t border-[#E8ECF0] p-3 sm:grid-cols-2 lg:grid-cols-4">
+      {open && <div className="grid gap-4 border-t border-[#E8ECF0] p-3 sm:grid-cols-2 xl:grid-cols-5">
         <div>
-          <p className="mb-2 font-medium uppercase tracking-wide text-[#6B7280]">Этапы производства</p>
+          <p className="mb-2 font-medium uppercase text-[#6B7280]">Этапы</p>
           <div className="flex flex-wrap gap-x-4 gap-y-1.5">
             {stages.map((stage) => (
               <div key={stage} className="flex items-center gap-1.5">
@@ -56,27 +56,27 @@ export function GanttLegend({
         </div>
 
         <div>
-          <p className="mb-2 font-medium uppercase tracking-wide text-[#6B7280]">Статус этапа</p>
+          <p className="mb-2 font-medium uppercase text-[#6B7280]">Бар этапа</p>
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <div
-                className="w-9 rounded-md border-2 border-dashed border-[#4472C4] bg-white"
+                className="w-9 rounded-sm border-2 border-dashed border-[#4472C4] bg-[#4472C4]/15"
                 style={{ height: GANTT_BAR_HEIGHT }}
               />
-              <span className="text-[#374151]">Запланировано</span>
+              <span className="text-[#374151]">Плановый этап</span>
             </div>
             {!planOnly && (
               <>
                 <div className="flex items-center gap-1.5">
                   <div
-                    className="w-9 rounded-md bg-[#4472C4] shadow-sm"
+                    className="w-9 rounded-sm bg-[#4472C4] shadow-sm"
                     style={{ height: GANTT_BAR_HEIGHT }}
                   />
-                  <span className="text-[#374151]">В работе</span>
+                  <span className="text-[#374151]">Факт / в работе</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div
-                    className="w-9 rounded-md bg-[#4472C4] shadow-sm ring-2 ring-red-500"
+                    className="w-9 rounded-sm bg-[#4472C4] shadow-sm ring-2 ring-red-500"
                     style={{ height: GANTT_BAR_HEIGHT }}
                   />
                   <span className="text-[#374151]">Просрочено</span>
@@ -85,18 +85,26 @@ export function GanttLegend({
             )}
             <div className="flex items-center gap-1.5">
               <div
-                className="relative w-9 overflow-hidden rounded-md bg-[#4472C4] shadow-sm"
+                className="relative w-9 overflow-hidden rounded-sm border-2 border-dashed border-[#70AD47] bg-[#70AD47]/15 shadow-sm"
                 style={{ height: GANTT_BAR_HEIGHT }}
               >
-                <div className="absolute inset-y-0 left-3 w-3 opacity-75" style={{ backgroundColor: NIGHT_SHIFT_COLOR }} />
+                <div className="absolute inset-y-0 left-2 w-1.5 opacity-80" style={{ backgroundColor: NIGHT_SHIFT_COLOR }} />
+                <div className="absolute inset-y-0 left-5 w-1.5 opacity-80" style={{ backgroundColor: NIGHT_SHIFT_COLOR }} />
               </div>
-              <span className="text-[#374151]">Ночная смена</span>
+              <span className="text-[#374151]">Ночная малярка</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div
+                className="w-9 rounded-sm bg-[#4472C4] bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(255,255,255,0.35)_4px,rgba(255,255,255,0.35)_8px)] shadow-sm"
+                style={{ height: GANTT_BAR_HEIGHT }}
+              />
+              <span className="text-[#374151]">Машина не подтверждена</span>
             </div>
           </div>
         </div>
 
         <div>
-          <p className="mb-2 font-medium uppercase tracking-wide text-[#6B7280]">Снабжение</p>
+          <p className="mb-2 font-medium uppercase text-[#6B7280]">Снабжение</p>
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <div
@@ -123,7 +131,7 @@ export function GanttLegend({
         </div>
 
         <div>
-          <p className="mb-2 font-medium uppercase tracking-wide text-[#6B7280]">Маркеры</p>
+          <p className="mb-2 font-medium uppercase text-[#6B7280]">Даты машины</p>
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <div
@@ -162,6 +170,22 @@ export function GanttLegend({
               <div className="relative h-5 w-9 rounded-sm bg-red-100">
                 <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-red-500" />
               </div>
+              <span className="text-[#374151]">Сегодня</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 font-medium uppercase text-[#6B7280]">Нагрузка сварки</p>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <div className="flex h-6 w-10 items-center justify-center border border-[#E8ECF0] bg-white text-[10px] font-semibold text-[#1B3A6B]">
+                0.90
+              </div>
+              <span className="text-[#374151]">Тоннаж по цеху за день</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-6 w-10 border border-[#E8ECF0] bg-red-50" />
               <span className="text-[#374151]">Сегодня</span>
             </div>
           </div>

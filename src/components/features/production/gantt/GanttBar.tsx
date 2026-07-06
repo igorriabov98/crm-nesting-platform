@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { NIGHT_SHIFT_COLOR, stageHasSingleDate } from '@/lib/constants/stages'
 import { barGeometry, formatDate, type GanttScale } from '@/lib/utils/gantt'
+import { formatNightShiftDates, normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
 import { cn } from '@/lib/utils'
 import { ROUTES } from '@/lib/constants/routes'
 import type { GanttStage } from '@/app/(protected)/production/gantt/actions'
@@ -102,14 +103,15 @@ export const GanttBar = React.memo(function GanttBar({
   const isSingleDateStage = stageHasSingleDate(stage.stage_type)
   const workshopLabel = getStageWorkshopLabel(stage)
 
-  let nightLeft = 0
-  let showNight = false
-  if (stage.is_night_shift && stage.night_shift_date) {
-    const nightDate = new Date(stage.night_shift_date)
+  const nightShiftDates = stage.is_night_shift
+    ? normalizeNightShiftDates(stage.night_shift_dates, stage.night_shift_date)
+    : []
+  const nightMarkers = nightShiftDates.flatMap((date) => {
+    const nightDate = new Date(date)
     const { left: nLeft } = barGeometry(nightDate, nightDate, rangeStart, scale, unitWidth)
-    nightLeft = nLeft - left
-    showNight = nightLeft >= 0 && nightLeft < width
-  }
+    const markerLeft = nLeft - left
+    return markerLeft >= 0 && markerLeft < width ? [{ date, left: markerLeft }] : []
+  })
 
   const durationDays = Math.max(
     1,
@@ -189,16 +191,17 @@ export const GanttBar = React.memo(function GanttBar({
             backgroundColor: isPlanned ? hexToRgba(color, 0.16) : color,
           }}
         >
-          {showNight && !isPlanned && (
+          {nightMarkers.map((marker) => (
             <div
+              key={marker.date}
               className="absolute top-0 bottom-0 opacity-75"
               style={{
-                left: nightLeft,
+                left: marker.left,
                 width: unitWidth,
                 backgroundColor: NIGHT_SHIFT_COLOR,
               }}
             />
-          )}
+          ))}
 
           <div
             className="pointer-events-none absolute inset-0"
@@ -271,6 +274,11 @@ export const GanttBar = React.memo(function GanttBar({
           {visibleStatus === 'overdue' && (
             <p className="mt-1 font-medium text-[#DC2626]">
               {stage.delay_days > 0 ? `Просрочено на ${stage.delay_days} дн.` : 'Просрочено'}
+            </p>
+          )}
+          {nightShiftDates.length > 0 && (
+            <p className="mt-1 text-[#1E3A5F]">
+              Ночная малярка: <span className="font-medium">{formatNightShiftDates(nightShiftDates)}</span>
             </p>
           )}
         </div>,

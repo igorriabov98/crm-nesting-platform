@@ -7,6 +7,7 @@ import { addDays, differenceInCalendarDays, format, subDays } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
+  CalendarDays,
   ChevronDown,
   Eraser,
   ExternalLink,
@@ -18,8 +19,11 @@ import {
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Calendar } from '@/components/ui/calendar'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DatePicker } from '@/components/ui/date-picker'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { GanttControls, type GanttFilters, type GanttMonthOption } from '@/components/features/production/gantt/GanttControls'
 import { GanttTimeline } from '@/components/features/production/gantt/GanttTimeline'
 import { GanttLegend } from '@/components/features/production/gantt/GanttLegend'
@@ -28,6 +32,7 @@ import { GanttSupplyMarker } from '@/components/features/production/gantt/GanttS
 import { GanttMaterialMarker } from '@/components/features/production/gantt/GanttMaterialMarker'
 import { ProductionOutsourcingQuickAdd } from '@/components/features/production/ProductionOutsourcingQuickAdd'
 import { STAGES, STAGE_ORDER, stageHasWorkshop } from '@/lib/constants/stages'
+import { COATINGS } from '@/lib/constants/coatings'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { clearProductionStageDates, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
 import { createProductionPlanDateChangeRequest, type ProductionMonthPlanSummary, type ProductionPlanDateChangeInput } from '@/lib/actions/production-plan'
@@ -36,6 +41,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { barGeometry, generateDateScale, type GanttScale } from '@/lib/utils/gantt'
 import { formatDesiredShippingDate } from '@/lib/utils/desired-shipping'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
+import { formatNightShiftDates, normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
 import { cn } from '@/lib/utils'
 import type {
   GanttData,
@@ -100,10 +106,11 @@ type MachineDateField = 'planned_material_date'
 type StageDateField = 'date_start' | 'date_end' | 'night_shift_date'
 type StageOptimisticPatch = Partial<Pick<
   ProductionStage,
-  'date_start' | 'date_end' | 'night_shift_date' | 'workshop' | 'is_night_shift' | 'manual_overdue' | 'is_skipped'
+  'date_start' | 'date_end' | 'night_shift_date' | 'night_shift_dates' | 'workshop' | 'is_night_shift' | 'manual_overdue' | 'is_skipped'
 >>
 type ProductionStage = ProductionRow['stages'][number]
 type ActionResult = { success?: boolean; error?: string | null }
+type StageFieldValue = string | number | boolean | string[] | null
 type DateChangeDraft = ProductionPlanDateChangeInput & {
   key: string
   machineId: string
@@ -210,6 +217,14 @@ function formatDateValue(value: string | null | undefined, short = false) {
   const parsed = parseDateOnly(value)
   if (!parsed) return '—'
   return format(parsed, short ? 'dd.MM' : 'dd.MM.yyyy', { locale: ru })
+}
+
+function formatCoatingLabel(coating: string) {
+  return COATINGS[coating as keyof typeof COATINGS]?.label ?? coating
+}
+
+function getStageNightShiftDates(stage: Pick<ProductionStage, 'night_shift_date' | 'night_shift_dates'>) {
+  return normalizeNightShiftDates(stage.night_shift_dates, stage.night_shift_date)
 }
 
 function dateOffset(date: string | null | undefined, rangeStart: Date, dayWidth: number) {
@@ -358,6 +373,7 @@ function productionStageToGanttStage(stage: ProductionStage): GanttStage | null 
     manual_overdue: stage.manual_overdue,
     is_night_shift: stage.is_night_shift,
     night_shift_date: stage.night_shift_date,
+    night_shift_dates: getStageNightShiftDates(stage),
     status,
     delay_days: stage.delay_days,
   }
@@ -388,24 +404,69 @@ function mergeWeldingLoadMachine(items: WeldingLoadMachine[], next: WeldingLoadM
   items.push({ ...next })
 }
 
-function weldingLoadTitle(row: WeldingLoadRow, date: Date, value: number) {
-  if (value <= 0) return undefined
-
-  const machines = (row.machines.get(dayKey(date)) || [])
+function getWeldingLoadMachines(row: WeldingLoadRow, date: Date) {
+  return (row.machines.get(dayKey(date)) || [])
     .slice()
     .sort((a, b) => b.dailyTons - a.dailyTons)
-  const machineLines = machines.map((machine) => `${machine.name}: ${machine.dailyTons.toFixed(2)} т`)
-
-  return [
-    `${row.label}: ${value.toFixed(2)} т`,
-    format(date, 'dd.MM.yyyy'),
-    machineLines.length > 0 ? 'Машины:' : null,
-    ...machineLines,
-  ].filter(Boolean).join('\n')
 }
 
 function isFailedResult(result: unknown): result is { success: false; error?: string | null } {
   return Boolean(result && typeof result === 'object' && 'success' in result && result.success === false)
+}
+
+function WeldingLoadValueCell({
+  row,
+  date,
+  value,
+  left,
+  width,
+}: {
+  row: WeldingLoadRow
+  date: Date
+  value: number
+  left: number
+  width: number
+}) {
+  const content = formatTons(value)
+  const machines = value > 0 ? getWeldingLoadMachines(row, date) : []
+  const cell = (
+    <div
+      className={cn(
+        'absolute top-0 flex h-full items-center justify-center border-r border-slate-100 px-1 text-[10px]',
+        value > 0 ? (row.isTotal ? 'font-semibold text-blue-950' : 'text-slate-700') : 'text-slate-300'
+      )}
+      style={{ left, width }}
+    >
+      {content}
+    </div>
+  )
+
+  if (value <= 0) return cell
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={cell} />
+      <TooltipContent
+        side="top"
+        className="block max-w-[280px] rounded-lg border border-slate-200 bg-white p-3 text-left text-xs text-slate-700 shadow-lg"
+      >
+        <div className="font-semibold text-blue-950">
+          {row.label}: {value.toFixed(2)} т
+        </div>
+        <div className="mt-0.5 text-slate-500">{format(date, 'dd.MM.yyyy')}</div>
+        {machines.length > 0 && (
+          <div className="mt-2 space-y-1">
+            {machines.map((machine) => (
+              <div key={machine.id} className="flex gap-2">
+                <span className="min-w-0 flex-1 truncate text-slate-800">{machine.name}</span>
+                <span className="shrink-0 font-medium text-blue-950">{machine.dailyTons.toFixed(2)} т</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 function DateField({
@@ -425,7 +486,6 @@ function DateField({
   const [displayValue, setDisplayValue] = useState(value)
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayValue(value)
   }, [value])
 
@@ -466,6 +526,109 @@ function DateField({
       ) : (
         <div className="flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 sm:min-h-10">
           {formatDateValue(value, short)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NightShiftDatesField({
+  label,
+  values,
+  editable,
+  onSave,
+}: {
+  label: string
+  values: string[]
+  editable: boolean
+  onSave: (values: string[]) => Promise<ActionResult | void>
+}) {
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [draftDates, setDraftDates] = useState<Date[]>(() => values.map(parseDateOnly).filter((date): date is Date => Boolean(date)))
+  const normalizedValues = useMemo(() => normalizeNightShiftDates(values), [values])
+
+  useEffect(() => {
+    if (open) return
+    setDraftDates(normalizedValues.map(parseDateOnly).filter((date): date is Date => Boolean(date)))
+  }, [normalizedValues, open])
+
+  const handleSave = async () => {
+    const nextValues = normalizeNightShiftDates(draftDates.map(formatDateOnly))
+    if (nextValues.join('|') === normalizedValues.join('|')) {
+      setOpen(false)
+      return
+    }
+
+    setSaving(true)
+    try {
+      const result = await onSave(nextValues)
+      if (isFailedResult(result)) throw new Error(result.error || 'Сохранение отменено')
+      setOpen(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Ошибка сохранения')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const selectedLabel = normalizedValues.length > 0
+    ? formatNightShiftDates(normalizedValues)
+    : 'Выбрать'
+
+  return (
+    <div className="min-w-0 space-y-1">
+      <div className="text-[11px] font-medium uppercase text-slate-500">{label}</div>
+      {editable ? (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
+            render={
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(
+                  'min-h-11 w-full justify-start bg-white text-left text-sm font-normal text-blue-950 hover:bg-slate-50 sm:min-h-10',
+                  normalizedValues.length === 0 && 'text-slate-500'
+                )}
+                disabled={saving}
+              />
+            }
+          >
+            <CalendarDays className="mr-2 h-4 w-4 shrink-0" />
+            <span className="truncate">{selectedLabel}</span>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto border-slate-200 bg-white p-0 text-blue-950" align="start">
+            <Calendar
+              mode="multiple"
+              selected={draftDates}
+              onSelect={(dates) => setDraftDates(dates || [])}
+              disabled={saving}
+              className="bg-white"
+            />
+            <div className="flex gap-2 border-t border-slate-200 p-2">
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-8 flex-1 text-xs text-slate-600 hover:text-blue-950"
+                disabled={saving || draftDates.length === 0}
+                onClick={() => setDraftDates([])}
+              >
+                Очистить
+              </Button>
+              <Button
+                type="button"
+                className="h-8 flex-1 bg-blue-900 text-xs text-white hover:bg-blue-800"
+                disabled={saving}
+                onClick={handleSave}
+              >
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Сохранить'}
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <div className="flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 sm:min-h-10">
+          {normalizedValues.length > 0 ? formatNightShiftDates(normalizedValues) : '—'}
         </div>
       )}
     </div>
@@ -913,7 +1076,9 @@ function StageEditor({
   canEdit,
   clearingStageId,
   getDateValue,
+  getNightShiftDateValues,
   onStageDateUpdate,
+  onNightShiftDatesUpdate,
   onStageUpdate,
   onClearDates,
 }: {
@@ -922,13 +1087,15 @@ function StageEditor({
   canEdit: boolean
   clearingStageId: string | null
   getDateValue?: (stage: ProductionStage, field: 'date_start' | 'date_end' | 'night_shift_date') => string | null
+  getNightShiftDateValues?: (stage: ProductionStage) => string[]
   onStageDateUpdate: (
     row: ProductionRow,
     stage: ProductionStage,
     field: 'date_start' | 'date_end' | 'night_shift_date',
     value: string | null
   ) => Promise<ActionResult | void>
-  onStageUpdate: (stageId: string, field: string, value: string | number | boolean | null) => Promise<ActionResult | void>
+  onNightShiftDatesUpdate: (stage: ProductionStage, values: string[]) => Promise<ActionResult | void>
+  onStageUpdate: (stageId: string, field: string, value: StageFieldValue) => Promise<ActionResult | void>
   onClearDates: (stage: ProductionStage) => Promise<ActionResult | void>
 }) {
   const meta = STAGES[stage.stage_type]
@@ -1019,12 +1186,11 @@ function StageEditor({
             />
             Ночная смена
           </label>
-          <DateField
-            label="Дата ночи"
-            value={getDateValue ? getDateValue(stage, 'night_shift_date') : stage.night_shift_date}
+          <NightShiftDatesField
+            label="Даты ночи"
+            values={getNightShiftDateValues ? getNightShiftDateValues(stage) : getStageNightShiftDates(stage)}
             editable={editable && stage.is_night_shift}
-            onSave={(value) => onStageDateUpdate(row, stage, 'night_shift_date', value)}
-            short
+            onSave={(values) => onNightShiftDatesUpdate(stage, values)}
           />
         </div>
       )}
@@ -1044,8 +1210,10 @@ function ProductionMachineInspector({
   defaultOpen = true,
   getMachineDateValue,
   getStageDateValue,
+  getNightShiftDateValues,
   onMachineDateUpdate,
   onStageDateUpdate,
+  onNightShiftDatesUpdate,
   onStageUpdate,
   onClearDates,
   onSubmitDateChangeRequest,
@@ -1063,6 +1231,7 @@ function ProductionMachineInspector({
   defaultOpen?: boolean
   getMachineDateValue?: (machine: GanttMachine, field: MachineDateField) => string | null
   getStageDateValue?: (stage: ProductionStage, field: 'date_start' | 'date_end' | 'night_shift_date') => string | null
+  getNightShiftDateValues?: (stage: ProductionStage) => string[]
   onMachineDateUpdate: (machineId: string, field: MachineDateField, value: string | null) => Promise<ActionResult | void>
   onStageDateUpdate: (
     row: ProductionRow,
@@ -1070,7 +1239,8 @@ function ProductionMachineInspector({
     field: 'date_start' | 'date_end' | 'night_shift_date',
     value: string | null
   ) => Promise<ActionResult | void>
-  onStageUpdate: (stageId: string, field: string, value: string | number | boolean | null) => Promise<ActionResult | void>
+  onNightShiftDatesUpdate: (stage: ProductionStage, values: string[]) => Promise<ActionResult | void>
+  onStageUpdate: (stageId: string, field: string, value: StageFieldValue) => Promise<ActionResult | void>
   onClearDates: (stage: ProductionStage) => Promise<ActionResult | void>
   onSubmitDateChangeRequest: () => Promise<void>
   onResetDateChangeDraft: () => void
@@ -1191,7 +1361,9 @@ function ProductionMachineInspector({
                   canEdit={canEdit}
                   clearingStageId={clearingStageId}
                   getDateValue={getStageDateValue}
+                  getNightShiftDateValues={getNightShiftDateValues}
                   onStageDateUpdate={onStageDateUpdate}
+                  onNightShiftDatesUpdate={onNightShiftDatesUpdate}
                   onStageUpdate={onStageUpdate}
                   onClearDates={onClearDates}
                 />
@@ -1237,7 +1409,7 @@ function ProductionMachineInspector({
             </span>
             {machine.coatings.map((coating) => (
               <span key={coating} className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
-                {coating}
+                {formatCoatingLabel(coating)}
               </span>
             ))}
           </div>
@@ -1549,6 +1721,14 @@ export function ProductionPlanner({
     return dateChangeDrafts[key]?.new_value ?? stageOptimisticPatches[stage.id]?.[field] ?? stage[field]
   }, [dateChangeDrafts, selectedMachineId, stageOptimisticPatches])
 
+  const getStageNightShiftDraftValues = useCallback((stage: ProductionStage) => {
+    const patch = stageOptimisticPatches[stage.id]
+    return normalizeNightShiftDates(
+      patch && 'night_shift_dates' in patch ? patch.night_shift_dates : stage.night_shift_dates,
+      patch && 'night_shift_date' in patch ? patch.night_shift_date : stage.night_shift_date,
+    )
+  }, [stageOptimisticPatches])
+
   const clearSelectedDrafts = useCallback(() => {
     setDateChangeDrafts((current) => Object.fromEntries(
       Object.entries(current).filter(([, change]) => change.machineId !== selectedMachineId)
@@ -1783,7 +1963,7 @@ export function ProductionPlanner({
   const saveStageField = useCallback(async (
     stageId: string,
     field: string,
-    value: string | number | boolean | null,
+    value: StageFieldValue,
     options: { refresh?: boolean } = {},
   ) => {
     const shouldRefresh = options.refresh === true
@@ -1806,6 +1986,31 @@ export function ProductionPlanner({
     }
     return result
   }, [router, selectedProductionRow, updateStageOptimisticPatch])
+
+  const saveNightShiftDates = useCallback(async (stage: ProductionStage, values: string[]) => {
+    const previousDates = getStageNightShiftDraftValues(stage)
+    const nextDates = normalizeNightShiftDates(values)
+    const nextPatch: StageOptimisticPatch = {
+      night_shift_dates: nextDates,
+      night_shift_date: nextDates[0] ?? null,
+      is_night_shift: nextDates.length > 0,
+    }
+    const rollbackPatch: StageOptimisticPatch = {
+      night_shift_dates: previousDates,
+      night_shift_date: previousDates[0] ?? null,
+      is_night_shift: previousDates.length > 0 || stage.is_night_shift,
+    }
+
+    updateStageOptimisticPatch(stage.id, nextPatch)
+    const result = await updateProductionStage(stage.id, nextPatch, { revalidate: false })
+    if (result.success) {
+      toast.success('Сохранено')
+    } else {
+      updateStageOptimisticPatch(stage.id, rollbackPatch)
+      toast.error(result.error || 'Ошибка сохранения')
+    }
+    return result
+  }, [getStageNightShiftDraftValues, updateStageOptimisticPatch])
 
   const saveStageDate = useCallback(async (
     row: ProductionRow,
@@ -2156,8 +2361,10 @@ export function ProductionPlanner({
             defaultOpen
             getMachineDateValue={getMachineDraftValue}
             getStageDateValue={getStageDraftValue}
+            getNightShiftDateValues={getStageNightShiftDraftValues}
             onMachineDateUpdate={saveMachineDate}
             onStageDateUpdate={saveStageDate}
+            onNightShiftDatesUpdate={saveNightShiftDates}
             onStageUpdate={saveStageField}
             onClearDates={clearStageDates}
             onSubmitDateChangeRequest={submitDateChangeRequest}
@@ -2205,36 +2412,32 @@ export function ProductionPlanner({
                   <div className="bg-slate-100" />
                 </div>
 
-                {weldingLoadRows.map((row) => (
-                  <div
-                    key={row.key}
-                    className={cn('grid border-b border-slate-200 last:border-b-0', row.isTotal ? 'bg-slate-50' : 'bg-white')}
-                    style={{ gridTemplateColumns: `64px ${totalWidth}px ${Math.max(0, MACHINE_RAIL_WIDTH - 64)}px` }}
-                  >
-                    <div className={cn('sticky left-0 z-10 border-r border-slate-300 px-2 py-2 text-center text-xs font-semibold', row.isTotal ? 'bg-slate-50 text-blue-950' : 'bg-white text-slate-700')}>
-                      {row.label}
-                    </div>
-                    <div className="relative h-9">
-                      {scaleItems.map((item, index) => {
-                        const value = row.values.get(dayKey(item.date)) || 0
-                        return (
-                          <div
+                <TooltipProvider>
+                  {weldingLoadRows.map((row) => (
+                    <div
+                      key={row.key}
+                      className={cn('grid border-b border-slate-200 last:border-b-0', row.isTotal ? 'bg-slate-50' : 'bg-white')}
+                      style={{ gridTemplateColumns: `64px ${totalWidth}px ${Math.max(0, MACHINE_RAIL_WIDTH - 64)}px` }}
+                    >
+                      <div className={cn('sticky left-0 z-10 border-r border-slate-300 px-2 py-2 text-center text-xs font-semibold', row.isTotal ? 'bg-slate-50 text-blue-950' : 'bg-white text-slate-700')}>
+                        {row.label}
+                      </div>
+                      <div className="relative h-9">
+                        {scaleItems.map((item, index) => (
+                          <WeldingLoadValueCell
                             key={`${row.key}-${index}`}
-                            className={cn(
-                              'absolute top-0 flex h-full items-center justify-center border-r border-slate-100 px-1 text-[10px]',
-                              value > 0 ? (row.isTotal ? 'font-semibold text-blue-950' : 'text-slate-700') : 'text-slate-300'
-                            )}
-                            style={{ left: index * dayWidth, width: dayWidth }}
-                            title={weldingLoadTitle(row, item.date, value)}
-                          >
-                            {formatTons(value)}
-                          </div>
-                        )
-                      })}
+                            row={row}
+                            date={item.date}
+                            value={row.values.get(dayKey(item.date)) || 0}
+                            left={index * dayWidth}
+                            width={dayWidth}
+                          />
+                        ))}
+                      </div>
+                      <div className={row.isTotal ? 'bg-slate-50' : 'bg-white'} />
                     </div>
-                    <div className={row.isTotal ? 'bg-slate-50' : 'bg-white'} />
-                  </div>
-                ))}
+                  ))}
+                </TooltipProvider>
 
                 {weldingLoadRows.length === 0 && (
                   <div className="px-3 py-6 text-center text-sm text-slate-500">
@@ -2263,8 +2466,10 @@ export function ProductionPlanner({
               clearingStageId={clearingStageId}
               getMachineDateValue={getMachineDraftValue}
               getStageDateValue={getStageDraftValue}
+              getNightShiftDateValues={getStageNightShiftDraftValues}
               onMachineDateUpdate={saveMachineDate}
               onStageDateUpdate={saveStageDate}
+              onNightShiftDatesUpdate={saveNightShiftDates}
               onStageUpdate={saveStageField}
               onClearDates={clearStageDates}
               onSubmitDateChangeRequest={submitDateChangeRequest}

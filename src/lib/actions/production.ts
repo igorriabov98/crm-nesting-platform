@@ -10,6 +10,7 @@ import { syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
 import { isMachineInConfirmedProductionPlan, notifyProductionPlanShippingDateChanged } from '@/lib/actions/production-plan'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { normalizeNightShiftDates, primaryNightShiftDate } from '@/lib/utils/night-shift-dates'
 import type { CurrentUser } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
 
@@ -37,7 +38,17 @@ type StageForUpdate = {
   date_start: string | null
   date_end: string | null
   night_shift_date: string | null
+  night_shift_dates: string[] | null
   machines: { factory_id: string | null; is_archived: boolean } | null
+}
+type StageForUpdateLegacy = Omit<StageForUpdate, 'night_shift_dates'>
+type StageForUpdateResult = {
+  data: StageForUpdate | null
+  error: { message?: string } | null
+}
+type StageForUpdateLegacyResult = {
+  data: StageForUpdateLegacy | null
+  error: { message?: string } | null
 }
 type MachineItemCoating = {
   coating: Database['public']['Enums']['coating_type']
@@ -184,6 +195,7 @@ async function requireAuth() {
 export async function updateProductionStage(stageId: string, data: ProductionStageUpdate, options: ProductionMutationOptions = {}) {
   try {
     const { supabase, user } = await requireAuth()
+    data = { ...data }
 
     if ('manual_overdue' in data) {
       throw new Error('Ручная просрочка отключена')
@@ -192,11 +204,25 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
     const canEdit = user.role === 'production_manager' || isDirector(user.role)
     if (!canEdit) throw new Error('Недостаточно прав для редактирования этапа производства')
 
-    const { data: currentStage, error: stageErr } = await supabase
+    let hasNightShiftDatesColumn = true
+    const currentStageResult = await supabase
       .from('production_stages')
-      .select('machine_id, stage_type, date_start, date_end, night_shift_date, machines(factory_id, is_archived)')
+      .select('machine_id, stage_type, date_start, date_end, night_shift_date, night_shift_dates, machines(factory_id, is_archived)')
       .eq('id', stageId)
-      .single()
+      .single() as unknown as StageForUpdateResult
+    let currentStage = currentStageResult.data
+    let stageErr = currentStageResult.error
+
+    if (stageErr && stageErr.message?.includes('night_shift_dates')) {
+      hasNightShiftDatesColumn = false
+      const fallback = await supabase
+        .from('production_stages')
+        .select('machine_id, stage_type, date_start, date_end, night_shift_date, machines(factory_id, is_archived)')
+        .eq('id', stageId)
+        .single() as unknown as StageForUpdateLegacyResult
+      currentStage = fallback.data ? { ...fallback.data, night_shift_dates: null } : null
+      stageErr = fallback.error
+    }
 
     if (stageErr || !currentStage) throw new Error('Этап не найден')
 
@@ -206,7 +232,7 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
     if (machine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
     if (machine.factory_id !== user.factory_id) throw new Error('Доступ запрещён')
 
-    const dateFields = ['date_start', 'date_end', 'night_shift_date'] as const
+    const dateFields = ['date_start', 'date_end', 'night_shift_date', 'night_shift_dates'] as const
     const changesPlanDate = dateFields.some((field) => field in data)
     if (
       user.role === 'production_manager' &&
@@ -234,6 +260,28 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
       data.workshop = null
     }
 
+    if ('night_shift_dates' in data) {
+      const dates = normalizeNightShiftDates(data.night_shift_dates, data.night_shift_date)
+      if (hasNightShiftDatesColumn) {
+        data.night_shift_dates = dates
+      } else {
+        delete data.night_shift_dates
+        if (dates.length > 1) throw new Error('Для нескольких дат ночной малярки нужно применить миграцию БД')
+      }
+      data.night_shift_date = dates[0] ?? null
+      data.is_night_shift = dates.length > 0
+    } else if ('night_shift_date' in data) {
+      const dates = normalizeNightShiftDates([], data.night_shift_date)
+      if (hasNightShiftDatesColumn) data.night_shift_dates = dates
+      data.night_shift_date = primaryNightShiftDate(dates, data.night_shift_date)
+      if (dates.length > 0 && !('is_night_shift' in data)) data.is_night_shift = true
+    }
+
+    if (data.is_night_shift === false) {
+      data.night_shift_date = null
+      if (hasNightShiftDatesColumn) data.night_shift_dates = []
+    }
+
     if (isSingleDateShippingStage(stageObj.stage_type)) {
       if ('date_start' in data && !('date_end' in data)) {
         data.date_end = dateOnly(data.date_start)
@@ -243,6 +291,7 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
         data.workshop = null
         data.is_night_shift = false
         data.night_shift_date = null
+        if (hasNightShiftDatesColumn) data.night_shift_dates = []
       } else if (data.workshop !== undefined) {
         data.workshop = null
       }
