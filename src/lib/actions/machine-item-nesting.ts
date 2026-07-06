@@ -142,28 +142,23 @@ async function loadStartContext(machineId: string, machineItemId: string) {
     machineResult,
     itemResult,
     existingRunResult,
-    requestResult,
   ] = await Promise.all([
     supabase.from('machines').select('id, name, is_archived').eq('id', machineId).single(),
     supabase.from('machine_items').select('id, machine_id, product_id, drawing_number, product_name, quantity').eq('id', machineItemId).eq('machine_id', machineId).single(),
     supabase.from('machine_item_nesting_runs').select('*').eq('machine_item_id', machineItemId).maybeSingle(),
-    supabase.from('technologist_requests').select('id, machine_id, status').eq('machine_id', machineId).maybeSingle(),
   ]) as [
     DbSingleResult<MachineRow>,
     DbSingleResult<MachineItemRow>,
     DbSingleResult<MachineItemNestingRun>,
-    DbSingleResult<RequestRow>,
   ]
 
   if (machineResult.error || !machineResult.data) throw new Error('Машина не найдена')
   if (itemResult.error || !itemResult.data) throw new Error('Строка товара не найдена')
   if (existingRunResult.error) throw new Error(existingRunResult.error.message || 'Не удалось проверить предыдущую раскладку')
-  if (requestResult.error) throw new Error(requestResult.error.message || 'Не удалось проверить заявку технолога')
 
   const machine = machineResult.data
   const item = itemResult.data
   const existingRun = existingRunResult.data
-  const request = requestResult.data
 
   if (machine.is_archived) throw new Error('Машина архивирована. Запуск раскладки остановлен.')
   if (!item.product_id) throw new Error('Строка машины не привязана к товару из базы')
@@ -196,27 +191,34 @@ async function loadStartContext(machineId: string, machineItemId: string) {
     stepFile: stepFiles[0],
     drawingFile: drawingFiles[0],
     existingRun,
-    request,
   }
 }
 
 async function deleteImportedRowsForRun(
   db: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  request: RequestRow | null,
   runId: string,
 ) {
-  if (!request) return
   const looseDb = db as unknown as LooseDb
 
-  const { count, error: countError } = await looseDb
+  const { data: importedRows, error: importedError } = await looseDb
     .from('request_sheet_metal')
-    .select('id', { count: 'exact', head: true })
+    .select('request_id')
     .eq('source_nesting_run_id', runId)
+    .limit(1)
 
-  if (countError) throw new Error(countError.message || 'Не удалось проверить импортированные строки заявки')
-  if (!count) return
+  if (importedError) throw new Error(importedError.message || 'Не удалось проверить импортированные строки заявки')
+  const requestId = ((importedRows || []) as Array<{ request_id?: string | null }>)[0]?.request_id
+  if (!requestId) return
 
-  if (request.status !== 'draft') {
+  const { data: requestData, error: requestError } = await looseDb
+    .from('technologist_requests')
+    .select('id, machine_id, status')
+    .eq('id', requestId)
+    .single() as DbSingleResult<RequestRow>
+
+  if (requestError || !requestData) throw new Error(requestError?.message || 'Заявка с импортированными строками не найдена')
+
+  if (requestData.status !== 'draft') {
     throw new Error('Заявка уже передана дальше. Повторная раскладка с заменой импортированных строк доступна только в черновике.')
   }
 
@@ -397,7 +399,7 @@ export async function startMachineItemNesting(machineId: string, machineItemId: 
   try {
     const context = await loadStartContext(machineId, machineItemId)
     if (context.existingRun) {
-      await deleteImportedRowsForRun(context.supabase, context.request, context.existingRun.id)
+      await deleteImportedRowsForRun(context.supabase, context.existingRun.id)
     }
 
     const quantity = Math.max(1, Math.trunc(Number(context.item.quantity) || 1))
@@ -498,22 +500,44 @@ async function ensureDraftRequest(
   db: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   machineId: string,
   userId: string,
+  runId: string,
 ) {
   const looseDb = db as unknown as LooseDb
-  const { data: existing, error } = await looseDb
+
+  const { data: importedRows, error: importedError } = await looseDb
+    .from('request_sheet_metal')
+    .select('request_id')
+    .eq('source_nesting_run_id', runId)
+    .limit(1)
+
+  if (importedError) throw new Error(importedError.message || 'Не удалось проверить импортированные строки заявки')
+  const importedRequestId = ((importedRows || []) as Array<{ request_id?: string | null }>)[0]?.request_id
+
+  if (importedRequestId) {
+    const { data: requestData, error: requestError } = await looseDb
+      .from('technologist_requests')
+      .select('id, machine_id, status')
+      .eq('id', importedRequestId)
+      .single() as DbSingleResult<RequestRow>
+
+    if (requestError || !requestData) throw new Error(requestError?.message || 'Заявка с импортированными строками не найдена')
+    if (requestData.status !== 'draft') {
+      throw new Error('Импорт раскладки доступен только в черновик заявки технолога')
+    }
+    return requestData
+  }
+
+  const { data: draftRows, error } = await looseDb
     .from('technologist_requests')
     .select('id, machine_id, status')
     .eq('machine_id', machineId)
-    .maybeSingle() as DbSingleResult<RequestRow>
+    .eq('status', 'draft')
+    .order('created_at', { ascending: false })
+    .limit(1) as DbListResult<RequestRow>
 
   if (error) throw new Error(error.message || 'Не удалось проверить заявку технолога')
-  if (existing) {
-    const request = existing
-    if (request.status !== 'draft') {
-      throw new Error('Импорт раскладки доступен только в черновик заявки технолога')
-    }
-    return request
-  }
+  const draft = draftRows?.[0]
+  if (draft) return draft
 
   const { data, error: insertError } = await looseDb
     .from('technologist_requests')
@@ -549,7 +573,7 @@ export async function importMachineItemNestingResult(projectId: string): Promise
     await assertMachineEditable(supabase, run.machine_id)
     await requireEngineerConfirmation(supabase, run.machine_id)
 
-    const request = await ensureDraftRequest(supabase, run.machine_id, userId)
+    const request = await ensureDraftRequest(supabase, run.machine_id, userId, run.id)
     const result = await getResult(projectId)
     const groups = groupSheets(result.data.sheets)
     if (groups.length === 0) throw new Error('В результате раскладки нет листов для импорта')

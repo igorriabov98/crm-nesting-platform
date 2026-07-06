@@ -30,6 +30,8 @@ type Props = {
   suppliers: SupplierGroups
   canManage: boolean
   steelTypes: SteelType[]
+  backHref?: string
+  backLabel?: string
 }
 
 type PaintRows = TechnologistRequestPayload['paint']
@@ -38,7 +40,7 @@ type MeshRows = TechnologistRequestPayload['meshItems']
 type ChainCordRows = TechnologistRequestPayload['chainCords']
 type PipeRows = TechnologistRequestPayload['pipes']
 
-export function TechnologistRequestPage({ machine, data, suppliers, canManage, steelTypes }: Props) {
+export function TechnologistRequestPage({ machine, data, suppliers, canManage, steelTypes, backHref, backLabel }: Props) {
   const router = useRouter()
   const [status, setStatus] = useState<RequestStatus>(data.request.status)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -100,9 +102,9 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
 
   return (
     <div className="w-full space-y-6">
-      <Button variant="ghost" className="-ml-2 text-slate-600" onClick={() => router.push(`${ROUTES.SALES_PLAN}/${machine.id}`)}>
+      <Button variant="ghost" className="-ml-2 text-slate-600" onClick={() => router.push(backHref || `${ROUTES.SALES_PLAN}/${machine.id}`)}>
         <ArrowLeft className="mr-2 h-4 w-4" />
-        Назад к машине
+        {backLabel || 'Назад к машине'}
       </Button>
 
       <div className="rounded-xl border border-[#E8ECF0] bg-white p-6">

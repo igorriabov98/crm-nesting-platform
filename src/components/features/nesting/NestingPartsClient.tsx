@@ -133,7 +133,7 @@ export function NestingPartsClient({
         return
       }
       toast.success(`Импортировано строк: ${result.data.rowsInserted}`)
-      router.push(`/sales-plan/${result.data.machineId}/request`)
+      router.push(`/sales-plan/${result.data.machineId}/request/${result.data.requestId}`)
       router.refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось импортировать листы в заявку')

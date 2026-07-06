@@ -1,15 +1,13 @@
 import { notFound } from 'next/navigation'
-import { TechnologistRequestPage } from '@/components/features/requests/TechnologistRequestPage'
-import { CreateRequestPanel } from '@/components/features/requests/CreateRequestPanel'
+import { RequestListPage } from '@/components/features/requests/RequestListPage'
 import { getMachine } from '@/app/(protected)/sales-plan/actions'
-import { getRequest } from '@/lib/actions/technologist-requests'
-import { getSteelTypes } from '@/lib/actions/steel-types'
+import { getRequestsForMachine } from '@/lib/actions/technologist-requests'
 import { getCurrentUserPermissions } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
 import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 
 export const metadata = {
-  title: 'Заявка на материалы | CRM Завода',
+  title: 'Заявки на материалы | CRM Завода',
 }
 
 export default async function RequestPage({ params }: { params: Promise<{ id: string }> }) {
@@ -18,32 +16,17 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
   const permissionDetails = await getCurrentUserPermissions(user.id)
   const permissions = permissionDetails.permissions
 
-  const [{ data: machine, error }, { data: requestData }, steelTypes] = await Promise.all([
+  const [{ data: machine, error }, { data: requests }] = await Promise.all([
     getMachine(id),
-    getRequest(id),
-    getSteelTypes(),
+    getRequestsForMachine(id),
   ])
   if (error || !machine) notFound()
 
-  if (!requestData) {
-    const canManageRequest = hasPermission(permissions, 'technologist_requests', 'manage')
-    return (
-      <CreateRequestPanel
-        machineId={id}
-        canCreate={canManageRequest}
-      />
-    )
-  }
-
   return (
-    <TechnologistRequestPage
+    <RequestListPage
       machine={{ id: machine.id, name: machine.name }}
-      data={requestData}
-      suppliers={{
-        sheetMetal: [],
-      }}
-      canManage={hasPermission(permissions, 'technologist_requests', 'manage')}
-      steelTypes={steelTypes}
+      requests={requests || []}
+      canCreate={hasPermission(permissions, 'technologist_requests', 'manage')}
     />
   )
 }

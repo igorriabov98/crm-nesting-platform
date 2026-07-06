@@ -15,8 +15,9 @@ export function CreateRequestPanel({ machineId, canCreate }: { machineId: string
     setIsCreating(true)
     try {
       const result = await createRequest(machineId)
-      if (!result.success) throw new Error(result.error || 'Не удалось создать заявку')
+      if (!result.success || !result.data) throw new Error(result.error || 'Не удалось создать заявку')
       toast.success('Заявка создана')
+      router.push(`/sales-plan/${machineId}/request/${result.data.id}`)
       router.refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось создать заявку')
