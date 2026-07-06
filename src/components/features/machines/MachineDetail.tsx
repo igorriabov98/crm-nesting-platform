@@ -29,7 +29,6 @@ import { SupplyTab } from './tabs/SupplyTab'
 import { InvoiceTab } from './tabs/InvoiceTab'
 import { OutsourcingTab } from '@/components/features/outsourcing/OutsourcingTab'
 import { MachineTasksPanel } from './MachineTasksPanel'
-import { MachineRequestPanel } from './MachineRequestPanel'
 import { MachineActivityPanel } from './MachineActivityPanel'
 import { MachineProgressBadge, MachineStatusProgress } from './MachineStatusBadge'
 
@@ -351,13 +350,6 @@ export function MachineDetail({
 
       <MachineStatusProgress progress={machine.progress} />
 
-      <MachineRequestPanel
-        machineId={machine.id}
-        requestData={requestData}
-        canManageTechnologistRequests={canManageTechnologistRequests}
-        canViewSupplyRequest={canViewSupplyRequest}
-      />
-
       <MachineTasksPanel tasks={tasks} />
 
       <MachineActivityPanel machineId={machine.id} activity={activity} />
@@ -437,7 +429,12 @@ export function MachineDetail({
             )}
           </TabsContent>
           <TabsContent value="supply" className="outline-none">
-            <SupplyTab machine={machine} requestData={requestData} />
+            <SupplyTab
+              machine={machine}
+              requestData={requestData}
+              canManageTechnologistRequests={canManageTechnologistRequests}
+              canViewSupplyRequest={canViewSupplyRequest}
+            />
           </TabsContent>
           <TabsContent value="expenses" className="outline-none">
             <ExpensesTab machine={machine} />

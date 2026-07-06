@@ -26,7 +26,7 @@ export function ProductionSummary({ data }: ProductionSummaryProps) {
     { label: 'Всего машин', value: totalMachines, icon: Factory, color: 'text-[#2563EB]', bg: 'bg-blue-500/10 border-blue-500/20' },
     { label: 'В работе этапов', value: activeStages, icon: PlayCircle, color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20' },
     { label: 'Завершено этапов', value: completedStages, icon: CheckCircle2, color: 'text-[#16A34A]', bg: 'bg-green-500/10 border-green-500/20' },
-    { label: 'Просрочено вручную', value: overdueStages, icon: AlertTriangle, color: 'text-[#DC2626]', bg: 'bg-red-500/10 border-red-500/20' },
+    { label: 'Просрочено', value: overdueStages, icon: AlertTriangle, color: 'text-[#DC2626]', bg: 'bg-red-500/10 border-red-500/20' },
   ]
 
   return (

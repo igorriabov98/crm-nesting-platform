@@ -107,7 +107,6 @@ function SortableHeader({
       type="button"
       onClick={() => onSort(sortKey)}
       aria-label="Sort by date"
-      aria-sort={sortState}
       aria-pressed={sortState !== 'none'}
       className={cn(
         'inline-flex min-h-8 w-full items-center justify-center gap-1 whitespace-nowrap rounded px-1 py-0.5 hover:bg-[#E8ECF0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]',
@@ -367,28 +366,6 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
     )
   }
 
-  const renderManualOverdueToggle = (stage: ProductionStage, disabled = false) => {
-    const isDisabled = !canEdit || disabled
-    return (
-      <button
-        type="button"
-        disabled={isDisabled}
-        title={stage.manual_overdue ? 'Снять ручную просрочку' : 'Отметить ручную просрочку'}
-        aria-label={stage.manual_overdue ? 'Clear manual overdue flag' : 'Set manual overdue flag'}
-        onClick={() => handleUpdate(stage.id, 'manual_overdue', !stage.manual_overdue)}
-        className={cn(
-          'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]',
-          stage.manual_overdue
-            ? 'border-[#DC2626] bg-[#FEE2E2] text-[#DC2626]'
-            : 'border-[#E8ECF0] bg-white text-[#9CA3AF] hover:border-[#DC2626] hover:text-[#DC2626]',
-          isDisabled && 'cursor-not-allowed opacity-40 hover:border-[#E8ECF0] hover:text-[#9CA3AF]'
-        )}
-      >
-        !
-      </button>
-    )
-  }
-
   return (
     <div className="space-y-4">
       <ProductionSummary data={filtered} />
@@ -579,7 +556,6 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                             <div className="flex items-center justify-center gap-1">
                               {renderDateEdit(stage.date_end, canEdit && !isSkipped, (value) => handleStageDateUpdate(row, stage, 'date_end', value))}
                               {renderClearStageDatesButton(stage, isSkipped)}
-                              {renderManualOverdueToggle(stage, isSkipped)}
                             </div>
                           )}
                         </td>
@@ -627,7 +603,6 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                         ) : (
                           <div className="flex items-center justify-center gap-1">
                             {renderDateEdit(stage.date_end, canEdit, (value) => handleStageDateUpdate(row, stage, 'date_end', value))}
-                            {renderManualOverdueToggle(stage, isSkipped)}
                           </div>
                         )}
                       </td>

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { InlineEdit } from '@/components/features/shared/InlineEdit'
+import { MachineRequestPanel } from '@/components/features/machines/MachineRequestPanel'
 import { useRole } from '@/lib/hooks/useRole'
 import { differenceInDays, isPast, format } from 'date-fns'
 import { ru } from 'date-fns/locale'
@@ -36,6 +37,8 @@ import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requ
 interface SupplyTabProps {
   machine: MachineDetails
   requestData?: TechnologistRequestPayload | null
+  canManageTechnologistRequests?: boolean
+  canViewSupplyRequest?: boolean
 }
 
 type RequestMaterialRow = {
@@ -238,7 +241,12 @@ function buildRequestMaterialRows(requestData?: TechnologistRequestPayload | nul
   ]
 }
 
-export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
+export function SupplyTab({
+  machine,
+  requestData = null,
+  canManageTechnologistRequests = false,
+  canViewSupplyRequest = false,
+}: SupplyTabProps) {
   const router = useRouter()
   const { isDirector, isEngineer, isTechnologist, isSupplyManager } = useRole()
   const [isUpdatingMaterialType, setIsUpdatingMaterialType] = useState(false)
@@ -331,6 +339,13 @@ export function SupplyTab({ machine, requestData = null }: SupplyTabProps) {
           </Select>
         </div>
       </div>
+
+      <MachineRequestPanel
+        machineId={machine.id}
+        requestData={requestData}
+        canManageTechnologistRequests={canManageTechnologistRequests}
+        canViewSupplyRequest={canViewSupplyRequest}
+      />
 
       <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5">
         <div className="min-w-0">

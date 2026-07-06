@@ -182,6 +182,10 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
   try {
     const { supabase, user } = await requireAuth()
 
+    if ('manual_overdue' in data) {
+      throw new Error('Ручная просрочка отключена')
+    }
+
     const canEdit = user.role === 'production_manager' || isDirector(user.role)
     if (!canEdit) throw new Error('Недостаточно прав для редактирования этапа производства')
 

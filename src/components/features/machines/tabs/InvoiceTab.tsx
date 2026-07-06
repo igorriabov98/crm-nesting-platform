@@ -1,11 +1,12 @@
 "use client"
 
 import React, { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { AlertTriangle, FileText, Info } from 'lucide-react'
+import { AlertTriangle, Download, FileText, Info, Loader2, Plus, Trash2 } from 'lucide-react'
 import { useRole } from '@/lib/hooks/useRole'
-import { recordInvoicePayment, updateInvoiceStatus } from '@/lib/actions/invoices'
+import { createMachineInvoice, deleteMachineInvoice, recordInvoicePayment, updateInvoiceStatus } from '@/lib/actions/invoices'
 import { format, differenceInDays, isPast } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { toast } from 'sonner'
@@ -21,11 +22,15 @@ interface InvoiceTabProps {
 }
 
 export function InvoiceTab({ machine }: InvoiceTabProps) {
+  const router = useRouter()
   const { role } = useRole()
   const invoice = Array.isArray(machine.invoice) ? machine.invoice[0] || null : machine.invoice
   const [paidAmount, setPaidAmount] = useState('')
   const [balanceDueDate, setBalanceDueDate] = useState<string | null>(null)
   const [isSavingPayment, setIsSavingPayment] = useState(false)
+  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false)
+  const [isDeletingInvoice, setIsDeletingInvoice] = useState(false)
+  const [isDownloadingDocument, setIsDownloadingDocument] = useState(false)
 
   // Ensure user has access
   if (!role || !INVOICE_VISIBLE_ROLES.includes(role as UserRole)) {
@@ -33,7 +38,46 @@ export function InvoiceTab({ machine }: InvoiceTabProps) {
   }
 
   const canEdit = ['financial_director', 'planning_director', 'sales_manager'].includes(role)
-  const deliveryDate = machine.delivery_to_client_date ? new Date(machine.delivery_to_client_date) : null
+
+  const downloadInvoiceDocument = async ({ quiet = false }: { quiet?: boolean } = {}) => {
+    const number = machine.specification_number?.trim() || ''
+    const date = machine.specification_date?.trim() || ''
+
+    if (!number || !date || !machine.delivery_basis_type) {
+      if (!quiet) toast.error('Заполните данные документов во вкладке Настройки машины')
+      return false
+    }
+
+    setIsDownloadingDocument(true)
+    try {
+      const response = await fetch('/api/documents/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machineId: machine.id, type: 'invoice' }),
+      })
+
+      if (!response.ok) throw new Error('Не удалось сформировать документ инвойса')
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const safeNumber = number.replace(/[<>:"/\\|?*\x00-\x1F]+/g, '_') || machine.name
+      link.href = url
+      link.download = `Invoice_${safeNumber}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+
+      if (!quiet) toast.success('Документ инвойса сформирован')
+      return true
+    } catch (error) {
+      if (!quiet) toast.error(error instanceof Error ? error.message : 'Не удалось сформировать документ инвойса')
+      return false
+    } finally {
+      setIsDownloadingDocument(false)
+    }
+  }
 
   const handleStatusChange = async (val: 'paid' | 'not_paid') => {
     if (!invoice) return
@@ -42,6 +86,38 @@ export function InvoiceTab({ machine }: InvoiceTabProps) {
       toast.success('Статус инвойса обновлён')
     } else {
       toast.error(res.error || 'Ошибка обновления статуса')
+    }
+  }
+
+  const handleCreateInvoice = async () => {
+    setIsCreatingInvoice(true)
+    try {
+      const res = await createMachineInvoice(machine.id)
+      if (!res.success) throw new Error(res.error || 'Не удалось создать инвойс')
+      toast.success('Инвойс создан')
+      await downloadInvoiceDocument({ quiet: true })
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось создать инвойс')
+    } finally {
+      setIsCreatingInvoice(false)
+    }
+  }
+
+  const handleDeleteInvoice = async () => {
+    if (!invoice) return
+    if (!window.confirm('Удалить инвойс по этой машине?')) return
+
+    setIsDeletingInvoice(true)
+    try {
+      const res = await deleteMachineInvoice(machine.id, invoice.id)
+      if (!res.success) throw new Error(res.error || 'Не удалось удалить инвойс')
+      toast.success('Инвойс удалён')
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось удалить инвойс')
+    } finally {
+      setIsDeletingInvoice(false)
     }
   }
 
@@ -69,11 +145,17 @@ export function InvoiceTab({ machine }: InvoiceTabProps) {
           <Info className="w-5 h-5 text-[#2563EB] mr-4 mt-0.5" />
           <div>
             <h4 className="text-[#1B3A6B] font-medium mb-1">Инвойс ещё не создан</h4>
-            <p className="text-sm text-[#6B7280]">
-              {machine.delivery_to_client_date
-                ? 'Инвойс будет создан автоматически после обновления даты доставки клиенту.'
-                : 'Инвойс будет создан после указания даты доставки клиенту.'}
-            </p>
+            {canEdit && (
+              <Button
+                type="button"
+                onClick={handleCreateInvoice}
+                disabled={isCreatingInvoice || isDownloadingDocument}
+                className="mt-3 min-h-10 bg-blue-950 text-white hover:bg-blue-900"
+              >
+                {isCreatingInvoice ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                Создать инвойс
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -113,6 +195,30 @@ export function InvoiceTab({ machine }: InvoiceTabProps) {
             </Badge>
           )}
         </h3>
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void downloadInvoiceDocument()}
+              disabled={isDownloadingDocument}
+              className="min-h-10 border-slate-200 bg-white text-blue-950 hover:bg-blue-50"
+            >
+              {isDownloadingDocument ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+              Документ инвойса
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleDeleteInvoice}
+              disabled={isDeletingInvoice}
+              className="min-h-10 border-red-200 bg-white text-red-700 hover:bg-red-50"
+            >
+              {isDeletingInvoice ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Удалить инвойс
+            </Button>
+          </div>
+        )}
       </div>
       
       <div className="p-6 space-y-6">
@@ -141,13 +247,6 @@ export function InvoiceTab({ machine }: InvoiceTabProps) {
           <span className="text-[#6B7280] text-sm">Дата создания</span>
           <span className="font-medium text-[#374151]">
             {format(new Date(invoice.created_at), 'dd.MM.yyyy', { locale: ru })}
-          </span>
-        </div>
-
-        <div className="flex justify-between items-center border-b border-[#E8ECF0] pb-4">
-          <span className="text-[#6B7280] text-sm">Доставка клиенту</span>
-          <span className="font-medium text-[#374151]">
-            {deliveryDate ? format(deliveryDate, 'dd.MM.yyyy', { locale: ru }) : '—'}
           </span>
         </div>
 

@@ -26,7 +26,7 @@ interface ProductionFiltersProps {
 const statusOptions = [
   { value: 'active', label: 'По плану сейчас' },
   { value: 'completed', label: 'Отгружено' },
-  { value: 'overdue', label: 'Просрочено вручную' },
+  { value: 'overdue', label: 'Просрочено' },
   { value: 'not_planned', label: 'Не началось / нет плана' },
   { value: 'skipped', label: 'Пропущен' },
 ]

@@ -270,7 +270,7 @@ export const GanttBar = React.memo(function GanttBar({
           {visibleStatus === 'completed' && <p className="mt-1 text-[#16A34A]">Завершен</p>}
           {visibleStatus === 'overdue' && (
             <p className="mt-1 font-medium text-[#DC2626]">
-              {stage.delay_days > 0 ? `Просрочено вручную на ${stage.delay_days} дн.` : 'Просрочено вручную'}
+              {stage.delay_days > 0 ? `Просрочено на ${stage.delay_days} дн.` : 'Просрочено'}
             </p>
           )}
         </div>,
