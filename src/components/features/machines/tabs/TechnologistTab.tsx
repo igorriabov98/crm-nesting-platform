@@ -59,7 +59,7 @@ function LayoutStatusBadge({ version }: { version: MachineLayoutVersion | null }
   if (version.status === 'completed') {
     return <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">PDF загружен</Badge>
   }
-  return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Ожидает PDF</Badge>
+  return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Ожидает расстановки</Badge>
 }
 
 function DrawingLink({ item }: { item: MachineLayoutSnapshotItem }) {
@@ -202,7 +202,9 @@ export function TechnologistTab({
   const latest = layoutData?.latest || null
   const versions = layoutData?.versions || []
   const visibleItems = latest?.items?.length ? latest.items : currentItems
-  const canRequestLayout = !machine.is_archived && currentItems.length > 0 && (isDirector || role === 'sales_manager')
+  const openLayoutVersion = latest?.status === 'requested' ? latest : null
+  const hasOpenLayoutRequest = Boolean(openLayoutVersion)
+  const canRequestLayout = !machine.is_archived && currentItems.length > 0 && !hasOpenLayoutRequest && (isDirector || role === 'sales_manager')
   const canUploadPdf = !machine.is_archived && latest?.status === 'requested' && (
     isDirector || (role === 'technologist' && latest.assignedTo === user?.id)
   )
@@ -301,7 +303,9 @@ export function TechnologistTab({
               <LayoutStatusBadge version={latest} />
             </div>
             <p className="mt-1 text-sm text-slate-500">
-              {latest
+              {openLayoutVersion
+                ? `Версия ${openLayoutVersion.versionNo} ожидает расстановки. Новый запрос появится после загрузки PDF.`
+                : latest
                 ? `Текущая версия ${latest.versionNo}, запрос создан ${formatDateTime(latest.createdAt)}.`
                 : 'Запрос на расстановку ещё не создан.'}
             </p>
@@ -338,6 +342,11 @@ export function TechnologistTab({
                 {isRequestingLayout ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardList className="mr-2 h-4 w-4" />}
                 Запрос на расстановку машины
               </Button>
+            )}
+            {hasOpenLayoutRequest && (
+              <div className="inline-flex min-h-11 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-medium text-amber-800">
+                Ожидает расстановки
+              </div>
             )}
           </div>
         </div>

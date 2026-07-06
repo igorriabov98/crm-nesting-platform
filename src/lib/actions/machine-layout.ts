@@ -469,7 +469,6 @@ async function upsertLayoutTask(db: LooseDb, input: {
     .eq('machine_id', input.machineId)
     .eq('assigned_to', input.assignedTo)
     .eq('task_type', MACHINE_LAYOUT_TASK_TYPE)
-    .in('status', ['pending', 'in_progress'])
     .order('created_at', { ascending: false })
     .limit(1)
 
@@ -497,6 +496,19 @@ async function upsertLayoutTask(db: LooseDb, input: {
 
   if (insertError || !insertedData) throw new Error(insertError?.message || 'Не удалось создать задачу расстановки')
   return (insertedData as { id: string }).id
+}
+
+async function findOpenLayoutRequest(db: LooseDb, machineId: string) {
+  const { data, error } = await db
+    .from('machine_layout_requests')
+    .select('id, version_no')
+    .eq('machine_id', machineId)
+    .eq('status', 'requested')
+    .order('version_no', { ascending: false })
+    .limit(1)
+
+  if (error) throw new Error(error.message || 'Не удалось проверить текущую расстановку')
+  return ((data || []) as Array<{ id: string; version_no: number }>)[0] || null
 }
 
 function assertPdfFile(file: File) {
@@ -540,6 +552,11 @@ export async function requestMachineLayout(machineId: string): Promise<ActionRes
 
     const snapshot = await buildCurrentSnapshot(db, machine)
     if (snapshot.length === 0) throw new Error('Добавьте хотя бы один товар перед запросом расстановки')
+
+    const openRequest = await findOpenLayoutRequest(db, machineId)
+    if (openRequest) {
+      throw new Error(`Расстановка версии ${openRequest.version_no} уже ожидает PDF. Загрузите PDF перед новым запросом.`)
+    }
 
     const assignedTo = await resolveConfiguredTechnologist(db)
     const taskId = await upsertLayoutTask(db, {
