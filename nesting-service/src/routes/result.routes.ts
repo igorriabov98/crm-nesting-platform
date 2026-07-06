@@ -42,6 +42,7 @@ type EnrichedPlacementForResult = PlacementForResult & {
   dimensionMismatch?: boolean;
   mismatchNote?: string | null;
   contourSource?: string;
+  contourStale?: boolean;
   bendCount?: number;
   kFactor?: number | null;
   kFactorDefaulted?: boolean;
@@ -251,6 +252,7 @@ function enrichPlacements(
     contour: unknown;
     holes: unknown;
     contourSource: string;
+    contourStale: boolean;
     bendCount: number;
     kFactor: number | null;
     kFactorDefaulted: boolean;
@@ -290,6 +292,7 @@ function enrichPlacements(
       return part ? {
         ...placement,
         contourSource: part.contourSource,
+        contourStale: part.contourStale,
         bendCount: part.bendCount,
         kFactor: part.kFactor,
         kFactorDefaulted: part.kFactorDefaulted,
@@ -300,7 +303,9 @@ function enrichPlacements(
 
     const localWidth = isQuarterTurn(rotation) ? placedH : placedW;
     const localHeight = isQuarterTurn(rotation) ? placedW : placedH;
-    const { contour, holes } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight);
+    const { contour, holes } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight, {
+      contourStale: part.contourStale,
+    });
     const localOuterContour = ensureCW(
       removeClosingPoint(transformContourForDxf(contour, rotation, 0, 0, localWidth, localHeight))
     );
@@ -326,6 +331,7 @@ function enrichPlacements(
     return {
       ...placement,
       contourSource: part.contourSource,
+      contourStale: part.contourStale,
       bendCount: part.bendCount,
       kFactor: part.kFactor,
       kFactorDefaulted: part.kFactorDefaulted,

@@ -218,6 +218,7 @@ function buildParseReportJson(project: Prisma.NestingProjectGetPayload<{
       thickness: part.thickness,
       quantity: part.quantity,
       isSheetMetal: part.isSheetMetal,
+      contourStale: part.contourStale,
       width: part.width,
       height: part.height,
       bboxSizeX: part.bboxSizeX,

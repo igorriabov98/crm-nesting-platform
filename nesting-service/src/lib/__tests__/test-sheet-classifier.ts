@@ -49,6 +49,36 @@ function assertApprox(actual: number, expected: number, tolerance: number): void
   );
 }
 
+function extrudeRect(minX: number, minY: number, maxX: number, maxY: number, depth: number): Mesh {
+  return extrudePolygon(
+    [
+      [minX, minY],
+      [maxX, minY],
+      [maxX, maxY],
+      [minX, maxY],
+    ],
+    [[0, 1, 2], [0, 2, 3]],
+    depth
+  );
+}
+
+function mergeMeshes(meshes: Mesh[]): Mesh {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  let vertexOffset = 0;
+
+  for (const mesh of meshes) {
+    positions.push(...Array.from(mesh.positions));
+    indices.push(...Array.from(mesh.indices).map((index) => index + vertexOffset));
+    vertexOffset += mesh.positions.length / 3;
+  }
+
+  return {
+    positions: new Float32Array(positions),
+    indices: new Uint32Array(indices),
+  };
+}
+
 const flatPlate = extrudePolygon(
   [
     [0, 0],
@@ -85,6 +115,39 @@ assert.equal(lProfileResult.hasBends, true);
 assert.ok(lProfileResult.developedBlank);
 assertApprox(lProfileResult.developedBlank.width, 1180, 0.1);
 assertApprox(lProfileResult.developedBlank.height, 58, 0.1);
+
+const u80Profile = extrudePolygon(
+  [
+    [0, 0],
+    [45, 0],
+    [45, 7],
+    [5, 7],
+    [5, 73],
+    [45, 73],
+    [45, 80],
+    [0, 80],
+  ],
+  [
+    [0, 1, 2], [0, 2, 3],
+    [0, 3, 4], [0, 4, 7],
+    [7, 4, 5], [7, 5, 6],
+  ],
+  690
+);
+const u80Result = classify(u80Profile);
+assert.equal(u80Result.isSheetMetal, false);
+assert.equal(u80Result.method, 'volume_area');
+assert.match(u80Result.warnings.join(' '), /неравномерная толщина стенок 5..7 мм/);
+
+const closedTube = mergeMeshes([
+  extrudeRect(0, 0, 3, 50, 1000),
+  extrudeRect(47, 0, 50, 50, 1000),
+  extrudeRect(3, 0, 47, 3, 1000),
+  extrudeRect(3, 47, 47, 50, 1000),
+]);
+const closedTubeResult = classify(closedTube);
+assert.equal(closedTubeResult.isSheetMetal, false);
+assert.match(closedTubeResult.warnings.join(' '), /замкнутая труба/);
 
 const compactPart = extrudePolygon(
   [

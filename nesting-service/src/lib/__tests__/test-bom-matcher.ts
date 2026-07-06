@@ -375,6 +375,30 @@ assert.equal(sheetSortamentAngleMatches[0].suggestedIsSheetMetal, true);
 assert.equal(sheetSortamentAngleMatches[0].suggestedUnfoldingWidth, 1150);
 assert.equal(sheetSortamentAngleMatches[0].suggestedUnfoldingHeight, 54.6);
 
+const wrongTwinDetailMatches = matchBOMToParts(
+  [],
+  [createPart({
+    id: 'bordkante-1',
+    name: 'bordkante_1',
+    thickness: 3,
+    width: 1400,
+    height: 75,
+    hasBends: true,
+    isSheetMetal: true,
+  })],
+  [createDetail({
+    designation: 'SKM-750.00.042',
+    name: 'Bordkante',
+    thicknessMm: 3,
+    unfoldingWidth: 1002,
+    unfoldingHeight: 344,
+    isSheetMetal: true,
+  })]
+);
+assert.equal(wrongTwinDetailMatches[0].matchType, 'none');
+assert.equal(wrongTwinDetailMatches[0].matchConfidence <= 0.5, true);
+assert.match(wrongTwinDetailMatches[0].matchDetails, /unfolding rejected/);
+
 const explicitChannelMatches = matchBOMToParts(
   [createBom({ description: 'U 80 - 690', partType: 'channel', widthMm: 80, heightMm: 690, quantity: 1 })],
   [createPart({ id: 'real-channel', name: 'Швеллер 80', thickness: 5, width: 80, height: 690, isSheetMetal: true })]

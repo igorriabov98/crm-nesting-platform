@@ -89,6 +89,7 @@ export interface NestingPart {
   meshArea: number | null
   facesCount: number | null
   contourSource: ContourSource | string
+  contourStale: boolean
   quantity: number
   isSheetMetal: boolean
   grainLock: boolean

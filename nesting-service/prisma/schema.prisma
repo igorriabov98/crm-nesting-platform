@@ -101,6 +101,7 @@ model Part {
   facesCount   Int?
   contour      Json
   holes        Json?
+  contourStale Boolean       @default(false)
   contourSource ContourSource @default(EXACT_BOUNDARY)
   quantity     Int            @default(1)
   isSheetMetal Boolean        @default(true)

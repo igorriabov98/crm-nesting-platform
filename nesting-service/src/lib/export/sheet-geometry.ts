@@ -86,7 +86,9 @@ export function dxfOptionsForSheet(geometry: Pick<SheetExportGeometry, 'leadSafe
 function toDxfPartData(placement: PlacementForExport, part: Part): DxfPartData {
   const localWidth = isQuarterTurn(placement.rotation) ? placement.placedH : placement.placedW;
   const localHeight = isQuarterTurn(placement.rotation) ? placement.placedW : placement.placedH;
-  const { contour, holes, needsReview, reviewReason } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight);
+  const { contour, holes, needsReview, reviewReason } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight, {
+    contourStale: part.contourStale,
+  });
 
   return {
     name: normalizeCadText(placement.name || part.name),

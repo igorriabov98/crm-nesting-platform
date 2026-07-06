@@ -28,6 +28,24 @@ assert.doesNotMatch(reviewDxf.dxfContent, /Mismatch ESTIMATE/, 'anisotropy alone
 const almostUniform = readFittedPartGeometry(sourceContour, [], 100.2, 100);
 assert.equal(almostUniform.needsReview, false, 'small rounding-scale mismatch should pass');
 
+const rotatedUniform = readFittedPartGeometry(
+  [
+    { x: 0, y: 0 },
+    { x: 136.2, y: 0 },
+    { x: 136.2, y: 100 },
+    { x: 0, y: 100 },
+    { x: 0, y: 0 },
+  ],
+  [],
+  100,
+  135.59
+);
+assert.equal(rotatedUniform.needsReview, false, '90 degree contour orientation should pass when uniform after rotation');
+
+const stale = readFittedPartGeometry(sourceContour, [], 1340, 890, { contourStale: true });
+assert.equal(stale.needsReview, true, 'stale contour must require review');
+assert.match(stale.reviewReason || '', /контур не соответствует/);
+
 const normalDxf = generateDXFWithWarnings(
   { width: 300, height: 200, material: 'Steel', thickness: 3 },
   [createPart('Uniform', almostUniform)],

@@ -173,6 +173,7 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         quantity: true,
         width: true,
         height: true,
+        contourStale: true,
         thickness: true,
         isSheetMetal: true,
         hasBends: true,
@@ -259,6 +260,9 @@ export async function aiProjectRoutes(app: FastifyInstance) {
           body.appliedBy,
           appliedAt
         );
+        guarded.data.contourStale = true;
+      } else if (guarded.dimensionsApplied) {
+        guarded.data.contourStale = false;
       }
 
       if (Object.keys(guarded.data).length === 0) continue;
@@ -317,6 +321,7 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         quantity: true,
         width: true,
         height: true,
+        contourStale: true,
         isSheetMetal: true,
       },
     });

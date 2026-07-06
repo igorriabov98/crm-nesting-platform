@@ -52,11 +52,37 @@ export interface DevelopedBlankInfo {
   contour: Point2D[];
 }
 
+type ThinWallPlaneGroup = {
+  projection: number;
+  area: number;
+};
+
+type ThinWallOrientation = {
+  normal: [number, number, number];
+  totalArea: number;
+  planes: ThinWallPlaneGroup[];
+  candidateGaps: number[];
+};
+
+type ThinWallProfileInfo = {
+  candidateThicknesses: number[];
+  uniform: boolean;
+  minThickness: number | null;
+  maxThickness: number | null;
+  closedTube: boolean;
+};
+
 type Axis = 'x' | 'y' | 'z';
 
 const POINT_EPSILON = 0.01;
 const CHAIN_EPSILON = 0.02;
 const RDP_EPSILON = 1e-9;
+const THIN_WALL_MIN_MM = 0.5;
+const THIN_WALL_MAX_MM = 12;
+const THIN_WALL_UNIFORM_TOLERANCE = 0.05;
+const THIN_WALL_NORMAL_COS = Math.cos(10 * Math.PI / 180);
+const THIN_WALL_PLANE_TOLERANCE_MM = 0.15;
+const THIN_WALL_MIN_PLANE_AREA_RATIO = 0.01;
 const STANDARD_THICKNESSES = [
   0.5, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20, 25, 30,
 ];
@@ -459,9 +485,25 @@ export function classifySheetMetalV2(
   const volumeInfo = indices && indices.length >= 3
     ? getVolumeAreaInfo(bbox, positions, indices)
     : null;
+  const thinWallInfo = indices && indices.length >= 3
+    ? analyzeThinWallProfile(positions, indices)
+    : null;
   const ratio = minDim.size / maxDim.size;
   if (ratio >= threshold) {
     if (volumeInfo && isManualThinWallShellCandidate(dims, volumeInfo)) {
+      const rejectReason = buildThinWallProfileRejectReason(thinWallInfo);
+      if (rejectReason) {
+        return {
+          isSheetMetal: false,
+          thickness: volumeInfo.roundedWall,
+          projectionAxis: minDim.axis,
+          confidence: 0.75,
+          method: 'volume_area',
+          hasBends: false,
+          warnings: [rejectReason],
+        };
+      }
+
       return {
         isSheetMetal: false,
         thickness: volumeInfo.roundedWall,
@@ -494,6 +536,19 @@ export function classifySheetMetalV2(
       volumeInfo.roundedWall <= 12 &&
       volumeInfo.roundedWall < minDim.size * 0.5
     ) {
+      const rejectReason = buildThinWallProfileRejectReason(thinWallInfo);
+      if (rejectReason) {
+        return {
+          isSheetMetal: false,
+          thickness: volumeInfo.roundedWall,
+          projectionAxis: minDim.axis,
+          confidence: 0.75,
+          method: 'volume_area',
+          hasBends: false,
+          warnings: [rejectReason],
+        };
+      }
+
       const wallThickness = volumeInfo.wallThickness;
 
       return {
@@ -618,6 +673,186 @@ export function classifySheetMetalV2(
     hasBends: false,
     warnings: [],
   };
+}
+
+function analyzeThinWallProfile(positions: Float32Array, indices: Uint32Array): ThinWallProfileInfo | null {
+  const orientations = collectThinWallOrientations(positions, indices);
+  const candidateThicknesses = orientations.flatMap((orientation) => orientation.candidateGaps);
+  if (candidateThicknesses.length === 0) {
+    return null;
+  }
+
+  const minThickness = Math.min(...candidateThicknesses);
+  const maxThickness = Math.max(...candidateThicknesses);
+  const meanThickness = (minThickness + maxThickness) / 2;
+  const uniform = meanThickness > 0
+    ? (maxThickness - minThickness) / meanThickness <= THIN_WALL_UNIFORM_TOLERANCE
+    : true;
+
+  return {
+    candidateThicknesses,
+    uniform,
+    minThickness,
+    maxThickness,
+    closedTube: isClosedTubeProfile(orientations),
+  };
+}
+
+function buildThinWallProfileRejectReason(info: ThinWallProfileInfo | null): string | null {
+  if (!info) {
+    return null;
+  }
+
+  if (info.closedTube) {
+    return 'Профиль: замкнутая труба — не для листового раскроя.';
+  }
+
+  if (!info.uniform && info.minThickness !== null && info.maxThickness !== null) {
+    return `Профиль: неравномерная толщина стенок ${formatMm(info.minThickness)}..${formatMm(info.maxThickness)} мм, листовая развертка отклонена.`;
+  }
+
+  return null;
+}
+
+function collectThinWallOrientations(positions: Float32Array, indices: Uint32Array): ThinWallOrientation[] {
+  const orientations: ThinWallOrientation[] = [];
+
+  for (let i = 0; i < indices.length; i += 3) {
+    const [i0, i1, i2] = [indices[i], indices[i + 1], indices[i + 2]];
+    if (!isValidTriangleIndex(positions, i0) || !isValidTriangleIndex(positions, i1) || !isValidTriangleIndex(positions, i2)) {
+      continue;
+    }
+
+    const ax = positions[i0 * 3];
+    const ay = positions[i0 * 3 + 1];
+    const az = positions[i0 * 3 + 2];
+    const bx = positions[i1 * 3];
+    const by = positions[i1 * 3 + 1];
+    const bz = positions[i1 * 3 + 2];
+    const cx = positions[i2 * 3];
+    const cy = positions[i2 * 3 + 1];
+    const cz = positions[i2 * 3 + 2];
+    let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay);
+    let ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+    let nz = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    const normalLength = Math.hypot(nx, ny, nz);
+    if (normalLength < 1e-10) {
+      continue;
+    }
+
+    const area = normalLength / 2;
+    nx /= normalLength;
+    ny /= normalLength;
+    nz /= normalLength;
+    const normal = canonicalNormal([nx, ny, nz]);
+    const center: [number, number, number] = [
+      (ax + bx + cx) / 3,
+      (ay + by + cy) / 3,
+      (az + bz + cz) / 3,
+    ];
+    const projection = dot3(center, normal);
+    let orientation = orientations.find((candidate) => dot3(candidate.normal, normal) >= THIN_WALL_NORMAL_COS);
+
+    if (!orientation) {
+      orientation = {
+        normal,
+        totalArea: 0,
+        planes: [],
+        candidateGaps: [],
+      };
+      orientations.push(orientation);
+    }
+
+    const nextArea = orientation.totalArea + area;
+    orientation.normal = normalize3([
+      (orientation.normal[0] * orientation.totalArea + normal[0] * area) / nextArea,
+      (orientation.normal[1] * orientation.totalArea + normal[1] * area) / nextArea,
+      (orientation.normal[2] * orientation.totalArea + normal[2] * area) / nextArea,
+    ]);
+    orientation.totalArea = nextArea;
+    addProjectionPlane(orientation.planes, projection, area);
+  }
+
+  for (const orientation of orientations) {
+    orientation.planes = orientation.planes
+      .filter((plane) => plane.area >= orientation.totalArea * THIN_WALL_MIN_PLANE_AREA_RATIO)
+      .sort((left, right) => left.projection - right.projection);
+    orientation.candidateGaps = collectCandidatePlaneGaps(orientation.planes);
+  }
+
+  return orientations.filter((orientation) => orientation.candidateGaps.length > 0);
+}
+
+function addProjectionPlane(planes: ThinWallPlaneGroup[], projection: number, area: number): void {
+  const existing = planes.find((plane) => Math.abs(plane.projection - projection) <= THIN_WALL_PLANE_TOLERANCE_MM);
+  if (!existing) {
+    planes.push({ projection, area });
+    return;
+  }
+
+  const nextArea = existing.area + area;
+  existing.projection = (existing.projection * existing.area + projection * area) / nextArea;
+  existing.area = nextArea;
+}
+
+function collectCandidatePlaneGaps(planes: ThinWallPlaneGroup[]): number[] {
+  const gaps: number[] = [];
+
+  for (let index = 1; index < planes.length; index += 1) {
+    const gap = planes[index].projection - planes[index - 1].projection;
+    if (gap >= THIN_WALL_MIN_MM && gap <= THIN_WALL_MAX_MM) {
+      gaps.push(roundBlankSize(gap));
+    }
+  }
+
+  return gaps;
+}
+
+function isClosedTubeProfile(orientations: ThinWallOrientation[]): boolean {
+  const repeatedWallDirections = orientations.filter((orientation) => {
+    const gaps = orientation.candidateGaps;
+    if (gaps.length < 2 || orientation.planes.length < 4) {
+      return false;
+    }
+
+    return gaps.some((gap, index) =>
+      gaps.some((other, otherIndex) =>
+        otherIndex !== index &&
+        Math.abs(gap - other) / Math.max(gap, other) <= THIN_WALL_UNIFORM_TOLERANCE
+      )
+    );
+  });
+
+  return repeatedWallDirections.length >= 2;
+}
+
+function canonicalNormal(normal: [number, number, number]): [number, number, number] {
+  const normalized = normalize3(normal);
+  const axis = [Math.abs(normalized[0]), Math.abs(normalized[1]), Math.abs(normalized[2])];
+  const dominant = axis[0] >= axis[1] && axis[0] >= axis[2] ? 0 : axis[1] >= axis[2] ? 1 : 2;
+
+  if (normalized[dominant] < 0) {
+    return [-normalized[0], -normalized[1], -normalized[2]];
+  }
+
+  return normalized;
+}
+
+function normalize3(vector: [number, number, number]): [number, number, number] {
+  const length = Math.hypot(vector[0], vector[1], vector[2]);
+  if (length < 1e-10) {
+    return [0, 0, 1];
+  }
+
+  return [vector[0] / length, vector[1] / length, vector[2] / length];
+}
+
+function dot3(left: [number, number, number], right: [number, number, number]): number {
+  return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+}
+
+function formatMm(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 export function projectTo2D(positions: Float32Array, axis: Axis): Point2D[] {

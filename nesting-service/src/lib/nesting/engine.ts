@@ -103,8 +103,10 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   for (const group of groups.values()) {
     const { material, thickness, steelTypeId, steelTypeName, parts: groupParts } = group;
     const nestingParts: NestingPart[] = groupParts.map((part) => {
-      const contour = readPointArray(part.contour, part.width, part.height);
-      const holes = readHoles(part.holes);
+      const contour = part.contourStale
+        ? rectangleContour(part.width, part.height)
+        : readPointArray(part.contour, part.width, part.height);
+      const holes = part.contourStale ? [] : readHoles(part.holes);
       const area = polygonNetArea(contour, holes);
 
       return {
@@ -391,6 +393,16 @@ function readPointArray(value: Prisma.JsonValue, width: number, height: number):
     return value.map((point) => ({ x: Number(point.x), y: Number(point.y) }));
   }
 
+  return [
+    { x: 0, y: 0 },
+    { x: width, y: 0 },
+    { x: width, y: height },
+    { x: 0, y: height },
+    { x: 0, y: 0 },
+  ];
+}
+
+function rectangleContour(width: number, height: number): Point2D[] {
   return [
     { x: 0, y: 0 },
     { x: width, y: 0 },

@@ -10,6 +10,10 @@ export type FittedPartGeometry = {
   reviewReason: string | null;
 };
 
+type FittedPartGeometryOptions = {
+  contourStale?: boolean;
+};
+
 type Bounds = {
   minX: number;
   minY: number;
@@ -21,14 +25,25 @@ export function readFittedPartGeometry(
   contourValue: unknown,
   holesValue: unknown,
   width: number,
-  height: number
+  height: number,
+  options: FittedPartGeometryOptions = {}
 ): FittedPartGeometry {
   const targetWidth = Math.max(0, width);
   const targetHeight = Math.max(0, height);
-  const rawContour = isPointArray(contourValue) ? toPoints(contourValue) : createRectangleContour(targetWidth, targetHeight);
-  const bounds = getBounds(removeClosingPoint(rawContour));
+  if (options.contourStale) {
+    return {
+      contour: createRectangleContour(targetWidth, targetHeight),
+      holes: [],
+      needsReview: true,
+      reviewReason: 'контур не соответствует применённой развёртке (принято из PDF)',
+    };
+  }
 
-  if (!bounds || bounds.width <= EPSILON_MM || bounds.height <= EPSILON_MM || targetWidth <= 0 || targetHeight <= 0) {
+  const rawContour = isPointArray(contourValue) ? toPoints(contourValue) : createRectangleContour(targetWidth, targetHeight);
+  const rawHoles = readHoles(holesValue);
+  const directFit = fitGeometry(rawContour, rawHoles, targetWidth, targetHeight);
+
+  if (!directFit) {
     return {
       contour: createRectangleContour(targetWidth, targetHeight),
       holes: [],
@@ -37,24 +52,53 @@ export function readFittedPartGeometry(
     };
   }
 
-  const scaleX = targetWidth / bounds.width;
-  const scaleY = targetHeight / bounds.height;
-  const scaleDelta = Math.abs(scaleX - scaleY) / ((scaleX + scaleY) / 2);
+  if (directFit.scaleDelta > SCALE_MISMATCH_TOLERANCE) {
+    const rotatedFit = fitGeometry(rotatePoints90(rawContour), rawHoles.map(rotatePoints90), targetWidth, targetHeight);
+    if (rotatedFit && rotatedFit.scaleDelta <= SCALE_MISMATCH_TOLERANCE) {
+      return {
+        contour: rotatedFit.contour,
+        holes: rotatedFit.holes,
+        needsReview: false,
+        reviewReason: null,
+      };
+    }
 
-  if (scaleDelta > SCALE_MISMATCH_TOLERANCE) {
     return {
       contour: createRectangleContour(targetWidth, targetHeight),
       holes: [],
       needsReview: true,
       reviewReason: [
         `DXF geometry scale mismatch`,
-        `scaleX ${formatPercent(scaleX)}`,
-        `scaleY ${formatPercent(scaleY)}`,
-        `delta ${formatPercent(scaleDelta)}`,
+        `scaleX ${formatPercent(directFit.scaleX)}`,
+        `scaleY ${formatPercent(directFit.scaleY)}`,
+        `delta ${formatPercent(directFit.scaleDelta)}`,
       ].join('; '),
     };
   }
 
+  return {
+    contour: directFit.contour,
+    holes: directFit.holes,
+    needsReview: false,
+    reviewReason: null,
+  };
+}
+
+function fitGeometry(
+  rawContour: Point2D[],
+  rawHoles: Point2D[][],
+  targetWidth: number,
+  targetHeight: number
+): (FittedPartGeometry & { scaleX: number; scaleY: number; scaleDelta: number }) | null {
+  const bounds = getBounds(removeClosingPoint(rawContour));
+
+  if (!bounds || bounds.width <= EPSILON_MM || bounds.height <= EPSILON_MM || targetWidth <= 0 || targetHeight <= 0) {
+    return null;
+  }
+
+  const scaleX = targetWidth / bounds.width;
+  const scaleY = targetHeight / bounds.height;
+  const scaleDelta = Math.abs(scaleX - scaleY) / ((scaleX + scaleY) / 2);
   const uniformScale = (scaleX + scaleY) / 2;
   const fittedWidth = bounds.width * uniformScale;
   const fittedHeight = bounds.height * uniformScale;
@@ -67,10 +111,17 @@ export function readFittedPartGeometry(
 
   return {
     contour: rawContour.map(fitPoint),
-    holes: readHoles(holesValue).map((hole) => hole.map(fitPoint)).filter((hole) => hole.length >= 3),
+    holes: rawHoles.map((hole) => hole.map(fitPoint)).filter((hole) => hole.length >= 3),
     needsReview: false,
     reviewReason: null,
+    scaleX,
+    scaleY,
+    scaleDelta,
   };
+}
+
+function rotatePoints90(points: Point2D[]): Point2D[] {
+  return points.map((point) => ({ x: point.y, y: -point.x }));
 }
 
 function createRectangleContour(width: number, height: number): Point2D[] {

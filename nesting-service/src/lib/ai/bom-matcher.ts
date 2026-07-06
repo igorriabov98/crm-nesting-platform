@@ -1,4 +1,4 @@
-import { normalizeSteelTypeName } from './steel-types';
+import { normalizeSteelTypeName, resolveCatalogSteelType as resolveSteelTypeCatalogEntry } from './steel-types';
 import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, SteelTypeCatalogItem } from './types';
 import { mergeUnfoldingWarning, resolveUnfolding } from './unfolding-extraction';
 
@@ -25,6 +25,7 @@ const STANDARD_THICKNESSES = [
   0.5, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20, 25, 30,
 ];
 const THICKNESS_TOLERANCE_MM = 0.3;
+const UNFOLDING_MATCH_TOLERANCE = 0.02;
 const DIMENSION_CLUSTER_TOLERANCE_MM = 0.3;
 const CONTOUR_CLUSTER_TOLERANCE_MM = 0.3;
 
@@ -286,6 +287,10 @@ function findGeometryMatch(
 
     const geometry = geometryMatchScore(part, entry);
     if (geometry.score < 0.45 || geometry.strongMatches === 0) {
+      const rejection = geometry.details.find((item) => item.startsWith('unfolding rejected'));
+      if (rejection) {
+        rejectedDetails.push(rejection);
+      }
       continue;
     }
 
@@ -321,6 +326,10 @@ function findDetailMatch(
 
     const geometry = detailGeometryMatchScore(part, detail);
     if (geometry.score < 0.8 || geometry.strongMatches < 2) {
+      const rejection = geometry.details.find((item) => item.startsWith('unfolding rejected'));
+      if (rejection) {
+        rejectedDetails.push(rejection);
+      }
       continue;
     }
 
@@ -344,6 +353,14 @@ function detailGeometryMatchScore(part: PartForMatching, detail: DetailEntry): G
   let strongMatches = 0;
   const detailDims = getDetailUnfoldingDims(detail);
   const partDims = getPartUnfoldingDims(part);
+  const unfoldingMismatch = buildUnfoldingMismatchReason(partDims, detailDims, 'detail');
+  if (unfoldingMismatch) {
+    return {
+      score: 0.5,
+      details: [unfoldingMismatch],
+      strongMatches: 0,
+    };
+  }
 
   if (detail.thicknessMm > 0 && thicknessMatch(detail.thicknessMm, getStepThickness(part))) {
     score += 0.35;
@@ -396,6 +413,19 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
   const bomDims = getBOMDimensions(bom);
   const stepDims = getPartBBoxDims(part);
   const dimensionWeight = 0.3;
+  const bomUnfoldingDims = [bomDims.widthMm, bomDims.heightMm]
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+  const unfoldingMismatch = bomDims.partType === 'sheet' && part.hasBends
+    ? buildUnfoldingMismatchReason(getPartUnfoldingDims(part), bomUnfoldingDims, 'BOM')
+    : null;
+  if (unfoldingMismatch) {
+    return {
+      score: 0.5,
+      details: [unfoldingMismatch],
+      strongMatches: 0,
+    };
+  }
 
   if (bomDims.thicknessMm) {
     const stepThickness = getStepThickness(part);
@@ -553,6 +583,25 @@ function getDetailUnfoldingDims(detail: DetailEntry): number[] {
   return [detail.unfoldingWidth, detail.unfoldingHeight]
     .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
     .sort((a, b) => a - b);
+}
+
+function buildUnfoldingMismatchReason(stepDims: number[], candidateDims: number[], source: string): string | null {
+  if (stepDims.length !== 2 || candidateDims.length !== 2) {
+    return null;
+  }
+
+  const sideDelta = Math.max(
+    Math.abs(stepDims[0] - candidateDims[0]) / Math.max(stepDims[0], candidateDims[0]),
+    Math.abs(stepDims[1] - candidateDims[1]) / Math.max(stepDims[1], candidateDims[1])
+  );
+  const areaDelta = Math.abs(stepDims[0] * stepDims[1] - candidateDims[0] * candidateDims[1]) / Math.max(stepDims[0] * stepDims[1], candidateDims[0] * candidateDims[1]);
+  const delta = Math.max(sideDelta, areaDelta);
+
+  if (delta <= UNFOLDING_MATCH_TOLERANCE) {
+    return null;
+  }
+
+  return `unfolding rejected: ${source}=${formatNumber(candidateDims[0])}x${formatNumber(candidateDims[1])}, STEP=${formatNumber(stepDims[0])}x${formatNumber(stepDims[1])}, mismatch=${formatNumber(delta * 100)}%`;
 }
 
 function getPartWallThickness(part: PartForMatching): number {
@@ -997,10 +1046,7 @@ function sameSteelType(a: string | null | undefined, b: string | null | undefine
 }
 
 function resolveCatalogSteelType(raw: string, steelTypes: SteelTypeCatalogItem[]): SteelTypeCatalogItem | null {
-  const normalizedRaw = normalizeSteelTypeName(raw);
-  if (!normalizedRaw) return null;
-  const matches = steelTypes.filter((steelType) => normalizeSteelTypeName(steelType.name) === normalizedRaw);
-  return matches.length === 1 ? matches[0] : null;
+  return resolveSteelTypeCatalogEntry(raw, steelTypes).item;
 }
 
 function normalize(str: string): string {
