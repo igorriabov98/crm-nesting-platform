@@ -9,7 +9,7 @@ import { STAGES, STAGE_ORDER, stageHasSingleDate, stageHasWorkshop } from '@/lib
 import { useRole } from '@/lib/hooks/useRole'
 import { clearProductionStageDates, updateMachineDate, updateProductionStage, toggleStageSkip } from '@/lib/actions/production'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { AlertTriangle, CalendarDays, MinusCircle, Undo2, Ban, Info, Eraser, Loader2 } from 'lucide-react'
+import { CalendarDays, MinusCircle, Undo2, Ban, Info, Eraser, Loader2 } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { getDesiredShippingInfo } from '@/lib/utils/desired-shipping'
@@ -51,10 +51,6 @@ export function ProductionTab({ machine }: ProductionTabProps) {
       return { label: 'Завершён', color: 'bg-green-600 text-white' }
     }
 
-    if (stage.manual_overdue) {
-      return { label: 'Просрочено вручную', color: 'bg-red-600 text-white' }
-    }
-
     if (!stage.date_start && !stage.date_end) return { label: 'Не запланирован', color: 'bg-[#F8F9FA] text-[#6B7280]' }
 
     const today = todayDateOnly()
@@ -93,7 +89,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
   }
 
   const handleMachineDateUpdate = async (
-    field: 'desired_shipping_date' | 'planned_material_date' | 'delivery_to_client_date',
+    field: 'desired_shipping_date' | 'planned_material_date',
     value: string | null
   ) => {
     const res = await updateMachineDate(machine.id, field, value)
@@ -135,6 +131,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
   const hasZinc = itemsWithZinc.length > 0
   const hasPainting = itemsWithPainting.length > 0
   const desiredShipping = getDesiredShippingInfo(machine.desired_shipping_date)
+  const readOnlyDateClassName = "flex h-8 w-full max-w-sm items-center rounded-md border border-[#E8ECF0] bg-white px-3 text-sm text-[#1B3A6B]"
 
   return (
     <div className="space-y-4">
@@ -143,7 +140,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
           <CalendarDays className="h-4 w-4" />
           Даты машины
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <div className="space-y-1">
             <div className="text-xs text-[#6B7280]">Желаемая отгрузка</div>
             <InlineEdit
@@ -177,6 +174,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
               dateDisplayFormat="dd.MM.yyyy"
               fallbackText="—"
               placeholder="Дата..."
+              className={readOnlyDateClassName}
             />
           </div>
 
@@ -203,19 +201,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
               dateDisplayFormat="dd.MM.yyyy"
               fallbackText="—"
               placeholder="Дата..."
-            />
-          </div>
-
-          <div className="space-y-1">
-            <div className="text-xs text-[#6B7280]">Доставка клиенту</div>
-            <InlineEdit
-              type="date"
-              value={machine.delivery_to_client_date}
-              editable={canEditSalesDates}
-              onSave={(value) => handleMachineDateUpdate('delivery_to_client_date', value)}
-              dateDisplayFormat="dd.MM.yyyy"
-              fallbackText="—"
-              placeholder="Дата..."
+              className={readOnlyDateClassName}
             />
           </div>
         </div>
@@ -327,23 +313,6 @@ export function ProductionTab({ machine }: ProductionTabProps) {
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge className={status.color}>{status.label}</Badge>
-                    {canEdit && !stage.is_skipped && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleUpdate(stage.id, 'manual_overdue', !stage.manual_overdue)}
-                        className={cn(
-                          'h-7 px-2 text-xs',
-                          stage.manual_overdue
-                            ? 'border-[#DC2626] bg-[#FEE2E2] text-[#DC2626] hover:bg-[#FEE2E2]'
-                            : 'border-[#E8ECF0] text-[#6B7280] hover:text-[#DC2626]'
-                        )}
-                      >
-                        <AlertTriangle className="mr-1 h-3 w-3" />
-                        Просрочка
-                      </Button>
-                    )}
                   </div>
                 </td>
                 <td className="px-4 py-3">

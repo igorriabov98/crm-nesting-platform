@@ -79,7 +79,7 @@ export function GanttLegend({
                     className="w-9 rounded-md bg-[#4472C4] shadow-sm ring-2 ring-red-500"
                     style={{ height: GANTT_BAR_HEIGHT }}
                   />
-                  <span className="text-[#374151]">Просрочено вручную</span>
+                  <span className="text-[#374151]">Просрочено</span>
                 </div>
               </>
             )}
