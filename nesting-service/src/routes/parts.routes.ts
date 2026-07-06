@@ -42,6 +42,7 @@ const partListSelect = {
   mismatchNote: true,
   thicknessMismatch: true,
   thicknessMismatchNote: true,
+  aiApplySnapshot: true,
   thumbnailSvg: true,
   classificationMethod: true,
   classificationWarning: true,

@@ -5,6 +5,14 @@ import { analyzePDF, parsePDFAnalysisResponse } from './openrouter';
 import { estimateCost, getAISettingsView, recordAIUsage } from './settings';
 import { matchBOMToParts } from './bom-matcher';
 import { applyDimensionGuard, applyThicknessGuard } from './dimension-guard';
+import {
+  AI_RECALC_REQUIRED_MESSAGE,
+  buildAIApplySnapshot,
+  hasAIApplyTrackedChange,
+  hasNestingAffectingChange,
+  type AIApplyStatus,
+  type SnapshotPart,
+} from './apply-control';
 import { extractDeterministicPdfDataFromPdf, mergeDeterministicBOM, mergeDeterministicDetails } from './pdf-bom-fallback';
 import { resolveBOMSteelTypes } from './steel-types';
 import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
@@ -27,6 +35,7 @@ export async function analyzeProjectPdf(input: {
   projectId: string;
   pdfFilePath: string;
   autoApply?: boolean;
+  appliedBy?: string | null;
   steelTypes?: SteelTypeCatalogItem[];
 }): Promise<ProjectPdfAnalysisResult> {
   const pdfResult = await analyzePDF(input.pdfFilePath, { steelTypes: input.steelTypes });
@@ -61,11 +70,17 @@ export async function analyzeProjectPdf(input: {
       facesCount: true,
       isSheetMetal: true,
       hasBends: true,
+      classificationMethod: true,
+      classificationWarning: true,
     },
   });
   const matches = matchBOMToParts(bom, parts, details, input.steelTypes ?? []);
   const partsById = new Map(parts.map((part) => [part.id, part]));
-  const finalMatches = input.autoApply === false ? matches : await autoApplyMatches(input.projectId, matches, partsById);
+  const settings = await getAISettingsView();
+  const shouldAutoApply = input.autoApply ?? settings.autoApplyResults;
+  const finalMatches = shouldAutoApply
+    ? await autoApplyMatches(input.projectId, matches, partsById, input.appliedBy ?? null)
+    : matches.map((match) => ({ ...match, applyStatus: 'suggested' as const }));
   const unmatchedBom = getUnmatchedBom(bom, finalMatches);
   const cost = estimateCost(pdfResult.tokensUsed, pdfResult.model);
 
@@ -76,7 +91,6 @@ export async function analyzeProjectPdf(input: {
     cost,
   });
 
-  const settings = await getAISettingsView();
   const budgetWarning = settings.budgetWarning;
 
   await persistProjectSpecification({
@@ -145,14 +159,19 @@ export async function getProjectSpecification(projectId: string): Promise<Omit<P
 async function autoApplyMatches(
   projectId: string,
   matches: MatchResult[],
-  partsById: Map<string, { id: string; name: string; width: number; height: number; thickness: number }>
+  partsById: Map<string, SnapshotPart & { id: string; name: string }>,
+  appliedBy: string | null
 ): Promise<MatchResult[]> {
   const nextMatches = [...matches];
   let needsUnfoldRecalculation = false;
+  const appliedAt = new Date();
 
   for (let index = 0; index < nextMatches.length; index += 1) {
     const match = nextMatches[index];
-    if (match.matchConfidence < 0.8) continue;
+    if (match.matchConfidence < 0.8) {
+      nextMatches[index] = { ...match, applyStatus: 'suggested' };
+      continue;
+    }
 
     const data: Prisma.PartUpdateInput = {};
     if (match.suggestedMaterial) data.material = match.suggestedMaterial;
@@ -182,6 +201,9 @@ async function autoApplyMatches(
     if (dimensionGuard) {
       Object.assign(data, dimensionGuard.data);
     }
+    if (dimensionGuard?.mismatch) {
+      match.applyStatus = 'needs_force';
+    }
     if (match.suggestedHasBends !== null) data.hasBends = match.suggestedHasBends;
     if (match.suggestedIsSheetMetal === true) {
       data.isSheetMetal = true;
@@ -196,8 +218,12 @@ async function autoApplyMatches(
     if (typeof match.suggestedQuantity === 'number') data.quantity = match.suggestedQuantity;
 
     if (Object.keys(data).length === 0) continue;
-    if (data.material !== undefined || data.thickness !== undefined) {
+    if (hasNestingAffectingChange(data)) {
       needsUnfoldRecalculation = true;
+    }
+
+    if (part && hasAIApplyTrackedChange(data)) {
+      data.aiApplySnapshot = buildAIApplySnapshot(part, { appliedBy, appliedAt }) as unknown as Prisma.InputJsonValue;
     }
 
     await prisma.part.update({
@@ -205,7 +231,14 @@ async function autoApplyMatches(
       data,
     });
 
-    nextMatches[index] = { ...match, autoApplied: true };
+    const blockedByGuard = Boolean(thicknessGuard?.mismatch || dimensionGuard?.mismatch);
+    nextMatches[index] = {
+      ...match,
+      autoApplied: !blockedByGuard,
+      applyStatus: blockedByGuard ? 'needs_force' : 'applied_auto',
+      appliedBy,
+      appliedAt: appliedAt.toISOString(),
+    };
   }
 
   if (needsUnfoldRecalculation) {
@@ -213,7 +246,7 @@ async function autoApplyMatches(
       where: { id: projectId },
       data: {
         status: 'parsed',
-        errorMessage: 'требуется пересчёт развёртки после изменения материала/толщины',
+        errorMessage: AI_RECALC_REQUIRED_MESSAGE,
       },
     });
   }
@@ -268,7 +301,17 @@ async function persistProjectSpecification(input: {
   });
 }
 
-export async function markSpecificationMatchesApplied(projectId: string, partIds: Set<string>): Promise<void> {
+export async function markSpecificationMatchesApplied(
+  projectId: string,
+  partIds: Set<string>,
+  options: {
+    status?: AIApplyStatus;
+    appliedBy?: string | null;
+    appliedAt?: Date;
+    revertedBy?: string | null;
+    revertedAt?: Date;
+  } = {}
+): Promise<void> {
   if (partIds.size === 0) return;
 
   const specification = await prisma.projectSpecification.findUnique({
@@ -281,7 +324,51 @@ export async function markSpecificationMatchesApplied(projectId: string, partIds
   const matches = Array.isArray(specification.matches) ? specification.matches : [];
   const nextMatches = matches.map((match) => {
     if (isMatchRecord(match) && partIds.has(match.partId)) {
-      return { ...(match as Record<string, unknown>), autoApplied: true };
+      const status = options.status ?? 'applied_manual';
+      return {
+        ...(match as Record<string, unknown>),
+        autoApplied: status === 'applied_auto' || status === 'applied_manual' || status === 'applied_forced',
+        applyStatus: status,
+        appliedBy: options.appliedBy ?? (match as MatchResult).appliedBy ?? null,
+        appliedAt: options.appliedAt?.toISOString() ?? (match as MatchResult).appliedAt ?? null,
+        revertedBy: status === 'reverted' ? options.revertedBy ?? null : null,
+        revertedAt: status === 'reverted' ? options.revertedAt?.toISOString() ?? null : null,
+      };
+    }
+    return match;
+  });
+
+  await prisma.projectSpecification.update({
+    where: { projectId },
+    data: { matches: nextMatches as Prisma.InputJsonValue },
+  });
+}
+
+export async function markSpecificationMatchesReverted(
+  projectId: string,
+  partIds: Set<string>,
+  revertedBy?: string | null,
+  revertedAt: Date = new Date()
+): Promise<void> {
+  if (partIds.size === 0) return;
+
+  const specification = await prisma.projectSpecification.findUnique({
+    where: { projectId },
+    select: { matches: true },
+  });
+
+  if (!specification) return;
+
+  const matches = Array.isArray(specification.matches) ? specification.matches : [];
+  const nextMatches = matches.map((match) => {
+    if (isMatchRecord(match) && partIds.has(match.partId)) {
+      return {
+        ...(match as Record<string, unknown>),
+        autoApplied: false,
+        applyStatus: 'reverted',
+        revertedBy: revertedBy ?? null,
+        revertedAt: revertedAt.toISOString(),
+      };
     }
     return match;
   });

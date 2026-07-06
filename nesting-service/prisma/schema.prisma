@@ -113,6 +113,7 @@ model Part {
   mismatchNote String?
   thicknessMismatch Boolean   @default(false)
   thicknessMismatchNote String?
+  aiApplySnapshot Json?
   thumbnailSvg String?
   classificationMethod  String?
   classificationWarning String?
@@ -132,6 +133,7 @@ model AISettings {
   baseUrl       String   @default("https://openrouter.ai/api/v1")
   maxTokens     Int      @default(4000)
   monthlyBudget Float    @default(50)
+  autoApplyResults Boolean @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

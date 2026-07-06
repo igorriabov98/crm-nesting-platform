@@ -39,8 +39,8 @@ export const THICKNESS_MISMATCH_TOLERANCE_MM = 0.3;
 export function isDimensionChangeSafe(part: DimensionedPart, newWidth: number, newHeight: number): boolean {
   const currentArea = part.width * part.height;
   const nextArea = newWidth * newHeight;
-  const currentAspect = part.width / part.height;
-  const nextAspect = newWidth / newHeight;
+  const currentAspect = normalizedAspect(part.width, part.height);
+  const nextAspect = normalizedAspect(newWidth, newHeight);
 
   return (
     isPositiveFinite(part.width) &&
@@ -175,8 +175,8 @@ export function applyThicknessGuard<T extends Record<string, unknown>>(
 export function buildDimensionMismatchNote(part: DimensionedPart, newWidth: number, newHeight: number): string {
   const currentArea = part.width * part.height;
   const nextArea = newWidth * newHeight;
-  const currentAspect = part.width / part.height;
-  const nextAspect = newWidth / newHeight;
+  const currentAspect = normalizedAspect(part.width, part.height);
+  const nextAspect = normalizedAspect(newWidth, newHeight);
   const areaDiff = ratioDelta(currentArea, nextArea) * 100;
   const aspectDiff = ratioDelta(currentAspect, nextAspect) * 100;
   const partName = part.name ? `${part.name}: ` : '';
@@ -205,6 +205,14 @@ function ratioDelta(current: number, next: number): number {
   }
 
   return Math.abs(next - current) / current;
+}
+
+function normalizedAspect(width: number, height: number): number {
+  if (!isPositiveFinite(width) || !isPositiveFinite(height)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.max(width, height) / Math.min(width, height);
 }
 
 function isPositiveFinite(value: unknown): value is number {

@@ -22,6 +22,7 @@ export async function POST(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        appliedBy: access.context!.userId,
         steelTypes: steelTypes.map((steelType) => ({
           id: steelType.id,
           name: steelType.name,

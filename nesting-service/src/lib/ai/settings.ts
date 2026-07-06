@@ -5,6 +5,7 @@ import { ValidationError } from '../errors';
 import { prisma } from '../prisma';
 import {
   DEFAULT_AI_MAX_TOKENS,
+  DEFAULT_AI_AUTO_APPLY_RESULTS,
   DEFAULT_AI_MONTHLY_BUDGET,
   DEFAULT_OPENROUTER_BASE_URL,
   DEFAULT_OPENROUTER_MODEL,
@@ -23,6 +24,7 @@ export const aiSettingsInputSchema = z.object({
   baseUrl: z.string().trim().url().optional(),
   maxTokens: z.coerce.number().int().min(256).max(32000).optional(),
   monthlyBudget: z.coerce.number().min(0).max(100000).optional(),
+  autoApplyResults: z.boolean().optional(),
 });
 
 export type AISettingsInput = z.infer<typeof aiSettingsInputSchema>;
@@ -67,6 +69,7 @@ export async function getAISettingsView(): Promise<AISettingsView> {
   const currentMonthUsage = roundMoney(usage.cost);
   const averageRequestCost = usage.requests > 0 ? roundMoney(usage.cost / usage.requests) : 0;
   const monthlyBudget = stored?.monthlyBudget ?? DEFAULT_AI_MONTHLY_BUDGET;
+  const autoApplyResults = stored?.autoApplyResults ?? DEFAULT_AI_AUTO_APPLY_RESULTS;
 
   return {
     model: stored?.model || config.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL,
@@ -79,6 +82,7 @@ export async function getAISettingsView(): Promise<AISettingsView> {
     totalRequests,
     averageRequestCost,
     budgetWarning: monthlyBudget > 0 && currentMonthUsage > monthlyBudget,
+    autoApplyResults,
   };
 }
 
@@ -89,6 +93,7 @@ export async function updateAISettings(input: AISettingsInput): Promise<AISettin
     baseUrl?: string;
     maxTokens?: number;
     monthlyBudget?: number;
+    autoApplyResults?: boolean;
   } = {};
 
   if (typeof input.apiKey === 'string' && input.apiKey.trim()) {
@@ -98,6 +103,7 @@ export async function updateAISettings(input: AISettingsInput): Promise<AISettin
   if (input.baseUrl) data.baseUrl = normalizeBaseUrl(input.baseUrl);
   if (typeof input.maxTokens === 'number') data.maxTokens = input.maxTokens;
   if (typeof input.monthlyBudget === 'number') data.monthlyBudget = input.monthlyBudget;
+  if (typeof input.autoApplyResults === 'boolean') data.autoApplyResults = input.autoApplyResults;
 
   await prisma.aISettings.upsert({
     where: { id: SETTINGS_ID },
@@ -108,6 +114,7 @@ export async function updateAISettings(input: AISettingsInput): Promise<AISettin
       baseUrl: data.baseUrl || config.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL,
       maxTokens: data.maxTokens || DEFAULT_AI_MAX_TOKENS,
       monthlyBudget: data.monthlyBudget ?? DEFAULT_AI_MONTHLY_BUDGET,
+      autoApplyResults: data.autoApplyResults ?? DEFAULT_AI_AUTO_APPLY_RESULTS,
       apiKey: data.apiKey,
     },
   });
