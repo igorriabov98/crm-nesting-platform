@@ -156,14 +156,23 @@ export const GanttBar = React.memo(function GanttBar({
       {nightMarkers.map((marker) => (
         <div
           key={`night-${marker.date}`}
-          className="pointer-events-none absolute top-1/2 h-[22px] -translate-y-1/2 opacity-75 ring-1 ring-white/70"
+          className="pointer-events-none absolute top-1/2 h-[18px] -translate-y-1/2 overflow-hidden rounded-none border-2 border-dashed shadow-sm"
           style={{
             left: marker.left,
             width: unitWidth,
-            backgroundColor: NIGHT_SHIFT_COLOR,
+            minWidth: unitWidth,
+            borderColor: NIGHT_SHIFT_COLOR,
+            backgroundColor: hexToRgba(NIGHT_SHIFT_COLOR, 0.78),
             zIndex: 8,
           }}
-        />
+        >
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.22) ${Math.max(1, unitWidth - 1)}px, rgba(255,255,255,0.22) ${unitWidth}px)`,
+            }}
+          />
+        </div>
       ))}
 
       {isSingleDateStage ? (

@@ -85,12 +85,13 @@ export function GanttLegend({
             )}
             <div className="flex items-center gap-1.5">
               <div
-                className="relative w-9 overflow-hidden rounded-sm border-2 border-dashed border-[#70AD47] bg-[#70AD47]/15 shadow-sm"
-                style={{ height: GANTT_BAR_HEIGHT }}
-              >
-                <div className="absolute inset-y-0 left-2 w-1.5 opacity-80" style={{ backgroundColor: NIGHT_SHIFT_COLOR }} />
-                <div className="absolute inset-y-0 left-5 w-1.5 opacity-80" style={{ backgroundColor: NIGHT_SHIFT_COLOR }} />
-              </div>
+                className="w-9 rounded-sm border-2 border-dashed shadow-sm"
+                style={{
+                  height: GANTT_BAR_HEIGHT,
+                  borderColor: NIGHT_SHIFT_COLOR,
+                  backgroundColor: NIGHT_SHIFT_COLOR,
+                }}
+              />
               <span className="text-[#374151]">Ночная малярка</span>
             </div>
             <div className="flex items-center gap-1.5">
