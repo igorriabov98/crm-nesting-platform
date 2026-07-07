@@ -13,6 +13,8 @@ const serviceSecret = process.env.NESTING_SERVICE_SECRET || '';
 const oldProjectId = process.env.SMOKE_OLD_PROJECT_ID || '';
 const pollAttempts = Number(process.env.SMOKE_POLL_ATTEMPTS || 60);
 const pollSeconds = Number(process.env.SMOKE_POLL_SECONDS || 5);
+const networkAttempts = 3;
+const networkRetryDelayMs = 5000;
 let crmCookie = '';
 
 async function main() {
@@ -100,36 +102,38 @@ async function uploadViaUiPath(kind: 'step' | 'pdf', filePath: string, fileName:
   const storageUri = data?.storageUri;
   assert(typeof signedUrl === 'string' && signedUrl.length > 0, `${kind} signedUrl is required`);
   assert(typeof storageUri === 'string' && storageUri.startsWith('supabase://'), `${kind} storageUri is required`);
-  curlUpload(String(signedUrl), filePath, contentType, kind);
+  await curlUpload(String(signedUrl), filePath, contentType, kind);
   return String(storageUri);
 }
 
-function curlUpload(signedUrl: string, filePath: string, contentType: string, label: string) {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), `smoke-upload-${label}-`));
-  const headersPath = path.join(tempDir, 'headers.txt');
-  const bodyPath = path.join(tempDir, 'body.txt');
-  try {
-    const result = spawnSync('curl', [
-      '--http1.1',
-      '-sS',
-      '-D', headersPath,
-      '-o', bodyPath,
-      '-w', 'HTTP_STATUS:%{http_code}\\n',
-      '-X', 'PUT',
-      '-H', `content-type: ${contentType}`,
-      '--data-binary', `@${filePath}`,
-      signedUrl,
-    ], { encoding: 'utf8' });
-    const headers = safeRead(headersPath);
-    const body = safeRead(bodyPath);
-    console.log(`[raw upload ${label}]\n${result.stdout}${headers}${body}`);
-    if (result.status !== 0) throw new Error(result.stderr || `curl upload ${label} failed`);
-    const match = result.stdout.match(/HTTP_STATUS:(\d+)/);
-    const code = match ? Number(match[1]) : 0;
-    assert(code >= 200 && code < 300, `upload ${label} returned HTTP ${code}`);
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
+async function curlUpload(signedUrl: string, filePath: string, contentType: string, label: string) {
+  await withSmokeRetry(`upload ${label}`, async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), `smoke-upload-${label}-`));
+    const headersPath = path.join(tempDir, 'headers.txt');
+    const bodyPath = path.join(tempDir, 'body.txt');
+    try {
+      const result = spawnSync('curl', [
+        '--http1.1',
+        '-sS',
+        '-D', headersPath,
+        '-o', bodyPath,
+        '-w', 'HTTP_STATUS:%{http_code}\\n',
+        '-X', 'PUT',
+        '-H', `content-type: ${contentType}`,
+        '--data-binary', `@${filePath}`,
+        signedUrl,
+      ], { encoding: 'utf8' });
+      const headers = safeRead(headersPath);
+      const body = safeRead(bodyPath);
+      console.log(`[raw upload ${label}]\n${result.stdout}${headers}${body}`);
+      if (result.status !== 0) throw new Error(result.stderr || `curl upload ${label} failed`);
+      const match = result.stdout.match(/HTTP_STATUS:(\d+)/);
+      const code = match ? Number(match[1]) : 0;
+      assert(code >= 200 && code < 300, `upload ${label} returned HTTP ${code}`);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 }
 
 async function waitForProjectStatus(projectId: string, expected: string[]) {
@@ -166,21 +170,26 @@ function assertDetailMatch(payload: Json) {
 }
 
 async function readJson(label: string, url: string, init: RequestInit = {}) {
-  const response = await fetch(url, init);
-  const raw = await response.text();
-  console.log(`[raw ${label}]\nHTTP ${response.status}\n${raw}`);
-  if (!response.ok) throw new Error(`${label} failed with HTTP ${response.status}`);
-  return parseJson(raw, label);
+  return withSmokeRetry(label, async () => {
+    const response = await fetch(url, init);
+    const raw = await response.text();
+    console.log(`[raw ${label}]\nHTTP ${response.status}\n${raw}`);
+    if (!response.ok) throw new Error(`${label} failed with HTTP ${response.status}`);
+    return parseJson(raw, label);
+  });
 }
 
 async function readBinary(label: string, url: string, init: RequestInit = {}) {
-  const response = await fetch(url, init);
-  const body = Buffer.from(await response.arrayBuffer());
-  console.log(`[raw ${label}]\nHTTP ${response.status}\n${formatHeaders(response.headers)}\nbytes=${body.length}`);
-  if (!response.ok) {
-    console.log(body.toString('utf8'));
-  }
-  return { status: response.status, headers: response.headers, body };
+  return withSmokeRetry(label, async () => {
+    const response = await fetch(url, init);
+    const body = Buffer.from(await response.arrayBuffer());
+    console.log(`[raw ${label}]\nHTTP ${response.status}\n${formatHeaders(response.headers)}\nbytes=${body.length}`);
+    if (!response.ok) {
+      console.log(body.toString('utf8'));
+      throw new Error(`${label} failed with HTTP ${response.status}`);
+    }
+    return { status: response.status, headers: response.headers, body };
+  });
 }
 
 function parseJson(raw: string, label: string) {
@@ -239,13 +248,16 @@ async function createCrmAuthCookie() {
       persistSession: false,
     },
   });
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error || !data.session) {
-    throw new Error(`smoke user login failed: ${error?.message || 'session missing'}`);
-  }
+  const session = await withSmokeRetry('smoke user login', async () => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data.session) {
+      throw new Error(`smoke user login failed: ${error?.message || 'session missing'}`);
+    }
+    return data.session;
+  });
 
   const cookieName = `sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token`;
-  const sessionValue = JSON.stringify(data.session);
+  const sessionValue = JSON.stringify(session);
   const encoded = `base64-${base64UrlEncode(sessionValue)}`;
   const chunks = createCookieChunks(cookieName, encoded);
   console.log(`[smoke] authenticated smoke user; auth cookie chunks=${chunks.length}`);
@@ -458,6 +470,33 @@ function requiredEnv(name: string) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+async function withSmokeRetry<T>(label: string, operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= networkAttempts; attempt += 1) {
+    console.log(`[smoke retry] ${label}: attempt ${attempt}/${networkAttempts}`);
+    try {
+      const result = await operation();
+      if (attempt > 1) {
+        console.log(`[smoke retry] ${label}: succeeded on attempt ${attempt}/${networkAttempts}`);
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.log(`[smoke retry] ${label}: attempt ${attempt}/${networkAttempts} failed: ${formatError(error)}`);
+      if (attempt < networkAttempts) {
+        await delay(networkRetryDelayMs);
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`${label} failed after ${networkAttempts} attempts`);
+}
+
+function formatError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function delay(ms: number) {
