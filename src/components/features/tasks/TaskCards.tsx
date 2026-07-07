@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format, isBefore, startOfToday } from 'date-fns'
@@ -290,6 +290,7 @@ interface TaskCardsProps {
   layout?: 'cards' | 'list'
   context?: TaskCardContext
   emptyMessage?: string
+  onTaskStatusChange?: (taskId: string, status: TaskStatus, completedAt: string | null) => void
 }
 
 export function TaskCards({
@@ -298,8 +299,10 @@ export function TaskCards({
   layout = 'cards',
   context = 'standard',
   emptyMessage,
+  onTaskStatusChange,
 }: TaskCardsProps) {
   const router = useRouter()
+  const [, startRefreshTransition] = useTransition()
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [reasonTask, setReasonTask] = useState<TaskWithRelations | null>(null)
   const [deliverablesTask, setDeliverablesTask] = useState<TaskWithRelations | null>(null)
@@ -326,11 +329,30 @@ export function TaskCards({
 
   const selectedCandidate = delegationCandidates.find((candidate) => candidateKey(candidate) === selectedCandidateKey) || null
 
+  const refreshRoute = () => {
+    startRefreshTransition(() => {
+      router.refresh()
+    })
+  }
+
   const handleStatusChange = async (taskId: string, status: TaskStatus) => {
+    const previousTask = tasks.find((item) => item.id === taskId) || null
+    const previousCompletedAt = previousTask?.completed_at || null
+    const optimisticCompletedAt = status === 'completed' ? new Date().toISOString() : null
+    let shouldRevertOptimisticStatus = Boolean(previousTask && onTaskStatusChange)
+
+    if (previousTask && onTaskStatusChange) {
+      onTaskStatusChange(taskId, status, optimisticCompletedAt)
+    }
+
     setUpdatingId(taskId)
     try {
       const result = await updateTaskStatus(taskId, status)
       if (!result.success) {
+        if (shouldRevertOptimisticStatus && previousTask) {
+          onTaskStatusChange?.(taskId, previousTask.status, previousCompletedAt)
+          shouldRevertOptimisticStatus = false
+        }
         if (result.code === 'PROJECT_DELIVERABLES_REQUIRED') {
           const task = tasks.find((item) => item.id === taskId) || null
           setDeliverablesTask(task)
@@ -339,9 +361,13 @@ export function TaskCards({
         }
         throw new Error(result.error || 'Не удалось обновить задачу')
       }
+      shouldRevertOptimisticStatus = false
       toast.success('Статус задачи обновлён')
-      router.refresh()
+      refreshRoute()
     } catch (error) {
+      if (shouldRevertOptimisticStatus && previousTask) {
+        onTaskStatusChange?.(taskId, previousTask.status, previousCompletedAt)
+      }
       toast.error(error instanceof Error ? error.message : 'Не удалось обновить задачу')
     } finally {
       setUpdatingId(null)
