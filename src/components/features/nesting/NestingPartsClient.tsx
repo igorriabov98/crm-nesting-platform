@@ -91,7 +91,7 @@ export function NestingPartsClient({
   })
 
   const sheetMetalCount = useMemo(
-    () => parts.filter((part) => part.partType === 'SHEET' || (!part.partType && part.isSheetMetal)).length,
+    () => parts.filter((part) => part.isActive !== false && (part.partType === 'SHEET' || (!part.partType && part.isSheetMetal))).length,
     [parts]
   )
 

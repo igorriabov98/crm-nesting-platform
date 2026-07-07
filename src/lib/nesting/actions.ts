@@ -32,6 +32,7 @@ export async function updateNestingPart(
     steelTypeName: string | null
     steelTypeRaw: string | null
     quantity: number
+    isActive: boolean
     grainLock: boolean
     isSheetMetal: boolean
     partType: PartType
@@ -39,8 +40,11 @@ export async function updateNestingPart(
     hasBends: boolean
   }>
 ) {
-  await assertCanAccessNestingProject(projectId, 'manage')
-  const result = await updatePart(projectId, partId, data)
+  const context = await assertCanAccessNestingProject(projectId, 'manage')
+  const result = await updatePart(projectId, partId, {
+    ...data,
+    ...(data.isActive !== undefined ? { activityChangedBy: context.userId } : {}),
+  })
   revalidatePath(`${ROUTES.NESTING}/${projectId}/parts`)
   revalidatePath(ROUTES.NESTING)
   return result

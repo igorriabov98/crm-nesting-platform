@@ -18,6 +18,7 @@ import { prisma } from '../lib/prisma';
 import { isCompletedProjectStatus } from '../lib/project-status';
 import { normalizeCadText } from '../lib/text-encoding';
 import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../lib/part-type';
+import { isPartActive, summarizePartActivity } from '../lib/part-activity';
 import { sanitizeFilename, transliterate } from '../lib/utils';
 import type { Point2D } from '../lib/nesting/types';
 
@@ -164,10 +165,12 @@ function buildResultJson(project: Prisma.NestingProjectGetPayload<{
       remnantGeom: sheet.remnantGeom,
     };
   });
-  const totalParts = project.parts.reduce((sum, part) => sum + part.quantity * project.quantity, 0);
+  const activeProjectParts = project.parts.filter(isPartActive);
+  const activitySummary = summarizePartActivity(project.parts, project.quantity);
+  const totalParts = activitySummary.activeParts;
   const placedParts = Array.from(placedByPartId.values()).reduce((sum, count) => sum + count, 0);
   const unplacedReasonQueues = buildUnplacedReasonQueues(project.validationReport);
-  const unplacedParts = project.parts.flatMap((part) => {
+  const unplacedParts = activeProjectParts.flatMap((part) => {
     const required = part.quantity * project.quantity;
     const placed = placedByPartId.get(part.id) ?? 0;
     const baseName = normalizeCadText(part.name);
@@ -230,6 +233,9 @@ function buildResultJson(project: Prisma.NestingProjectGetPayload<{
     sheets,
     unplacedParts,
     totalParts,
+    totalBodies: activitySummary.totalBodies,
+    activeParts: activitySummary.activeParts,
+    inactiveParts: activitySummary.inactiveParts,
     placedParts,
     profileParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PROFILE').length,
     purchasedParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PURCHASED').length,
@@ -260,6 +266,10 @@ function buildParseReportJson(project: Prisma.NestingProjectGetPayload<{
       quantity: part.quantity,
       isSheetMetal: part.isSheetMetal,
       partType: part.partType,
+      isActive: part.isActive,
+      inactiveReason: part.inactiveReason,
+      activityChangedBy: part.activityChangedBy,
+      activityChangedAt: part.activityChangedAt?.toISOString() ?? null,
       contourStale: part.contourStale,
       width: part.width,
       height: part.height,
@@ -297,7 +307,7 @@ function buildReconciliation(project: Prisma.NestingProjectGetPayload<{
           details,
         }
       : null,
-    rows: project.parts.filter((part) => isSheetPartType(part.partType, part.isSheetMetal)).map((part) => {
+    rows: project.parts.filter((part) => isPartActive(part) && isSheetPartType(part.partType, part.isSheetMetal)).map((part) => {
       const match = matchesByPartId.get(part.id);
       const pdfWidth = toPositiveNumber(match?.suggestedUnfoldingWidth);
       const pdfHeight = toPositiveNumber(match?.suggestedUnfoldingHeight);
@@ -379,7 +389,7 @@ function buildSummaryMarkdown(
     `- Project: ${project.id}`,
     `- Status: ${project.status}`,
     `- Sheets: ${resultJson.totalSheets}`,
-    `- Parts: placed ${resultJson.placedParts}, profile ${resultJson.profileParts}, purchased ${resultJson.purchasedParts}, no sheet ${resultJson.noSheetParts}, total ${resultJson.totalParts}`,
+    `- Parts: total bodies ${resultJson.totalBodies}, active ${resultJson.activeParts}, inactive ${resultJson.inactiveParts}, placed ${resultJson.placedParts}, profile ${resultJson.profileParts}, purchased ${resultJson.purchasedParts}, no sheet ${resultJson.noSheetParts}`,
     `- Average utilization: ${resultJson.avgUtilization}%`,
     `- Waste: ${resultJson.totalWaste}%`,
     `- Validation violations: ${violations}`,

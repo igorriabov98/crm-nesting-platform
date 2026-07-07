@@ -12,6 +12,7 @@ import {
 } from './unplaced-reasons';
 import { validateLayout, type LayoutValidationReport } from '../validation/layout-validator';
 import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../part-type';
+import { isPartActive, summarizePartActivity } from '../part-activity';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
 
@@ -41,8 +42,10 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   const strategy = STRATEGIES.includes(project.strategy as NestingParams['strategy'])
     ? (project.strategy as NestingParams['strategy'])
     : 'minWaste';
-  const sheetMetalParts = project.parts.filter((part) => isSheetPartType(part.partType, part.isSheetMetal));
-  const excludedParts = project.parts
+  const activeProjectParts = project.parts.filter(isPartActive);
+  const activitySummary = summarizePartActivity(project.parts, project.quantity);
+  const sheetMetalParts = activeProjectParts.filter((part) => isSheetPartType(part.partType, part.isSheetMetal));
+  const excludedParts = activeProjectParts
     .filter((part) => !isSheetPartType(part.partType, part.isSheetMetal))
     .map((part) => ({
       partId: part.id,
@@ -56,7 +59,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     (part): part is PartWithKnownThickness => typeof part.thickness === 'number'
   );
   const partsWithoutThickness = sheetMetalParts.filter((part) => part.thickness === null);
-  const expectedParts = project.parts.map((part) => ({
+  const expectedParts = activeProjectParts.map((part) => ({
     id: part.id,
     name: normalizeCadText(part.name),
     quantity: part.quantity * project.quantity,
@@ -104,7 +107,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
       requiredHeight: null,
     }))
   );
-  const totalParts = expectedParts.reduce((sum, part) => sum + part.quantity, 0);
+  const totalParts = activitySummary.activeParts;
   let placedParts = 0;
   const profileParts = excludedParts
     .filter((part) => part.reasonCode === 'EXCLUDED_PROFILE')
@@ -233,6 +236,9 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     sheets: allSheetResults,
     unplacedParts: allUnplaced,
     totalParts,
+    totalBodies: activitySummary.totalBodies,
+    activeParts: activitySummary.activeParts,
+    inactiveParts: activitySummary.inactiveParts,
     placedParts,
     profileParts,
     purchasedParts,

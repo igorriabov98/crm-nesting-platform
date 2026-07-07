@@ -3,6 +3,13 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE SCHEMA IF NOT EXISTS nesting;
 
+DO $$
+BEGIN
+  CREATE TYPE nesting."InactiveReason" AS ENUM ('HIDDEN_IN_CAD', 'MANUAL');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
 CREATE TABLE IF NOT EXISTS nesting."NestingProject" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
   "orderNumber" TEXT NOT NULL,
@@ -43,6 +50,10 @@ CREATE TABLE IF NOT EXISTS nesting."Part" (
   "holes" JSONB,
   "quantity" INTEGER NOT NULL DEFAULT 1,
   "isSheetMetal" BOOLEAN NOT NULL DEFAULT TRUE,
+  "isActive" BOOLEAN NOT NULL DEFAULT TRUE,
+  "inactiveReason" nesting."InactiveReason",
+  "activityChangedBy" TEXT,
+  "activityChangedAt" TIMESTAMP(3),
   "grainLock" BOOLEAN NOT NULL DEFAULT FALSE,
   "hasBends" BOOLEAN NOT NULL DEFAULT FALSE,
   "thumbnailSvg" TEXT,
@@ -78,6 +89,18 @@ ALTER TABLE nesting."Part"
 
 ALTER TABLE nesting."Part"
   ADD COLUMN IF NOT EXISTS "facesCount" INTEGER;
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "isActive" BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "inactiveReason" nesting."InactiveReason";
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "activityChangedBy" TEXT;
+
+ALTER TABLE nesting."Part"
+  ADD COLUMN IF NOT EXISTS "activityChangedAt" TIMESTAMP(3);
 
 CREATE TABLE IF NOT EXISTS nesting."AISettings" (
   "id" TEXT PRIMARY KEY DEFAULT 'singleton',
@@ -214,6 +237,8 @@ CREATE INDEX IF NOT EXISTS "Part_projectId_idx"
   ON nesting."Part"("projectId");
 CREATE INDEX IF NOT EXISTS "Part_material_thickness_idx"
   ON nesting."Part"("material", "thickness");
+CREATE INDEX IF NOT EXISTS "Part_isActive_idx"
+  ON nesting."Part"("isActive");
 
 CREATE INDEX IF NOT EXISTS "AIUsageLog_projectId_idx"
   ON nesting."AIUsageLog"("projectId");

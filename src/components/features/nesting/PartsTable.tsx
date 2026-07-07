@@ -121,6 +121,17 @@ function formatThickness(value: number | null) {
   return typeof value === 'number' && Number.isFinite(value) ? `${value} мм` : '—'
 }
 
+function inactiveReasonLabel(part: NestingPart) {
+  switch (part.inactiveReason) {
+    case 'HIDDEN_IN_CAD':
+      return 'скрыто в CAD'
+    case 'MANUAL':
+      return 'выключено вручную'
+    default:
+      return 'неактивна'
+  }
+}
+
 export function PartsTable({
   projectId,
   parts,
@@ -161,6 +172,7 @@ export function PartsTable({
     steelTypeName: string | null
     steelTypeRaw: string | null
     quantity: number
+    isActive: boolean
     grainLock: boolean
     isSheetMetal: boolean
     partType: PartType
@@ -236,6 +248,7 @@ export function PartsTable({
             <TableRow className="bg-[#F8F9FA]">
               <TableHead>Превью</TableHead>
               <TableHead>Имя</TableHead>
+              <TableHead>Активна</TableHead>
               <TableHead>Размеры</TableHead>
               <TableHead>Толщина</TableHead>
               <TableHead>Материал</TableHead>
@@ -253,12 +266,17 @@ export function PartsTable({
               const sheetPart = partType === 'SHEET'
               const typeMeta = partTypeMeta(partType)
               const autoTyped = part.classificationMethod !== null && part.classificationMethod !== 'manual'
+              const inactive = part.isActive === false
+              const controlsDisabled = disabled || inactive
 
               return (
-                <TableRow key={part.id} className={cn(!sheetPart && 'bg-slate-50/40')}>
+                <TableRow key={part.id} className={cn(!sheetPart && 'bg-slate-50/40', inactive && 'bg-slate-100/70 text-slate-500')}>
                   <TableCell>
                     <div
-                      className="flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-md border border-[#E8ECF0] bg-[#F8F9FA] [&_svg]:max-h-[44px] [&_svg]:max-w-[44px]"
+                      className={cn(
+                        'flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-md border border-[#E8ECF0] bg-[#F8F9FA] [&_svg]:max-h-[44px] [&_svg]:max-w-[44px]',
+                        inactive && 'opacity-45 grayscale'
+                      )}
                       dangerouslySetInnerHTML={{ __html: sanitizeThumbnail(part.thumbnailSvg) || '<span class="text-xs text-slate-400">—</span>' }}
                     />
                   </TableCell>
@@ -269,6 +287,21 @@ export function PartsTable({
                         {part.sourceMachineName || part.sourceLabel}
                       </div>
                     ) : null}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex min-w-[112px] flex-col gap-1">
+                      <Switch
+                        size="sm"
+                        checked={!inactive}
+                        disabled={disabled}
+                        onCheckedChange={(checked) => savePart(part, { isActive: checked === true })}
+                      />
+                      {inactive ? (
+                        <Badge variant="outline" className="w-fit border-slate-300 bg-slate-50 text-slate-600">
+                          {inactiveReasonLabel(part)}
+                        </Badge>
+                      ) : null}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1 font-mono text-xs">
@@ -310,7 +343,7 @@ export function PartsTable({
                           step={0.1}
                           autoFocus
                           value={thicknesses[part.id] ?? (part.thickness === null ? '' : String(part.thickness))}
-                          disabled={disabled}
+                          disabled={controlsDisabled}
                           onChange={(event) => setThicknesses((current) => ({ ...current, [part.id]: event.target.value }))}
                           onBlur={() => commitThickness(part)}
                           onKeyDown={(event) => {
@@ -327,7 +360,7 @@ export function PartsTable({
                         <button
                           type="button"
                           className="text-left"
-                          disabled={disabled || !sheetPart}
+                          disabled={controlsDisabled || !sheetPart}
                           onClick={() => sheetPart && setEditingThicknessPartId(part.id)}
                         >
                           <Badge
@@ -398,7 +431,7 @@ export function PartsTable({
                   <TableCell>
                     <Select
                       value={part.material}
-                      disabled={disabled}
+                      disabled={controlsDisabled}
                       onValueChange={(value) => value && savePart(part, { material: value })}
                     >
                       <SelectTrigger className="w-[150px] bg-white">
@@ -414,7 +447,7 @@ export function PartsTable({
                   <TableCell>
                     <Select
                       value={part.steelTypeId || noSteelTypeValue}
-                      disabled={disabled || !sheetPart || steelTypes.length === 0}
+                      disabled={controlsDisabled || !sheetPart || steelTypes.length === 0}
                       onValueChange={(value) => saveSteelType(part, value)}
                     >
                       <SelectTrigger className="w-[150px] bg-white">
@@ -437,7 +470,7 @@ export function PartsTable({
                       type="number"
                       min={1}
                       value={quantities[part.id] ?? String(part.quantity)}
-                      disabled={disabled}
+                      disabled={controlsDisabled}
                       onChange={(event) => setQuantities((current) => ({ ...current, [part.id]: event.target.value }))}
                       onBlur={() => commitQuantity(part)}
                       onKeyDown={(event) => {
@@ -451,7 +484,7 @@ export function PartsTable({
                     <Switch
                       size="sm"
                       checked={part.grainLock}
-                      disabled={disabled || !sheetPart}
+                      disabled={controlsDisabled || !sheetPart}
                       onCheckedChange={(checked) => savePart(part, { grainLock: checked === true })}
                     />
                   </TableCell>
@@ -459,7 +492,7 @@ export function PartsTable({
                     <div className="flex min-w-[150px] flex-col gap-1">
                       <Select
                         value={partType}
-                        disabled={disabled}
+                        disabled={controlsDisabled}
                         onValueChange={(value) => savePart(part, { partType: value as PartType })}
                       >
                         <SelectTrigger className="w-[150px] bg-white">

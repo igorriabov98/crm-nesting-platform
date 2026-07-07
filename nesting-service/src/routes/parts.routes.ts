@@ -6,6 +6,7 @@ import { normalizeCadText } from '../lib/text-encoding';
 import { normalizePartType, partTypeFromLegacySheetFlag } from '../lib/part-type';
 import { idParamSchema } from '../schemas/common.schema';
 import { projectPartParamsSchema, updatePartSchema } from '../schemas/project.schema';
+import { summarizePartActivity } from '../lib/part-activity';
 
 const partListSelect = {
   id: true,
@@ -36,6 +37,10 @@ const partListSelect = {
   quantity: true,
   isSheetMetal: true,
   partType: true,
+  isActive: true,
+  inactiveReason: true,
+  activityChangedBy: true,
+  activityChangedAt: true,
   grainLock: true,
   hasBends: true,
   bendCount: true,
@@ -81,16 +86,21 @@ export async function partsRoutes(app: FastifyInstance) {
       throw new ValidationError('Парсинг ещё не завершён');
     }
 
-    const [parts, total] = await prisma.$transaction([
+    const [parts, total, project] = await prisma.$transaction([
       prisma.part.findMany({
         where: { projectId: id },
         orderBy: { name: 'asc' },
         select: partListSelect,
       }),
       prisma.part.count({ where: { projectId: id } }),
+      prisma.nestingProject.findUnique({
+        where: { id },
+        select: { quantity: true },
+      }),
     ]);
+    const activity = summarizePartActivity(parts, project?.quantity ?? 1);
 
-    return { data: parts.map(normalizePartText), total };
+    return { data: parts.map(normalizePartText), total, ...activity };
   });
 
   app.get('/:id/parts/:partId', async (request) => {
@@ -132,6 +142,16 @@ export async function partsRoutes(app: FastifyInstance) {
         updateData.thicknessMismatchNote = null;
       }
     }
+
+    if (data.isActive !== undefined) {
+      updateData.isActive = data.isActive;
+      updateData.inactiveReason = data.isActive ? null : 'MANUAL';
+      updateData.activityChangedBy = data.activityChangedBy ?? null;
+      updateData.activityChangedAt = new Date();
+    } else {
+      delete updateData.activityChangedBy;
+    }
+
     const part = await prisma.part.findFirst({
       where: { id: partId, projectId: id },
       select: { id: true },
@@ -148,7 +168,11 @@ export async function partsRoutes(app: FastifyInstance) {
       data.partType !== undefined ||
       data.steelTypeId !== undefined ||
       data.steelTypeName !== undefined ||
-      data.steelTypeRaw !== undefined;
+      data.steelTypeRaw !== undefined ||
+      data.isActive !== undefined;
+    const recalculationMessage = data.isActive !== undefined
+      ? 'требуется пересчёт после изменения активности детали'
+      : 'требуется пересчёт развёртки после изменения материала/толщины';
     const updated = await prisma.$transaction(async (tx) => {
       const nextPart = await tx.part.update({
         where: { id: partId },
@@ -161,7 +185,7 @@ export async function partsRoutes(app: FastifyInstance) {
           where: { id },
           data: {
             status: 'parsed',
-            errorMessage: 'требуется пересчёт развёртки после изменения материала/толщины',
+            errorMessage: recalculationMessage,
           },
         });
       }

@@ -6,9 +6,11 @@ function getPartType(part: NestingPart): PartType {
 }
 
 export function StatsCards({ parts }: { parts: NestingPart[] }) {
-  const sheetMetal = parts.filter((part) => getPartType(part) === 'SHEET')
-  const profile = parts.filter((part) => getPartType(part) === 'PROFILE')
-  const purchased = parts.filter((part) => getPartType(part) === 'PURCHASED')
+  const activeParts = parts.filter((part) => part.isActive !== false)
+  const inactiveParts = parts.filter((part) => part.isActive === false)
+  const sheetMetal = activeParts.filter((part) => getPartType(part) === 'SHEET')
+  const profile = activeParts.filter((part) => getPartType(part) === 'PROFILE')
+  const purchased = activeParts.filter((part) => getPartType(part) === 'PURCHASED')
   const thicknesses = Array.from(new Set(
     sheetMetal
       .map((part) => part.thickness)
@@ -16,7 +18,9 @@ export function StatsCards({ parts }: { parts: NestingPart[] }) {
   )).sort((a, b) => a - b)
 
   const cards = [
-    { label: 'Всего', value: parts.length, detail: 'деталей' },
+    { label: 'Всего', value: parts.length, detail: 'тел STEP' },
+    { label: 'Активных', value: activeParts.length, detail: 'участвуют в расчёте' },
+    { label: 'Неактивных', value: inactiveParts.length, detail: 'вне расчёта' },
     { label: 'Листовых', value: sheetMetal.length, detail: 'для раскладки' },
     { label: 'Профильных', value: profile.length, detail: 'не в раскладку' },
     { label: 'Покупных', value: purchased.length, detail: 'не в раскладку' },
@@ -28,7 +32,7 @@ export function StatsCards({ parts }: { parts: NestingPart[] }) {
   ]
 
   return (
-    <div className="grid gap-3 md:grid-cols-5">
+    <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
       {cards.map((card) => (
         <Card key={card.label} className="bg-white">
           <CardHeader className="pb-0">
