@@ -7,6 +7,20 @@ import { parseStepFile, type ParsedPart } from '../step-parser';
 import { distributePartsToSheets } from '../nesting/multi-sheet';
 import type { NestingPart, SheetOption } from '../nesting/types';
 
+type AppliedPart = ParsedPart & { id: string; matchSourceSection: string | null };
+
+const OPERATOR_PASSPORT_ROWS = [
+  { label: 'ЛЕДА 024.00.007 Обшивка верхняя нижняя', match: /024\.00\.007/, width: 1186, height: 1173, thickness: 2, quantity: 1 },
+  { label: 'ЛЕДА 024.00.001 Обшивка верхняя', match: /024\.00\.001/, width: 1186, height: 1173, thickness: 2, quantity: 1 },
+  { label: 'ЛЕДА 024.00.008 Стенка боковая', match: /024\.00\.008/, width: 787, height: 356, thickness: 2, quantity: 2 },
+  { label: 'ЛЕДА 024.00.003 Ножка-опора', match: /024\.00\.003/, width: 476, height: 100, thickness: 8, quantity: 4 },
+  { label: 'ЛЕДА 024.00.005 Уголок/стойка', match: /024\.00\.005/, width: 360, height: 56, thickness: 2, quantity: 4 },
+  { label: 'ЛЕДА 024.00.006-03 Уголок', match: /024\.00\.006 Уголок_-03/, width: 760, height: 56, thickness: 2, quantity: 2 },
+  { label: 'ЛЕДА 024.00.006-01 Уголок', match: /024\.00\.006 Уголок_-01/, width: 725, height: 56, thickness: 2, quantity: 2 },
+  { label: 'ЛЕДА 024.00.006 Уголок', match: /024\.00\.006 Уголок$/, width: 1180, height: 56, thickness: 2, quantity: 2 },
+  { label: 'ЛЕДА 024.00.006-02 Уголок', match: /024\.00\.006 Уголок_-02/, width: 1126, height: 56, thickness: 2, quantity: 2 },
+] as const;
+
 async function main(): Promise<void> {
   const fixturesDir = path.resolve(__dirname, 'fixtures/real');
   const stepPath = path.join(fixturesDir, 'LEDA_024_00_000_Stol_vanna.STEP');
@@ -27,6 +41,8 @@ async function main(): Promise<void> {
   const plugMatches = matches.filter((match) => match.bomPosition === '19');
   assert.equal(plugMatches.length, 2);
   assert.ok(plugMatches.every((match) => match.matchType !== 'none'));
+  assert.ok(plugMatches.every((match) => match.suggestedPartType === 'PURCHASED'));
+  assert.ok(plugMatches.every((match) => match.suggestedIsSheetMetal === false));
   assert.ok(plugMatches.every((match) => match.steelTypeWarning === null));
   assert.ok(plugMatches.every((match) => match.suggestedThickness === null));
 
@@ -37,12 +53,16 @@ async function main(): Promise<void> {
   assert.ok(plugs.every((part) => part.isSheetMetal === false));
   assert.ok(plugs.every((part) => part.thickness === 5));
   assert.ok(plugs.every((part) => part.classificationWarning === null));
+  assert.ok(plugs.every((part) => part.matchSourceSection === 'Прочие изделия'));
   assert.equal(new Set(plugs.map((part) => part.partType)).size, 1);
   assert.equal(new Set(plugs.map((part) => part.thickness)).size, 1);
 
   const sheetParts = applied.filter((part) => part.partType === 'SHEET');
   assert.equal(sheetParts.length, 21);
   assert.ok(sheetParts.every((part) => part.thickness !== null));
+  assert.ok(sheetParts.every((part) => part.name !== 'Заглушка пластмассовая 15мм'));
+  assertLedaAnglesAreSheet(applied);
+  assertOperatorPassport(applied);
 
   const nestingParts = sheetParts.map((part, index) => toNestingPart(part, `sheet-${index}`));
   const quantities = new Map(nestingParts.map((part) => [part.id, 1]));
@@ -66,11 +86,78 @@ async function main(): Promise<void> {
 
   const reconciliationCandidates = applied.filter((part) => part.partType === 'SHEET');
   assert.equal(reconciliationCandidates.some((part) => part.name.includes('Заглушка')), false);
+  assertDiagnosticSummary({ placed, profile, purchased, noSheet, total });
+  assertUnknownTwentyThirdBody(applied);
 
   await assertStv300Regression(fixturesDir);
   await assertSkm750Regression(fixturesDir);
 
-  console.log('[leda-purchased-acceptance] all tests passed');
+  console.log('[purchased-parts] all tests passed');
+}
+
+function assertLedaAnglesAreSheet(parts: AppliedPart[]): void {
+  const angleGroups = [
+    { suffix: 'base', match: (part: AppliedPart) => part.name === 'ЛЕДА.024.00.006 Уголок', width: 1180, quantity: 2 },
+    { suffix: '-01', match: (part: AppliedPart) => part.name === 'ЛЕДА.024.00.006 Уголок_-01', width: 725, quantity: 2 },
+    { suffix: '-02', match: (part: AppliedPart) => part.name === 'ЛЕДА.024.00.006 Уголок_-02', width: 1126, quantity: 2 },
+    { suffix: '-03', match: (part: AppliedPart) => part.name === 'ЛЕДА.024.00.006 Уголок_-03', width: 780, quantity: 2 },
+  ];
+
+  for (const group of angleGroups) {
+    const rows = parts.filter(group.match);
+    assert.equal(rows.length, group.quantity, `angle ${group.suffix} quantity`);
+    assert.ok(rows.every((part) => part.partType === 'SHEET'), `angle ${group.suffix} should be SHEET`);
+    assert.ok(rows.every((part) => part.isSheetMetal), `angle ${group.suffix} should be sheet metal`);
+    assert.ok(rows.every((part) => part.thickness === 2), `angle ${group.suffix} thickness`);
+    assert.ok(rows.every((part) => withinTolerance(part.width, group.width, 0.5)), `angle ${group.suffix} width`);
+    assert.ok(rows.every((part) => withinTolerance(part.height, 56, 0.5)), `angle ${group.suffix} height`);
+  }
+}
+
+function assertOperatorPassport(parts: AppliedPart[]): void {
+  const mismatches: string[] = [];
+
+  for (const row of OPERATOR_PASSPORT_ROWS) {
+    const matched = parts.filter((part) => row.match.test(part.name));
+    assert.equal(matched.length, row.quantity, `${row.label} quantity`);
+    assert.ok(matched.every((part) => part.partType === 'SHEET'), `${row.label} partType`);
+    assert.ok(matched.every((part) => part.thickness === row.thickness), `${row.label} thickness`);
+    for (const part of matched) {
+      if (!sameUnorderedSize(part, row.width, row.height, 1)) {
+        mismatches.push(`${row.label}: STEP ${round1(part.width)}x${round1(part.height)}, passport ${row.width}x${row.height}`);
+      }
+    }
+  }
+
+  assert.deepEqual(mismatches, [
+    'ЛЕДА 024.00.006-03 Уголок: STEP 780x56, passport 760x56',
+    'ЛЕДА 024.00.006-03 Уголок: STEP 780x56, passport 760x56',
+  ]);
+}
+
+function assertDiagnosticSummary(summary: {
+  placed: number;
+  profile: number;
+  purchased: number;
+  noSheet: number;
+  total: number;
+}): void {
+  assert.deepEqual(summary, {
+    placed: 21,
+    profile: 0,
+    purchased: 2,
+    noSheet: 0,
+    total: 23,
+  });
+}
+
+function assertUnknownTwentyThirdBody(parts: AppliedPart[]): void {
+  const body = parts.find((part) => part.name === 'закрівающий уголок лидл');
+  assert.ok(body);
+  assert.equal(body.partType, 'SHEET');
+  assert.equal(body.thickness, 2);
+  assert.ok(withinTolerance(body.width, 735, 0.5));
+  assert.ok(withinTolerance(body.height, 39.4, 0.5));
 }
 
 async function assertStv300Regression(fixturesDir: string): Promise<void> {
@@ -115,20 +202,22 @@ function toMatchingPart(part: ParsedPart, index: number) {
   };
 }
 
-function applyMatch(part: ParsedPart, index: number, matches: ReturnType<typeof matchBOMToParts>): ParsedPart {
+function applyMatch(part: ParsedPart, index: number, matches: ReturnType<typeof matchBOMToParts>): AppliedPart {
   const match = matches.find((item) => item.partId === `part-${index}`);
   const partType = match?.suggestedPartType ?? part.partType;
 
   return {
     ...part,
+    id: `part-${index}`,
     partType,
     isSheetMetal: partType === 'SHEET',
     hasBends: partType === 'SHEET' && part.hasBends,
     classificationWarning: partType === 'SHEET' ? part.classificationWarning : null,
+    matchSourceSection: match?.bomPosition === '19' ? 'Прочие изделия' : null,
   };
 }
 
-function toNestingPart(part: ParsedPart, id: string): NestingPart {
+function toNestingPart(part: AppliedPart, id: string): NestingPart {
   return {
     id,
     name: part.name,
@@ -139,6 +228,24 @@ function toNestingPart(part: ParsedPart, id: string): NestingPart {
     grainLock: false,
     area: Math.abs(polygonNetArea(part.contour, part.holes)) || part.width * part.height,
   };
+}
+
+function sameUnorderedSize(part: AppliedPart, expectedWidth: number, expectedHeight: number, tolerance: number): boolean {
+  return (
+    withinTolerance(part.width, expectedWidth, tolerance) &&
+    withinTolerance(part.height, expectedHeight, tolerance)
+  ) || (
+    withinTolerance(part.width, expectedHeight, tolerance) &&
+    withinTolerance(part.height, expectedWidth, tolerance)
+  );
+}
+
+function withinTolerance(actual: number, expected: number, tolerance: number): boolean {
+  return Math.abs(actual - expected) <= tolerance;
+}
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 function acceptanceSheet(): SheetOption {

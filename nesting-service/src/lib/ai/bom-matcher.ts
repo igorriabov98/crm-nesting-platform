@@ -1049,7 +1049,7 @@ function buildMatchResult(
 function applyPartTypeSuggestion(result: MatchResult, candidatePartType: PartType | null, currentPartType: PartType): void {
   if (!candidatePartType) return;
 
-  if (candidatePartType !== currentPartType) {
+  if (candidatePartType !== currentPartType || candidatePartType !== 'SHEET') {
     result.suggestedPartType = candidatePartType;
   }
 
