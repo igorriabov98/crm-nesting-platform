@@ -11,7 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ROUTES } from '@/lib/constants/routes'
-import type { AIAnalysisResponse, AIMatchResult, AIStatus, NestingPart, PartType } from '@/lib/nesting/api'
+import type { AIAnalysisResponse, AIMatchResult, AIStatus, ApplyBOMBlockedRow, NestingPart, PartType } from '@/lib/nesting/api'
 
 type ApplyMatchPayload = {
   partId: string
@@ -31,6 +31,11 @@ type ApplyMatchPayload = {
 type DimensionMismatchState = {
   note: string
   payload: ApplyMatchPayload[]
+}
+
+type BatchApplyState = {
+  applied: number
+  blocked: ApplyBOMBlockedRow[]
 }
 
 export function AIAnalysisPanel({
@@ -53,6 +58,7 @@ export function AIAnalysisPanel({
   const [isLoadingSpecification, setIsLoadingSpecification] = useState(false)
   const [specificationError, setSpecificationError] = useState<string | null>(null)
   const [dimensionMismatch, setDimensionMismatch] = useState<DimensionMismatchState | null>(null)
+  const [batchApply, setBatchApply] = useState<BatchApplyState | null>(null)
 
   const partsById = useMemo(() => new Map(parts.map((part) => [part.id, part])), [parts])
   const proposedMatches = useMemo(() => {
@@ -206,6 +212,7 @@ export function AIAnalysisPanel({
       await loadSpecification()
       setSelected({})
       setDimensionMismatch(null)
+      setBatchApply(null)
       toast.success(`Отменено деталей: ${data.reverted || 0}`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось отменить AI-изменения')
@@ -247,7 +254,15 @@ export function AIAnalysisPanel({
       await loadSpecification()
       setSelected({})
       setDimensionMismatch(null)
-      toast.success(`Обновлено деталей: ${data.updated || 0}`)
+      const blocked = readBlockedRows(data)
+      const updated = typeof data.updated === 'number' ? data.updated : 0
+      if (blocked.length > 0) {
+        setBatchApply({ applied: updated, blocked })
+        toast.warning(`Применено ${updated}, заблокировано ${blocked.length}`)
+      } else {
+        setBatchApply(null)
+        toast.success(`Обновлено деталей: ${updated}`)
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось применить предложения AI')
     } finally {
@@ -562,6 +577,23 @@ export function AIAnalysisPanel({
                   </div>
                 )}
 
+                {batchApply && batchApply.blocked.length > 0 && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-medium">Применено {batchApply.applied}, заблокировано {batchApply.blocked.length}</p>
+                    <div className="mt-2 space-y-1">
+                      {batchApply.blocked.map((row) => (
+                        <div key={row.partId} className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium">{row.partName}</span>
+                          <span>{blockedReasonLabel(row)}</span>
+                          <Badge variant="outline" className="border-amber-200 bg-white text-amber-800">
+                            {blockedValuesLabel(row)}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" onClick={applySelected} disabled={isApplying || proposedMatches.length === 0}>
                     {isApplying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -661,6 +693,42 @@ function matchToApplyPayload(match: AIMatchResult): ApplyMatchPayload {
     unfoldingWidth: match.suggestedUnfoldingWidth || undefined,
     unfoldingHeight: match.suggestedUnfoldingHeight || undefined,
   }
+}
+
+function readBlockedRows(data: unknown): ApplyBOMBlockedRow[] {
+  if (!data || typeof data !== 'object' || !('blocked' in data)) return []
+  const blocked = (data as { blocked?: unknown }).blocked
+  return Array.isArray(blocked) ? blocked.filter(isBlockedRow) : []
+}
+
+function isBlockedRow(value: unknown): value is ApplyBOMBlockedRow {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      typeof (value as ApplyBOMBlockedRow).partId === 'string' &&
+      typeof (value as ApplyBOMBlockedRow).partName === 'string' &&
+      ((value as ApplyBOMBlockedRow).reason === 'dimension_mismatch' || (value as ApplyBOMBlockedRow).reason === 'thickness_mismatch')
+  )
+}
+
+function blockedReasonLabel(row: ApplyBOMBlockedRow) {
+  return row.reason === 'thickness_mismatch'
+    ? 'толщина PDF расходится с STEP'
+    : 'размеры PDF расходятся с STEP'
+}
+
+function blockedValuesLabel(row: ApplyBOMBlockedRow) {
+  if (row.reason === 'thickness_mismatch') {
+    return `PDF ${formatThickness(row.pdf.thickness)} · STEP ${formatThickness(row.step.thickness)}`
+  }
+
+  const pdfSize = typeof row.pdf.width === 'number' && typeof row.pdf.height === 'number'
+    ? formatSize(row.pdf.width, row.pdf.height)
+    : '—'
+  const stepSize = typeof row.step.width === 'number' && typeof row.step.height === 'number'
+    ? formatSize(row.step.width, row.step.height)
+    : '—'
+  return `PDF ${pdfSize} · STEP ${stepSize}`
 }
 
 function isApplied(match: AIMatchResult) {

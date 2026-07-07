@@ -19,25 +19,26 @@ type ParsedBOMLine = {
   thicknessMm: number | null;
   widthMm: number | null;
   heightMm: number | null;
+  sourcePage?: number;
 };
 
 export async function extractDeterministicBOMFromPdf(pdfFilePath: string): Promise<BOMEntry[]> {
   const buffer = await fs.readFile(pdfFilePath);
-  const parsed = await pdfParse(buffer);
-  return parseDeterministicBOMText(parsed.text || '');
+  const pages = await parsePdfPages(buffer);
+  return parseDeterministicBOMPages(pages);
 }
 
 export async function extractDeterministicPdfDataFromPdf(pdfFilePath: string): Promise<{ bom: BOMEntry[]; details: DetailEntry[] }> {
   const buffer = await fs.readFile(pdfFilePath);
-  const parsed = await pdfParse(buffer);
-  const text = parsed.text || '';
+  const pages = await parsePdfPages(buffer);
+  const text = pages.join('\n');
   return {
-    bom: parseDeterministicBOMText(text),
+    bom: parseDeterministicBOMPages(pages),
     details: parseDeterministicDetailText(text),
   };
 }
 
-export function parseDeterministicBOMText(text: string): BOMEntry[] {
+export function parseDeterministicBOMText(text: string, sourcePage?: number): BOMEntry[] {
   const entries = new Map<string, BOMEntry>();
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
   let currentSection = '';
@@ -55,7 +56,7 @@ export function parseDeterministicBOMText(text: string): BOMEntry[] {
       parseMaterialLine(line, currentSection);
     if (!parsed) continue;
 
-    addEntry(entries, createBOMEntry(parsed));
+    addEntry(entries, createBOMEntry({ ...parsed, sourcePage }));
   }
 
   const candidates = buildCandidateSegments(text);
@@ -65,10 +66,59 @@ export function parseDeterministicBOMText(text: string): BOMEntry[] {
     const parsed = parseRussianAssemblyLine(line, '') ?? parseMaterialLine(line, '');
     if (!parsed) continue;
 
-    addEntry(entries, createBOMEntry(parsed));
+    addEntry(entries, createBOMEntry({ ...parsed, sourcePage }));
   }
 
   return Array.from(entries.values());
+}
+
+function parseDeterministicBOMPages(pages: string[]): BOMEntry[] {
+  const merged = new Map<string, BOMEntry>();
+  const order: string[] = [];
+
+  pages.forEach((pageText, index) => {
+    for (const entry of parseDeterministicBOMText(pageText, index + 1)) {
+      const key = buildBOMKey(entry);
+      if (!merged.has(key)) order.push(key);
+      merged.set(key, merged.has(key) ? mergeBOMEntry(merged.get(key)!, entry) : entry);
+    }
+  });
+
+  return order.map((key) => merged.get(key)!).filter(Boolean);
+}
+
+async function parsePdfPages(buffer: Buffer): Promise<string[]> {
+  const pages: string[] = [];
+  await pdfParse(buffer, {
+    pagerender: async (pageData: any) => {
+      const text = await renderPdfPageText(pageData);
+      pages.push(text);
+      return text;
+    },
+  });
+  return pages;
+}
+
+async function renderPdfPageText(pageData: any): Promise<string> {
+  const content = await pageData.getTextContent({
+    normalizeWhitespace: false,
+    disableCombineTextItems: false,
+  });
+  let lastY: number | null = null;
+  let text = '';
+
+  for (const item of content.items ?? []) {
+    const y = Array.isArray(item.transform) ? item.transform[5] : null;
+    if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) {
+      text += '\n';
+    } else if (text && !text.endsWith('\n')) {
+      text += '';
+    }
+    text += item.str;
+    lastY = y;
+  }
+
+  return text;
 }
 
 export function mergeDeterministicBOM(aiBom: BOMEntry[], deterministicBom: BOMEntry[]): BOMEntry[] {
@@ -101,7 +151,7 @@ export function parseDeterministicDetailText(text: string): DetailEntry[] {
   let inExecutionTable = false;
 
   for (const line of lines) {
-    const designation = extractDetailDesignation(line);
+    const designation = extractDetailDesignation(line) || extractCompactDetailDesignation(line);
     if (designation) {
       currentDesignation = designation;
       currentName = extractDetailName(line, designation) || currentName;
@@ -109,10 +159,24 @@ export function parseDeterministicDetailText(text: string): DetailEntry[] {
 
     if (isSheetMaterialLine(line)) {
       currentMaterialFull = line;
+      upsertCurrentMaterialDetail(details, currentDesignation, currentName, currentMaterialFull, line);
+    } else if (extractMaterialGrade(line)) {
+      currentMaterialFull = [currentMaterialFull, line].filter(Boolean).join(' ');
+      upsertCurrentMaterialDetail(details, currentDesignation, currentName, currentMaterialFull, line);
     }
 
-    if (/исполн/i.test(line) && /разв[её]рт/i.test(line)) {
+    if (/(?:исполн|обозначение)/i.test(line) && /разв[её]рт/i.test(line)) {
       inExecutionTable = true;
+    }
+
+    if (inExecutionTable) {
+      const row = parseExecutionUnfoldingRow(line, currentDesignation, currentName, currentMaterialFull);
+      if (row) {
+        details.set(normalizeDetailKey(row.designation), mergeDetailEntry(details.get(normalizeDetailKey(row.designation)), row));
+        continue;
+      } else if (/^\S+\s+\S+/.test(line) && !/[xх×]\s*\d/u.test(line) && !/(?:исполн|обозначение)/i.test(line)) {
+        inExecutionTable = false;
+      }
     }
 
     const explicit = resolveUnfolding({ text: line });
@@ -128,15 +192,6 @@ export function parseDeterministicDetailText(text: string): DetailEntry[] {
       });
       details.set(normalizeDetailKey(detail.designation), mergeDetailEntry(details.get(normalizeDetailKey(detail.designation)), detail));
       continue;
-    }
-
-    if (inExecutionTable) {
-      const row = parseExecutionUnfoldingRow(line, currentDesignation, currentName, currentMaterialFull);
-      if (row) {
-        details.set(normalizeDetailKey(row.designation), mergeDetailEntry(details.get(normalizeDetailKey(row.designation)), row));
-      } else if (/^\S+\s+\S+/.test(line) && !/[xх×]\s*\d/u.test(line) && !/исполн/i.test(line)) {
-        inExecutionTable = false;
-      }
     }
   }
 
@@ -262,7 +317,7 @@ function parseRussianSpecTableLine(line: string, bomSection: string): ParsedBOML
     .replace(/\s+/g, ' ')
     .replace(/(Заглушка)(пластмассовая)/giu, '$1 $2')
     .trim();
-  const designationMatch = normalized.match(/^(?:[A-ZА-Я]\d*)?(\d{1,3})([A-ZА-ЯЁ]+[A-ZА-ЯЁ]*\.\d+\.\d+\.\d+(?:-\d{1,3})?)(.+?)(\d{1,3})$/u);
+  const designationMatch = normalized.match(/^(?:[A-ZА-Я]\d)?(\d{1,3})([A-ZА-ЯЁ]+[A-ZА-ЯЁ]*\.\d+\.\d+\.\d+(?:-\d{1,3})?)(.+?)(\d{1,3})$/u);
 
   if (designationMatch) {
     const position = designationMatch[1];
@@ -397,6 +452,8 @@ function extractDesignation(value: string): string {
 }
 
 function createBOMEntry(input: ParsedBOMLine): BOMEntry {
+  const bomSources = input.sourcePage ? [input.sourcePage] : undefined;
+
   return {
     articleNumber: input.articleNumber,
     position: input.position ?? '',
@@ -420,6 +477,7 @@ function createBOMEntry(input: ParsedBOMLine): BOMEntry {
     quantity: input.quantity,
     thickness: input.thicknessMm,
     notes: input.norm,
+    bomSources,
   };
 }
 
@@ -428,8 +486,8 @@ function createDetailEntry(input: {
   name: string;
   materialFull: string;
   notes: string;
-  unfoldingWidth: number;
-  unfoldingHeight: number;
+  unfoldingWidth?: number | null;
+  unfoldingHeight?: number | null;
   warnings?: string[];
 }): DetailEntry {
   const materialGrade = extractMaterialGrade(input.materialFull);
@@ -442,8 +500,8 @@ function createDetailEntry(input: {
     materialType: input.materialFull ? 'Сталь' : '',
     materialGrade,
     thicknessMm,
-    unfoldingWidth: input.unfoldingWidth,
-    unfoldingHeight: input.unfoldingHeight,
+    unfoldingWidth: input.unfoldingWidth ?? null,
+    unfoldingHeight: input.unfoldingHeight ?? null,
     massKg: null,
     isSheetMetal: true,
     notes: mergeUnfoldingWarning(input.notes, input.warnings ?? []),
@@ -451,6 +509,10 @@ function createDetailEntry(input: {
 }
 
 function mergeBOMEntry(base: BOMEntry, override: BOMEntry): BOMEntry {
+  const baseIsSpec = isSpecItemSection(base.bomSection);
+  const overrideIsSpec = isSpecItemSection(override.bomSection);
+  const sourcePages = mergeSourcePages(base.bomSources, override.bomSources);
+
   return {
     ...base,
     position: override.position || base.position,
@@ -469,9 +531,10 @@ function mergeBOMEntry(base: BOMEntry, override: BOMEntry): BOMEntry {
     name: override.name || base.name,
     material: override.material || base.material,
     steelTypeRaw: override.steelTypeRaw ?? base.steelTypeRaw,
-    quantity: override.quantity || base.quantity,
+    quantity: baseIsSpec && !overrideIsSpec ? base.quantity : override.quantity || base.quantity,
     thickness: override.thickness ?? base.thickness,
     notes: mergeNotes(base.notes, override.notes),
+    bomSources: sourcePages.length > 0 ? sourcePages : undefined,
   };
 }
 
@@ -485,8 +548,8 @@ function mergeDetailEntry(base: DetailEntry | undefined, override: DetailEntry):
     materialType: override.materialType || base.materialType,
     materialGrade: override.materialGrade || base.materialGrade,
     thicknessMm: override.thicknessMm || base.thicknessMm,
-    unfoldingWidth: override.unfoldingWidth ?? base.unfoldingWidth,
-    unfoldingHeight: override.unfoldingHeight ?? base.unfoldingHeight,
+    unfoldingWidth: base.unfoldingWidth ?? override.unfoldingWidth,
+    unfoldingHeight: base.unfoldingHeight ?? override.unfoldingHeight,
     massKg: override.massKg ?? base.massKg,
     isSheetMetal: override.isSheetMetal || base.isSheetMetal,
     notes: mergeNotes(base.notes, override.notes),
@@ -502,6 +565,35 @@ function mergeNotes(...values: Array<string | null | undefined>): string {
         .filter(Boolean)
     )
   ).join('; ');
+}
+
+function mergeSourcePages(...values: Array<number[] | undefined>): number[] {
+  return Array.from(
+    new Set(
+      values
+        .flatMap((pages) => pages ?? [])
+        .filter((page) => Number.isInteger(page) && page > 0)
+    )
+  ).sort((left, right) => left - right);
+}
+
+function upsertCurrentMaterialDetail(
+  details: Map<string, DetailEntry>,
+  currentDesignation: string,
+  currentName: string,
+  currentMaterialFull: string,
+  notes: string
+): void {
+  if (!currentDesignation || !currentMaterialFull) return;
+
+  const detail = createDetailEntry({
+    designation: currentDesignation,
+    name: currentName,
+    materialFull: currentMaterialFull,
+    notes,
+  });
+  const key = normalizeDetailKey(detail.designation);
+  details.set(key, mergeDetailEntry(details.get(key), detail));
 }
 
 function parseDescriptionGeometry(description: string): {
@@ -532,23 +624,37 @@ function parseDescriptionGeometry(description: string): {
   return { partType: 'other', thicknessMm: null, widthMm: null, heightMm: null };
 }
 
-function buildBOMKey(entry: Pick<BOMEntry, 'articleNumber' | 'description' | 'partType' | 'quantity'>): string {
+function buildBOMKey(entry: Pick<BOMEntry, 'articleNumber' | 'designation' | 'description' | 'name' | 'partType' | 'thicknessMm' | 'widthMm' | 'heightMm'>): string {
   const article = entry.articleNumber.trim().toLowerCase();
   if (article) return `article:${article}`;
+  const designation = entry.designation.trim().toLowerCase();
+  if (designation) return `designation:${designation}`;
   return [
     'desc',
     entry.partType,
-    normalizeDescription(entry.description),
-    entry.quantity,
+    normalizeDescription(entry.description || entry.name),
+    formatKeyNumber(entry.thicknessMm),
+    formatKeyNumber(entry.widthMm),
+    formatKeyNumber(entry.heightMm),
   ].join(':');
 }
 
 function normalizeLine(value: string): string {
-  return normalizeCadText(value).replace(/\s+/g, ' ').trim();
+  return normalizeCadText(value).replace(/õ/g, 'х').replace(/\s+/g, ' ').trim();
+}
+
+function formatKeyNumber(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(3).replace(/\.?0+$/, '') : '';
 }
 
 function extractDetailDesignation(line: string): string {
   const match = line.match(/(?:^|\s)((?=[A-ZА-ЯЁ0-9.-]*\d)[A-ZА-ЯЁ]{2,}[-.0-9A-ZА-ЯЁ]+(?:-\d{1,3})?)(?=\s|$)/u);
+  const value = match?.[1] ?? '';
+  return /^(?:ГОСТ|БТ?-ПН)/iu.test(value) ? '' : value;
+}
+
+function extractCompactDetailDesignation(line: string): string {
+  const match = line.match(/((?=[A-ZА-ЯЁ0-9.-]*\d)[A-ZА-ЯЁ]{2,}[-.0-9A-ZА-ЯЁ]*\.\d{2}\.\d{3})(?=\d{3,6}[,.])/u);
   const value = match?.[1] ?? '';
   return /^(?:ГОСТ|БТ?-ПН)/iu.test(value) ? '' : value;
 }
@@ -565,15 +671,16 @@ function parseExecutionUnfoldingRow(
 ): DetailEntry | null {
   if (/гост/i.test(line)) return null;
 
-  const match = line.match(/(?:^|\s)([-\w.а-яёА-ЯЁ]+)?\s+(\d{1,5}(?:[,.]\d+)?)\s*[xх×]\s*(\d{1,5}(?:[,.]\d+)?)(?:\s|$)/u);
-  if (!match) return null;
+  const compact = parseCompactExecutionUnfoldingRow(line, currentDesignation);
+  const match = compact ? null : line.match(/(?:^|\s)([-\w.а-яёА-ЯЁ]+)?\s+(\d{1,5}(?:[,.]\d+)?)\s*[xх×]\s*(\d{1,5}(?:[,.]\d+)?)(?:\s|$)/u);
+  if (!compact && !match) return null;
 
-  const width = normalizePositiveNumber(match[2]);
-  const height = normalizePositiveNumber(match[3]);
+  const width = compact?.width ?? normalizePositiveNumber(match?.[2]);
+  const height = compact?.height ?? normalizePositiveNumber(match?.[3]);
   if (!width || !height) return null;
 
-  const suffix = match[1] ?? '';
-  const designation = buildExecutionDesignation(currentDesignation, suffix);
+  const suffix = compact?.suffix ?? match?.[1] ?? '';
+  const designation = compact?.designation ?? buildExecutionDesignation(currentDesignation, suffix);
   const resolved = resolveUnfolding({
     providedWidth: width,
     providedHeight: height,
@@ -590,6 +697,51 @@ function parseExecutionUnfoldingRow(
     unfoldingHeight: resolved.height,
     warnings: resolved.warnings,
   });
+}
+
+function parseCompactExecutionUnfoldingRow(
+  line: string,
+  currentDesignation: string
+): { designation: string; suffix: string; width: number; height: number } | null {
+  const normalized = line.replace(/õ/g, 'х');
+  const height = normalizePositiveNumber(normalized.match(/[xх×]\s*(\d{1,5}(?:[,.]\d+)?)/u)?.[1]);
+  if (!height) return null;
+
+  const suffixMatch = normalized.match(/(?:^|\s)(-\d{1,3})(?=\s|\d)/u);
+  if (suffixMatch) {
+    const afterSuffix = normalized.slice((suffixMatch.index ?? 0) + suffixMatch[0].length);
+    const firstDigitsMatch = afterSuffix.match(/\d{3,6}/);
+    const firstDigits = firstDigitsMatch?.[0] ?? '';
+    if (firstDigits.length < 4) return null;
+    const afterDigits = firstDigitsMatch?.index !== undefined
+      ? afterSuffix.slice(firstDigitsMatch.index + firstDigits.length)
+      : '';
+    const widthSource = /^[xх×]/u.test(afterDigits.trimStart()) ? firstDigits : firstDigits.slice(0, -1);
+    const width = normalizePositiveNumber(widthSource);
+    if (!width) return null;
+    const suffix = suffixMatch[1];
+    return {
+      designation: buildExecutionDesignation(currentDesignation, suffix),
+      suffix,
+      width,
+      height,
+    };
+  }
+
+  const explicitDesignation = extractDetailDesignation(normalized) || extractCompactDetailDesignation(normalized);
+  if (!explicitDesignation || !currentDesignation) return null;
+  const remainder = normalized.replace(explicitDesignation, '');
+  const firstDigits = remainder.match(/\d{3,6}/)?.[0] ?? '';
+  if (firstDigits.length < 4) return null;
+  const width = normalizePositiveNumber(firstDigits.slice(0, -1));
+  if (!width) return null;
+
+  return {
+    designation: explicitDesignation,
+    suffix: '',
+    width,
+    height,
+  };
 }
 
 function buildExecutionDesignation(baseDesignation: string, suffix: string): string {
@@ -618,7 +770,7 @@ function extractSheetThickness(value: string): number | null {
 }
 
 function extractMaterialGrade(value: string): string {
-  return lastMatch(value, /(?:Ст3сп|Ст3пс|09Г2С|12Х18Н10Т|AISI\s*304|AISI\s*430|40Х|65Г)\b/giu) ?? '';
+  return lastMatch(value, /(?:Ст3сп|Ст3пс|09Г2С|12Х18Н10Т|AISI\s*304|AISI\s*430|40Х|65Г)(?=$|[^A-Za-zА-Яа-яЁё0-9])/giu) ?? '';
 }
 
 function normalizeDescription(value: string): string {

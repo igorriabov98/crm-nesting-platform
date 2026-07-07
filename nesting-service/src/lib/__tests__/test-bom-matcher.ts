@@ -61,9 +61,12 @@ const thicknessMismatchMatches = matchBOMToParts(
   [createPart({ id: 'wrong-plate', name: 'Wrong plate', thickness: 4 })]
 );
 
-assert.equal(thicknessMismatchMatches[0].matchType, 'none');
+assert.equal(thicknessMismatchMatches[0].matchType, 'exact');
 assert.match(thicknessMismatchMatches[0].matchDetails, /thickness rejected/);
 assert.equal(thicknessMismatchMatches[0].suggestedThickness, null);
+assert.equal(thicknessMismatchMatches[0].thicknessMismatch, true);
+assert.match(String(thicknessMismatchMatches[0].thicknessMismatchNote), /чертёж: 3 мм/);
+assert.match(String(thicknessMismatchMatches[0].thicknessMismatchNote), /модель STEP: 4 мм/);
 
 const designationBom = [
   createBom({
@@ -88,6 +91,8 @@ const designationParts = [
     name: 'ÃÃÃÃ.024.00.008 ÃÃ²Ã¥ÃíÃêÃà Ã¡Ã®ÃªÃ®Ã¢ÃàÃ¿',
     quantity: 1,
     thickness: 2,
+    width: 787,
+    height: 356,
     isSheetMetal: false,
   }),
 ];
@@ -147,16 +152,61 @@ const suffixParts = [
     id: 'angle-01',
     name: 'ЛЕДА.024.00.006 Уголок_-01',
     thickness: 3,
+    width: 725,
+    height: 55,
   }),
 ];
 const suffixMatches = matchBOMToParts(suffixBom, suffixParts, suffixDetails);
 
 assert.equal(suffixMatches[0].matchType, 'designation');
-assert.equal(suffixMatches[0].matchConfidence, 0.7);
+assert.equal(suffixMatches[0].matchConfidence, 0.75);
 assert.equal(suffixMatches[0].bomDesignation, 'ЛЕДА.024.00.006-01');
 assert.equal(suffixMatches[0].suggestedThickness, null);
 assert.equal(suffixMatches[0].suggestedUnfoldingWidth, 725);
 assert.equal(suffixMatches[0].suggestedUnfoldingHeight, 55);
+
+const suffixThicknessMismatchMatches = matchBOMToParts(
+  [createBom({
+    position: '9',
+    designation: 'ЛЕДА.024.00.006-01',
+    name: 'Уголок',
+    quantity: 2,
+  })],
+  [
+    createPart({
+      id: 'angle-01-a',
+      name: 'ЛЕДА.024.00.006 Уголок_-01',
+      thickness: 2,
+      width: 725,
+      height: 55,
+    }),
+    createPart({
+      id: 'angle-01-b',
+      name: 'ЛЕДА.024.00.006 Уголок_-01',
+      thickness: 2,
+      width: 725,
+      height: 55,
+    }),
+  ],
+  [createDetail({
+    designation: 'ЛЕДА.024.00.006-01',
+    name: 'Уголок',
+    materialGrade: 'Ст3пс',
+    thicknessMm: 3,
+    unfoldingWidth: 725,
+    unfoldingHeight: 55,
+  })],
+  [{ id: 'steel-st3ps', name: 'Ст3пс', densityKgMm3: 0.00000785 }]
+);
+
+assert.equal(suffixThicknessMismatchMatches[0].matchType, 'designation');
+assert.equal(suffixThicknessMismatchMatches[0].bomPosition, '9');
+assert.equal(suffixThicknessMismatchMatches[0].bomDesignation, 'ЛЕДА.024.00.006-01');
+assert.equal(suffixThicknessMismatchMatches[0].suggestedSteelTypeId, 'steel-st3ps');
+assert.equal(suffixThicknessMismatchMatches[0].suggestedThickness, null);
+assert.equal(suffixThicknessMismatchMatches[0].thicknessMismatch, true);
+assert.match(String(suffixThicknessMismatchMatches[0].thicknessMismatchNote), /чертёж: 3 мм/);
+assert.match(String(suffixThicknessMismatchMatches[0].thicknessMismatchNote), /модель STEP: 2 мм/);
 
 const prefixedDetailMatches = matchBOMToParts(
   [createBom({
@@ -353,6 +403,8 @@ const sheetSortamentAngleMatches = matchBOMToParts(
     id: 'ugolok-sheet',
     name: 'СТВ-300.00.010 Уголок_-01',
     thickness: 3,
+    width: 1150,
+    height: 54.6,
     isSheetMetal: false,
     bboxSizeX: 3,
     bboxSizeY: 54.6,

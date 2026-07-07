@@ -73,12 +73,38 @@ async function main(): Promise<void> {
 
   if (existsSync(ledaPdf)) {
     const ledaParsed = await extractDeterministicPdfDataFromPdf(ledaPdf);
+    assert.equal(ledaParsed.bom.length, 10, 'LEDA PDF BOM should be deduplicated to 9 sheet rows + purchased plug');
+    assert.deepEqual(
+      ledaParsed.bom.map((entry) => `${entry.position}:${entry.designation || entry.name}:${entry.quantity}`),
+      [
+        '1:ЛЕДА.024.00.001:1',
+        '3:ЛЕДА.024.00.003:4',
+        '5:ЛЕДА.024.00.005:4',
+        '7:ЛЕДА.024.00.006:2',
+        '9:ЛЕДА.024.00.006-01:2',
+        '11:ЛЕДА.024.00.006-02:2',
+        '13:ЛЕДА.024.00.006-03:2',
+        '15:ЛЕДА.024.00.007:1',
+        '17:ЛЕДА.024.00.008:2',
+        '19:Заглушка пластмассовая 15мм:2',
+      ]
+    );
+    assert.ok(ledaParsed.bom.every((entry) => entry.bomSources && entry.bomSources.length >= 1), 'LEDA BOM rows should retain source pages');
+    assert.equal(new Set(ledaParsed.bom.map((entry) => entry.designation || entry.name)).size, 10, 'LEDA BOM should not contain duplicate rows');
+
     const plug = ledaParsed.bom.find((entry) => entry.name.includes('Заглушка пластмассовая'));
     assert.ok(plug);
     assert.equal(plug.bomSection, 'Прочие изделия');
     assert.equal(plug.partType, 'other');
     assert.equal(plug.quantity, 2);
     assert.equal(plug.thicknessMm, null);
+
+    const angle03 = ledaParsed.details.find((entry) => entry.designation === 'ЛЕДА.024.00.006-03');
+    assert.ok(angle03);
+    assert.equal(angle03.materialGrade, 'Ст3пс');
+    assert.equal(angle03.thicknessMm, 3);
+    assert.equal(angle03.unfoldingWidth, 780);
+    assert.equal(angle03.unfoldingHeight, 55);
   }
 
   console.log('[pdf-bom-fallback] all tests passed');

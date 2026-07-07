@@ -27,6 +27,7 @@ const STANDARD_THICKNESSES = [
 ];
 const THICKNESS_TOLERANCE_MM = 0.3;
 const UNFOLDING_MATCH_TOLERANCE = 0.02;
+const UNFOLDING_SUGGESTION_REJECT_TOLERANCE = 0.15;
 const DIMENSION_CLUSTER_TOLERANCE_MM = 0.3;
 const CONTOUR_CLUSTER_TOLERANCE_MM = 0.3;
 
@@ -103,12 +104,14 @@ function clusterIdenticalParts(parts: PartForMatching[]): PartGroup[] {
 }
 
 function buildPartClusterKey(part: PartForMatching): string {
+  const identity = extractDesignationKey(part.name) ?? '';
   const dims = getPartBBoxDims(part).map((dim) => quantize(dim, DIMENSION_CLUSTER_TOLERANCE_MM)).join('x');
   const volume = quantize(part.meshVolume ?? 0, 1);
   const area = quantize(part.meshArea ?? 0, 1);
   const contour = buildContourSignature(part.contour);
 
   return [
+    identity,
     dims,
     volume,
     area,
@@ -153,10 +156,7 @@ function findBestMatch(
   const designationMatch = findDesignationMatch(part, detailsByDesignation, bomByDesignation);
 
   if (designationMatch) {
-    if (isThicknessCompatibleWithCandidate(part, designationMatch.bomEntry, designationMatch.detail)) {
-      return designationMatch;
-    }
-    rejectedDetails.push(buildThicknessRejectedDetails(part, designationMatch.bomEntry, designationMatch.detail));
+    return withThicknessMismatchDetails(part, designationMatch);
   }
 
   const profileGeometryMatch = findProfileGeometryMatch(part, bom);
@@ -184,6 +184,15 @@ function findBestMatch(
         matchConfidence: detail ? Math.max(nameMatch.confidence, 0.7) : nameMatch.confidence,
         matchDetails: nameMatch.details,
       };
+    }
+    if (nameMatch.type === 'exact') {
+      return withThicknessMismatchDetails(part, {
+        bomEntry: nameMatch.entry,
+        detail,
+        matchType: nameMatch.type,
+        matchConfidence: detail ? Math.max(nameMatch.confidence, 0.7) : nameMatch.confidence,
+        matchDetails: nameMatch.details,
+      });
     }
     rejectedDetails.push(buildThicknessRejectedDetails(part, nameMatch.entry, detail));
   }
@@ -218,6 +227,18 @@ function findBestMatch(
   };
 }
 
+function withThicknessMismatchDetails(part: PartForMatching, match: MatchCandidate): MatchCandidate {
+  if (isThicknessCompatibleWithCandidate(part, match.bomEntry, match.detail)) {
+    return match;
+  }
+
+  const rejection = buildThicknessRejectedDetails(part, match.bomEntry, match.detail);
+  return {
+    ...match,
+    matchDetails: [match.matchDetails, rejection].filter(Boolean).join('; '),
+  };
+}
+
 function findDesignationMatch(
   part: PartForMatching,
   detailsByDesignation: Map<string, DetailEntry>,
@@ -226,18 +247,27 @@ function findDesignationMatch(
   const partDesignation = extractDesignationKey(part.name);
   if (!partDesignation) return null;
 
-  let bomEntry = bomByDesignation.get(partDesignation) ?? null;
-  let detail = detailsByDesignation.get(partDesignation) ?? null;
+  const suffix = extractTrailingSuffix(part.name);
+  const suffixKey = suffix ? `${partDesignation.replace(/-\d{2,3}$/, '')}-${suffix}` : null;
+  let bomEntry = suffixKey ? bomByDesignation.get(suffixKey) ?? null : null;
+  let detail = suffixKey ? detailsByDesignation.get(suffixKey) ?? null : null;
   let matchConfidence = 0;
   let matchDetails = '';
 
   if (detail || bomEntry) {
     matchConfidence = 0.95;
-    matchDetails = 'designation match';
+    matchDetails = 'designation suffix match';
+  }
+
+  bomEntry = bomEntry ?? bomByDesignation.get(partDesignation) ?? null;
+  detail = detail ?? detailsByDesignation.get(partDesignation) ?? null;
+
+  if (detail || bomEntry) {
+    matchConfidence = Math.max(matchConfidence, 0.95);
+    matchDetails = matchDetails || 'designation match';
   }
 
   if (!detail || !bomEntry) {
-    const suffix = extractTrailingSuffix(part.name);
     if (suffix) {
       const fullKey = `${partDesignation.replace(/-\d{2,3}$/, '')}-${suffix}`;
       detail = detail ?? detailsByDesignation.get(fullKey) ?? null;
@@ -865,11 +895,6 @@ function findNameMatch(
   let bestMatch: { entry: BOMEntry; type: MatchType; confidence: number; details: string } | null = null;
 
   for (const entry of bom) {
-    if (!isThicknessCompatibleWithCandidate(part, entry, null)) {
-      rejectedDetails.push(buildThicknessRejectedDetails(part, entry, null));
-      continue;
-    }
-
     const partName = normalize(part.name);
     const entryName = normalize(entry.name || entry.description);
 
@@ -956,6 +981,11 @@ function buildMatchResult(
       })
     : null;
   const detailHasUnfolding = Boolean(detailUnfolding?.width && detailUnfolding.height);
+  const detailUnfoldingCompatible = Boolean(
+    detailUnfolding?.width &&
+    detailUnfolding.height &&
+    isUnfoldingSuggestionCompatible(part, detailUnfolding.width, detailUnfolding.height)
+  );
 
   const suggestedMaterial = detail?.materialType || bomEntry?.materialType || (bomEntry ? normalizeMaterial(bomEntry.material) : null);
   if (suggestedMaterial && suggestedMaterial !== part.material) {
@@ -980,7 +1010,7 @@ function buildMatchResult(
       result.suggestedThickness = detail.thicknessMm;
     }
 
-    if (detailHasUnfolding && detailUnfolding) {
+    if (detailUnfoldingCompatible && detailUnfolding) {
       result.suggestedUnfoldingWidth = detailUnfolding.width;
       result.suggestedUnfoldingHeight = detailUnfolding.height;
     }
@@ -990,7 +1020,7 @@ function buildMatchResult(
     }
 
     if (detail.isSheetMetal || sheetMaterialSignal) {
-      result.suggestedHasBends = detailHasUnfolding && detailUnfolding
+      result.suggestedHasBends = detailUnfoldingCompatible && detailUnfolding
         ? computeSheetHasBends(part, detail.thicknessMm, detailUnfolding.width!, detailUnfolding.height!)
         : part.hasBends;
     }
@@ -1042,8 +1072,52 @@ function buildMatchResult(
   }
 
   applyPartTypeSuggestion(result, candidatePartType, currentPartType);
+  applyThicknessMismatchFlag(result, part, bomEntry, detail);
 
   return result;
+}
+
+function applyThicknessMismatchFlag(
+  result: MatchResult,
+  part: PartForMatching,
+  bomEntry: BOMEntry | null,
+  detail: DetailEntry | null
+): void {
+  const candidatePartType = resolveCandidatePartType(bomEntry, detail);
+  if (candidatePartType && candidatePartType !== 'SHEET') return;
+
+  const candidateThickness = getCandidateThickness(bomEntry, detail);
+  const stepThickness = getStepThickness(part);
+  if (!candidateThickness || thicknessMatch(candidateThickness, stepThickness)) return;
+
+  result.thicknessMismatch = true;
+  result.thicknessMismatchNote = buildThicknessMismatchNote(candidateThickness, stepThickness);
+  result.suggestedThickness = null;
+}
+
+function buildThicknessMismatchNote(candidateThickness: number, stepThickness: number): string {
+  return [
+    `чертёж: ${formatNumber(candidateThickness)} мм`,
+    `модель STEP: ${formatNumber(stepThickness)} мм`,
+    `толщина не будет применена автоматически`,
+  ].join('; ');
+}
+
+function isUnfoldingSuggestionCompatible(part: PartForMatching, width: number, height: number): boolean {
+  const stepDims = getPartUnfoldingDims(part);
+  const candidateDims = [width, height]
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+
+  if (stepDims.length !== 2 || candidateDims.length !== 2) return true;
+
+  const sideDelta = Math.max(
+    Math.abs(stepDims[0] - candidateDims[0]) / Math.max(stepDims[0], candidateDims[0]),
+    Math.abs(stepDims[1] - candidateDims[1]) / Math.max(stepDims[1], candidateDims[1])
+  );
+  const areaDelta = Math.abs(stepDims[0] * stepDims[1] - candidateDims[0] * candidateDims[1]) / Math.max(stepDims[0] * stepDims[1], candidateDims[0] * candidateDims[1]);
+
+  return Math.max(sideDelta, areaDelta) <= UNFOLDING_SUGGESTION_REJECT_TOLERANCE;
 }
 
 function applyPartTypeSuggestion(result: MatchResult, candidatePartType: PartType | null, currentPartType: PartType): void {

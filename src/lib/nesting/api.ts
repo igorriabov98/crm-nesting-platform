@@ -260,6 +260,7 @@ export interface BOMEntry {
   quantity: number
   thickness: number | null
   notes: string
+  bomSources?: number[]
 }
 
 export interface DetailEntry {
@@ -583,11 +584,44 @@ export async function applyProjectBOM(
     unfoldingHeight?: number
   }>,
   force?: boolean
-): Promise<{ updated: number }> {
+): Promise<ApplyProjectBOMResponse> {
   const res = await request(buildUrl(`/api/projects/${projectId}/apply-bom`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ matches, force }),
   }, 'Не удалось применить предложения AI')
-  return readJson<{ updated: number }>(res, 'Не удалось применить предложения AI')
+  return readJson<ApplyProjectBOMResponse>(res, 'Не удалось применить предложения AI')
+}
+
+export type ApplyBOMBlockedRow = {
+  partId: string
+  partName: string
+  reason: 'thickness_mismatch' | 'dimension_mismatch'
+  message: string
+  pdf: {
+    thickness?: number | null
+    width?: number | null
+    height?: number | null
+  }
+  step: {
+    thickness?: number | null
+    width?: number | null
+    height?: number | null
+  }
+  requiresForce: true
+  mismatchNote?: string | null
+  thicknessMismatchNote?: string | null
+}
+
+export type ApplyProjectBOMResponse = {
+  updated: number
+  blocked?: ApplyBOMBlockedRow[]
+  results?: Array<{
+    partId: string
+    partName?: string
+    status: 'applied' | 'blocked' | 'skipped' | 'not_found'
+    reason?: ApplyBOMBlockedRow['reason']
+    message?: string
+    requiresForce?: boolean
+  }>
 }
