@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { AtSign, Check, ChevronsUpDown, History, MessageSquare, Pencil, Save, Send, Trash2, UserRound, X } from 'lucide-react'
+import { AtSign, Check, ChevronsUpDown, FileImage, FileText, History, MessageSquare, Paperclip, Pencil, Save, Send, Trash2, UserRound, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -31,6 +31,11 @@ import {
 } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import {
+  MAX_MACHINE_CHAT_ATTACHMENTS,
+  MAX_MACHINE_CHAT_ATTACHMENT_SIZE,
+  type MachineChatAttachment,
+} from '@/lib/machine-chat-attachments'
 
 type MachineActivityPanelProps = {
   machineId: string
@@ -54,6 +59,61 @@ function normalizedUserSearch(user: MachineMentionUser) {
     ...user.department_names,
     ...user.position_names,
   ].join(' ').toLowerCase()
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`
+}
+
+function isAllowedChatFile(file: File) {
+  const name = file.name.toLowerCase()
+  return file.type === 'application/pdf' || file.type.startsWith('image/') || /\.(pdf|png|jpe?g|webp|gif|heic|heif)$/i.test(name)
+}
+
+function isImageFile(file: File) {
+  return file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(file.name)
+}
+
+function MessageAttachments({ attachments }: { attachments: MachineChatAttachment[] }) {
+  if (attachments.length === 0) return null
+
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      {attachments.map((attachment) => {
+        const isImage = attachment.kind === 'image'
+        return (
+          <a
+            key={attachment.id}
+            href={attachment.url}
+            target="_blank"
+            rel="noreferrer"
+            className="group overflow-hidden rounded-lg border border-slate-200 bg-white text-sm shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50/40"
+          >
+            {isImage ? (
+              <img
+                src={attachment.url}
+                alt={attachment.fileName}
+                className="h-32 w-full object-cover"
+                loading="lazy"
+              />
+            ) : (
+              <span className="flex h-32 items-center justify-center bg-slate-50 text-blue-700">
+                <FileText className="h-8 w-8" />
+              </span>
+            )}
+            <span className="flex items-center gap-2 px-3 py-2">
+              {isImage ? <FileImage className="h-4 w-4 shrink-0 text-blue-700" /> : <FileText className="h-4 w-4 shrink-0 text-blue-700" />}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-slate-900">{attachment.fileName}</span>
+                <span className="text-xs text-slate-500">{formatFileSize(attachment.fileSize)}</span>
+              </span>
+            </span>
+          </a>
+        )
+      })}
+    </div>
+  )
 }
 
 function MentionPicker({
@@ -143,11 +203,13 @@ function MentionPicker({
 
 export function MachineActivityPanel({ machineId, activity }: MachineActivityPanelProps) {
   const router = useRouter()
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [updates, setUpdates] = useState(activity.updates)
   const [messages, setMessages] = useState(activity.messages)
   const [updateDraft, setUpdateDraft] = useState('')
   const [chatDraft, setChatDraft] = useState('')
   const [selectedMentionIds, setSelectedMentionIds] = useState<string[]>([])
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [savingUpdate, setSavingUpdate] = useState(false)
   const [sendingMessage, setSendingMessage] = useState(false)
   const [editingUpdateId, setEditingUpdateId] = useState<string | null>(null)
@@ -173,6 +235,42 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
     })
     const token = `@${user.full_name}`
     setChatDraft((current) => current.includes(token) ? current : `${current}${current.trim() ? ' ' : ''}${token} `)
+  }
+
+  function handleFileSelect(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || [])
+    event.target.value = ''
+    if (files.length === 0) return
+
+    setSelectedFiles((current) => {
+      const availableSlots = MAX_MACHINE_CHAT_ATTACHMENTS - current.length
+      if (availableSlots <= 0) {
+        toast.error(`Можно прикрепить не больше ${MAX_MACHINE_CHAT_ATTACHMENTS} файлов`)
+        return current
+      }
+
+      const accepted: File[] = []
+      for (const file of files.slice(0, availableSlots)) {
+        if (!isAllowedChatFile(file)) {
+          toast.error(`${file.name}: можно загрузить только PDF или фото`)
+          continue
+        }
+        if (file.size > MAX_MACHINE_CHAT_ATTACHMENT_SIZE) {
+          toast.error(`${file.name}: файл больше 20 МБ`)
+          continue
+        }
+        accepted.push(file)
+      }
+
+      if (files.length > availableSlots) {
+        toast.error(`Добавлены первые ${availableSlots} файлов`)
+      }
+      return [...current, ...accepted]
+    })
+  }
+
+  function removeSelectedFile(index: number) {
+    setSelectedFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))
   }
 
   async function handleCreateUpdate(event: FormEvent<HTMLFormElement>) {
@@ -233,10 +331,21 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
     event.preventDefault()
     setSendingMessage(true)
     try {
-      const result = await sendMachineChatMessage(machineId, chatDraft, selectedMentionIds)
+      const formData = new FormData()
+      formData.append('body', chatDraft)
+      for (const mentionId of selectedMentionIds) {
+        formData.append('mention_user_ids', mentionId)
+      }
+      for (const file of selectedFiles) {
+        formData.append('attachments', file)
+      }
+
+      const result = await sendMachineChatMessage(machineId, formData)
       if (!result.success) throw new Error(result.error || 'Не удалось отправить сообщение')
       setChatDraft('')
       setSelectedMentionIds([])
+      setSelectedFiles([])
+      if (fileInputRef.current) fileInputRef.current.value = ''
       toast.success('Сообщение отправлено')
       router.refresh()
     } catch (error) {
@@ -424,7 +533,10 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
                       <div className="mt-0.5 text-xs text-slate-500">{activityDate(message.created_at)}</div>
                     </div>
                   </div>
-                  <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{message.body}</p>
+                  {message.body && (
+                    <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{message.body}</p>
+                  )}
+                  <MessageAttachments attachments={message.attachments} />
                   {message.mentions.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {message.mentions.map((mention) => (
@@ -458,6 +570,31 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
               </div>
             )}
 
+            {selectedFiles.length > 0 && (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {selectedFiles.map((file, index) => {
+                  const image = isImageFile(file)
+                  return (
+                    <div key={`${file.name}-${file.lastModified}-${index}`} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                      {image ? <FileImage className="h-4 w-4 shrink-0 text-blue-700" /> : <FileText className="h-4 w-4 shrink-0 text-blue-700" />}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium text-slate-900">{file.name}</span>
+                        <span className="text-xs text-slate-500">{formatFileSize(file.size)}</span>
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Убрать ${file.name}`}
+                        onClick={() => removeSelectedFile(index)}
+                        className="rounded-full p-1 text-slate-500 hover:bg-white hover:text-red-600"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
             <Textarea
               value={chatDraft}
               onChange={(event) => setChatDraft(event.target.value)}
@@ -468,18 +605,40 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
             />
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <MentionPicker
-                users={activity.mentionUsers}
-                selectedIds={selectedMentionIds}
-                disabled={!activity.canSendChat || sendingMessage}
-                onSelect={toggleMention}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <MentionPicker
+                  users={activity.mentionUsers}
+                  selectedIds={selectedMentionIds}
+                  disabled={!activity.canSendChat || sendingMessage}
+                  onSelect={toggleMention}
+                />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/pdf,image/*,.pdf"
+                  multiple
+                  className="hidden"
+                  onChange={handleFileSelect}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="lg"
+                  disabled={!activity.canSendChat || sendingMessage || selectedFiles.length >= MAX_MACHINE_CHAT_ATTACHMENTS}
+                  aria-label="Прикрепить PDF или фото"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="h-10 min-w-28 gap-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                >
+                  <Paperclip className="h-4 w-4" />
+                  Файл
+                </Button>
+              </div>
               <div className="flex items-center justify-between gap-3 sm:justify-end">
                 <span className="text-xs text-slate-500">{chatDraft.trim().length}/4000</span>
                 <LoadingButton
                   type="submit"
                   loading={sendingMessage}
-                  disabled={!activity.canSendChat || !chatDraft.trim()}
+                  disabled={!activity.canSendChat || (!chatDraft.trim() && selectedFiles.length === 0)}
                   className="min-h-10 bg-blue-600 text-white hover:bg-blue-700"
                 >
                   <Send className="h-4 w-4" />

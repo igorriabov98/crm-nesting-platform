@@ -1,5 +1,6 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -7,6 +8,16 @@ import { requirePermission } from '@/lib/permissions/server'
 import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
+import {
+  MAX_MACHINE_CHAT_ATTACHMENTS,
+  MAX_MACHINE_CHAT_ATTACHMENT_SIZE,
+  decodeMachineChatBody,
+  encodeMachineChatBody,
+  toPublicMachineChatAttachment,
+  type MachineChatAttachment,
+  type MachineChatAttachmentKind,
+  type StoredMachineChatAttachment,
+} from '@/lib/machine-chat-attachments'
 import type { CurrentUser, UserRole } from '@/lib/types'
 
 const DIRECTOR_ROLES: readonly UserRole[] = ['planning_director', 'financial_director', 'commercial_director']
@@ -32,6 +43,7 @@ const RECIPIENT_KEYWORDS = [
 const machineIdSchema = z.string().uuid('Некорректный ID машины')
 const updateIdSchema = z.string().uuid('Некорректный ID обновления')
 const bodySchema = z.string().trim().min(1, 'Введите текст').max(4000, 'Текст не должен превышать 4000 символов')
+const chatBodySchema = z.string().trim().max(4000, 'Текст не должен превышать 4000 символов')
 const mentionIdsSchema = z.array(z.string().uuid()).max(50).optional().default([])
 
 type DbError = { message?: string; code?: string; details?: string; hint?: string }
@@ -135,6 +147,7 @@ export type MachineChatMessageItem = {
   system_event_key: string | null
   author: { id: string; full_name: string } | null
   mentions: Array<{ id: string; full_name: string }>
+  attachments: MachineChatAttachment[]
 }
 
 export type MachineActivityPayload = {
@@ -161,6 +174,82 @@ function normalizeText(value: string | null | undefined) {
 function hasRecipientKeyword(...values: Array<string | null | undefined>) {
   const haystack = values.map(normalizeText).join(' ')
   return RECIPIENT_KEYWORDS.some((keyword) => haystack.includes(keyword))
+}
+
+function normalizeFileName(value: string) {
+  return value
+    .replace(/[\\/]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 140) || 'file'
+}
+
+function fileExtension(name: string, kind: MachineChatAttachmentKind) {
+  const match = name.match(/\.([A-Za-z0-9]{1,12})$/)
+  if (match) return `.${match[1].toLowerCase()}`
+  return kind === 'pdf' ? '.pdf' : '.jpg'
+}
+
+function detectAttachmentKind(file: File): MachineChatAttachmentKind | null {
+  const name = file.name.toLowerCase()
+  if (file.type === 'application/pdf' || name.endsWith('.pdf')) return 'pdf'
+  if (file.type.startsWith('image/')) return 'image'
+  if (/\.(png|jpe?g|webp|gif|heic|heif)$/i.test(name)) return 'image'
+  return null
+}
+
+function assertChatAttachmentFile(file: File) {
+  if (!file || file.size === 0) throw new Error('Выберите файл для чата')
+  if (file.size > MAX_MACHINE_CHAT_ATTACHMENT_SIZE) {
+    throw new Error('Файл чата не должен превышать 20 МБ')
+  }
+  const kind = detectAttachmentKind(file)
+  if (!kind) throw new Error('В чат машины можно загрузить только PDF или фото')
+  return kind
+}
+
+async function uploadChatAttachments(
+  admin: ReturnType<typeof createAdminClient>,
+  machineId: string,
+  files: File[],
+) {
+  if (files.length > MAX_MACHINE_CHAT_ATTACHMENTS) {
+    throw new Error(`Можно прикрепить не больше ${MAX_MACHINE_CHAT_ATTACHMENTS} файлов`)
+  }
+
+  const attachments: StoredMachineChatAttachment[] = []
+  const uploadedPaths: string[] = []
+  try {
+    for (const file of files) {
+      const kind = assertChatAttachmentFile(file)
+      const fileName = normalizeFileName(file.name)
+      const mimeType = file.type || (kind === 'pdf' ? 'application/pdf' : 'application/octet-stream')
+      const path = `machine-chat/${machineId}/${Date.now()}-${randomUUID()}${fileExtension(fileName, kind)}`
+      const { error } = await admin.storage.from('product-files').upload(path, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: mimeType,
+      })
+
+      if (error) throw new Error(error.message || 'Не удалось загрузить файл в чат')
+      uploadedPaths.push(path)
+      attachments.push({
+        id: randomUUID(),
+        fileName,
+        mimeType,
+        fileSize: file.size,
+        kind,
+        path,
+      })
+    }
+  } catch (error) {
+    if (uploadedPaths.length > 0) {
+      await admin.storage.from('product-files').remove(uploadedPaths).catch(() => undefined)
+    }
+    throw error
+  }
+
+  return attachments
 }
 
 function canManageMachineUpdates(user: CurrentUser, machine: MachineAccessRow) {
@@ -321,6 +410,7 @@ function mapMessage(
   usersById: Map<string, UserSummaryRow>,
   mentionsByMessage: Map<string, MachineChatMentionRow[]>,
 ): MachineChatMessageItem {
+  const decodedBody = decodeMachineChatBody(row.body)
   const author = row.created_by ? usersById.get(row.created_by) : null
   const mentions = (mentionsByMessage.get(row.id) || [])
     .map((mention) => usersById.get(mention.user_id))
@@ -329,12 +419,13 @@ function mapMessage(
 
   return {
     id: row.id,
-    body: row.body,
+    body: decodedBody.text,
     created_at: row.created_at,
     message_kind: row.message_kind === 'system' ? 'system' : 'user',
     system_event_key: row.system_event_key || null,
     author: author ? { id: author.id, full_name: author.full_name } : null,
     mentions,
+    attachments: decodedBody.attachments.map((attachment) => toPublicMachineChatAttachment(row.id, attachment)),
   }
 }
 
@@ -516,14 +607,29 @@ export async function deleteMachineUpdate(machineId: string, updateId: string) {
   }
 }
 
-export async function sendMachineChatMessage(machineId: string, body: string, mentionUserIds: string[] = []) {
+export async function sendMachineChatMessage(machineId: string, formData: FormData) {
+  let uploadedPaths: string[] = []
+  let messageCreated = false
+
   try {
-    const parsedBody = bodySchema.parse(body)
-    const parsedMentionIds = Array.from(new Set(mentionIdsSchema.parse(mentionUserIds)))
+    const rawBody = String(formData.get('body') || '')
+    const parsedBody = chatBodySchema.parse(rawBody)
+    const parsedMentionIds = Array.from(new Set(mentionIdsSchema.parse(
+      formData.getAll('mention_user_ids').map((value) => String(value)),
+    )))
+    const files = formData
+      .getAll('attachments')
+      .filter((value): value is File => value instanceof File && value.size > 0)
+
+    if (!parsedBody && files.length === 0) {
+      throw new Error('Введите сообщение или добавьте файл')
+    }
+
     const { machine, user } = await requireMachineAccess(machineId)
     assertMachineWritable(machine)
 
-    const db = dbFrom(createAdminClient())
+    const admin = createAdminClient()
+    const db = dbFrom(admin)
     const activeMentionIds = new Set<string>()
     if (parsedMentionIds.length > 0) {
       const { data: activeUsers, error: activeUsersError } = await db
@@ -538,17 +644,22 @@ export async function sendMachineChatMessage(machineId: string, body: string, me
       }
     }
 
+    const attachments = await uploadChatAttachments(admin, machine.id, files)
+    uploadedPaths = attachments.map((attachment) => attachment.path)
+    const storedBody = bodySchema.parse(encodeMachineChatBody(parsedBody, attachments))
+
     const { data: createdMessage, error: messageError } = await db
       .from('machine_chat_messages')
       .insert({
         machine_id: machine.id,
-        body: parsedBody,
+        body: storedBody,
         created_by: user.id,
       })
       .select('id')
       .single()
 
     if (messageError) throw messageError
+    messageCreated = true
     const messageId = (createdMessage as { id: string }).id
 
     if (activeMentionIds.size > 0) {
@@ -568,12 +679,13 @@ export async function sendMachineChatMessage(machineId: string, body: string, me
     recipientIds.delete(user.id)
 
     if (recipientIds.size > 0) {
+      const previewBody = parsedBody || `Вложений: ${attachments.length}`
       const { error: notificationError } = await db.from('notifications').insert(
         Array.from(recipientIds).map((recipientId) => ({
           user_id: recipientId,
           type: MACHINE_CHAT_NOTIFICATION_TYPE,
           title: 'Новое сообщение в чате машины',
-          message: notificationMessage(user.full_name, parsedBody),
+          message: notificationMessage(user.full_name, previewBody),
           related_machine_id: machine.id,
         })),
       )
@@ -585,6 +697,9 @@ export async function sendMachineChatMessage(machineId: string, body: string, me
     revalidateActivity(machine.id)
     return { success: true, error: null }
   } catch (error) {
+    if (!messageCreated && uploadedPaths.length > 0) {
+      await createAdminClient().storage.from('product-files').remove(uploadedPaths).catch(() => undefined)
+    }
     return { success: false, error: getErrorMessage(error) }
   }
 }

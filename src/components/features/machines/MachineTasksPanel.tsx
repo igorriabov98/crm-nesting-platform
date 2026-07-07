@@ -1,6 +1,6 @@
 "use client"
 
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { isBefore, startOfToday } from 'date-fns'
 import { ChevronDown, ClipboardList } from 'lucide-react'
 
@@ -14,9 +14,23 @@ interface MachineTasksPanelProps {
 
 export function MachineTasksPanel({ tasks }: MachineTasksPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const [localTasks, setLocalTasks] = useState(tasks)
   const contentId = useId()
   const today = startOfToday()
-  const groupedTasks = tasks.reduce(
+
+  useEffect(() => {
+    setLocalTasks(tasks)
+  }, [tasks])
+
+  function handleTaskStatusChange(taskId: string, status: TaskWithRelations['status'], completedAt: string | null) {
+    setLocalTasks((current) => current.map((task) => (
+      task.id === taskId
+        ? { ...task, status, completed_at: completedAt, updated_at: new Date().toISOString() }
+        : task
+    )))
+  }
+
+  const groupedTasks = localTasks.reduce(
     (groups, task) => {
       if (task.status === 'completed') {
         groups.completed.push(task)
@@ -76,7 +90,7 @@ export function MachineTasksPanel({ tasks }: MachineTasksPanelProps) {
           <span className="min-w-0">
             <span className="block text-base font-semibold text-slate-950">Задачи</span>
             <span className="mt-0.5 block text-sm text-slate-500">
-              {tasks.length === 0
+              {localTasks.length === 0
                 ? 'Автоматические задачи появятся здесь при необходимости.'
                 : `${activeTasks} активных · ${groupedTasks.overdue.length} просроченных · ${groupedTasks.completed.length} выполненных`}
             </span>
@@ -105,7 +119,12 @@ export function MachineTasksPanel({ tasks }: MachineTasksPanelProps) {
                   </span>
                 </div>
                 {section.tasks.length > 0 ? (
-                  <TaskCards tasks={section.tasks} compact emptyMessage={section.empty} />
+                  <TaskCards
+                    tasks={section.tasks}
+                    compact
+                    emptyMessage={section.empty}
+                    onTaskStatusChange={handleTaskStatusChange}
+                  />
                 ) : (
                   <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
                     {section.empty}

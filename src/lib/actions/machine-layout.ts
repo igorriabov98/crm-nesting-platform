@@ -119,6 +119,7 @@ type TaskRow = {
   status: TaskStatus
   assigned_to: string
 }
+type LayoutUploadMachineRow = Pick<MachineRow, 'id' | 'name' | 'created_by'>
 
 const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
 const SETTINGS_ID = '00000000-0000-0000-0000-000000000001'
@@ -684,6 +685,56 @@ function revalidateLayout(machineId: string) {
   revalidatePath(ROUTES.TASKS)
 }
 
+async function notifyManagerAboutLayoutUpload(db: LooseDb, input: {
+  requestId: string
+  machineId: string
+  requestedBy: string | null
+  uploadedBy: string
+  versionNo: number
+  fileName: string
+}) {
+  try {
+    const { data: machineData, error: machineError } = await db
+      .from('machines')
+      .select('id, name, created_by')
+      .eq('id', input.machineId)
+      .single()
+
+    if (machineError || !machineData) {
+      throw new Error(machineError?.message || 'Машина не найдена для уведомления')
+    }
+
+    const machine = machineData as LayoutUploadMachineRow
+    const managerId = input.requestedBy || machine.created_by
+    const machineName = machine.name || 'машине'
+    const body = `Расстановка машины загружена в систему: версия ${input.versionNo}${input.fileName ? ` (${input.fileName})` : ''}.`
+
+    const { error: chatError } = await db.from('machine_chat_messages').insert({
+      machine_id: input.machineId,
+      body,
+      created_by: null,
+      message_kind: 'system',
+      system_event_key: `machine_layout_pdf_uploaded:${input.requestId}`,
+    })
+    if (chatError) throw new Error(chatError.message || 'Не удалось добавить системное сообщение о расстановке')
+
+    if (managerId && managerId !== input.uploadedBy) {
+      const { error: notificationError } = await db.from('notifications').insert({
+        user_id: managerId,
+        type: 'machine_layout_uploaded',
+        title: 'Расстановка машины загружена',
+        message: `По машине "${machineName}" загружена расстановка версии ${input.versionNo}.`,
+        related_machine_id: input.machineId,
+      })
+      if (notificationError) throw new Error(notificationError.message || 'Не удалось создать уведомление менеджеру')
+
+      await dispatchPendingTelegramDeliveries({ machineId: input.machineId, userId: managerId })
+    }
+  } catch (error) {
+    console.error('[MachineLayout] Не удалось отправить уведомление о загруженной расстановке:', error)
+  }
+}
+
 export async function getMachineLayout(machineId: string): Promise<ActionResult<MachineLayoutPayload>> {
   try {
     await getCurrentUserContext()
@@ -764,12 +815,12 @@ export async function uploadMachineLayoutPdf(formData: FormData): Promise<Action
 
     const { data: requestData, error: requestError } = await db
       .from('machine_layout_requests')
-      .select('id, machine_id, task_id, assigned_to, status, version_no')
+      .select('id, machine_id, task_id, requested_by, assigned_to, status, version_no')
       .eq('id', requestId)
       .single()
 
     if (requestError || !requestData) throw new Error(requestError?.message || 'Версия расстановки не найдена')
-    const request = requestData as Pick<MachineLayoutRequest, 'id' | 'machine_id' | 'task_id' | 'assigned_to' | 'status' | 'version_no'>
+    const request = requestData as Pick<MachineLayoutRequest, 'id' | 'machine_id' | 'task_id' | 'requested_by' | 'assigned_to' | 'status' | 'version_no'>
     if (request.status === 'completed') throw new Error('Эта версия уже закрыта. Создайте новый запрос на расстановку.')
     if (!DIRECTOR_ROLES.includes(role) && request.assigned_to !== userId) {
       throw new Error('Загрузить PDF может только назначенный технолог')
@@ -813,6 +864,15 @@ export async function uploadMachineLayoutPdf(formData: FormData): Promise<Action
         .eq('id', request.task_id)
       if (taskError) throw new Error(taskError.message || 'Не удалось закрыть задачу расстановки')
     }
+
+    await notifyManagerAboutLayoutUpload(db, {
+      requestId: request.id,
+      machineId: request.machine_id,
+      requestedBy: request.requested_by,
+      uploadedBy: userId,
+      versionNo: request.version_no,
+      fileName: file.name,
+    })
 
     revalidateLayout(request.machine_id)
     const data = await loadLayoutPayload(db, request.machine_id)

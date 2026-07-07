@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CheckCircle2, ClipboardList, Inbox, LayoutGrid, List, Send, TimerReset, type LucideIcon } from 'lucide-react'
 import { isBefore, startOfToday } from 'date-fns'
 import { Button } from '@/components/ui/button'
@@ -33,18 +33,31 @@ export function MyTasksView({
   resultLimit,
 }: MyTasksViewProps) {
   const today = useMemo(() => startOfToday(), [])
+  const [localTasks, setLocalTasks] = useState(tasks)
   const incomingTasks = useMemo(() => tasksFromDelegations(incomingDelegations), [incomingDelegations])
   const outgoingTasks = useMemo(() => tasksFromDelegations(outgoingDelegations), [outgoingDelegations])
   const [tab, setTab] = useState<TaskTab>(incomingTasks.length > 0 ? 'acceptance' : 'active')
   const [viewMode, setViewMode] = useState<TaskViewMode>('cards')
 
+  useEffect(() => {
+    setLocalTasks(tasks)
+  }, [tasks])
+
+  function handleTaskStatusChange(taskId: string, status: TaskWithRelations['status'], completedAt: string | null) {
+    setLocalTasks((current) => current.map((task) => (
+      task.id === taskId
+        ? { ...task, status, completed_at: completedAt, updated_at: new Date().toISOString() }
+        : task
+    )))
+  }
+
   const activeTasks = useMemo(
-    () => tasks.filter((task) => ['pending', 'in_progress'].includes(task.status)),
-    [tasks],
+    () => localTasks.filter((task) => ['pending', 'in_progress'].includes(task.status)),
+    [localTasks],
   )
   const completedTasks = useMemo(
-    () => tasks.filter((task) => task.status === 'completed'),
-    [tasks],
+    () => localTasks.filter((task) => task.status === 'completed'),
+    [localTasks],
   )
   const overdueTasks = useMemo(
     () => activeTasks.filter((task) => isBefore(new Date(task.deadline), today)),
@@ -63,14 +76,14 @@ export function MyTasksView({
     if (tab === 'acceptance') return incomingTasks
     if (tab === 'active') return activeTasks
     if (tab === 'completed') return completedTasks
-    return tasks
-  }, [activeTasks, completedTasks, incomingTasks, tab, tasks])
+    return localTasks
+  }, [activeTasks, completedTasks, incomingTasks, tab, localTasks])
 
   const tabs: { value: TaskTab; label: string; count: number }[] = [
     { value: 'acceptance', label: 'На принятие', count: incomingTasks.length },
     { value: 'active', label: 'Активные', count: activeTasks.length },
     { value: 'completed', label: 'Завершенные', count: completedTasks.length },
-    { value: 'all', label: 'Все', count: tasks.length },
+    { value: 'all', label: 'Все', count: localTasks.length },
   ]
 
   const viewModes: { value: TaskViewMode; label: string; icon: LucideIcon }[] = [
@@ -213,6 +226,7 @@ export function MyTasksView({
         layout={viewMode}
         context={taskContext}
         emptyMessage={tab === 'acceptance' ? 'Нет задач, ожидающих принятия.' : undefined}
+        onTaskStatusChange={handleTaskStatusChange}
       />
 
       {tab === 'active' && outgoingTasks.length > 0 && (
