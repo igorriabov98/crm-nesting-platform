@@ -41,6 +41,7 @@ export async function calculateRoutes(app: FastifyInstance) {
       where: {
         projectId: id,
         partType: 'SHEET',
+        isActive: true,
       },
     });
 

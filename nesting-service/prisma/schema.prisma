@@ -26,6 +26,13 @@ enum PartType {
   @@schema("nesting")
 }
 
+enum InactiveReason {
+  HIDDEN_IN_CAD
+  MANUAL
+
+  @@schema("nesting")
+}
+
 model NestingProject {
   id           String         @id @default(cuid())
   orderNumber  String
@@ -114,6 +121,10 @@ model Part {
   quantity     Int            @default(1)
   isSheetMetal Boolean        @default(true)
   partType     PartType       @default(SHEET)
+  isActive     Boolean        @default(true)
+  inactiveReason InactiveReason?
+  activityChangedBy String?
+  activityChangedAt DateTime?
   grainLock    Boolean        @default(false)
   hasBends     Boolean        @default(false)
   bendCount    Int            @default(0)
@@ -134,6 +145,7 @@ model Part {
   @@index([material, thickness])
   @@index([steelTypeId])
   @@index([partType])
+  @@index([isActive])
   @@schema("nesting")
 }
 

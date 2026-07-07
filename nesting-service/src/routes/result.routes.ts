@@ -18,6 +18,7 @@ import { idParamSchema } from '../schemas/common.schema';
 import { projectSheetParamsSchema } from '../schemas/project.schema';
 import { isCompletedProjectStatus } from '../lib/project-status';
 import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../lib/part-type';
+import { isPartActive, summarizePartActivity } from '../lib/part-activity';
 
 type PlacementForResult = {
   partId: string;
@@ -147,11 +148,13 @@ export async function resultRoutes(app: FastifyInstance) {
       };
     });
 
-    const totalParts = project.parts.reduce((sum, part) => sum + part.quantity * project.quantity, 0);
+    const activeProjectParts = project.parts.filter(isPartActive);
+    const activitySummary = summarizePartActivity(project.parts, project.quantity);
+    const totalParts = activitySummary.activeParts;
     const unplacedParts: UnplacedPart[] = [];
     const unplacedReasonQueues = buildUnplacedReasonQueues(project.validationReport);
 
-    for (const part of project.parts) {
+    for (const part of activeProjectParts) {
       const required = part.quantity * project.quantity;
       const placed = placedByPartId.get(part.id) ?? 0;
       const baseName = normalizeCadText(part.name);
@@ -212,6 +215,9 @@ export async function resultRoutes(app: FastifyInstance) {
         sheets,
         unplacedParts,
         totalParts,
+        totalBodies: activitySummary.totalBodies,
+        activeParts: activitySummary.activeParts,
+        inactiveParts: activitySummary.inactiveParts,
         placedParts,
         profileParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PROFILE').length,
         purchasedParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PURCHASED').length,

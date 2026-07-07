@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, Layers, Package, PackageCheck, Trash2, TrendingUp, Wrench } from 'lucide-react'
+import { AlertTriangle, CheckCircle, CircleOff, Layers, Package, PackageCheck, Trash2, TrendingUp, Wrench } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import type { NestingResult } from '@/lib/nesting/api'
@@ -20,6 +20,9 @@ function formatPercent(value: number) {
 }
 
 export function ResultStatsCards({ result }: { result: NestingResult }) {
+  const totalBodies = result.totalBodies ?? result.totalParts
+  const activeParts = result.activeParts ?? result.totalParts
+  const inactiveParts = result.inactiveParts ?? 0
   const cards = [
     {
       label: 'Листов',
@@ -28,10 +31,22 @@ export function ResultStatsCards({ result }: { result: NestingResult }) {
       className: 'text-[#1B3A6B]',
     },
     {
-      label: 'Всего деталей',
-      value: result.totalParts,
+      label: 'Тел STEP',
+      value: totalBodies,
       icon: Package,
       className: 'text-[#1B3A6B]',
+    },
+    {
+      label: 'Активных',
+      value: activeParts,
+      icon: PackageCheck,
+      className: 'text-[#1B3A6B]',
+    },
+    {
+      label: 'Неактивных',
+      value: inactiveParts,
+      icon: CircleOff,
+      className: inactiveParts > 0 ? 'text-slate-500' : 'text-green-600',
     },
     {
       label: 'Размещено',
@@ -72,7 +87,7 @@ export function ResultStatsCards({ result }: { result: NestingResult }) {
   ]
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-10">
       {cards.map((card) => {
         const Icon = card.icon
 

@@ -77,6 +77,9 @@ export function distributePartsToSheets(
       };
     }),
     totalParts,
+    totalBodies: totalParts,
+    activeParts: totalParts,
+    inactiveParts: 0,
     placedParts,
     profileParts: 0,
     purchasedParts: 0,
