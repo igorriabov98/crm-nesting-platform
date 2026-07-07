@@ -153,7 +153,7 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     const { id } = idParamSchema.parse(request.params);
     const body = applyBomSchema.parse(request.body ?? {});
     const parts = await prisma.part.findMany({
-      where: { projectId: id, id: { in: body.matches.map((match) => match.partId) } },
+      where: { projectId: id, id: { in: body.matches.map((match) => match.partId) }, isActive: true },
       select: {
         id: true,
         name: true,

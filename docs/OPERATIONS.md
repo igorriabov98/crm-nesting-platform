@@ -12,6 +12,12 @@
 
 Railway and Vercel autodeploy from `main` should stay disabled after the operator explicitly changes those settings. Production deploys should come from `deploy.yml`, not from feature branches or provider autodeploy.
 
+## Preparing STEP Files For Upload
+
+Ask CAD designers to export STEP files with only visible/active bodies enabled. In most CAD exporters this is a checkbox similar to "export visible bodies only" or "active/visible components only".
+
+If hidden or suppressed bodies are included in the exported STEP without explicit visibility metadata, the nesting service receives them as ordinary parts. In that case the operator must open the project parts table and turn off the extra body with the "Активна" toggle before matching, reconciliation, or nesting calculation.
+
 ## Five Layers
 
 Use this table shape in release reports:

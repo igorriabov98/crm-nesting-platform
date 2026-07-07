@@ -49,7 +49,7 @@ export async function analyzeProjectPdf(input: {
   const bom = resolveBOMSteelTypes(extractedBom, input.steelTypes ?? []);
   const details = mergeDeterministicDetails(pdfResult.details, deterministicPdfData.details);
   const parts = await prisma.part.findMany({
-    where: { projectId: input.projectId },
+    where: { projectId: input.projectId, isActive: true },
     select: {
       id: true,
       name: true,

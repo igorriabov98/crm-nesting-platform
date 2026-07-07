@@ -119,6 +119,9 @@ export interface NestingResult {
   sheets: SheetResult[];
   unplacedParts: UnplacedPart[];
   totalParts: number;
+  totalBodies: number;
+  activeParts: number;
+  inactiveParts: number;
   placedParts: number;
   profileParts: number;
   purchasedParts: number;

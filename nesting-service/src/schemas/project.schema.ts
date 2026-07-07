@@ -66,6 +66,8 @@ export const updatePartSchema = z.object({
   steelTypeName: z.string().min(1).nullable().optional(),
   steelTypeRaw: z.string().trim().min(1).max(120).nullable().optional(),
   quantity: z.number().int().min(1).optional(),
+  isActive: z.boolean().optional(),
+  activityChangedBy: z.string().trim().min(1).max(120).nullable().optional(),
   grainLock: z.boolean().optional(),
   isSheetMetal: z.boolean().optional(),
   partType: z.enum(['SHEET', 'PROFILE', 'PURCHASED']).optional(),

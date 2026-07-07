@@ -7,7 +7,12 @@ import { parseStepFile, type ParsedPart } from '../step-parser';
 import { distributePartsToSheets } from '../nesting/multi-sheet';
 import type { NestingPart, SheetOption } from '../nesting/types';
 
-type AppliedPart = ParsedPart & { id: string; matchSourceSection: string | null };
+type AppliedPart = ParsedPart & {
+  id: string;
+  matchSourceSection: string | null;
+  isActive: boolean;
+  inactiveReason: 'MANUAL' | null;
+};
 
 const OPERATOR_PASSPORT_ROWS = [
   { label: 'ЛЕДА 024.00.007 Обшивка верхняя нижняя', match: /024\.00\.007/, width: 1186, height: 1173, thickness: 2, quantity: 1 },
@@ -36,8 +41,13 @@ async function main(): Promise<void> {
   assert.equal(plugBom.bomSection, 'Прочие изделия');
   assert.equal(plugBom.quantity, 2);
 
-  const matchingParts = parsed.parts.map((part, index) => toMatchingPart(part, index));
+  const activeParsedParts = parsed.parts
+    .map((part, index) => ({ part, index, isActive: part.name !== 'закрівающий уголок лидл' }));
+  const matchingParts = activeParsedParts
+    .filter((item) => item.isActive)
+    .map(({ part, index }) => toMatchingPart(part, index));
   const matches = matchBOMToParts(pdfData.bom, matchingParts, pdfData.details);
+  assert.equal(matches.some((match) => match.partName === 'закрівающий уголок лидл'), false);
   const plugMatches = matches.filter((match) => match.bomPosition === '19');
   assert.equal(plugMatches.length, 2);
   assert.ok(plugMatches.every((match) => match.matchType !== 'none'));
@@ -47,6 +57,7 @@ async function main(): Promise<void> {
   assert.ok(plugMatches.every((match) => match.suggestedThickness === null));
 
   const applied = parsed.parts.map((part, index) => applyMatch(part, index, matches));
+  assertManualInactiveLedaBody(applied);
   const plugs = applied.filter((part) => part.name === 'Заглушка пластмассовая 15мм');
   assert.equal(plugs.length, 2);
   assert.ok(plugs.every((part) => part.partType === 'PURCHASED'));
@@ -57,8 +68,11 @@ async function main(): Promise<void> {
   assert.equal(new Set(plugs.map((part) => part.partType)).size, 1);
   assert.equal(new Set(plugs.map((part) => part.thickness)).size, 1);
 
-  const sheetParts = applied.filter((part) => part.partType === 'SHEET');
-  assert.equal(sheetParts.length, 21);
+  const activeApplied = applied.filter((part) => part.isActive);
+  const sheetPartsBeforeManualToggle = applied.filter((part) => part.partType === 'SHEET');
+  const sheetParts = activeApplied.filter((part) => part.partType === 'SHEET');
+  assert.equal(sheetPartsBeforeManualToggle.length, 21);
+  assert.equal(sheetParts.length, 20);
   assert.ok(sheetParts.every((part) => part.thickness !== null));
   assert.ok(sheetParts.every((part) => part.name !== 'Заглушка пластмассовая 15мм'));
   assertLedaAnglesAreSheet(applied);
@@ -74,20 +88,27 @@ async function main(): Promise<void> {
   });
 
   const placed = result.placedParts;
-  const profile = applied.filter((part) => part.partType === 'PROFILE').length;
-  const purchased = applied.filter((part) => part.partType === 'PURCHASED').length;
+  const profile = activeApplied.filter((part) => part.partType === 'PROFILE').length;
+  const purchased = activeApplied.filter((part) => part.partType === 'PURCHASED').length;
   const noSheet = result.noSheetParts;
-  const total = applied.length;
-  assert.equal(placed, 21);
+  const totalBodies = applied.length;
+  const inactive = applied.filter((part) => !part.isActive).length;
+  const activeTotal = activeApplied.length;
+  assert.equal(placed, 20);
   assert.equal(profile, 0);
   assert.equal(purchased, 2);
   assert.equal(noSheet, 0);
-  assert.equal(placed + profile + purchased + noSheet, total);
+  assert.equal(totalBodies, 23);
+  assert.equal(inactive, 1);
+  assert.equal(activeTotal, 22);
+  assert.equal(placed + profile + purchased + noSheet, activeTotal);
 
-  const reconciliationCandidates = applied.filter((part) => part.partType === 'SHEET');
+  const reconciliationCandidates = activeApplied.filter((part) => part.partType === 'SHEET');
   assert.equal(reconciliationCandidates.some((part) => part.name.includes('Заглушка')), false);
-  assertDiagnosticSummary({ placed, profile, purchased, noSheet, total });
+  assert.equal(reconciliationCandidates.some((part) => part.name === 'закрівающий уголок лидл'), false);
+  assertDiagnosticSummary({ placed, profile, purchased, noSheet, totalBodies, activeTotal, inactive });
   assertUnknownTwentyThirdBody(applied);
+  assertManualReactivationIsSymmetric(applied);
 
   await assertStv300Regression(fixturesDir);
   await assertSkm750Regression(fixturesDir);
@@ -140,24 +161,46 @@ function assertDiagnosticSummary(summary: {
   profile: number;
   purchased: number;
   noSheet: number;
-  total: number;
+  totalBodies: number;
+  activeTotal: number;
+  inactive: number;
 }): void {
   assert.deepEqual(summary, {
-    placed: 21,
+    placed: 20,
     profile: 0,
     purchased: 2,
     noSheet: 0,
-    total: 23,
+    totalBodies: 23,
+    activeTotal: 22,
+    inactive: 1,
   });
+}
+
+function assertManualInactiveLedaBody(parts: AppliedPart[]): void {
+  const body = parts.find((part) => part.name === 'закрівающий уголок лидл');
+  assert.ok(body);
+  assert.equal(body.isActive, false);
+  assert.equal(body.inactiveReason, 'MANUAL');
 }
 
 function assertUnknownTwentyThirdBody(parts: AppliedPart[]): void {
   const body = parts.find((part) => part.name === 'закрівающий уголок лидл');
   assert.ok(body);
   assert.equal(body.partType, 'SHEET');
+  assert.equal(body.isActive, false);
+  assert.equal(body.inactiveReason, 'MANUAL');
   assert.equal(body.thickness, 2);
   assert.ok(withinTolerance(body.width, 735, 0.5));
   assert.ok(withinTolerance(body.height, 39.4, 0.5));
+}
+
+function assertManualReactivationIsSymmetric(parts: AppliedPart[]): void {
+  const reactivated = parts.map((part) => part.name === 'закрівающий уголок лидл'
+    ? { ...part, isActive: true, inactiveReason: null }
+    : part
+  );
+  assert.equal(reactivated.filter((part) => part.isActive).length, 23);
+  assert.equal(reactivated.filter((part) => part.isActive && part.partType === 'SHEET').length, 21);
 }
 
 async function assertStv300Regression(fixturesDir: string): Promise<void> {
@@ -214,6 +257,8 @@ function applyMatch(part: ParsedPart, index: number, matches: ReturnType<typeof 
     hasBends: partType === 'SHEET' && part.hasBends,
     classificationWarning: partType === 'SHEET' ? part.classificationWarning : null,
     matchSourceSection: match?.bomPosition === '19' ? 'Прочие изделия' : null,
+    isActive: part.name !== 'закрівающий уголок лидл',
+    inactiveReason: part.name === 'закрівающий уголок лидл' ? 'MANUAL' : null,
   };
 }
 

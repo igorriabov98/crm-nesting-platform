@@ -61,12 +61,15 @@ export function AIAnalysisPanel({
   const [batchApply, setBatchApply] = useState<BatchApplyState | null>(null)
 
   const partsById = useMemo(() => new Map(parts.map((part) => [part.id, part])), [parts])
+  const activeMatches = useMemo(() => {
+    return (analysis?.matches || []).filter((match) => partsById.get(match.partId)?.isActive !== false)
+  }, [analysis, partsById])
   const proposedMatches = useMemo(() => {
-    return (analysis?.matches || []).filter((match) => isProposed(match))
-  }, [analysis])
+    return activeMatches.filter((match) => isProposed(match))
+  }, [activeMatches])
   const appliedMatches = useMemo(() => {
-    return (analysis?.matches || []).filter((match) => isApplied(match))
-  }, [analysis])
+    return activeMatches.filter((match) => isApplied(match))
+  }, [activeMatches])
   const selectedProposedMatches = useMemo(
     () => proposedMatches.filter((match) => selected[match.partId]),
     [proposedMatches, selected]
@@ -76,10 +79,10 @@ export function AIAnalysisPanel({
     [appliedMatches, selected]
   )
   const autoAppliedFieldCount = useMemo(() => {
-    return (analysis?.matches || [])
+    return activeMatches
       .filter((match) => match.applyStatus === 'applied_auto' || (match.autoApplied && !match.applyStatus))
       .reduce((total, match) => total + countSuggestedFields(match), 0)
-  }, [analysis])
+  }, [activeMatches])
 
   const loadSpecification = useCallback(async () => {
     setIsLoadingSpecification(true)
@@ -367,7 +370,7 @@ export function AIAnalysisPanel({
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {analysis.matches.map((match) => {
+                        {activeMatches.map((match) => {
                         const part = partsById.get(match.partId)
                         const confidence = Math.round(match.matchConfidence * 100)
                         const applied = isApplied(match)

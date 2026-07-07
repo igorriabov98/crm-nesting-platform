@@ -7,6 +7,7 @@ export type ClassificationMethod = 'bbox' | 'normals' | 'volume_area' | 'heurist
 export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE'
 export type NestingMaterial = 'Сталь' | 'Нержавейка' | 'Алюминий'
 export type PartType = 'SHEET' | 'PROFILE' | 'PURCHASED'
+export type InactiveReason = 'HIDDEN_IN_CAD' | 'MANUAL'
 
 export interface NestingParseReport {
   brepFlat: number
@@ -117,6 +118,10 @@ export interface NestingPart {
   quantity: number
   isSheetMetal: boolean
   partType: PartType
+  isActive: boolean
+  inactiveReason: InactiveReason | null
+  activityChangedBy: string | null
+  activityChangedAt: string | null
   grainLock: boolean
   hasBends: boolean
   bendCount: number
@@ -227,6 +232,9 @@ export interface NestingResult {
     requiredHeight?: number | null
   }>
   totalParts: number
+  totalBodies?: number
+  activeParts?: number
+  inactiveParts?: number
   placedParts: number
   profileParts: number
   purchasedParts: number
@@ -458,9 +466,21 @@ export async function markProjectSuperseded(projectId: string, supersededByProje
   }
 }
 
-export async function getParts(projectId: string): Promise<{ data: NestingPart[]; total: number }> {
+export async function getParts(projectId: string): Promise<{
+  data: NestingPart[]
+  total: number
+  totalBodies?: number
+  activeParts?: number
+  inactiveParts?: number
+}> {
   const res = await request(buildUrl(`/api/projects/${projectId}/parts`), { cache: 'no-store' }, 'Не удалось загрузить детали')
-  return readJson<{ data: NestingPart[]; total: number }>(res, 'Не удалось загрузить детали')
+  return readJson<{
+    data: NestingPart[]
+    total: number
+    totalBodies?: number
+    activeParts?: number
+    inactiveParts?: number
+  }>(res, 'Не удалось загрузить детали')
 }
 
 export async function getPartDetail(projectId: string, partId: string): Promise<{ data: NestingPartDetail }> {
@@ -477,6 +497,8 @@ export async function updatePart(
     steelTypeName: string | null
     steelTypeRaw: string | null
     quantity: number
+    isActive: boolean
+    activityChangedBy: string | null
     grainLock: boolean
     isSheetMetal: boolean
     partType: PartType
