@@ -44,6 +44,7 @@ export interface BOMEntry {
   quantity: number;
   thickness: number | null;
   notes: string;
+  bomSources?: number[];
 }
 
 export interface DetailEntry {

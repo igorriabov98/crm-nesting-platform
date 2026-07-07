@@ -11,23 +11,12 @@ import {
   markSpecificationMatchesReverted,
 } from '../lib/ai/service';
 import {
-  applyDimensionGuard,
-  applyThicknessGuard,
-  buildDimensionMismatchNote,
-  buildThicknessMismatchNote,
-  isDimensionChangeSafe,
-  isThicknessChangeSafe,
-} from '../lib/ai/dimension-guard';
-import {
   AI_RECALC_REQUIRED_MESSAGE,
-  appendForceAudit,
-  buildAIApplySnapshot,
   buildRestorePartData,
-  hasAIApplyTrackedChange,
   hasGeometryAffectingChange,
-  hasNestingAffectingChange,
   parseAIApplySnapshot,
 } from '../lib/ai/apply-control';
+import { prepareBOMApplyUpdate, type BOMApplyBlockedRow } from '../lib/ai/bom-apply';
 import {
   aiSettingsInputSchema,
   getAISettingsView,
@@ -37,7 +26,6 @@ import {
 } from '../lib/ai/settings';
 import { testOpenRouterConnection } from '../lib/ai/openrouter';
 import { materializeValidatedStorageObject } from '../lib/storage';
-import { normalizePartType, partTypeFromLegacySheetFlag } from '../lib/part-type';
 
 const steelTypeSchema = z.object({
   id: z.string().min(1),
@@ -188,107 +176,66 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     const partsById = new Map(parts.map((part) => [part.id, part]));
     const pendingUpdates: Array<{ partId: string; data: Prisma.PartUpdateInput }> = [];
     const updatedPartIds = new Set<string>();
+    const blockedPartIds = new Set<string>();
+    const blocked: BOMApplyBlockedRow[] = [];
+    const results: Array<{
+      partId: string;
+      partName?: string;
+      status: 'applied' | 'blocked' | 'skipped' | 'not_found';
+      reason?: BOMApplyBlockedRow['reason'];
+      message?: string;
+      requiresForce?: boolean;
+    }> = [];
     let needsUnfoldRecalculation = false;
     const appliedAt = new Date();
 
     for (const match of body.matches) {
       const part = partsById.get(match.partId);
-      if (!part) continue;
+      if (!part) {
+        results.push({ partId: match.partId, status: 'not_found', message: 'Деталь не найдена' });
+        continue;
+      }
 
-      const data: Prisma.PartUpdateInput = {};
-      if (match.material) data.material = match.material;
-      if (match.quantity) data.quantity = match.quantity;
-      if ('steelTypeId' in match) data.steelTypeId = match.steelTypeId ?? null;
-      if ('steelTypeName' in match) data.steelTypeName = match.steelTypeName ?? null;
-      if ('steelTypeRaw' in match) data.steelTypeRaw = match.steelTypeRaw ?? null;
-      if (match.hasBends !== undefined) data.hasBends = match.hasBends;
-      const nextPartType = match.partType
-        ? normalizePartType(match.partType)
-        : match.isSheetMetal !== undefined
-          ? partTypeFromLegacySheetFlag(match.isSheetMetal)
-          : null;
-      if (nextPartType) {
-        data.partType = nextPartType;
-        data.isSheetMetal = nextPartType === 'SHEET';
-        data.classificationMethod = 'pdf_bom';
-        data.classificationWarning = null;
-        if (nextPartType !== 'SHEET') {
-          data.hasBends = false;
-          data.grainLock = false;
-          data.thicknessMismatch = false;
-          data.thicknessMismatchNote = null;
+      const prepared = prepareBOMApplyUpdate(match, part, {
+        force: body.force === true,
+        appliedBy: body.appliedBy ?? null,
+        appliedAt,
+      });
+
+      if (prepared.status === 'blocked') {
+        if (body.matches.length === 1 && body.force !== true) {
+          throw new AppError(409, prepared.blocked.message, {
+            partId: prepared.blocked.partId,
+            mismatchNote: prepared.blocked.mismatchNote,
+            thicknessMismatchNote: prepared.blocked.thicknessMismatchNote,
+            blocked: prepared.blocked,
+          });
         }
-      }
-      if (match.unfoldingWidth && match.unfoldingHeight) {
-        if (data.hasBends === undefined) data.hasBends = true;
-      }
-
-      const forcedThicknessMismatch = body.force === true
-        && match.thickness !== undefined
-        && !isThicknessChangeSafe(part, match.thickness);
-      const forcedDimensionMismatch = body.force === true
-        && match.unfoldingWidth !== undefined
-        && match.unfoldingHeight !== undefined
-        && !isDimensionChangeSafe(part, match.unfoldingWidth, match.unfoldingHeight);
-      const thicknessGuard = applyThicknessGuard(data, part, match.thickness, {
-        force: body.force === true,
-        blockOnMismatch: true,
-      });
-
-      if (thicknessGuard.blocked) {
-        throw new AppError(409, thicknessGuard.note ?? 'Толщина BOM расходится с геометрией STEP', {
-          partId: match.partId,
-          thicknessMismatchNote: thicknessGuard.note,
+        blocked.push(prepared.blocked);
+        blockedPartIds.add(prepared.blocked.partId);
+        results.push({
+          partId: prepared.blocked.partId,
+          partName: prepared.blocked.partName,
+          status: 'blocked',
+          reason: prepared.blocked.reason,
+          message: prepared.blocked.message,
+          requiresForce: true,
         });
+        continue;
       }
 
-      const guarded = applyDimensionGuard(thicknessGuard.data, part, match.unfoldingWidth, match.unfoldingHeight, {
-        force: body.force === true,
-        blockOnMismatch: true,
-      });
-
-      if (guarded.blocked) {
-        throw new AppError(409, guarded.note ?? 'Размеры PDF расходятся с геометрией STEP', {
-          partId: match.partId,
-          mismatchNote: guarded.note,
-        });
+      if (prepared.status === 'skipped') {
+        results.push({ partId: prepared.partId, partName: prepared.partName, status: 'skipped' });
+        continue;
       }
 
-      if (forcedThicknessMismatch && match.thickness !== undefined) {
-        guarded.data.thicknessMismatch = true;
-        guarded.data.thicknessMismatchNote = appendForceAudit(
-          buildThicknessMismatchNote(part, match.thickness),
-          body.appliedBy,
-          appliedAt
-        );
-      }
-
-      if (forcedDimensionMismatch && match.unfoldingWidth !== undefined && match.unfoldingHeight !== undefined) {
-        guarded.data.dimensionMismatch = true;
-        guarded.data.mismatchNote = appendForceAudit(
-          buildDimensionMismatchNote(part, match.unfoldingWidth, match.unfoldingHeight),
-          body.appliedBy,
-          appliedAt
-        );
-        guarded.data.contourStale = true;
-      } else if (guarded.dimensionsApplied) {
-        guarded.data.contourStale = false;
-      }
-
-      if (Object.keys(guarded.data).length === 0) continue;
-      if (hasNestingAffectingChange(guarded.data)) {
+      if (prepared.update.needsUnfoldRecalculation) {
         needsUnfoldRecalculation = true;
       }
-      if (hasAIApplyTrackedChange(guarded.data)) {
-        guarded.data.aiApplySnapshot = buildAIApplySnapshot(part, {
-          appliedBy: body.appliedBy ?? null,
-          appliedAt,
-          forced: body.force === true,
-        }) as unknown as Prisma.InputJsonValue;
-      }
 
-      pendingUpdates.push({ partId: match.partId, data: guarded.data });
-      updatedPartIds.add(match.partId);
+      pendingUpdates.push({ partId: prepared.update.partId, data: prepared.update.data });
+      updatedPartIds.add(prepared.update.partId);
+      results.push({ partId: prepared.update.partId, partName: part.name, status: 'applied' });
     }
 
     for (const update of pendingUpdates) {
@@ -303,6 +250,10 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       appliedBy: body.appliedBy ?? null,
       appliedAt,
     });
+    await markSpecificationMatchesApplied(id, blockedPartIds, {
+      status: 'needs_force',
+      appliedBy: body.appliedBy ?? null,
+    });
     if (needsUnfoldRecalculation) {
       await prisma.nestingProject.update({
         where: { id },
@@ -313,7 +264,11 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       });
     }
 
-    return { updated: pendingUpdates.length };
+    return {
+      updated: pendingUpdates.length,
+      blocked,
+      results,
+    };
   });
 
   app.post('/:id/revert-bom', async (request) => {
