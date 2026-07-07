@@ -1,4 +1,5 @@
 import type { BOMEntry, SteelTypeCatalogItem } from './types';
+import { isProfileBomPartType, isPurchasedBomSection } from '../part-type';
 
 type ResolvedSteelType = Pick<BOMEntry, 'steelTypeRaw' | 'steelTypeId' | 'steelTypeName' | 'steelTypeWarning'>;
 type CatalogResolution = {
@@ -17,9 +18,18 @@ export function resolveBOMSteelTypes(
 }
 
 export function resolveSteelTypeForEntry(
-  entry: Pick<BOMEntry, 'material' | 'notes' | 'steelTypeRaw'>,
+  entry: Pick<BOMEntry, 'material' | 'notes' | 'steelTypeRaw'> & Partial<Pick<BOMEntry, 'bomSection' | 'partType' | 'description' | 'name'>>,
   steelTypes: SteelTypeCatalogItem[] = []
 ): ResolvedSteelType {
+  if (isNonSheetReferenceEntry(entry)) {
+    return {
+      steelTypeRaw: entry.steelTypeRaw ?? null,
+      steelTypeId: null,
+      steelTypeName: null,
+      steelTypeWarning: null,
+    };
+  }
+
   const raw = firstNonEmpty([
     entry.steelTypeRaw,
     extractCatalogSteelType(entry.material, steelTypes),
@@ -67,6 +77,17 @@ export function resolveSteelTypeForEntry(
     steelTypeName: null,
     steelTypeWarning: `Тип стали не найден в CRM: ${raw}`,
   };
+}
+
+function isNonSheetReferenceEntry(
+  entry: Pick<BOMEntry, 'material' | 'notes' | 'steelTypeRaw'> & Partial<Pick<BOMEntry, 'bomSection' | 'partType' | 'description' | 'name'>>
+): boolean {
+  if (isPurchasedBomSection(entry.bomSection)) return true;
+  if (!entry.partType || entry.partType === 'sheet') return false;
+  if (!isProfileBomPartType(entry.partType)) return false;
+
+  const text = [entry.material, entry.notes, entry.description, entry.name].filter(Boolean).join(' ');
+  return !/(?:\bлист\b|бт?\s*-\s*пн|\bbl\b|sheet|blech)/iu.test(text);
 }
 
 export function normalizeSteelTypeName(value: string | null | undefined): string {

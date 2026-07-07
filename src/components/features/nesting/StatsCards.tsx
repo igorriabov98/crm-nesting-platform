@@ -1,15 +1,25 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import type { NestingPart } from '@/lib/nesting/api'
+import type { NestingPart, PartType } from '@/lib/nesting/api'
+
+function getPartType(part: NestingPart): PartType {
+  return part.partType || (part.isSheetMetal ? 'SHEET' : 'PROFILE')
+}
 
 export function StatsCards({ parts }: { parts: NestingPart[] }) {
-  const sheetMetal = parts.filter((part) => part.isSheetMetal)
-  const nonSheetMetal = parts.length - sheetMetal.length
-  const thicknesses = Array.from(new Set(sheetMetal.map((part) => part.thickness))).sort((a, b) => a - b)
+  const sheetMetal = parts.filter((part) => getPartType(part) === 'SHEET')
+  const profile = parts.filter((part) => getPartType(part) === 'PROFILE')
+  const purchased = parts.filter((part) => getPartType(part) === 'PURCHASED')
+  const thicknesses = Array.from(new Set(
+    sheetMetal
+      .map((part) => part.thickness)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+  )).sort((a, b) => a - b)
 
   const cards = [
     { label: 'Всего', value: parts.length, detail: 'деталей' },
     { label: 'Листовых', value: sheetMetal.length, detail: 'для раскладки' },
-    { label: 'Не листовых', value: nonSheetMetal, detail: 'исключены' },
+    { label: 'Профильных', value: profile.length, detail: 'не в раскладку' },
+    { label: 'Покупных', value: purchased.length, detail: 'не в раскладку' },
     {
       label: 'Толщин',
       value: thicknesses.length,
@@ -18,7 +28,7 @@ export function StatsCards({ parts }: { parts: NestingPart[] }) {
   ]
 
   return (
-    <div className="grid gap-3 md:grid-cols-4">
+    <div className="grid gap-3 md:grid-cols-5">
       {cards.map((card) => (
         <Card key={card.label} className="bg-white">
           <CardHeader className="pb-0">

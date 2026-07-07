@@ -40,7 +40,7 @@ export async function calculateRoutes(app: FastifyInstance) {
     const sheetMetalPartsCount = await prisma.part.count({
       where: {
         projectId: id,
-        isSheetMetal: true,
+        partType: 'SHEET',
       },
     });
 

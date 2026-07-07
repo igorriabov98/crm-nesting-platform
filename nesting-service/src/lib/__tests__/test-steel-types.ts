@@ -83,6 +83,7 @@ function createBom(name: string, material: string, steelTypeRaw: string | null):
     articleNumber: '',
     position: '',
     designation: '',
+    bomSection: '',
     description: name,
     partType: 'other',
     thicknessMm: null,

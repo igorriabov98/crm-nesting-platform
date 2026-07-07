@@ -18,6 +18,14 @@ enum ContourSource {
   @@schema("nesting")
 }
 
+enum PartType {
+  SHEET
+  PROFILE
+  PURCHASED
+
+  @@schema("nesting")
+}
+
 model NestingProject {
   id           String         @id @default(cuid())
   orderNumber  String
@@ -86,7 +94,7 @@ model Part {
   sourceMachineItemId String?
   sourceProductId String?
   name         String
-  thickness    Float
+  thickness    Float?
   material     String         @default("Сталь")
   steelTypeId   String?
   steelTypeName String?
@@ -105,6 +113,7 @@ model Part {
   contourSource ContourSource @default(EXACT_BOUNDARY)
   quantity     Int            @default(1)
   isSheetMetal Boolean        @default(true)
+  partType     PartType       @default(SHEET)
   grainLock    Boolean        @default(false)
   hasBends     Boolean        @default(false)
   bendCount    Int            @default(0)
@@ -124,6 +133,7 @@ model Part {
   @@index([sourceId])
   @@index([material, thickness])
   @@index([steelTypeId])
+  @@index([partType])
   @@schema("nesting")
 }
 

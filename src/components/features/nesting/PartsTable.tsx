@@ -20,10 +20,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { updateNestingPart } from '@/lib/nesting/actions'
 import { cn } from '@/lib/utils'
 import type { SteelType } from '@/lib/types/database'
-import type { NestingPart } from '@/lib/nesting/api'
+import type { NestingPart, PartType } from '@/lib/nesting/api'
 
 const materials = ['Сталь', 'Нержавейка', 'Алюминий']
 const noSteelTypeValue = '__none__'
+const partTypeOptions: Array<{ value: PartType; label: string; className: string }> = [
+  { value: 'SHEET', label: 'Листовая', className: 'bg-emerald-100 text-emerald-700' },
+  { value: 'PROFILE', label: 'Профиль', className: 'bg-sky-100 text-sky-700' },
+  { value: 'PURCHASED', label: 'Покупная', className: 'bg-violet-100 text-violet-700' },
+]
 
 function sanitizeThumbnail(svg: string | null) {
   const value = svg?.trim()
@@ -95,13 +100,25 @@ function formatDim(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, '')
 }
 
-function isPdfNonSheet(part: NestingPart) {
-  return !part.isSheetMetal && part.classificationMethod === 'pdf_bom'
-}
-
 function formatKFactor(part: NestingPart) {
   if (part.kFactor === null || part.kFactor === undefined) return ''
   return `${part.kFactor.toFixed(2)}${part.kFactorDefaulted ? ' default' : ''}`
+}
+
+function getPartType(part: NestingPart): PartType {
+  return part.partType || (part.isSheetMetal ? 'SHEET' : 'PROFILE')
+}
+
+function isSheetPart(part: NestingPart) {
+  return getPartType(part) === 'SHEET'
+}
+
+function partTypeMeta(partType: PartType) {
+  return partTypeOptions.find((option) => option.value === partType) ?? partTypeOptions[0]
+}
+
+function formatThickness(value: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value} мм` : '—'
 }
 
 export function PartsTable({
@@ -122,16 +139,21 @@ export function PartsTable({
   const [thicknesses, setThicknesses] = useState<Record<string, string>>({})
 
   const thicknessIndex = useMemo(() => {
-    const values = Array.from(new Set(parts.map((part) => part.thickness))).sort((a, b) => a - b)
+    const values = Array.from(new Set(
+      parts
+        .filter(isSheetPart)
+        .map((part) => part.thickness)
+        .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    )).sort((a, b) => a - b)
     return new Map(values.map((value, index) => [value, index]))
   }, [parts])
 
   useEffect(() => {
     setQuantities(Object.fromEntries(parts.map((part) => [part.id, String(part.quantity)])))
-    setThicknesses(Object.fromEntries(parts.map((part) => [part.id, String(part.thickness)])))
+    setThicknesses(Object.fromEntries(parts.map((part) => [part.id, part.thickness === null ? '' : String(part.thickness)])))
   }, [parts])
 
-  const visibleParts = onlySheetMetal ? parts.filter((part) => part.isSheetMetal) : parts
+  const visibleParts = onlySheetMetal ? parts.filter(isSheetPart) : parts
 
   async function savePart(part: NestingPart, data: Partial<{
     material: string
@@ -141,6 +163,7 @@ export function PartsTable({
     quantity: number
     grainLock: boolean
     isSheetMetal: boolean
+    partType: PartType
     thickness: number
   }>) {
     setSavingPartId(part.id)
@@ -169,7 +192,7 @@ export function PartsTable({
   function commitThickness(part: NestingPart) {
     const next = Number(thicknesses[part.id])
     if (!Number.isFinite(next) || next <= 0 || next > 50) {
-      setThicknesses((current) => ({ ...current, [part.id]: String(part.thickness) }))
+      setThicknesses((current) => ({ ...current, [part.id]: part.thickness === null ? '' : String(part.thickness) }))
       setEditingThicknessPartId(null)
       return
     }
@@ -226,10 +249,13 @@ export function PartsTable({
             {visibleParts.map((part) => {
               const disabled = savingPartId === part.id
               const methodLabel = classificationMethodLabel(part.classificationMethod)
-              const pdfNonSheet = isPdfNonSheet(part)
+              const partType = getPartType(part)
+              const sheetPart = partType === 'SHEET'
+              const typeMeta = partTypeMeta(partType)
+              const autoTyped = part.classificationMethod !== null && part.classificationMethod !== 'manual'
 
               return (
-                <TableRow key={part.id} className={cn(!part.isSheetMetal && !pdfNonSheet && 'opacity-50')}>
+                <TableRow key={part.id} className={cn(!sheetPart && 'bg-slate-50/40')}>
                   <TableCell>
                     <div
                       className="flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-md border border-[#E8ECF0] bg-[#F8F9FA] [&_svg]:max-h-[44px] [&_svg]:max-w-[44px]"
@@ -275,7 +301,7 @@ export function PartsTable({
                   </TableCell>
                   <TableCell>
                     <div className="flex min-w-[150px] items-center gap-2">
-                      {editingThicknessPartId === part.id ? (
+                      {editingThicknessPartId === part.id && sheetPart ? (
                         <Input
                           className="h-8 w-24 bg-white"
                           type="number"
@@ -283,7 +309,7 @@ export function PartsTable({
                           max={50}
                           step={0.1}
                           autoFocus
-                          value={thicknesses[part.id] ?? String(part.thickness)}
+                          value={thicknesses[part.id] ?? (part.thickness === null ? '' : String(part.thickness))}
                           disabled={disabled}
                           onChange={(event) => setThicknesses((current) => ({ ...current, [part.id]: event.target.value }))}
                           onBlur={() => commitThickness(part)}
@@ -292,7 +318,7 @@ export function PartsTable({
                               event.currentTarget.blur()
                             }
                             if (event.key === 'Escape') {
-                              setThicknesses((current) => ({ ...current, [part.id]: String(part.thickness) }))
+                              setThicknesses((current) => ({ ...current, [part.id]: part.thickness === null ? '' : String(part.thickness) }))
                               setEditingThicknessPartId(null)
                             }
                           }}
@@ -301,11 +327,14 @@ export function PartsTable({
                         <button
                           type="button"
                           className="text-left"
-                          disabled={disabled}
-                          onClick={() => setEditingThicknessPartId(part.id)}
+                          disabled={disabled || !sheetPart}
+                          onClick={() => sheetPart && setEditingThicknessPartId(part.id)}
                         >
-                          <Badge variant="secondary" className={thicknessClass(thicknessIndex.get(part.thickness) ?? 0)}>
-                            {part.thickness} мм
+                          <Badge
+                            variant="secondary"
+                            className={sheetPart ? thicknessClass(thicknessIndex.get(part.thickness ?? 0) ?? 0) : 'bg-slate-100 text-slate-600'}
+                          >
+                            {formatThickness(part.thickness)}
                           </Badge>
                         </button>
                       )}
@@ -339,7 +368,7 @@ export function PartsTable({
                             </TooltipContent>
                           </Tooltip>
                         ) : null}
-                        {part.classificationWarning ? (
+                        {sheetPart && part.classificationWarning ? (
                           <Tooltip>
                             <TooltipTrigger
                               render={
@@ -351,7 +380,7 @@ export function PartsTable({
                             <TooltipContent>{part.classificationWarning}</TooltipContent>
                           </Tooltip>
                         ) : null}
-                        {part.thicknessMismatch ? (
+                        {sheetPart && part.thicknessMismatch ? (
                           <Tooltip>
                             <TooltipTrigger
                               render={
@@ -367,10 +396,10 @@ export function PartsTable({
                     </div>
                   </TableCell>
                   <TableCell>
-	                    <Select
-	                      value={part.material}
-	                      disabled={disabled}
-	                      onValueChange={(value) => value && savePart(part, { material: value })}
+                    <Select
+                      value={part.material}
+                      disabled={disabled}
+                      onValueChange={(value) => value && savePart(part, { material: value })}
                     >
                       <SelectTrigger className="w-[150px] bg-white">
                         <SelectValue>{part.material}</SelectValue>
@@ -383,10 +412,10 @@ export function PartsTable({
                     </Select>
                   </TableCell>
                   <TableCell>
-	                    <Select
-	                      value={part.steelTypeId || noSteelTypeValue}
-	                      disabled={disabled || steelTypes.length === 0}
-	                      onValueChange={(value) => saveSteelType(part, value)}
+                    <Select
+                      value={part.steelTypeId || noSteelTypeValue}
+                      disabled={disabled || !sheetPart || steelTypes.length === 0}
+                      onValueChange={(value) => saveSteelType(part, value)}
                     >
                       <SelectTrigger className="w-[150px] bg-white">
                         <SelectValue>{part.steelTypeName || 'Не выбран'}</SelectValue>
@@ -422,28 +451,33 @@ export function PartsTable({
                     <Switch
                       size="sm"
                       checked={part.grainLock}
-                      disabled={disabled || !part.isSheetMetal}
+                      disabled={disabled || !sheetPart}
                       onCheckedChange={(checked) => savePart(part, { grainLock: checked === true })}
                     />
                   </TableCell>
                   <TableCell>
-                    <button type="button" disabled={disabled} onClick={() => savePart(part, { isSheetMetal: !part.isSheetMetal })}>
-                      <Badge
-                        variant="secondary"
-                        className={
-                          part.isSheetMetal
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : pdfNonSheet
-                              ? 'bg-sky-100 text-sky-700'
-                              : 'bg-slate-100 text-slate-600'
-                        }
+                    <div className="flex min-w-[150px] flex-col gap-1">
+                      <Select
+                        value={partType}
+                        disabled={disabled}
+                        onValueChange={(value) => savePart(part, { partType: value as PartType })}
                       >
-	                        {part.isSheetMetal ? 'Листовая' : 'Профиль/круг'}
-                      </Badge>
-                    </button>
-                    {pdfNonSheet ? (
-                      <div className="mt-1 text-[11px] text-[#6B7280]">не для листового раскроя</div>
-                    ) : null}
+                        <SelectTrigger className="w-[150px] bg-white">
+                          <SelectValue>{typeMeta.label}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent className="bg-white">
+                          {partTypeOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="flex items-center gap-1">
+                        <Badge variant="secondary" className={typeMeta.className}>{typeMeta.label}</Badge>
+                        {autoTyped ? (
+                          <Badge variant="outline" className="border-[#DDE3EA] bg-white text-[#6B7280]">авто</Badge>
+                        ) : null}
+                      </div>
+                    </div>
                   </TableCell>
                 </TableRow>
               )

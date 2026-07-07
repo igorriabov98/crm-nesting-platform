@@ -11,6 +11,7 @@ import {
   createUnplacedPart,
 } from './unplaced-reasons';
 import { validateLayout, type LayoutValidationReport } from '../validation/layout-validator';
+import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../part-type';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
 
@@ -40,13 +41,14 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   const strategy = STRATEGIES.includes(project.strategy as NestingParams['strategy'])
     ? (project.strategy as NestingParams['strategy'])
     : 'minWaste';
-  const sheetMetalParts = project.parts.filter((part) => part.isSheetMetal);
+  const sheetMetalParts = project.parts.filter((part) => isSheetPartType(part.partType, part.isSheetMetal));
   const excludedParts = project.parts
-    .filter((part) => !part.isSheetMetal)
+    .filter((part) => !isSheetPartType(part.partType, part.isSheetMetal))
     .map((part) => ({
       partId: part.id,
       name: normalizeCadText(part.name),
       quantity: part.quantity * project.quantity,
+      reasonCode: excludedReasonCode(part.partType),
       reason: buildExcludedFromNestingReason(part),
     }));
   type PartWithKnownThickness = (typeof sheetMetalParts)[number] & { thickness: number };
@@ -93,7 +95,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     Array.from({ length: part.quantity }, (_, index) => ({
       partId: part.partId,
       name: `${part.name} (#${index + 1}) - ${part.reason}`,
-      reasonCode: 'EXCLUDED' as const,
+      reasonCode: part.reasonCode,
       reason: part.reason,
       material: null,
       steelTypeName: null,
@@ -104,6 +106,12 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   );
   const totalParts = expectedParts.reduce((sum, part) => sum + part.quantity, 0);
   let placedParts = 0;
+  const profileParts = excludedParts
+    .filter((part) => part.reasonCode === 'EXCLUDED_PROFILE')
+    .reduce((sum, part) => sum + part.quantity, 0);
+  const purchasedParts = excludedParts
+    .filter((part) => part.reasonCode === 'EXCLUDED_PURCHASED')
+    .reduce((sum, part) => sum + part.quantity, 0);
 
   for (const part of partsWithoutThickness) {
     const quantity = part.quantity * project.quantity;
@@ -226,6 +234,9 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     unplacedParts: allUnplaced,
     totalParts,
     placedParts,
+    profileParts,
+    purchasedParts,
+    noSheetParts: allUnplaced.filter((part) => part.reasonCode === 'NO_SHEET_AVAILABLE').length,
     totalSheets: allSheetResults.length,
     avgUtilization,
     totalWaste,
@@ -243,18 +254,20 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
 }
 
 function buildExcludedFromNestingReason(part: {
+  partType?: string | null;
   classificationMethod: string | null;
   classificationWarning: string | null;
 }): string {
+  const typeLabel = partTypeLabel(part.partType);
   if (part.classificationMethod === 'manual') {
-    return 'ручная метка "Профиль/круг — не для листового раскроя"';
+    return `ручная метка "${typeLabel} — не для листового раскроя"`;
   }
 
   if (part.classificationMethod === 'pdf_bom') {
-    return 'PDF/BOM указал профиль/круг — не для листового раскроя';
+    return `PDF/BOM указал ${typeLabel.toLowerCase()} — не для листового раскроя`;
   }
 
-  return part.classificationWarning || 'автоматическая классификация как не листовая деталь';
+  return part.classificationWarning || `автоматическая классификация: ${typeLabel.toLowerCase()} — не для листового раскроя`;
 }
 
 async function findSuitableSheets(
@@ -368,11 +381,17 @@ async function saveResults(
   result: NestingResult,
   validationReport: LayoutValidationReport
 ): Promise<void> {
-  const validationWarning = validationReport.violations.length > 0
-    ? `Найдены нарушения валидации раскладки: ${validationReport.violations.length}`
+  const realValidationViolations = validationReport.violations.filter((violation) => violation.severity !== 'info');
+  const realUnplacedParts = result.unplacedParts.filter((part) =>
+    part.reasonCode !== 'EXCLUDED' &&
+    part.reasonCode !== 'EXCLUDED_PROFILE' &&
+    part.reasonCode !== 'EXCLUDED_PURCHASED'
+  );
+  const validationWarning = realValidationViolations.length > 0
+    ? `Найдены нарушения валидации раскладки: ${realValidationViolations.length}`
     : null;
-  const unplacedWarning = result.unplacedParts.length > 0
-    ? `Не размещено деталей: ${result.unplacedParts.length}`
+  const unplacedWarning = realUnplacedParts.length > 0
+    ? `Не размещено деталей: ${realUnplacedParts.length}`
     : null;
   const warningMessage = [validationWarning, unplacedWarning].filter(Boolean).join('; ') || null;
 
@@ -426,7 +445,7 @@ async function saveResults(
     await tx.nestingProject.update({
       where: { id: projectId },
       data: {
-        status: validationReport.valid && result.unplacedParts.length === 0 ? 'done' : 'completed_with_warnings',
+        status: validationReport.valid && realUnplacedParts.length === 0 ? 'done' : 'completed_with_warnings',
         errorMessage: warningMessage,
         validationReport: validationReport as unknown as Prisma.InputJsonValue,
       },

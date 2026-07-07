@@ -16,12 +16,13 @@ export type AIApplySnapshot = {
   steelTypeId: string | null;
   steelTypeName: string | null;
   steelTypeRaw: string | null;
-  thickness: number;
+  thickness: number | null;
   quantity: number;
   width: number;
   height: number;
   contourStale: boolean;
   isSheetMetal: boolean;
+  partType: 'SHEET' | 'PROFILE' | 'PURCHASED';
   hasBends: boolean;
   classificationMethod: string | null;
   classificationWarning: string | null;
@@ -35,12 +36,13 @@ export type SnapshotPart = {
   steelTypeId: string | null;
   steelTypeName: string | null;
   steelTypeRaw: string | null;
-  thickness: number;
+  thickness: number | null;
   quantity: number;
   width: number;
   height: number;
   contourStale?: boolean | null;
   isSheetMetal: boolean;
+  partType?: 'SHEET' | 'PROFILE' | 'PURCHASED' | null;
   hasBends: boolean;
   classificationMethod: string | null;
   classificationWarning: string | null;
@@ -61,6 +63,7 @@ export function buildAIApplySnapshot(
     height: part.height,
     contourStale: part.contourStale === true,
     isSheetMetal: part.isSheetMetal,
+    partType: part.partType ?? (part.isSheetMetal ? 'SHEET' : 'PROFILE'),
     hasBends: part.hasBends,
     classificationMethod: part.classificationMethod,
     classificationWarning: part.classificationWarning,
@@ -76,7 +79,6 @@ export function parseAIApplySnapshot(value: unknown): AIApplySnapshot | null {
 
   if (
     typeof candidate.material !== 'string' ||
-    typeof candidate.thickness !== 'number' ||
     typeof candidate.quantity !== 'number' ||
     typeof candidate.width !== 'number' ||
     typeof candidate.height !== 'number' ||
@@ -90,12 +92,15 @@ export function parseAIApplySnapshot(value: unknown): AIApplySnapshot | null {
     steelTypeId: typeof candidate.steelTypeId === 'string' ? candidate.steelTypeId : null,
     steelTypeName: typeof candidate.steelTypeName === 'string' ? candidate.steelTypeName : null,
     steelTypeRaw: typeof candidate.steelTypeRaw === 'string' ? candidate.steelTypeRaw : null,
-    thickness: candidate.thickness,
+    thickness: typeof candidate.thickness === 'number' ? candidate.thickness : null,
     quantity: candidate.quantity,
     width: candidate.width,
     height: candidate.height,
     contourStale: candidate.contourStale === true,
     isSheetMetal: candidate.isSheetMetal,
+    partType: candidate.partType === 'SHEET' || candidate.partType === 'PROFILE' || candidate.partType === 'PURCHASED'
+      ? candidate.partType
+      : candidate.isSheetMetal ? 'SHEET' : 'PROFILE',
     hasBends: candidate.hasBends === true,
     classificationMethod: typeof candidate.classificationMethod === 'string' ? candidate.classificationMethod : null,
     classificationWarning: typeof candidate.classificationWarning === 'string' ? candidate.classificationWarning : null,
@@ -117,6 +122,7 @@ export function buildRestorePartData(snapshot: AIApplySnapshot): Prisma.PartUpda
     height: snapshot.height,
     contourStale: snapshot.contourStale,
     isSheetMetal: snapshot.isSheetMetal,
+    partType: snapshot.partType,
     hasBends: snapshot.hasBends,
     classificationMethod: snapshot.classificationMethod,
     classificationWarning: snapshot.classificationWarning,
@@ -134,6 +140,7 @@ export function hasNestingAffectingChange(data: Prisma.PartUpdateInput): boolean
     data.width !== undefined ||
     data.height !== undefined ||
     data.isSheetMetal !== undefined ||
+    data.partType !== undefined ||
     data.quantity !== undefined
   );
 }
@@ -153,6 +160,7 @@ export function hasGeometryAffectingChange(data: Prisma.PartUpdateInput): boolea
     data.width !== undefined ||
     data.height !== undefined ||
     data.isSheetMetal !== undefined ||
+    data.partType !== undefined ||
     data.quantity !== undefined
   );
 }

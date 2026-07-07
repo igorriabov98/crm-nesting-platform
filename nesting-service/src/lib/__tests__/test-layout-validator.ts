@@ -76,13 +76,14 @@ const excludedReport = validateLayout(
     unplacedParts: [{
       partId: 'b',
       name: 'B (#1) - ручная метка',
-      reasonCode: 'EXCLUDED',
+      reasonCode: 'EXCLUDED_PROFILE',
       reason: 'ручная метка',
     }],
-    excludedParts: [{ partId: 'b', name: 'B', quantity: 1, reason: 'ручная метка' }],
+    excludedParts: [{ partId: 'b', name: 'B', quantity: 1, reason: 'ручная метка', reasonCode: 'EXCLUDED_PROFILE' }],
   }
 );
-assertViolation(excludedReport, 'EXCLUDED_FROM_NESTING');
+assert.equal(excludedReport.valid, true);
+assertInfoViolation(excludedReport, 'EXCLUDED_PROFILE');
 assertNoViolation(excludedReport, 'quantity');
 
 const unexplainedReport = validateLayout(
@@ -120,7 +121,7 @@ const skmWithoutT20Report = validateLayout(
       ...Array.from({ length: 4 }, (_, index) => ({
         partId: 'excluded',
         name: `Kufe (#${index + 1}) - PDF/BOM указал профиль/круг — не для листового раскроя`,
-        reasonCode: 'EXCLUDED' as const,
+        reasonCode: 'EXCLUDED_PROFILE' as const,
         reason: 'PDF/BOM указал профиль/круг — не для листового раскроя',
       })),
       ...Array.from({ length: 2 }, (_, index) => ({
@@ -135,11 +136,11 @@ const skmWithoutT20Report = validateLayout(
         requiredHeight: 90,
       })),
     ],
-    excludedParts: [{ partId: 'excluded', name: 'Kufe', quantity: 4, reason: 'PDF/BOM указал профиль/круг — не для листового раскроя' }],
+    excludedParts: [{ partId: 'excluded', name: 'Kufe', quantity: 4, reason: 'PDF/BOM указал профиль/круг — не для листового раскроя', reasonCode: 'EXCLUDED_PROFILE' }],
   }
 );
 assert.equal(countViolations(skmWithoutT20Report, 'NO_SHEET_AVAILABLE'), 2);
-assert.equal(countViolations(skmWithoutT20Report, 'EXCLUDED_FROM_NESTING'), 1);
+assert.equal(countViolations(skmWithoutT20Report, 'EXCLUDED_PROFILE'), 1);
 assertNoViolation(skmWithoutT20Report, 'quantity');
 assertNoViolation(skmWithoutT20Report, 'UNPLACED_WITHOUT_REASON');
 
@@ -153,12 +154,14 @@ const skmWithT20Report = validateLayout(
     unplacedParts: Array.from({ length: 4 }, (_, index) => ({
       partId: 'excluded',
       name: `Kufe (#${index + 1}) - PDF/BOM указал профиль/круг — не для листового раскроя`,
-      reasonCode: 'EXCLUDED' as const,
+      reasonCode: 'EXCLUDED_PROFILE' as const,
       reason: 'PDF/BOM указал профиль/круг — не для листового раскроя',
     })),
-    excludedParts: [{ partId: 'excluded', name: 'Kufe', quantity: 4, reason: 'PDF/BOM указал профиль/круг — не для листового раскроя' }],
+    excludedParts: [{ partId: 'excluded', name: 'Kufe', quantity: 4, reason: 'PDF/BOM указал профиль/круг — не для листового раскроя', reasonCode: 'EXCLUDED_PROFILE' }],
   }
 );
+assert.equal(skmWithT20Report.valid, true);
+assertInfoViolation(skmWithT20Report, 'EXCLUDED_PROFILE');
 assert.equal(countViolations(skmWithT20Report, 'NO_SHEET_AVAILABLE'), 0);
 assertNoViolation(skmWithT20Report, 'quantity');
 
@@ -171,6 +174,12 @@ function assertViolation(report: ReturnType<typeof validateLayout>, type: Layout
 
 function assertNoViolation(report: ReturnType<typeof validateLayout>, type: LayoutViolationType): void {
   assert.equal(report.violations.some((violation) => violation.type === type), false, `did not expect ${type} violation`);
+}
+
+function assertInfoViolation(report: ReturnType<typeof validateLayout>, type: LayoutViolationType): void {
+  const violation = report.violations.find((item) => item.type === type);
+  assert.ok(violation, `expected ${type} info violation`);
+  assert.equal(violation.severity, 'info');
 }
 
 function countViolations(report: ReturnType<typeof validateLayout>, type: LayoutViolationType): number {

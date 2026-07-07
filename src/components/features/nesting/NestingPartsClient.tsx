@@ -90,7 +90,10 @@ export function NestingPartsClient({
     },
   })
 
-  const sheetMetalCount = useMemo(() => parts.filter((part) => part.isSheetMetal).length, [parts])
+  const sheetMetalCount = useMemo(
+    () => parts.filter((part) => part.partType === 'SHEET' || (!part.partType && part.isSheetMetal)).length,
+    [parts]
+  )
 
   const loadParts = useCallback(async () => {
     setIsLoadingParts(true)

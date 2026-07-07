@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { extractDeterministicBOMFromPdf, parseDeterministicBOMText } from '../ai/pdf-bom-fallback';
+import path from 'node:path';
+import { extractDeterministicBOMFromPdf, extractDeterministicPdfDataFromPdf, parseDeterministicBOMText } from '../ai/pdf-bom-fallback';
 
 const materialListText = `
 70000000006505 U 80 - 690 FZ 4 690 DIN1026 S235JRG2 80009 5,971 kg 23,883 kg
@@ -55,6 +56,7 @@ assert.equal(tube.heightMm, 120);
 assert.equal(tube.quantity, 1);
 
 const localPdf = '/Users/igorrabov/Downloads/10461020050000_Detail.pdf';
+const ledaPdf = path.resolve(__dirname, 'fixtures/real/LEDA_024_00_000_Stol_vanna.pdf');
 main().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -67,6 +69,16 @@ async function main(): Promise<void> {
     assert.equal(pdfParsed.find((entry) => entry.articleNumber === '70000000006512')?.description, 'BL 6 x 75 x 280');
     assert.equal(pdfParsed.find((entry) => entry.articleNumber === '70000000006512')?.quantity, 4);
     assert.equal(pdfParsed.find((entry) => entry.articleNumber === '70000000006512')?.massKg, 1);
+  }
+
+  if (existsSync(ledaPdf)) {
+    const ledaParsed = await extractDeterministicPdfDataFromPdf(ledaPdf);
+    const plug = ledaParsed.bom.find((entry) => entry.name.includes('Заглушка пластмассовая'));
+    assert.ok(plug);
+    assert.equal(plug.bomSection, 'Прочие изделия');
+    assert.equal(plug.partType, 'other');
+    assert.equal(plug.quantity, 2);
+    assert.equal(plug.thicknessMm, null);
   }
 
   console.log('[pdf-bom-fallback] all tests passed');

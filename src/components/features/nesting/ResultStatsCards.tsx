@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, Layers, Package, Trash2, TrendingUp } from 'lucide-react'
+import { AlertTriangle, CheckCircle, Layers, Package, PackageCheck, Trash2, TrendingUp, Wrench } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import type { NestingResult } from '@/lib/nesting/api'
@@ -37,13 +37,25 @@ export function ResultStatsCards({ result }: { result: NestingResult }) {
       label: 'Размещено',
       value: result.placedParts,
       icon: CheckCircle,
-      className: result.placedParts === result.totalParts ? 'text-green-600' : 'text-[#1B3A6B]',
+      className: result.noSheetParts === 0 ? 'text-green-600' : 'text-[#1B3A6B]',
     },
     {
-      label: 'Не размещено',
-      value: result.unplacedParts.length,
+      label: 'Профильных',
+      value: result.profileParts,
+      icon: Wrench,
+      className: 'text-[#1B3A6B]',
+    },
+    {
+      label: 'Покупных',
+      value: result.purchasedParts,
+      icon: PackageCheck,
+      className: 'text-[#1B3A6B]',
+    },
+    {
+      label: 'Без листа',
+      value: result.noSheetParts,
       icon: AlertTriangle,
-      className: result.unplacedParts.length > 0 ? 'text-red-600' : 'text-green-600',
+      className: result.noSheetParts > 0 ? 'text-red-600' : 'text-green-600',
     },
     {
       label: 'Использование',
@@ -60,7 +72,7 @@ export function ResultStatsCards({ result }: { result: NestingResult }) {
   ]
 
   return (
-    <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
       {cards.map((card) => {
         const Icon = card.icon
 

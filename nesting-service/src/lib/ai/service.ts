@@ -70,6 +70,7 @@ export async function analyzeProjectPdf(input: {
       meshArea: true,
       facesCount: true,
       isSheetMetal: true,
+      partType: true,
       hasBends: true,
       classificationMethod: true,
       classificationWarning: true,
@@ -209,13 +210,27 @@ async function autoApplyMatches(
       match.applyStatus = 'needs_force';
     }
     if (match.suggestedHasBends !== null) data.hasBends = match.suggestedHasBends;
-    if (match.suggestedIsSheetMetal === true) {
+    if (match.suggestedPartType) {
+      data.partType = match.suggestedPartType;
+      data.isSheetMetal = match.suggestedPartType === 'SHEET';
+      data.classificationMethod = 'pdf_bom';
+      data.classificationWarning = null;
+      if (match.suggestedPartType !== 'SHEET') {
+        data.hasBends = false;
+        data.grainLock = false;
+        data.thicknessMismatch = false;
+        data.thicknessMismatchNote = null;
+      }
+    } else if (match.suggestedIsSheetMetal === true) {
+      data.partType = 'SHEET';
       data.isSheetMetal = true;
       data.classificationMethod = 'pdf_bom';
       data.classificationWarning = null;
     } else if (match.suggestedIsSheetMetal === false) {
+      data.partType = 'PROFILE';
       data.isSheetMetal = false;
       data.hasBends = false;
+      data.grainLock = false;
       data.classificationMethod = 'pdf_bom';
       data.classificationWarning = null;
     }

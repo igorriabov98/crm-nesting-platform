@@ -9,6 +9,8 @@ export type LayoutViolationType =
   | 'out_of_bounds'
   | 'quantity'
   | 'EXCLUDED_FROM_NESTING'
+  | 'EXCLUDED_PROFILE'
+  | 'EXCLUDED_PURCHASED'
   | 'NO_SHEET_AVAILABLE'
   | 'MISSING_THICKNESS'
   | 'NESTING_FAILED'
@@ -31,6 +33,7 @@ export type LayoutViolation = {
   thickness?: number | null;
   requiredWidth?: number | null;
   requiredHeight?: number | null;
+  severity?: 'info' | 'warning';
   message: string;
 };
 
@@ -48,7 +51,7 @@ export type LayoutValidationPart = {
 
 export type LayoutValidationParams = {
   unplacedParts?: UnplacedPart[];
-  excludedParts?: Array<{ partId: string; name: string; quantity: number; reason: string }>;
+  excludedParts?: Array<{ partId: string; name: string; quantity: number; reason: string; reasonCode?: UnplacedReasonCode }>;
   toleranceMm?: number;
 };
 
@@ -93,7 +96,7 @@ export function validateLayout(
   validateQuantities(parts, placedCounts, params.unplacedParts ?? [], violations);
 
   return {
-    valid: violations.length === 0,
+    valid: violations.every((violation) => violation.severity === 'info'),
     violations,
     checkedAt: new Date().toISOString(),
   };
@@ -254,7 +257,7 @@ function validateUnplacedParts(
   violations: LayoutViolation[]
 ): void {
   for (const part of unplacedParts) {
-    if (part.reasonCode === 'EXCLUDED') continue;
+    if (isExcludedReasonCode(part.reasonCode)) continue;
 
     const type = reasonCodeToViolationType(part.reasonCode);
     const reason = part.reason?.trim() || 'причина не указана';
@@ -274,15 +277,18 @@ function validateUnplacedParts(
 }
 
 function validateExcludedParts(
-  excludedParts: Array<{ partId: string; name: string; quantity: number; reason: string }>,
+  excludedParts: Array<{ partId: string; name: string; quantity: number; reason: string; reasonCode?: UnplacedReasonCode }>,
   violations: LayoutViolation[]
 ): void {
   for (const part of excludedParts) {
     violations.push({
-      type: 'EXCLUDED_FROM_NESTING',
+      type: excludedReasonCodeToViolationType(part.reasonCode),
       partIds: [part.partId],
       expected: part.quantity,
       actual: 0,
+      reasonCode: part.reasonCode,
+      reason: part.reason,
+      severity: 'info',
       message: `Деталь ${part.name} исключена из листового раскроя: ${part.reason}`,
     });
   }
@@ -298,9 +304,23 @@ function reasonCodeToViolationType(reasonCode: UnplacedReasonCode): LayoutViolat
       return 'NESTING_FAILED';
     case 'EXCLUDED':
       return 'EXCLUDED_FROM_NESTING';
+    case 'EXCLUDED_PROFILE':
+      return 'EXCLUDED_PROFILE';
+    case 'EXCLUDED_PURCHASED':
+      return 'EXCLUDED_PURCHASED';
     case 'UNPLACED_WITHOUT_REASON':
       return 'UNPLACED_WITHOUT_REASON';
   }
+}
+
+function excludedReasonCodeToViolationType(reasonCode: UnplacedReasonCode | undefined): LayoutViolationType {
+  if (reasonCode === 'EXCLUDED_PURCHASED') return 'EXCLUDED_PURCHASED';
+  if (reasonCode === 'EXCLUDED_PROFILE') return 'EXCLUDED_PROFILE';
+  return 'EXCLUDED_FROM_NESTING';
+}
+
+function isExcludedReasonCode(reasonCode: UnplacedReasonCode): boolean {
+  return reasonCode === 'EXCLUDED' || reasonCode === 'EXCLUDED_PROFILE' || reasonCode === 'EXCLUDED_PURCHASED';
 }
 
 function toPlacementShape(placement: PlacedPart): PlacementShape {

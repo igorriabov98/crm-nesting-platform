@@ -17,6 +17,7 @@ import {
 import { idParamSchema } from '../schemas/common.schema';
 import { projectSheetParamsSchema } from '../schemas/project.schema';
 import { isCompletedProjectStatus } from '../lib/project-status';
+import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../lib/part-type';
 
 type PlacementForResult = {
   partId: string;
@@ -156,14 +157,15 @@ export async function resultRoutes(app: FastifyInstance) {
       const baseName = normalizeCadText(part.name);
       const material = normalizeCadText(part.material);
 
-      if (!part.isSheetMetal) {
+      if (!isSheetPartType(part.partType, part.isSheetMetal)) {
         const reason = buildExcludedFromNestingReason(part);
+        const reasonCode = excludedReasonCode(part.partType);
         for (let index = 1; index <= required; index += 1) {
           unplacedParts.push(createUnplacedPart({
             partId: part.id,
             baseName,
             copyIndex: index,
-            reasonCode: 'EXCLUDED',
+            reasonCode,
             reason,
             material,
             steelTypeName: part.steelTypeName,
@@ -211,6 +213,9 @@ export async function resultRoutes(app: FastifyInstance) {
         unplacedParts,
         totalParts,
         placedParts,
+        profileParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PROFILE').length,
+        purchasedParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PURCHASED').length,
+        noSheetParts: unplacedParts.filter((part) => part.reasonCode === 'NO_SHEET_AVAILABLE').length,
         totalSheets: sheets.length,
         avgUtilization,
         totalWaste,
@@ -262,18 +267,20 @@ export async function resultRoutes(app: FastifyInstance) {
 }
 
 function buildExcludedFromNestingReason(part: {
+  partType?: string | null;
   classificationMethod: string | null;
   classificationWarning: string | null;
 }): string {
+  const typeLabel = partTypeLabel(part.partType);
   if (part.classificationMethod === 'manual') {
-    return 'ручная метка "Профиль/круг — не для листового раскроя"';
+    return `ручная метка "${typeLabel} — не для листового раскроя"`;
   }
 
   if (part.classificationMethod === 'pdf_bom') {
-    return 'PDF/BOM указал профиль/круг — не для листового раскроя';
+    return `PDF/BOM указал ${typeLabel.toLowerCase()} — не для листового раскроя`;
   }
 
-  return part.classificationWarning || 'автоматическая классификация как не листовая деталь';
+  return part.classificationWarning || `автоматическая классификация: ${typeLabel.toLowerCase()} — не для листового раскроя`;
 }
 
 function readPlacements(value: unknown): PlacementForResult[] {

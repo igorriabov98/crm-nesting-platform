@@ -24,6 +24,7 @@ const systemPrompt = `Ты — опытный технолог на произв
 - Английский: "BILL OF MATERIALS", "BOM", "PARTS LIST"
 
 Для каждой позиции извлеки:
+- bom_section: название раздела спецификации, под которым находится строка ("Детали", "Прочие изделия", "Стандартные изделия", "Zukaufteile", "Kaufteile")
 - position: номер позиции, если есть
 - article_number: артикул/номер, если есть
 - designation: обозначение, номер чертежа или имя файла
@@ -85,6 +86,7 @@ const systemPrompt = `Ты — опытный технолог на произв
 {
   "bom": [
     {
+      "bom_section": "Детали",
       "position": "1",
       "article_number": "70000000006505",
       "designation": "10461.geo",
@@ -172,6 +174,7 @@ export async function analyzePDF(
                 properties: {
                   position: { type: 'string' },
                   article_number: { type: 'string' },
+                  bom_section: { type: 'string' },
                   designation: { type: 'string' },
                   description: { type: 'string' },
                   part_type: {
@@ -190,6 +193,7 @@ export async function analyzePDF(
                 required: [
                   'position',
                   'article_number',
+                  'bom_section',
                   'designation',
                   'description',
                   'part_type',
@@ -437,6 +441,7 @@ function normalizeBOMEntry(entry: unknown): BOMEntry | null {
     position: String(entry.position || ''),
     designation: String(entry.designation || '').trim(),
     description,
+    bomSection: String(entry.bom_section ?? entry.bomSection ?? entry.section ?? '').trim(),
     partType,
     thicknessMm,
     widthMm,

@@ -17,6 +17,7 @@ import {
 import { prisma } from '../lib/prisma';
 import { isCompletedProjectStatus } from '../lib/project-status';
 import { normalizeCadText } from '../lib/text-encoding';
+import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../lib/part-type';
 import { sanitizeFilename, transliterate } from '../lib/utils';
 import type { Point2D } from '../lib/nesting/types';
 
@@ -172,13 +173,14 @@ function buildResultJson(project: Prisma.NestingProjectGetPayload<{
     const baseName = normalizeCadText(part.name);
     const material = normalizeCadText(part.material);
 
-    if (!part.isSheetMetal) {
+    if (!isSheetPartType(part.partType, part.isSheetMetal)) {
       const reason = buildExcludedFromNestingReason(part);
+      const reasonCode = excludedReasonCode(part.partType);
       return Array.from({ length: required }, (_, index) => createUnplacedPart({
         partId: part.id,
         baseName,
         copyIndex: index + 1,
-        reasonCode: 'EXCLUDED',
+        reasonCode,
         reason,
         material,
         steelTypeName: part.steelTypeName,
@@ -229,6 +231,9 @@ function buildResultJson(project: Prisma.NestingProjectGetPayload<{
     unplacedParts,
     totalParts,
     placedParts,
+    profileParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PROFILE').length,
+    purchasedParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PURCHASED').length,
+    noSheetParts: unplacedParts.filter((part) => part.reasonCode === 'NO_SHEET_AVAILABLE').length,
     totalSheets: sheets.length,
     avgUtilization: sheets.length > 0 ? roundPercent(sheets.reduce((sum, sheet) => sum + sheet.utilization, 0) / sheets.length) : 0,
     totalWaste: sheets.length > 0 ? roundPercent(sheets.reduce((sum, sheet) => sum + sheet.waste, 0) / sheets.length) : 0,
@@ -254,6 +259,7 @@ function buildParseReportJson(project: Prisma.NestingProjectGetPayload<{
       thickness: part.thickness,
       quantity: part.quantity,
       isSheetMetal: part.isSheetMetal,
+      partType: part.partType,
       contourStale: part.contourStale,
       width: part.width,
       height: part.height,
@@ -291,7 +297,7 @@ function buildReconciliation(project: Prisma.NestingProjectGetPayload<{
           details,
         }
       : null,
-    rows: project.parts.filter((part) => part.isSheetMetal).map((part) => {
+    rows: project.parts.filter((part) => isSheetPartType(part.partType, part.isSheetMetal)).map((part) => {
       const match = matchesByPartId.get(part.id);
       const pdfWidth = toPositiveNumber(match?.suggestedUnfoldingWidth);
       const pdfHeight = toPositiveNumber(match?.suggestedUnfoldingHeight);
@@ -362,7 +368,7 @@ function buildSummaryMarkdown(
   warnings: string[]
 ): string {
   const violations = isRecord(validationReport) && Array.isArray(validationReport.violations)
-    ? validationReport.violations.length
+    ? validationReport.violations.filter((violation) => !isRecord(violation) || violation.severity !== 'info').length
     : 0;
   const mismatchCount = reconciliationRows.filter((row) => row.status === 'MISMATCH').length;
   const noPdfDataCount = reconciliationRows.filter((row) => row.status === 'NO_PDF_DATA').length;
@@ -373,7 +379,7 @@ function buildSummaryMarkdown(
     `- Project: ${project.id}`,
     `- Status: ${project.status}`,
     `- Sheets: ${resultJson.totalSheets}`,
-    `- Parts: ${resultJson.placedParts}/${resultJson.totalParts}${resultJson.placedParts < resultJson.totalParts ? ' PROBLEM: not all project parts are placed' : ''}`,
+    `- Parts: placed ${resultJson.placedParts}, profile ${resultJson.profileParts}, purchased ${resultJson.purchasedParts}, no sheet ${resultJson.noSheetParts}, total ${resultJson.totalParts}`,
     `- Average utilization: ${resultJson.avgUtilization}%`,
     `- Waste: ${resultJson.totalWaste}%`,
     `- Validation violations: ${violations}`,
@@ -396,18 +402,20 @@ function buildSummaryMarkdown(
 }
 
 function buildExcludedFromNestingReason(part: {
+  partType?: string | null;
   classificationMethod: string | null;
   classificationWarning: string | null;
 }): string {
+  const typeLabel = partTypeLabel(part.partType);
   if (part.classificationMethod === 'manual') {
-    return 'ручная метка "Профиль/круг — не для листового раскроя"';
+    return `ручная метка "${typeLabel} — не для листового раскроя"`;
   }
 
   if (part.classificationMethod === 'pdf_bom') {
-    return 'PDF/BOM указал профиль/круг — не для листового раскроя';
+    return `PDF/BOM указал ${typeLabel.toLowerCase()} — не для листового раскроя`;
   }
 
-  return part.classificationWarning || 'автоматическая классификация как не листовая деталь';
+  return part.classificationWarning || `автоматическая классификация: ${typeLabel.toLowerCase()} — не для листового раскроя`;
 }
 
 function renderSheetSvg(geometry: SheetExportGeometry): string {

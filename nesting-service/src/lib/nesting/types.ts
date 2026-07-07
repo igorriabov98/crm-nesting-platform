@@ -74,6 +74,8 @@ export interface SheetResult {
 
 export type UnplacedReasonCode =
   | 'EXCLUDED'
+  | 'EXCLUDED_PROFILE'
+  | 'EXCLUDED_PURCHASED'
   | 'NO_SHEET_AVAILABLE'
   | 'MISSING_THICKNESS'
   | 'NESTING_FAILED'
@@ -118,6 +120,9 @@ export interface NestingResult {
   unplacedParts: UnplacedPart[];
   totalParts: number;
   placedParts: number;
+  profileParts: number;
+  purchasedParts: number;
+  noSheetParts: number;
   totalSheets: number;
   avgUtilization: number;
   totalWaste: number;

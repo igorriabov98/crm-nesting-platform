@@ -20,6 +20,7 @@ const stepPart = {
   height: 650,
   contourStale: false,
   isSheetMetal: true,
+  partType: 'SHEET' as const,
   hasBends: false,
   classificationMethod: 'step',
   classificationWarning: null,
@@ -49,6 +50,7 @@ assert.equal(restoreData.width, 1100);
 assert.equal(restoreData.height, 650);
 assert.equal(restoreData.contourStale, false);
 assert.equal(restoreData.isSheetMetal, true);
+assert.equal(restoreData.partType, 'SHEET');
 assert.equal(restoreData.hasBends, false);
 assert.equal(hasNestingAffectingChange(restoreData), true, 'restore should mark nesting data as changed');
 assert.equal(hasGeometryAffectingChange(restoreData), true, 'restore should require recalculation for geometry fields');
