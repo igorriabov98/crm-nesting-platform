@@ -21,6 +21,16 @@ type PartGroup = {
   parts: PartForMatching[];
   firstIndex: number;
 };
+type BomSlot = {
+  entry: BOMEntry;
+  key: string;
+  capacityKey: string;
+  remaining: number;
+};
+type BomSlotAllocation = {
+  slot: BomSlot;
+  count: number;
+};
 
 const STANDARD_THICKNESSES = [
   0.5, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20, 25, 30,
@@ -28,8 +38,7 @@ const STANDARD_THICKNESSES = [
 const THICKNESS_TOLERANCE_MM = 0.3;
 const UNFOLDING_MATCH_TOLERANCE = 0.02;
 const UNFOLDING_SUGGESTION_REJECT_TOLERANCE = 0.15;
-const DIMENSION_CLUSTER_TOLERANCE_MM = 0.3;
-const CONTOUR_CLUSTER_TOLERANCE_MM = 0.3;
+const DIMENSION_CLUSTER_TOLERANCE_MM = 0.1;
 
 export function matchBOMToParts(
   bom: BOMEntry[],
@@ -38,43 +47,75 @@ export function matchBOMToParts(
   steelTypes: SteelTypeCatalogItem[] = []
 ): MatchResult[] {
   const detailsByDesignation = buildDesignationMap(details, (detail) => detail.designation);
-  const remainingByBom = new Map(
-    bom.map((entry) => [buildBomKeyFromEntry(entry), Math.max(1, Math.round(entry.quantity || 1))])
-  );
+  const bomSlots: BomSlot[] = bom.map((entry) => ({
+    entry,
+    key: buildBomKeyFromEntry(entry),
+    capacityKey: buildBomCapacityKey(entry),
+    remaining: Math.max(1, Math.round(entry.quantity || 1)),
+  }));
   const resultsByPartId = new Map<string, MatchResult>();
   const groups = clusterIdenticalParts(parts);
 
   for (const group of groups) {
-    const eligibleBom = bom.filter((entry) => (remainingByBom.get(buildBomKeyFromEntry(entry)) ?? 0) >= group.parts.length);
+    const eligibleBom = bomSlots
+      .filter((slot) => slot.remaining > 0 && availableBomCapacity(slot.entry, bomSlots) >= group.parts.length)
+      .map((slot) => slot.entry);
     const bomByDesignation = buildDesignationMap(eligibleBom, (entry) => entry.designation);
+    const rawMatch = findBestMatch(group.parts[0], eligibleBom, details, detailsByDesignation, bomByDesignation);
+    const allocation = rawMatch.bomEntry
+      ? planBomSlotAllocation(rawMatch.bomEntry, bomSlots, group.parts.length)
+      : [];
     const match = applyGroupQuantitySignal(
-      findBestMatch(group.parts[0], eligibleBom, details, detailsByDesignation, bomByDesignation),
-      group.parts.length
+      rawMatch.bomEntry && allocation.length === 0
+        ? {
+            ...rawMatch,
+            bomEntry: null,
+            matchType: 'none',
+            matchConfidence: 0,
+            matchDetails: 'qty group: no available BOM capacity',
+          }
+        : rawMatch,
+      group.parts.length,
+      allocation.reduce((sum, item) => sum + item.count, 0)
     );
 
-    if (match.bomEntry) {
-      const key = buildBomKeyFromEntry(match.bomEntry);
-      remainingByBom.set(key, Math.max(0, (remainingByBom.get(key) ?? 0) - group.parts.length));
+    for (const item of allocation) {
+      item.slot.remaining = Math.max(0, item.slot.remaining - item.count);
     }
 
+    let allocationIndex = 0;
+    let allocationUsed = 0;
     for (const part of group.parts) {
+      while (allocation[allocationIndex] && allocationUsed >= allocation[allocationIndex].count) {
+        allocationIndex += 1;
+        allocationUsed = 0;
+      }
+      const allocationItem = allocation[allocationIndex] ?? null;
+      const bomEntry = allocationItem?.slot.entry ?? match.bomEntry;
+      const assignedGroupSize = allocationItem?.count ?? group.parts.length;
+      if (allocationItem) {
+        allocationUsed += 1;
+      }
+
       resultsByPartId.set(
         part.id,
         buildMatchResult(
           part,
-          match.bomEntry,
+          bomEntry,
           match.detail,
           match.matchType,
           match.matchConfidence,
           match.matchDetails,
           steelTypes,
-          group.parts.length
+          assignedGroupSize
         )
       );
     }
   }
 
-  return parts.map((part) => resultsByPartId.get(part.id) ?? buildMatchResult(part, null, null, 'none', 0, '', steelTypes, 1));
+  const orderedResults = parts.map((part) => resultsByPartId.get(part.id) ?? buildMatchResult(part, null, null, 'none', 0, '', steelTypes, 1));
+  applyAllocatedSuggestedQuantities(orderedResults, parts, bom);
+  return orderedResults;
 }
 
 function clusterIdenticalParts(parts: PartForMatching[]): PartGroup[] {
@@ -104,28 +145,34 @@ function clusterIdenticalParts(parts: PartForMatching[]): PartGroup[] {
 }
 
 function buildPartClusterKey(part: PartForMatching): string {
-  const identity = extractDesignationKey(part.name) ?? '';
+  const product = normalizePartClusterName(part.name);
   const dims = getPartBBoxDims(part).map((dim) => quantize(dim, DIMENSION_CLUSTER_TOLERANCE_MM)).join('x');
-  const volume = quantize(part.meshVolume ?? 0, 1);
-  const area = quantize(part.meshArea ?? 0, 1);
-  const contour = buildContourSignature(part.contour);
+  const volume = quantizeByRelativeTolerance(part.meshVolume ?? 0, 0.001);
 
   return [
-    identity,
+    product,
     dims,
     volume,
-    area,
-    part.facesCount ?? 0,
-    contour,
   ].join('|');
 }
 
-function applyGroupQuantitySignal(match: MatchCandidate, groupSize: number): MatchCandidate {
+export function normalizePartClusterName(name: string): string {
+  const withoutInstanceSuffix = name
+    .trim()
+    .replace(/(?:\s*\(\s*\d+\s*\)|[‐‑‒–—−_\-.\s]+\d+)$/u, '')
+    .trim();
+  return normalize(withoutInstanceSuffix || name);
+}
+
+function applyGroupQuantitySignal(match: MatchCandidate, groupSize: number, allocatedQuantity?: number): MatchCandidate {
   if (!match.bomEntry || match.matchType === 'none') return match;
 
+  // Confidence is a signal from the original BOM row quantity and the matched clone-group size.
+  // It gets the positive boost only when BOM qty equals the group size and allocation covered the whole group.
   const bomQuantity = Math.max(1, Math.round(match.bomEntry.quantity || 1));
-  const exactGroupSize = bomQuantity === groupSize;
-  const quantityDetails = `qty group: BOM=${bomQuantity}, STEP bodies=${groupSize}`;
+  const allocation = Math.max(0, Math.round(allocatedQuantity ?? 0));
+  const exactGroupSize = bomQuantity === groupSize && allocation === groupSize;
+  const quantityDetails = `qty group: BOM=${bomQuantity}, STEP bodies=${groupSize}, allocated=${allocation}`;
   const matchDetails = [match.matchDetails, quantityDetails].filter(Boolean).join('; ');
 
   if (exactGroupSize) {
@@ -143,6 +190,32 @@ function applyGroupQuantitySignal(match: MatchCandidate, groupSize: number): Mat
     matchConfidence: Math.max(0, match.matchConfidence - penalty),
     matchDetails,
   };
+}
+
+function availableBomCapacity(entry: BOMEntry, slots: BomSlot[]): number {
+  const capacityKey = buildBomCapacityKey(entry);
+  return slots
+    .filter((slot) => slot.capacityKey === capacityKey)
+    .reduce((sum, slot) => sum + slot.remaining, 0);
+}
+
+function planBomSlotAllocation(entry: BOMEntry, slots: BomSlot[], groupSize: number): BomSlotAllocation[] {
+  const capacityKey = buildBomCapacityKey(entry);
+  const compatible = slots.filter((slot) => slot.capacityKey === capacityKey && slot.remaining > 0);
+  if (compatible.reduce((sum, slot) => sum + slot.remaining, 0) < groupSize) {
+    return [];
+  }
+
+  const plan: BomSlotAllocation[] = [];
+  let remaining = groupSize;
+  for (const slot of compatible) {
+    if (remaining <= 0) break;
+    const count = Math.min(slot.remaining, remaining);
+    plan.push({ slot, count });
+    remaining -= count;
+  }
+
+  return remaining === 0 ? plan : [];
 }
 
 function findBestMatch(
@@ -1046,11 +1119,6 @@ function buildMatchResult(
       result.suggestedMaterialGrade = result.suggestedMaterialGrade || bomEntry.steelTypeRaw;
     }
 
-    const suggestedQuantity = getDistributedSuggestedQuantity(part, bomEntry, assignedGroupSize);
-    if (suggestedQuantity !== null) {
-      result.suggestedQuantity = suggestedQuantity;
-    }
-
     if (bomEntry.partType === 'sheet' || sheetMaterialSignal) {
       result.suggestedIsSheetMetal = true;
       if (bomEntry.thicknessMm && Math.abs(bomEntry.thicknessMm - getStepThickness(part)) > 0.1) {
@@ -1194,11 +1262,14 @@ function profilePartTypesCompatible(stepType: BOMEntry['partType'], bomType: BOM
 
 function getDistributedSuggestedQuantity(
   part: PartForMatching,
-  bomEntry: BOMEntry,
-  assignedGroupSize: number
+  bomQuantity: number,
+  matchedGroupSize: number
 ): number | null {
-  const groupSize = Math.max(1, assignedGroupSize);
-  const bomQuantity = Math.max(1, Math.round(bomEntry.quantity || 1));
+  // Quantity signal has three faces:
+  // 1. confidence uses the original BOM row qty vs the clone-group size; allocation only gates the full-match boost;
+  // 2. suggestedQuantity is the distributed per-body share and stays null when share equals current qty or no body was allocated;
+  // 3. the invariant is that all per-body shares across the matched group sum back to the original BOM row qty.
+  const groupSize = Math.max(1, matchedGroupSize);
   const perBodyQuantity = bomQuantity / groupSize;
 
   if (!Number.isInteger(perBodyQuantity) || perBodyQuantity < 1) {
@@ -1206,6 +1277,48 @@ function getDistributedSuggestedQuantity(
   }
 
   return perBodyQuantity !== part.quantity ? perBodyQuantity : null;
+}
+
+function applyAllocatedSuggestedQuantities(
+  results: MatchResult[],
+  parts: PartForMatching[],
+  bom: BOMEntry[]
+): void {
+  const partById = new Map(parts.map((part) => [part.id, part]));
+  const quantityByKey = new Map(bom.map((entry) => [
+    buildBomKeyFromEntry(entry),
+    Math.max(1, Math.round(entry.quantity || 1)),
+  ]));
+  const resultsByBomKey = new Map<string, MatchResult[]>();
+
+  for (const result of results) {
+    if (result.matchType === 'none') {
+      continue;
+    }
+
+    const key = buildBomKey(result.bomPosition, result.bomDesignation, result.bomName);
+    if (!quantityByKey.has(key)) {
+      continue;
+    }
+
+    const list = resultsByBomKey.get(key) ?? [];
+    list.push(result);
+    resultsByBomKey.set(key, list);
+  }
+
+  for (const [key, matchedResults] of resultsByBomKey) {
+    const bomQuantity = quantityByKey.get(key) ?? 0;
+    const perBodyQuantity = matchedResults.length > 0 && bomQuantity % matchedResults.length === 0
+      ? bomQuantity / matchedResults.length
+      : null;
+
+    for (const result of matchedResults) {
+      const part = partById.get(result.partId);
+      result.suggestedQuantity = part
+        ? getDistributedSuggestedQuantity(part, bomQuantity, matchedResults.length)
+        : null;
+    }
+  }
 }
 
 function computeSheetHasBends(
@@ -1368,38 +1481,26 @@ function buildBomKey(position: string, designation: string, name: string): strin
   return `${position.trim().toLowerCase()}__${designation.trim().toLowerCase()}__${name.trim().toLowerCase()}`;
 }
 
+function buildBomCapacityKey(entry: BOMEntry): string {
+  return [
+    entry.designation.trim().toLowerCase(),
+    (entry.description || entry.name).trim().toLowerCase(),
+    entry.partType,
+    entry.thicknessMm ?? '',
+    entry.widthMm ?? '',
+    entry.heightMm ?? '',
+  ].join('__');
+}
+
 function quantize(value: number, tolerance: number): string {
   if (!Number.isFinite(value)) return '0';
   return String(Math.round(value / tolerance));
 }
 
-function buildContourSignature(contour: unknown): string {
-  const points = readContourPoints(contour);
-  if (points.length < 3) return 'no-contour';
-
-  const minX = Math.min(...points.map((point) => point.x));
-  const minY = Math.min(...points.map((point) => point.y));
-  const normalized = points
-    .map((point) => [
-      quantize(point.x - minX, CONTOUR_CLUSTER_TOLERANCE_MM),
-      quantize(point.y - minY, CONTOUR_CLUSTER_TOLERANCE_MM),
-    ].join(':'))
-    .sort()
-    .join(',');
-
-  return `${points.length}:${normalized}`;
-}
-
-function readContourPoints(contour: unknown): Array<{ x: number; y: number }> {
-  if (!Array.isArray(contour)) return [];
-
-  return contour.flatMap((point) => {
-    if (!point || typeof point !== 'object') return [];
-    const maybePoint = point as { x?: unknown; y?: unknown };
-    const x = Number(maybePoint.x);
-    const y = Number(maybePoint.y);
-    return Number.isFinite(x) && Number.isFinite(y) ? [{ x, y }] : [];
-  });
+function quantizeByRelativeTolerance(value: number, toleranceRatio: number): string {
+  if (!Number.isFinite(value) || value === 0) return '0';
+  const tolerance = Math.max(Math.abs(value) * toleranceRatio, 0.001);
+  return quantize(value, tolerance);
 }
 
 function formatNumber(value: number): string {
