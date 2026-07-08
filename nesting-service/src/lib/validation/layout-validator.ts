@@ -15,6 +15,7 @@ export type LayoutViolationType =
   | 'MISSING_THICKNESS'
   | 'NESTING_FAILED'
   | 'UNPLACED_WITHOUT_REASON'
+  | 'BODY_COUNT_MISMATCH'
   | 'hole_outside'
   | 'part_in_hole';
 
@@ -33,7 +34,7 @@ export type LayoutViolation = {
   thickness?: number | null;
   requiredWidth?: number | null;
   requiredHeight?: number | null;
-  severity?: 'info' | 'warning';
+  severity?: 'info' | 'warning' | 'error';
   message: string;
 };
 
@@ -53,6 +54,8 @@ export type LayoutValidationParams = {
   unplacedParts?: UnplacedPart[];
   excludedParts?: Array<{ partId: string; name: string; quantity: number; reason: string; reasonCode?: UnplacedReasonCode }>;
   toleranceMm?: number;
+  stepSolidCount?: number | null;
+  accountedBodies?: number | null;
 };
 
 type PlacementShape = {
@@ -93,6 +96,7 @@ export function validateLayout(
 
   validateExcludedParts(params.excludedParts ?? [], violations);
   validateUnplacedParts(params.unplacedParts ?? [], violations);
+  validateBodyCount(params.stepSolidCount, params.accountedBodies, violations);
   validateQuantities(parts, placedCounts, params.unplacedParts ?? [], violations);
 
   return {
@@ -100,6 +104,31 @@ export function validateLayout(
     violations,
     checkedAt: new Date().toISOString(),
   };
+}
+
+function validateBodyCount(
+  stepSolidCount: number | null | undefined,
+  accountedBodies: number | null | undefined,
+  violations: LayoutViolation[]
+): void {
+  if (!Number.isFinite(stepSolidCount) || !Number.isFinite(accountedBodies)) {
+    return;
+  }
+
+  const expected = Math.round(stepSolidCount as number);
+  const actual = Math.round(accountedBodies as number);
+  if (expected === actual) {
+    return;
+  }
+
+  violations.push({
+    type: 'BODY_COUNT_MISMATCH',
+    partIds: [],
+    expected,
+    actual,
+    severity: 'error',
+    message: `bodies: step=${expected}, accounted=${actual}`,
+  });
 }
 
 function validateInsideSheet(

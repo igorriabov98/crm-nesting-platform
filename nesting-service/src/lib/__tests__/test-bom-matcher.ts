@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { matchBOMToParts } from '../ai/bom-matcher';
+import { matchBOMToParts, normalizePartClusterName } from '../ai/bom-matcher';
 import { resolveBOMSteelTypes } from '../ai/steel-types';
 import type { BOMEntry, DetailEntry, PartForMatching } from '../ai/types';
 
@@ -530,6 +530,98 @@ assert.equal(
   skmProfileBom.filter((entry) => !skmProfileMatches.some((match) => match.matchType !== 'none' && match.bomPosition === entry.position)).length,
   0
 );
+
+const cloneDistributionMatches = matchBOMToParts(
+  [createBom({
+    position: '12',
+    description: 'BL 20 x 65 x 230',
+    partType: 'sheet',
+    thicknessMm: 20,
+    widthMm: 65,
+    heightMm: 230,
+    quantity: 4,
+  })],
+  Array.from({ length: 4 }, (_, index) => createPart({
+    id: `clone-${index + 1}`,
+    name: 'Проушина верхняя',
+    thickness: 20,
+    bboxSizeX: index % 2 === 0 ? 20 : 230,
+    bboxSizeY: 65,
+    bboxSizeZ: index % 2 === 0 ? 230 : 20,
+    meshVolume: 299000,
+    isSheetMetal: true,
+  }))
+);
+assert.equal(cloneDistributionMatches.length, 4);
+assert.equal(cloneDistributionMatches.filter((match) => match.bomPosition === '12').length, 4);
+assert.equal(cloneDistributionMatches.every((match) => match.suggestedQuantity === null), true);
+assert.equal(cloneDistributionMatches.every((match) => /qty group: BOM=4, STEP bodies=4, allocated=4/.test(match.matchDetails)), true);
+
+const duplicateBomRowsMatches = matchBOMToParts(
+  [
+    createBom({ position: '8', description: 'BL 2 x 702 x 1656', partType: 'sheet', thicknessMm: 2, widthMm: 702, heightMm: 1656, quantity: 1 }),
+    createBom({ position: '9', description: 'BL 2 x 702 x 1656', partType: 'sheet', thicknessMm: 2, widthMm: 702, heightMm: 1656, quantity: 1 }),
+  ],
+  [
+    createPart({ id: 'side-a', name: 'Боковая стенка', thickness: 2, bboxSizeX: 702, bboxSizeY: 1656, bboxSizeZ: 2, meshVolume: 2325024, isSheetMetal: true }),
+    createPart({ id: 'side-b', name: 'Боковая стенка', thickness: 2, bboxSizeX: 2, bboxSizeY: 1656, bboxSizeZ: 702, meshVolume: 2325024, isSheetMetal: true }),
+  ]
+);
+assert.deepEqual(duplicateBomRowsMatches.map((match) => match.bomPosition).sort(), ['8', '9']);
+assert.equal(duplicateBomRowsMatches.every((match) => match.suggestedQuantity === null), true);
+assert.equal(duplicateBomRowsMatches.every((match) => /qty group: BOM=1, STEP bodies=2, allocated=2/.test(match.matchDetails)), true);
+
+const differentProductMatches = matchBOMToParts(
+  [createBom({ position: '10', description: 'BL 2 x 702 x 1656', partType: 'sheet', thicknessMm: 2, widthMm: 702, heightMm: 1656, quantity: 2 })],
+  [
+    createPart({ id: 'side-main', name: 'Боковая стенка', thickness: 2, bboxSizeX: 702, bboxSizeY: 1656, bboxSizeZ: 2, meshVolume: 2325024, isSheetMetal: true }),
+    createPart({ id: 'side-left', name: 'Боковая стенка левая', thickness: 2, bboxSizeX: 2, bboxSizeY: 1656, bboxSizeZ: 702, meshVolume: 2325024, isSheetMetal: true }),
+  ]
+);
+assert.equal(differentProductMatches.every((match) => /qty group: BOM=2, STEP bodies=1, allocated=1/.test(match.matchDetails)), true);
+
+assert.equal(normalizePartClusterName('bokovina_1'), 'bokovina');
+assert.equal(normalizePartClusterName('bokovina_2'), 'bokovina');
+assert.equal(normalizePartClusterName('Опора-3'), normalizePartClusterName('Опора-4'));
+assert.notEqual(normalizePartClusterName('Боковая стенка'), normalizePartClusterName('Боковая стенка левая'));
+assert.notEqual(normalizePartClusterName('Панель 2'), normalizePartClusterName('Панель 2 левая'));
+assert.equal(normalizePartClusterName('Труба 40'), normalizePartClusterName('Труба 40'));
+
+const normalizedCloneMatches = matchBOMToParts(
+  [createBom({ position: '20', description: 'bokovina', partType: 'sheet', thicknessMm: 2, widthMm: 702, heightMm: 1656, quantity: 2 })],
+  [
+    createPart({ id: 'bokovina-1', name: 'bokovina_1', thickness: 2, bboxSizeX: 702, bboxSizeY: 1656, bboxSizeZ: 2, meshVolume: 2325024, isSheetMetal: true }),
+    createPart({ id: 'bokovina-2', name: 'bokovina_2', thickness: 2, bboxSizeX: 2, bboxSizeY: 1656, bboxSizeZ: 702, meshVolume: 2325024, isSheetMetal: true }),
+  ]
+);
+assert.equal(normalizedCloneMatches.every((match) => /qty group: BOM=2, STEP bodies=2, allocated=2/.test(match.matchDetails)), true);
+
+const normalizedSupportMatches = matchBOMToParts(
+  [createBom({ position: '21', description: 'Опора', partType: 'sheet', thicknessMm: 6, widthMm: 75, heightMm: 280, quantity: 2 })],
+  [
+    createPart({ id: 'support-3', name: 'Опора-3', thickness: 6, bboxSizeX: 75, bboxSizeY: 280, bboxSizeZ: 6, meshVolume: 126000, isSheetMetal: true }),
+    createPart({ id: 'support-4', name: 'Опора-4', thickness: 6, bboxSizeX: 6, bboxSizeY: 280, bboxSizeZ: 75, meshVolume: 126000, isSheetMetal: true }),
+  ]
+);
+assert.equal(normalizedSupportMatches.every((match) => /qty group: BOM=2, STEP bodies=2, allocated=2/.test(match.matchDetails)), true);
+
+const leftPanelMatches = matchBOMToParts(
+  [createBom({ position: '22', description: 'Панель', partType: 'sheet', thicknessMm: 2, widthMm: 100, heightMm: 50, quantity: 2 })],
+  [
+    createPart({ id: 'panel-2', name: 'Панель 2', thickness: 2, bboxSizeX: 100, bboxSizeY: 50, bboxSizeZ: 2, meshVolume: 10000, isSheetMetal: true }),
+    createPart({ id: 'panel-left', name: 'Панель 2 левая', thickness: 2, bboxSizeX: 2, bboxSizeY: 50, bboxSizeZ: 100, meshVolume: 10000, isSheetMetal: true }),
+  ]
+);
+assert.equal(leftPanelMatches.every((match) => /qty group: BOM=2, STEP bodies=1, allocated=1/.test(match.matchDetails)), true);
+
+const profileNumberMatches = matchBOMToParts(
+  [createBom({ position: '23', description: 'Профиль', partType: 'channel', widthMm: 80, heightMm: 690, quantity: 2 })],
+  [
+    createPart({ id: 'profile-690', name: 'Профиль 690', thickness: 5, bboxSizeX: 80, bboxSizeY: 690, bboxSizeZ: 5, meshVolume: 276000, isSheetMetal: false }),
+    createPart({ id: 'profile-1090', name: 'Профиль 1090', thickness: 5, bboxSizeX: 80, bboxSizeY: 1090, bboxSizeZ: 5, meshVolume: 436000, isSheetMetal: false }),
+  ]
+);
+assert.equal(profileNumberMatches.every((match) => /qty group: BOM=2, STEP bodies=1, allocated=1/.test(match.matchDetails)), true);
 
 console.log('[bom-matcher] all tests passed');
 

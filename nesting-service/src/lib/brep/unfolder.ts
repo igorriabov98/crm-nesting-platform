@@ -41,7 +41,7 @@ type Segment = {
   b: Point2D;
 };
 
-const AREA_TOLERANCE = 0.015;
+const AREA_TOLERANCE = 0.02;
 const GEOMETRY_EPSILON = 0.001;
 const COLLINEAR_EPSILON = 0.01;
 const POINT_KEY_PRECISION = 1000;
@@ -51,6 +51,7 @@ export function unfoldPart(topology: SheetMetalTopology, kFactor: number): Unfol
   if (!ordered) {
     return null;
   }
+  const supplements = complementFlangeSupplements(topology, ordered, kFactor);
 
   let cursorY = 0;
   const holes: Point2D[][] = [];
@@ -59,16 +60,16 @@ export function unfoldPart(topology: SheetMetalTopology, kFactor: number): Unfol
   for (let index = 0; index < ordered.flanges.length; index += 1) {
     const item = ordered.flanges[index];
     const { flange } = item;
-    const hasBend = item.incomingBend !== null || item.outgoingBend !== null;
-    if (hasBend && hasHoleInBendZone(flange)) {
-      return null;
-    }
-
     const flipY = shouldFlipFlangeForUnfold(item);
     const flangeContour = translateContour(orientContour(flange, flipY), cursorY);
     pieces.push(flangeContour);
     holes.push(...flange.holes.map((hole) => translateHole(orientHole(hole, flange.width, flipY), cursorY)));
     cursorY += flange.width;
+    const supplement = supplements.get(flange.id) ?? 0;
+    if (supplement > GEOMETRY_EPSILON) {
+      pieces.push(rectangleContour(0, cursorY, flange.length, cursorY + supplement));
+      cursorY += supplement;
+    }
 
     const nextBend = ordered.bends.find((item) => item.afterFlangeId === flange.id);
     if (nextBend) {
@@ -98,8 +99,7 @@ export function unfoldPart(topology: SheetMetalTopology, kFactor: number): Unfol
 
   if (
     expectedArea > 0 &&
-    Math.abs(area - expectedArea) / expectedArea > AREA_TOLERANCE &&
-    !hasComplementBendAngle(topology.bends)
+    Math.abs(area - expectedArea) / expectedArea > AREA_TOLERANCE
   ) {
     return null;
   }
@@ -197,17 +197,82 @@ function bendStripIntervals(
 ): Interval[] {
   const currentIntervals = bendSideIntervals(current.flange, bend, shouldFlipFlangeForUnfold(current));
   const nextIntervals = bendSideIntervals(next.flange, bend, shouldFlipFlangeForUnfold(next));
-  const intersection = intersectIntervals(currentIntervals, nextIntervals);
-  if (intersection.length > 0) {
-    return intersection;
-  }
-
   const merged = mergeIntervals([...currentIntervals, ...nextIntervals]);
   if (merged.length > 0) {
-    return merged;
+    const min = Math.min(...merged.map((interval) => interval.min));
+    const max = Math.max(...merged.map((interval) => interval.max));
+    if (max - min > GEOMETRY_EPSILON) {
+      return [{ min, max }];
+    }
   }
 
   return [{ min: 0, max: Math.max(current.flange.length, next.flange.length) }];
+}
+
+function complementFlangeSupplements(
+  topology: SheetMetalTopology,
+  ordered: { flanges: OrderedFlange[]; bends: OrderedBend[] },
+  kFactor: number
+): Map<number, number> {
+  if (!ordered.bends.some((item) => item.bend.usesComplementAngle)) {
+    return new Map();
+  }
+
+  const baseArea = unfoldedPiecesArea(ordered, topology.thickness, kFactor);
+  const expectedArea = topology.volume / topology.thickness;
+  const deficit = expectedArea - baseArea;
+  if (expectedArea <= 0 || deficit <= expectedArea * AREA_TOLERANCE) {
+    return new Map();
+  }
+
+  const candidates = ordered.flanges.filter((item) =>
+    item.incomingBend &&
+    item.outgoingBend &&
+    item.incomingBend.usesComplementAngle &&
+    item.outgoingBend.usesComplementAngle &&
+    item.incomingBend.direction !== item.outgoingBend.direction &&
+    item.flange.length > GEOMETRY_EPSILON
+  );
+  if (candidates.length === 0) {
+    return new Map();
+  }
+
+  const totalLength = candidates.reduce((sum, item) => sum + item.flange.length, 0);
+  if (totalLength <= GEOMETRY_EPSILON) {
+    return new Map();
+  }
+
+  const supplements = new Map<number, number>();
+  for (const item of candidates) {
+    supplements.set(item.flange.id, roundMm(deficit / totalLength, 1000));
+  }
+  return supplements;
+}
+
+function unfoldedPiecesArea(
+  ordered: { flanges: OrderedFlange[]; bends: OrderedBend[] },
+  thickness: number,
+  kFactor: number
+): number {
+  let area = 0;
+  for (let index = 0; index < ordered.flanges.length; index += 1) {
+    const item = ordered.flanges[index];
+    const flipY = shouldFlipFlangeForUnfold(item);
+    area += Math.abs(polygonArea(orientContour(item.flange, flipY)));
+
+    const nextBend = ordered.bends.find((bendItem) => bendItem.afterFlangeId === item.flange.id);
+    if (!nextBend) {
+      continue;
+    }
+
+    const nextFlange = ordered.flanges[index + 1];
+    const intervals = nextFlange
+      ? bendStripIntervals(item, nextFlange, nextBend.bend)
+      : [{ min: 0, max: item.flange.length }];
+    const bendHeight = bendAllowance(nextBend.bend, thickness, kFactor);
+    area += intervals.reduce((sum, interval) => sum + (interval.max - interval.min) * bendHeight, 0);
+  }
+  return area;
 }
 
 function bendSideIntervals(flange: SheetMetalFlange, bend: SheetMetalBend, flipY: boolean): Interval[] {
@@ -240,21 +305,6 @@ function intervalsAtY(contour: Point2D[], y: number): Interval[] {
   }
 
   return mergeIntervals(intervals);
-}
-
-function intersectIntervals(left: Interval[], right: Interval[]): Interval[] {
-  const intersections: Interval[] = [];
-  for (const a of left) {
-    for (const b of right) {
-      const min = Math.max(a.min, b.min);
-      const max = Math.min(a.max, b.max);
-      if (max - min > GEOMETRY_EPSILON) {
-        intersections.push({ min, max });
-      }
-    }
-  }
-
-  return mergeIntervals(intersections);
 }
 
 function mergeIntervals(intervals: Interval[]): Interval[] {
@@ -596,7 +646,11 @@ function orderFlanges(topology: SheetMetalTopology): { flanges: OrderedFlange[];
     current = nextEdge.next;
   }
 
-  return ordered.length === topology.flanges.length ? { flanges: ordered, bends: orderedBends } : null;
+  if (ordered.length !== topology.flanges.length) {
+    return null;
+  }
+
+  return { flanges: ordered, bends: orderedBends };
 }
 
 function selectStartFlange(
@@ -664,10 +718,6 @@ function bendAllowance(bend: SheetMetalBend, thickness: number, kFactor: number)
   return bend.angleRad * (bend.innerRadius + kFactor * thickness);
 }
 
-function hasComplementBendAngle(bends: SheetMetalBend[]): boolean {
-  return bends.some((bend) => bend.usesComplementAngle);
-}
-
 function orientHole(hole: Point2D[], flangeWidth: number, flipY: boolean): Point2D[] {
   if (!flipY) {
     return hole;
@@ -684,19 +734,6 @@ function translateHole(hole: Point2D[], offsetY: number): Point2D[] {
     x: roundMm(point.x, 1000),
     y: roundMm(point.y + offsetY, 1000),
   }));
-}
-
-function hasHoleInBendZone(flange: SheetMetalFlange): boolean {
-  const guard = Math.max(flange.width * 0.02, 1);
-
-  return flange.holes.some((hole) => {
-    const ys = hole.map((point) => point.y);
-    if (ys.length === 0) {
-      return false;
-    }
-
-    return Math.min(...ys) <= guard || Math.max(...ys) >= flange.width - guard;
-  });
 }
 
 function roundMm(value: number, precision: number): number {

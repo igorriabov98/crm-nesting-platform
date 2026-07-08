@@ -1,7 +1,8 @@
 import type { Prisma } from '@prisma/client';
 import { getBoss, QUEUE_STEP_PARSING, stopBoss } from '../lib/queue';
 import type { StepParsingJobData } from '../lib/queue';
-import { parseStepFile, type ParsedPart } from '../lib/step-parser';
+import { parseStepFile } from '../lib/step-parser';
+import type { ParsedPart } from '../lib/step-parser';
 import { prisma } from '../lib/prisma';
 import { analyzeProjectPdf } from '../lib/ai/service';
 import {
@@ -31,6 +32,7 @@ type StepInputContext = {
 };
 
 type ProjectParseReport = {
+  stepSolidCount: number;
   brepFlat: number;
   brepUnfolded: number;
   fallback: number;
@@ -39,6 +41,7 @@ type ProjectParseReport = {
     source: string;
     bendCount?: number;
     fallbackReason?: string;
+    suspectedBend?: boolean;
   }>;
 };
 
@@ -143,6 +146,7 @@ async function processStepJob(job: StepJob) {
             source: trace.source,
             ...(trace.bendCount > 0 ? { bendCount: trace.bendCount } : {}),
             ...(trace.reason ? { fallbackReason: trace.reason } : {}),
+            ...(trace.suspectedBend ? { suspectedBend: true } : {}),
           }))
         );
 
@@ -176,11 +180,13 @@ async function processStepJob(job: StepJob) {
     }
 
     const parseReport: ProjectParseReport = {
+      stepSolidCount: totalMeshes,
       brepFlat,
       brepUnfolded,
       fallback: brepFallback,
       perPart: perPartParseReport,
     };
+    const parseWarnings = resultWarnings(parsedParts.map(({ part }) => part), perPartParseReport);
 
     await prisma.$transaction(async (tx) => {
       await tx.part.deleteMany({ where: { projectId } });
@@ -212,6 +218,7 @@ async function processStepJob(job: StepJob) {
             holes: part.holes as unknown as Prisma.InputJsonValue,
             contourSource: part.contourSource,
             quantity: input.isBatch ? input.quantity : 1,
+            contourStale: part.suspectedBend && part.contourSource !== 'UNFOLDED_BREP',
             isSheetMetal: part.partType === 'SHEET',
             partType: part.partType,
             grainLock: false,
@@ -229,8 +236,8 @@ async function processStepJob(job: StepJob) {
       await tx.nestingProject.update({
         where: { id: projectId },
         data: {
-          status: 'parsed',
-          errorMessage: null,
+          status: parseWarnings.length > 0 ? 'completed_with_warnings' : 'parsed',
+          errorMessage: parseWarnings.length > 0 ? truncateErrorMessage(parseWarnings.join('; ')) : null,
           parseReport: parseReport as unknown as Prisma.InputJsonValue,
         },
       });
@@ -296,6 +303,27 @@ async function processStepJob(job: StepJob) {
   } finally {
     await retainedPdf?.cleanup();
   }
+}
+
+function resultWarnings(
+  parts: Array<{ classificationWarning: string | null; suspectedBend?: boolean; contourSource: string; name: string }>,
+  traces: ProjectParseReport['perPart']
+): string[] {
+  const warnings = new Set<string>();
+  for (const part of parts) {
+    if (part.classificationWarning) {
+      warnings.add(`${part.name}: ${part.classificationWarning}`);
+    }
+    if (part.suspectedBend && part.contourSource !== 'UNFOLDED_BREP') {
+      warnings.add(`${part.name}: suspected bend fallback requires review`);
+    }
+  }
+  for (const trace of traces) {
+    if (trace.suspectedBend && trace.fallbackReason) {
+      warnings.add(`${trace.partName}: ${trace.fallbackReason}`);
+    }
+  }
+  return [...warnings];
 }
 
 async function main() {

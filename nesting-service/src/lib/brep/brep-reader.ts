@@ -77,6 +77,7 @@ export interface BrepContourResult {
   solidIndex: number;
   contour: BrepPartContour | null;
   fallbackReason: string | null;
+  suspectedBend: boolean;
   elapsedMs: number;
   kFactor: number | null;
   kFactorDefaulted: boolean;
@@ -340,6 +341,7 @@ export async function readBrepPartContours(
             solidIndex,
             contour: unfolded.contour,
             fallbackReason: null,
+            suspectedBend: unfolded.suspectedBend,
             elapsedMs: Date.now() - startTime,
             kFactor: unfolded.kFactor,
             kFactorDefaulted: unfolded.kFactorDefaulted,
@@ -354,6 +356,7 @@ export async function readBrepPartContours(
             solidIndex,
             contour: flatContour,
             fallbackReason: flatContour ? null : unfolded.reason,
+            suspectedBend: unfolded.suspectedBend,
             elapsedMs: Date.now() - startTime,
             kFactor: flatContour ? null : unfolded.kFactor,
             kFactorDefaulted: flatContour ? false : unfolded.kFactorDefaulted,
@@ -366,6 +369,7 @@ export async function readBrepPartContours(
           solidIndex,
           contour: null,
           fallbackReason: message,
+          suspectedBend: true,
           elapsedMs: Date.now() - startTime,
           kFactor: null,
           kFactorDefaulted: false,
@@ -421,7 +425,9 @@ async function tryUnfoldSolid(input: {
   kFactorDefaulted: boolean;
   warnings: string[];
   allowFlatContour: boolean;
+  suspectedBend: boolean;
 }> {
+  const bendCandidates = getSolidBendRadiusThicknessCandidates(input.oc, input.solid);
   const topology = detectSheetMetalTopology({
     oc: input.oc,
     shape: input.solid,
@@ -435,7 +441,8 @@ async function tryUnfoldSolid(input: {
       kFactor: null,
       kFactorDefaulted: false,
       warnings: [],
-      allowFlatContour: true,
+      allowFlatContour: bendCandidates.length === 0,
+      suspectedBend: bendCandidates.length > 0,
     };
   }
 
@@ -461,6 +468,7 @@ async function tryUnfoldSolid(input: {
       kFactorDefaulted: lookup.defaulted,
       warnings,
       allowFlatContour: false,
+      suspectedBend: true,
     };
   }
 
@@ -474,7 +482,12 @@ async function tryUnfoldSolid(input: {
     kFactorDefaulted: lookup.defaulted,
     warnings,
     allowFlatContour: false,
+    suspectedBend: true,
   };
+}
+
+function getSolidBendRadiusThicknessCandidates(oc: OpenCascadeInstance, solid: TopoDS_Solid): number[] {
+  return getBendRadiusThicknessCandidates(readSolidFaceStats(oc, solid).cylinders);
 }
 
 function readFaceInfo(oc: OpenCascadeInstance, currentShape: TopoDS_Shape, index: number): FaceInfo {

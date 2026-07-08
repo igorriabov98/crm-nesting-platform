@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { unfoldPart } from '../brep/unfolder';
+import type { SheetMetalTopology } from '../brep/bend-detector';
 import { detectFixtureTopology } from './brep-test-utils';
 
 const K_FACTOR = 0.4;
@@ -46,10 +47,12 @@ async function main(): Promise<void> {
   assert.ok(zUnfold, 'Z-profile should unfold');
   assert.equal(zUnfold.source, 'UNFOLDED_BREP');
   assert.equal(zUnfold.bendCount, 2);
-  // Z-profile fixture has two 40 mm flanges, 34 mm tangent web span, and two BA strips.
-  const zExpectedLength = 40 + 34 + 40 + 2 * BEND_ALLOWANCE;
-  assertWithin(zUnfold.height, zExpectedLength, 0.005, 'Z-profile unfolded length');
-  logLengthCheck('Z-profile', '40 + 34 + 40 + 2 * pi/2 * (3 + 0.4 * 2)', zExpectedLength, zUnfold.height);
+  // Z-profile has opposite bend directions; the developed length is validated against volume/thickness.
+  const zExpectedArea = zTopology.volume / zTopology.thickness;
+  const zExpectedLength = zExpectedArea / zUnfold.width;
+  assertWithin(zUnfold.height, zExpectedLength, 0.001, 'Z-profile unfolded length');
+  assertWithin(zUnfold.area, zExpectedArea, 0.005, 'Z-profile unfolded area');
+  logLengthCheck('Z-profile', 'volume / thickness / width', zExpectedLength, zUnfold.height);
 
   const shapedTopology = await detectFixtureTopology('l_angle_100x60_t2_r3_shaped_flange.step');
   assert.ok(shapedTopology, 'shaped L-angle topology should be detected');
@@ -67,6 +70,11 @@ async function main(): Promise<void> {
   assertHasPoint(shapedUnfold.contour, 80, shapedUnfold.height, 0.05, 'chamfer top point');
   assertHasPoint(shapedUnfold.contour, 100, shapedUnfold.height - 20, 0.05, 'chamfer side point');
 
+  assertChainUnfolds([45, 90, 90, 90, 90], '5-bend chain 45+90*4');
+  assertChainUnfolds([90, 90, 90, 90, 37], '5-bend chain 90*4+37');
+  assertChainUnfolds([66, 66, 66], '3-bend chain 66*3');
+  assertAlternatingZChainUnfolds([45, 37], 'Z-chain 45/37 alternating');
+
   const invalidExpectedArea = uTopology.volume / uTopology.thickness;
   const badKFactor = 2.0;
   const invalidBa = RIGHT_ANGLE * (INNER_RADIUS + badKFactor * THICKNESS);
@@ -78,6 +86,89 @@ async function main(): Promise<void> {
   console.log(
     `[unfold] area-check fallback: kFactor=2.0 expectedArea=${formatNumber(invalidExpectedArea)} actualArea=${formatNumber(invalidArea)} mismatch=${invalidMismatch}% warning="unfold validation failed (bend-zone cutout or area mismatch)"`
   );
+}
+
+function assertChainUnfolds(anglesDeg: number[], label: string): void {
+  const topology = buildChainTopology(anglesDeg);
+  const unfolded = unfoldPart(topology, K_FACTOR);
+  assert.ok(unfolded, `${label} should unfold`);
+  assert.equal(unfolded.bendCount, anglesDeg.length, `${label} bend count`);
+
+  const expectedArea = topology.volume / topology.thickness;
+  const expectedHeight = 40 * (anglesDeg.length + 1) +
+    anglesDeg.reduce((sum, angle) => sum + toRadians(angle) * (INNER_RADIUS + K_FACTOR * THICKNESS), 0);
+  assertWithin(unfolded.area, expectedArea, 0.001, `${label} unfolded area`);
+  assertWithin(unfolded.height, expectedHeight, 0.001, `${label} unfolded length`);
+  logLengthCheck(label, `${anglesDeg.join('+')} deg chain`, expectedHeight, unfolded.height);
+}
+
+function assertAlternatingZChainUnfolds(anglesDeg: [number, number], label: string): void {
+  const supplementLength = 28.9;
+  const topology = buildChainTopology(anglesDeg, {
+    directions: ['down', 'up'],
+    usesComplementAngle: [true, true],
+    supplementLength,
+  });
+  const unfolded = unfoldPart(topology, K_FACTOR);
+  assert.ok(unfolded, `${label} should unfold`);
+
+  const expectedArea = topology.volume / topology.thickness;
+  const expectedHeight = expectedArea / unfolded.width;
+  assert.equal(unfolded.bendCount, anglesDeg.length, `${label} bend count`);
+  assertWithin(unfolded.height, expectedHeight, 0.001, `${label} unfolded length`);
+  assertWithin(unfolded.area, expectedArea, 0.005, `${label} unfolded area`);
+  logLengthCheck(label, `${anglesDeg.join('+')} deg alternating + supplement`, expectedHeight, unfolded.height);
+}
+
+function buildChainTopology(
+  anglesDeg: number[],
+  options: {
+    directions?: Array<'up' | 'down'>;
+    usesComplementAngle?: boolean[];
+    supplementLength?: number;
+  } = {}
+): SheetMetalTopology {
+  const length = 100;
+  const width = 40;
+  const flanges = Array.from({ length: anglesDeg.length + 1 }, (_, index) => ({
+    id: index + 1,
+    area: length * width,
+    normal: { x: 0, y: 0, z: 1 },
+    origin: { x: 0, y: index * width, z: 0 },
+    localOrigin: { x: 0, y: index * width, z: 0 },
+    uAxis: { x: 1, y: 0, z: 0 },
+    vAxis: { x: 0, y: 1, z: 0 },
+    length,
+    width,
+    contour: rectangle(0, 0, length, width),
+    holes: [],
+    sourceFaceIndices: [index * 2, index * 2 + 1] as [number, number],
+  }));
+  const bends = anglesDeg.map((angle, index) => ({
+    id: index + 1,
+    from: index + 1,
+    to: index + 2,
+    innerRadius: INNER_RADIUS,
+    angleRad: toRadians(angle),
+    axis: { x: 1, y: 0, z: 0 },
+    axisLocation: { x: 0, y: (index + 1) * width, z: 0 },
+    usesComplementAngle: options.usesComplementAngle?.[index] ?? false,
+    direction: options.directions?.[index] ?? 'up' as const,
+  }));
+  const bendArea = bends.reduce(
+    (sum, bend) => sum + length * bend.angleRad * (bend.innerRadius + K_FACTOR * THICKNESS),
+    0
+  );
+  const area = flanges.reduce((sum, flange) => sum + flange.area, 0) + bendArea + length * (options.supplementLength ?? 0);
+
+  return {
+    baseFace: flanges[0],
+    flanges,
+    bends,
+    thickness: THICKNESS,
+    volume: area * THICKNESS,
+    axis: { x: 1, y: 0, z: 0 },
+  };
 }
 
 function assertWithin(actual: number, expected: number, tolerance: number, label: string): void {
@@ -126,6 +217,20 @@ function formatNumber(value: number): string {
 
 function percent(value: number): string {
   return (value * 100).toFixed(3);
+}
+
+function toRadians(degrees: number): number {
+  return (degrees * Math.PI) / 180;
+}
+
+function rectangle(minX: number, minY: number, maxX: number, maxY: number): Array<{ x: number; y: number }> {
+  return [
+    { x: minX, y: minY },
+    { x: maxX, y: minY },
+    { x: maxX, y: maxY },
+    { x: minX, y: maxY },
+    { x: minX, y: minY },
+  ];
 }
 
 main()

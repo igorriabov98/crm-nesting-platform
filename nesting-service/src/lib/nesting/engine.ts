@@ -248,10 +248,16 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     totalWaste,
     computeTimeMs: Date.now() - startTime,
   };
+  const stepSolidCount = readStepSolidCount(project.parseReport);
   const validationReport = validateLayout(
     result.sheets,
     expectedParts,
-    { unplacedParts: result.unplacedParts, excludedParts }
+    {
+      unplacedParts: result.unplacedParts,
+      excludedParts,
+      stepSolidCount,
+      accountedBodies: activitySummary.totalBodies,
+    }
   );
 
   await saveResults(projectId, result, validationReport);
@@ -471,6 +477,15 @@ function readPointArray(value: Prisma.JsonValue, width: number, height: number):
     { x: 0, y: height },
     { x: 0, y: 0 },
   ];
+}
+
+function readStepSolidCount(value: Prisma.JsonValue | null): number | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const count = (value as { stepSolidCount?: unknown }).stepSolidCount;
+  return typeof count === 'number' && Number.isFinite(count) ? count : null;
 }
 
 function rectangleContour(width: number, height: number): Point2D[] {

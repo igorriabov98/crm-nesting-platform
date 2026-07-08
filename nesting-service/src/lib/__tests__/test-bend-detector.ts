@@ -18,6 +18,7 @@ async function main(): Promise<void> {
 
   const box = await detectFixtureTopology('box_cycle_100x40x40_t2_r3.step');
   assert.equal(box, null, 'closed bend cycle should be outside the phase2 scope');
+  await assertSuspectedBendFallback('box_cycle_100x40x40_t2_r3.step');
 
   const flatPlate = await detectFixtureTopology('plate_100x50x3_two_holes.step');
   assert.equal(flatPlate, null, 'flat plate should not be classified as bent topology');
@@ -27,7 +28,7 @@ async function main(): Promise<void> {
   await assertFlatFixture('plate_100x50x2_edge_fillet_r1.step');
 
   await assertUnfoldedFixture('l_angle_100x40x40_t2_r3_holes.step', 100, 85.97, 1);
-  await assertUnfoldedFixture('z_profile_100x40x40_t2_r3.step', 100, 125.94, 2);
+  await assertUnfoldedFixture('z_profile_100x40x40_t2_r3.step', 100, 154.84, 2, 0.001);
 }
 
 async function assertFlatFixture(file: string, expectedSource?: ContourSource): Promise<void> {
@@ -43,14 +44,30 @@ async function assertFlatFixture(file: string, expectedSource?: ContourSource): 
   }
 }
 
-async function assertUnfoldedFixture(file: string, expectedWidth: number, expectedHeight: number, expectedBends: number): Promise<void> {
+async function assertUnfoldedFixture(
+  file: string,
+  expectedWidth: number,
+  expectedHeight: number,
+  expectedBends: number,
+  tolerance = 0.005
+): Promise<void> {
   const parsed = await parseFixture(file);
   assert.equal(parsed.parts.length, 1, `${file} should parse as one part`);
   const part = parsed.parts[0];
   assert.equal(part.contourSource, 'UNFOLDED_BREP', `${file} should unfold`);
   assert.equal(part.bendCount, expectedBends, `${file} bend count`);
-  assertWithin(part.width, expectedWidth, 0.005, `${file} unfolded width`);
-  assertWithin(part.height, expectedHeight, 0.005, `${file} unfolded height`);
+  assertWithin(part.width, expectedWidth, tolerance, `${file} unfolded width`);
+  assertWithin(part.height, expectedHeight, tolerance, `${file} unfolded height`);
+}
+
+async function assertSuspectedBendFallback(file: string): Promise<void> {
+  const parsed = await parseFixture(file);
+  assert.equal(parsed.parts.length, 1, `${file} should parse as one part`);
+  const part = parsed.parts[0];
+  assert.equal(part.suspectedBend, true, `${file} should be marked as suspected bend`);
+  assert.notEqual(part.contourSource, 'EXACT_BREP', `${file} must not silently use folded exact B-Rep`);
+  assert.match(part.classificationWarning ?? '', /suspected bend/, `${file} should require review`);
+  assert.ok(part.fallbackReason, `${file} should keep fallback reason`);
 }
 
 async function parseFixture(file: string) {

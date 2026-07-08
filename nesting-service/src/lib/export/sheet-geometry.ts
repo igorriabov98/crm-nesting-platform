@@ -89,6 +89,9 @@ function toDxfPartData(placement: PlacementForExport, part: Part): DxfPartData {
   const { contour, holes, needsReview, reviewReason } = readFittedPartGeometry(part.contour, part.holes, localWidth, localHeight, {
     contourStale: part.contourStale,
   });
+  const bendReviewReason = part.classificationWarning?.includes('suspected bend')
+    ? part.classificationWarning
+    : null;
 
   return {
     name: normalizeCadText(placement.name || part.name),
@@ -102,8 +105,8 @@ function toDxfPartData(placement: PlacementForExport, part: Part): DxfPartData {
     originalW: localWidth,
     originalH: localHeight,
     grainLock: part.grainLock,
-    needsReview,
-    reviewReason,
+    needsReview: needsReview || bendReviewReason !== null,
+    reviewReason: bendReviewReason ?? reviewReason,
     contourSource: part.contourSource,
   };
 }

@@ -2,7 +2,7 @@ import archiver from 'archiver';
 import { PassThrough } from 'node:stream';
 import { Prisma } from '@prisma/client';
 import { parsePDFAnalysisResponse } from '../lib/ai/openrouter';
-import type { MatchResult } from '../lib/ai/types';
+import type { DetailEntry, MatchResult } from '../lib/ai/types';
 import { generateDXFWithWarnings } from '../lib/dxf/generator';
 import { transformContourForDxf } from '../lib/dxf/transform';
 import { validateDXF } from '../lib/dxf/validate';
@@ -36,9 +36,11 @@ type ReconciliationRow = {
   stepHeightMm: number;
   pdfWidthMm: number | null;
   pdfHeightMm: number | null;
+  pdf_mm: { width: number; height: number; candidate: boolean } | null;
+  pdfCandidate: boolean;
   mismatchPercent: number | null;
   stepAreaMismatchPercent: number | null;
-  status: 'OK' | 'MISMATCH' | 'NO_PDF_DATA';
+  status: 'OK' | 'MISMATCH' | 'NO_PDF_DATA' | 'UNMATCHED_CANDIDATE';
   kFactor: number | null;
   kFactorDefaulted: boolean;
   dimensionMismatch: boolean;
@@ -309,8 +311,11 @@ function buildReconciliation(project: Prisma.NestingProjectGetPayload<{
       : null,
     rows: project.parts.filter((part) => isPartActive(part) && isSheetPartType(part.partType, part.isSheetMetal)).map((part) => {
       const match = matchesByPartId.get(part.id);
-      const pdfWidth = toPositiveNumber(match?.suggestedUnfoldingWidth);
-      const pdfHeight = toPositiveNumber(match?.suggestedUnfoldingHeight);
+      const exactPdf = readPdfDimensionsFromMatch(match);
+      const pdfCandidate = exactPdf ? null : findPdfDimensionCandidate(part, details);
+      const pdfWidth = exactPdf?.width ?? pdfCandidate?.width ?? null;
+      const pdfHeight = exactPdf?.height ?? pdfCandidate?.height ?? null;
+      const isCandidate = pdfCandidate !== null;
       const mismatchPercent = pdfWidth && pdfHeight
         ? compareDimensionsPercent(part.width, part.height, pdfWidth, pdfHeight)
         : null;
@@ -326,9 +331,15 @@ function buildReconciliation(project: Prisma.NestingProjectGetPayload<{
         stepHeightMm: roundMm(part.height),
         pdfWidthMm: pdfWidth ? roundMm(pdfWidth) : null,
         pdfHeightMm: pdfHeight ? roundMm(pdfHeight) : null,
+        pdf_mm: pdfWidth && pdfHeight
+          ? { width: roundMm(pdfWidth), height: roundMm(pdfHeight), candidate: isCandidate }
+          : null,
+        pdfCandidate: isCandidate,
         mismatchPercent,
         stepAreaMismatchPercent,
-        status: mismatchPercent === null
+        status: isCandidate
+          ? 'UNMATCHED_CANDIDATE'
+          : mismatchPercent === null
           ? 'NO_PDF_DATA'
           : mismatchPercent <= DIMENSION_MATCH_TOLERANCE_PERCENT
             ? 'OK'
@@ -363,7 +374,10 @@ function buildReconciliationMarkdown(rows: ReconciliationRow[]): string {
       row.stepAreaMismatchPercent === null ? 'n/a' : `${row.stepAreaMismatchPercent}%`,
       row.status,
       row.kFactor === null ? 'n/a' : String(row.kFactor),
-      escapeMarkdown(row.mismatchNote || (row.kFactorDefaulted ? 'K factor defaulted' : '')),
+      escapeMarkdown([
+        row.pdfCandidate ? 'PDF candidate' : '',
+        row.mismatchNote || (row.kFactorDefaulted ? 'K factor defaulted' : ''),
+      ].filter(Boolean).join('; ')),
     ].join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
   }
 
@@ -382,6 +396,7 @@ function buildSummaryMarkdown(
     : 0;
   const mismatchCount = reconciliationRows.filter((row) => row.status === 'MISMATCH').length;
   const noPdfDataCount = reconciliationRows.filter((row) => row.status === 'NO_PDF_DATA').length;
+  const candidateCount = reconciliationRows.filter((row) => row.status === 'UNMATCHED_CANDIDATE').length;
 
   return [
     `# Diagnostic package: ${project.orderNumber}`,
@@ -394,6 +409,7 @@ function buildSummaryMarkdown(
     `- Waste: ${resultJson.totalWaste}%`,
     `- Validation violations: ${violations}`,
     `- PDF/STEP mismatches: ${mismatchCount}`,
+    `- PDF/STEP unmatched candidates: ${candidateCount}`,
     `- Parts without PDF unfolding data: ${noPdfDataCount}`,
     `- DXF/SVG warnings: ${warnings.length}`,
     '',
@@ -485,12 +501,60 @@ function readMatches(value: unknown): MatchResult[] {
   return readArray(value).filter(isMatchResult);
 }
 
-function parseDetails(rawResponse: string): unknown[] {
+function parseDetails(rawResponse: string): DetailEntry[] {
   try {
     return parsePDFAnalysisResponse(rawResponse).details;
   } catch {
     return [];
   }
+}
+
+function readPdfDimensionsFromMatch(match: MatchResult | undefined): { width: number; height: number } | null {
+  const width = toPositiveNumber(match?.suggestedUnfoldingWidth);
+  const height = toPositiveNumber(match?.suggestedUnfoldingHeight);
+  return width && height ? { width, height } : null;
+}
+
+function findPdfDimensionCandidate(
+  part: { name: string; thickness: number | null; width: number; height: number },
+  details: DetailEntry[]
+): { width: number; height: number } | null {
+  const candidates = details.flatMap((detail) => {
+    const width = toPositiveNumber(detail.unfoldingWidth);
+    const height = toPositiveNumber(detail.unfoldingHeight);
+    if (!width || !height) return [];
+
+    const thicknessScore = detail.thicknessMm && part.thickness
+      ? Math.abs(detail.thicknessMm - part.thickness) <= 0.3 ? 0.35 : -1
+      : 0;
+    if (thicknessScore < 0) return [];
+
+    const nameScore = nameOverlapScore(part.name, `${detail.designation} ${detail.name}`);
+    if (nameScore <= 0) return [];
+
+    const dimensionHint = compareDimensionsPercent(part.width, part.height, width, height) <= 15 ? 0.15 : 0;
+    return [{ width, height, score: nameScore + thicknessScore + dimensionHint }];
+  });
+
+  return candidates.sort((left, right) => right.score - left.score)[0] ?? null;
+}
+
+function nameOverlapScore(left: string, right: string): number {
+  const leftTokens = meaningfulTokens(left);
+  const rightTokens = meaningfulTokens(right);
+  if (leftTokens.length === 0 || rightTokens.length === 0) return 0;
+
+  const rightSet = new Set(rightTokens);
+  const overlap = leftTokens.filter((token) => rightSet.has(token)).length;
+  return overlap > 0 ? overlap / Math.min(leftTokens.length, rightTokens.length) : 0;
+}
+
+function meaningfulTokens(value: string): string[] {
+  return normalizeCadText(value)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= 4 && !/^\d+$/.test(token));
 }
 
 function compareDimensionsPercent(stepWidth: number, stepHeight: number, pdfWidth: number, pdfHeight: number): number {
