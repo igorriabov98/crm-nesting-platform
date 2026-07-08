@@ -73,6 +73,8 @@ export interface ParsedPart {
   bendCount: number;
   kFactor: number | null;
   kFactorDefaulted: boolean;
+  suspectedBend: boolean;
+  fallbackReason: string | null;
 }
 
 export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE';
@@ -82,6 +84,7 @@ export type BrepTrace = {
   source: ContourSource;
   bendCount: number;
   reason: string | null;
+  suspectedBend?: boolean;
   elapsedMs: number | null;
 };
 
@@ -213,6 +216,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
               source: part.contourSource,
               bendCount: part.bendCount,
               reason: null,
+              suspectedBend: part.suspectedBend,
               elapsedMs: brepResult?.elapsedMs ?? null,
             });
           } else if (part.contourSource === 'UNFOLDED_BREP') {
@@ -222,15 +226,18 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
               source: part.contourSource,
               bendCount: part.bendCount,
               reason: null,
+              suspectedBend: part.suspectedBend,
               elapsedMs: brepResult?.elapsedMs ?? null,
             });
           } else {
+            const fallbackReason = part.fallbackReason ?? brepResult?.fallbackReason ?? brepReadError ?? 'no matching B-Rep solid';
             brepFallback += 1;
             brepTrace.push({
               partName: part.name,
               source: part.contourSource,
               bendCount: part.bendCount,
-              reason: brepResult?.fallbackReason ?? brepReadError ?? 'no matching B-Rep solid',
+              reason: fallbackReason,
+              suspectedBend: part.suspectedBend,
               elapsedMs: brepResult?.elapsedMs ?? null,
             });
           }
@@ -364,6 +371,8 @@ function processMesh(
   const holes: Point2D[][] = [];
   let contour: Point2D[] = [];
   let contourSource: ContourSource | null = null;
+  const suspectedBend = brepResult?.suspectedBend === true;
+  const brepFallbackReason = brepResult?.fallbackReason ?? null;
 
   if (exactContour) {
     contour = exactContour.contour;
@@ -412,7 +421,7 @@ function processMesh(
         meshArea,
       });
   const maxBBoxDim = Math.max(boundingBox.sizeX, boundingBox.sizeY, boundingBox.sizeZ);
-  const hasBends = exactContour?.source === 'UNFOLDED_BREP' ? true : exactContour ? false : classification.hasBends;
+  const hasBends = exactContour?.source === 'UNFOLDED_BREP' ? true : exactContour ? false : (suspectedBend || classification.hasBends);
   const hasLargeExactSheetContour =
     exactContour?.source === 'EXACT_BREP' &&
     fallbackThickness.thickness !== null &&
@@ -433,6 +442,12 @@ function processMesh(
   if (!exactContour && classificationWarning) {
     errors.push(`${name}: ${classificationWarning}`);
   }
+  if (!exactContour && suspectedBend) {
+    const warning = `${name}: suspected bend requires review (${brepFallbackReason ?? 'B-Rep unfolding did not produce a validated blank'})`;
+    warnings.push(warning);
+    errors.push(warning);
+  }
+  const finalClassificationWarning = partType === 'SHEET' && warnings.length > 0 ? warnings.join('; ') : null;
 
   const { width, height } = exactContour ?? getContourSize(contour);
   const thumbnailSvg = generateThumbnailSvg(contour, holes);
@@ -450,7 +465,7 @@ function processMesh(
     hasBends: partType === 'SHEET' && hasBends,
     confidence: exactContour ? 0.98 : classification.confidence,
     classificationMethod: classification.method,
-    classificationWarning: exactContour ? (brepResult?.warnings.join('; ') || null) : classificationWarning,
+    classificationWarning: exactContour ? (brepResult?.warnings.join('; ') || null) : finalClassificationWarning,
     thumbnailSvg,
     boundingBox,
     meshVolume,
@@ -459,6 +474,8 @@ function processMesh(
     bendCount: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.bendCount : 0,
     kFactor: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.kFactor : null,
     kFactorDefaulted: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.kFactorDefaulted : false,
+    suspectedBend,
+    fallbackReason: exactContour ? null : brepFallbackReason,
   };
 }
 
