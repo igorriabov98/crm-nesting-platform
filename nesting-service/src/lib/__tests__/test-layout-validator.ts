@@ -101,6 +101,11 @@ const unexplainedReport = validateLayout(
 assertViolation(unexplainedReport, 'UNPLACED_WITHOUT_REASON');
 assertNoViolation(unexplainedReport, 'quantity');
 
+const bodyMismatchReport = validateLayout([], [], { stepSolidCount: 20, accountedBodies: 24 });
+assertViolation(bodyMismatchReport, 'BODY_COUNT_MISMATCH');
+assert.equal(bodyMismatchReport.violations[0].severity, 'error');
+assert.equal(bodyMismatchReport.violations[0].message, 'bodies: step=20, accounted=24');
+
 const skmWithoutT20Report = validateLayout(
   [sheet(Array.from({ length: 9 }, (_, index) => part(`placed-${index + 1}`, 10 + index * 25, 10, 20, 20)), { width: 260 })],
   [
