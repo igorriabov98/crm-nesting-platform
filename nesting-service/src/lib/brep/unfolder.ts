@@ -880,6 +880,13 @@ function stitchOuterContour(polygons: Point2D[][]): Point2D[] | null {
   const splitSegments = splitCollinearSegments(rawSegments);
   const boundary = removeInternalSegments(splitSegments);
   const loops = chainSegments(boundary);
+  if (process.env.UNFOLD_CONTOUR_DEBUG === '1') {
+    console.error(`[unfold-contour-debug] stitch-loops: ${JSON.stringify(loops.map((loop) => ({
+      points: loop.length,
+      area: roundMm(polygonArea(loop), 1000),
+      bounds: boundsOf(loop),
+    })))}`);
+  }
   const outer = loops
     .filter((loop) => loop.length >= 4)
     .sort((left, right) => polygonArea(right) - polygonArea(left))[0];
@@ -888,7 +895,13 @@ function stitchOuterContour(polygons: Point2D[][]): Point2D[] | null {
     return null;
   }
 
-  return removeCollinearPoints(closeContour(outer));
+  const stitched = closeContour(outer);
+  const cleaned = removeCollinearPoints(stitched);
+  if (process.env.UNFOLD_CONTOUR_DEBUG === '1') {
+    debugContour('stitched-before-clean', stitched);
+    debugContour('stitched-after-clean', cleaned);
+  }
+  return cleaned;
 }
 
 function contourSegments(contour: Point2D[]): Segment[] {

@@ -8,6 +8,16 @@ const THICKNESS = 2;
 const INNER_RADIUS = 3;
 const RIGHT_ANGLE = Math.PI / 2;
 const BEND_ALLOWANCE = RIGHT_ANGLE * (INNER_RADIUS + K_FACTOR * THICKNESS);
+const STRIP66_ARC_CENTER = { x: 75, y: 167.117 };
+const STRIP66_ARC_RADIUS = 5;
+
+type ArcExpectation = {
+  center: { x: number; y: number };
+  radius: number;
+  tolerance: number;
+  minPoints: number;
+  label: string;
+};
 
 async function main(): Promise<void> {
   const lTopology = await detectFixtureTopology('l_angle_100x40x40_t2_r3_holes.step');
@@ -70,10 +80,38 @@ async function main(): Promise<void> {
   assertHasPoint(shapedUnfold.contour, 80, shapedUnfold.height, 0.05, 'chamfer top point');
   assertHasPoint(shapedUnfold.contour, 100, shapedUnfold.height - 20, 0.05, 'chamfer side point');
 
+  const rearLikeUnfold = unfoldPart(buildChainTopology([90, 90, 90, 90, 37]), K_FACTOR);
+  assert.ok(rearLikeUnfold, 'rear-like rectangular chain should unfold');
+  assertRectangularContour(rearLikeUnfold.contour, 'rear-like rectangular chain');
   assertChainUnfolds([45, 90, 90, 90, 90], '5-bend chain 45+90*4');
   assertChainUnfolds([90, 90, 90, 90, 37], '5-bend chain 90*4+37');
   assertChainUnfolds([66, 66, 66], '3-bend chain 66*3');
   assertAlternatingZChainUnfolds([45, 37], 'Z-chain 45/37 alternating');
+  await assertPassportFixtureUnfolds(
+    'synthetic/multiaxis/strip66x3_r5notch_w75_t6_r4.step',
+    'strip66 R5-notch',
+    100649.9991 / 6,
+    75,
+    3,
+    4,
+    undefined,
+    {
+      center: STRIP66_ARC_CENTER,
+      radius: STRIP66_ARC_RADIUS,
+      tolerance: 0.2,
+      minPoints: 8,
+      label: 'strip66 R5-notch',
+    }
+  );
+  await assertPassportFixtureUnfolds(
+    'synthetic/multiaxis/flange_tree_100x100_t2_r3.step',
+    'flange tree 3-axis',
+    29665.2300 / 2,
+    130.97,
+    3,
+    8,
+    9
+  );
 
   const invalidExpectedArea = uTopology.volume / uTopology.thickness;
   const badKFactor = 2.0;
@@ -118,6 +156,45 @@ function assertAlternatingZChainUnfolds(anglesDeg: [number, number], label: stri
   assertWithin(unfolded.height, expectedHeight, 0.001, `${label} unfolded length`);
   assertWithin(unfolded.area, expectedArea, 0.005, `${label} unfolded area`);
   logLengthCheck(label, `${anglesDeg.join('+')} deg alternating + supplement`, expectedHeight, unfolded.height);
+}
+
+async function assertPassportFixtureUnfolds(
+  fileName: string,
+  label: string,
+  expectedArea: number,
+  expectedWidth: number,
+  expectedBends: number,
+  minContourPoints: number,
+  exactContourPoints?: number,
+  expectArc?: ArcExpectation
+): Promise<void> {
+  const topology = await detectFixtureTopology(fileName);
+  assert.ok(topology, `${label} topology should be detected`);
+  assert.equal(topology.bends.length, expectedBends, `${label} bend count`);
+
+  const unfolded = unfoldPart(topology, K_FACTOR);
+  assert.ok(unfolded, `${label} should unfold`);
+  assert.equal(unfolded.source, 'UNFOLDED_BREP');
+  assert.equal(unfolded.bendCount, expectedBends, `${label} unfolded bend count`);
+  const contourPoints = openLoop(unfolded.contour).length;
+  if (exactContourPoints !== undefined) {
+    assert.equal(contourPoints, exactContourPoints, `${label} contour point count`);
+  } else {
+    assert.ok(contourPoints > minContourPoints, `${label} contour should be non-rectangular`);
+  }
+  assertWithin(unfolded.area, expectedArea, 0.02, `${label} unfolded area`);
+  assertWithin(unfolded.width, expectedWidth, 0.005, `${label} unfolded width`);
+  if (expectArc) {
+    assertArcPoints(
+      unfolded.contour,
+      expectArc.center,
+      expectArc.radius,
+      expectArc.tolerance,
+      expectArc.minPoints,
+      expectArc.label
+    );
+  }
+  logAreaCheck(label, expectedArea, unfolded.area, unfolded.width, unfolded.height);
 }
 
 function buildChainTopology(
@@ -182,6 +259,13 @@ function logLengthCheck(label: string, formula: string, expected: number, actual
   );
 }
 
+function logAreaCheck(label: string, expectedArea: number, actualArea: number, width: number, height: number): void {
+  console.log(
+    `[unfold] ${label}: area formula=volume / thickness; expectedArea=${formatNumber(expectedArea)} actualArea=${formatNumber(actualArea)} areaDelta=${percent(Math.abs(actualArea - expectedArea) / expectedArea)}%`
+  );
+  console.log(`[unfold] ${label}: bbox=${formatNumber(width)} x ${formatNumber(height)}`);
+}
+
 function measureHoleCenter(hole: Array<{ x: number; y: number }>): { x: number; y: number } {
   const points = openLoop(hole);
   return {
@@ -200,6 +284,27 @@ function assertHasPoint(
   assert.ok(
     points.some((point) => Math.hypot(point.x - expectedX, point.y - expectedY) <= tolerance),
     `${label}: expected point near ${expectedX},${expectedY}`
+  );
+}
+
+function assertRectangularContour(points: Array<{ x: number; y: number }>, label: string): void {
+  assert.equal(openLoop(points).length, 4, `${label} should drop collinear bend breakpoints`);
+}
+
+function assertArcPoints(
+  points: Array<{ x: number; y: number }>,
+  center: { x: number; y: number },
+  radius: number,
+  tolerance: number,
+  minPoints: number,
+  label: string
+): void {
+  const arcPoints = openLoop(points).filter((point) => (
+    Math.abs(Math.hypot(point.x - center.x, point.y - center.y) - radius) <= tolerance
+  ));
+  assert.ok(
+    arcPoints.length >= minPoints,
+    `${label} should preserve arc points: expected >=${minPoints}, got ${arcPoints.length}`
   );
 }
 
