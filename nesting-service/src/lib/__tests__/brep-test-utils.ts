@@ -18,7 +18,7 @@ export const fixturesDir = path.join(__dirname, 'fixtures');
 
 export async function detectFixtureTopology(fileName: string): Promise<SheetMetalTopology | null> {
   const oc = await getOCC();
-  const inputPath = `/test-${fileName}`;
+  const inputPath = `/test-${fileName.replace(/[^a-zA-Z0-9._-]+/g, '_')}`;
   let reader: STEPControl_Reader | null = null;
   let progress: Message_ProgressRange | null = null;
   let shape: TopoDS_Shape | null = null;

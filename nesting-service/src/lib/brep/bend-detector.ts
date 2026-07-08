@@ -46,6 +46,8 @@ export type SheetMetalBend = {
   angleRad: number;
   axis: Vec3;
   axisLocation: Vec3;
+  axisStart?: Vec3;
+  axisEnd?: Vec3;
   usesComplementAngle: boolean;
   direction: BendDirection;
 };
@@ -63,6 +65,7 @@ export type SheetMetalTopologyInput = {
   oc: OpenCascadeInstance;
   shape: TopoDS_Shape;
   deadlineMs?: number;
+  onReject?: (reason: string) => void;
 };
 
 type Deletable = {
@@ -90,7 +93,13 @@ type CylindricalFace = {
   radius: number;
   axisLocation: Vec3;
   axisDirection: Vec3;
+  firstU: number;
+  lastU: number;
+  firstV: number;
+  lastV: number;
   angleSpanRad: number;
+  axisStart: Vec3;
+  axisEnd: Vec3;
 };
 
 type FlangePair = {
@@ -105,14 +114,25 @@ type BendCandidate = {
   usesComplementAngle: boolean;
   axisLocation: Vec3;
   axisDirection: Vec3;
+  axisStart: Vec3;
+  axisEnd: Vec3;
   innerCylinder: CylindricalFace;
+  innerCylinders: CylindricalFace[];
   outerRadius: number;
 };
 
 type BendCylinderSet = {
   axis: Vec3;
   thickness: number;
-  cylinders: CylindricalFace[];
+  pairs: BendCylinderPair[];
+};
+
+type BendCylinderPair = {
+  inner: CylindricalFace;
+  outer: CylindricalFace;
+  thickness: number;
+  innerSegments: CylindricalFace[];
+  outerSegments: CylindricalFace[];
 };
 
 const ANGULAR_DEFLECTION_RAD = 0.1;
@@ -126,8 +146,12 @@ const THICKNESS_TOLERANCE = 0.05;
 const MIN_FLANGE_WIDTH_FACTOR = 3;
 const TANGENCY_TOLERANCE_MM = 0.35;
 const BEND_ANGLE_TOLERANCE_RAD = 0.2;
+const BEND_SECTOR_TOLERANCE_RAD = 0.02;
 const MIN_INNER_RADIUS_MM = 0.25;
 const MAX_BEND_RADIUS_TO_THICKNESS = 12;
+const BEND_FRAGMENT_RADIUS_TOLERANCE_MM = 0.05;
+const BEND_FRAGMENT_SECTOR_GAP_TOLERANCE_RAD = 0.02;
+const BEND_TOPOLOGY_DEBUG = process.env.BEND_TOPOLOGY_DEBUG === '1';
 
 export function detectSheetMetalTopology(input: SheetMetalTopologyInput): SheetMetalTopology | null {
   const planarFaces: PlanarFace[] = [];
@@ -137,42 +161,128 @@ export function detectSheetMetalTopology(input: SheetMetalTopologyInput): SheetM
     const faces = collectFaces(input);
     planarFaces.push(...faces.planar);
     cylindricalFaces.push(...faces.cylinders);
+    debugTopology('faces', {
+      planarCount: faces.planar.length,
+      cylinderCount: faces.cylinders.length,
+      planars: faces.planar.map((face) => ({
+        index: face.index,
+        area: roundMm(face.area, 1000),
+        normal: formatVec3(face.frame.normal),
+        origin: formatVec3(face.frame.origin),
+      })),
+      cylinders: faces.cylinders.map(summarizeCylinder),
+    });
 
     if (faces.cylinders.length === 0 || faces.planar.length < 4) {
+      debugTopology('reject', { reason: 'not enough cylinders or planar faces', planarCount: faces.planar.length, cylinderCount: faces.cylinders.length });
       return null;
     }
 
     const bendCylinderSet = selectBendCylinderSet(faces.cylinders);
     if (!bendCylinderSet) {
+      debugTopology('reject', { reason: 'no selected bend cylinder set' });
       return null;
     }
     const { axis: bendAxis, thickness } = bendCylinderSet;
+    const bendPairs = mergeFragmentedBendPairs(bendCylinderSet.pairs);
+    const singleAxisTopology = allBendPairsParallel(bendPairs);
+    debugTopology('selected-cylinder-set', {
+      thickness,
+      rawPairCount: bendCylinderSet.pairs.length,
+      pairCount: bendPairs.length,
+      singleAxisTopology,
+      axis: formatVec3(bendAxis),
+      rawPairs: bendCylinderSet.pairs.map(summarizePair),
+      pairs: bendPairs.map(summarizePair),
+    });
 
-    const length = readShapeLengthAlongAxis(input.oc, input.shape, bendAxis);
-    if (length <= 0) {
+    const length = singleAxisTopology ? readShapeLengthAlongAxis(input.oc, input.shape, bendAxis) : 0;
+    if (singleAxisTopology && length <= 0) {
+      debugTopology('reject', { reason: 'non-positive shape length along bend axis', length });
       return null;
     }
 
-    const facePairs = findFlangePairs(faces.planar, thickness, bendAxis, length);
+    const facePairs = findFlangePairs(
+      faces.planar,
+      thickness,
+      singleAxisTopology ? bendAxis : null,
+      singleAxisTopology ? length : null,
+      bendPairs
+    );
     if (facePairs.length < 2) {
+      debugTopology('reject', {
+        reason: 'not enough flange face pairs',
+        facePairCount: facePairs.length,
+        thickness,
+        length,
+        singleAxisTopology,
+        planarAreas: faces.planar.map((face) => ({ index: face.index, area: roundMm(face.area, 1000), normal: formatVec3(face.frame.normal) })),
+      });
       return null;
     }
 
-    const flanges = facePairs.map((pair, index) => buildFlange(input, pair, index, bendAxis));
-    const bendCandidates = findBendCandidates(bendCylinderSet.cylinders, thickness, bendAxis);
+    const flanges = facePairs.map((pair, index) =>
+      buildFlange(input, pair, index, singleAxisTopology ? bendAxis : null)
+    );
+    const bendCandidates = findBendCandidates(bendPairs, thickness);
+    debugTopology('flanges-and-candidates', {
+      flangeCount: flanges.length,
+      flanges: flanges.map((flange) => ({
+        id: flange.id,
+        area: roundMm(flange.area, 1000),
+        length: flange.length,
+        width: flange.width,
+        normal: formatVec3(flange.normal),
+        sourceFaceIndices: flange.sourceFaceIndices,
+        contourPoints: flange.contour.length,
+      })),
+      candidateCount: bendCandidates.length,
+      candidates: bendCandidates.map((candidate) => ({
+        innerIndex: candidate.innerCylinder.index,
+        innerRadius: roundMm(candidate.innerRadius, 1000),
+        outerRadius: roundMm(candidate.outerRadius, 1000),
+        angleDeg: roundMm(toDegrees(candidate.angleRad), 1000),
+        usesComplementAngle: candidate.usesComplementAngle,
+        axis: formatVec3(candidate.axisDirection),
+      })),
+    });
     const facesByIndex = new Map(faces.planar.map((face) => [face.index, face]));
     const bends = connectBends(input.oc, bendCandidates, flanges, facesByIndex, thickness);
+    debugTopology('connected-bends', {
+      bendCount: bends.length,
+      foundBendPairCount: bendPairs.length,
+      expectedForTree: flanges.length - 1,
+      bends: bends.map((bend) => ({
+        id: bend.id,
+        from: bend.from,
+        to: bend.to,
+        innerRadius: bend.innerRadius,
+        angleDeg: roundMm(toDegrees(bend.angleRad), 1000),
+        direction: bend.direction,
+      })),
+    });
+
+    // Compare found bend pairs with connected bends, not with the derived tree size.
+    // A mismatch means a real bend was lost while wiring flanges.
+    // That is a review fallback, not a successful unfold.
+    if (bends.length !== bendPairs.length) {
+      return rejectTopology(input, `unconnected bend pairs: found=${bendPairs.length}, connected=${bends.length}`, {
+        flangeCount: flanges.length,
+        bendCount: bends.length,
+      });
+    }
 
     if (!isValidTree(flanges.length, bends)) {
-      return null;
+      return rejectTopology(input, 'invalid bend tree', { flangeCount: flanges.length, bendCount: bends.length, expectedBends: flanges.length - 1 });
     }
 
     const volume = readShapeVolume(input.oc, input.shape);
     const baseFace = [...flanges].sort((a, b) => b.area - a.area)[0];
+    const orientedBends = orientBendDirections(flanges, bends, baseFace.id);
     return {
       baseFace,
       flanges,
-      bends,
+      bends: orientedBends,
       thickness,
       volume,
       axis: bendAxis,
@@ -185,6 +295,12 @@ export function detectSheetMetalTopology(input: SheetMetalTopologyInput): SheetM
       safeDelete(face.face);
     }
   }
+}
+
+function rejectTopology(input: SheetMetalTopologyInput, reason: string, details: Record<string, unknown> = {}): null {
+  debugTopology('reject', { reason, ...details });
+  input.onReject?.(reason);
+  return null;
 }
 
 function collectFaces(input: SheetMetalTopologyInput): { planar: PlanarFace[]; cylinders: CylindricalFace[] } {
@@ -250,21 +366,24 @@ function collectFaces(input: SheetMetalTopologyInput): { planar: PlanarFace[]; c
 
 function selectBendCylinderSet(cylinders: CylindricalFace[]): BendCylinderSet | null {
   const groups = groupCylindersByAxis(cylinders);
-  const eligibleGroups: CylindricalFace[][] = [];
+  const eligibleGroups: Array<{ group: CylindricalFace[]; pairs: BendCylinderPair[] }> = [];
   const candidates: number[] = [];
 
   for (const group of groups) {
-    const radii = uniqueByTolerance(group.map((cylinder) => cylinder.radius), 0.01).sort((a, b) => a - b);
-    let groupHasThickness = false;
-    for (let index = 1; index < radii.length; index += 1) {
-      const diff = radii[index] - radii[index - 1];
-      if (diff >= MIN_THICKNESS_MM && diff <= MAX_THICKNESS_MM) {
-        candidates.push(diff);
-        groupHasThickness = true;
-      }
-    }
-    if (groupHasThickness) {
-      eligibleGroups.push(group);
+    const pairs = findBendCylinderPairs(group);
+    const paired = new Set(pairs.flatMap((pair) => [pair.inner.index, pair.outer.index]));
+    debugTopology('axis-group', {
+      cylinderCount: group.length,
+      pairCount: pairs.length,
+      singleCount: group.filter((cylinder) => !paired.has(cylinder.index)).length,
+      axis: formatVec3(canonicalDirection(normalize(group[0].axisDirection))),
+      cylinders: group.map(summarizeCylinder),
+      pairs: pairs.map(summarizePair),
+      singles: group.filter((cylinder) => !paired.has(cylinder.index)).map(summarizeCylinder),
+    });
+    if (pairs.length > 0) {
+      candidates.push(...pairs.map((pair) => pair.thickness));
+      eligibleGroups.push({ group, pairs });
     }
   }
 
@@ -272,55 +391,97 @@ function selectBendCylinderSet(cylinders: CylindricalFace[]): BendCylinderSet | 
     return null;
   }
 
-  const firstAxis = canonicalDirection(normalize(eligibleGroups[0][0].axisDirection));
-  if (eligibleGroups.some((group) => Math.abs(dotProduct(firstAxis, canonicalDirection(normalize(group[0].axisDirection)))) < PARALLEL_DOT_TOLERANCE)) {
+  const eligiblePairs = eligibleGroups.flatMap((group) => group.pairs);
+  if (eligiblePairs.length === 0) {
     return null;
   }
 
   candidates.sort((a, b) => a - b);
   const thickness = roundMm(candidates[Math.floor(candidates.length / 2)], 100);
+  const selectedPairs = eligiblePairs.filter((pair) =>
+    relativeDelta(pair.thickness, thickness) <= THICKNESS_TOLERANCE
+  );
+  debugTopology('selected-pairs', {
+    candidateThicknesses: candidates.map((candidate) => roundMm(candidate, 1000)),
+    selectedThickness: thickness,
+    eligiblePairCount: eligiblePairs.length,
+    selectedPairCount: selectedPairs.length,
+    selectedPairs: selectedPairs.map(summarizePair),
+  });
+  if (selectedPairs.length === 0) {
+    return null;
+  }
 
   return {
-    axis: firstAxis,
+    axis: canonicalDirection(normalize(selectedPairs[0].inner.axisDirection)),
     thickness,
-    cylinders: eligibleGroups.flat(),
+    pairs: selectedPairs,
   };
 }
 
-function findFlangePairs(faces: PlanarFace[], thickness: number, bendAxis: Vec3, length: number): FlangePair[] {
+function findFlangePairs(
+  faces: PlanarFace[],
+  thickness: number,
+  bendAxis: Vec3 | null,
+  length: number | null,
+  bendPairs: BendCylinderPair[] = []
+): FlangePair[] {
   const pairs: FlangePair[] = [];
   const used = new Set<number>();
-  const minArea = length * thickness * MIN_FLANGE_WIDTH_FACTOR;
+  const maxArea = Math.max(...faces.map((face) => face.area), 0);
+  const minBendAxisLength = bendPairs.length > 0
+    ? Math.min(...bendPairs.map((pair) => vectorLength(subtract(pair.inner.axisStart, pair.inner.axisEnd))))
+    : 0;
+  // Short flanges are judged against the local adjacent bend-line length.
+  // Using maxArea drops real short flanges; using zero admits CAD noise/facets.
+  // The lower bound stays tied to thickness so micro-faces do not become flanges.
+  const minArea = bendAxis && length
+    ? length * thickness * MIN_FLANGE_WIDTH_FACTOR
+    : Math.max(
+        thickness * thickness * MIN_FLANGE_WIDTH_FACTOR,
+        minBendAxisLength > 0 ? minBendAxisLength * thickness * MIN_FLANGE_WIDTH_FACTOR : maxArea * 0.01
+      );
+  const orderedFaces = [...faces].sort((a, b) => b.area - a.area);
 
-  for (let i = 0; i < faces.length; i += 1) {
-    if (used.has(i) || faces[i].area < minArea || Math.abs(dotProduct(faces[i].frame.normal, bendAxis)) > 0.05) {
+  for (let i = 0; i < orderedFaces.length; i += 1) {
+    const left = orderedFaces[i];
+    if (
+      used.has(left.index) ||
+      left.area < minArea ||
+      (bendAxis && Math.abs(dotProduct(left.frame.normal, bendAxis)) > 0.05)
+    ) {
       continue;
     }
 
     let best: { pair: FlangePair; score: number } | null = null;
-    for (let j = i + 1; j < faces.length; j += 1) {
-      if (used.has(j) || faces[j].area < minArea || Math.abs(dotProduct(faces[j].frame.normal, bendAxis)) > 0.05) {
+    for (let j = i + 1; j < orderedFaces.length; j += 1) {
+      const right = orderedFaces[j];
+      if (
+        used.has(right.index) ||
+        right.area < minArea ||
+        (bendAxis && Math.abs(dotProduct(right.frame.normal, bendAxis)) > 0.05)
+      ) {
         continue;
       }
 
-      const dot = Math.abs(dotProduct(faces[i].frame.normal, faces[j].frame.normal));
+      const dot = Math.abs(dotProduct(left.frame.normal, right.frame.normal));
       if (dot < PARALLEL_DOT_TOLERANCE) {
         continue;
       }
 
-      const distance = Math.abs(dotProduct(subtract(faces[j].frame.origin, faces[i].frame.origin), faces[i].frame.normal));
+      const distance = Math.abs(dotProduct(subtract(right.frame.origin, left.frame.origin), left.frame.normal));
       if (relativeDelta(distance, thickness) > THICKNESS_TOLERANCE) {
         continue;
       }
 
-      const areaDelta = relativeDelta(faces[i].area, faces[j].area);
+      const areaDelta = relativeDelta(left.area, right.area);
       if (areaDelta > 0.1) {
         continue;
       }
 
       const score = areaDelta + Math.abs(distance - thickness);
       if (!best || score < best.score) {
-        best = { pair: { a: faces[i], b: faces[j], thickness: distance }, score };
+        best = { pair: { a: left, b: right, thickness: distance }, score };
       }
     }
 
@@ -334,10 +495,12 @@ function findFlangePairs(faces: PlanarFace[], thickness: number, bendAxis: Vec3,
   return pairs;
 }
 
-function buildFlange(input: SheetMetalTopologyInput, pair: FlangePair, id: number, bendAxis: Vec3): SheetMetalFlange {
+function buildFlange(input: SheetMetalTopologyInput, pair: FlangePair, id: number, preferredAxis: Vec3 | null): SheetMetalFlange {
   const face = pair.a.area >= pair.b.area ? pair.a : pair.b;
   const normal = canonicalDirection(normalize(face.frame.normal));
-  const uAxis = bendAxis;
+  const uAxis = preferredAxis && Math.abs(dotProduct(preferredAxis, normal)) <= 0.05
+    ? preferredAxis
+    : canonicalDirection(normalize(face.frame.xAxis));
   const vAxis = canonicalDirection(normalize(crossProduct(uAxis, normal)));
   const frame = { origin: face.frame.origin, uAxis, vAxis };
   const loops = extractFaceLoops(input, face.face, frame);
@@ -368,42 +531,181 @@ function buildFlange(input: SheetMetalTopologyInput, pair: FlangePair, id: numbe
   };
 }
 
-function findBendCandidates(cylinders: CylindricalFace[], thickness: number, bendAxis: Vec3): BendCandidate[] {
-  const groups = groupCylindersByAxis(cylinders);
+function findBendCandidates(pairs: BendCylinderPair[], thickness: number): BendCandidate[] {
   const candidates: BendCandidate[] = [];
 
-  for (const group of groups) {
-    const radii = uniqueByTolerance(group.map((cylinder) => cylinder.radius), 0.01).sort((a, b) => a - b);
-    if (radii.length < 2) {
+  for (const pair of pairs) {
+    const innerRadius = pair.inner.radius;
+    const outerRadius = pair.outer.radius;
+    if (
+      relativeDelta(outerRadius - innerRadius, thickness) > THICKNESS_TOLERANCE ||
+      !isReasonableBendRadii(innerRadius, outerRadius, thickness)
+    ) {
       continue;
     }
 
-    for (let index = 1; index < radii.length; index += 1) {
-      const innerRadius = radii[index - 1];
-      const outerRadius = radii[index];
-      if (
-        relativeDelta(outerRadius - innerRadius, thickness) <= THICKNESS_TOLERANCE &&
-        isReasonableBendRadii(innerRadius, outerRadius, thickness)
-      ) {
-        const inner = group.find((cylinder) => Math.abs(cylinder.radius - innerRadius) <= 0.01);
-        if (!inner) {
-          continue;
-        }
-        const angle = normalizeBendAngleSpan(inner.angleSpanRad);
-        candidates.push({
-          innerRadius,
-          angleRad: angle.value,
-          usesComplementAngle: angle.usesComplement,
-          axisLocation: inner.axisLocation,
-          axisDirection: bendAxis,
-          innerCylinder: inner,
-          outerRadius,
-        });
-      }
-    }
+    const angle = normalizeBendAngleSpan(pair.inner.angleSpanRad);
+    candidates.push({
+      innerRadius,
+      angleRad: angle.value,
+      usesComplementAngle: angle.usesComplement,
+      axisLocation: pair.inner.axisLocation,
+      axisDirection: canonicalDirection(normalize(pair.inner.axisDirection)),
+      axisStart: pair.inner.axisStart,
+      axisEnd: pair.inner.axisEnd,
+      innerCylinder: pair.inner,
+      innerCylinders: pair.innerSegments,
+      outerRadius,
+    });
   }
 
   return candidates;
+}
+
+function mergeFragmentedBendPairs(pairs: BendCylinderPair[]): BendCylinderPair[] {
+  const remaining = [...pairs];
+  const merged: BendCylinderPair[] = [];
+
+  while (remaining.length > 0) {
+    let current = remaining.shift()!;
+    let changed = true;
+
+    while (changed) {
+      changed = false;
+      const nextIndex = remaining.findIndex((candidate) => canMergeBendPairFragments(current, candidate));
+      if (nextIndex >= 0) {
+        const [next] = remaining.splice(nextIndex, 1);
+        current = mergeBendPairFragments(current, next);
+        changed = true;
+      }
+    }
+
+    merged.push(current);
+  }
+
+  debugTopology('merged-fragmented-pairs', {
+    rawPairCount: pairs.length,
+    mergedPairCount: merged.length,
+    mergedPairs: merged.map(summarizePair),
+  });
+  return merged;
+}
+
+function canMergeBendPairFragments(left: BendCylinderPair, right: BendCylinderPair): boolean {
+  return (
+    sameAxis(left.inner, right.inner) &&
+    Math.abs(left.inner.radius - right.inner.radius) <= BEND_FRAGMENT_RADIUS_TOLERANCE_MM &&
+    Math.abs(left.outer.radius - right.outer.radius) <= BEND_FRAGMENT_RADIUS_TOLERANCE_MM &&
+    relativeDelta(left.thickness, right.thickness) <= THICKNESS_TOLERANCE &&
+    sameAngularDirection(left.inner, right.inner) &&
+    sectorsAreAdjacent(left.inner, right.inner) &&
+    sectorsAreAdjacent(left.outer, right.outer)
+  );
+}
+
+function mergeBendPairFragments(left: BendCylinderPair, right: BendCylinderPair): BendCylinderPair {
+  const innerSegments = [...left.innerSegments, ...right.innerSegments].sort(compareCylinderSectors);
+  const outerSegments = [...left.outerSegments, ...right.outerSegments].sort(compareCylinderSectors);
+  const inner = mergeCylinderFragments(innerSegments);
+  const outer = mergeCylinderFragments(outerSegments);
+  return {
+    inner,
+    outer,
+    thickness: outer.radius - inner.radius,
+    innerSegments,
+    outerSegments,
+  };
+}
+
+function mergeCylinderFragments(segments: CylindricalFace[]): CylindricalFace {
+  const [first] = segments;
+  const positive = segments.every((segment) => segment.lastU >= segment.firstU);
+  const totalSpan = segments.reduce((sum, segment) => sum + Math.abs(segment.lastU - segment.firstU), 0);
+  return {
+    ...first,
+    area: segments.reduce((sum, segment) => sum + segment.area, 0),
+    firstU: positive ? first.firstU : first.lastU,
+    lastU: positive ? first.firstU + totalSpan : first.lastU - totalSpan,
+    angleSpanRad: positive ? totalSpan : -totalSpan,
+    firstV: Math.min(...segments.map((segment) => segment.firstV)),
+    lastV: Math.max(...segments.map((segment) => segment.lastV)),
+  };
+}
+
+function sameAngularDirection(left: CylindricalFace, right: CylindricalFace): boolean {
+  return Math.sign(left.lastU - left.firstU) === Math.sign(right.lastU - right.firstU);
+}
+
+function sectorsAreAdjacent(left: CylindricalFace, right: CylindricalFace): boolean {
+  if (angularSectorOverlap(left, right) > BEND_FRAGMENT_SECTOR_GAP_TOLERANCE_RAD) {
+    return false;
+  }
+  const leftEndpoints = [normalizeAngle(left.firstU), normalizeAngle(left.lastU)];
+  const rightEndpoints = [normalizeAngle(right.firstU), normalizeAngle(right.lastU)];
+  return leftEndpoints.some((leftEndpoint) =>
+    rightEndpoints.some((rightEndpoint) => angularDistance(leftEndpoint, rightEndpoint) <= BEND_FRAGMENT_SECTOR_GAP_TOLERANCE_RAD)
+  );
+}
+
+function compareCylinderSectors(left: CylindricalFace, right: CylindricalFace): number {
+  return normalizeAngle(left.firstU) - normalizeAngle(right.firstU);
+}
+
+function findBendCylinderPairs(group: CylindricalFace[]): BendCylinderPair[] {
+  const pairs: BendCylinderPair[] = [];
+
+  for (let left = 0; left < group.length; left += 1) {
+    for (let right = left + 1; right < group.length; right += 1) {
+      const a = group[left];
+      const b = group[right];
+      const inner = a.radius <= b.radius ? a : b;
+      const outer = a.radius <= b.radius ? b : a;
+      const thickness = outer.radius - inner.radius;
+
+      if (
+        thickness < MIN_THICKNESS_MM ||
+        thickness > MAX_THICKNESS_MM ||
+        !isReasonableBendRadii(inner.radius, outer.radius, thickness) ||
+        !haveCompatibleBendSector(inner, outer)
+      ) {
+        continue;
+      }
+
+      pairs.push({
+        inner,
+        outer,
+        thickness,
+        innerSegments: [inner],
+        outerSegments: [outer],
+      });
+    }
+  }
+
+  return pairs;
+}
+
+function allBendPairsParallel(pairs: BendCylinderPair[]): boolean {
+  if (pairs.length <= 1) {
+    return true;
+  }
+
+  const firstAxis = canonicalDirection(normalize(pairs[0].inner.axisDirection));
+  return pairs.every((pair) =>
+    Math.abs(dotProduct(firstAxis, canonicalDirection(normalize(pair.inner.axisDirection)))) >= PARALLEL_DOT_TOLERANCE
+  );
+}
+
+function haveCompatibleBendSector(inner: CylindricalFace, outer: CylindricalFace): boolean {
+  if (angularSectorOverlap(inner, outer) > BEND_SECTOR_TOLERANCE_RAD) {
+    return true;
+  }
+
+  // OCCT commonly reports inner and outer faces of the same bend as complementary U ranges.
+  // After the same-axis and dR checks, matching angular spans are the stable signal.
+  return Math.abs(
+    normalizeBendAngleSpan(inner.angleSpanRad).value -
+    normalizeBendAngleSpan(outer.angleSpanRad).value
+  ) <= BEND_SECTOR_TOLERANCE_RAD;
 }
 
 function connectBends(
@@ -425,16 +727,34 @@ function connectBends(
       .filter((item) => item.tangentError <= TANGENCY_TOLERANCE_MM);
 
     let best: { a: SheetMetalFlange; b: SheetMetalFlange; score: number } | null = null;
+    const attempts: Array<{
+      flanges: [number, number];
+      angleDeg: number;
+      angleErrorDeg: number;
+      tangentErrors: [number, number];
+      sharesEdges: boolean;
+    }> = [];
     for (let i = 0; i < tangentFlanges.length; i += 1) {
       for (let j = i + 1; j < tangentFlanges.length; j += 1) {
         const a = tangentFlanges[i];
         const b = tangentFlanges[j];
         const angle = Math.acos(clamp(Math.abs(dotProduct(a.flange.normal, b.flange.normal)), -1, 1));
         const score = Math.abs(angle - candidate.angleRad) + a.tangentError + b.tangentError;
+        const angleMatches = Math.abs(angle - candidate.angleRad) <= BEND_ANGLE_TOLERANCE_RAD;
+        const sharesEdges = angleMatches
+          ? cylinderConnectsFlanges(oc, candidate, a.flange, b.flange, facesByIndex)
+          : false;
+        attempts.push({
+          flanges: [a.flange.id, b.flange.id],
+          angleDeg: roundMm(toDegrees(angle), 1000),
+          angleErrorDeg: roundMm(toDegrees(Math.abs(angle - candidate.angleRad)), 1000),
+          tangentErrors: [roundMm(a.tangentError, 1000), roundMm(b.tangentError, 1000)],
+          sharesEdges,
+        });
 
         if (
-          Math.abs(angle - candidate.angleRad) <= BEND_ANGLE_TOLERANCE_RAD &&
-          cylinderConnectsFlanges(oc, candidate, a.flange, b.flange, facesByIndex) &&
+          angleMatches &&
+          sharesEdges &&
           (!best || score < best.score)
         ) {
           best = { a: a.flange, b: b.flange, score };
@@ -452,10 +772,29 @@ function connectBends(
         angleRad: candidate.angleRad,
         axis: candidate.axisDirection,
         axisLocation: candidate.axisLocation,
+        axisStart: candidate.axisStart,
+        axisEnd: candidate.axisEnd,
         usesComplementAngle: candidate.usesComplementAngle,
         direction,
       });
     }
+    debugTopology('connect-candidate', {
+      innerIndex: candidate.innerCylinder.index,
+      innerRadius: roundMm(candidate.innerRadius, 1000),
+      outerRadius: roundMm(candidate.outerRadius, 1000),
+      angleDeg: roundMm(toDegrees(candidate.angleRad), 1000),
+      tangentFlangeCount: tangentFlanges.length,
+      tangentFlanges: tangentFlanges.map((item) => ({ id: item.flange.id, tangentError: roundMm(item.tangentError, 1000) })),
+      attempts,
+      selected: best ? { from: best.a.id, to: best.b.id, score: roundMm(best.score, 1000) } : null,
+      adjacentPlanarFaces: best
+        ? undefined
+        : findAdjacentPlanarFaces(oc, candidate, facesByIndex).map((face) => ({
+            index: face.index,
+            area: roundMm(face.area, 1000),
+            normal: formatVec3(face.frame.normal),
+          })),
+    });
   }
 
   return bends;
@@ -467,6 +806,95 @@ function isReasonableBendRadii(innerRadius: number, outerRadius: number, thickne
   }
 
   return innerRadius / thickness <= MAX_BEND_RADIUS_TO_THICKNESS;
+}
+
+function orientBendDirections(
+  flanges: SheetMetalFlange[],
+  bends: SheetMetalBend[],
+  fallbackRootId: number
+): SheetMetalBend[] {
+  const byId = new Map(flanges.map((flange) => [flange.id, flange]));
+  const adjacency = new Map<number, Array<{ next: number; bend: SheetMetalBend }>>();
+  for (const flange of flanges) {
+    adjacency.set(flange.id, []);
+  }
+  for (const bend of bends) {
+    adjacency.get(bend.from)?.push({ next: bend.to, bend });
+    adjacency.get(bend.to)?.push({ next: bend.from, bend });
+  }
+
+  const root = [...flanges].sort((left, right) => {
+    const degreeDelta = (adjacency.get(right.id)?.length ?? 0) - (adjacency.get(left.id)?.length ?? 0);
+    return degreeDelta || right.area - left.area || (left.id === fallbackRootId ? -1 : right.id === fallbackRootId ? 1 : left.id - right.id);
+  })[0];
+  if (!root) {
+    return bends;
+  }
+
+  const oriented = new Map<number, SheetMetalBend>();
+  const visited = new Set<number>([root.id]);
+  const stack = [root.id];
+
+  while (stack.length > 0) {
+    const parentId = stack.pop()!;
+    const parent = byId.get(parentId);
+    if (!parent) {
+      continue;
+    }
+
+    for (const edge of adjacency.get(parentId) ?? []) {
+      if (visited.has(edge.next)) {
+        continue;
+      }
+
+      const child = byId.get(edge.next);
+      if (!child) {
+        continue;
+      }
+
+      const direction = bendDirectionFromParent(parent, child, edge.bend);
+      oriented.set(edge.bend.id, {
+        ...edge.bend,
+        from: parent.id,
+        to: child.id,
+        direction,
+      });
+      visited.add(child.id);
+      stack.push(child.id);
+    }
+  }
+
+  if (oriented.size !== bends.length) {
+    return bends;
+  }
+
+  const result = bends.map((bend) => oriented.get(bend.id) ?? bend);
+  const allSameSide = result.every((bend) => bend.direction === result[0]?.direction);
+  const allOriginalSameDirection = bends.every((bend) => bend.direction === bends[0]?.direction);
+  if (allSameSide && allOriginalSameDirection && bends[0]) {
+    return result.map((bend) => ({
+      ...bend,
+      direction: bends[0].direction,
+    }));
+  }
+
+  return result;
+}
+
+function bendDirectionFromParent(
+  parent: SheetMetalFlange,
+  child: SheetMetalFlange,
+  bend: SheetMetalBend
+): BendDirection {
+  if (bend.usesComplementAngle) {
+    const axisY = dotProduct(subtract(bend.axisLocation, parent.localOrigin), parent.vAxis);
+    if (Number.isFinite(axisY) && parent.width > POINT_EPSILON_MM) {
+      return axisY >= parent.width / 2 ? 'up' : 'down';
+    }
+  }
+
+  const side = dotProduct(subtract(child.origin, parent.origin), parent.normal);
+  return side >= 0 ? 'up' : 'down';
 }
 
 function cylinderConnectsFlanges(
@@ -481,9 +909,23 @@ function cylinderConnectsFlanges(
   }
 
   return (
-    cylinderSharesEdgeWithFlange(oc, candidate.innerCylinder.face, a, facesByIndex) &&
-    cylinderSharesEdgeWithFlange(oc, candidate.innerCylinder.face, b, facesByIndex)
+    candidate.innerCylinders.some((cylinder) => cylinderSharesEdgeWithFlange(oc, cylinder.face, a, facesByIndex)) &&
+    candidate.innerCylinders.some((cylinder) => cylinderSharesEdgeWithFlange(oc, cylinder.face, b, facesByIndex))
   );
+}
+
+function findAdjacentPlanarFaces(
+  oc: OpenCascadeInstance,
+  candidate: BendCandidate,
+  facesByIndex: Map<number, PlanarFace>
+): PlanarFace[] {
+  const adjacent: PlanarFace[] = [];
+  for (const face of facesByIndex.values()) {
+    if (candidate.innerCylinders.some((cylinder) => facesShareEdge(oc, cylinder.face, face.face))) {
+      adjacent.push(face);
+    }
+  }
+  return adjacent;
 }
 
 function cylinderSharesEdgeWithFlange(
@@ -645,7 +1087,7 @@ function discretizeWire(
 ): Point2D[] {
   const { oc } = input;
   let explorer: BRepTools_WireExplorer | null = null;
-  const points: Point2D[] = [];
+  const edges: Point2D[][] = [];
 
   try {
     explorer = new oc.BRepTools_WireExplorer_3(wire, face);
@@ -654,7 +1096,10 @@ function discretizeWire(
       let edge: TopoDS_Edge | null = null;
       try {
         edge = explorer.Current();
-        appendEdgePoints(points, discretizeEdge(input, face, edge, frame));
+        const points = discretizeEdge(input, face, edge, frame);
+        if (points.length >= 2) {
+          edges.push(points);
+        }
       } finally {
         safeDelete(edge);
       }
@@ -664,7 +1109,7 @@ function discretizeWire(
     safeDelete(explorer);
   }
 
-  return closeAndClean(points);
+  return closeAndClean(chainWireEdges(edges));
 }
 
 function discretizeEdge(
@@ -729,23 +1174,39 @@ function curvePoint(
   }
 }
 
-function appendEdgePoints(target: Point2D[], edgePoints: Point2D[]): void {
-  let points = edgePoints;
-  const previous = target[target.length - 1];
-  if (previous && points.length > 1) {
-    const firstDistance = distance2D(previous, points[0]);
-    const lastDistance = distance2D(previous, points[points.length - 1]);
-    if (lastDistance < firstDistance) {
-      points = [...points].reverse();
+function chainWireEdges(edges: Point2D[][]): Point2D[] {
+  if (edges.length === 0) {
+    return [];
+  }
+
+  const unused = edges.map((edge) => edge.map((point) => ({ ...point })));
+  const points = [...unused.shift()!];
+
+  while (unused.length > 0) {
+    const current = points[points.length - 1];
+    const nextIndex = unused.findIndex((edge) =>
+      distance2D(edge[0], current) <= POINT_EPSILON_MM ||
+      distance2D(edge[edge.length - 1], current) <= POINT_EPSILON_MM
+    );
+
+    if (nextIndex < 0) {
+      break;
+    }
+
+    let next = unused.splice(nextIndex, 1)[0];
+    if (distance2D(next[next.length - 1], current) <= POINT_EPSILON_MM) {
+      next = next.reverse();
+    }
+
+    for (const point of next.slice(1)) {
+      const last = points[points.length - 1];
+      if (!last || distance2D(last, point) > POINT_EPSILON_MM) {
+        points.push(point);
+      }
     }
   }
 
-  for (const point of points) {
-    const last = target[target.length - 1];
-    if (!last || distance2D(last, point) > POINT_EPSILON_MM) {
-      target.push(point);
-    }
-  }
+  return points;
 }
 
 function closeAndClean(points: Point2D[]): Point2D[] {
@@ -800,6 +1261,39 @@ function sameAxis(a: CylindricalFace, b: CylindricalFace): boolean {
   return vectorLength(crossProduct(subtract(b.axisLocation, a.axisLocation), a.axisDirection)) <= AXIS_TOLERANCE_MM;
 }
 
+function angularSectorOverlap(a: CylindricalFace, b: CylindricalFace): number {
+  const aIntervals = normalizedAngularIntervals(a.firstU, a.lastU);
+  const bIntervals = normalizedAngularIntervals(b.firstU, b.lastU);
+  let overlap = 0;
+
+  for (const left of aIntervals) {
+    for (const right of bIntervals) {
+      overlap += Math.max(0, Math.min(left.max, right.max) - Math.max(left.min, right.min));
+    }
+  }
+
+  return overlap;
+}
+
+function normalizedAngularIntervals(first: number, last: number): Array<{ min: number; max: number }> {
+  const fullTurn = Math.PI * 2;
+  const rawSpan = Math.abs(last - first);
+  if (rawSpan >= fullTurn - BEND_SECTOR_TOLERANCE_RAD) {
+    return [{ min: 0, max: fullTurn }];
+  }
+
+  const start = normalizeAngle(first);
+  const end = normalizeAngle(last);
+  if (end >= start) {
+    return [{ min: start, max: end }];
+  }
+
+  return [
+    { min: start, max: fullTurn },
+    { min: 0, max: end },
+  ];
+}
+
 function sameEdge(bend: SheetMetalBend, a: number, b: number): boolean {
   return (bend.from === a && bend.to === b) || (bend.from === b && bend.to === a);
 }
@@ -846,11 +1340,23 @@ function readCylinder(adaptor: BRepAdaptor_Surface): Omit<CylindricalFace, 'inde
     axis = cylinder.Axis();
     location = axis.Location();
     direction = axis.Direction();
+    const firstU = adaptor.FirstUParameter();
+    const lastU = adaptor.LastUParameter();
+    const firstV = adaptor.FirstVParameter();
+    const lastV = adaptor.LastVParameter();
+    const axisLocation = toVec3(location);
+    const axisDirection = normalize(toVec3(direction));
     return {
       radius: cylinder.Radius(),
-      axisLocation: toVec3(location),
-      axisDirection: normalize(toVec3(direction)),
-      angleSpanRad: adaptor.LastUParameter() - adaptor.FirstUParameter(),
+      axisLocation,
+      axisDirection,
+      firstU,
+      lastU,
+      firstV,
+      lastV,
+      angleSpanRad: lastU - firstU,
+      axisStart: add(axisLocation, scale(axisDirection, firstV)),
+      axisEnd: add(axisLocation, scale(axisDirection, lastV)),
     };
   } finally {
     safeDelete(direction);
@@ -977,6 +1483,11 @@ function normalizeBendAngleSpan(span: number): { value: number; usesComplement: 
     : { value: positive, usesComplement: false };
 }
 
+function normalizeAngle(angle: number): number {
+  const fullTurn = Math.PI * 2;
+  return ((angle % fullTurn) + fullTurn) % fullTurn;
+}
+
 function canonicalDirection(direction: Vec3): Vec3 {
   if (
     direction.x < -1e-9 ||
@@ -1027,6 +1538,63 @@ function vectorLength(vector: Vec3): number {
 
 function distance2D(a: Point2D, b: Point2D): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function debugTopology(label: string, details: unknown): void {
+  if (!BEND_TOPOLOGY_DEBUG) {
+    return;
+  }
+  console.error(`[bend-topology-debug] ${label}: ${JSON.stringify(details)}`);
+}
+
+function summarizeCylinder(cylinder: CylindricalFace): unknown {
+  return {
+    index: cylinder.index,
+    radius: roundMm(cylinder.radius, 1000),
+    area: roundMm(cylinder.area, 1000),
+    angleDeg: roundMm(toDegrees(normalizeBendAngleSpan(cylinder.angleSpanRad).value), 1000),
+    usesComplementAngle: normalizeBendAngleSpan(cylinder.angleSpanRad).usesComplement,
+    axisLength: roundMm(vectorLength(subtract(cylinder.axisEnd, cylinder.axisStart)), 1000),
+    axis: formatVec3(canonicalDirection(normalize(cylinder.axisDirection))),
+    location: formatVec3(cylinder.axisLocation),
+    firstU: roundMm(cylinder.firstU, 1000),
+    lastU: roundMm(cylinder.lastU, 1000),
+    firstV: roundMm(cylinder.firstV, 1000),
+    lastV: roundMm(cylinder.lastV, 1000),
+  };
+}
+
+function summarizePair(pair: BendCylinderPair): unknown {
+  return {
+    innerIndex: pair.inner.index,
+    outerIndex: pair.outer.index,
+    innerSegments: pair.innerSegments.map((segment) => segment.index),
+    outerSegments: pair.outerSegments.map((segment) => segment.index),
+    innerRadius: roundMm(pair.inner.radius, 1000),
+    outerRadius: roundMm(pair.outer.radius, 1000),
+    thickness: roundMm(pair.thickness, 1000),
+    angleDeg: roundMm(toDegrees(normalizeBendAngleSpan(pair.inner.angleSpanRad).value), 1000),
+    axisLength: roundMm(vectorLength(subtract(pair.inner.axisEnd, pair.inner.axisStart)), 1000),
+    axis: formatVec3(canonicalDirection(normalize(pair.inner.axisDirection))),
+  };
+}
+
+function formatVec3(vector: Vec3): { x: number; y: number; z: number } {
+  return {
+    x: roundMm(vector.x, 1000),
+    y: roundMm(vector.y, 1000),
+    z: roundMm(vector.z, 1000),
+  };
+}
+
+function toDegrees(angleRad: number): number {
+  return (angleRad * 180) / Math.PI;
+}
+
+function angularDistance(left: number, right: number): number {
+  const fullTurn = Math.PI * 2;
+  const direct = Math.abs(normalizeAngle(left) - normalizeAngle(right));
+  return Math.min(direct, fullTurn - direct);
 }
 
 function clamp(value: number, min: number, max: number): number {

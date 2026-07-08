@@ -34,6 +34,8 @@ export interface FaceInfo {
     radius: number;
     axisLocation: Vec3;
     axisDirection: Vec3;
+    firstU: number;
+    lastU: number;
     angleSpanRad: number;
     heightSpanV: number;
   };
@@ -113,7 +115,10 @@ type SolidCylinderInfo = {
   radius: number;
   axisLocation: Vec3;
   axisDirection: Vec3;
+  firstU: number;
+  lastU: number;
   angleSpanRad: number;
+  heightSpanV: number;
 };
 
 type TopAbsExplorerEnums = {
@@ -123,6 +128,12 @@ type TopAbsExplorerEnums = {
 };
 
 const INPUT_PATH = '/input.step';
+const MIN_BEND_THICKNESS_MM = 0.5;
+const MAX_BEND_THICKNESS_MM = 50;
+const MIN_INNER_RADIUS_MM = 0.25;
+const MAX_BEND_RADIUS_TO_THICKNESS = 12;
+const BEND_SECTOR_TOLERANCE_RAD = 0.02;
+const MIN_BEND_AXIS_LENGTH_FACTOR = 3;
 
 export async function readBrepTopology(fileBytes: Uint8Array): Promise<BrepTopology> {
   const oc = await getOCC();
@@ -355,7 +366,7 @@ export async function readBrepPartContours(
           results.push({
             solidIndex,
             contour: flatContour,
-            fallbackReason: flatContour ? null : unfolded.reason,
+            fallbackReason: flatContour ? null : unfolded.reason || null,
             suspectedBend: unfolded.suspectedBend,
             elapsedMs: Date.now() - startTime,
             kFactor: flatContour ? null : unfolded.kFactor,
@@ -428,21 +439,26 @@ async function tryUnfoldSolid(input: {
   suspectedBend: boolean;
 }> {
   const bendCandidates = getSolidBendRadiusThicknessCandidates(input.oc, input.solid);
+  let topologyRejectReason: string | null = null;
   const topology = detectSheetMetalTopology({
     oc: input.oc,
     shape: input.solid,
     deadlineMs: input.deadlineMs,
+    onReject: (reason) => {
+      topologyRejectReason = reason;
+    },
   });
 
   if (!topology) {
+    const suspectedBend = bendCandidates.length > 0;
     return {
       contour: null,
-      reason: 'not a validated bend topology by B-Rep validation',
+      reason: suspectedBend ? topologyRejectReason ?? 'not a validated bend topology by B-Rep validation' : '',
       kFactor: null,
       kFactorDefaulted: false,
       warnings: [],
-      allowFlatContour: bendCandidates.length === 0,
-      suspectedBend: bendCandidates.length > 0,
+      allowFlatContour: !suspectedBend,
+      suspectedBend,
     };
   }
 
@@ -482,7 +498,7 @@ async function tryUnfoldSolid(input: {
     kFactorDefaulted: lookup.defaulted,
     warnings,
     allowFlatContour: false,
-    suspectedBend: true,
+    suspectedBend: false,
   };
 }
 
@@ -593,7 +609,10 @@ function readSolidFaceStats(
             radius: cylinder.radius,
             axisLocation: cylinder.axisLocation,
             axisDirection: cylinder.axisDirection,
+            firstU: cylinder.firstU,
+            lastU: cylinder.lastU,
             angleSpanRad: cylinder.angleSpanRad,
+            heightSpanV: cylinder.heightSpanV,
           });
         }
       } finally {
@@ -670,18 +689,52 @@ function getBendRadiusThicknessCandidates(cylinders: SolidCylinderInfo[]): numbe
   const candidates = new Set<number>();
 
   for (const group of groups) {
-    const radii = uniqueRounded(group.map((cylinder) => cylinder.radius), 1e-3).sort((a, b) => a - b);
+    for (let left = 0; left < group.length; left += 1) {
+      for (let right = left + 1; right < group.length; right += 1) {
+        const a = group[left];
+        const b = group[right];
+        const innerRadius = Math.min(a.radius, b.radius);
+        const outerRadius = Math.max(a.radius, b.radius);
+        const diff = outerRadius - innerRadius;
 
-    for (let i = 1; i < radii.length; i += 1) {
-      const diff = roundTo(radii[i] - radii[i - 1], 0.1);
-
-      if (diff > 0) {
-        candidates.add(diff);
+        if (
+          diff >= MIN_BEND_THICKNESS_MM &&
+          diff <= MAX_BEND_THICKNESS_MM &&
+          isReasonableBendRadii(innerRadius, outerRadius, diff) &&
+          hasSufficientBendAxisLength(a, b, diff) &&
+          haveCompatibleBendSector(a, b)
+        ) {
+          candidates.add(roundTo(diff, 0.1));
+        }
       }
     }
   }
 
   return [...candidates].sort((a, b) => a - b);
+}
+
+function hasSufficientBendAxisLength(a: SolidCylinderInfo, b: SolidCylinderInfo, thickness: number): boolean {
+  const axisLength = Math.min(Math.abs(a.heightSpanV), Math.abs(b.heightSpanV));
+  return axisLength >= thickness * MIN_BEND_AXIS_LENGTH_FACTOR;
+}
+
+function isReasonableBendRadii(innerRadius: number, outerRadius: number, thickness: number): boolean {
+  if (innerRadius < MIN_INNER_RADIUS_MM || outerRadius <= innerRadius || thickness <= 0) {
+    return false;
+  }
+
+  return innerRadius / thickness <= MAX_BEND_RADIUS_TO_THICKNESS;
+}
+
+function haveCompatibleBendSector(a: SolidCylinderInfo, b: SolidCylinderInfo): boolean {
+  if (angularSectorOverlap(a, b) > BEND_SECTOR_TOLERANCE_RAD) {
+    return true;
+  }
+
+  return Math.abs(
+    normalizeBendAngleSpan(a.angleSpanRad) -
+    normalizeBendAngleSpan(b.angleSpanRad)
+  ) <= BEND_SECTOR_TOLERANCE_RAD;
 }
 
 function groupCylindersByAxis(cylinders: SolidCylinderInfo[], tolerance: number): SolidCylinderInfo[][] {
@@ -716,16 +769,48 @@ function sameAxis(a: SolidCylinderInfo, b: SolidCylinderInfo, tolerance: number)
   return vectorLength(cross) <= tolerance;
 }
 
-function uniqueRounded(values: number[], tolerance: number): number[] {
-  const unique: number[] = [];
+function angularSectorOverlap(a: SolidCylinderInfo, b: SolidCylinderInfo): number {
+  const aIntervals = normalizedAngularIntervals(a.firstU, a.lastU);
+  const bIntervals = normalizedAngularIntervals(b.firstU, b.lastU);
+  let overlap = 0;
 
-  for (const value of values) {
-    if (!unique.some((existing) => Math.abs(existing - value) <= tolerance)) {
-      unique.push(value);
+  for (const left of aIntervals) {
+    for (const right of bIntervals) {
+      overlap += Math.max(0, Math.min(left.max, right.max) - Math.max(left.min, right.min));
     }
   }
 
-  return unique;
+  return overlap;
+}
+
+function normalizedAngularIntervals(first: number, last: number): Array<{ min: number; max: number }> {
+  const fullTurn = Math.PI * 2;
+  const rawSpan = Math.abs(last - first);
+  if (rawSpan >= fullTurn - BEND_SECTOR_TOLERANCE_RAD) {
+    return [{ min: 0, max: fullTurn }];
+  }
+
+  const start = normalizeAngle(first);
+  const end = normalizeAngle(last);
+  if (end >= start) {
+    return [{ min: start, max: end }];
+  }
+
+  return [
+    { min: start, max: fullTurn },
+    { min: 0, max: end },
+  ];
+}
+
+function normalizeBendAngleSpan(span: number): number {
+  const fullTurn = Math.PI * 2;
+  const positive = Math.abs(span) % fullTurn;
+  return positive > Math.PI ? fullTurn - positive : positive;
+}
+
+function normalizeAngle(angle: number): number {
+  const fullTurn = Math.PI * 2;
+  return ((angle % fullTurn) + fullTurn) % fullTurn;
 }
 
 function readCylinderInfo(adaptor: BRepAdaptor_Surface): NonNullable<FaceInfo['cylinder']> {
@@ -739,12 +824,16 @@ function readCylinderInfo(adaptor: BRepAdaptor_Surface): NonNullable<FaceInfo['c
     axis = cylinder.Axis();
     location = axis.Location();
     direction = axis.Direction();
+    const firstU = adaptor.FirstUParameter();
+    const lastU = adaptor.LastUParameter();
 
     return {
       radius: cylinder.Radius(),
       axisLocation: toVec3(location),
       axisDirection: toVec3(direction),
-      angleSpanRad: adaptor.LastUParameter() - adaptor.FirstUParameter(),
+      firstU,
+      lastU,
+      angleSpanRad: lastU - firstU,
       heightSpanV: adaptor.LastVParameter() - adaptor.FirstVParameter(),
     };
   } finally {
