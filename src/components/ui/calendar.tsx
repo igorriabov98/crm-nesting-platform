@@ -7,10 +7,33 @@ import {
   type DayButton,
   type Locale,
 } from "react-day-picker"
+import { ru } from "react-day-picker/locale"
 
 import { cn } from "@/lib/utils"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from "lucide-react"
+
+const DEFAULT_CALENDAR_LOCALE = ru
+const DEFAULT_CALENDAR_LOCALE_CODE = "ru-RU"
+
+function getCalendarLocaleCode(locale?: Partial<Locale>) {
+  return locale?.code || DEFAULT_CALENDAR_LOCALE_CODE
+}
+
+function formatCalendarCaption(date: Date, localeCode: string) {
+  const month = date.toLocaleString(localeCode, { month: "long" })
+  const year = date.toLocaleString(localeCode, { year: "numeric" })
+
+  return `${month} ${year}`
+}
+
+function formatCalendarWeekday(date: Date, localeCode: string) {
+  const weekday = date
+    .toLocaleString(localeCode, { weekday: "short" })
+    .replace(/\.$/, "")
+
+  return weekday.charAt(0).toLocaleUpperCase(localeCode) + weekday.slice(1)
+}
 
 function Calendar({
   className,
@@ -18,14 +41,16 @@ function Calendar({
   showOutsideDays = true,
   captionLayout = "label",
   buttonVariant = "ghost",
-  locale,
+  locale = DEFAULT_CALENDAR_LOCALE,
   formatters,
   components,
+  weekStartsOn = 1,
   ...props
 }: React.ComponentProps<typeof DayPicker> & {
   buttonVariant?: React.ComponentProps<typeof Button>["variant"]
 }) {
   const defaultClassNames = getDefaultClassNames()
+  const localeCode = getCalendarLocaleCode(locale)
 
   return (
     <DayPicker
@@ -38,9 +63,12 @@ function Calendar({
       )}
       captionLayout={captionLayout}
       locale={locale}
+      weekStartsOn={weekStartsOn}
       formatters={{
+        formatCaption: (date) => formatCalendarCaption(date, localeCode),
         formatMonthDropdown: (date) =>
-          date.toLocaleString(locale?.code, { month: "short" }),
+          date.toLocaleString(localeCode, { month: "long" }),
+        formatWeekdayName: (date) => formatCalendarWeekday(date, localeCode),
         ...formatters,
       }}
       classNames={{
@@ -81,7 +109,7 @@ function Calendar({
           defaultClassNames.dropdown
         ),
         caption_label: cn(
-          "font-medium select-none",
+          "font-semibold text-[#1B3A6B] select-none",
           captionLayout === "label"
             ? "text-sm"
             : "flex items-center gap-1 rounded-(--cell-radius) text-sm [&>svg]:size-3.5 [&>svg]:text-muted-foreground",
@@ -90,7 +118,7 @@ function Calendar({
         table: "w-full border-collapse",
         weekdays: cn("flex", defaultClassNames.weekdays),
         weekday: cn(
-          "flex-1 rounded-(--cell-radius) text-[0.8rem] font-normal text-muted-foreground select-none",
+          "flex-1 rounded-(--cell-radius) text-[0.78rem] font-medium text-[#6B7280] select-none",
           defaultClassNames.weekday
         ),
         week: cn("mt-2 flex w-full", defaultClassNames.week),
