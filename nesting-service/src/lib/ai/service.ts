@@ -16,6 +16,7 @@ import {
 import { extractDeterministicPdfDataFromPdf, mergeDeterministicBOM, mergeDeterministicDetails } from './pdf-bom-fallback';
 import { resolveBOMSteelTypes } from './steel-types';
 import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
+import { normalizePartType, partTypeFromLegacySheetFlag } from '../part-type';
 
 export interface ProjectPdfAnalysisResult {
   success: boolean;
@@ -234,7 +235,15 @@ async function autoApplyMatches(
       data.classificationMethod = 'pdf_bom';
       data.classificationWarning = null;
     }
-    if (typeof match.suggestedQuantity === 'number') data.quantity = match.suggestedQuantity;
+    const currentPartType = part
+      ? normalizePartType(part.partType, partTypeFromLegacySheetFlag(part.isSheetMetal))
+      : 'SHEET';
+    const effectivePartType = typeof data.partType === 'string'
+      ? normalizePartType(data.partType, currentPartType)
+      : currentPartType;
+    if (typeof match.suggestedQuantity === 'number' && effectivePartType === 'SHEET') {
+      data.quantity = match.suggestedQuantity;
+    }
 
     if (Object.keys(data).length === 0) continue;
     if (hasNestingAffectingChange(data)) {

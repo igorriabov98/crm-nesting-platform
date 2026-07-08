@@ -18,7 +18,7 @@ import { idParamSchema } from '../schemas/common.schema';
 import { projectSheetParamsSchema } from '../schemas/project.schema';
 import { isCompletedProjectStatus } from '../lib/project-status';
 import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../lib/part-type';
-import { isPartActive, summarizePartActivity } from '../lib/part-activity';
+import { getActivityQuantity, isPartActive, summarizePartActivity } from '../lib/part-activity';
 
 type PlacementForResult = {
   partId: string;
@@ -155,7 +155,7 @@ export async function resultRoutes(app: FastifyInstance) {
     const unplacedReasonQueues = buildUnplacedReasonQueues(project.validationReport);
 
     for (const part of activeProjectParts) {
-      const required = part.quantity * project.quantity;
+      const required = getActivityQuantity(part, project.quantity);
       const placed = placedByPartId.get(part.id) ?? 0;
       const baseName = normalizeCadText(part.name);
       const material = normalizeCadText(part.material);

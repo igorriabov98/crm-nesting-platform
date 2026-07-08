@@ -5,6 +5,7 @@ import { extractDeterministicPdfDataFromPdf } from '../ai/pdf-bom-fallback';
 import { matchBOMToParts } from '../ai/bom-matcher';
 import { parseStepFile, type ParsedPart } from '../step-parser';
 import { distributePartsToSheets } from '../nesting/multi-sheet';
+import { getActivityQuantity, summarizePartActivity } from '../part-activity';
 import type { NestingPart, SheetOption } from '../nesting/types';
 
 type AppliedPart = ParsedPart & {
@@ -55,6 +56,7 @@ async function main(): Promise<void> {
   assert.ok(plugMatches.every((match) => match.suggestedIsSheetMetal === false));
   assert.ok(plugMatches.every((match) => match.steelTypeWarning === null));
   assert.ok(plugMatches.every((match) => match.suggestedThickness === null));
+  assertLedaLegContours(parsed.parts);
 
   const applied = parsed.parts.map((part, index) => applyMatch(part, index, matches));
   assertManualInactiveLedaBody(applied);
@@ -67,6 +69,7 @@ async function main(): Promise<void> {
   assert.ok(plugs.every((part) => part.matchSourceSection === 'Прочие изделия'));
   assert.equal(new Set(plugs.map((part) => part.partType)).size, 1);
   assert.equal(new Set(plugs.map((part) => part.thickness)).size, 1);
+  assertLegacyPurchasedQuantitiesAreNotDoubleCounted(applied);
 
   const activeApplied = applied.filter((part) => part.isActive);
   const sheetPartsBeforeManualToggle = applied.filter((part) => part.partType === 'SHEET');
@@ -156,6 +159,26 @@ function assertOperatorPassport(parts: AppliedPart[]): void {
   ]);
 }
 
+function assertLedaLegContours(parts: ParsedPart[]): void {
+  const legs = parts.filter((part) => /024\.00\.003/.test(part.name));
+  assert.equal(legs.length, 4, 'LEDA should contain four 024.00.003 legs');
+
+  for (const leg of legs) {
+    assert.equal(leg.contourSource, 'UNFOLDED_BREP', 'LEDA leg should use BRep unfolding');
+    assert.equal(openLoop(leg.contour).length > 4, true, 'LEDA leg contour should include shaped flange edges');
+    assert.ok(sameUnorderedDimensions(leg, 476, 100, 1.5), `LEDA leg bbox ${round1(leg.width)}x${round1(leg.height)}`);
+    assertHasPoint(leg.contour, 10, 0, 0.05, 'LEDA leg lower step x=10');
+    assertHasPoint(leg.contour, 25, 0, 0.05, 'LEDA leg lower step x=25');
+    assertHasPoint(leg.contour, 75, 0, 0.05, 'LEDA leg lower step x=75');
+    assertHasPoint(leg.contour, 90, 0, 0.05, 'LEDA leg lower step x=90');
+
+    const expectedArea = leg.thickness ? leg.meshVolume / leg.thickness : 0;
+    const actualArea = polygonNetArea(leg.contour, leg.holes);
+    const areaError = expectedArea > 0 ? Math.abs(actualArea - expectedArea) / expectedArea : 0;
+    assert.ok(areaError <= 0.015, `LEDA leg area mismatch ${(areaError * 100).toFixed(3)}%`);
+  }
+}
+
 function assertDiagnosticSummary(summary: {
   placed: number;
   profile: number;
@@ -201,6 +224,26 @@ function assertManualReactivationIsSymmetric(parts: AppliedPart[]): void {
   );
   assert.equal(reactivated.filter((part) => part.isActive).length, 23);
   assert.equal(reactivated.filter((part) => part.isActive && part.partType === 'SHEET').length, 21);
+}
+
+function assertLegacyPurchasedQuantitiesAreNotDoubleCounted(parts: AppliedPart[]): void {
+  const legacyParts = parts.map((part) => ({
+    ...part,
+    quantity: part.name === 'Заглушка пластмассовая 15мм' ? 2 : 1,
+  }));
+  const summary = summarizePartActivity(legacyParts, 1);
+  const active = legacyParts.filter((part) => part.isActive);
+  const placed = active
+    .filter((part) => part.partType === 'SHEET')
+    .reduce((sum, part) => sum + getActivityQuantity(part), 0);
+  const purchased = active
+    .filter((part) => part.partType === 'PURCHASED')
+    .reduce((sum, part) => sum + getActivityQuantity(part), 0);
+
+  assert.equal(purchased, 2, 'LEDA legacy BOM qty on purchased plugs must still report two physical bodies');
+  assert.equal(summary.totalBodies, 23);
+  assert.equal(summary.activeParts, 22);
+  assert.equal(placed + purchased, summary.activeParts);
 }
 
 async function assertStv300Regression(fixturesDir: string): Promise<void> {
@@ -276,6 +319,15 @@ function toNestingPart(part: AppliedPart, id: string): NestingPart {
 }
 
 function sameUnorderedSize(part: AppliedPart, expectedWidth: number, expectedHeight: number, tolerance: number): boolean {
+  return sameUnorderedDimensions(part, expectedWidth, expectedHeight, tolerance);
+}
+
+function sameUnorderedDimensions(
+  part: Pick<ParsedPart, 'width' | 'height'>,
+  expectedWidth: number,
+  expectedHeight: number,
+  tolerance: number
+): boolean {
   return (
     withinTolerance(part.width, expectedWidth, tolerance) &&
     withinTolerance(part.height, expectedHeight, tolerance)
@@ -283,6 +335,27 @@ function sameUnorderedSize(part: AppliedPart, expectedWidth: number, expectedHei
     withinTolerance(part.width, expectedHeight, tolerance) &&
     withinTolerance(part.height, expectedWidth, tolerance)
   );
+}
+
+function assertHasPoint(
+  points: Array<{ x: number; y: number }>,
+  expectedX: number,
+  expectedY: number,
+  tolerance: number,
+  label: string
+): void {
+  assert.ok(
+    points.some((point) => Math.hypot(point.x - expectedX, point.y - expectedY) <= tolerance),
+    `${label}: expected point near ${expectedX},${expectedY}`
+  );
+}
+
+function openLoop<T extends { x: number; y: number }>(points: T[]): T[] {
+  const first = points[0];
+  const last = points[points.length - 1];
+  return first && last && Math.hypot(first.x - last.x, first.y - last.y) <= 1e-6
+    ? points.slice(0, -1)
+    : points;
 }
 
 function withinTolerance(actual: number, expected: number, tolerance: number): boolean {

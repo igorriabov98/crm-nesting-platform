@@ -51,6 +51,22 @@ async function main(): Promise<void> {
   assertWithin(zUnfold.height, zExpectedLength, 0.005, 'Z-profile unfolded length');
   logLengthCheck('Z-profile', '40 + 34 + 40 + 2 * pi/2 * (3 + 0.4 * 2)', zExpectedLength, zUnfold.height);
 
+  const shapedTopology = await detectFixtureTopology('l_angle_100x60_t2_r3_shaped_flange.step');
+  assert.ok(shapedTopology, 'shaped L-angle topology should be detected');
+  const shapedUnfold = unfoldPart(shapedTopology, K_FACTOR);
+  assert.ok(shapedUnfold, 'shaped L-angle should unfold');
+  // Shaped L-angle: rectangular flange 100*60, shaped flange 100*60 - 20*20/2 chamfer - 15*10 notch,
+  // plus one BA strip 100 * pi/2 * (3 + 0.4 * 2) = 12246.9 mm2.
+  const shapedExpectedArea = 100 * 60 + (100 * 60 - (20 * 20) / 2 - 15 * 10) + 100 * BEND_ALLOWANCE;
+  assert.equal(openLoop(shapedUnfold.contour).length > 4, true, 'shaped L-angle contour should not be rectangular');
+  assertWithin(shapedUnfold.area, shapedExpectedArea, 0.01, 'shaped L-angle unfolded area');
+  assertWithin(shapedUnfold.width, 100, 0.005, 'shaped L-angle unfolded width');
+  assertWithin(shapedUnfold.height, 60 + 60 + BEND_ALLOWANCE, 0.005, 'shaped L-angle unfolded height');
+  assertHasPoint(shapedUnfold.contour, 40, shapedUnfold.height - 10, 0.05, 'notch inner-left corner');
+  assertHasPoint(shapedUnfold.contour, 55, shapedUnfold.height - 10, 0.05, 'notch inner-right corner');
+  assertHasPoint(shapedUnfold.contour, 80, shapedUnfold.height, 0.05, 'chamfer top point');
+  assertHasPoint(shapedUnfold.contour, 100, shapedUnfold.height - 20, 0.05, 'chamfer side point');
+
   const invalidExpectedArea = uTopology.volume / uTopology.thickness;
   const badKFactor = 2.0;
   const invalidBa = RIGHT_ANGLE * (INNER_RADIUS + badKFactor * THICKNESS);
@@ -81,6 +97,19 @@ function measureHoleCenter(hole: Array<{ x: number; y: number }>): { x: number; 
     x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
     y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
   };
+}
+
+function assertHasPoint(
+  points: Array<{ x: number; y: number }>,
+  expectedX: number,
+  expectedY: number,
+  tolerance: number,
+  label: string
+): void {
+  assert.ok(
+    points.some((point) => Math.hypot(point.x - expectedX, point.y - expectedY) <= tolerance),
+    `${label}: expected point near ${expectedX},${expectedY}`
+  );
 }
 
 function openLoop<T extends { x: number; y: number }>(points: T[]): T[] {

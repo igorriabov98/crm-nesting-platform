@@ -32,6 +32,49 @@ assert.doesNotMatch(dxf, /\r\n2\r\nSHEET\r\n/, 'CAM export should not include sh
 assert.doesNotMatch(dxf, /\r\n2\r\nREMNANT\r\n/, 'CAM export should not include remnant layer');
 assert.doesNotMatch(dxf, /LEAD_SKIPPED/, 'simple separated rectangles should receive lead-in and lead-out');
 
+const shapedContour = [
+  { x: 0, y: 125.969 },
+  { x: 40, y: 125.969 },
+  { x: 40, y: 115.969 },
+  { x: 55, y: 115.969 },
+  { x: 55, y: 125.969 },
+  { x: 80, y: 125.969 },
+  { x: 100, y: 105.969 },
+  { x: 100, y: 0 },
+  { x: 0, y: 0 },
+  { x: 0, y: 125.969 },
+];
+const shapedDxf = generateDXF(
+  { width: 300, height: 200, material: 'Steel', thickness: 2 },
+  [{
+    name: 'Shaped flange',
+    x: 0,
+    y: 0,
+    rotation: 0,
+    placedW: 100,
+    placedH: 125.969,
+    originalW: 100,
+    originalH: 125.969,
+    grainLock: false,
+    contour: shapedContour,
+    holes: [],
+  }],
+  null,
+  {
+    entityMode: 'lwpolyline',
+    includeSheet: false,
+    includeLabels: false,
+    includeRemnant: false,
+    grainArrow: false,
+    leadInLength: 0,
+    leadOutLength: 0,
+  }
+);
+assert.match(shapedDxf, /\r\n90\r\n9\r\n/, 'shaped cut contour should keep nine DXF vertices, not collapse to a rectangle');
+assert.match(shapedDxf, /\r\n10\r\n40\r\n20\r\n115\.969\r\n/, 'DXF should contain notch bottom-left vertex');
+assert.match(shapedDxf, /\r\n10\r\n55\r\n20\r\n115\.969\r\n/, 'DXF should contain notch bottom-right vertex');
+assert.match(shapedDxf, /\r\n10\r\n100\r\n20\r\n105\.969\r\n/, 'DXF should contain chamfer side vertex');
+
 console.log('[dxf-pronest-export] all tests passed');
 
 function createRectPart(name: string, x: number, y: number, width: number, height: number): DxfPartData {

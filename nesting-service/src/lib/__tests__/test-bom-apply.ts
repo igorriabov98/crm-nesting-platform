@@ -30,6 +30,29 @@ if (clean.status === 'updated') {
   assert.equal(clean.update.needsUnfoldRecalculation, true);
 }
 
+const purchasedQuantity = prepareBOMApplyUpdate(
+  {
+    partId: 'plug',
+    quantity: 2,
+    partType: 'PURCHASED',
+  },
+  createPart({
+    id: 'plug',
+    name: 'Заглушка пластмассовая 15мм',
+    quantity: 1,
+    isSheetMetal: true,
+    partType: 'SHEET',
+  }),
+  { appliedBy: 'operator-1', appliedAt: new Date('2026-07-07T10:00:00.000Z') }
+);
+
+assert.equal(purchasedQuantity.status, 'updated');
+if (purchasedQuantity.status === 'updated') {
+  assert.equal('quantity' in purchasedQuantity.update.data, false, 'BOM qty must not multiply purchased STEP bodies');
+  assert.equal(purchasedQuantity.update.data.partType, 'PURCHASED');
+  assert.equal(purchasedQuantity.update.data.isSheetMetal, false);
+}
+
 const blocked = prepareBOMApplyUpdate(
   {
     partId: 'blocked',

@@ -38,6 +38,7 @@ async function main(): Promise<void> {
   writeStep(oc, createUChannel(oc), path.join(FIXTURE_DIR, 'u_channel_100x40x40_t2_r3.step'));
   writeStep(oc, createZProfile(oc), path.join(FIXTURE_DIR, 'z_profile_100x40x40_t2_r3.step'));
   writeStep(oc, createRadiusLAngleWithHoles(oc), path.join(FIXTURE_DIR, 'l_angle_100x40x40_t2_r3_holes.step'));
+  writeStep(oc, createShapedLAngle(oc), path.join(FIXTURE_DIR, 'l_angle_100x60_t2_r3_shaped_flange.step'));
   writeStep(oc, createBoxCycle(oc), path.join(FIXTURE_DIR, 'box_cycle_100x40x40_t2_r3.step'));
   writeStep(oc, createPlateWithHalfEdgeHole(oc), path.join(FIXTURE_DIR, 'plate_100x50x3_half_edge_hole_r6.step'));
   writeStep(oc, createPlateWithSlot(oc), path.join(FIXTURE_DIR, 'plate_100x50x3_slot_30x10.step'));
@@ -132,6 +133,34 @@ function createRadiusLAngleWithHoles(oc: OpenCascadeInstance): TopoDS_Shape {
     [
       { center: [30, r + 18, -t - 2], direction: [0, 0, 1], radius: 4, depth: t + 4 },
       { center: [70, r + 18, -t - 2], direction: [0, 0, 1], radius: 4, depth: t + 4 },
+    ]
+  );
+}
+
+function createShapedLAngle(oc: OpenCascadeInstance): TopoDS_Shape {
+  const t = 2;
+  const r = 3;
+  const leg = 60;
+  const length = 100;
+  const profile = makeLProfileWireYZ(oc, leg, t, r);
+  const bent = extrudeFace(oc, makeFaceWithHoles(oc, profile, []), [length, 0, 0]);
+  const freeEdgeY = r + leg;
+
+  return cutPrisms(
+    oc,
+    bent,
+    [
+      makeZPrism(oc, [
+        [40, freeEdgeY - 10, -5],
+        [55, freeEdgeY - 10, -5],
+        [55, freeEdgeY + 5, -5],
+        [40, freeEdgeY + 5, -5],
+      ], 10),
+      makeZPrism(oc, [
+        [80, freeEdgeY, -5],
+        [100, freeEdgeY, -5],
+        [100, freeEdgeY - 20, -5],
+      ], 10),
     ]
   );
 }
@@ -477,6 +506,39 @@ function cutCylindricalHoles(
   }
 
   return result;
+}
+
+function cutPrisms(
+  oc: OpenCascadeInstance,
+  shape: TopoDS_Shape,
+  cutters: TopoDS_Shape[]
+): TopoDS_Shape {
+  let result = shape;
+
+  for (const cutter of cutters) {
+    let progress: Message_ProgressRange | null = null;
+    let cut: BRepAlgoAPI_Cut | null = null;
+
+    try {
+      progress = new oc.Message_ProgressRange_1();
+      cut = new oc.BRepAlgoAPI_Cut_3(result, cutter, progress);
+      result = cut.Shape();
+    } finally {
+      safeDelete(cut);
+      safeDelete(progress);
+      safeDelete(cutter);
+    }
+  }
+
+  return result;
+}
+
+function makeZPrism(
+  oc: OpenCascadeInstance,
+  basePoints: Point3[],
+  height: number
+): TopoDS_Shape {
+  return extrudeFace(oc, makeFaceWithHoles(oc, makePolygonWire(oc, basePoints), []), [0, 0, height]);
 }
 
 function makeCylinder(

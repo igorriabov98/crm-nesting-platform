@@ -18,7 +18,7 @@ import { prisma } from '../lib/prisma';
 import { isCompletedProjectStatus } from '../lib/project-status';
 import { normalizeCadText } from '../lib/text-encoding';
 import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../lib/part-type';
-import { isPartActive, summarizePartActivity } from '../lib/part-activity';
+import { getActivityQuantity, isPartActive, summarizePartActivity } from '../lib/part-activity';
 import { sanitizeFilename, transliterate } from '../lib/utils';
 import type { Point2D } from '../lib/nesting/types';
 
@@ -171,7 +171,7 @@ function buildResultJson(project: Prisma.NestingProjectGetPayload<{
   const placedParts = Array.from(placedByPartId.values()).reduce((sum, count) => sum + count, 0);
   const unplacedReasonQueues = buildUnplacedReasonQueues(project.validationReport);
   const unplacedParts = activeProjectParts.flatMap((part) => {
-    const required = part.quantity * project.quantity;
+    const required = getActivityQuantity(part, project.quantity);
     const placed = placedByPartId.get(part.id) ?? 0;
     const baseName = normalizeCadText(part.name);
     const material = normalizeCadText(part.material);

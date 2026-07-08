@@ -12,7 +12,7 @@ import {
 } from './unplaced-reasons';
 import { validateLayout, type LayoutValidationReport } from '../validation/layout-validator';
 import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../part-type';
-import { isPartActive, summarizePartActivity } from '../part-activity';
+import { getActivityQuantity, isPartActive, summarizePartActivity } from '../part-activity';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
 
@@ -50,7 +50,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     .map((part) => ({
       partId: part.id,
       name: normalizeCadText(part.name),
-      quantity: part.quantity * project.quantity,
+      quantity: getActivityQuantity(part, project.quantity),
       reasonCode: excludedReasonCode(part.partType),
       reason: buildExcludedFromNestingReason(part),
     }));
@@ -62,7 +62,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   const expectedParts = activeProjectParts.map((part) => ({
     id: part.id,
     name: normalizeCadText(part.name),
-    quantity: part.quantity * project.quantity,
+    quantity: getActivityQuantity(part, project.quantity),
   }));
 
   if (sheetMetalParts.length === 0) {
@@ -117,7 +117,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     .reduce((sum, part) => sum + part.quantity, 0);
 
   for (const part of partsWithoutThickness) {
-    const quantity = part.quantity * project.quantity;
+    const quantity = getActivityQuantity(part, project.quantity);
     const material = normalizeCadText(part.material);
     const steelTypeName = part.steelTypeName ?? null;
     const reason = buildMissingThicknessReason({ material, steelTypeName });
@@ -169,7 +169,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     const quantities = new Map<string, number>();
 
     for (const part of groupParts) {
-      quantities.set(part.id, part.quantity * project.quantity);
+      quantities.set(part.id, getActivityQuantity(part, project.quantity));
     }
 
     const groupParams = await resolveNestingParams({ material, thickness });

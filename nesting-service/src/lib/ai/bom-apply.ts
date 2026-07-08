@@ -79,18 +79,20 @@ export function prepareBOMApplyUpdate(
   const data: Prisma.PartUpdateInput = {};
   const appliedAt = options.appliedAt ?? new Date();
 
-  if (match.material) data.material = match.material;
-  if (match.quantity) data.quantity = match.quantity;
-  if ('steelTypeId' in match) data.steelTypeId = match.steelTypeId ?? null;
-  if ('steelTypeName' in match) data.steelTypeName = match.steelTypeName ?? null;
-  if ('steelTypeRaw' in match) data.steelTypeRaw = match.steelTypeRaw ?? null;
-  if (match.hasBends !== undefined) data.hasBends = match.hasBends;
-
   const nextPartType = match.partType
     ? normalizePartType(match.partType)
     : match.isSheetMetal !== undefined
       ? partTypeFromLegacySheetFlag(match.isSheetMetal)
       : null;
+  const currentPartType = normalizePartType(part.partType, partTypeFromLegacySheetFlag(part.isSheetMetal));
+  const effectivePartType = nextPartType ?? currentPartType;
+
+  if (match.material) data.material = match.material;
+  if (match.quantity && effectivePartType === 'SHEET') data.quantity = match.quantity;
+  if ('steelTypeId' in match) data.steelTypeId = match.steelTypeId ?? null;
+  if ('steelTypeName' in match) data.steelTypeName = match.steelTypeName ?? null;
+  if ('steelTypeRaw' in match) data.steelTypeRaw = match.steelTypeRaw ?? null;
+  if (match.hasBends !== undefined) data.hasBends = match.hasBends;
 
   if (nextPartType) {
     data.partType = nextPartType;
