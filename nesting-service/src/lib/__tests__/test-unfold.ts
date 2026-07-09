@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { unfoldPart } from '../brep/unfolder';
+import { unfoldPart, validateSimpleUnfoldContour } from '../brep/unfolder';
 import type { SheetMetalTopology } from '../brep/bend-detector';
 import { detectFixtureTopology } from './brep-test-utils';
 
@@ -20,10 +20,13 @@ type ArcExpectation = {
 };
 
 async function main(): Promise<void> {
+  assertSelfIntersectingSideWallContourRejected();
+
   const lTopology = await detectFixtureTopology('l_angle_100x40x40_t2_r3_holes.step');
   assert.ok(lTopology, 'L-angle topology should be detected');
   const lUnfold = unfoldPart(lTopology, K_FACTOR);
   assert.ok(lUnfold, 'L-angle should unfold');
+  assertSimpleContour(lUnfold.contour, 'L-angle');
   // L-angle: 40 + 40 + BA, BA = pi/2 * (3 + 0.4 * 2) = 5.969 mm.
   const lExpectedLength = 40 + 40 + BEND_ALLOWANCE;
   assertWithin(lUnfold.height, lExpectedLength, 0.005, 'L-angle unfolded length');
@@ -40,6 +43,7 @@ async function main(): Promise<void> {
   assert.ok(uTopology, 'U-channel topology should be detected');
   const uUnfold = unfoldPart(uTopology, K_FACTOR);
   assert.ok(uUnfold, 'U-channel should unfold');
+  assertSimpleContour(uUnfold.contour, 'U-channel');
   // U-channel fixture has two 40 mm side flanges, 34 mm tangent base span, and two BA strips.
   const uExpectedLength = 40 + 34 + 40 + 2 * BEND_ALLOWANCE;
   assertWithin(uUnfold.height, uExpectedLength, 0.005, 'U-channel unfolded length');
@@ -55,6 +59,7 @@ async function main(): Promise<void> {
   );
   const zUnfold = unfoldPart(zTopology, K_FACTOR);
   assert.ok(zUnfold, 'Z-profile should unfold');
+  assertSimpleContour(zUnfold.contour, 'Z-profile');
   assert.equal(zUnfold.source, 'UNFOLDED_BREP');
   assert.equal(zUnfold.bendCount, 2);
   // Z-profile has opposite bend directions; the developed length is validated against volume/thickness.
@@ -68,6 +73,7 @@ async function main(): Promise<void> {
   assert.ok(shapedTopology, 'shaped L-angle topology should be detected');
   const shapedUnfold = unfoldPart(shapedTopology, K_FACTOR);
   assert.ok(shapedUnfold, 'shaped L-angle should unfold');
+  assertSimpleContour(shapedUnfold.contour, 'shaped L-angle');
   // Shaped L-angle: rectangular flange 100*60, shaped flange 100*60 - 20*20/2 chamfer - 15*10 notch,
   // plus one BA strip 100 * pi/2 * (3 + 0.4 * 2) = 12246.9 mm2.
   const shapedExpectedArea = 100 * 60 + (100 * 60 - (20 * 20) / 2 - 15 * 10) + 100 * BEND_ALLOWANCE;
@@ -82,6 +88,7 @@ async function main(): Promise<void> {
 
   const rearLikeUnfold = unfoldPart(buildChainTopology([90, 90, 90, 90, 37]), K_FACTOR);
   assert.ok(rearLikeUnfold, 'rear-like rectangular chain should unfold');
+  assertSimpleContour(rearLikeUnfold.contour, 'rear-like rectangular chain');
   assertRectangularContour(rearLikeUnfold.contour, 'rear-like rectangular chain');
   assertChainUnfolds([45, 90, 90, 90, 90], '5-bend chain 45+90*4');
   assertChainUnfolds([90, 90, 90, 90, 37], '5-bend chain 90*4+37');
@@ -130,6 +137,7 @@ function assertChainUnfolds(anglesDeg: number[], label: string): void {
   const topology = buildChainTopology(anglesDeg);
   const unfolded = unfoldPart(topology, K_FACTOR);
   assert.ok(unfolded, `${label} should unfold`);
+  assertSimpleContour(unfolded.contour, label);
   assert.equal(unfolded.bendCount, anglesDeg.length, `${label} bend count`);
 
   const expectedArea = topology.volume / topology.thickness;
@@ -149,6 +157,7 @@ function assertAlternatingZChainUnfolds(anglesDeg: [number, number], label: stri
   });
   const unfolded = unfoldPart(topology, K_FACTOR);
   assert.ok(unfolded, `${label} should unfold`);
+  assertSimpleContour(unfolded.contour, label);
 
   const expectedArea = topology.volume / topology.thickness;
   const expectedHeight = expectedArea / unfolded.width;
@@ -174,6 +183,7 @@ async function assertPassportFixtureUnfolds(
 
   const unfolded = unfoldPart(topology, K_FACTOR);
   assert.ok(unfolded, `${label} should unfold`);
+  assertSimpleContour(unfolded.contour, label);
   assert.equal(unfolded.source, 'UNFOLDED_BREP');
   assert.equal(unfolded.bendCount, expectedBends, `${label} unfolded bend count`);
   const contourPoints = openLoop(unfolded.contour).length;
@@ -251,6 +261,45 @@ function buildChainTopology(
 function assertWithin(actual: number, expected: number, tolerance: number, label: string): void {
   const relativeError = Math.abs(actual - expected) / expected;
   assert.ok(relativeError <= tolerance, `${label}: ${actual} should be within ${tolerance * 100}% of ${expected}`);
+}
+
+function assertSelfIntersectingSideWallContourRejected(): void {
+  // Known LEDA.525 side-wall state before polygon union: bend-direction placement removes the beak,
+  // but the current stitcher still produces a self-intersecting outline. Keep this in NEEDS_REVIEW;
+  // the actual union fix is tracked separately in fix-unfold-union.
+  const reason = validateSimpleUnfoldContour([
+    { x: 1570.155, y: 388.859 },
+    { x: 1192.335, y: 104.152 },
+    { x: 1207.927, y: 57.552 },
+    { x: 1179.162, y: 95.725 },
+    { x: 1178.674, y: 95.358 },
+    { x: 1174.704, y: 100.627 },
+    { x: 1175.192, y: 100.994 },
+    { x: 1177.802, y: 100.994 },
+    { x: 1177.802, y: 46.6 },
+    { x: 1174.664, y: 46.6 },
+    { x: 1159.072, y: 0 },
+    { x: 0, y: 0 },
+    { x: 0, y: 49.9 },
+    { x: 71.062, y: 49.9 },
+    { x: 71.062, y: 50.392 },
+    { x: 21.654, y: 99.797 },
+    { x: 71.062, y: 99.797 },
+    { x: 71.062, y: 699.994 },
+    { x: 1175.192, y: 699.994 },
+    { x: 1572.642, y: 400.494 },
+    { x: 1573.129, y: 400.861 },
+    { x: 1576.164, y: 396.833 },
+  ]);
+  assert.match(
+    reason ?? '',
+    /^self-intersecting unfold contour: edges \[4,7\] at \(1177\.802,96\.515\)/,
+    'self-intersecting side-wall contour must not be a valid unfold'
+  );
+}
+
+function assertSimpleContour(points: Array<{ x: number; y: number }>, label: string): void {
+  assert.equal(validateSimpleUnfoldContour(points), null, `${label} contour should be simple`);
 }
 
 function logLengthCheck(label: string, formula: string, expected: number, actual: number): void {

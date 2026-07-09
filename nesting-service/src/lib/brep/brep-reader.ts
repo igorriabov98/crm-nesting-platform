@@ -1,7 +1,7 @@
 import { getOCC } from './occ-loader';
 import { extractPartContour, type ExtractedPartContour } from './contour-extractor';
 import { detectSheetMetalTopology } from './bend-detector';
-import { unfoldPart, type UnfoldedPartContour } from './unfolder';
+import { unfoldPartDetailed, type UnfoldedPartContour } from './unfolder';
 import type {
   Bnd_Box,
   BRepAdaptor_Surface,
@@ -473,13 +473,13 @@ async function tryUnfoldSolid(input: {
         defaulted: true,
         warning: 'K-factor rule not found, default 0.4 used',
       };
-  const unfolded = unfoldPart(topology, lookup.kFactor);
+  const unfolded = unfoldPartDetailed(topology, lookup.kFactor);
   const warnings = lookup.warning ? [lookup.warning] : [];
 
-  if (!unfolded) {
+  if (!unfolded.contour) {
     return {
       contour: null,
-      reason: 'unfold validation failed (bend-zone cutout or area mismatch)',
+      reason: unfolded.failureReason ?? 'unfold validation failed (bend-zone cutout or area mismatch)',
       kFactor: lookup.kFactor,
       kFactorDefaulted: lookup.defaulted,
       warnings,
@@ -490,7 +490,7 @@ async function tryUnfoldSolid(input: {
 
   return {
     contour: {
-      ...unfolded,
+      ...unfolded.contour,
       kFactorDefaulted: lookup.defaulted,
     },
     reason: '',

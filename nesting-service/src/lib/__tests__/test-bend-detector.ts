@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { parseStepFile, type ContourSource } from '../step-parser';
+import { validateSimpleUnfoldContour } from '../brep/unfolder';
 import { detectFixtureTopology, fixturesDir } from './brep-test-utils';
 
 const K_FACTOR = 0.4;
@@ -97,6 +98,7 @@ async function assertUnfoldedFixture(
   assert.equal(part.contourSource, 'UNFOLDED_BREP', `${file} should unfold`);
   assert.equal(part.suspectedBend, false, `${file} successful unfold should not be marked suspected`);
   assert.equal(part.bendCount, expectedBends, `${file} bend count`);
+  assert.equal(validateSimpleUnfoldContour(part.contour), null, `${file} unfold contour should be simple`);
   assertWithin(part.width, expectedWidth, tolerance, `${file} unfolded width`);
   assertWithin(part.height, expectedHeight, tolerance, `${file} unfolded height`);
   const contourPoints = openLoop(part.contour).length;
