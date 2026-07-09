@@ -20,6 +20,11 @@ export type UnfoldedPartContour = {
   kFactorDefaulted: boolean;
 };
 
+export type UnfoldPartDetailedResult = {
+  contour: UnfoldedPartContour | null;
+  failureReason: string | null;
+};
+
 type OrderedBend = {
   bend: SheetMetalBend;
   afterFlangeId: number;
@@ -53,12 +58,18 @@ type PlacedFlange = {
   contour: Point2D[];
 };
 
+type ChildFlangePlacementResult = {
+  transform: Transform2D | null;
+  failureReason: string | null;
+};
+
 type BendLine2D = {
   point: Point2D;
   direction: Point2D;
 };
 
 type Vec3 = SheetMetalFlange['normal'];
+type BendDirection = SheetMetalBend['direction'];
 
 const AREA_TOLERANCE = 0.02;
 const GEOMETRY_EPSILON = 0.001;
@@ -67,8 +78,14 @@ const COLLINEAR_ANGLE_TOLERANCE_RAD = (0.5 * Math.PI) / 180;
 const FLANGE_BOUNDARY_SNAP_TOLERANCE = 0.01;
 const POINT_KEY_PRECISION = 100;
 const PARALLEL_DOT_TOLERANCE = 0.999;
+const UNFOLD_VALIDATION_FAILURE_REASON = 'unfold validation failed (bend-zone cutout or area mismatch)';
+const SEGMENT_INTERSECTION_EPSILON = 1e-6;
 
 export function unfoldPart(topology: SheetMetalTopology, kFactor: number): UnfoldedPartContour | null {
+  return unfoldPartDetailed(topology, kFactor).contour;
+}
+
+export function unfoldPartDetailed(topology: SheetMetalTopology, kFactor: number): UnfoldPartDetailedResult {
   const ordered = orderFlanges(topology);
   const shareAxis = topologyBendsShareAxis(topology);
   if (ordered && shareAxis) {
@@ -78,11 +95,64 @@ export function unfoldPart(topology: SheetMetalTopology, kFactor: number): Unfol
   return unfoldTreePart(topology, kFactor);
 }
 
+export function validateSimpleUnfoldContour(contour: Point2D[]): string | null {
+  const intersection = findContourSelfIntersection(contour);
+  if (!intersection) {
+    return null;
+  }
+
+  return `self-intersecting unfold contour: edges [${intersection.edgeA},${intersection.edgeB}] at (${intersection.point.x.toFixed(3)},${intersection.point.y.toFixed(3)})`;
+}
+
+export function findContourSelfIntersection(contour: Point2D[]): {
+  edgeA: number;
+  edgeB: number;
+  point: Point2D;
+} | null {
+  const points = openContour(contour);
+  if (points.length < 4) {
+    return null;
+  }
+
+  const edgeCount = points.length;
+  for (let left = 0; left < edgeCount; left += 1) {
+    const a = points[left];
+    const b = points[(left + 1) % edgeCount];
+    for (let right = left + 1; right < edgeCount; right += 1) {
+      const isAdjacent = right === left + 1 || (left === 0 && right === edgeCount - 1);
+      if (isAdjacent) {
+        continue;
+      }
+
+      const c = points[right];
+      const d = points[(right + 1) % edgeCount];
+      const point = segmentIntersectionPoint(a, b, c, d);
+      if (point) {
+        return {
+          edgeA: left,
+          edgeB: right,
+          point: roundPoint(point),
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function acceptUnfold(contour: UnfoldedPartContour): UnfoldPartDetailedResult {
+  return { contour, failureReason: null };
+}
+
+function rejectUnfold(failureReason = UNFOLD_VALIDATION_FAILURE_REASON): UnfoldPartDetailedResult {
+  return { contour: null, failureReason };
+}
+
 function unfoldOrderedPart(
   topology: SheetMetalTopology,
   kFactor: number,
   ordered: { flanges: OrderedFlange[]; bends: OrderedBend[] }
-): UnfoldedPartContour | null {
+): UnfoldPartDetailedResult {
   const supplements = complementFlangeSupplements(topology, ordered, kFactor);
 
   let cursorY = 0;
@@ -138,13 +208,17 @@ function unfoldOrderedPart(
 
   const stitched = stitchOuterContour(pieces);
   if (!stitched) {
-    return null;
+    return rejectUnfold();
   }
   const normalized = normalizeUnfoldGeometry(stitched, holes);
   const width = roundMm(normalized.width, 100);
   const height = roundMm(normalized.height, 100);
   const contour = ensureClockwise(normalized.contour);
   const orientedHoles = normalized.holes.map(ensureCounterClockwise);
+  const contourFailure = validateSimpleUnfoldContour(contour);
+  if (contourFailure) {
+    return rejectUnfold(contourFailure);
+  }
   const area = polygonNetArea(contour, orientedHoles);
   const expectedArea = topology.volume / topology.thickness;
 
@@ -152,10 +226,10 @@ function unfoldOrderedPart(
     expectedArea > 0 &&
     Math.abs(area - expectedArea) / expectedArea > AREA_TOLERANCE
   ) {
-    return null;
+    return rejectUnfold();
   }
 
-  return {
+  return acceptUnfold({
     contour,
     holes: orientedHoles,
     thickness: topology.thickness,
@@ -166,13 +240,13 @@ function unfoldOrderedPart(
     bendCount: topology.bends.length,
     kFactor,
     kFactorDefaulted: false,
-  };
+  });
 }
 
-function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): UnfoldedPartContour | null {
+function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): UnfoldPartDetailedResult {
   const adjacency = buildTreeAdjacency(topology);
   if (!adjacency) {
-    return null;
+    return rejectUnfold();
   }
 
   const root = selectTreeRoot(topology, adjacency);
@@ -206,7 +280,7 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): Unfolded
     const item = stack.pop()!;
     const parentPlaced = placed.get(item.current);
     if (!parentPlaced) {
-      return null;
+      return rejectUnfold();
     }
 
     for (const edge of adjacency.get(item.current) ?? []) {
@@ -214,24 +288,26 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): Unfolded
         continue;
       }
       if (visited.has(edge.next)) {
-        return null;
+        return rejectUnfold();
       }
 
       const child = byId.get(edge.next);
       if (!child) {
-        return null;
+        return rejectUnfold();
       }
 
       const bendHeight = bendAllowance(edge.bend, topology.thickness, kFactor);
-      const childTransform = placeChildFlange(parentPlaced, child, edge.bend, bendHeight);
-      if (!childTransform) {
-        return null;
+      const childIsLeaf = (adjacency.get(child.id)?.length ?? 0) <= 1;
+      const childPlacement = placeChildFlange(parentPlaced, child, edge.bend, bendHeight, childIsLeaf);
+      if (!childPlacement.transform) {
+        return rejectUnfold(childPlacement.failureReason ?? UNFOLD_VALIDATION_FAILURE_REASON);
       }
 
+      const childTransform = childPlacement.transform;
       const childPlaced = placeFlange(child, childTransform);
       const strip = bendStripPolygon(parentPlaced, childPlaced, edge.bend, bendHeight);
       if (!strip) {
-        return null;
+        return rejectUnfold();
       }
 
       debugUnfoldPlacement('tree-flange', {
@@ -261,16 +337,20 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): Unfolded
   }
 
   if (visited.size !== topology.flanges.length) {
-    return null;
+    return rejectUnfold();
   }
 
   const stitched = stitchOuterContour(pieces);
   if (!stitched) {
-    return null;
+    return rejectUnfold();
   }
   const normalized = normalizeUnfoldGeometry(stitched, holes);
   const contour = ensureClockwise(normalized.contour);
   const orientedHoles = normalized.holes.map(ensureCounterClockwise);
+  const contourFailure = validateSimpleUnfoldContour(contour);
+  if (contourFailure) {
+    return rejectUnfold(contourFailure);
+  }
   const area = polygonNetArea(contour, orientedHoles);
   const expectedArea = topology.volume / topology.thickness;
 
@@ -278,10 +358,10 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): Unfolded
     expectedArea > 0 &&
     Math.abs(area - expectedArea) / expectedArea > AREA_TOLERANCE
   ) {
-    return null;
+    return rejectUnfold();
   }
 
-  return {
+  return acceptUnfold({
     contour,
     holes: orientedHoles,
     thickness: topology.thickness,
@@ -292,14 +372,13 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): Unfolded
     bendCount: topology.bends.length,
     kFactor,
     kFactorDefaulted: false,
-  };
+  });
 }
 
 function selectTreeRoot(
   topology: SheetMetalTopology,
   adjacency: Map<number, Array<{ next: number; bend: SheetMetalBend }>>
 ): SheetMetalFlange {
-  const byId = new Map(topology.flanges.map((flange) => [flange.id, flange]));
   const hasBranch = topology.flanges.some((flange) => (adjacency.get(flange.id)?.length ?? 0) > 2);
   if (hasBranch) {
     return topology.baseFace;
@@ -360,21 +439,22 @@ function placeChildFlange(
   parent: PlacedFlange,
   child: SheetMetalFlange,
   bend: SheetMetalBend,
-  bendHeight: number
-): Transform2D | null {
+  bendHeight: number,
+  childIsLeaf: boolean
+): ChildFlangePlacementResult {
   const parentLine = bendLineOnFlange(parent.flange, bend);
   const parentBoundary = bendBoundaryOnFlange(parent.flange, bend);
   const childBoundary = bendBoundaryOnFlange(child, bend);
   const childLine = childBoundary ?? bendLineOnFlange(child, bend);
   if (!parentLine || !childLine) {
-    return null;
+    return rejectChildPlacement(`unable to place child flange: bend ${bend.id} has no shared bend line`);
   }
 
   const parentPlacementLine = parentBoundary ?? parentLine;
   const parentLinePoint = transformPoint(parent.transform, parentPlacementLine.point);
   const parentLineDirection = normalize2D(transformVector(parent.transform, parentPlacementLine.direction));
   if (length2D(parentLineDirection) <= GEOMETRY_EPSILON) {
-    return null;
+    return rejectChildPlacement(`unable to place child flange: bend ${bend.id} parent line is degenerate`);
   }
 
   const parentCenter = boundsCenter(parent.contour);
@@ -383,11 +463,17 @@ function placeChildFlange(
   const childLinePoint = add2D(parentLinePoint, scale2D(stripNormal, bendHeight));
   const childLineDirection = normalize2D(childLine.direction);
   if (length2D(childLineDirection) <= GEOMETRY_EPSILON) {
-    return null;
+    return rejectChildPlacement(`unable to place child flange: bend ${bend.id} child line is degenerate`);
   }
 
-  let best: { transform: Transform2D; score: number; boundsArea: number } | null = null;
-  const attempts: Array<{ axisSign: number; perpSign: number; score: number; boundsArea: number; bounds: ReturnType<typeof boundsOf> }> = [];
+  const placementDirection = bendDirectionForPlacement(parent.flange, child, bend, childIsLeaf);
+  if (!placementDirection) {
+    return rejectChildPlacement(`unable to place child flange: bend ${bend.id} is not connected to parent flange ${parent.flange.id}`);
+  }
+
+  let best: { transform: Transform2D; score: number; directionScore: number; boundsArea: number; axisSign: number; perpSign: number } | null = null;
+  const requiredScoreSign = placementDirection === 'up' ? 1 : -1;
+  const attempts: Array<{ axisSign: number; perpSign: number; score: number; directionScore: number; eligible: boolean; boundsArea: number; bounds: ReturnType<typeof boundsOf> }> = [];
   for (const axisSign of [1, -1]) {
     const targetAxis = scale2D(parentLineDirection, axisSign);
     for (const perpSign of [1, -1]) {
@@ -401,17 +487,27 @@ function placeChildFlange(
       );
       const contour = transformContour(orientContour(child, false), transform);
       const score = dot2D(subtract2D(boundsCenter(contour), childLinePoint), stripNormal);
+      const directionScore = score * requiredScoreSign;
       const candidateBounds = boundsOf(contour);
       const combinedBounds = boundsOf([...openContour(parent.contour), ...openContour(contour)]);
       const boundsArea = (combinedBounds.maxX - combinedBounds.minX) * (combinedBounds.maxY - combinedBounds.minY);
-      attempts.push({ axisSign, perpSign, score: roundMm(score, 1000), boundsArea: roundMm(boundsArea, 1000), bounds: candidateBounds });
+      const eligible = directionScore > GEOMETRY_EPSILON;
+      attempts.push({
+        axisSign,
+        perpSign,
+        score: roundMm(score, 1000),
+        directionScore: roundMm(directionScore, 1000),
+        eligible,
+        boundsArea: roundMm(boundsArea, 1000),
+        bounds: candidateBounds,
+      });
       if (
-        score > GEOMETRY_EPSILON &&
+        eligible &&
         (!best ||
           boundsArea < best.boundsArea - GEOMETRY_EPSILON ||
-          (Math.abs(boundsArea - best.boundsArea) <= GEOMETRY_EPSILON && score > best.score))
+          (Math.abs(boundsArea - best.boundsArea) <= GEOMETRY_EPSILON && directionScore > best.directionScore))
       ) {
-        best = { transform, score, boundsArea };
+        best = { transform, score, directionScore, boundsArea, axisSign, perpSign };
       }
     }
   }
@@ -421,15 +517,59 @@ function placeChildFlange(
     childId: child.id,
     bendId: bend.id,
     bendAngleDeg: roundMm(bend.angleRad * 180 / Math.PI, 1000),
+    bendDirection: bend.direction,
+    placementDirection,
+    childIsLeaf,
+    requiredScoreSign,
     parentLinePoint,
     parentLineDirection,
     childLinePoint,
     stripNormal,
     attempts,
-    selected: best ? { score: roundMm(best.score, 1000), boundsArea: roundMm(best.boundsArea, 1000) } : null,
+    selected: best
+      ? {
+          axisSign: best.axisSign,
+          perpSign: best.perpSign,
+          score: roundMm(best.score, 1000),
+          directionScore: roundMm(best.directionScore, 1000),
+          boundsArea: roundMm(best.boundsArea, 1000),
+        }
+      : null,
   });
 
-  return best?.transform ?? null;
+  if (!best) {
+    return rejectChildPlacement(`unable to place child flange: bend ${bend.id} direction=${placementDirection} has no valid placement side`);
+  }
+
+  return acceptChildPlacement(best.transform);
+}
+
+function bendDirectionForPlacement(
+  parent: SheetMetalFlange,
+  child: SheetMetalFlange,
+  bend: SheetMetalBend,
+  childIsLeaf = true
+): BendDirection | null {
+  if (bend.from === parent.id && bend.to === child.id) {
+    if (bend.direction === 'down' && !childIsLeaf) {
+      return 'up';
+    }
+    return bend.direction;
+  }
+
+  if (bend.to === parent.id && bend.from === child.id) {
+    return 'up';
+  }
+
+  return null;
+}
+
+function acceptChildPlacement(transform: Transform2D): ChildFlangePlacementResult {
+  return { transform, failureReason: null };
+}
+
+function rejectChildPlacement(failureReason: string): ChildFlangePlacementResult {
+  return { transform: null, failureReason };
 }
 
 function transformFromLineMapping(
@@ -877,7 +1017,7 @@ function stitchOuterContour(polygons: Point2D[][]): Point2D[] | null {
     return null;
   }
 
-  const splitSegments = splitCollinearSegments(rawSegments);
+  const splitSegments = splitIntersectingSegments(splitCollinearSegments(rawSegments));
   const boundary = removeInternalSegments(splitSegments);
   const loops = chainSegments(boundary);
   if (process.env.UNFOLD_CONTOUR_DEBUG === '1') {
@@ -951,6 +1091,46 @@ function splitCollinearSegments(segments: Segment[]): Segment[] {
   return result;
 }
 
+function splitIntersectingSegments(segments: Segment[]): Segment[] {
+  const result: Segment[] = [];
+
+  for (const segment of segments) {
+    const splits = [0, 1];
+    for (const other of segments) {
+      if (segment === other || sameLine(segment, other)) {
+        continue;
+      }
+
+      const point = segmentIntersectionPoint(segment.a, segment.b, other.a, other.b);
+      if (!point) {
+        continue;
+      }
+
+      const t = segmentParameter(segment, point);
+      if (t > GEOMETRY_EPSILON && t < 1 - GEOMETRY_EPSILON) {
+        splits.push(t);
+      }
+    }
+
+    const unique = uniqueNumbers(splits).sort((left, right) => left - right);
+    for (let index = 0; index < unique.length - 1; index += 1) {
+      const start = unique[index];
+      const end = unique[index + 1];
+      if (end - start <= GEOMETRY_EPSILON) {
+        continue;
+      }
+
+      const a = interpolate(segment, start);
+      const b = interpolate(segment, end);
+      if (distance(a, b) > GEOMETRY_EPSILON) {
+        result.push({ a, b });
+      }
+    }
+  }
+
+  return result;
+}
+
 function removeInternalSegments(segments: Segment[]): Segment[] {
   const counts = new Map<string, { segment: Segment; count: number }>();
   for (const segment of segments) {
@@ -970,34 +1150,104 @@ function removeInternalSegments(segments: Segment[]): Segment[] {
 }
 
 function chainSegments(segments: Segment[]): Point2D[][] {
-  const unused = [...segments];
-  const loops: Point2D[][] = [];
-
-  while (unused.length > 0) {
-    const first = unused.shift()!;
-    const loop = [first.a, first.b];
-
-    while (unused.length > 0) {
-      const current = loop[loop.length - 1];
-      if (samePoint(current, loop[0])) {
-        break;
-      }
-
-      const nextIndex = unused.findIndex((segment) => samePoint(segment.a, current) || samePoint(segment.b, current));
-      if (nextIndex < 0) {
-        break;
-      }
-
-      const [next] = unused.splice(nextIndex, 1);
-      loop.push(samePoint(next.a, current) ? next.b : next.a);
+  const nodes = new Map<string, { point: Point2D; neighbors: Set<string> }>();
+  for (const segment of segments) {
+    const aKey = pointKey(segment.a);
+    const bKey = pointKey(segment.b);
+    if (aKey === bKey) {
+      continue;
     }
 
-    if (samePoint(loop[loop.length - 1], loop[0])) {
+    if (!nodes.has(aKey)) nodes.set(aKey, { point: roundPoint(segment.a), neighbors: new Set() });
+    if (!nodes.has(bKey)) nodes.set(bKey, { point: roundPoint(segment.b), neighbors: new Set() });
+    nodes.get(aKey)?.neighbors.add(bKey);
+    nodes.get(bKey)?.neighbors.add(aKey);
+  }
+
+  const directedEdges = new Set<string>();
+  for (const [key, node] of nodes) {
+    for (const neighbor of node.neighbors) {
+      directedEdges.add(`${key}>${neighbor}`);
+    }
+  }
+
+  const visited = new Set<string>();
+  const loops: Point2D[][] = [];
+
+  for (const edge of directedEdges) {
+    if (visited.has(edge)) {
+      continue;
+    }
+
+    const [start, second] = edge.split('>');
+    const loopKeys = [start];
+    let previous = start;
+    let current = second;
+
+    for (let steps = 0; steps <= directedEdges.size; steps += 1) {
+      visited.add(`${previous}>${current}`);
+      loopKeys.push(current);
+
+      if (current === start) {
+        break;
+      }
+
+      const next = nextBoundaryNeighbor(previous, current, nodes);
+      if (!next) {
+        break;
+      }
+
+      previous = current;
+      current = next;
+    }
+
+    if (loopKeys.length >= 4 && loopKeys[loopKeys.length - 1] === start) {
+      const loop = loopKeys.map((key) => nodes.get(key)?.point).filter((point): point is Point2D => Boolean(point));
       loops.push(closeContour(loop));
     }
   }
 
   return loops;
+}
+
+function nextBoundaryNeighbor(
+  previousKey: string,
+  currentKey: string,
+  nodes: Map<string, { point: Point2D; neighbors: Set<string> }>
+): string | null {
+  const previous = nodes.get(previousKey)?.point;
+  const current = nodes.get(currentKey)?.point;
+  const currentNode = nodes.get(currentKey);
+  if (!previous || !current || !currentNode) {
+    return null;
+  }
+
+  const incomingAngle = Math.atan2(current.y - previous.y, current.x - previous.x);
+  const candidates = [...currentNode.neighbors].filter((neighbor) => neighbor !== previousKey);
+  if (candidates.length === 0) {
+    return previousKey;
+  }
+
+  return candidates
+    .map((neighbor) => {
+      const point = nodes.get(neighbor)?.point;
+      if (!point) {
+        return null;
+      }
+
+      const outgoingAngle = Math.atan2(point.y - current.y, point.x - current.x);
+      return {
+        neighbor,
+        turn: normalizeAngle(outgoingAngle - incomingAngle),
+      };
+    })
+    .filter((item): item is { neighbor: string; turn: number } => Boolean(item))
+    .sort((left, right) => left.turn - right.turn)[0]?.neighbor ?? null;
+}
+
+function normalizeAngle(value: number): number {
+  const twoPi = 2 * Math.PI;
+  return ((value % twoPi) + twoPi) % twoPi;
 }
 
 function normalizeUnfoldGeometry(contour: Point2D[], holes: Point2D[][]): {
@@ -1212,6 +1462,47 @@ function distance(left: Point2D, right: Point2D): number {
 
 function cross2D(left: Point2D, right: Point2D): number {
   return left.x * right.y - left.y * right.x;
+}
+
+function segmentIntersectionPoint(a: Point2D, b: Point2D, c: Point2D, d: Point2D): Point2D | null {
+  const r = subtract2D(b, a);
+  const s = subtract2D(d, c);
+  const denominator = cross2D(r, s);
+  const delta = subtract2D(c, a);
+
+  if (Math.abs(denominator) <= SEGMENT_INTERSECTION_EPSILON) {
+    if (Math.abs(cross2D(delta, r)) > SEGMENT_INTERSECTION_EPSILON) {
+      return null;
+    }
+
+    const rLengthSquared = dot2D(r, r);
+    if (rLengthSquared <= SEGMENT_INTERSECTION_EPSILON) {
+      return null;
+    }
+
+    const start = dot2D(delta, r) / rLengthSquared;
+    const end = dot2D(subtract2D(d, a), r) / rLengthSquared;
+    const overlapStart = Math.max(0, Math.min(start, end));
+    const overlapEnd = Math.min(1, Math.max(start, end));
+    if (overlapEnd < overlapStart - SEGMENT_INTERSECTION_EPSILON) {
+      return null;
+    }
+
+    return add2D(a, scale2D(r, clamp((overlapStart + overlapEnd) / 2, 0, 1)));
+  }
+
+  const t = cross2D(delta, s) / denominator;
+  const u = cross2D(delta, r) / denominator;
+  if (
+    t < -SEGMENT_INTERSECTION_EPSILON ||
+    t > 1 + SEGMENT_INTERSECTION_EPSILON ||
+    u < -SEGMENT_INTERSECTION_EPSILON ||
+    u > 1 + SEGMENT_INTERSECTION_EPSILON
+  ) {
+    return null;
+  }
+
+  return add2D(a, scale2D(r, clamp(t, 0, 1)));
 }
 
 function orderFlanges(topology: SheetMetalTopology): { flanges: OrderedFlange[]; bends: OrderedBend[] } | null {
