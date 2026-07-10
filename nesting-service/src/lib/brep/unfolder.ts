@@ -5,6 +5,7 @@ import {
   polygonNetArea,
   type Point2D,
 } from '../geometry';
+import { intersection as polygonIntersection, union as polygonUnion, type MultiPolygon, type Polygon, type Ring } from 'polygon-clipping';
 import type { SheetMetalBend, SheetMetalFlange, SheetMetalTopology } from './bend-detector';
 
 export type UnfoldedPartContour = {
@@ -46,6 +47,17 @@ type Segment = {
   b: Point2D;
 };
 
+type UnfoldPieceDebug = {
+  label: string;
+  contour: Point2D[];
+};
+
+export type PolygonUnionResult = {
+  contour: Point2D[] | null;
+  holes: Point2D[][];
+  failureReason: string | null;
+};
+
 type Transform2D = {
   origin: Point2D;
   xAxis: Point2D;
@@ -66,6 +78,8 @@ type ChildFlangePlacementResult = {
 type BendLine2D = {
   point: Point2D;
   direction: Point2D;
+  start?: Point2D;
+  end?: Point2D;
 };
 
 type Vec3 = SheetMetalFlange['normal'];
@@ -76,6 +90,9 @@ const GEOMETRY_EPSILON = 0.001;
 const COLLINEAR_EPSILON = 0.01;
 const COLLINEAR_ANGLE_TOLERANCE_RAD = (0.5 * Math.PI) / 180;
 const FLANGE_BOUNDARY_SNAP_TOLERANCE = 0.01;
+const ENDPOINT_CORRESPONDENCE_TOLERANCE = 0.5;
+const COMPONENT_OVERLAP_TOLERANCE = 0.5;
+const BEND_STRIP_UNION_OVERLAP = 0.001;
 const POINT_KEY_PRECISION = 100;
 const PARALLEL_DOT_TOLERANCE = 0.999;
 const UNFOLD_VALIDATION_FAILURE_REASON = 'unfold validation failed (bend-zone cutout or area mismatch)';
@@ -158,6 +175,7 @@ function unfoldOrderedPart(
   let cursorY = 0;
   const holes: Point2D[][] = [];
   const pieces: Point2D[][] = [];
+  const pieceDebug: UnfoldPieceDebug[] = [];
 
   for (let index = 0; index < ordered.flanges.length; index += 1) {
     const item = ordered.flanges[index];
@@ -177,11 +195,14 @@ function unfoldOrderedPart(
       contourPoints: flangeContour.length,
     });
     pieces.push(flangeContour);
+    pieceDebug.push({ label: `flange:${flange.id}`, contour: flangeContour });
     holes.push(...flange.holes.map((hole) => translateHole(orientHole(hole, flange.width, flipY, true), cursorY)));
     cursorY += flange.width;
     const supplement = supplements.get(flange.id) ?? 0;
     if (supplement > GEOMETRY_EPSILON) {
-      pieces.push(rectangleContour(0, cursorY, flange.length, cursorY + supplement));
+      const supplementContour = rectangleContour(0, cursorY, flange.length, cursorY + supplement);
+      pieces.push(supplementContour);
+      pieceDebug.push({ label: `supplement:${flange.id}`, contour: supplementContour });
       cursorY += supplement;
     }
 
@@ -193,7 +214,9 @@ function unfoldOrderedPart(
         ? bendStripIntervals(item, nextFlange, nextBend.bend)
         : [{ min: 0, max: flange.length }];
       for (const interval of intervals) {
-        pieces.push(rectangleContour(interval.min, cursorY, interval.max, cursorY + bendHeight));
+        const stripContour = rectangleContour(interval.min, cursorY, interval.max, cursorY + bendHeight);
+        pieces.push(stripContour);
+        pieceDebug.push({ label: `bend-strip:${nextBend.bend.id}:${flange.id}->${nextFlange?.flange.id ?? 'n/a'}`, contour: stripContour });
       }
       debugUnfoldPlacement('bend-strip', {
         afterFlangeId: flange.id,
@@ -206,11 +229,12 @@ function unfoldOrderedPart(
     }
   }
 
-  const stitched = stitchOuterContour(pieces);
-  if (!stitched) {
-    return rejectUnfold();
+  debugUnfoldPieces('ordered-pieces-before-union', pieceDebug);
+  const unioned = unionUnfoldPolygons(pieces);
+  if (!unioned.contour) {
+    return rejectUnfold(unioned.failureReason ?? UNFOLD_VALIDATION_FAILURE_REASON);
   }
-  const normalized = normalizeUnfoldGeometry(stitched, holes);
+  const normalized = normalizeUnfoldGeometry(unioned.contour, [...holes, ...unioned.holes]);
   const width = roundMm(normalized.width, 100);
   const height = roundMm(normalized.height, 100);
   const contour = ensureClockwise(normalized.contour);
@@ -219,6 +243,9 @@ function unfoldOrderedPart(
   if (contourFailure) {
     return rejectUnfold(contourFailure);
   }
+  // Validate the final union contour that will be cut into DXF, not the
+  // pre-union material-piece sum. Otherwise overlapped flanges can hide a bad
+  // shape behind a plausible material area.
   const area = polygonNetArea(contour, orientedHoles);
   const expectedArea = topology.volume / topology.thickness;
 
@@ -258,10 +285,12 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): UnfoldPa
   const byId = new Map(topology.flanges.map((flange) => [flange.id, flange]));
   const placed = new Map<number, PlacedFlange>();
   const pieces: Point2D[][] = [];
+  const pieceDebug: UnfoldPieceDebug[] = [];
   const holes: Point2D[][] = [];
   const rootPlaced = placeFlange(root, rootTransform);
   placed.set(root.id, rootPlaced);
   pieces.push(rootPlaced.contour);
+  pieceDebug.push({ label: `flange:${root.id}`, contour: rootPlaced.contour });
   holes.push(...root.holes.map((hole) => transformContour(hole, rootTransform)));
   debugUnfoldPlacement('tree-flange', {
     flangeId: root.id,
@@ -298,7 +327,8 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): UnfoldPa
 
       const bendHeight = bendAllowance(edge.bend, topology.thickness, kFactor);
       const childIsLeaf = (adjacency.get(child.id)?.length ?? 0) <= 1;
-      const childPlacement = placeChildFlange(parentPlaced, child, edge.bend, bendHeight, childIsLeaf);
+      const existingFlangeContours = [...placed.values()].map((placedFlange) => placedFlange.contour);
+      const childPlacement = placeChildFlange(parentPlaced, child, edge.bend, bendHeight, childIsLeaf, existingFlangeContours);
       if (!childPlacement.transform) {
         return rejectUnfold(childPlacement.failureReason ?? UNFOLD_VALIDATION_FAILURE_REASON);
       }
@@ -329,6 +359,8 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): UnfoldPa
       });
 
       pieces.push(strip, childPlaced.contour);
+      pieceDebug.push({ label: `bend-strip:${edge.bend.id}:${item.current}->${child.id}`, contour: strip });
+      pieceDebug.push({ label: `flange:${child.id}`, contour: childPlaced.contour });
       holes.push(...child.holes.map((hole) => transformContour(hole, childTransform)));
       placed.set(child.id, childPlaced);
       visited.add(child.id);
@@ -340,17 +372,21 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): UnfoldPa
     return rejectUnfold();
   }
 
-  const stitched = stitchOuterContour(pieces);
-  if (!stitched) {
-    return rejectUnfold();
+  debugUnfoldPieces('tree-pieces-before-union', pieceDebug);
+  const unioned = unionUnfoldPolygons(pieces);
+  if (!unioned.contour) {
+    return rejectUnfold(unioned.failureReason ?? UNFOLD_VALIDATION_FAILURE_REASON);
   }
-  const normalized = normalizeUnfoldGeometry(stitched, holes);
+  const normalized = normalizeUnfoldGeometry(unioned.contour, [...holes, ...unioned.holes]);
   const contour = ensureClockwise(normalized.contour);
   const orientedHoles = normalized.holes.map(ensureCounterClockwise);
   const contourFailure = validateSimpleUnfoldContour(contour);
   if (contourFailure) {
     return rejectUnfold(contourFailure);
   }
+  // Validate the final union contour that will be cut into DXF, not the
+  // pre-union material-piece sum. Otherwise overlapped flanges can hide a bad
+  // shape behind a plausible material area.
   const area = polygonNetArea(contour, orientedHoles);
   const expectedArea = topology.volume / topology.thickness;
 
@@ -440,7 +476,8 @@ function placeChildFlange(
   child: SheetMetalFlange,
   bend: SheetMetalBend,
   bendHeight: number,
-  childIsLeaf: boolean
+  childIsLeaf: boolean,
+  existingFlangeContours: Point2D[][]
 ): ChildFlangePlacementResult {
   const parentLine = bendLineOnFlange(parent.flange, bend);
   const parentBoundary = bendBoundaryOnFlange(parent.flange, bend);
@@ -471,9 +508,24 @@ function placeChildFlange(
     return rejectChildPlacement(`unable to place child flange: bend ${bend.id} is not connected to parent flange ${parent.flange.id}`);
   }
 
-  let best: { transform: Transform2D; score: number; directionScore: number; boundsArea: number; axisSign: number; perpSign: number } | null = null;
+  let best: { transform: Transform2D; score: number; directionScore: number; boundsArea: number; endpointError: number; axisSign: number; perpSign: number; directionOverride: boolean } | null = null;
   const requiredScoreSign = placementDirection === 'up' ? 1 : -1;
-  const attempts: Array<{ axisSign: number; perpSign: number; score: number; directionScore: number; eligible: boolean; boundsArea: number; bounds: ReturnType<typeof boundsOf> }> = [];
+  const attempts: Array<{
+    axisSign: number;
+    perpSign: number;
+    score: number;
+    directionScore: number;
+    endpointError: number | null;
+    reverseEndpointError: number | null;
+    parentOverlapArea: number;
+    existingOverlapArea: number;
+    directionSatisfied: boolean;
+    overlapFree: boolean;
+    eligible: boolean;
+    boundsArea: number;
+    bounds: ReturnType<typeof boundsOf>;
+  }> = [];
+  const candidates: Array<{ transform: Transform2D; score: number; directionScore: number; boundsArea: number; endpointError: number; existingOverlapArea: number; directionSatisfied: boolean; axisSign: number; perpSign: number }> = [];
   for (const axisSign of [1, -1]) {
     const targetAxis = scale2D(parentLineDirection, axisSign);
     for (const perpSign of [1, -1]) {
@@ -491,24 +543,73 @@ function placeChildFlange(
       const candidateBounds = boundsOf(contour);
       const combinedBounds = boundsOf([...openContour(parent.contour), ...openContour(contour)]);
       const boundsArea = (combinedBounds.maxX - combinedBounds.minX) * (combinedBounds.maxY - combinedBounds.minY);
-      const eligible = directionScore > GEOMETRY_EPSILON;
+      const parentOverlapArea = polygonOverlapArea(parent.contour, contour);
+      const existingOverlapArea = existingFlangeContours.reduce((sum, existingContour) => sum + polygonOverlapArea(existingContour, contour), 0);
+      const endpointCorrespondence = bendEndpointCorrespondenceError(
+        parent.flange,
+        parent.transform,
+        parentPlacementLine,
+        child,
+        transform,
+        childLine,
+        bend,
+        stripNormal,
+        bendHeight
+      );
+      const directionSatisfied = directionScore > GEOMETRY_EPSILON;
+      const overlapFree = existingOverlapArea <= COMPONENT_OVERLAP_TOLERANCE;
+      const eligible = directionSatisfied && overlapFree;
       attempts.push({
         axisSign,
         perpSign,
         score: roundMm(score, 1000),
         directionScore: roundMm(directionScore, 1000),
+        endpointError: endpointCorrespondence ? roundMm(endpointCorrespondence.forward, 1000) : null,
+        reverseEndpointError: endpointCorrespondence ? roundMm(endpointCorrespondence.reverse, 1000) : null,
+        parentOverlapArea: roundMm(parentOverlapArea, 1000),
+        existingOverlapArea: roundMm(existingOverlapArea, 1000),
+        directionSatisfied,
+        overlapFree,
         eligible,
         boundsArea: roundMm(boundsArea, 1000),
         bounds: candidateBounds,
       });
-      if (
-        eligible &&
-        (!best ||
-          boundsArea < best.boundsArea - GEOMETRY_EPSILON ||
-          (Math.abs(boundsArea - best.boundsArea) <= GEOMETRY_EPSILON && directionScore > best.directionScore))
-      ) {
-        best = { transform, score, directionScore, boundsArea, axisSign, perpSign };
+      if (endpointCorrespondence) {
+        candidates.push({
+          transform,
+          score,
+          directionScore,
+          boundsArea,
+          endpointError: endpointCorrespondence.forward,
+          existingOverlapArea,
+          directionSatisfied,
+          axisSign,
+          perpSign,
+        });
       }
+    }
+  }
+
+  // axisSign is fixed by physical endpoint correspondence of the shared bend
+  // edge, never by bbox compactness. boundsArea remains diagnostic/tie-breaker
+  // only when physics is ambiguous, and component-overlap candidates are banned.
+  const strictCandidates = candidates.filter((candidate) =>
+    candidate.directionSatisfied && candidate.existingOverlapArea <= COMPONENT_OVERLAP_TOLERANCE
+  );
+  if (strictCandidates.length > 0) {
+    strictCandidates.sort((left, right) => left.endpointError - right.endpointError);
+    const [first, second] = strictCandidates;
+    if (!second || second.endpointError - first.endpointError > ENDPOINT_CORRESPONDENCE_TOLERANCE) {
+      best = { ...first, directionOverride: false };
+    }
+  } else {
+    const overlapFreeCandidates = candidates.filter((candidate) =>
+      candidate.existingOverlapArea <= COMPONENT_OVERLAP_TOLERANCE
+    );
+    overlapFreeCandidates.sort((left, right) => left.endpointError - right.endpointError);
+    const [first, second] = overlapFreeCandidates;
+    if (first && (!second || second.endpointError - first.endpointError > ENDPOINT_CORRESPONDENCE_TOLERANCE)) {
+      best = { ...first, directionOverride: true };
     }
   }
 
@@ -532,13 +633,19 @@ function placeChildFlange(
           perpSign: best.perpSign,
           score: roundMm(best.score, 1000),
           directionScore: roundMm(best.directionScore, 1000),
+          endpointError: roundMm(best.endpointError, 1000),
+          directionOverride: best.directionOverride,
           boundsArea: roundMm(best.boundsArea, 1000),
         }
       : null,
   });
 
+  if (candidates.length === 0) {
+    return rejectChildPlacement(`unable to place child flange: bend ${bend.id} has no physical endpoint correspondence`);
+  }
+
   if (!best) {
-    return rejectChildPlacement(`unable to place child flange: bend ${bend.id} direction=${placementDirection} has no valid placement side`);
+    return rejectChildPlacement(`unable to place child flange: bend ${bend.id} endpoint correspondence is ambiguous`);
   }
 
   return acceptChildPlacement(best.transform);
@@ -594,6 +701,98 @@ function transformFromLineMapping(
     origin: subtract2D(worldPoint, localPointVector),
     xAxis,
     yAxis,
+  };
+}
+
+function bendEndpointCorrespondenceError(
+  parentFlange: SheetMetalFlange,
+  parentTransform: Transform2D,
+  parentLine: BendLine2D,
+  childFlange: SheetMetalFlange,
+  childTransform: Transform2D,
+  childLine: BendLine2D,
+  bend: SheetMetalBend,
+  stripNormal: Point2D,
+  bendHeight: number
+): { forward: number; reverse: number } | null {
+  const boundaryOrder = bendBoundaryEndpointOrder(parentFlange, parentLine, childFlange, childLine);
+  if (boundaryOrder && parentLine.start && parentLine.end && childLine.start && childLine.end) {
+    const parentStart = transformPoint(parentTransform, parentLine.start);
+    const parentEnd = transformPoint(parentTransform, parentLine.end);
+    const childStart = transformPoint(childTransform, childLine.start);
+    const childEnd = transformPoint(childTransform, childLine.end);
+    const expectedChildStart = add2D(
+      boundaryOrder === 'forward' ? parentStart : parentEnd,
+      scale2D(stripNormal, bendHeight)
+    );
+    const expectedChildEnd = add2D(
+      boundaryOrder === 'forward' ? parentEnd : parentStart,
+      scale2D(stripNormal, bendHeight)
+    );
+
+    return {
+      forward: distance(childStart, expectedChildStart) + distance(childEnd, expectedChildEnd),
+      reverse: distance(childStart, expectedChildEnd) + distance(childEnd, expectedChildStart),
+    };
+  }
+
+  if (!bend.axisStart || !bend.axisEnd) {
+    return null;
+  }
+
+  const parentStart = bendEndpointOnLine(parentFlange, parentTransform, parentLine, bend.axisStart);
+  const parentEnd = bendEndpointOnLine(parentFlange, parentTransform, parentLine, bend.axisEnd);
+  const childStart = bendEndpointOnLine(childFlange, childTransform, childLine, bend.axisStart);
+  const childEnd = bendEndpointOnLine(childFlange, childTransform, childLine, bend.axisEnd);
+  const expectedChildStart = add2D(parentStart, scale2D(stripNormal, bendHeight));
+  const expectedChildEnd = add2D(parentEnd, scale2D(stripNormal, bendHeight));
+
+  return {
+    forward: distance(childStart, expectedChildStart) + distance(childEnd, expectedChildEnd),
+    reverse: distance(childStart, expectedChildEnd) + distance(childEnd, expectedChildStart),
+  };
+}
+
+function bendBoundaryEndpointOrder(
+  parentFlange: SheetMetalFlange,
+  parentLine: BendLine2D,
+  childFlange: SheetMetalFlange,
+  childLine: BendLine2D
+): 'forward' | 'reverse' | null {
+  if (!parentLine.start || !parentLine.end || !childLine.start || !childLine.end) {
+    return null;
+  }
+
+  const parentStart = localPointTo3D(parentFlange, parentLine.start);
+  const parentEnd = localPointTo3D(parentFlange, parentLine.end);
+  const childStart = localPointTo3D(childFlange, childLine.start);
+  const childEnd = localPointTo3D(childFlange, childLine.end);
+  const forward = distance3D(parentStart, childStart) + distance3D(parentEnd, childEnd);
+  const reverse = distance3D(parentStart, childEnd) + distance3D(parentEnd, childStart);
+  if (Math.abs(forward - reverse) <= ENDPOINT_CORRESPONDENCE_TOLERANCE) {
+    return null;
+  }
+
+  return forward < reverse ? 'forward' : 'reverse';
+}
+
+function bendEndpointOnLine(
+  flange: SheetMetalFlange,
+  transform: Transform2D,
+  line: BendLine2D,
+  axisPoint: Vec3
+): Point2D {
+  const localPoint = projectPointToFlange(flange, axisPoint);
+  const lineDirection = normalize2D(line.direction);
+  const parameter = dot2D(subtract2D(localPoint, line.point), lineDirection);
+  return transformPoint(transform, add2D(line.point, scale2D(lineDirection, parameter)));
+}
+
+function localPointTo3D(flange: SheetMetalFlange, point: Point2D): Vec3 {
+  return {
+    x: flange.localOrigin.x + flange.uAxis.x * point.x + flange.vAxis.x * point.y,
+    y: flange.localOrigin.y + flange.uAxis.y * point.x + flange.vAxis.y * point.y,
+    z: flange.localOrigin.z + flange.uAxis.z * point.x + flange.vAxis.z * point.y,
   };
 }
 
@@ -653,10 +852,11 @@ function bendStripPolygon(
   }
 
   const actualHeight = normalLength > GEOMETRY_EPSILON ? normalLength : bendHeight;
-  const a = add2D(parentLinePoint, scale2D(axis, min));
-  const b = add2D(parentLinePoint, scale2D(axis, max));
-  const c = add2D(b, scale2D(normal, actualHeight));
-  const d = add2D(a, scale2D(normal, actualHeight));
+  const overlap = Math.min(BEND_STRIP_UNION_OVERLAP, actualHeight / 4);
+  const a = add2D(add2D(parentLinePoint, scale2D(axis, min)), scale2D(normal, -overlap));
+  const b = add2D(add2D(parentLinePoint, scale2D(axis, max)), scale2D(normal, -overlap));
+  const c = add2D(b, scale2D(normal, actualHeight + overlap * 2));
+  const d = add2D(a, scale2D(normal, actualHeight + overlap * 2));
   return closeContour([a, b, c, d]);
 }
 
@@ -758,6 +958,8 @@ function bendBoundaryOnFlange(flange: SheetMetalFlange, bend: SheetMetalBend): B
         line: {
           point: orientedPoint,
           direction: orientedDirection,
+          start: directionAligned ? a : b,
+          end: directionAligned ? b : a,
         },
         score,
       };
@@ -1009,6 +1211,148 @@ function mergeIntervals(intervals: Interval[]): Interval[] {
   }
 
   return merged;
+}
+
+export function unionUnfoldPolygons(polygons: Point2D[][]): PolygonUnionResult {
+  const clippingPolygons = polygons
+    .map(toClippingPolygon)
+    .filter((polygon): polygon is Polygon => Boolean(polygon));
+  if (clippingPolygons.length === 0) {
+    return {
+      contour: null,
+      holes: [],
+      failureReason: 'unfold polygon union failed: no valid input polygons',
+    };
+  }
+
+  let unioned: MultiPolygon;
+  try {
+    unioned = polygonUnion(clippingPolygons[0], ...clippingPolygons.slice(1));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      contour: null,
+      holes: [],
+      failureReason: `unfold polygon union failed: ${message}`,
+    };
+  }
+
+  if (process.env.UNFOLD_CONTOUR_DEBUG === '1') {
+    console.error(`[unfold-contour-debug] polygon-union: ${JSON.stringify(unioned.map((polygon) => ({
+      rings: polygon.length,
+      outerPoints: polygon[0]?.length ?? 0,
+      area: polygon[0] ? roundMm(Math.abs(polygonArea(pointsFromRing(polygon[0]))), 1000) : 0,
+      bounds: polygon[0] ? boundsOf(pointsFromRing(polygon[0])) : null,
+    })))}`);
+  }
+
+  if (unioned.length !== 1) {
+    return {
+      contour: null,
+      holes: [],
+      failureReason: `unfold polygon union returned ${unioned.length} disconnected polygons`,
+    };
+  }
+
+  const [outerRing, ...holeRings] = unioned[0];
+  if (!outerRing) {
+    return {
+      contour: null,
+      holes: [],
+      failureReason: 'unfold polygon union returned no outer contour',
+    };
+  }
+
+  const contour = removeCollinearPoints(pointsFromRing(outerRing));
+  const holes = holeRings
+    .map(pointsFromRing)
+    .map(removeCollinearPoints)
+    .filter((hole) => openContour(hole).length >= 3);
+
+  if (openContour(contour).length < 3) {
+    return {
+      contour: null,
+      holes: [],
+      failureReason: 'unfold polygon union returned degenerate outer contour',
+    };
+  }
+
+  if (process.env.UNFOLD_CONTOUR_DEBUG === '1') {
+    debugContour('union-outer-after-clean', contour);
+    holes.forEach((hole, index) => debugContour(`union-hole-${index}-after-clean`, hole));
+  }
+
+  return {
+    contour,
+    holes,
+    failureReason: null,
+  };
+}
+
+function polygonOverlapArea(left: Point2D[], right: Point2D[]): number {
+  const leftPolygon = toClippingPolygon(left);
+  const rightPolygon = toClippingPolygon(right);
+  if (!leftPolygon || !rightPolygon) {
+    return 0;
+  }
+
+  let intersected: MultiPolygon;
+  try {
+    intersected = polygonIntersection(leftPolygon, rightPolygon);
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return clippingMultiPolygonArea(intersected);
+}
+
+function clippingMultiPolygonArea(multiPolygon: MultiPolygon): number {
+  return multiPolygon.reduce((sum, polygon) => {
+    const [outerRing, ...holeRings] = polygon;
+    if (!outerRing) {
+      return sum;
+    }
+
+    const outerArea = Math.abs(polygonArea(pointsFromRing(outerRing)));
+    const holesArea = holeRings.reduce((holeSum, ring) => holeSum + Math.abs(polygonArea(pointsFromRing(ring))), 0);
+    return sum + Math.max(0, outerArea - holesArea);
+  }, 0);
+}
+
+function toClippingPolygon(contour: Point2D[]): Polygon | null {
+  const ring = ringFromPoints(openContour(contour));
+  if (!ring) {
+    return null;
+  }
+
+  return [ring];
+}
+
+function ringFromPoints(points: Point2D[]): Ring | null {
+  const ring: Ring = [];
+  for (const point of points) {
+    const rounded = roundPoint(point);
+    const previous = ring[ring.length - 1];
+    if (previous && samePoint({ x: previous[0], y: previous[1] }, rounded)) {
+      continue;
+    }
+    ring.push([rounded.x, rounded.y]);
+  }
+
+  if (ring.length < 3) {
+    return null;
+  }
+
+  const contour = closeContour(ring.map(([x, y]) => ({ x, y })));
+  if (Math.abs(polygonArea(contour)) <= GEOMETRY_EPSILON) {
+    return null;
+  }
+
+  return ring;
+}
+
+function pointsFromRing(ring: Ring): Point2D[] {
+  return closeContour(ring.map(([x, y]) => ({ x, y })));
 }
 
 function stitchOuterContour(polygons: Point2D[][]): Point2D[] | null {
@@ -1314,6 +1658,21 @@ function debugContour(label: string, contour: Point2D[]): void {
   points.forEach((point, index) => {
     console.error(`[unfold-contour-debug] ${label}[${index}] x=${point.x.toFixed(6)} y=${point.y.toFixed(6)}`);
   });
+}
+
+function debugUnfoldPieces(label: string, pieces: UnfoldPieceDebug[]): void {
+  if (process.env.UNFOLD_CONTOUR_DEBUG !== '1') {
+    return;
+  }
+
+  console.error(`[unfold-contour-debug] ${label}: ${JSON.stringify(pieces.map((piece, index) => ({
+    index,
+    label: piece.label,
+    area: roundMm(Math.abs(polygonArea(piece.contour)), 1000),
+    signedArea: roundMm(polygonArea(piece.contour), 1000),
+    bounds: boundsOf(piece.contour),
+    points: openContour(piece.contour),
+  })))}`);
 }
 
 function debugUnfoldPlacement(label: string, details: unknown): void {
@@ -1720,6 +2079,10 @@ function subtract3D(a: Vec3, b: Vec3): Vec3 {
 
 function dot3D(a: Vec3, b: Vec3): number {
   return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+function distance3D(a: Vec3, b: Vec3): number {
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
 function normalize3D(vector: Vec3): Vec3 {
