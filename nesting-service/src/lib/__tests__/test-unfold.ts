@@ -5,6 +5,7 @@ import { unfoldPart, unionUnfoldPolygons, validateSimpleUnfoldContour } from '..
 import type { SheetMetalTopology } from '../brep/bend-detector';
 import { polygonNetArea, type Point2D } from '../geometry';
 import { detectFixtureTopology, fixturesDir } from './brep-test-utils';
+import { assertNoComponentOverlap, assertUnfoldShape } from './unfold-shape-assertions';
 
 const K_FACTOR = 0.4;
 const THICKNESS = 2;
@@ -33,6 +34,11 @@ async function main(): Promise<void> {
   assertSimpleContour(lUnfold.contour, 'L-angle');
   // L-angle: 40 + 40 + BA, BA = pi/2 * (3 + 0.4 * 2) = 5.969 mm.
   const lExpectedLength = 40 + 40 + BEND_ALLOWANCE;
+  assertUnfoldShape(lUnfold, {
+    label: 'L-angle',
+    expectedArea: lTopology.volume / lTopology.thickness,
+    bomBbox: { width: 100, height: lExpectedLength },
+  });
   assertWithin(lUnfold.height, lExpectedLength, 0.005, 'L-angle unfolded length');
   logLengthCheck('L-angle', '40 + 40 + pi/2 * (3 + 0.4 * 2)', lExpectedLength, lUnfold.height);
   assert.equal(lUnfold.holes.length, 2, 'L-angle holes should survive unfold');
@@ -50,6 +56,11 @@ async function main(): Promise<void> {
   assertSimpleContour(uUnfold.contour, 'U-channel');
   // U-channel fixture has two 40 mm side flanges, 34 mm tangent base span, and two BA strips.
   const uExpectedLength = 40 + 34 + 40 + 2 * BEND_ALLOWANCE;
+  assertUnfoldShape(uUnfold, {
+    label: 'U-channel',
+    expectedArea: uTopology.volume / uTopology.thickness,
+    bomBbox: { width: 100, height: uExpectedLength },
+  });
   assertWithin(uUnfold.height, uExpectedLength, 0.005, 'U-channel unfolded length');
   logLengthCheck('U-channel', '40 + 34 + 40 + 2 * pi/2 * (3 + 0.4 * 2)', uExpectedLength, uUnfold.height);
 
@@ -69,6 +80,11 @@ async function main(): Promise<void> {
   // Z-profile has opposite bend directions; the developed length is validated against volume/thickness.
   const zExpectedArea = zTopology.volume / zTopology.thickness;
   const zExpectedLength = zExpectedArea / zUnfold.width;
+  assertUnfoldShape(zUnfold, {
+    label: 'Z-profile',
+    expectedArea: zExpectedArea,
+    bomBbox: { width: 100, height: zExpectedLength },
+  });
   assertWithin(zUnfold.height, zExpectedLength, 0.001, 'Z-profile unfolded length');
   assertWithin(zUnfold.area, zExpectedArea, 0.005, 'Z-profile unfolded area');
   logLengthCheck('Z-profile', 'volume / thickness / width', zExpectedLength, zUnfold.height);
@@ -81,6 +97,19 @@ async function main(): Promise<void> {
   // Shaped L-angle: rectangular flange 100*60, shaped flange 100*60 - 20*20/2 chamfer - 15*10 notch,
   // plus one BA strip 100 * pi/2 * (3 + 0.4 * 2) = 12246.9 mm2.
   const shapedExpectedArea = 100 * 60 + (100 * 60 - (20 * 20) / 2 - 15 * 10) + 100 * BEND_ALLOWANCE;
+  assertUnfoldShape(shapedUnfold, {
+    label: 'shaped L-angle',
+    expectedArea: shapedExpectedArea,
+    areaTolerance: 0.01,
+    bomBbox: { width: 100, height: 60 + 60 + BEND_ALLOWANCE },
+    minContourPoints: 4,
+    featurePoints: [
+      { x: 40, y: shapedUnfold.height - 10, tolerance: 0.05, label: 'notch inner-left corner' },
+      { x: 55, y: shapedUnfold.height - 10, tolerance: 0.05, label: 'notch inner-right corner' },
+      { x: 80, y: shapedUnfold.height, tolerance: 0.05, label: 'chamfer top point' },
+      { x: 100, y: shapedUnfold.height - 20, tolerance: 0.05, label: 'chamfer side point' },
+    ],
+  });
   assert.equal(openLoop(shapedUnfold.contour).length > 4, true, 'shaped L-angle contour should not be rectangular');
   assertWithin(shapedUnfold.area, shapedExpectedArea, 0.01, 'shaped L-angle unfolded area');
   assertWithin(shapedUnfold.width, 100, 0.005, 'shaped L-angle unfolded width');
@@ -90,9 +119,16 @@ async function main(): Promise<void> {
   assertHasPoint(shapedUnfold.contour, 80, shapedUnfold.height, 0.05, 'chamfer top point');
   assertHasPoint(shapedUnfold.contour, 100, shapedUnfold.height - 20, 0.05, 'chamfer side point');
 
-  const rearLikeUnfold = unfoldPart(buildChainTopology([90, 90, 90, 90, 37]), K_FACTOR);
+  const rearLikeTopology = buildChainTopology([90, 90, 90, 90, 37]);
+  const rearLikeUnfold = unfoldPart(rearLikeTopology, K_FACTOR);
   assert.ok(rearLikeUnfold, 'rear-like rectangular chain should unfold');
   assertSimpleContour(rearLikeUnfold.contour, 'rear-like rectangular chain');
+  assertUnfoldShape(rearLikeUnfold, {
+    label: 'rear-like rectangular chain',
+    expectedArea: rearLikeTopology.volume / rearLikeTopology.thickness,
+    bomBbox: { width: rearLikeUnfold.width, height: rearLikeUnfold.height },
+    exactContourPoints: 4,
+  });
   assertRectangularContour(rearLikeUnfold.contour, 'rear-like rectangular chain');
   assertChainUnfolds([45, 90, 90, 90, 90], '5-bend chain 45+90*4');
   assertChainUnfolds([90, 90, 90, 90, 37], '5-bend chain 90*4+37');
@@ -103,6 +139,7 @@ async function main(): Promise<void> {
     'strip66 R5-notch',
     100649.9991 / 6,
     75,
+    222.12,
     3,
     4,
     undefined,
@@ -118,6 +155,7 @@ async function main(): Promise<void> {
     'synthetic/multiaxis/flange_tree_100x100_t2_r3.step',
     'flange tree 3-axis',
     29665.2300 / 2,
+    130.97,
     130.97,
     3,
     8,
@@ -147,6 +185,12 @@ function assertChainUnfolds(anglesDeg: number[], label: string): void {
   const expectedArea = topology.volume / topology.thickness;
   const expectedHeight = 40 * (anglesDeg.length + 1) +
     anglesDeg.reduce((sum, angle) => sum + toRadians(angle) * (INNER_RADIUS + K_FACTOR * THICKNESS), 0);
+  assertUnfoldShape(unfolded, {
+    label,
+    expectedArea,
+    areaTolerance: 0.001,
+    bomBbox: { width: 100, height: expectedHeight },
+  });
   assertWithin(unfolded.area, expectedArea, 0.001, `${label} unfolded area`);
   assertWithin(unfolded.height, expectedHeight, 0.001, `${label} unfolded length`);
   logLengthCheck(label, `${anglesDeg.join('+')} deg chain`, expectedHeight, unfolded.height);
@@ -165,6 +209,12 @@ function assertAlternatingZChainUnfolds(anglesDeg: [number, number], label: stri
 
   const expectedArea = topology.volume / topology.thickness;
   const expectedHeight = expectedArea / unfolded.width;
+  assertUnfoldShape(unfolded, {
+    label,
+    expectedArea,
+    areaTolerance: 0.005,
+    bomBbox: { width: 100, height: expectedHeight },
+  });
   assert.equal(unfolded.bendCount, anglesDeg.length, `${label} bend count`);
   assertWithin(unfolded.height, expectedHeight, 0.001, `${label} unfolded length`);
   assertWithin(unfolded.area, expectedArea, 0.005, `${label} unfolded area`);
@@ -176,6 +226,7 @@ async function assertPassportFixtureUnfolds(
   label: string,
   expectedArea: number,
   expectedWidth: number,
+  expectedHeight: number,
   expectedBends: number,
   minContourPoints: number,
   exactContourPoints?: number,
@@ -190,6 +241,14 @@ async function assertPassportFixtureUnfolds(
   assertSimpleContour(unfolded.contour, label);
   assert.equal(unfolded.source, 'UNFOLDED_BREP');
   assert.equal(unfolded.bendCount, expectedBends, `${label} unfolded bend count`);
+  assertUnfoldShape(unfolded, {
+    label,
+    expectedArea,
+    bomBbox: { width: expectedWidth, height: expectedHeight },
+    exactContourPoints,
+    minContourPoints: exactContourPoints === undefined ? minContourPoints : undefined,
+    arcs: expectArc ? [expectArc] : undefined,
+  });
   const contourPoints = openLoop(unfolded.contour).length;
   if (exactContourPoints !== undefined) {
     assert.equal(contourPoints, exactContourPoints, `${label} contour point count`);
@@ -285,6 +344,23 @@ function assertUnionTargetFixture(): void {
   assert.equal(openLoop(unioned.contour).length, 8, 'union target outer contour point count');
   assertLoopMatches(unioned.contour, expectedOuter, 0.001, 'union target outer contour');
   assertWithin(polygonNetArea(unioned.contour, unioned.holes), fixture.expected_area, 0.001, 'union target area');
+  assertUnfoldShape(
+    { contour: unioned.contour, holes: unioned.holes },
+    {
+      label: 'union target',
+      expectedArea: fixture.expected_area,
+      areaTolerance: 0.001,
+      bomBbox: { width: 360, height: 270 },
+      exactContourPoints: 8,
+    }
+  );
+  assertNoComponentOverlap(
+    unioned.contour,
+    unioned.holes,
+    polygons.reduce((sum, polygon) => sum + polygonNetArea(closeLoop(polygon)), 0),
+    'union target',
+    0.001
+  );
 }
 
 function assertSelfIntersectingSideWallContourRejected(): void {
@@ -405,6 +481,15 @@ function rotateLoop<T>(points: T[], start: number): T[] {
 
 function pointsFromPairs(points: Array<[number, number]>): Point2D[] {
   return points.map(([x, y]) => ({ x, y }));
+}
+
+function closeLoop(points: Point2D[]): Point2D[] {
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (!first || !last || Math.hypot(first.x - last.x, first.y - last.y) <= 1e-6) {
+    return points;
+  }
+  return [...points, first];
 }
 
 function distance(left: Point2D, right: Point2D): number {
