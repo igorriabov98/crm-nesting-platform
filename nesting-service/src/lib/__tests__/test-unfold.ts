@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
-import { unfoldPart, validateSimpleUnfoldContour } from '../brep/unfolder';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { unfoldPart, unionUnfoldPolygons, validateSimpleUnfoldContour } from '../brep/unfolder';
 import type { SheetMetalTopology } from '../brep/bend-detector';
-import { detectFixtureTopology } from './brep-test-utils';
+import { polygonNetArea, type Point2D } from '../geometry';
+import { detectFixtureTopology, fixturesDir } from './brep-test-utils';
 
 const K_FACTOR = 0.4;
 const THICKNESS = 2;
@@ -21,6 +24,7 @@ type ArcExpectation = {
 
 async function main(): Promise<void> {
   assertSelfIntersectingSideWallContourRejected();
+  assertUnionTargetFixture();
 
   const lTopology = await detectFixtureTopology('l_angle_100x40x40_t2_r3_holes.step');
   assert.ok(lTopology, 'L-angle topology should be detected');
@@ -263,6 +267,26 @@ function assertWithin(actual: number, expected: number, tolerance: number, label
   assert.ok(relativeError <= tolerance, `${label}: ${actual} should be within ${tolerance * 100}% of ${expected}`);
 }
 
+function assertUnionTargetFixture(): void {
+  const fixturePath = path.join(fixturesDir, 'synthetic/multiaxis/union_target.json');
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8')) as {
+    polygons: Record<string, Array<[number, number]>>;
+    expected_union_outer: Array<[number, number]>;
+    expected_area: number;
+  };
+  const polygons = Object.values(fixture.polygons).map(pointsFromPairs);
+  const expectedOuter = pointsFromPairs(fixture.expected_union_outer);
+  const unioned = unionUnfoldPolygons(polygons);
+
+  assert.equal(unioned.failureReason, null, `union target should not fail: ${unioned.failureReason}`);
+  assert.ok(unioned.contour, 'union target should return an outer contour');
+  assert.equal(unioned.holes.length, 0, 'union target should not produce holes');
+  assertSimpleContour(unioned.contour, 'union target');
+  assert.equal(openLoop(unioned.contour).length, 8, 'union target outer contour point count');
+  assertLoopMatches(unioned.contour, expectedOuter, 0.001, 'union target outer contour');
+  assertWithin(polygonNetArea(unioned.contour, unioned.holes), fixture.expected_area, 0.001, 'union target area');
+}
+
 function assertSelfIntersectingSideWallContourRejected(): void {
   // Known LEDA.525 side-wall state before polygon union: bend-direction placement removes the beak,
   // but the current stitcher still produces a self-intersecting outline. Keep this in NEEDS_REVIEW;
@@ -355,6 +379,36 @@ function assertArcPoints(
     arcPoints.length >= minPoints,
     `${label} should preserve arc points: expected >=${minPoints}, got ${arcPoints.length}`
   );
+}
+
+function assertLoopMatches(actual: Point2D[], expected: Point2D[], tolerance: number, label: string): void {
+  const actualOpen = openLoop(actual);
+  const expectedOpen = openLoop(expected);
+  assert.equal(actualOpen.length, expectedOpen.length, `${label} point count`);
+
+  const matches = (candidate: Point2D[]) => (
+    candidate.every((point, index) => distance(point, expectedOpen[index]) <= tolerance)
+  );
+  for (let start = 0; start < actualOpen.length; start += 1) {
+    const rotated = rotateLoop(actualOpen, start);
+    if (matches(rotated) || matches([...rotated].reverse())) {
+      return;
+    }
+  }
+
+  assert.fail(`${label} differs from expected loop: actual=${JSON.stringify(actualOpen)} expected=${JSON.stringify(expectedOpen)}`);
+}
+
+function rotateLoop<T>(points: T[], start: number): T[] {
+  return [...points.slice(start), ...points.slice(0, start)];
+}
+
+function pointsFromPairs(points: Array<[number, number]>): Point2D[] {
+  return points.map(([x, y]) => ({ x, y }));
+}
+
+function distance(left: Point2D, right: Point2D): number {
+  return Math.hypot(left.x - right.x, left.y - right.y);
 }
 
 function openLoop<T extends { x: number; y: number }>(points: T[]): T[] {
