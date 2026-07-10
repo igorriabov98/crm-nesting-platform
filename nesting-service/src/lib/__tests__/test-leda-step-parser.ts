@@ -6,6 +6,7 @@ import { matchBOMToParts } from '../ai/bom-matcher';
 import { resolveBOMSteelTypes } from '../ai/steel-types';
 import type { PartForMatching, SteelTypeCatalogItem } from '../ai/types';
 import { parseStepFile } from '../step-parser';
+import { assertUnfoldShape } from './unfold-shape-assertions';
 
 function assertApprox(actual: number, expected: number, tolerance: number): void {
   assert.ok(
@@ -55,6 +56,20 @@ async function main(): Promise<void> {
   assertApprox(topShell.width, 1186, 0.1);
   assertApprox(topShell.height, 1172.8, 2);
   assert.equal(topShell.contourSource, 'UNFOLDED_BREP');
+
+  const unfoldedParts = result.parts.filter((part) => part.contourSource === 'UNFOLDED_BREP');
+  assert.ok(unfoldedParts.length > 0, 'LEDA should have unfolded parts for shape-invariant coverage');
+  for (const part of unfoldedParts) {
+    assert.ok(part.thickness && part.thickness > 0, `${part.name} should keep positive thickness`);
+    assertUnfoldShape(
+      { contour: part.contour, holes: part.holes },
+      {
+        label: `LEDA shape ${part.name}`,
+        expectedArea: part.meshVolume / part.thickness,
+        bomBbox: { width: part.width, height: part.height },
+      }
+    );
+  }
 
   const plugRows = result.parts.filter((part) => part.name === 'Заглушка пластмассовая 15мм');
   assert.equal(plugRows.length, 2);

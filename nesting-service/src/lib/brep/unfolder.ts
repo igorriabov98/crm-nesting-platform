@@ -112,6 +112,11 @@ export function unfoldPartDetailed(topology: SheetMetalTopology, kFactor: number
   return unfoldTreePart(topology, kFactor);
 }
 
+/**
+ * Shape invariant for the final cut contour: the outer loop must be a simple polygon.
+ * Area and bbox can look plausible on a self-crossing outline, so this runs before area validation.
+ * The same check remains after polygon-union as a guard against unexpected topology output.
+ */
 export function validateSimpleUnfoldContour(contour: Point2D[]): string | null {
   const intersection = findContourSelfIntersection(contour);
   if (!intersection) {
@@ -243,9 +248,9 @@ function unfoldOrderedPart(
   if (contourFailure) {
     return rejectUnfold(contourFailure);
   }
-  // Validate the final union contour that will be cut into DXF, not the
-  // pre-union material-piece sum. Otherwise overlapped flanges can hide a bad
-  // shape behind a plausible material area.
+  // Shape invariant: validate the final union contour that will be cut into DXF,
+  // not the pre-union material-piece sum or bbox. Otherwise overlapped flanges
+  // can hide a bad shape behind plausible material dimensions.
   const area = polygonNetArea(contour, orientedHoles);
   const expectedArea = topology.volume / topology.thickness;
 
@@ -384,9 +389,9 @@ function unfoldTreePart(topology: SheetMetalTopology, kFactor: number): UnfoldPa
   if (contourFailure) {
     return rejectUnfold(contourFailure);
   }
-  // Validate the final union contour that will be cut into DXF, not the
-  // pre-union material-piece sum. Otherwise overlapped flanges can hide a bad
-  // shape behind a plausible material area.
+  // Shape invariant: validate the final union contour that will be cut into DXF,
+  // not the pre-union material-piece sum or bbox. Otherwise overlapped flanges
+  // can hide a bad shape behind plausible material dimensions.
   const area = polygonNetArea(contour, orientedHoles);
   const expectedArea = topology.volume / topology.thickness;
 
@@ -471,6 +476,11 @@ function placeFlange(flange: SheetMetalFlange, transform: Transform2D): PlacedFl
   };
 }
 
+/**
+ * Place a child flange by physical bend facts, not compactness heuristics.
+ * perpSign follows bend direction relative to the parent flange; axisSign follows endpoint correspondence of the shared bend line.
+ * boundsArea is only a diagnostic/tie-breaker when geometry is genuinely ambiguous, and overlap candidates are rejected.
+ */
 function placeChildFlange(
   parent: PlacedFlange,
   child: SheetMetalFlange,

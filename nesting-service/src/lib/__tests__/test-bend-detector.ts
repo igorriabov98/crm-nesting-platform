@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { parseStepFile, type ContourSource } from '../step-parser';
-import { validateSimpleUnfoldContour } from '../brep/unfolder';
 import { detectFixtureTopology, fixturesDir } from './brep-test-utils';
+import { assertUnfoldShape } from './unfold-shape-assertions';
 
 const K_FACTOR = 0.4;
 const STRIP66_ARC_CENTER = { x: 75, y: 167.117 };
@@ -98,7 +98,18 @@ async function assertUnfoldedFixture(
   assert.equal(part.contourSource, 'UNFOLDED_BREP', `${file} should unfold`);
   assert.equal(part.suspectedBend, false, `${file} successful unfold should not be marked suspected`);
   assert.equal(part.bendCount, expectedBends, `${file} bend count`);
-  assert.equal(validateSimpleUnfoldContour(part.contour), null, `${file} unfold contour should be simple`);
+  assert.ok(part.thickness && part.thickness > 0, `${file} should keep positive thickness`);
+  assertUnfoldShape(
+    { contour: part.contour, holes: part.holes },
+    {
+      label: file,
+      expectedArea: part.meshVolume / part.thickness,
+      bomBbox: { width: expectedWidth, height: expectedHeight },
+      exactContourPoints,
+      minContourPoints: exactContourPoints === undefined && minContourPoints > 0 ? minContourPoints : undefined,
+      arcs: expectArc ? [expectArc] : undefined,
+    }
+  );
   assertWithin(part.width, expectedWidth, tolerance, `${file} unfolded width`);
   assertWithin(part.height, expectedHeight, tolerance, `${file} unfolded height`);
   const contourPoints = openLoop(part.contour).length;

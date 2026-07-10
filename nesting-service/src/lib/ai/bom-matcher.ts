@@ -164,6 +164,11 @@ export function normalizePartClusterName(name: string): string {
   return normalize(withoutInstanceSuffix || name);
 }
 
+/**
+ * Quantity confidence is based on the original BOM row quantity and the matched clone-group size.
+ * Allocation only gates the positive boost when BOM qty == group size and every body in that group was allocated.
+ * Suggested quantities are handled separately so confidence never leaks the already-consumed allocation count.
+ */
 function applyGroupQuantitySignal(match: MatchCandidate, groupSize: number, allocatedQuantity?: number): MatchCandidate {
   if (!match.bomEntry || match.matchType === 'none') return match;
 
