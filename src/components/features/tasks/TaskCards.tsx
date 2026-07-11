@@ -84,6 +84,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   production_cutting_rollback_review: 'Откат заготовки',
   production_plan_date_change_approval: 'Согласование дат',
   outsourcing_transport: 'Транспорт аутсорсинга',
+  product_version_incomplete: 'Дозаполнить карточку товара',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {

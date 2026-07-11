@@ -7,6 +7,7 @@ import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
+import { buildProductVersionFileInsert } from '@/lib/actions/product-version-file-helpers'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { ResourceKey } from '@/lib/permissions/resources'
 import {
@@ -50,6 +51,8 @@ type LooseDb = { from: (table: string) => LooseQuery }
 type ProductInsert = Database['public']['Tables']['products']['Insert']
 type ProductUpdate = Database['public']['Tables']['products']['Update']
 type ProductFileInsert = Database['public']['Tables']['product_files']['Insert']
+type ProductVersion = Database['public']['Tables']['product_versions']['Row']
+type ProductVersionInsert = Database['public']['Tables']['product_versions']['Insert']
 type ProductProjectInsert = Database['public']['Tables']['product_projects']['Insert']
 type ProductProjectUpdate = Database['public']['Tables']['product_projects']['Update']
 type ProductProjectVersionInsert = Database['public']['Tables']['product_project_versions']['Insert']
@@ -69,6 +72,11 @@ type DepartmentMemberUserRow = {
   department_id: string
   user?: DepartmentUserRow | DepartmentUserRow[] | null
 }
+type UploadedInitialProductFile = {
+  fileKind: ProductFileInsert['file_kind']
+  file: File
+  filePath: string
+}
 
 export type ProductOption = Pick<Product,
   | 'id'
@@ -80,7 +88,11 @@ export type ProductOption = Pick<Product,
   | 'unit_weight_kg'
   | 'base_price_eur'
   | 'status'
->
+> & {
+  current_product_version_id?: string | null
+  current_product_version_number?: number | null
+  product_version_count?: number
+}
 
 export type ProductProjectSampleOption = ProductOption & {
   project_id: string
@@ -114,12 +126,12 @@ function dbFrom(supabase: unknown): LooseDb {
   return supabase as LooseDb
 }
 
-async function requireProductAccess(resourceKey: Extract<ResourceKey, 'products' | 'product_projects'> = 'products') {
+export async function requireProductAccess(resourceKey: Extract<ResourceKey, 'products' | 'product_projects'> = 'products') {
   const { supabase, user } = await requirePermission(resourceKey, 'view')
   return { supabase, db: dbFrom(supabase), user }
 }
 
-async function requireProductManageAccess(resourceKey: Extract<ResourceKey, 'products' | 'product_projects'> = 'products') {
+export async function requireProductManageAccess(resourceKey: Extract<ResourceKey, 'products' | 'product_projects'> = 'products') {
   const { supabase, user } = await requirePermission(resourceKey, 'manage')
   return { supabase, db: dbFrom(supabase), user }
 }
@@ -211,7 +223,7 @@ function isImageFile(file: File) {
   return file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(name)
 }
 
-async function uploadStorageFile(
+export async function uploadStorageFile(
   supabase: Awaited<ReturnType<typeof getCurrentUserContext>>['supabase'],
   prefix: string,
   file: File
@@ -368,6 +380,40 @@ function productPayload(parsed: ProductInput, userId: string): ProductInsert {
   }
 }
 
+async function insertInitialProductVersion(db: LooseDb, product: Pick<Product, 'id' | 'drawing_number'>, userId: string) {
+  const payload: ProductVersionInsert = {
+    product_id: product.id,
+    version_number: 1,
+    status: 'current',
+    drawing_number: product.drawing_number,
+    change_summary: null,
+    fastening_types: [],
+    completion_type: null,
+    created_by: userId,
+  }
+  const { data, error } = await db.from('product_versions').insert(payload).select('*').single()
+  if (error || !data) throw error || new Error('Не удалось создать начальную версию товара')
+  return data as ProductVersion
+}
+
+function buildInitialProductFilePayloads(
+  productId: string,
+  productVersionId: string,
+  files: UploadedInitialProductFile[],
+  userId: string,
+) {
+  return files.map(({ fileKind, file, filePath }) => buildProductVersionFileInsert({
+    productId,
+    productVersionId,
+    fileKind,
+    fileName: file.name,
+    filePath,
+    mimeType: file.type || null,
+    fileSize: file.size,
+    uploadedBy: userId,
+  }))
+}
+
 async function insertProductProjectWithInitialVersion(
   db: LooseDb,
   userId: string,
@@ -424,7 +470,34 @@ export async function getProductOptions() {
       .order('name_uk', { ascending: true })
 
     if (error) throw error
-    return { data: (data || []) as ProductOption[], error: null }
+    const products = (data || []) as ProductOption[]
+    const productIds = products.map((product) => product.id)
+    if (productIds.length === 0) return { data: products, error: null }
+
+    const { data: versionsData, error: versionsError } = await db
+      .from('product_versions')
+      .select('id, product_id, version_number, status')
+      .in('product_id', productIds)
+    if (versionsError) throw versionsError
+
+    const versionsByProductId = new Map<string, Pick<ProductVersion, 'id' | 'product_id' | 'version_number' | 'status'>[]>()
+    for (const version of (versionsData || []) as Pick<ProductVersion, 'id' | 'product_id' | 'version_number' | 'status'>[]) {
+      versionsByProductId.set(version.product_id, [...(versionsByProductId.get(version.product_id) || []), version])
+    }
+
+    return {
+      data: products.map((product) => {
+        const versions = versionsByProductId.get(product.id) || []
+        const currentVersion = versions.find((version) => version.status === 'current') || null
+        return {
+          ...product,
+          current_product_version_id: currentVersion?.id || null,
+          current_product_version_number: currentVersion?.version_number || null,
+          product_version_count: versions.length,
+        }
+      }),
+      error: null,
+    }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
@@ -532,8 +605,14 @@ export async function getProduct(id: string) {
 }
 
 export async function createProduct(input: ProductInput) {
+  let cleanupDb: LooseDb | null = null
+  let createdProductId: string | null = null
+
   try {
     const { db, user } = await requireProductManageAccess()
+    const adminSupabase = createAdminClient()
+    const adminDb = dbFrom(adminSupabase)
+    cleanupDb = adminDb
     const parsed = productSchema.parse(input)
     const { data, error } = await db
       .from('products')
@@ -542,10 +621,24 @@ export async function createProduct(input: ProductInput) {
       .single()
 
     if (error) throw error
+    const product = data as Product
+    createdProductId = product.id
+    // Product manage access includes sales_manager, while product_versions RLS intentionally does not.
+    // Creating v1 is an internal consistency write coupled to product creation after the app-level product check.
+    await insertInitialProductVersion(adminDb, product, user.id)
+
     revalidatePath(ROUTES.PRODUCTS)
     revalidatePath(ROUTES.SALES_PLAN_NEW)
-    return { success: true, product: data as Product, error: null }
+    return { success: true, product, error: null }
   } catch (error) {
+    if (cleanupDb && createdProductId) {
+      try {
+        await cleanupDb.from('products').delete().eq('id', createdProductId)
+      } catch {
+        // Return the original create/version error; rollback is best effort.
+      }
+    }
+
     return { success: false, product: null, error: getErrorMessage(error) }
   }
 }
@@ -577,19 +670,15 @@ export async function createProductWithFiles(formData: FormData) {
     if (pdfFile) validateFileExtension(pdfFile, ['.pdf'], 'PDF файл')
 
     const productId = randomUUID()
-    const files: ProductFileInsert[] = []
+    const files: UploadedInitialProductFile[] = []
 
     if (stepFile) {
       const filePath = await uploadStorageFile(adminSupabase, `products/${productId}`, stepFile)
       uploadedPaths.push(filePath)
       files.push({
-        product_id: productId,
-        file_kind: 'step',
-        file_name: stepFile.name,
-        file_path: filePath,
-        mime_type: stepFile.type || null,
-        file_size: stepFile.size,
-        uploaded_by: user.id,
+        fileKind: 'step',
+        file: stepFile,
+        filePath,
       })
     }
 
@@ -597,13 +686,9 @@ export async function createProductWithFiles(formData: FormData) {
       const filePath = await uploadStorageFile(adminSupabase, `products/${productId}`, pdfFile)
       uploadedPaths.push(filePath)
       files.push({
-        product_id: productId,
-        file_kind: 'pdf',
-        file_name: pdfFile.name,
-        file_path: filePath,
-        mime_type: pdfFile.type || null,
-        file_size: pdfFile.size,
-        uploaded_by: user.id,
+        fileKind: 'pdf',
+        file: pdfFile,
+        filePath,
       })
     }
 
@@ -616,9 +701,13 @@ export async function createProductWithFiles(formData: FormData) {
     if (error) throw error
     const product = data as Product
     createdProductId = product.id
+    // Product manage access includes sales_manager, while product_versions RLS intentionally does not.
+    // Creating v1 is an internal consistency write coupled to product creation after the app-level product check.
+    const initialVersion = await insertInitialProductVersion(db, product, user.id)
 
     if (files.length > 0) {
-      const { error: filesError } = await db.from('product_files').insert(files)
+      const productFiles = buildInitialProductFilePayloads(product.id, initialVersion.id, files, user.id)
+      const { error: filesError } = await db.from('product_files').insert(productFiles)
       if (filesError) throw filesError
     }
 

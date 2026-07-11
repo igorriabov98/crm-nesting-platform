@@ -103,6 +103,8 @@ export const updateDepartmentMemberSchema = z.object({
 export const machineItemSchema = z.object({
   id: z.string().uuid().optional(),
   product_id: z.string().uuid().optional().nullable(),
+  product_version_id: z.string().uuid().optional().nullable(),
+  productVersionId: z.string().uuid().optional().nullable(),
   product_project_id: z.string().uuid().optional().nullable(),
   product_project_version_id: z.string().uuid().optional().nullable(),
   product_name_uk: z.string().optional().nullable(),

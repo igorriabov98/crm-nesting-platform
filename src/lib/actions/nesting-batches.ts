@@ -8,6 +8,7 @@ import { NESTING_QUEUE_LIMIT } from '@/lib/constants/performance-limits'
 import { requirePermission } from '@/lib/permissions/server'
 import { fetchNestingService as fetch, getNestingServiceUrl, getProjectStatus, markProjectSuperseded } from '@/lib/nesting/api'
 import { isCompletedNestingStatus } from '@/lib/nesting/status'
+import { getProductVersionNestingGuards, type ProductVersionNestingDb } from '@/lib/actions/product-version-nesting-guard'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 
 type ActionResult<T> = {
@@ -296,7 +297,18 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
 
   if (scope === 'tasks') {
     if (taskMachineIds.length === 0) {
-      return { db, machines: [] as MachineRow[], activeTasks, items: [] as MachineItemRow[], products: [] as ProductRow[], files: [] as ProductFileRow[], runs: [] as RunRow[], engineerTasks: [] as TaskRow[], precuts: [] as PrecutRow[] }
+      return {
+        db,
+        machines: [] as MachineRow[],
+        activeTasks,
+        items: [] as MachineItemRow[],
+        products: [] as ProductRow[],
+        files: [] as ProductFileRow[],
+        runs: [] as RunRow[],
+        engineerTasks: [] as TaskRow[],
+        precuts: [] as PrecutRow[],
+        productVersionGuards: new Map(),
+      }
     }
     machineQuery = machineQuery.in('id', taskMachineIds)
   }
@@ -307,7 +319,18 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
   const machineIds = machines.map((machine) => machine.id)
 
   if (machineIds.length === 0) {
-    return { db, machines, activeTasks, items: [] as MachineItemRow[], products: [] as ProductRow[], files: [] as ProductFileRow[], runs: [] as RunRow[], engineerTasks: [] as TaskRow[], precuts: [] as PrecutRow[] }
+    return {
+      db,
+      machines,
+      activeTasks,
+      items: [] as MachineItemRow[],
+      products: [] as ProductRow[],
+      files: [] as ProductFileRow[],
+      runs: [] as RunRow[],
+      engineerTasks: [] as TaskRow[],
+      precuts: [] as PrecutRow[],
+      productVersionGuards: new Map(),
+    }
   }
 
   const [itemsResult, engineerTasksResult] = await Promise.all([
@@ -331,7 +354,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
   const productIds = Array.from(new Set(items.map((item) => item.product_id).filter(Boolean))) as string[]
   const itemIds = items.map((item) => item.id)
 
-  const [productsResult, filesResult, runsResult, precutsResult] = await Promise.all([
+  const [productsResult, filesResult, runsResult, precutsResult, productVersionGuards] = await Promise.all([
     productIds.length
       ? db.from('products').select('id, name_uk, drawing_number, status').in('id', productIds)
       : Promise.resolve({ data: [], error: null } as DbResult),
@@ -344,6 +367,9 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
     itemIds.length
       ? db.from('nesting_precut_parts').select('machine_item_id, quantity').in('machine_item_id', itemIds)
       : Promise.resolve({ data: [], error: null } as DbResult),
+    productIds.length
+      ? getProductVersionNestingGuards(db as ProductVersionNestingDb, productIds)
+      : Promise.resolve(new Map()),
   ])
 
   if (productsResult.error) throw new Error(productsResult.error.message || 'Не удалось загрузить товары')
@@ -360,6 +386,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
     runs: (runsResult.data || []) as RunRow[],
     engineerTasks: (engineerTasksResult.data || []) as TaskRow[],
     precuts: (precutsResult.data || []) as PrecutRow[],
+    productVersionGuards,
   }
 }
 
@@ -400,6 +427,7 @@ export async function getNestingQueue(scope: 'tasks' | 'all' = 'all'): Promise<A
         const files = item.product_id ? filesByProduct.get(item.product_id) || [] : []
         const stepFileCount = files.filter(isStepFile).length
         const drawingPdfFileCount = files.filter(isPdfDrawing).length
+        const versionGuard = item.product_id ? rows.productVersionGuards.get(item.product_id) || null : null
         const run = runByItem.get(item.id) || null
         const service = run ? statusByProject.get(run.nesting_project_id) || null : null
         const serviceUnavailable = service?.status === 'unavailable'
@@ -415,6 +443,7 @@ export async function getNestingQueue(scope: 'tasks' | 'all' = 'all'): Promise<A
         else if (!item.product_id) disabledReason = 'Строка не привязана к товару из базы'
         else if (!drawingsConfirmed) disabledReason = 'Инженер еще не подтвердил чертежи'
         else if (product && product.status !== 'active') disabledReason = 'Товар не активен'
+        else if (versionGuard?.message) disabledReason = versionGuard.message
         else if (issue) disabledReason = issue
 
         return {
@@ -533,15 +562,16 @@ export async function createNestingBatch(input: {
     if (items.length !== uniqueItemIds.length) throw new Error('Часть выбранных позиций не найдена')
 
     const machineIds = Array.from(new Set(items.map((item) => item.machine_id)))
-    const productIds = Array.from(new Set(items.map((item) => item.product_id).filter(Boolean))) as string[]
+    const productIds = Array.from(new Set(items.filter((item) => !item.is_sample).map((item) => item.product_id).filter(Boolean))) as string[]
 
-    const [machinesResult, engineerTasksResult, productsResult, filesResult, precutsResult, existingRunsResult] = await Promise.all([
+    const [machinesResult, engineerTasksResult, productsResult, filesResult, precutsResult, existingRunsResult, productVersionGuards] = await Promise.all([
       db.from('machines').select('id, name, is_archived, desired_shipping_date, production_month, created_at').in('id', machineIds),
       db.from('tasks').select('id, machine_id, deadline, status').eq('task_type', 'engineer_confirm').eq('status', 'completed').in('machine_id', machineIds),
       productIds.length ? db.from('products').select('id, name_uk, drawing_number, status').in('id', productIds) : Promise.resolve({ data: [], error: null } as DbResult),
       productIds.length ? db.from('product_files').select('id, product_id, file_kind, file_name, file_path, mime_type').in('product_id', productIds) : Promise.resolve({ data: [], error: null } as DbResult),
       uniqueItemIds.length ? db.from('nesting_precut_parts').select('machine_item_id, quantity').in('machine_item_id', uniqueItemIds) : Promise.resolve({ data: [], error: null } as DbResult),
       uniqueItemIds.length ? db.from('machine_item_nesting_runs').select('machine_item_id, nesting_project_id').in('machine_item_id', uniqueItemIds) : Promise.resolve({ data: [], error: null } as DbResult),
+      productIds.length ? getProductVersionNestingGuards(db as ProductVersionNestingDb, productIds) : Promise.resolve(new Map()),
     ])
 
     if (machinesResult.error) throw new Error(machinesResult.error.message || 'Не удалось загрузить машины')
@@ -577,6 +607,8 @@ export async function createNestingBatch(input: {
       if (!engineerConfirmed.has(item.machine_id)) throw new Error(`Инженер еще не подтвердил чертежи по машине ${machine.name}`)
       const product = products.get(item.product_id)
       if (!product || product.status !== 'active') throw new Error(`Товар ${item.product_name || item.id} не активен`)
+      const versionGuard = productVersionGuards.get(item.product_id)
+      if (versionGuard?.message) throw new Error(`${item.product_name || product.name_uk}: ${versionGuard.message}`)
       const files = filesByProduct.get(item.product_id) || []
       const stepFiles = files.filter(isStepFile)
       const drawingFiles = files.filter(isPdfDrawing)

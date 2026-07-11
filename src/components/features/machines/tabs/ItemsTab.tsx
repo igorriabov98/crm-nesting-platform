@@ -22,6 +22,10 @@ import { startMachineItemNesting, type MachineItemNestingState } from '@/lib/act
 import type { CoatingType, MachineDetails, MachineItem } from '@/lib/types'
 import type { TaskWithRelations } from '@/lib/actions/tasks'
 
+type MachineItemWithVersionStatus = MachineItem & {
+  is_product_version_outdated?: boolean
+}
+
 interface ItemsTabProps {
   machine: MachineDetails
   tasks?: TaskWithRelations[]
@@ -35,8 +39,8 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
   const canNest = canManageNesting
   const [isEditOpen, setIsEditOpen] = useState(false)
 
-  const goods = (machine.machine_items || []).filter((item) => !item.is_sample)
-  const samples = (machine.machine_items || []).filter((item) => item.is_sample)
+  const goods = ((machine.machine_items || []) as MachineItemWithVersionStatus[]).filter((item) => !item.is_sample)
+  const samples = ((machine.machine_items || []) as MachineItemWithVersionStatus[]).filter((item) => item.is_sample)
   const nestingStateByItemId = useMemo(
     () => new Map(nestingStates.map((state) => [state.machineItemId, state])),
     [nestingStates]
@@ -53,7 +57,16 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
     return <span className="text-[#9CA3AF] text-xs">{COATINGS.none.label}</span>
   }
 
-  const renderTable = (items: MachineItem[], emptyLabel: string) => {
+  const versionStatusBadge = (item: MachineItemWithVersionStatus) => {
+    if (item.is_sample || !item.product_version_id || !item.is_product_version_outdated) return null
+    return (
+      <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+        устаревшая версия
+      </Badge>
+    )
+  }
+
+  const renderTable = (items: MachineItemWithVersionStatus[], emptyLabel: string) => {
     const totalWeight = items.reduce((sum, item) => sum + Number(item.weight) * Number(item.quantity), 0)
     const totalCost = items.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0)
     const showActions = canEdit || canNest
@@ -89,7 +102,12 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
                   <TableRow key={item.id || idx} className="border-[#E8ECF0] hover:bg-[#F8F9FA]">
                     <TableCell className="text-center text-[#9CA3AF]">{idx + 1}</TableCell>
                     <TableCell className="font-medium text-[#374151]">{item.drawing_number}</TableCell>
-                    <TableCell className="text-[#374151]">{item.product_name}</TableCell>
+                    <TableCell className="text-[#374151]">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>{item.product_name}</span>
+                        {versionStatusBadge(item)}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-right text-[#374151]">{Number(item.weight).toFixed(2)} т</TableCell>
                     <TableCell className="text-right text-[#374151]">€{Number(item.price).toLocaleString()}</TableCell>
                     <TableCell className="text-center text-[#374151]">{item.quantity} шт</TableCell>
@@ -138,7 +156,10 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Позиция {idx + 1}</div>
-                  <div className="mt-1 break-words font-semibold text-slate-900">{item.product_name}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 break-words font-semibold text-slate-900">
+                    <span>{item.product_name}</span>
+                    {versionStatusBadge(item)}
+                  </div>
                   <div className="mt-1 text-sm text-slate-500">Чертёж: {item.drawing_number}</div>
                 </div>
                 {showActions && (

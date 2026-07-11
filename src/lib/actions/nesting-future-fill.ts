@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { ROUTES } from '@/lib/constants/routes'
 import { createNestingBatch } from '@/lib/actions/nesting-batches'
 import { resolveSheetMetalMaterialForRequestRow } from '@/lib/actions/request-sheet-metal-materials'
+import { getProductVersionNestingGuards, type ProductVersionNestingDb } from '@/lib/actions/product-version-nesting-guard'
 import { getResult, type NestingResult, type RemnantGeom, type SheetResult } from '@/lib/nesting/api'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
@@ -321,11 +322,12 @@ async function loadCandidates(db: LooseDb, batchDate: string, originalMachineIds
   const productIds = Array.from(new Set(items.map((item) => item.product_id).filter(Boolean))) as string[]
   const itemIds = items.map((item) => item.id)
 
-  const [productsResult, filesResult, runsResult, precutsResult] = await Promise.all([
+  const [productsResult, filesResult, runsResult, precutsResult, productVersionGuards] = await Promise.all([
     productIds.length ? db.from('products').select('id, name_uk, drawing_number, status').in('id', productIds) : Promise.resolve({ data: [], error: null } as DbResult),
     productIds.length ? db.from('product_files').select('id, product_id, file_kind, file_name, file_path, mime_type').in('product_id', productIds) : Promise.resolve({ data: [], error: null } as DbResult),
     itemIds.length ? db.from('machine_item_nesting_runs').select('machine_item_id, status').in('machine_item_id', itemIds) : Promise.resolve({ data: [], error: null } as DbResult),
     itemIds.length ? db.from('nesting_precut_parts').select('machine_item_id, quantity').in('machine_item_id', itemIds) : Promise.resolve({ data: [], error: null } as DbResult),
+    productIds.length ? getProductVersionNestingGuards(db as ProductVersionNestingDb, productIds) : Promise.resolve(new Map()),
   ])
 
   if (productsResult.error) throw new Error(productsResult.error.message || 'Не удалось загрузить товары будущих машин')
@@ -355,6 +357,7 @@ async function loadCandidates(db: LooseDb, batchDate: string, originalMachineIds
     if (!item.product_id) continue
     const product = productById.get(item.product_id)
     if (!product || product.status !== 'active') continue
+    if (productVersionGuards.get(item.product_id)?.isBlocked) continue
     const files = filesByProduct.get(item.product_id) || []
     if (files.filter(isStepFile).length !== 1 || files.filter(isPdfDrawing).length !== 1) continue
     const run = runByItem.get(item.id)
