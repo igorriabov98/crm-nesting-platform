@@ -21,7 +21,9 @@
     "test:phase0": "tsx src/lib/__tests__/test-dimension-guard.ts && tsx src/lib/__tests__/test-dxf-no-anisotropy.ts && tsx src/lib/__tests__/test-nesting-params.ts && tsx src/lib/__tests__/test-layout-validator.ts",
     "test:phase1": "tsx src/lib/__tests__/test-brep-contour.ts && tsx src/lib/__tests__/test-polygon-utilization.ts && tsx src/lib/__tests__/test-put-guard.ts && tsx src/lib/__tests__/test-phase1-fixture-pipeline.ts",
     "test:phase2": "tsx src/lib/__tests__/test-bend-detector.ts && tsx src/lib/__tests__/test-unfold.ts && tsx src/lib/__tests__/test-unfold-pipeline.ts",
-    "test:all": "tsx scripts/run-tests.ts"
+    "test:all": "tsx scripts/run-tests.ts",
+    "test:real": "tsx scripts/run-tests.ts --real",
+    "test:full": "tsx scripts/run-tests.ts --all"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

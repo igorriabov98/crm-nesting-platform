@@ -6,3 +6,9 @@
 *.gif binary
 *.ico binary
 *.pdf binary
+
+# CAD fixtures are exporter output; keep bytes as-is and skip whitespace lint.
+*.step -text -whitespace
+*.STEP -text -whitespace
+*.stp -text -whitespace
+*.STP -text -whitespace

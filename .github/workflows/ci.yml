@@ -93,3 +93,20 @@ jobs:
       - name: All nesting-service tests
         run: npm run test:all
         working-directory: nesting-service
+
+  real-fixtures:
+    name: real fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: nesting-service/package-lock.json
+      - name: Install nesting-service dependencies
+        run: npm ci
+        working-directory: nesting-service
+      - name: Real STEP fixtures
+        run: npm run test:real
+        working-directory: nesting-service
