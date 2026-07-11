@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/table'
 import { useRole } from '@/lib/hooks/useRole'
 import { COATINGS } from '@/lib/constants/coatings'
-import { MachineEditDialog } from '../MachineEditDialog'
+import { LazyMachineEditDialog } from '../LazyMachineEditDialog'
 import { startMachineItemNesting, type MachineItemNestingState } from '@/lib/actions/machine-item-nesting'
 import type { CoatingType, MachineDetails, MachineItem } from '@/lib/types'
 import type { TaskWithRelations } from '@/lib/actions/tasks'
@@ -251,10 +251,11 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
       </div>
 
       {isEditOpen && (
-        <MachineEditDialog
+        <LazyMachineEditDialog
           machine={machine}
           isOpen={isEditOpen}
           onClose={() => setIsEditOpen(false)}
+          mode="items"
         />
       )}
     </div>
