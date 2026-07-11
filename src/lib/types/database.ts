@@ -592,6 +592,7 @@ export type Database = {
           id: string
           machine_id: string
           product_id: string | null
+          product_version_id: string | null
           product_project_id: string | null
           product_project_version_id: string | null
           drawing_number: string
@@ -618,6 +619,7 @@ export type Database = {
           id?: string
           machine_id: string
           product_id?: string | null
+          product_version_id?: string | null
           product_project_id?: string | null
           product_project_version_id?: string | null
           drawing_number: string
@@ -644,6 +646,7 @@ export type Database = {
           id?: string
           machine_id?: string
           product_id?: string | null
+          product_version_id?: string | null
           product_project_id?: string | null
           product_project_version_id?: string | null
           drawing_number?: string
@@ -1029,6 +1032,7 @@ export type Database = {
         Row: {
           id: string
           product_id: string
+          product_version_id: string | null
           file_kind: 'drawing' | 'step' | 'pdf' | 'photo' | 'other'
           file_name: string
           file_path: string
@@ -1040,6 +1044,7 @@ export type Database = {
         Insert: {
           id?: string
           product_id: string
+          product_version_id?: string | null
           file_kind: 'drawing' | 'step' | 'pdf' | 'photo' | 'other'
           file_name: string
           file_path: string
@@ -1051,12 +1056,51 @@ export type Database = {
         Update: {
           id?: string
           product_id?: string
+          product_version_id?: string | null
           file_kind?: 'drawing' | 'step' | 'pdf' | 'photo' | 'other'
           file_name?: string
           file_path?: string
           mime_type?: string | null
           file_size?: number | null
           uploaded_by?: string | null
+          created_at?: string
+        }
+      }
+      product_versions: {
+        Row: {
+          id: string
+          product_id: string
+          version_number: number
+          status: 'current' | 'archived'
+          drawing_number: string
+          change_summary: string | null
+          fastening_types: Database['public']['Enums']['product_fastening_type'][]
+          completion_type: Database['public']['Enums']['product_completion_type'] | null
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          product_id: string
+          version_number: number
+          status?: 'current' | 'archived'
+          drawing_number: string
+          change_summary?: string | null
+          fastening_types?: Database['public']['Enums']['product_fastening_type'][]
+          completion_type?: Database['public']['Enums']['product_completion_type'] | null
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          product_id?: string
+          version_number?: number
+          status?: 'current' | 'archived'
+          drawing_number?: string
+          change_summary?: string | null
+          fastening_types?: Database['public']['Enums']['product_fastening_type'][]
+          completion_type?: Database['public']['Enums']['product_completion_type'] | null
+          created_by?: string | null
           created_at?: string
         }
       }
@@ -3186,6 +3230,7 @@ export type Database = {
           machine_id: string | null
           related_meeting_id: string | null
           product_project_id: string | null
+          product_version_id: string | null
           consumable_request_id: string | null
           supply_order_schedule_id: string | null
           assigned_to: string
@@ -3206,6 +3251,7 @@ export type Database = {
           machine_id?: string | null
           related_meeting_id?: string | null
           product_project_id?: string | null
+          product_version_id?: string | null
           consumable_request_id?: string | null
           supply_order_schedule_id?: string | null
           assigned_to: string
@@ -3226,6 +3272,7 @@ export type Database = {
           machine_id?: string | null
           related_meeting_id?: string | null
           product_project_id?: string | null
+          product_version_id?: string | null
           consumable_request_id?: string | null
           supply_order_schedule_id?: string | null
           assigned_to?: string
@@ -4064,7 +4111,9 @@ export type Database = {
       outsourcing_transport_plan_state: 'preliminary' | 'confirmed'
       outsourcing_transport_need_status: 'open' | 'linked' | 'completed' | 'cancelled'
       outsourcing_transport_order_status: 'needed' | 'found' | 'in_transit' | 'completed' | 'cancelled'
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'outsourcing_transport'
+      product_completion_type: 'mounting_set' | 'chain_set'
+      product_fastening_type: 'metal_plate' | 'wp_plate' | 'a4_plate' | 'white_sticker' | 'none_required'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'outsourcing_transport' | 'product_version_incomplete'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'

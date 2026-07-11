@@ -8,6 +8,7 @@ import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { getProductVersionNestingGuards, type ProductVersionNestingDb } from '@/lib/actions/product-version-nesting-guard'
 import type { Database } from '@/lib/types/database'
 import type { MachineLayoutRequest, TaskStatus, UserRole } from '@/lib/types'
 
@@ -236,18 +237,22 @@ async function resolveDrawingFiles(db: LooseDb, items: MachineItemRow[]) {
   const projectFileByVersionId = new Map<string, ProductFileRow>()
 
   if (productIds.length > 0) {
-    const { data, error } = await db
-      .from('product_files')
-      .select('id, product_id, file_kind, file_name')
-      .in('product_id', productIds)
+    const [filesResult, productVersionGuards] = await Promise.all([
+      db
+        .from('product_files')
+        .select('id, product_id, file_kind, file_name')
+        .in('product_id', productIds),
+      getProductVersionNestingGuards(db as ProductVersionNestingDb, productIds),
+    ])
 
-    if (error) throw new Error(error.message || 'Не удалось загрузить чертежи товаров')
+    if (filesResult.error) throw new Error(filesResult.error.message || 'Не удалось загрузить чертежи товаров')
     const grouped = new Map<string, ProductFileRow[]>()
-    for (const file of (data || []) as ProductFileRow[]) {
+    for (const file of (filesResult.data || []) as ProductFileRow[]) {
       if (!file.product_id) continue
       grouped.set(file.product_id, [...(grouped.get(file.product_id) || []), file])
     }
     for (const [productId, files] of grouped.entries()) {
+      if (productVersionGuards.get(productId)?.isBlocked) continue
       const file = chooseDrawingFile(files)
       if (file) productFileByProductId.set(productId, file)
     }

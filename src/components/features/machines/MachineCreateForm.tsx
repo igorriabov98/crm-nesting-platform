@@ -21,6 +21,8 @@ import { getFactoryWorkshopOptionsById } from '@/lib/constants/factory-workshops
 import { getProductionMonthOptions, monthStartValue } from '@/lib/utils/production-months'
 import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 import { ProductOptionCombobox } from '@/components/features/machines/ProductOptionCombobox'
+import { ProductVersionSelector } from '@/components/features/machines/ProductVersionSelector'
+import type { ProductVersionWithFiles } from '@/lib/actions/product-versions'
 
 import {
   Form,
@@ -291,6 +293,7 @@ export function MachineCreateForm({
     const currentCoating = (form.getValues(rowPath(name, index, 'coating')) || 'none') as CoatingType
     const clientPrice = name === 'items' ? getClientPrice(product.id, currentCoating) : null
     setRowValue(name, index, 'product_id', product.id)
+    setRowValue(name, index, 'product_version_id', name === 'items' ? product.current_product_version_id || null : null)
     setRowValue(name, index, 'product_project_id', null)
     setRowValue(name, index, 'product_project_version_id', null)
     setRowValue(name, index, 'drawing_number', product.drawing_number)
@@ -302,6 +305,13 @@ export function MachineCreateForm({
     setRowValue(name, index, 'product_characteristics', product.characteristics)
     setRowValue(name, index, 'weight', Number(product.unit_weight_kg))
     setRowValue(name, index, 'price', clientPrice ?? (name === 'items' ? 0 : Number(product.base_price_eur)))
+  }
+
+  function applyProductVersionToRow(index: number, versionId: string, version?: ProductVersionWithFiles) {
+    setRowValue('items', index, 'product_version_id', versionId)
+    if (!version) return
+    setRowValue('items', index, 'drawing_number', version.drawing_number)
+    setRowValue('items', index, 'product_drawing_number', version.drawing_number)
   }
 
   function applyProjectSampleToRow(index: number, projectId: string) {
@@ -558,6 +568,8 @@ export function MachineCreateForm({
               {itemFields.map((field, index) => {
                 const coatingValue = watchedItems?.[index]?.coating || 'none'
                 const productId = watchedItems?.[index]?.product_id || null
+                const selectedProduct = productId ? products.find((product) => product.id === productId) || null : null
+                const showVersionSelector = Boolean(selectedProduct && (selectedProduct.product_version_count || 0) > 1)
                 const priceLocked = hasClientPrice(productId, coatingValue)
                 const totalWeight = toFiniteNumber(watchedItems?.[index]?.weight) * toFiniteNumber(watchedItems?.[index]?.quantity)
                 
@@ -584,6 +596,24 @@ export function MachineCreateForm({
                             <FormControl>
                               <ProductOptionCombobox products={products} value={field.value} onChange={(value) => applyProductToRow('items', index, value)} />
                             </FormControl>
+                            {selectedProduct && showVersionSelector && (
+                              <FormField
+                                control={form.control}
+                                name={`items.${index}.product_version_id`}
+                                render={({ field: versionField }) => (
+                                  <div className="mt-2">
+                                    <ProductVersionSelector
+                                      product={selectedProduct}
+                                      value={versionField.value}
+                                      onChange={(versionId, version) => {
+                                        versionField.onChange(versionId)
+                                        applyProductVersionToRow(index, versionId, version)
+                                      }}
+                                    />
+                                  </div>
+                                )}
+                              />
+                            )}
                             <FormMessage className="text-[10px] text-[#DC2626]" />
                           </FormItem>
                         )}
@@ -740,7 +770,7 @@ export function MachineCreateForm({
                 variant="outline" 
                 size="sm" 
                 className="mt-2 text-[#1B3A6B]"
-                onClick={() => appendItem({ product_id: null, drawing_number: '', product_name: '', weight: 0, price: 0, quantity: 1, coating: 'none', ral_number: '' })}
+                onClick={() => appendItem({ product_id: null, product_version_id: null, drawing_number: '', product_name: '', weight: 0, price: 0, quantity: 1, coating: 'none', ral_number: '' })}
               >
                 <Plus className="w-4 h-4 mr-1" /> Добавить товар
               </Button>

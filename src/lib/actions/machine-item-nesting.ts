@@ -7,6 +7,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { fetchNestingService as fetch, getNestingServiceUrl, getResult, markProjectSuperseded, type SheetResult } from '@/lib/nesting/api'
 import { resolveSheetMetalMaterialForRequestRow } from '@/lib/actions/request-sheet-metal-materials'
+import { getProductVersionNestingGuard, getProductVersionNestingGuards, type ProductVersionNestingDb } from '@/lib/actions/product-version-nesting-guard'
 import type { Database } from '@/lib/types/database'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { MachineItemNestingRun } from '@/lib/types'
@@ -17,7 +18,7 @@ type ActionResult<T = unknown> = {
   data?: T
 }
 
-type MachineItemRow = Pick<Database['public']['Tables']['machine_items']['Row'], 'id' | 'machine_id' | 'product_id' | 'drawing_number' | 'product_name' | 'quantity'>
+type MachineItemRow = Pick<Database['public']['Tables']['machine_items']['Row'], 'id' | 'machine_id' | 'product_id' | 'drawing_number' | 'product_name' | 'quantity' | 'is_sample'>
 type ProductRow = Pick<Database['public']['Tables']['products']['Row'], 'id' | 'name_uk' | 'drawing_number' | 'status'>
 type ProductFileRow = Pick<Database['public']['Tables']['product_files']['Row'], 'id' | 'product_id' | 'file_kind' | 'file_name' | 'file_path' | 'mime_type'>
 type MachineRow = Pick<Database['public']['Tables']['machines']['Row'], 'id' | 'name' | 'is_archived'>
@@ -144,7 +145,7 @@ async function loadStartContext(machineId: string, machineItemId: string) {
     existingRunResult,
   ] = await Promise.all([
     supabase.from('machines').select('id, name, is_archived').eq('id', machineId).single(),
-    supabase.from('machine_items').select('id, machine_id, product_id, drawing_number, product_name, quantity').eq('id', machineItemId).eq('machine_id', machineId).single(),
+    supabase.from('machine_items').select('id, machine_id, product_id, drawing_number, product_name, quantity, is_sample').eq('id', machineItemId).eq('machine_id', machineId).single(),
     supabase.from('machine_item_nesting_runs').select('*').eq('machine_item_id', machineItemId).maybeSingle(),
   ]) as [
     DbSingleResult<MachineRow>,
@@ -161,14 +162,16 @@ async function loadStartContext(machineId: string, machineItemId: string) {
   const existingRun = existingRunResult.data
 
   if (machine.is_archived) throw new Error('Машина архивирована. Запуск раскладки остановлен.')
+  if (item.is_sample) throw new Error(`Образец ${item.product_name || item.id} нельзя отправить в раскладку товара`)
   if (!item.product_id) throw new Error('Строка машины не привязана к товару из базы')
 
   await requireEngineerConfirmation(supabase, machineId)
 
-  const [productResult, filesResult] = await Promise.all([
+  const [productResult, filesResult, productVersionGuard] = await Promise.all([
     supabase.from('products').select('id, name_uk, drawing_number, status').eq('id', item.product_id).single(),
     supabase.from('product_files').select('id, product_id, file_kind, file_name, file_path, mime_type').eq('product_id', item.product_id),
-  ]) as [DbSingleResult<ProductRow>, DbListResult<ProductFileRow>]
+    getProductVersionNestingGuard(supabase as unknown as ProductVersionNestingDb, item.product_id),
+  ]) as [DbSingleResult<ProductRow>, DbListResult<ProductFileRow>, Awaited<ReturnType<typeof getProductVersionNestingGuard>>]
 
   if (productResult.error || !productResult.data) throw new Error('Товар не найден в базе продукции')
   if (filesResult.error) throw new Error(filesResult.error.message || 'Не удалось загрузить файлы товара')
@@ -176,6 +179,7 @@ async function loadStartContext(machineId: string, machineItemId: string) {
   const product = productResult.data
   const files = filesResult.data || []
   if (product.status !== 'active') throw new Error('Товар не активен и не может быть отправлен в раскладку')
+  if (productVersionGuard.isBlocked && productVersionGuard.message) throw new Error(productVersionGuard.message)
 
   const stepFiles = files.filter(isStepFile)
   const drawingFiles = files.filter(isPdfDrawing)
@@ -283,10 +287,10 @@ export async function getMachineItemNestingStates(machineId: string): Promise<Ac
     const { supabase } = await requireNestingPermission('view')
 
     const [itemsResult, runsResult] = await Promise.all([
-      supabase.from('machine_items').select('id, product_id').eq('machine_id', machineId),
+      supabase.from('machine_items').select('id, product_id, is_sample').eq('machine_id', machineId),
       supabase.from('machine_item_nesting_runs').select('*').eq('machine_id', machineId),
     ]) as [
-      DbListResult<Pick<MachineItemRow, 'id' | 'product_id'>>,
+      DbListResult<Pick<MachineItemRow, 'id' | 'product_id' | 'is_sample'>>,
       DbListResult<MachineItemNestingRun>,
     ]
 
@@ -295,22 +299,29 @@ export async function getMachineItemNestingStates(machineId: string): Promise<Ac
 
     const items = itemsResult.data || []
     const productIds = Array.from(new Set(items.map((item) => item.product_id).filter(Boolean))) as string[]
+    const regularProductIds = Array.from(new Set(items.filter((item) => !item.is_sample).map((item) => item.product_id).filter(Boolean))) as string[]
     let productRows: Pick<ProductRow, 'id' | 'status'>[] = []
     let fileRows: ProductFileRow[] = []
+    let productVersionGuards = new Map<string, Awaited<ReturnType<typeof getProductVersionNestingGuard>>>()
 
     if (productIds.length > 0) {
-      const [productsResult, filesResult] = await Promise.all([
+      const [productsResult, filesResult, versionGuardsResult] = await Promise.all([
         supabase.from('products').select('id, status').in('id', productIds),
         supabase.from('product_files').select('id, product_id, file_kind, file_name, file_path, mime_type').in('product_id', productIds),
+        regularProductIds.length
+          ? getProductVersionNestingGuards(supabase as unknown as ProductVersionNestingDb, regularProductIds)
+          : Promise.resolve(new Map()),
       ]) as [
         DbListResult<Pick<ProductRow, 'id' | 'status'>>,
         DbListResult<ProductFileRow>,
+        Awaited<ReturnType<typeof getProductVersionNestingGuards>>,
       ]
 
       if (productsResult.error) throw new Error(productsResult.error.message || 'Не удалось загрузить товары')
       if (filesResult.error) throw new Error(filesResult.error.message || 'Не удалось загрузить файлы товаров')
       productRows = productsResult.data || []
       fileRows = filesResult.data || []
+      productVersionGuards = versionGuardsResult
     }
 
     const products = new Map(productRows.map((product) => [product.id, product.status]))
@@ -326,13 +337,14 @@ export async function getMachineItemNestingStates(machineId: string): Promise<Ac
         const files = item.product_id ? filesByProduct.get(item.product_id) || [] : []
         const stepFileCount = files.filter(isStepFile).length
         const drawingPdfFileCount = files.filter(isPdfDrawing).length
+        const versionGuard = !item.is_sample && item.product_id ? productVersionGuards.get(item.product_id) || null : null
         return {
           machineItemId: item.id,
           productId: item.product_id,
           productStatus: item.product_id ? products.get(item.product_id) || null : null,
           stepFileCount,
           drawingPdfFileCount,
-          fileIssue: item.product_id ? fileIssue(stepFileCount, drawingPdfFileCount) : 'Строка не привязана к товару из базы',
+          fileIssue: item.product_id ? versionGuard?.message || fileIssue(stepFileCount, drawingPdfFileCount) : 'Строка не привязана к товару из базы',
           run: runs.get(item.id) || null,
         }
       }),

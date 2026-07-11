@@ -11,6 +11,7 @@ import { createMachineSchema, machineExpenseSchema, machineItemSchema, machinePa
 import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
 import { syncMaterialTypeTask } from '@/lib/actions/material-type-tasks'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
+import { ensureProductVersionCompletionTask, type ProductVersionCompletionSnapshot } from '@/lib/actions/product-version-completion-tasks'
 import { isMachineInConfirmedProductionPlan, notifyMachineEnteredReadyProductionPlan } from '@/lib/actions/production-plan'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
 import { loadMachineProgressContexts, resolveMachineProgressWithContext } from '@/lib/actions/machine-progress'
@@ -40,8 +41,13 @@ type MachineExpenseInsert = Database['public']['Tables']['machine_expenses']['In
 type MachineExpenseUpdate = Database['public']['Tables']['machine_expenses']['Update']
 type MachinePackingGroupInsert = Database['public']['Tables']['machine_packing_groups']['Insert']
 type InventoryReservation = Database['public']['Tables']['inventory_reservations']['Row']
+type ProductVersionRow = Database['public']['Tables']['product_versions']['Row']
 export type MachineDocumentFieldsInput = z.input<typeof machineDocumentFieldsSchema>
 type ProductSnapshot = Pick<Product, 'id' | 'name_uk' | 'name_en' | 'uktzed' | 'drawing_number' | 'characteristics' | 'unit_weight_kg' | 'base_price_eur' | 'status'>
+type ProductVersionSnapshot = Pick<ProductVersionRow, 'id' | 'product_id' | 'version_number' | 'status' | 'drawing_number' | 'fastening_types' | 'completion_type'>
+type MachineItemVersionStatus = MachineItem & {
+  is_product_version_outdated?: boolean
+}
 type ProjectSampleSnapshot = {
   project_id: string
   version_id: string
@@ -64,6 +70,7 @@ type LooseQuery = PromiseLike<DbResult> & {
   is: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
+  limit: (count: number) => LooseQuery
   single: () => Promise<DbResult>
 }
 type LooseDb = {
@@ -189,6 +196,14 @@ function requireItemProductId(item: { product_id?: string | null }, context: str
   return item.product_id
 }
 
+function itemProductVersionId(item: { product_version_id?: string | null; productVersionId?: string | null }) {
+  return item.product_version_id || item.productVersionId || null
+}
+
+function productVersionSelectionKey(productId: string, productVersionId: string | null) {
+  return `${productId}:${productVersionId || 'current'}`
+}
+
 function sampleKey(projectId: string, versionId: string) {
   return `${projectId}:${versionId}`
 }
@@ -248,6 +263,103 @@ async function loadActiveProductSnapshots(db: LooseDb, productIds: string[]) {
     if (product.status !== 'active') throw new Error(`Товар "${product.name_uk}" не активен и не может быть добавлен в машину`)
   }
   return map
+}
+
+async function loadProductVersionSnapshots(
+  db: LooseDb,
+  refs: Array<{ productId: string; productVersionId?: string | null; context: string }>,
+) {
+  const uniqueRefs = Array.from(new Map(
+    refs.map((ref) => [productVersionSelectionKey(ref.productId, ref.productVersionId || null), ref])
+  ).values())
+  if (uniqueRefs.length === 0) return new Map<string, ProductVersionSnapshot>()
+
+  const explicitVersionIds = Array.from(new Set(
+    uniqueRefs.map((ref) => ref.productVersionId).filter((id): id is string => Boolean(id))
+  ))
+  const currentProductIds = Array.from(new Set(
+    uniqueRefs.filter((ref) => !ref.productVersionId).map((ref) => ref.productId)
+  ))
+
+  const [explicitResult, currentResult] = await Promise.all([
+    explicitVersionIds.length > 0
+      ? db
+          .from('product_versions')
+          .select('id, product_id, version_number, status, drawing_number, fastening_types, completion_type')
+          .in('id', explicitVersionIds)
+      : Promise.resolve({ data: [], error: null } as DbResult),
+    currentProductIds.length > 0
+      ? db
+          .from('product_versions')
+          .select('id, product_id, version_number, status, drawing_number, fastening_types, completion_type')
+          .in('product_id', currentProductIds)
+          .eq('status', 'current')
+      : Promise.resolve({ data: [], error: null } as DbResult),
+  ])
+
+  if (explicitResult.error) throw new Error(explicitResult.error.message || 'Не удалось загрузить версии товаров')
+  if (currentResult.error) throw new Error(currentResult.error.message || 'Не удалось загрузить текущие версии товаров')
+
+  const explicitById = new Map(((explicitResult.data || []) as ProductVersionSnapshot[]).map((version) => [version.id, version]))
+  const currentByProductId = new Map(((currentResult.data || []) as ProductVersionSnapshot[]).map((version) => [version.product_id, version]))
+  const resolved = new Map<string, ProductVersionSnapshot>()
+
+  for (const ref of uniqueRefs) {
+    if (ref.productVersionId) {
+      const version = explicitById.get(ref.productVersionId)
+      if (!version) throw new Error(`${ref.context}: выбранная версия товара не найдена`)
+      if (version.product_id !== ref.productId) {
+        throw new Error(`${ref.context}: выбранная версия не относится к выбранному товару`)
+      }
+      resolved.set(productVersionSelectionKey(ref.productId, ref.productVersionId), version)
+      continue
+    }
+
+    const version = currentByProductId.get(ref.productId)
+    if (!version) throw new Error(`${ref.context}: у выбранного товара нет текущей версии`)
+    resolved.set(productVersionSelectionKey(ref.productId, null), version)
+  }
+
+  return resolved
+}
+
+async function markOutdatedProductVersions(db: LooseDb, items: MachineItem[]) {
+  const productIds = Array.from(new Set(
+    items
+      .filter((item) => !item.is_sample && item.product_id && item.product_version_id)
+      .map((item) => item.product_id as string)
+  ))
+  if (productIds.length === 0) return items
+
+  const { data, error } = await db
+    .from('product_versions')
+    .select('id, product_id')
+    .in('product_id', productIds)
+    .eq('status', 'current')
+
+  if (error) throw new Error(error.message || 'Не удалось загрузить текущие версии товаров')
+
+  const currentVersionByProductId = new Map(
+    ((data || []) as Pick<ProductVersionRow, 'id' | 'product_id'>[]).map((version) => [version.product_id, version.id])
+  )
+
+  return items.map((item): MachineItemVersionStatus => {
+    if (item.is_sample || !item.product_id || !item.product_version_id) return item
+    return {
+      ...item,
+      is_product_version_outdated: currentVersionByProductId.get(item.product_id) !== item.product_version_id,
+    }
+  })
+}
+
+function resolvedProductVersion(
+  versions: Map<string, ProductVersionSnapshot>,
+  productId: string,
+  productVersionId: string | null,
+) {
+  const version = versions.get(productVersionSelectionKey(productId, productVersionId))
+  if (!version) throw new Error('Версия выбранного товара не найдена')
+  return version
 }
 
 async function loadApprovedProjectSampleSnapshots(
@@ -343,18 +455,20 @@ function productBackedItemPayload(
   machineId: string,
   item: NonNullable<CreateMachineInput['items']>[number],
   product: ProductSnapshot,
+  productVersion: ProductVersionSnapshot,
   priceEur: number,
   index: number
 ): MachineItemInsert {
   return {
     machine_id: machineId,
     product_id: product.id,
-    drawing_number: product.drawing_number,
+    product_version_id: productVersion.id,
+    drawing_number: productVersion.drawing_number,
     product_name: product.name_uk,
     product_name_uk: product.name_uk,
     product_name_en: product.name_en,
     product_uktzed: product.uktzed,
-    product_drawing_number: product.drawing_number,
+    product_drawing_number: productVersion.drawing_number,
     product_characteristics: product.characteristics,
     weight: Number(product.unit_weight_kg),
     price: priceEur,
@@ -852,7 +966,7 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
         factory:factories(name),
         client:clients(id, name, primary_contact_name),
         created_by_user:users!machines_created_by_fkey(full_name),
-        machine_items(id, product_id, product_project_id, product_project_version_id, drawing_number, product_name, product_name_uk, product_name_en, product_uktzed, product_drawing_number, weight, price, quantity, coating, ral_number, is_sample),
+        machine_items(id, product_id, product_version_id, product_project_id, product_project_version_id, drawing_number, product_name, product_name_uk, product_name_en, product_uktzed, product_drawing_number, weight, price, quantity, coating, ral_number, is_sample),
         production_stages(stage_type, date_start, date_end, is_skipped),
         supply_items(id, status),
         invoice:invoices(status, payment_date, due_date, amount, paid_amount)
@@ -926,7 +1040,7 @@ export async function getMachine(id: string) {
       .from('machines')
       .select(`
         *,
-        machine_items(id, machine_id, product_id, product_project_id, product_project_version_id, drawing_number, product_name, product_name_uk, product_name_en, product_uktzed, product_drawing_number, product_characteristics, weight, price, quantity, coating, ral_number, is_sample, sort_order, created_at),
+        machine_items(id, machine_id, product_id, product_version_id, product_project_id, product_project_version_id, drawing_number, product_name, product_name_uk, product_name_en, product_uktzed, product_drawing_number, product_characteristics, weight, price, quantity, coating, ral_number, is_sample, sort_order, created_at),
         machine_expenses(*),
         machine_packing_groups(*),
         production_stages(*),
@@ -950,6 +1064,7 @@ export async function getMachine(id: string) {
     const machineData = data as unknown as MachineDetails
     if (machineData.machine_items) {
       machineData.machine_items.sort((a, b) => a.sort_order - b.sort_order)
+      machineData.machine_items = await markOutdatedProductVersions(db, machineData.machine_items)
     }
     if (machineData.machine_packing_groups) {
       machineData.machine_packing_groups.sort((a, b) => {
@@ -1013,6 +1128,14 @@ export async function createMachine(data: CreateMachineInput) {
     const productIds = goods.map((item, index) => requireItemProductId(item, `Позиция ${index + 1}`))
     const sampleRefs = samples.map((item, index) => requireSampleProjectRef(item, `Образец ${index + 1}`))
     const productMap = await loadActiveProductSnapshots(db, productIds)
+    const productVersionMap = await loadProductVersionSnapshots(
+      db,
+      goods.map((item, index) => ({
+        productId: requireItemProductId(item, `Позиция ${index + 1}`),
+        productVersionId: itemProductVersionId(item),
+        context: `Позиция ${index + 1}`,
+      })),
+    )
     const sampleMap = await loadApprovedProjectSampleSnapshots(db, sampleRefs, parsed.client_id)
     const priceDb = clientPriceDb()
     const clientPriceLookup = await loadClientProductPriceLookup(priceDb, parsed.client_id, productIds)
@@ -1085,6 +1208,7 @@ export async function createMachine(data: CreateMachineInput) {
       // 2. Создать machine_items
       if (allItems.length > 0) {
         const itemsToInsert: MachineItemInsert[] = []
+        const productVersionTasksToEnsure: Array<{ productVersion: ProductVersionCompletionSnapshot; productName: string }> = []
         for (const [index, item] of allItems.entries()) {
           if (item.is_sample) {
             const ref = requireSampleProjectRef(item, `Образец ${index + 1}`)
@@ -1095,6 +1219,7 @@ export async function createMachine(data: CreateMachineInput) {
           }
           const product = productMap.get(item.product_id || '')
           if (!product) throw new Error('Выбранный товар не найден в базе продукции')
+          const productVersion = resolvedProductVersion(productVersionMap, product.id, itemProductVersionId(item))
           const priceEur = await resolveProductBackedPrice(
             priceDb,
             clientPriceLookup,
@@ -1104,11 +1229,19 @@ export async function createMachine(data: CreateMachineInput) {
             item.price,
             user.id,
           )
-          itemsToInsert.push(productBackedItemPayload(machineId, item, product, priceEur, index))
+          itemsToInsert.push(productBackedItemPayload(machineId, item, product, productVersion, priceEur, index))
+          productVersionTasksToEnsure.push({ productVersion, productName: product.name_uk })
         }
         
         const { error: itemsError } = await db.from('machine_items').insert(itemsToInsert satisfies MachineItemInsert[])
         if (itemsError) throw itemsError
+        for (const taskInput of productVersionTasksToEnsure) {
+          await ensureProductVersionCompletionTask(db, {
+            ...taskInput,
+            machineId,
+            assignedTo: user.id,
+          })
+        }
       }
 
       // 3. Создать machine_expenses
@@ -1469,16 +1602,31 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
         .map((item) => (item as MachineItem & { id?: string }).id)
         .filter((id): id is string => Boolean(id))
       const { data: existingItemsData, error: existingItemsError } = existingIds.length > 0
-        ? await db.from('machine_items').select('id, product_id, product_project_id, product_project_version_id, coating, price').in('id', existingIds)
+        ? await db.from('machine_items').select('id, product_id, product_version_id, product_project_id, product_project_version_id, coating, price').in('id', existingIds)
         : { data: [], error: null }
       if (existingItemsError) throw existingItemsError
-      const existingItems = new Map(((existingItemsData || []) as Pick<MachineItem, 'id' | 'product_id' | 'product_project_id' | 'product_project_version_id' | 'coating' | 'price'>[]).map((item) => [item.id, item]))
+      const existingItems = new Map(((existingItemsData || []) as Pick<MachineItem, 'id' | 'product_id' | 'product_version_id' | 'product_project_id' | 'product_project_version_id' | 'coating' | 'price'>[]).map((item) => [item.id, item]))
       const productIdsForInsert = data.items.flatMap((item) => {
         const itemObj = item as MachineItem & { id?: string }
         const existing = itemObj.id ? existingItems.get(itemObj.id) : null
         if (existing?.product_id || existing?.product_project_id) return []
         if (item.product_project_id) return []
         if (!itemObj.id || item.product_id) return [requireItemProductId(item, `Позиция ${data.items!.indexOf(item) + 1}`)]
+        return []
+      })
+      const productVersionRefsForInsert = data.items.flatMap((item) => {
+        const itemObj = item as MachineItem & { id?: string }
+        const existing = itemObj.id ? existingItems.get(itemObj.id) : null
+        if (existing?.product_id || existing?.product_project_id) return []
+        if (item.product_project_id) return []
+        if (!itemObj.id || item.product_id) {
+          const index = data.items!.indexOf(item)
+          return [{
+            productId: requireItemProductId(item, `Позиция ${index + 1}`),
+            productVersionId: itemProductVersionId(item),
+            context: `Позиция ${index + 1}`,
+          }]
+        }
         return []
       })
       const sampleRefsForInsert = data.items.flatMap((item) => {
@@ -1496,6 +1644,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
         return [productId]
       })
       const productMap = await loadActiveProductSnapshots(db, productIdsForInsert)
+      const productVersionMap = await loadProductVersionSnapshots(db, productVersionRefsForInsert)
       const sampleMap = await loadApprovedProjectSampleSnapshots(db, sampleRefsForInsert, nextClientId)
       const priceDb = clientPriceDb()
       const clientPriceLookup = await loadClientProductPriceLookup(priceDb, nextClientId, productIdsForPriceLookup)
@@ -1508,6 +1657,10 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
           if (existing.product_id || existing.product_project_id) {
             if (item.product_id && item.product_id !== existing.product_id) {
               throw new Error('Нельзя менять продукт в существующей строке машины. Удалите строку и добавьте новый товар из базы.')
+            }
+            const requestedProductVersionId = itemProductVersionId(item)
+            if (existing.product_id && existing.product_version_id && requestedProductVersionId && requestedProductVersionId !== existing.product_version_id) {
+              throw new Error('Нельзя менять версию продукта в существующей строке машины. Удалите строку и добавьте новый товар из базы.')
             }
             if (item.product_project_id && item.product_project_id !== existing.product_project_id) {
               throw new Error('Нельзя менять проект образца в существующей строке машины. Удалите строку и добавьте новый образец.')
@@ -1548,10 +1701,21 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
               item.price,
               user.id,
             )
-            const payload = productBackedItemPayload(id, item, product, priceEur, index)
+            const productVersion = resolvedProductVersion(productVersionMap, product.id, itemProductVersionId(item))
+            const payload = productBackedItemPayload(id, item, product, productVersion, priceEur, index)
             const { machine_id, ...updatePayload } = payload
             void machine_id
-            await db.from('machine_items').update(updatePayload satisfies MachineItemUpdate).eq('id', itemObj.id)
+            const { error: updateError } = await db
+              .from('machine_items')
+              .update(updatePayload satisfies MachineItemUpdate)
+              .eq('id', itemObj.id)
+            if (updateError) throw updateError
+            await ensureProductVersionCompletionTask(db, {
+              productVersion,
+              productName: product.name_uk,
+              machineId: id,
+              assignedTo: user.id,
+            })
           } else {
             await db.from('machine_items').update({
               drawing_number: item.drawing_number,
@@ -1575,6 +1739,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
           const productId = requireItemProductId(item, `Позиция ${index + 1}`)
           const product = productMap.get(productId)
           if (!product) throw new Error('Выбранный товар не найден в базе продукции')
+          const productVersion = resolvedProductVersion(productVersionMap, product.id, itemProductVersionId(item))
           const priceEur = await resolveProductBackedPrice(
             priceDb,
             clientPriceLookup,
@@ -1584,7 +1749,16 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
             item.price,
             user.id,
           )
-          await db.from('machine_items').insert(productBackedItemPayload(id, item, product, priceEur, index) satisfies MachineItemInsert)
+          const { error: insertError } = await db
+            .from('machine_items')
+            .insert(productBackedItemPayload(id, item, product, productVersion, priceEur, index) satisfies MachineItemInsert)
+          if (insertError) throw insertError
+          await ensureProductVersionCompletionTask(db, {
+            productVersion,
+            productName: product.name_uk,
+            machineId: id,
+            assignedTo: user.id,
+          })
         }
       }
     }
@@ -1745,6 +1919,12 @@ export async function addMachineItem(machineId: string, data: unknown) {
     const productMap = await loadActiveProductSnapshots(db, [productId])
     const product = productMap.get(productId)
     if (!product) throw new Error('Выбранный товар не найден в базе продукции')
+    const productVersionMap = await loadProductVersionSnapshots(db, [{
+      productId,
+      productVersionId: itemProductVersionId(parsed),
+      context: 'Новая позиция',
+    }])
+    const productVersion = resolvedProductVersion(productVersionMap, product.id, itemProductVersionId(parsed))
     const priceDb = clientPriceDb()
     const clientPriceLookup = await loadClientProductPriceLookup(priceDb, clientId, [productId])
     const priceEur = await resolveProductBackedPrice(
@@ -1756,8 +1936,14 @@ export async function addMachineItem(machineId: string, data: unknown) {
       parsed.price,
       user.id,
     )
-    const { error } = await db.from('machine_items').insert(productBackedItemPayload(machineId, parsed, product, priceEur, 0))
+    const { error } = await db.from('machine_items').insert(productBackedItemPayload(machineId, parsed, product, productVersion, priceEur, 0))
     if (error) throw error
+    await ensureProductVersionCompletionTask(db, {
+      productVersion,
+      productName: product.name_uk,
+      machineId,
+      assignedTo: user.id,
+    })
     await syncCoatingDependentProductionStages(db, machineId)
     await syncMaterialTypeTask(db, machineId)
     await notifyNewTasks(machineId)
@@ -1825,15 +2011,20 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
     const parsed = machineItemUpdateSchema.parse(data)
     const { data: existingData, error: existingError } = await db
       .from('machine_items')
-      .select('id, product_id, product_project_id, product_project_version_id, quantity, coating, price, is_sample, sort_order')
+      .select('id, product_id, product_version_id, product_project_id, product_project_version_id, quantity, coating, price, is_sample, sort_order')
       .eq('id', itemId)
       .eq('machine_id', machineId)
       .single()
     if (existingError || !existingData) throw existingError || new Error('Позиция не найдена')
-    const existing = existingData as Pick<MachineItem, 'id' | 'product_id' | 'product_project_id' | 'product_project_version_id' | 'quantity' | 'coating' | 'price' | 'is_sample' | 'sort_order'>
+    const existing = existingData as Pick<MachineItem, 'id' | 'product_id' | 'product_version_id' | 'product_project_id' | 'product_project_version_id' | 'quantity' | 'coating' | 'price' | 'is_sample' | 'sort_order'>
     const clientId = await getMachineClientId(db, machineId)
     let updatePayload: MachineItemUpdate
+    let productVersionTaskToEnsure: { productVersion: ProductVersionCompletionSnapshot; productName: string } | null = null
     if (existing.product_id || existing.product_project_id) {
+      const requestedProductVersionId = itemProductVersionId(parsed)
+      if (existing.product_id && existing.product_version_id && requestedProductVersionId && requestedProductVersionId !== existing.product_version_id) {
+        throw new Error('Нельзя менять версию продукта в существующей строке машины. Удалите строку и добавьте новый товар из базы.')
+      }
       updatePayload = {
         quantity: parsed.quantity,
         coating: parsed.coating,
@@ -1869,6 +2060,12 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
       const productMap = await loadActiveProductSnapshots(db, [parsed.product_id])
       const product = productMap.get(parsed.product_id)
       if (!product) throw new Error('Выбранный товар не найден в базе продукции')
+      const productVersionMap = await loadProductVersionSnapshots(db, [{
+        productId: parsed.product_id,
+        productVersionId: itemProductVersionId(parsed),
+        context: 'Позиция',
+      }])
+      const productVersion = resolvedProductVersion(productVersionMap, product.id, itemProductVersionId(parsed))
       const priceDb = clientPriceDb()
       const clientPriceLookup = await loadClientProductPriceLookup(priceDb, clientId, [parsed.product_id])
       const priceEur = await resolveProductBackedPrice(
@@ -1885,19 +2082,37 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
         quantity: parsed.quantity || existing.quantity,
         coating: parsed.coating || existing.coating,
         is_sample: parsed.is_sample ?? existing.is_sample,
-      } as NonNullable<CreateMachineInput['items']>[number], product, priceEur, existing.sort_order)
+      } as NonNullable<CreateMachineInput['items']>[number], product, productVersion, priceEur, existing.sort_order)
       void machine_id
       updatePayload = payload
+      productVersionTaskToEnsure = { productVersion, productName: product.name_uk }
     } else {
-      const { weight: _ignoredWeight, product_id: _ignoredProductId, product_project_id: _ignoredProjectId, product_project_version_id: _ignoredVersionId, ...legacyPayload } = parsed
+      const {
+        weight: _ignoredWeight,
+        product_id: _ignoredProductId,
+        product_version_id: _ignoredProductVersionId,
+        productVersionId: _ignoredProductVersionIdCamel,
+        product_project_id: _ignoredProjectId,
+        product_project_version_id: _ignoredVersionId,
+        ...legacyPayload
+      } = parsed
       void _ignoredWeight
       void _ignoredProductId
+      void _ignoredProductVersionId
+      void _ignoredProductVersionIdCamel
       void _ignoredProjectId
       void _ignoredVersionId
       updatePayload = legacyPayload
     }
     const { error } = await db.from('machine_items').update(updatePayload).eq('id', itemId).eq('machine_id', machineId)
     if (error) throw error
+    if (productVersionTaskToEnsure) {
+      await ensureProductVersionCompletionTask(db, {
+        ...productVersionTaskToEnsure,
+        machineId,
+        assignedTo: user.id,
+      })
+    }
     await syncCoatingDependentProductionStages(db, machineId)
     await syncMaterialTypeTask(db, machineId)
     await notifyNewTasks(machineId)
