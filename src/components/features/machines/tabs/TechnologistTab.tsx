@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useRef, useState, type ChangeEvent } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
@@ -22,6 +23,7 @@ import {
   type MachineLayoutVersion,
 } from '@/lib/actions/machine-layout'
 import { cn } from '@/lib/utils'
+import { ROUTES } from '@/lib/constants/routes'
 import type { MachineDetails, MaterialType } from '@/lib/types'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 
@@ -71,13 +73,32 @@ function DrawingLink({ item }: { item: MachineLayoutSnapshotItem }) {
   return (
     <a
       href={item.drawingUrl}
-      target="_blank"
-      rel="noreferrer"
-      className="font-medium text-blue-800 underline-offset-4 hover:underline"
+      download={item.drawingFileName || item.drawingNumber}
+      className="rounded-sm font-medium text-blue-800 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
       title={item.drawingFileName || item.drawingNumber}
     >
       {item.drawingNumber}
     </a>
+  )
+}
+
+function ProductLink({ item }: { item: MachineLayoutSnapshotItem }) {
+  const href = item.productId
+    ? `${ROUTES.PRODUCTS}/${item.productId}`
+    : item.productProjectId
+      ? `${ROUTES.PRODUCT_PROJECTS}/${item.productProjectId}`
+      : null
+
+  if (!href) return <span>{item.productName || '—'}</span>
+
+  return (
+    <Link
+      href={href}
+      prefetch={false}
+      className="rounded-sm text-blue-950 underline-offset-4 hover:text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+    >
+      {item.productName || '—'}
+    </Link>
   )
 }
 
@@ -105,7 +126,7 @@ function ItemsTable({ items }: { items: MachineLayoutSnapshotItem[] }) {
               items.map((item, index) => (
                 <tr key={item.machineItemId} className="bg-white hover:bg-slate-50">
                   <td className="px-3 py-3 text-center text-slate-400">{index + 1}</td>
-                  <td className="px-3 py-3 font-medium text-slate-900">{item.productName || '—'}</td>
+                  <td className="px-3 py-3 font-medium text-slate-900"><ProductLink item={item} /></td>
                   <td className="px-3 py-3 text-slate-700"><DrawingLink item={item} /></td>
                   <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-900">{formatQuantity(item.quantity)} шт</td>
                 </tr>
@@ -229,7 +250,6 @@ export function TechnologistTab({
       return
     }
     toast.success('Тип материала обновлён')
-    router.refresh()
   }
 
   const handleLayoutRequest = async () => {

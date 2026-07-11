@@ -175,7 +175,6 @@ export function MachineDetail({
       const res = await updateMachineConfirmation(machine.id, !machine.is_confirmed)
       if (!res.success) throw new Error(res.error || 'Не удалось изменить подтверждение')
       toast.success(!machine.is_confirmed ? 'Машина подтверждена' : 'Подтверждение снято')
-      router.refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Неизвестная ошибка')
     } finally {
