@@ -120,6 +120,13 @@ type TaskRow = {
   assigned_to: string
 }
 type LayoutUploadMachineRow = Pick<MachineRow, 'id' | 'name' | 'created_by'>
+type Relation<T> = T | T[] | null
+type StructuralTechnologistRow = {
+  user_id: string
+  user: Relation<{ id: string; full_name: string | null; email: string | null; is_active: boolean | null }>
+  department: Relation<{ name: string | null; is_active: boolean | null }>
+  position: Relation<{ name: string | null }>
+}
 
 const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
 const SETTINGS_ID = '00000000-0000-0000-0000-000000000001'
@@ -127,10 +134,47 @@ const MAX_PDF_SIZE = 50 * 1024 * 1024
 
 const REQUEST_ROLES: UserRole[] = ['sales_manager', ...DIRECTOR_ROLES]
 const UPLOAD_ROLES: UserRole[] = ['technologist', ...DIRECTOR_ROLES]
-const LAYOUT_ASSIGNEE_ROLES: UserRole[] = ['technologist']
 
 function dbFrom(client: unknown): LooseDb {
   return client as LooseDb
+}
+
+function relationOne<T>(value: Relation<T> | undefined) {
+  if (Array.isArray(value)) return value[0] || null
+  return value || null
+}
+
+function isServiceAccount(user: { full_name?: string | null; email?: string | null } | null | undefined) {
+  return /(^|\s)(ci\s+)?smoke(\s|$)|smoke[-_.+@]/i.test(`${user?.full_name || ''} ${user?.email || ''}`)
+}
+
+async function loadStructuralTechnologists(db: LooseDb) {
+  const { data, error } = await db
+    .from('department_members')
+    .select(`
+      user_id,
+      user:users!department_members_user_id_fkey!inner(id, full_name, email, is_active),
+      department:departments!inner(name, is_active),
+      position:positions(name)
+    `)
+    .eq('user.is_active', true)
+    .eq('department.is_active', true)
+
+  if (error) throw new Error(error.message || 'Не удалось проверить технологов в структуре компании')
+
+  return ((data || []) as StructuralTechnologistRow[])
+    .filter((row) => {
+      const user = relationOne(row.user)
+      const department = relationOne(row.department)
+      const position = relationOne(row.position)
+      const structure = `${department?.name || ''} ${position?.name || ''}`.toLowerCase()
+      return Boolean(user && !isServiceAccount(user) && (structure.includes('технолог') || structure.includes('technolog')))
+    })
+    .sort((left, right) => {
+      const leftName = relationOne(left.user)?.full_name || ''
+      const rightName = relationOne(right.user)?.full_name || ''
+      return leftName.localeCompare(rightName, 'ru')
+    })
 }
 
 function assertRole(role: UserRole, allowed: UserRole[], message = 'Недостаточно прав') {
@@ -484,9 +528,10 @@ async function resolveConfiguredTechnologist(db: LooseDb) {
 
     if (userError) throw new Error(userError.message || 'Не удалось проверить ответственного технолога')
     const user = userData as { id: string; is_active: boolean | null; role: UserRole | null; full_name: string | null; email: string | null } | null
-    const isServiceAccount = /(^|\s)(ci\s+)?smoke(\s|$)|smoke[-_.+@]/i.test(`${user?.full_name || ''} ${user?.email || ''}`)
-    if (user && !isServiceAccount && user.is_active !== false && user.role && LAYOUT_ASSIGNEE_ROLES.includes(user.role)) {
-      return user.id
+    if (user && !isServiceAccount(user) && user.is_active !== false) {
+      if (user.role === 'technologist') return user.id
+      const structuralIds = new Set((await loadStructuralTechnologists(db)).map((row) => row.user_id))
+      if (structuralIds.has(user.id)) return user.id
     }
   }
 
@@ -499,11 +544,15 @@ async function resolveConfiguredTechnologist(db: LooseDb) {
 
   if (fallbackError) throw new Error(fallbackError.message || 'Не удалось найти активного технолога')
   const fallbackId = ((fallbackData || []) as Array<{ id: string; full_name: string | null; email: string | null }>)
-    .find((user) => !/(^|\s)(ci\s+)?smoke(\s|$)|smoke[-_.+@]/i.test(`${user.full_name || ''} ${user.email || ''}`))
+    .find((user) => !isServiceAccount(user))
     ?.id || null
-  if (!fallbackId) throw new Error('В настройках компании выберите ответственного технолога или добавьте активного пользователя с ролью технолога')
+  if (fallbackId) return fallbackId
 
-  return fallbackId
+  const structuralTechnologist = (await loadStructuralTechnologists(db))[0] || null
+  if (!structuralTechnologist) {
+    throw new Error('В настройках компании выберите ответственного технолога или добавьте технолога в структуру компании')
+  }
+  return structuralTechnologist.user_id
 }
 
 async function upsertLayoutTask(db: LooseDb, input: {
