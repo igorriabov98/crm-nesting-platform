@@ -53,12 +53,15 @@ type EditableMachine = (MachineDetails | MachineListItem) & {
   machine_expenses?: MachineExpense[]
 }
 
-interface MachineEditDialogProps {
+export type MachineEditDialogMode = 'full' | 'items' | 'expenses'
+
+export interface MachineEditDialogProps {
   machine: EditableMachine
   isOpen: boolean
   onClose: () => void
   isDirector?: boolean
   factories?: FactorySummary[]
+  mode?: MachineEditDialogMode
 }
 
 function getErrorMessage(error: unknown) {
@@ -94,7 +97,7 @@ function dateOnly(date: Date | undefined) {
   return `${year}-${month}-${day}`
 }
 
-export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factories = [] }: MachineEditDialogProps) {
+export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factories = [], mode = 'full' }: MachineEditDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [deletedItemIds, setDeletedItemIds] = useState<string[]>([])
   const [deletedExpenseIds, setDeletedExpenseIds] = useState<string[]>([])
@@ -263,7 +266,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
   const queueLabel = productionQueueLabel(machine.production_workshop, machine.production_queue_number)
 
   useEffect(() => {
-    if (!isOpen || catalogLoaded) return
+    if (!isOpen || mode === 'expenses' || catalogLoaded) return
     let cancelled = false
     Promise.all([getProductOptions(), getProductProjectSampleOptions()]).then(([productResult, sampleResult]) => {
       if (cancelled) return
@@ -274,10 +277,10 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     return () => {
       cancelled = true
     }
-  }, [catalogLoaded, isOpen])
+  }, [catalogLoaded, isOpen, mode])
 
   useEffect(() => {
-    if (!isOpen || !selectedClientId || products.length === 0) {
+    if (!isOpen || mode === 'expenses' || !selectedClientId || products.length === 0) {
       setClientPriceLookup({})
       return
     }
@@ -297,7 +300,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     return () => {
       cancelled = true
     }
-  }, [isOpen, products, selectedClientId])
+  }, [isOpen, mode, products, selectedClientId])
 
   useEffect(() => {
     const items = form.getValues('items') || []
@@ -310,7 +313,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
   }, [clientPriceLookup, form])
 
   useEffect(() => {
-    if (!selectedClientId) return
+    if (mode !== 'full' || !selectedClientId) return
     if (form.getFieldState('specification_number').isDirty || form.getValues('specification_number')) return
 
     let cancelled = false
@@ -324,9 +327,10 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     return () => {
       cancelled = true
     }
-  }, [form, selectedClientId, selectedContractId])
+  }, [form, mode, selectedClientId, selectedContractId])
 
   useEffect(() => {
+    if (mode !== 'full') return
     if (!selectedFactoryId || selectedFactoryId === 'none') {
       form.setValue('production_workshop', undefined)
       return
@@ -340,7 +344,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     if (selectedWorkshop && !workshopOptions.some((option) => option.value === selectedWorkshop)) {
       form.setValue('production_workshop', undefined)
     }
-  }, [form, selectedFactoryId, selectedWorkshop, workshopOptions])
+  }, [form, mode, selectedFactoryId, selectedWorkshop, workshopOptions])
 
   const totals = useMemo(() => {
     const allItems = [...(watchedItems || []), ...(watchedSamples || [])]
@@ -484,14 +488,11 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
         expenseIdsToDelete.add(defaultTransportExpense.id)
       }
 
-      const payload = {
-        ...data,
-        items: [
-          ...(data.items || []).map((item) => ({ ...item, is_sample: false })),
-          ...(data.samples || []).map((item) => ({ ...item, is_sample: true })),
-        ],
-        samples: [],
-        expenses: [
+      const items = [
+        ...(data.items || []).map((item) => ({ ...item, is_sample: false })),
+        ...(data.samples || []).map((item) => ({ ...item, is_sample: true })),
+      ]
+      const expenses = [
           ...(transportCost > 0
             ? [{
                 id: defaultTransportExpense?.id,
@@ -501,15 +502,30 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
               }]
             : []),
           ...regularExpenses,
-        ],
-        deletedItemIds,
-        deletedExpenseIds: Array.from(expenseIdsToDelete),
-      }
+      ]
+      const payload = mode === 'items'
+        ? { items, deletedItemIds }
+        : mode === 'expenses'
+          ? { expenses, deletedExpenseIds: Array.from(expenseIdsToDelete) }
+          : {
+              ...data,
+              items,
+              samples: [],
+              expenses,
+              deletedItemIds,
+              deletedExpenseIds: Array.from(expenseIdsToDelete),
+            }
       
       const res = await updateMachine(machine.id, payload)
       if (!res.success) throw new Error(res.error || 'Не удалось обновить машину')
       
-      toast.success('Машина успешно обновлена')
+      toast.success(
+        mode === 'items'
+          ? 'Товары машины обновлены'
+          : mode === 'expenses'
+            ? 'Расходы машины обновлены'
+            : 'Машина успешно обновлена',
+      )
       onClose()
     } catch (e: unknown) {
       toast.error(getErrorMessage(e))
@@ -520,17 +536,29 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="!block !w-[calc(100vw-1rem)] !max-w-6xl !p-0 max-h-[92vh] overflow-y-auto border-slate-200 bg-slate-50 text-slate-900">
+      <DialogContent className={`!block !w-[calc(100vw-1rem)] ${mode === 'expenses' ? '!max-w-3xl' : '!max-w-6xl'} !p-0 max-h-[92vh] overflow-y-auto border-slate-200 bg-slate-50 text-slate-900`}>
         <DialogHeader className="sticky top-0 z-30 border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
-          <DialogTitle className="text-xl text-slate-950">Редактирование {machine.name}</DialogTitle>
+          <DialogTitle className="text-xl text-slate-950">
+            {mode === 'items'
+              ? `Товары машины ${machine.name}`
+              : mode === 'expenses'
+                ? `Расходы машины ${machine.name}`
+                : `Редактирование ${machine.name}`}
+          </DialogTitle>
           <DialogDescription className="text-slate-500">
-            Внесите изменения в товары и дополнительные расходы машины.
+            {mode === 'items'
+              ? 'Добавляйте и редактируйте только товары и образцы этой машины.'
+              : mode === 'expenses'
+                ? 'Добавляйте и редактируйте только дополнительные расходы этой машины.'
+                : 'Измените основные данные, товары и дополнительные расходы машины.'}
           </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 px-4 pb-4 sm:px-6 sm:pb-6">
             
+            {mode === 'full' && (
+              <>
             <div className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3 sm:p-5">
               <FormField
                 control={form.control}
@@ -768,8 +796,12 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                 </FormItem>
               )}
             />
+              </>
+            )}
 
             {/* ТОВАРЫ */}
+            {mode !== 'expenses' && (
+              <>
             <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Товары</h3>
               {itemFields.map((field, index) => {
@@ -1101,8 +1133,11 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                 <Plus className="w-4 h-4 mr-1" /> Добавить образец
               </Button>
             </div>
+              </>
+            )}
 
             {/* РАСХОДЫ */}
+            {mode !== 'items' && (
             <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <h3 className="text-lg font-semibold text-[#1B3A6B] border-b pb-2">Дополнительные расходы</h3>
               <div className="flex gap-4 items-start rounded-md border border-[#E8ECF0] bg-[#F8F9FA] p-3">
@@ -1173,30 +1208,38 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                 <Plus className="w-4 h-4 mr-1" /> Добавить расход
               </Button>
             </div>
+            )}
 
             {/* ИТОГОВАЯ ПАНЕЛЬ */}
             <div className="flex flex-wrap items-center justify-between gap-6 rounded-2xl border border-blue-900/10 bg-gradient-to-br from-blue-950 to-blue-800 p-4 text-white shadow-lg">
               <div className="flex gap-6">
-                <div>
+                {mode !== 'expenses' && <div>
                   <p className="text-xs text-blue-200">Общий вес</p>
                   <p className="text-lg font-semibold">{totals.totalWeight.toFixed(2)} т</p>
-                </div>
-                <div>
+                </div>}
+                {mode !== 'expenses' && <div>
                   <p className="text-xs text-blue-200">Товары</p>
                   <p className="text-lg font-semibold">€{totals.itemsCost.toLocaleString()}</p>
-                </div>
-                <div>
+                </div>}
+                {mode !== 'expenses' && <div>
                   <p className="text-xs text-blue-200">Образцы</p>
                   <p className="text-lg font-semibold">€{totals.samplesCost.toLocaleString()}</p>
-                </div>
-                <div>
+                </div>}
+                {mode !== 'items' && <div>
                   <p className="text-xs text-blue-200">Расходы</p>
                   <p className="text-lg font-semibold">€{totals.expensesCost.toLocaleString()}</p>
-                </div>
+                </div>}
               </div>
               <div className="text-right">
                 <p className="text-sm font-medium text-emerald-200">ИТОГО</p>
-                <p className="text-2xl font-bold text-emerald-300">€{totals.totalCost.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-emerald-300">
+                  €{(mode === 'items'
+                    ? totals.itemsCost + totals.samplesCost
+                    : mode === 'expenses'
+                      ? totals.expensesCost
+                      : totals.totalCost
+                  ).toLocaleString()}
+                </p>
               </div>
             </div>
 
@@ -1206,7 +1249,7 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
               </Button>
               <Button type="submit" disabled={isSubmitting} className="min-h-10 bg-blue-900 text-white hover:bg-blue-800">
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Сохранить изменения
+                {mode === 'items' ? 'Сохранить товары' : mode === 'expenses' ? 'Сохранить расходы' : 'Сохранить изменения'}
               </Button>
             </div>
           </form>
@@ -1215,4 +1258,3 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
     </Dialog>
   )
 }
-

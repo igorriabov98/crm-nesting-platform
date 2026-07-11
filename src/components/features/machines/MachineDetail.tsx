@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
@@ -21,19 +22,11 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import { DocumentGenerationButtons } from '@/components/features/documents/DocumentGenerationButtons'
-import { ItemsTab } from './tabs/ItemsTab'
-import { ExpensesTab } from './tabs/ExpensesTab'
-import { PackingListTab } from './tabs/PackingListTab'
-import { ProductionTab } from './tabs/ProductionTab'
-import { SupplyTab } from './tabs/SupplyTab'
-import { TechnologistTab } from './tabs/TechnologistTab'
-import { InvoiceTab } from './tabs/InvoiceTab'
-import { OutsourcingTab } from '@/components/features/outsourcing/OutsourcingTab'
 import { MachineTasksPanel } from './MachineTasksPanel'
 import { MachineActivityPanel } from './MachineActivityPanel'
 import { MachineProgressBadge, MachineStatusProgress } from './MachineStatusBadge'
 
-import { MachineEditDialog } from './MachineEditDialog'
+import { LazyMachineEditDialog } from './LazyMachineEditDialog'
 import { MachineArchiveDialog } from './MachineArchiveDialog'
 import { MachineDeleteDialog } from './MachineDeleteDialog'
 import { AssignFactoryDialog } from '@/components/features/meetings/AssignFactoryDialog'
@@ -52,6 +45,30 @@ import type { MachineOutsourcingData } from '@/lib/actions/outsourcing'
 import { ROUTES } from '@/lib/constants/routes'
 import { updateMachineConfirmation } from '@/app/(protected)/sales-plan/actions'
 import { cn } from '@/lib/utils'
+
+function TabLoading() {
+  return (
+    <div
+      className="flex min-h-52 items-center justify-center rounded-2xl border border-slate-200 bg-white p-6 text-sm font-medium text-slate-500 shadow-sm"
+      role="status"
+      aria-live="polite"
+    >
+      Загрузка раздела…
+    </div>
+  )
+}
+
+const ItemsTab = dynamic(() => import('./tabs/ItemsTab').then((module) => module.ItemsTab), { loading: TabLoading })
+const ExpensesTab = dynamic(() => import('./tabs/ExpensesTab').then((module) => module.ExpensesTab), { loading: TabLoading })
+const PackingListTab = dynamic(() => import('./tabs/PackingListTab').then((module) => module.PackingListTab), { loading: TabLoading })
+const ProductionTab = dynamic(() => import('./tabs/ProductionTab').then((module) => module.ProductionTab), { loading: TabLoading })
+const SupplyTab = dynamic(() => import('./tabs/SupplyTab').then((module) => module.SupplyTab), { loading: TabLoading })
+const TechnologistTab = dynamic(() => import('./tabs/TechnologistTab').then((module) => module.TechnologistTab), { loading: TabLoading })
+const InvoiceTab = dynamic(() => import('./tabs/InvoiceTab').then((module) => module.InvoiceTab), { loading: TabLoading })
+const OutsourcingTab = dynamic(
+  () => import('@/components/features/outsourcing/OutsourcingTab').then((module) => module.OutsourcingTab),
+  { loading: TabLoading },
+)
 
 interface MachineDetailProps {
   machine: MachineDetails
@@ -473,7 +490,7 @@ export function MachineDetail({
 
       {/* Модалки */}
       {isEditOpen && (
-        <MachineEditDialog
+        <LazyMachineEditDialog
           machine={machine}
           isOpen={isEditOpen}
           onClose={() => setIsEditOpen(false)}

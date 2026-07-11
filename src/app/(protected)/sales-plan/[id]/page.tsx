@@ -34,6 +34,7 @@ export default async function MachineDetailPage({
     activityResult,
     outsourcingResult,
     { data: factories },
+    { data: tasks },
   ] = await Promise.all([
     getMachine(id),
     getRequest(id),
@@ -42,13 +43,12 @@ export default async function MachineDetailPage({
     getMachineActivity(id),
     getMachineOutsourcingData(id),
     supabase.from('factories').select('id, name'),
+    getTasksByMachine(id),
   ])
 
   if (error || !machine) {
     notFound()
   }
-
-  const { data: tasks } = await getTasksByMachine(id)
 
   const activity: MachineActivityPayload = activityResult.data || {
     updates: [],

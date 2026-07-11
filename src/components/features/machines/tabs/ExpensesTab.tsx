@@ -12,7 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useRole } from '@/lib/hooks/useRole'
-import { MachineEditDialog } from '../MachineEditDialog'
+import { LazyMachineEditDialog } from '../LazyMachineEditDialog'
 import type { MachineDetails, MachineExpense } from '@/lib/types'
 import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 
@@ -136,10 +136,11 @@ export function ExpensesTab({ machine }: ExpensesTabProps) {
       )}
 
       {isEditOpen && (
-        <MachineEditDialog
+        <LazyMachineEditDialog
           machine={machine}
           isOpen={isEditOpen}
           onClose={() => setIsEditOpen(false)}
+          mode="expenses"
         />
       )}
     </div>
