@@ -1452,9 +1452,12 @@ export async function updateMachineMaterialType(machineId: string, materialType:
 
     if (error) throw error
 
-    await syncMaterialTypeTask(db, parsedMachineId)
     await refreshMaterialUndefinedAgenda(supabase, parsedMaterialType)
-    await notifyNewTasks(parsedMachineId)
+    after(async () => {
+      await notifyNewTasks(parsedMachineId).catch((notificationError) => {
+        console.error('Не удалось отправить уведомления после смены типа материала:', notificationError)
+      })
+    })
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${parsedMachineId}`)
@@ -2036,8 +2039,11 @@ export async function updateMachineConfirmation(id: string, isConfirmed: boolean
 
     if (error) throw error
 
-    await syncMaterialTypeTask(db, id)
-    await notifyNewTasks(id)
+    after(async () => {
+      await notifyNewTasks(id).catch((notificationError) => {
+        console.error('Не удалось отправить уведомления после подтверждения машины:', notificationError)
+      })
+    })
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${id}`)

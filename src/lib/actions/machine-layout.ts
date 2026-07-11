@@ -8,7 +8,6 @@ import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import { getProductVersionNestingGuards, type ProductVersionNestingDb } from '@/lib/actions/product-version-nesting-guard'
 import type { Database } from '@/lib/types/database'
 import type { MachineLayoutRequest, TaskStatus, UserRole } from '@/lib/types'
 
@@ -128,7 +127,7 @@ const MAX_PDF_SIZE = 50 * 1024 * 1024
 
 const REQUEST_ROLES: UserRole[] = ['sales_manager', ...DIRECTOR_ROLES]
 const UPLOAD_ROLES: UserRole[] = ['technologist', ...DIRECTOR_ROLES]
-const LAYOUT_ASSIGNEE_ROLES: UserRole[] = UPLOAD_ROLES
+const LAYOUT_ASSIGNEE_ROLES: UserRole[] = ['technologist']
 
 function dbFrom(client: unknown): LooseDb {
   return client as LooseDb
@@ -237,13 +236,10 @@ async function resolveDrawingFiles(db: LooseDb, items: MachineItemRow[]) {
   const projectFileByVersionId = new Map<string, ProductFileRow>()
 
   if (productIds.length > 0) {
-    const [filesResult, productVersionGuards] = await Promise.all([
-      db
-        .from('product_files')
-        .select('id, product_id, file_kind, file_name')
-        .in('product_id', productIds),
-      getProductVersionNestingGuards(db as ProductVersionNestingDb, productIds),
-    ])
+    const filesResult = await db
+      .from('product_files')
+      .select('id, product_id, file_kind, file_name')
+      .in('product_id', productIds)
 
     if (filesResult.error) throw new Error(filesResult.error.message || 'Не удалось загрузить чертежи товаров')
     const grouped = new Map<string, ProductFileRow[]>()
@@ -252,7 +248,6 @@ async function resolveDrawingFiles(db: LooseDb, items: MachineItemRow[]) {
       grouped.set(file.product_id, [...(grouped.get(file.product_id) || []), file])
     }
     for (const [productId, files] of grouped.entries()) {
-      if (productVersionGuards.get(productId)?.isBlocked) continue
       const file = chooseDrawingFile(files)
       if (file) productFileByProductId.set(productId, file)
     }
@@ -440,7 +435,28 @@ async function loadLayoutPayload(db: LooseDb, machineId: string): Promise<Machin
     previousItems = current
   }
 
-  const versions = rows.map((row) => normalizeVersion(row, diffById.get(row.id) || []))
+  const currentById = new Map(currentItems.map((item) => [item.machineItemId, item]))
+  const versions = rows.map((row) => {
+    const version = normalizeVersion(row, diffById.get(row.id) || [])
+    return {
+      ...version,
+      items: version.items.map((item) => {
+        if (item.drawingUrl) return item
+        const current = currentById.get(item.machineItemId)
+        const sameProduct = current
+          && current.productId === item.productId
+          && current.productProjectVersionId === item.productProjectVersionId
+        if (!sameProduct || !current.drawingUrl) return item
+        return {
+          ...item,
+          drawingFileSource: current.drawingFileSource,
+          drawingFileId: current.drawingFileId,
+          drawingFileName: current.drawingFileName,
+          drawingUrl: current.drawingUrl,
+        }
+      }),
+    }
+  })
   return {
     currentItems,
     latest: versions[0] || null,
@@ -462,27 +478,29 @@ async function resolveConfiguredTechnologist(db: LooseDb) {
   if (configuredId) {
     const { data: userData, error: userError } = await db
       .from('users')
-      .select('id, is_active, role')
+      .select('id, is_active, role, full_name, email')
       .eq('id', configuredId)
       .maybeSingle()
 
     if (userError) throw new Error(userError.message || 'Не удалось проверить ответственного технолога')
-    const user = userData as { id: string; is_active: boolean | null; role: UserRole | null } | null
-    if (user && user.is_active !== false && user.role && LAYOUT_ASSIGNEE_ROLES.includes(user.role)) {
+    const user = userData as { id: string; is_active: boolean | null; role: UserRole | null; full_name: string | null; email: string | null } | null
+    const isServiceAccount = /(^|\s)(ci\s+)?smoke(\s|$)|smoke[-_.+@]/i.test(`${user?.full_name || ''} ${user?.email || ''}`)
+    if (user && !isServiceAccount && user.is_active !== false && user.role && LAYOUT_ASSIGNEE_ROLES.includes(user.role)) {
       return user.id
     }
   }
 
   const { data: fallbackData, error: fallbackError } = await db
     .from('users')
-    .select('id')
+    .select('id, full_name, email')
     .eq('role', 'technologist')
     .eq('is_active', true)
     .order('full_name', { ascending: true })
-    .limit(1)
 
   if (fallbackError) throw new Error(fallbackError.message || 'Не удалось найти активного технолога')
-  const fallbackId = ((fallbackData || []) as Array<{ id: string }>)[0]?.id || null
+  const fallbackId = ((fallbackData || []) as Array<{ id: string; full_name: string | null; email: string | null }>)
+    .find((user) => !/(^|\s)(ci\s+)?smoke(\s|$)|smoke[-_.+@]/i.test(`${user.full_name || ''} ${user.email || ''}`))
+    ?.id || null
   if (!fallbackId) throw new Error('В настройках компании выберите ответственного технолога или добавьте активного пользователя с ролью технолога')
 
   return fallbackId
@@ -713,15 +731,27 @@ async function notifyManagerAboutLayoutUpload(db: LooseDb, input: {
     const managerId = input.requestedBy || machine.created_by
     const machineName = machine.name || 'машине'
     const body = `Расстановка машины загружена в систему: версия ${input.versionNo}${input.fileName ? ` (${input.fileName})` : ''}.`
+    const eventKey = `machine_layout_pdf_uploaded:${input.requestId}`
 
-    const { error: chatError } = await db.from('machine_chat_messages').insert({
-      machine_id: input.machineId,
-      body,
-      created_by: null,
-      message_kind: 'system',
-      system_event_key: `machine_layout_pdf_uploaded:${input.requestId}`,
-    })
+    const [{ error: chatError }, { error: updateError }] = await Promise.all([
+      db.from('machine_chat_messages').insert({
+        machine_id: input.machineId,
+        body,
+        created_by: null,
+        message_kind: 'system',
+        system_event_key: eventKey,
+      }),
+      db.from('machine_updates').insert({
+        machine_id: input.machineId,
+        body,
+        created_by: input.uploadedBy,
+        updated_by: input.uploadedBy,
+        message_kind: 'system',
+        system_event_key: eventKey,
+      }),
+    ])
     if (chatError) throw new Error(chatError.message || 'Не удалось добавить системное сообщение о расстановке')
+    if (updateError) throw new Error(updateError.message || 'Не удалось добавить событие о расстановке в последние обновления')
 
     if (managerId && managerId !== input.uploadedBy) {
       const { error: notificationError } = await db.from('notifications').insert({

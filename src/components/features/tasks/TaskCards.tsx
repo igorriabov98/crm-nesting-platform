@@ -83,6 +83,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   supply_material_receipt_shortage: 'Недовес материала',
   production_cutting_rollback_review: 'Откат заготовки',
   production_plan_date_change_approval: 'Согласование дат',
+  production_plan_preparation: 'Подготовка плана',
   outsourcing_transport: 'Транспорт аутсорсинга',
   product_version_incomplete: 'Дозаполнить карточку товара',
 }
@@ -242,6 +243,7 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (isSupplyReceiptTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (isCuttingRollbackTask(taskType)) return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (isProductionPlanDateChangeTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
+  if (taskType === 'production_plan_preparation') return 'border-violet-200 bg-violet-50 text-violet-800 shadow-sm'
   if (taskType === 'material_type_selection') return 'border-cyan-200 bg-cyan-50 text-cyan-700 shadow-sm'
   if (taskType === 'machine_layout') return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (taskType === 'outsourcing_transport') return 'border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm'
