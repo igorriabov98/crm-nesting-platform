@@ -13,7 +13,7 @@ export const metadata = {
 export default async function SalesPlanPage({
   searchParams
 }: {
-  searchParams?: Promise<{ factory?: string; productionMonth?: string }>
+  searchParams?: Promise<{ factory?: string; productionMonth?: string; view?: string }>
 }) {
   const { supabase, user } = await getCurrentUserContextOrRedirect()
 
@@ -24,6 +24,7 @@ export default async function SalesPlanPage({
   const resolvedSearchParams = await searchParams
   const factoryFilter = resolvedSearchParams?.factory || 'all'
   const productionMonthFilter = normalizeProductionMonthValue(resolvedSearchParams?.productionMonth)
+  const initialView = resolvedSearchParams?.view === 'kanban' ? 'kanban' : 'list'
   const [
     { data: machines, error },
     { data: productionMonthOptionsData },
@@ -74,6 +75,7 @@ export default async function SalesPlanPage({
         factoryFilter={factoryFilter}
         productionMonthFilter={productionMonthFilter}
         productionMonthOptions={productionMonthOptions}
+        initialView={initialView}
       />
     </div>
   )

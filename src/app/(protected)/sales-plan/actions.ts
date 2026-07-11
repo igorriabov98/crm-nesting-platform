@@ -33,6 +33,12 @@ const machineDocumentFieldsSchema = z.object({
   specification_date: z.string().trim().min(1, 'Укажите дату документов'),
 })
 const machineIdSchema = z.string().uuid('Некорректный ID машины')
+const productionQueueMoveSchema = z.object({
+  machineId: z.string().uuid('Некорректный ID машины'),
+  targetFactoryId: z.string().uuid('Некорректный ID завода'),
+  targetWorkshop: z.number().int().min(1).max(2),
+  targetQueueNumber: z.number().int().positive(),
+})
 type MachineInsert = Database['public']['Tables']['machines']['Insert']
 type MachineUpdate = Database['public']['Tables']['machines']['Update']
 type MachineItemInsert = Database['public']['Tables']['machine_items']['Insert']
@@ -79,6 +85,15 @@ type LooseDb = {
 
 type RpcClient = Awaited<ReturnType<typeof createServerSupabaseClient>> & {
   rpc: (fn: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string; code?: string } | null }>
+}
+
+export type ProductionQueueMoveResult = {
+  machineId: string
+  machineName: string
+  productionMonth: string
+  before: { factoryId: string; factoryName: string; workshop: number; queueNumber: number }
+  after: { factoryId: string; factoryName: string; workshop: number; queueNumber: number }
+  message: string
 }
 
 const DIRECTOR_ROLES = ['planning_director', 'financial_director', 'commercial_director'] as const
@@ -948,6 +963,36 @@ export async function getProductionMonthFilterOptions(factoryFilter?: string | n
     }
   } catch (error: unknown) {
     return { data: null, error: getErrorMessage(error) }
+  }
+}
+
+export async function moveMachineInProductionQueue(input: unknown) {
+  try {
+    const parsed = productionQueueMoveSchema.parse(input)
+    const { user } = await requireSalesPlanPermission('manage')
+    const admin = createAdminClient() as unknown as RpcClient
+    const { data, error } = await admin.rpc('reorder_machine_production_queue', {
+      p_machine_id: parsed.machineId,
+      p_target_factory_id: parsed.targetFactoryId,
+      p_target_workshop: parsed.targetWorkshop,
+      p_target_queue_number: parsed.targetQueueNumber,
+      p_changed_by: user.id,
+    })
+
+    if (error) throw new Error(error.message || 'Не удалось изменить очередь производства')
+    if (!data) throw new Error('Сервер не вернул результат изменения очереди')
+
+    await dispatchPendingTelegramDeliveries({ machineId: parsed.machineId }).catch((telegramError) => {
+      console.error('Не удалось отправить Telegram-уведомления об изменении очереди:', telegramError)
+    })
+
+    revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(`${ROUTES.SALES_PLAN}/${parsed.machineId}`)
+    revalidatePath(ROUTES.PRODUCTION)
+
+    return { success: true as const, data: data as ProductionQueueMoveResult }
+  } catch (error: unknown) {
+    return { success: false as const, error: getErrorMessage(error) }
   }
 }
 

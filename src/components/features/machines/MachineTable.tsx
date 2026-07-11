@@ -13,9 +13,11 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleDollarSign,
+  Columns3,
   Eye,
   Factory,
   Filter,
+  LayoutList,
   MoreHorizontal,
   PackageCheck,
   Pencil,
@@ -48,6 +50,7 @@ import { productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { MACHINE_PROGRESS_STATIC_LABELS, MACHINE_PROGRESS_STATIC_ORDER } from '@/lib/machine-progress'
 import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
 import { MachineProgressBadge } from './MachineStatusBadge'
+import { MachineKanban } from './MachineKanban'
 
 const MachineEditDialog = dynamic(() => import('./MachineEditDialog').then((mod) => mod.MachineEditDialog))
 const MachineArchiveDialog = dynamic(() => import('./MachineArchiveDialog').then((mod) => mod.MachineArchiveDialog))
@@ -314,6 +317,7 @@ interface MachineTableProps {
   resultLimit?: number
   productionMonthFilter?: string | null
   productionMonthOptions: ProductionMonthOption[]
+  initialView?: 'list' | 'kanban'
 }
 
 export function MachineTable({
@@ -326,11 +330,13 @@ export function MachineTable({
   resultLimit,
   productionMonthFilter,
   productionMonthOptions,
+  initialView = 'list',
 }: MachineTableProps) {
   const [filters, setFilters] = useState<SalesPlanFilters>(initialFilters)
   const [sort, setSort] = useState<SalesPlanSort>('newest')
-  const [selectedFactoryFilter, setSelectedFactoryFilter] = useState(factoryFilter || 'all')
+  const [selectedFactoryFilter, setSelectedFactoryFilter] = useState(initialView === 'kanban' ? 'all' : factoryFilter || 'all')
   const [selectedProductionMonthFilter, setSelectedProductionMonthFilter] = useState(productionMonthFilter || 'all')
+  const [viewMode, setViewMode] = useState<'list' | 'kanban'>(initialView)
   const [editMachine, setEditMachine] = useState<MachineListItem | null>(null)
   const [archiveMachine, setArchiveMachine] = useState<MachineListItem | null>(null)
   const [deleteMachine, setDeleteMachine] = useState<MachineListItem | null>(null)
@@ -340,7 +346,7 @@ export function MachineTable({
   const canEdit = canCreateMachines(userRole)
   const canDelete = isDirector
 
-  const replaceUrlFilters = useCallback((updates: Partial<Record<'factory' | 'productionMonth', string>>) => {
+  const replaceUrlFilters = useCallback((updates: Partial<Record<'factory' | 'productionMonth' | 'view', string>>) => {
     const params = new URLSearchParams(window.location.search)
     Object.entries(updates).forEach(([key, value]) => {
       if (!value || value === 'all') params.delete(key)
@@ -503,6 +509,24 @@ export function MachineTable({
     ? availableProductionMonthOptions.find((option) => option.value === selectedProductionMonthFilter)?.label || selectedProductionMonthFilter
     : 'Все месяцы'
 
+  const switchView = (nextView: 'list' | 'kanban') => {
+    setViewMode(nextView)
+    if (nextView === 'kanban') {
+      const nextMonth = selectedProductionMonthFilter === 'all'
+        ? availableProductionMonthOptions[0]?.value || 'all'
+        : selectedProductionMonthFilter
+      setSelectedFactoryFilter('all')
+      setSelectedProductionMonthFilter(nextMonth)
+      replaceUrlFilters({ view: 'kanban', factory: 'all', productionMonth: nextMonth })
+      return
+    }
+    replaceUrlFilters({ view: 'list' })
+  }
+
+  const kanbanMachines = selectedProductionMonthFilter === 'all'
+    ? []
+    : machines.filter((machine) => normalizeProductionMonthValue(machine.production_month) === selectedProductionMonthFilter)
+
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -528,7 +552,33 @@ export function MachineTable({
               </div>
               <p className="mt-1 text-xs text-slate-500">Поиск, производственный контекст и операционные статусы</p>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              <div className="inline-flex min-h-11 rounded-xl border border-slate-200 bg-white p-1" aria-label="Вид плана продаж">
+                <button
+                  type="button"
+                  onClick={() => switchView('list')}
+                  className={cn(
+                    'inline-flex min-h-9 items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors',
+                    viewMode === 'list' ? 'bg-blue-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100',
+                  )}
+                  aria-pressed={viewMode === 'list'}
+                >
+                  <LayoutList className="mr-2 h-4 w-4" />
+                  Список
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchView('kanban')}
+                  className={cn(
+                    'inline-flex min-h-9 items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors',
+                    viewMode === 'kanban' ? 'bg-blue-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100',
+                  )}
+                  aria-pressed={viewMode === 'kanban'}
+                >
+                  <Columns3 className="mr-2 h-4 w-4" />
+                  Kanban
+                </button>
+              </div>
               {hasAnyFilters && (
                 <Button
                   type="button"
@@ -565,18 +615,20 @@ export function MachineTable({
             </label>
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Select value={selectedFactoryFilter} onValueChange={(value) => updateFactoryFilter(value || 'all')}>
-                <SelectTrigger className={filterTriggerClassName}>
-                  <SelectValue>{selectedFactoryLabel}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Все заводы</SelectItem>
-                  <SelectItem value="no_factory">Без завода</SelectItem>
-                  {factories.map((factory) => (
-                    <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {viewMode === 'list' && (
+                <Select value={selectedFactoryFilter} onValueChange={(value) => updateFactoryFilter(value || 'all')}>
+                  <SelectTrigger className={filterTriggerClassName}>
+                    <SelectValue>{selectedFactoryLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все заводы</SelectItem>
+                    <SelectItem value="no_factory">Без завода</SelectItem>
+                    {factories.map((factory) => (
+                      <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
 
               <Select
                 value={selectedProductionMonthFilter}
@@ -638,17 +690,19 @@ export function MachineTable({
                 </SelectContent>
               </Select>
 
-              <Select value={sort} onValueChange={(value) => setSort((value || 'newest') as SalesPlanSort)}>
-                <SelectTrigger className={filterTriggerClassName}>
-                  <ArrowDownAZ className="mr-2 h-4 w-4 text-slate-400" />
-                  <SelectValue>{sortLabels[sort]}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(sortLabels).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>{label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {viewMode === 'list' && (
+                <Select value={sort} onValueChange={(value) => setSort((value || 'newest') as SalesPlanSort)}>
+                  <SelectTrigger className={filterTriggerClassName}>
+                    <ArrowDownAZ className="mr-2 h-4 w-4 text-slate-400" />
+                    <SelectValue>{sortLabels[sort]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(sortLabels).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
 
@@ -705,7 +759,22 @@ export function MachineTable({
           </div>
         )}
 
-        {sortedMachines.length === 0 ? (
+        {viewMode === 'kanban' ? (
+          selectedProductionMonthFilter === 'all' ? (
+            <div className="flex min-h-72 flex-col items-center justify-center px-6 py-12 text-center">
+              <Columns3 className="h-8 w-8 text-slate-400" />
+              <h2 className="mt-4 text-lg font-semibold text-slate-900">Выберите месяц производства</h2>
+              <p className="mt-1 max-w-md text-sm text-slate-500">Очередь сохраняется отдельно для каждого месяца, завода и цеха.</p>
+            </div>
+          ) : (
+            <MachineKanban
+              machines={kanbanMachines}
+              visibleMachineIds={filteredMachines.map((machine) => machine.id)}
+              factories={factories}
+              canManage={canEdit}
+            />
+          )
+        ) : sortedMachines.length === 0 ? (
           <div className="flex min-h-72 flex-col items-center justify-center px-6 py-12 text-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-500">
               <Search className="h-6 w-6" />
@@ -951,7 +1020,7 @@ export function MachineTable({
         )}
 
         <div className="flex flex-col gap-2 border-t border-slate-200 bg-white px-4 py-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <span>Показано {sortedMachines.length} из {machines.length} загруженных машин</span>
+          <span>{viewMode === 'kanban' ? 'Kanban показывает сохранённую производственную очередь' : `Показано ${sortedMachines.length} из ${machines.length} загруженных машин`}</span>
           <span className="inline-flex items-center gap-1">
             <Banknote className="h-3.5 w-3.5" />
             Суммы рассчитаны по текущей выборке
