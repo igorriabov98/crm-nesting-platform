@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useMemo, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Edit, ExternalLink, Plus, RefreshCw, Scissors } from 'lucide-react'
 import { toast } from 'sonner'
@@ -17,6 +18,7 @@ import {
 } from '@/components/ui/table'
 import { useRole } from '@/lib/hooks/useRole'
 import { COATINGS } from '@/lib/constants/coatings'
+import { ROUTES } from '@/lib/constants/routes'
 import { LazyMachineEditDialog } from '../LazyMachineEditDialog'
 import { startMachineItemNesting, type MachineItemNestingState } from '@/lib/actions/machine-item-nesting'
 import type { CoatingType, MachineDetails, MachineItem } from '@/lib/types'
@@ -66,6 +68,27 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
     )
   }
 
+  const itemName = (item: MachineItemWithVersionStatus) => {
+    const href = item.is_sample && item.product_project_id
+      ? `${ROUTES.PRODUCT_PROJECTS}/${item.product_project_id}`
+      : item.product_id
+        ? `${ROUTES.PRODUCTS}/${item.product_id}`
+        : null
+
+    if (!href) return <span>{item.product_name}</span>
+
+    return (
+      <Link
+        href={href}
+        prefetch={false}
+        className="font-medium text-blue-700 underline-offset-4 hover:text-blue-900 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        aria-label={`Открыть карточку: ${item.product_name}`}
+      >
+        {item.product_name}
+      </Link>
+    )
+  }
+
   const renderTable = (items: MachineItemWithVersionStatus[], emptyLabel: string) => {
     const totalWeight = items.reduce((sum, item) => sum + Number(item.weight) * Number(item.quantity), 0)
     const totalCost = items.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0)
@@ -104,7 +127,7 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
                     <TableCell className="font-medium text-[#374151]">{item.drawing_number}</TableCell>
                     <TableCell className="text-[#374151]">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span>{item.product_name}</span>
+                        {itemName(item)}
                         {versionStatusBadge(item)}
                       </div>
                     </TableCell>
@@ -157,7 +180,7 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
                 <div className="min-w-0">
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Позиция {idx + 1}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-2 break-words font-semibold text-slate-900">
-                    <span>{item.product_name}</span>
+                    {itemName(item)}
                     {versionStatusBadge(item)}
                   </div>
                   <div className="mt-1 text-sm text-slate-500">Чертёж: {item.drawing_number}</div>

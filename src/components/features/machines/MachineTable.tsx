@@ -272,7 +272,7 @@ function MachineActions({
         <DropdownMenuLabel className="text-xs uppercase tracking-wide text-slate-400">Действия</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem className="p-0">
-          <Link href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="flex w-full items-center px-2 py-2">
+          <Link prefetch={false} href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="flex w-full items-center px-2 py-2">
             <Eye className="mr-2 h-4 w-4" />
             Открыть карточку
           </Link>
@@ -330,7 +330,7 @@ export function MachineTable({
   resultLimit,
   productionMonthFilter,
   productionMonthOptions,
-  initialView = 'list',
+  initialView = 'kanban',
 }: MachineTableProps) {
   const [filters, setFilters] = useState<SalesPlanFilters>(initialFilters)
   const [sort, setSort] = useState<SalesPlanSort>('newest')
@@ -552,18 +552,6 @@ export function MachineTable({
               <div className="inline-flex min-h-11 rounded-xl border border-slate-200 bg-white p-1" aria-label="Вид плана продаж">
                 <button
                   type="button"
-                  onClick={() => switchView('list')}
-                  className={cn(
-                    'inline-flex min-h-9 items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors',
-                    viewMode === 'list' ? 'bg-blue-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100',
-                  )}
-                  aria-pressed={viewMode === 'list'}
-                >
-                  <LayoutList className="mr-2 h-4 w-4" />
-                  Список
-                </button>
-                <button
-                  type="button"
                   onClick={() => switchView('kanban')}
                   className={cn(
                     'inline-flex min-h-9 items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors',
@@ -573,6 +561,18 @@ export function MachineTable({
                 >
                   <Columns3 className="mr-2 h-4 w-4" />
                   Kanban
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchView('list')}
+                  className={cn(
+                    'inline-flex min-h-9 items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors',
+                    viewMode === 'list' ? 'bg-blue-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100',
+                  )}
+                  aria-pressed={viewMode === 'list'}
+                >
+                  <LayoutList className="mr-2 h-4 w-4" />
+                  Список
                 </button>
               </div>
               {hasAnyFilters && (
@@ -808,6 +808,7 @@ export function MachineTable({
                             !machine.is_confirmed && 'bg-amber-50 group-hover:bg-amber-50'
                           )}>
                             <Link
+                              prefetch={false}
                               href={`${ROUTES.SALES_PLAN}/${machine.id}`}
                               className="inline-flex max-w-[190px] items-center gap-1 font-semibold text-blue-950 hover:text-blue-700"
                             >
@@ -914,7 +915,7 @@ export function MachineTable({
                     )}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <Link href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="inline-flex items-center gap-1 text-lg font-bold text-blue-950">
+                          <Link prefetch={false} href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="inline-flex items-center gap-1 text-lg font-bold text-blue-950">
                             <span className="truncate">{machine.name}</span>
                             <ChevronRight className="h-4 w-4 shrink-0" />
                           </Link>
@@ -992,7 +993,7 @@ export function MachineTable({
                             : <span className="text-xs text-slate-400">Покрытие не указано</span>}
                         </div>
                         <Button
-                          render={<Link href={`${ROUTES.SALES_PLAN}/${machine.id}`} />}
+                          render={<Link prefetch={false} href={`${ROUTES.SALES_PLAN}/${machine.id}`} />}
                           variant="outline"
                           className="min-h-11 border-blue-200 text-blue-800"
                         >

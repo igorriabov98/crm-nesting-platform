@@ -295,7 +295,7 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
-              <Link href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="truncate font-bold text-blue-950 hover:text-blue-700 hover:underline">
+              <Link prefetch={false} href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="truncate font-bold text-blue-950 hover:text-blue-700 hover:underline">
                 {machine.name}
               </Link>
             </div>
@@ -479,7 +479,7 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
           <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {unassignedMachines.map((machine) => (
               <article key={machine.id} className="rounded-xl border border-amber-200 bg-white p-3">
-                <Link href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="font-semibold text-blue-950 hover:underline">{machine.name}</Link>
+                <Link prefetch={false} href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="font-semibold text-blue-950 hover:underline">{machine.name}</Link>
                 <div className="mt-1 text-xs text-slate-500">{machine.factory?.name || 'Без завода'} · {machine.production_workshop ? `Цех ${machine.production_workshop}` : 'Без цеха'}</div>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
                   <Badge variant="outline" className="border-amber-200 bg-amber-50 capitalize text-amber-900">

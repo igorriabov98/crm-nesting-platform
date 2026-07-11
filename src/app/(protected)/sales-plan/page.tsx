@@ -1,4 +1,4 @@
-import { getMachines, getProductionMonthFilterOptions } from './actions'
+import { getMachines } from './actions'
 import { MachineTable } from '@/components/features/machines/MachineTable'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
@@ -24,14 +24,12 @@ export default async function SalesPlanPage({
   const resolvedSearchParams = await searchParams
   const factoryFilter = resolvedSearchParams?.factory || 'all'
   const productionMonthFilter = normalizeProductionMonthValue(resolvedSearchParams?.productionMonth)
-  const initialView = resolvedSearchParams?.view === 'kanban' ? 'kanban' : 'list'
+  const initialView = resolvedSearchParams?.view === 'list' ? 'list' : 'kanban'
   const [
     { data: machines, error },
-    { data: productionMonthOptionsData },
     { data: factoriesData },
   ] = await Promise.all([
     getMachines(),
-    getProductionMonthFilterOptions(),
     supabase.from('factories').select('id, name'),
   ])
 
@@ -44,7 +42,13 @@ export default async function SalesPlanPage({
     )
   }
 
-  const productionMonthOptions = [...(productionMonthOptionsData || [])]
+  const productionMonthOptions = Array.from(new Set(
+    (machines || [])
+      .map((machine) => normalizeProductionMonthValue(machine.production_month))
+      .filter((value): value is string => Boolean(value))
+  ))
+    .sort((left, right) => right.localeCompare(left))
+    .map((value) => ({ value, label: formatProductionMonth(value) }))
   if (productionMonthFilter && !productionMonthOptions.some((option) => option.value === productionMonthFilter)) {
     productionMonthOptions.unshift({
       value: productionMonthFilter,
