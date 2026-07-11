@@ -1639,18 +1639,20 @@ export function ProductionPlanner({
   }, [effectiveProductionData, filters, ganttMachineById])
 
   useEffect(() => {
+    // Date edits can move a machine between visible and unscheduled rows.
+    // Keep the inspector pinned to the same machine while it still belongs to this factory data set.
     if (
       selectedMachineId &&
       (
-        plannerRows.some((row) => row.machine.id === selectedMachineId) ||
-        unscheduledRows.some((row) => row.machine.id === selectedMachineId)
+        ganttMachineById.has(selectedMachineId) ||
+        productionByMachineId.has(selectedMachineId)
       )
     ) {
       return
     }
 
     setSelectedMachineId(plannerRows[0]?.machine.id ?? unscheduledRows[0]?.machine.id ?? null)
-  }, [plannerRows, selectedMachineId, unscheduledRows])
+  }, [ganttMachineById, plannerRows, productionByMachineId, selectedMachineId, unscheduledRows])
 
   const selectedMachine = useMemo(() => (
     selectedMachineId
