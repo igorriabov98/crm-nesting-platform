@@ -507,24 +507,20 @@ export function MachineTable({
     : factories.find((factory) => factory.id === selectedFactoryFilter)?.name || 'Все заводы'
   const selectedMonthLabel = selectedProductionMonthFilter !== 'all'
     ? availableProductionMonthOptions.find((option) => option.value === selectedProductionMonthFilter)?.label || selectedProductionMonthFilter
-    : 'Все месяцы'
+    : viewMode === 'kanban' ? 'Все месяцы · Общая очередь' : 'Все месяцы'
 
   const switchView = (nextView: 'list' | 'kanban') => {
     setViewMode(nextView)
     if (nextView === 'kanban') {
-      const nextMonth = selectedProductionMonthFilter === 'all'
-        ? availableProductionMonthOptions[0]?.value || 'all'
-        : selectedProductionMonthFilter
       setSelectedFactoryFilter('all')
-      setSelectedProductionMonthFilter(nextMonth)
-      replaceUrlFilters({ view: 'kanban', factory: 'all', productionMonth: nextMonth })
+      replaceUrlFilters({ view: 'kanban', factory: 'all' })
       return
     }
     replaceUrlFilters({ view: 'list' })
   }
 
   const kanbanMachines = selectedProductionMonthFilter === 'all'
-    ? []
+    ? machines
     : machines.filter((machine) => normalizeProductionMonthValue(machine.production_month) === selectedProductionMonthFilter)
 
   return (
@@ -638,7 +634,7 @@ export function MachineTable({
                   <SelectValue>{selectedMonthLabel}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Все месяцы</SelectItem>
+                  <SelectItem value="all">{viewMode === 'kanban' ? 'Все месяцы · Общая очередь' : 'Все месяцы'}</SelectItem>
                   {availableProductionMonthOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                   ))}
@@ -760,20 +756,13 @@ export function MachineTable({
         )}
 
         {viewMode === 'kanban' ? (
-          selectedProductionMonthFilter === 'all' ? (
-            <div className="flex min-h-72 flex-col items-center justify-center px-6 py-12 text-center">
-              <Columns3 className="h-8 w-8 text-slate-400" />
-              <h2 className="mt-4 text-lg font-semibold text-slate-900">Выберите месяц производства</h2>
-              <p className="mt-1 max-w-md text-sm text-slate-500">Очередь сохраняется отдельно для каждого месяца, завода и цеха.</p>
-            </div>
-          ) : (
-            <MachineKanban
-              machines={kanbanMachines}
-              visibleMachineIds={filteredMachines.map((machine) => machine.id)}
-              factories={factories}
-              canManage={canEdit}
-            />
-          )
+          <MachineKanban
+            machines={kanbanMachines}
+            visibleMachineIds={filteredMachines.map((machine) => machine.id)}
+            factories={factories}
+            canManage={canEdit}
+            showAllMonths={selectedProductionMonthFilter === 'all'}
+          />
         ) : sortedMachines.length === 0 ? (
           <div className="flex min-h-72 flex-col items-center justify-center px-6 py-12 text-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-500">

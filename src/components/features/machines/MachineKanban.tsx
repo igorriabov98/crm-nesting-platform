@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState, type DragEvent } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { ArrowDown, ArrowRightLeft, ArrowUp, Factory, GripVertical, LoaderCircle, PackageOpen } from 'lucide-react'
+import { ArrowDown, ArrowRightLeft, ArrowUp, CalendarDays, Factory, GripVertical, ListOrdered, LoaderCircle, PackageOpen } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { moveMachineInProductionQueue } from '@/app/(protected)/sales-plan/actions'
@@ -20,7 +19,7 @@ import {
 import { ROUTES } from '@/lib/constants/routes'
 import type { FactorySummary, MachineListItem } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { formatProductionMonth } from '@/lib/utils/production-months'
+import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { MachineProgressBadge } from './MachineStatusBadge'
 
 type KanbanColumn = {
@@ -39,6 +38,21 @@ type MachineKanbanProps = {
   visibleMachineIds: string[]
   factories: FactorySummary[]
   canManage: boolean
+  showAllMonths: boolean
+}
+
+const NO_PRODUCTION_MONTH = 'no-production-month'
+
+function productionMonthKey(machine: MachineListItem) {
+  return normalizeProductionMonthValue(machine.production_month) || NO_PRODUCTION_MONTH
+}
+
+function productionMonthLabel(monthKey: string) {
+  return monthKey === NO_PRODUCTION_MONTH ? 'Без месяца' : formatProductionMonth(monthKey)
+}
+
+function sameProductionMonth(left: MachineListItem, right: MachineListItem) {
+  return productionMonthKey(left) === productionMonthKey(right)
 }
 
 function normalizedFactoryName(value: string) {
@@ -93,9 +107,18 @@ function machineMatchesColumn(machine: MachineListItem, column: KanbanColumn) {
   return Boolean(column.factoryId)
     && machine.factory_id === column.factoryId
     && machine.production_workshop === column.workshop
+    && Boolean(normalizeProductionMonthValue(machine.production_month))
+    && Boolean(machine.production_queue_number)
 }
 
 function machineOrder(left: MachineListItem, right: MachineListItem) {
+  const leftMonth = productionMonthKey(left)
+  const rightMonth = productionMonthKey(right)
+  if (leftMonth !== rightMonth) {
+    if (leftMonth === NO_PRODUCTION_MONTH) return 1
+    if (rightMonth === NO_PRODUCTION_MONTH) return -1
+    return leftMonth.localeCompare(rightMonth)
+  }
   const leftQueue = left.production_queue_number ?? Number.MAX_SAFE_INTEGER
   const rightQueue = right.production_queue_number ?? Number.MAX_SAFE_INTEGER
   if (leftQueue !== rightQueue) return leftQueue - rightQueue
@@ -114,8 +137,7 @@ function compactWeight(value: number | null) {
   return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(Number(value || 0))} т`
 }
 
-export function MachineKanban({ machines, visibleMachineIds, factories, canManage }: MachineKanbanProps) {
-  const router = useRouter()
+export function MachineKanban({ machines, visibleMachineIds, factories, canManage, showAllMonths }: MachineKanbanProps) {
   const [boardMachines, setBoardMachines] = useState(machines)
   const [draggedMachineId, setDraggedMachineId] = useState<string | null>(null)
   const [savingMachineId, setSavingMachineId] = useState<string | null>(null)
@@ -141,12 +163,20 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
     const previousMachines = boardMachines
     const movingMachine = boardMachines.find((machine) => machine.id === machineId)
     if (!movingMachine) return
+    if (!normalizeProductionMonthValue(movingMachine.production_month) || !movingMachine.production_queue_number) {
+      toast.error('Сначала укажите месяц производства и добавьте машину в очередь')
+      setDraggedMachineId(null)
+      return
+    }
 
     const sourceColumn = columns.find((column) => machineMatchesColumn(movingMachine, column))
-    const sourceMachines = sourceColumn ? [...(machinesByColumn.get(sourceColumn.id) || [])] : []
+    const sourceMachines = sourceColumn
+      ? (machinesByColumn.get(sourceColumn.id) || []).filter((machine) => sameProductionMonth(machine, movingMachine))
+      : []
     const targetMachines = sourceColumn?.id === targetColumn.id
       ? sourceMachines.filter((machine) => machine.id !== machineId)
-      : [...(machinesByColumn.get(targetColumn.id) || [])].filter((machine) => machine.id !== machineId)
+      : (machinesByColumn.get(targetColumn.id) || [])
+        .filter((machine) => sameProductionMonth(machine, movingMachine) && machine.id !== machineId)
     const insertionIndex = Math.max(0, Math.min(targetQueueNumber - 1, targetMachines.length))
     targetMachines.splice(insertionIndex, 0, movingMachine)
 
@@ -191,7 +221,6 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
 
     setSavingMachineId(null)
     toast.success('Очередь производства сохранена', { description: result.data.message })
-    router.refresh()
   }
 
   const handleCardDrop = (event: DragEvent<HTMLElement>, column: KanbanColumn, queueNumber: number) => {
@@ -208,7 +237,7 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
             type="button"
             variant="outline"
             size="sm"
-            disabled={!canManage || Boolean(savingMachineId)}
+            disabled={!canManage || Boolean(savingMachineId) || !normalizeProductionMonthValue(machine.production_month) || !machine.production_queue_number}
             className="min-h-11 flex-1 justify-center border-slate-200 bg-white text-slate-700"
             aria-label={`Переместить машину ${machine.name}`}
           >
@@ -224,7 +253,11 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
           <DropdownMenuItem
             key={column.id}
             disabled={!column.factoryId || machineMatchesColumn(machine, column)}
-            onClick={() => void moveMachine(machine.id, column, (machinesByColumn.get(column.id)?.length || 0) + 1)}
+            onClick={() => void moveMachine(
+              machine.id,
+              column,
+              (machinesByColumn.get(column.id) || []).filter((item) => sameProductionMonth(item, machine)).length + 1,
+            )}
             className="min-h-11"
           >
             <Factory className="mr-2 h-4 w-4" />
@@ -265,13 +298,29 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
               <Link href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="truncate font-bold text-blue-950 hover:text-blue-700 hover:underline">
                 {machine.name}
               </Link>
-              <Badge variant="outline" className="shrink-0 border-slate-200 bg-slate-50 tabular-nums text-slate-700">
-                № {index + 1}
-              </Badge>
             </div>
             <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
               {machine.product || machine.client?.name || 'Без описания продукции'}
             </p>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-xl border border-blue-100 bg-blue-50/70">
+          <div className="border-r border-blue-100 p-3">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-blue-700">
+              <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
+              Месяц производства
+            </div>
+            <div className="mt-1 text-sm font-bold capitalize text-blue-950">
+              {productionMonthLabel(productionMonthKey(machine))}
+            </div>
+          </div>
+          <div className="p-3">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-blue-700">
+              <ListOrdered className="h-3.5 w-3.5" aria-hidden="true" />
+              Очередь в месяце
+            </div>
+            <div className="mt-1 text-sm font-bold tabular-nums text-blue-950">№ {machine.production_queue_number ?? '—'}</div>
           </div>
         </div>
 
@@ -330,9 +379,15 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
     <div className="border-t border-slate-200 bg-slate-100/60 p-3 sm:p-5">
       <div className="mb-4 flex flex-col gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="font-semibold">Очередь за {boardMachines[0]?.production_month ? formatProductionMonth(boardMachines[0].production_month) : 'выбранный месяц'}</div>
+          <div className="font-semibold">
+            {showAllMonths
+              ? 'Общая очередь по месяцам'
+              : `Очередь за ${boardMachines[0]?.production_month ? formatProductionMonth(boardMachines[0].production_month) : 'выбранный месяц'}`}
+          </div>
           <div className="mt-0.5 text-xs text-blue-700">
-            Перетащите карточку или используйте кнопки. Каждое изменение сохраняется и фиксируется в уведомлениях.
+            {showAllMonths
+              ? 'Месяцы идут по порядку: июль, затем август и далее. Пунктирная граница показывает начало следующего месяца.'
+              : 'Перетащите карточку или используйте кнопки. Каждое изменение сохраняется и фиксируется в уведомлениях.'}
           </div>
         </div>
         {!canManage && <Badge variant="outline" className="w-fit border-blue-200 bg-white text-blue-800">Только просмотр</Badge>}
@@ -343,13 +398,21 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
           {columns.map((column) => {
             const allColumnMachines = machinesByColumn.get(column.id) || []
             const shownMachines = allColumnMachines.filter((machine) => visibleIds.has(machine.id))
+            const monthGroups = Array.from(new Set(shownMachines.map(productionMonthKey))).map((monthKey) => ({
+              monthKey,
+              machines: shownMachines.filter((machine) => productionMonthKey(machine) === monthKey),
+            }))
             return (
               <section
                 key={column.id}
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => {
                   event.preventDefault()
-                  if (draggedMachineId) void moveMachine(draggedMachineId, column, allColumnMachines.length + 1)
+                  const draggedMachine = boardMachines.find((machine) => machine.id === draggedMachineId)
+                  if (draggedMachine) {
+                    const targetMonthCount = allColumnMachines.filter((machine) => sameProductionMonth(machine, draggedMachine)).length
+                    void moveMachine(draggedMachine.id, column, targetMonthCount + 1)
+                  }
                 }}
                 className={cn('min-h-[420px] rounded-3xl border p-3', column.accent)}
                 aria-label={column.title}
@@ -375,13 +438,28 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
                     <p className="mt-1 text-xs text-slate-500">Перетащите сюда карточку из другого цеха</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {shownMachines.map((machine) => renderCard(
-                      machine,
-                      column,
-                      allColumnMachines.findIndex((item) => item.id === machine.id),
-                      allColumnMachines.length,
-                    ))}
+                  <div className="space-y-4">
+                    {monthGroups.map(({ monthKey, machines: monthMachines }) => {
+                      const allMonthMachines = allColumnMachines.filter((machine) => productionMonthKey(machine) === monthKey)
+                      return (
+                        <div key={monthKey} className="space-y-3">
+                          <div className="flex items-center gap-2" aria-label={`Начало месяца: ${productionMonthLabel(monthKey)}`}>
+                            <div className="h-px flex-1 border-t-2 border-dashed border-slate-300" />
+                            <Badge variant="outline" className="border-slate-300 bg-white px-3 py-1 font-semibold capitalize text-slate-700 shadow-sm">
+                              <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                              {productionMonthLabel(monthKey)} · {monthMachines.length}
+                            </Badge>
+                            <div className="h-px flex-1 border-t-2 border-dashed border-slate-300" />
+                          </div>
+                          {monthMachines.map((machine) => renderCard(
+                            machine,
+                            column,
+                            allMonthMachines.findIndex((item) => item.id === machine.id),
+                            allMonthMachines.length,
+                          ))}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </section>
@@ -403,6 +481,14 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
               <article key={machine.id} className="rounded-xl border border-amber-200 bg-white p-3">
                 <Link href={`${ROUTES.SALES_PLAN}/${machine.id}`} className="font-semibold text-blue-950 hover:underline">{machine.name}</Link>
                 <div className="mt-1 text-xs text-slate-500">{machine.factory?.name || 'Без завода'} · {machine.production_workshop ? `Цех ${machine.production_workshop}` : 'Без цеха'}</div>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                  <Badge variant="outline" className="border-amber-200 bg-amber-50 capitalize text-amber-900">
+                    {productionMonthLabel(productionMonthKey(machine))}
+                  </Badge>
+                  <Badge variant="outline" className="border-amber-200 bg-amber-50 tabular-nums text-amber-900">
+                    Очередь № {machine.production_queue_number ?? '—'}
+                  </Badge>
+                </div>
                 {canManage && <div className="mt-3 flex">{renderMoveMenu(machine)}</div>}
               </article>
             ))}

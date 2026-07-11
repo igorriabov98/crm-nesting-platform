@@ -1,6 +1,7 @@
 ﻿'use server'
 
 import { revalidatePath } from 'next/cache'
+import { after } from 'next/server'
 import { z } from 'zod'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -982,8 +983,10 @@ export async function moveMachineInProductionQueue(input: unknown) {
     if (error) throw new Error(error.message || 'Не удалось изменить очередь производства')
     if (!data) throw new Error('Сервер не вернул результат изменения очереди')
 
-    await dispatchPendingTelegramDeliveries({ machineId: parsed.machineId }).catch((telegramError) => {
-      console.error('Не удалось отправить Telegram-уведомления об изменении очереди:', telegramError)
+    after(async () => {
+      await dispatchPendingTelegramDeliveries({ machineId: parsed.machineId }).catch((telegramError) => {
+        console.error('Не удалось отправить Telegram-уведомления об изменении очереди:', telegramError)
+      })
     })
 
     revalidatePath(ROUTES.SALES_PLAN)
