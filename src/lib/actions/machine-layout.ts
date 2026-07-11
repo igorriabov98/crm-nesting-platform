@@ -782,24 +782,14 @@ async function notifyManagerAboutLayoutUpload(db: LooseDb, input: {
     const body = `Расстановка машины загружена в систему: версия ${input.versionNo}${input.fileName ? ` (${input.fileName})` : ''}.`
     const eventKey = `machine_layout_pdf_uploaded:${input.requestId}`
 
-    const [{ error: chatError }, { error: updateError }] = await Promise.all([
-      db.from('machine_chat_messages').insert({
-        machine_id: input.machineId,
-        body,
-        created_by: null,
-        message_kind: 'system',
-        system_event_key: eventKey,
-      }),
-      db.from('machine_updates').insert({
-        machine_id: input.machineId,
-        body,
-        created_by: input.uploadedBy,
-        updated_by: input.uploadedBy,
-        message_kind: 'system',
-        system_event_key: eventKey,
-      }),
-    ])
-    if (chatError) throw new Error(chatError.message || 'Не удалось добавить системное сообщение о расстановке')
+    const { error: updateError } = await db.from('machine_updates').insert({
+      machine_id: input.machineId,
+      body,
+      created_by: input.uploadedBy,
+      updated_by: input.uploadedBy,
+      message_kind: 'system',
+      system_event_key: eventKey,
+    })
     if (updateError) throw new Error(updateError.message || 'Не удалось добавить событие о расстановке в последние обновления')
 
     if (managerId && managerId !== input.uploadedBy) {
