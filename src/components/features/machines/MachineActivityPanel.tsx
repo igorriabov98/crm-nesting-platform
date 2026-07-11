@@ -365,7 +365,7 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
             </span>
             <div>
               <h2 className="text-base font-semibold text-slate-950">Последние обновления</h2>
-              <p className="mt-0.5 text-sm text-slate-500">Официальная лента менеджера по этой машине.</p>
+              <p className="mt-0.5 text-sm text-slate-500">Официальная лента ручных и системных событий по этой машине.</p>
             </div>
           </div>
         </div>
@@ -403,19 +403,23 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
             <div className="space-y-3">
               {updates.map((update) => {
                 const isEditing = editingUpdateId === update.id
+                const isSystem = update.message_kind === 'system'
                 return (
-                  <article key={update.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                  <article key={update.id} className={cn(
+                    'rounded-xl border p-4',
+                    isSystem ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-white',
+                  )}>
                     <div className="mb-3 flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold text-slate-900">
-                          {update.author?.full_name || 'Неизвестный пользователь'}
+                          {isSystem ? 'Система' : update.author?.full_name || 'Неизвестный пользователь'}
                         </div>
                         <div className="mt-0.5 text-xs text-slate-500">
                           {activityDate(update.created_at)}
                           {update.updated_at !== update.created_at && ' · изменено'}
                         </div>
                       </div>
-                      {activity.canManageUpdates && (
+                      {activity.canManageUpdates && !isSystem && (
                         <div className="flex shrink-0 items-center gap-1">
                           {isEditing ? (
                             <>

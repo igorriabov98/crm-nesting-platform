@@ -86,6 +86,8 @@ type MachineUpdateRow = {
   updated_by: string | null
   created_at: string
   updated_at: string
+  message_kind?: string | null
+  system_event_key?: string | null
 }
 type MachineChatMessageRow = {
   id: string
@@ -137,6 +139,8 @@ export type MachineUpdateItem = {
   updated_at: string
   author: { id: string; full_name: string } | null
   editor: { id: string; full_name: string } | null
+  message_kind: 'user' | 'system'
+  system_event_key: string | null
 }
 
 export type MachineChatMessageItem = {
@@ -402,6 +406,8 @@ function mapUpdate(row: MachineUpdateRow, usersById: Map<string, UserSummaryRow>
     updated_at: row.updated_at,
     author: author ? { id: author.id, full_name: author.full_name } : null,
     editor: editor ? { id: editor.id, full_name: editor.full_name } : null,
+    message_kind: row.message_kind === 'system' ? 'system' : 'user',
+    system_event_key: row.system_event_key || null,
   }
 }
 
@@ -453,7 +459,7 @@ export async function getMachineActivity(machineId: string): Promise<{ data: Mac
     const [{ data: updatesData, error: updatesError }, { data: messagesData, error: messagesError }, mentionUsers] = await Promise.all([
       db
         .from('machine_updates')
-        .select('id, machine_id, body, created_by, updated_by, created_at, updated_at')
+        .select('id, machine_id, body, created_by, updated_by, created_at, updated_at, message_kind, system_event_key')
         .eq('machine_id', machine.id)
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
@@ -550,6 +556,7 @@ export async function editMachineUpdate(machineId: string, updateId: string, bod
       .select('id')
       .eq('id', parsedUpdateId)
       .eq('machine_id', machine.id)
+      .eq('message_kind', 'user')
       .is('deleted_at', null)
       .maybeSingle()
 
@@ -561,6 +568,7 @@ export async function editMachineUpdate(machineId: string, updateId: string, bod
       .update({ body: parsedBody, updated_by: user.id })
       .eq('id', parsedUpdateId)
       .eq('machine_id', machine.id)
+      .eq('message_kind', 'user')
 
     if (error) throw error
     revalidateActivity(machine.id)
@@ -583,6 +591,7 @@ export async function deleteMachineUpdate(machineId: string, updateId: string) {
       .select('id')
       .eq('id', parsedUpdateId)
       .eq('machine_id', machine.id)
+      .eq('message_kind', 'user')
       .is('deleted_at', null)
       .maybeSingle()
 
@@ -598,6 +607,7 @@ export async function deleteMachineUpdate(machineId: string, updateId: string) {
       })
       .eq('id', parsedUpdateId)
       .eq('machine_id', machine.id)
+      .eq('message_kind', 'user')
 
     if (error) throw error
     revalidateActivity(machine.id)

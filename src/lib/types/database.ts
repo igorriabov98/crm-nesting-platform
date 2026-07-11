@@ -511,6 +511,8 @@ export type Database = {
           deleted_at: string | null
           created_at: string
           updated_at: string
+          message_kind: string
+          system_event_key: string | null
         }
         Insert: {
           id?: string
@@ -522,6 +524,8 @@ export type Database = {
           deleted_at?: string | null
           created_at?: string
           updated_at?: string
+          message_kind?: string
+          system_event_key?: string | null
         }
         Update: {
           id?: string
@@ -533,6 +537,8 @@ export type Database = {
           deleted_at?: string | null
           created_at?: string
           updated_at?: string
+          message_kind?: string
+          system_event_key?: string | null
         }
       }
       machine_chat_messages: {
