@@ -38,7 +38,7 @@ export function SupplyRoundTubeTable({ rows, machineId, canManageOrders = true }
                   )}
                 </td>
                 <td className={tdClass}>
-                  <ReserveButton table="request_round_tube" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} available={row.available_stock} unit="кг" stockItems={row.stock_items} />
+                  <ReserveButton table="request_round_tube" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit="кг" stockItems={row.stock_items} />
                 </td>
                 <td className={tdClass}>
                   <div className="flex items-center gap-2">

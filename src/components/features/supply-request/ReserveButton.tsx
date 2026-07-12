@@ -14,12 +14,13 @@ type ReserveButtonProps = {
   machineId: string
   needed: number
   reserved: number
+  covered?: number
   available: number | null
   unit: string
   stockItems?: SupplyStockItem[]
 }
 
-export function ReserveButton({ table, itemId, materialId, machineId, needed, reserved, available, unit, stockItems = [] }: ReserveButtonProps) {
+export function ReserveButton({ table, itemId, materialId, machineId, needed, reserved, covered, available, unit, stockItems = [] }: ReserveButtonProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const selectableStockItems = useMemo(
@@ -37,7 +38,7 @@ export function ReserveButton({ table, itemId, materialId, machineId, needed, re
   }, [defaultStockItem, selectableStockItems, selectedStockId])
   const effectiveAvailable = selectedStock ? selectedStock.available_quantity : available
   const hasAvailableStock = Number(effectiveAvailable || 0) > 0
-  const remaining = Math.max(needed - reserved, 0)
+  const remaining = Math.max(needed - (covered ?? reserved), 0)
   const suggested = useMemo(() => Math.max(Math.min(remaining, effectiveAvailable || 0), 0), [effectiveAvailable, remaining])
   const [quantity, setQuantity] = useState(() => suggested > 0 ? String(Number(suggested.toFixed(2))) : '')
 

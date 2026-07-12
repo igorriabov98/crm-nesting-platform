@@ -39,7 +39,7 @@ export function SupplyChainCordTable({ rows, machineId, canManageOrders = true }
                 <td className={tdClass}><OrderStatusCell table="request_chain_cord" id={row.id} status={row.order_status} canEdit={canManageOrders} /></td>
                 <td className={tdClass}>
                   <div className="flex items-center gap-2">
-                    <ReserveButton table="request_chain_cord" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
+                    <ReserveButton table="request_chain_cord" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
                     {row.reservation_id && <UnreserveButton table="request_chain_cord" itemId={row.id} />}
                   </div>
                 </td>
