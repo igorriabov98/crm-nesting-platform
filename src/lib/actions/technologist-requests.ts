@@ -675,6 +675,7 @@ export async function completeStockReservation(requestId: string): Promise<Actio
     revalidateRequest(request.machine_id, requestId)
     revalidatePath(`${ROUTES.SUPPLY_REQUEST}/${requestId}`)
     revalidatePath(ROUTES.SUPPLY)
+    revalidatePath(ROUTES.SUPPLY_MATERIAL_REQUESTS)
     revalidatePath(ROUTES.SUPPLY_ORDERS)
     revalidatePath(ROUTES.TASKS)
     revalidatePath(ROUTES.MATERIAL_REQUESTS)

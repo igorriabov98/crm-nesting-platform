@@ -40,6 +40,7 @@ export const ROUTES = {
   MEETINGS_AGENDA_POOL: '/meetings/agenda-pool',
   SUPPLY:         '/supply',
   SUPPLY_FINANCE: '/supply/finance',
+  SUPPLY_MATERIAL_REQUESTS: '/supply/material-requests',
   SUPPLY_ORDERS:  '/supply/orders',
   SUPPLY_REQUEST: '/supply/request',
   SUPPLY_CONSUMABLE_REQUESTS: '/supply/production-requests',

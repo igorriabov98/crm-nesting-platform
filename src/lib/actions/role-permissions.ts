@@ -48,13 +48,6 @@ type DepartmentRow = {
   sort_order?: number | null
 }
 
-type PositionRow = {
-  id: string
-  name: string
-  level: number | null
-  is_active: boolean
-}
-
 type UserRow = {
   id: string
   full_name: string | null
@@ -429,6 +422,7 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
   } else {
     const departmentIds = Array.from(new Set(memberships.map((membership) => membership.departmentId).filter(Boolean)))
     let appliedDepartmentRows = 0
+    const configuredResourceKeys = new Set<ResourceKey>()
 
     if (departmentIds.length > 0) {
       const { data: accessData } = await db
@@ -444,6 +438,7 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
           if (row.department_id !== membership.departmentId || row.subject_scope !== subjectScope) continue
           if (!(row.resource_key in RESOURCE_BY_KEY)) continue
           const resourceKey = row.resource_key as ResourceKey
+          configuredResourceKeys.add(resourceKey)
           const current = permissions[resourceKey] || { canView: false, canManage: false }
           permissions[resourceKey] = {
             canView: current.canView || row.can_view || row.can_manage,
@@ -451,6 +446,18 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
           }
           if (row.can_view || row.can_manage) addSource(sources, resourceKey, source)
           appliedDepartmentRows += 1
+        }
+      }
+    }
+
+    if (appliedDepartmentRows > 0 && userData.role) {
+      for (const resourceKey of ['material_request_queue', 'supply_material_requests'] as const) {
+        if (configuredResourceKeys.has(resourceKey)) continue
+        const resource = RESOURCE_BY_KEY[resourceKey]
+        const fallback = getDefaultPermission(resource, userData.role)
+        permissions[resourceKey] = fallback
+        if (fallback.canView || fallback.canManage) {
+          addSource(sources, resourceKey, 'Значение по умолчанию для новой страницы')
         }
       }
     }

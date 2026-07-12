@@ -14,6 +14,7 @@ type LooseQuery = PromiseLike<DbResult> & {
   eq: (column: string, value: unknown) => LooseQuery
   is: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
+  or: (filters: string) => LooseQuery
   gt: (column: string, value: unknown) => LooseQuery
   gte: (column: string, value: unknown) => LooseQuery
   lte: (column: string, value: unknown) => LooseQuery
@@ -140,6 +141,19 @@ export type InventoryWithMaterial = Inventory & {
   is_legacy_variant: boolean
   supplier_name: string | null
   source_machine_name: string | null
+  display_total_quantity: number
+  display_reserved_quantity: number
+  display_total_secondary_quantity: number | null
+  display_reserved_secondary_quantity: number | null
+  display_calculated_weight_kg: number | null
+  active_cut_reservations: Array<{
+    id: string
+    machine_id: string
+    machine_name: string
+    quantity: number
+    secondary_quantity: number | null
+    created_at: string
+  }>
 }
 
 export type InventoryFactory = Pick<Factory, 'id' | 'name'>
@@ -261,6 +275,22 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
     if (suppliersError) throw new Error(suppliersError.message || 'Не удалось загрузить поставщиков')
     for (const supplier of (suppliersData || []) as { id: string; name: string }[]) supplierMap.set(supplier.id, supplier.name)
   }
+  const inventoryIds = rows.map((row) => row.id)
+  const activeCutReservations: Array<Pick<
+    InventoryReservation,
+    'id' | 'inventory_id' | 'source_inventory_id' | 'machine_id' | 'request_item_table' | 'request_item_id' | 'reserved_quantity' | 'reserved_secondary_quantity' | 'created_at'
+  >> = []
+  if (inventoryIds.length) {
+    const ids = inventoryIds.join(',')
+    const { data: reservationData, error: reservationError } = await db
+      .from('inventory_reservations')
+      .select('id, inventory_id, source_inventory_id, machine_id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity, created_at')
+      .eq('is_cut_reservation', true)
+      .is('consumed_at', null)
+      .or(`source_inventory_id.in.(${ids}),inventory_id.in.(${ids})`)
+    if (reservationError) throw new Error(reservationError.message || 'Не удалось загрузить активные мерные бронирования')
+    activeCutReservations.push(...((reservationData || []) as typeof activeCutReservations))
+  }
   const transactionMachineByInventory = new Map<string, string>()
   const scrapIdsWithoutMachine = rows
     .filter((row) => row.is_business_scrap && !row.source_machine_id)
@@ -280,6 +310,7 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
   const sourceMachineIds = Array.from(new Set([
     ...rows.map((row) => row.source_machine_id).filter(Boolean),
     ...Array.from(transactionMachineByInventory.values()),
+    ...activeCutReservations.map((reservation) => reservation.machine_id),
   ])) as string[]
   const sourceMachineMap = new Map<string, string>()
   if (sourceMachineIds.length) {
@@ -288,11 +319,40 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
     for (const machine of (machinesData || []) as { id: string; name: string }[]) sourceMachineMap.set(machine.id, machine.name)
   }
 
+  const activeCutByInventory = new Map<string, typeof activeCutReservations>()
+  const inventoryIdSet = new Set(inventoryIds)
+  for (const reservation of activeCutReservations) {
+    const inventoryId = reservation.source_inventory_id && inventoryIdSet.has(reservation.source_inventory_id)
+      ? reservation.source_inventory_id
+      : reservation.inventory_id
+    if (!inventoryIdSet.has(inventoryId)) continue
+    const current = activeCutByInventory.get(inventoryId) || []
+    current.push(reservation)
+    activeCutByInventory.set(inventoryId, current)
+  }
+  const requestItemWeightMap = await loadRequestItemWeightMap(db, activeCutReservations)
+
   return rows.map((row) => {
     const material = materialMap.get(row.material_id) || null
     const variantOptions = variantsByMaterial.get(row.material_id) || []
     const exactVariant = row.material_variant_id ? variantMap.get(row.material_variant_id) || null : null
     const fallbackVariant = !row.material_variant_id && variantOptions.length === 1 ? variantOptions[0] : null
+    const cutReservations = activeCutByInventory.get(row.id) || []
+    const cutQuantity = cutReservations.reduce((sum, reservation) => sum + Number(reservation.reserved_quantity || 0), 0)
+    const hasCutSecondaryQuantity = cutReservations.some((reservation) => reservation.reserved_secondary_quantity !== null)
+    const cutSecondaryQuantity = cutReservations.reduce((sum, reservation) => sum + Number(reservation.reserved_secondary_quantity || 0), 0)
+    const cutWeights = cutReservations.map((reservation) => requestItemTransactionWeight({
+      request_item_table: reservation.request_item_table,
+      request_item_id: reservation.request_item_id,
+      quantity: reservation.reserved_quantity,
+    }, requestItemWeightMap))
+    const hasReliableCutWeight = cutWeights.every((weight) => weight !== null)
+    const baseWeight = row.calculated_weight_kg === null ? null : Number(row.calculated_weight_kg || 0)
+    const displayWeight = cutReservations.length === 0
+      ? baseWeight
+      : hasReliableCutWeight && (Number(row.total_quantity || 0) <= 0 || baseWeight !== null)
+        ? Number(baseWeight || 0) + cutWeights.reduce((sum, weight) => sum + Number(weight || 0), 0)
+        : null
     return {
       ...row,
       material,
@@ -303,6 +363,25 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
       source_machine_name: row.source_machine_id
         ? sourceMachineMap.get(row.source_machine_id) || null
         : sourceMachineMap.get(transactionMachineByInventory.get(row.id) || '') || null,
+      display_total_quantity: Number(row.total_quantity || 0) + cutQuantity,
+      display_reserved_quantity: Number(row.reserved_quantity || 0) + cutQuantity,
+      display_total_secondary_quantity: row.total_secondary_quantity === null && !hasCutSecondaryQuantity
+        ? null
+        : Number(row.total_secondary_quantity || 0) + cutSecondaryQuantity,
+      display_reserved_secondary_quantity: row.reserved_secondary_quantity === null && !hasCutSecondaryQuantity
+        ? null
+        : Number(row.reserved_secondary_quantity || 0) + cutSecondaryQuantity,
+      display_calculated_weight_kg: displayWeight,
+      active_cut_reservations: cutReservations.map((reservation) => ({
+        id: reservation.id,
+        machine_id: reservation.machine_id,
+        machine_name: sourceMachineMap.get(reservation.machine_id) || 'Машина',
+        quantity: Number(reservation.reserved_quantity || 0),
+        secondary_quantity: reservation.reserved_secondary_quantity === null
+          ? null
+          : Number(reservation.reserved_secondary_quantity || 0),
+        created_at: reservation.created_at,
+      })),
     }
   })
 }
