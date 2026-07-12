@@ -451,7 +451,7 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
     }
 
     if (appliedDepartmentRows > 0 && userData.role) {
-      for (const resourceKey of ['material_request_queue', 'supply_material_requests'] as const) {
+      for (const resourceKey of ['material_request_queue', 'supply_material_requests', 'business_scrap_reservations'] as const) {
         if (configuredResourceKeys.has(resourceKey)) continue
         const resource = RESOURCE_BY_KEY[resourceKey]
         const fallback = getDefaultPermission(resource, userData.role)

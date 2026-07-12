@@ -131,6 +131,7 @@ type GanttDbResult = { data: unknown; error: { message?: string } | null }
 type LooseGanttQuery = PromiseLike<GanttDbResult> & {
   select: (columns?: string) => LooseGanttQuery
   eq: (column: string, value: unknown) => LooseGanttQuery
+  neq: (column: string, value: unknown) => LooseGanttQuery
   in: (column: string, values: unknown[]) => LooseGanttQuery
 }
 type LooseGanttDb = { from: (table: string) => LooseGanttQuery }
@@ -444,6 +445,7 @@ async function loadGanttSchedules(db: LooseGanttDb, items: GanttSupplyOrderItem[
       .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, received_quantity, delivered_at')
       .eq('request_item_table', table)
       .in('request_item_id', ids)
+      .neq('status', 'cancelled')
     if (error) throw new Error(error.message || 'Не удалось загрузить график поставок для Gantt')
     return (data || []) as GanttScheduleRow[]
   }))

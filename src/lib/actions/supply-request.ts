@@ -8,7 +8,7 @@ import {
   type ReservationStockScope,
 } from '@/lib/inventory/reservation-stock-scope'
 import { requirePermission } from '@/lib/permissions/server'
-import type { PermissionOperation } from '@/lib/permissions/resources'
+import { DIRECTOR_ACCESS_ROLES, type PermissionOperation } from '@/lib/permissions/resources'
 import type {
   Machine,
   RequestChainCord,
@@ -32,6 +32,7 @@ type LooseQuery = PromiseLike<DbResult> & {
   is: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
+  limit: (count: number) => LooseQuery
   maybeSingle: () => Promise<DbResult>
   single: () => Promise<DbResult>
 }
@@ -145,6 +146,7 @@ type ReservationRow = {
   reserved_quantity: number
   reserved_secondary_quantity: number | null
   consumed_at: string | null
+  reservation_source?: string | null
 }
 
 type ReservationStockSource = ReservationStockScope
@@ -649,9 +651,13 @@ function revalidateSupplyRequest(requestId: string, machineId?: string) {
   }
 }
 
-export async function getRequestForSupply(requestId: string): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
+async function loadRequestForStockSource(
+  db: LooseDb,
+  role: UserRole,
+  requestId: string,
+  stockSourceOverride?: ReservationStockSource,
+): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
   try {
-    const { db, role } = await requireAccess()
     const request = await getRequestMeta(db, requestId)
     assertSupplyRequestVisibleForRole(request, role)
     const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
@@ -692,7 +698,7 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
         ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds).eq('factory_id', request.machine.factory_id)
         : Promise.resolve({ data: [], error: null } as DbResult),
       itemIds.length
-        ? db.from('inventory_reservations').select('id, inventory_id, source_inventory_id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity, consumed_at').in('request_item_id', itemIds)
+        ? db.from('inventory_reservations').select('id, inventory_id, source_inventory_id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity, consumed_at, reservation_source').in('request_item_id', itemIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       steelTypeIds.length
         ? db.from('steel_types').select('id, name').in('id', steelTypeIds)
@@ -716,7 +722,7 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
       for (const variant of (variantsData || []) as MaterialVariant[]) variantMap.set(variant.id, variant)
       for (const row of inventoryRows) row.variant = row.material_variant_id ? variantMap.get(row.material_variant_id) || null : null
     }
-    const reservationSource = assertReservationAllowedForRequest(request)
+    const reservationSource = stockSourceOverride || assertReservationAllowedForRequest(request)
     const visibleInventoryRows = inventoryRows.filter((row) => inventoryMatchesReservationSource(row, reservationSource))
     const inventoryMap = new Map(visibleInventoryRows.map((row) => [stockKey(row.material_id, row.material_variant_id, row.piece_length_mm), row]))
     const inventoryGroupMap = new Map<string, InventoryRow[]>()
@@ -739,7 +745,8 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
       }] as const] : []),
     )
     const scopedReservations = filterReservationsByStockScope(
-      (reservationsRes.data || []) as ReservationRow[],
+      ((reservationsRes.data || []) as ReservationRow[])
+        .filter((reservation) => reservation.reservation_source !== 'correction_hold'),
       inventoryById,
       reservationSource,
     )
@@ -779,6 +786,38 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
     }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð·Ð°ÑÐ²ÐºÑƒ' }
+  }
+}
+
+export async function getRequestForSupply(requestId: string): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
+  try {
+    const { db, role } = await requireAccess()
+    return await loadRequestForStockSource(db, role, requestId)
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заявку' }
+  }
+}
+
+export async function getRequestForBusinessScrap(requestId: string): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
+  try {
+    const { supabase, userId, role } = await requirePermission('business_scrap_reservations', 'view')
+    const db = supabase as unknown as LooseDb
+    const request = await getRequestMeta(db, requestId)
+    if (!(DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(role)) {
+      const { data: taskData, error: taskError } = await db
+        .from('tasks')
+        .select('id')
+        .eq('machine_id', request.machine_id)
+        .eq('task_type', 'technologist_request')
+        .eq('assigned_to', userId)
+        .in('status', ['pending', 'in_progress', 'completed'])
+        .limit(1)
+      if (taskError) throw new Error(taskError.message || 'Не удалось проверить назначение машины')
+      if (!Array.isArray(taskData) || taskData.length === 0) throw new Error('Машина не назначена текущему технологу')
+    }
+    return await loadRequestForStockSource(db, role, requestId, 'business_scrap')
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить деловой остаток' }
   }
 }
 

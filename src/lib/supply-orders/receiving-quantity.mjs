@@ -14,6 +14,7 @@
  * @param {DeliveryScheduleQuantity} schedule
  */
 export function committedScheduleQuantity(schedule) {
+  if (schedule.status === 'cancelled') return 0
   const value = schedule.status === 'delivered'
     ? schedule.received_quantity ?? schedule.quantity ?? 0
     : schedule.quantity ?? 0

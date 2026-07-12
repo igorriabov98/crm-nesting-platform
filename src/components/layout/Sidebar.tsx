@@ -109,6 +109,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isSalesMenuOpen, setIsSalesMenuOpen] = useState(false)
   const [isFinanceMenuOpen, setIsFinanceMenuOpen] = useState(false)
+  const [isTechnologistMenuOpen, setIsTechnologistMenuOpen] = useState(false)
   const [isProductionMenuOpen, setIsProductionMenuOpen] = useState(false)
   const [isSupplyMenuOpen, setIsSupplyMenuOpen] = useState(false)
   const [isInventoryMenuOpen, setIsInventoryMenuOpen] = useState(false)
@@ -124,6 +125,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const salesItems = sectionItems(user, permissions, 'sales')
   const financeItems = sectionItems(user, permissions, 'finance')
   const workflowItems = sectionItems(user, permissions, 'workflow')
+  const technologistItems = sectionItems(user, permissions, 'technologist')
   const productionItems = sectionItems(user, permissions, 'production')
   const supplyItems = sectionItems(user, permissions, 'supply')
   const inventoryItems = sectionItems(user, permissions, 'inventory')
@@ -143,6 +145,8 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const isSalesExpanded = !collapsed && (isSalesMenuOpen || isSalesActive)
   const isFinanceActive = financeItems.some(isActiveItem)
   const isFinanceExpanded = !collapsed && (isFinanceMenuOpen || isFinanceActive)
+  const isTechnologistActive = technologistItems.some(isActiveItem)
+  const isTechnologistExpanded = !collapsed && (isTechnologistMenuOpen || isTechnologistActive)
   const isProductionActive = productionItems.some(isActiveItem)
   const isProductionExpanded = !collapsed && (isProductionMenuOpen || isProductionActive)
   const isSupplyActive = supplyItems.some(isActiveItem)
@@ -301,6 +305,16 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
         })}
 
         {workflowItems.map((item) => renderNavItem(item))}
+
+        {renderMenu({
+          items: technologistItems,
+          label: 'Технолог',
+          collapsedTitle: 'Технолог',
+          isActive: isTechnologistActive,
+          isExpanded: isTechnologistExpanded,
+          toggle: () => setIsTechnologistMenuOpen((current) => !current),
+          icon: Shapes,
+        })}
 
         {renderMenu({
           items: productionItems,

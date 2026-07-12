@@ -9,6 +9,7 @@ export type ResourceKey =
   | 'client_prices'
   | 'technologist_requests'
   | 'material_request_queue'
+  | 'business_scrap_reservations'
   | 'products'
   | 'product_projects'
   | 'clients'
@@ -45,7 +46,7 @@ export type ResourceKey =
   | 'production_fact_settings'
   | 'access_settings'
 
-export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'production' | 'supply' | 'inventory' | 'meetings' | 'tools' | 'settings'
+export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'technologist' | 'production' | 'supply' | 'inventory' | 'meetings' | 'tools' | 'settings'
 
 export type SidebarIconKey =
   | 'dashboard'
@@ -196,7 +197,18 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: ['technologist', ...DIRECTORS],
     defaultManageRoles: [],
     routes: [{ path: ROUTES.MATERIAL_REQUESTS, match: 'prefix', operation: 'view', priority: 100 }],
-    sidebar: { section: 'workflow', icon: 'materialRequests', order: 20 },
+    sidebar: { section: 'technologist', icon: 'materialRequests', order: 20 },
+  },
+  {
+    key: 'business_scrap_reservations',
+    label: 'Бронь делового остатка',
+    description: 'Машины технолога и согласуемые корректировки делового остатка',
+    group: 'Технолог',
+    defaultHref: ROUTES.BUSINESS_SCRAP_RESERVATIONS,
+    defaultViewRoles: ['technologist', ...DIRECTORS],
+    defaultManageRoles: ['technologist', ...DIRECTORS],
+    routes: [{ path: ROUTES.BUSINESS_SCRAP_RESERVATIONS, match: 'prefix', operation: 'view', priority: 110 }],
+    sidebar: { section: 'technologist', icon: 'inventory', order: 30 },
   },
   {
     key: 'products',
@@ -447,7 +459,7 @@ export const PERMISSION_RESOURCES = [
       { regex: /^\/nesting\/[^/]+\/(?:parts|result)(?:\/.*)?$/, operation: 'view', priority: 70 },
       { path: ROUTES.NESTING, match: 'exact', operation: 'view' },
     ],
-    sidebar: { section: 'tools', icon: 'nesting', order: 10 },
+    sidebar: { section: 'technologist', icon: 'nesting', order: 10 },
   },
   {
     key: 'nesting_catalog',

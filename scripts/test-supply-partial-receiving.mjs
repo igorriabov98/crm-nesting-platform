@@ -40,4 +40,12 @@ assert.equal(committedScheduleQuantity({
   received_quantity: null,
 }), 3)
 
+const cancelledDelivery = {
+  quantity: 7,
+  status: 'cancelled',
+  received_quantity: null,
+}
+assert.equal(committedScheduleQuantity(cancelledDelivery), 0)
+assert.equal(outstandingReceivingQuantity(10, [firstPartialReceipt, cancelledDelivery]), 9)
+
 console.log('Supply partial receiving tests passed')

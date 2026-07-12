@@ -13,6 +13,7 @@ type DbResult = { data: unknown; error: { message?: string } | null; count?: num
 type LooseQuery = PromiseLike<DbResult> & {
   select: (columns?: string, options?: { count?: 'exact' | 'planned' | 'estimated'; head?: boolean }) => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
+  neq: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   gt: (column: string, value: unknown) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
@@ -90,7 +91,7 @@ export type SupplyOrderDeliverySchedule = {
   supplier_id: string | null
   supplier_name: string | null
   change_reason: string | null
-  status: 'planned' | 'delivered'
+  status: 'planned' | 'delivered' | 'cancelled'
   received_quantity: number | null
   delivered_at: string | null
   received_by: string | null
@@ -534,6 +535,7 @@ async function syncActualMaterialDatesForMachines(machineIds: string[]) {
         .from('supply_order_delivery_schedules')
         .select('request_item_table, request_item_id, delivery_date, status, delivered_at')
         .in('request_item_id', itemIds)
+        .neq('status', 'cancelled')
     : { data: [], error: null }
 
   if (schedulesError) throw new Error(schedulesError.message || 'Не удалось загрузить график снабжения')
@@ -815,6 +817,7 @@ async function getPlannedScheduleTotal(db: LooseDb, table: string, id: string, e
     .select('id, quantity, status, received_quantity')
     .eq('request_item_table', table)
     .eq('request_item_id', id)
+    .neq('status', 'cancelled')
   if (error) throw new Error(error.message || 'Не удалось загрузить график поставок')
   return ((data || []) as Array<{ id: string; quantity: number; status: string; received_quantity: number | null }>)
     .filter((row) => row.id !== excludeId)
@@ -988,6 +991,7 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
       .filter((item) => !item.consumed_at)
       .map((item) => [`${item.request_item_table}:${item.request_item_id}`, item.id]))
     const scheduleRows = ((schedulesRes.data || []) as Array<SupplyOrderDeliverySchedule & { request_item_table: string; request_item_id: string }>)
+      .filter((row) => row.status !== 'cancelled')
       .filter((row) => orderableRawItems.some((item) => item.table === row.request_item_table && item.id === row.request_item_id))
     const scheduleMap = new Map<string, typeof scheduleRows>()
     for (const schedule of scheduleRows) {
@@ -1814,6 +1818,7 @@ async function loadReceivingSchedules(db: LooseDb, items: Array<Pick<RawOrderIte
     .from('supply_order_delivery_schedules')
     .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, delivered_at, received_by, created_at, updated_at')
     .in('request_item_id', itemIds)
+    .neq('status', 'cancelled')
     .order('delivery_date', { ascending: true })
 
   if (error) throw new Error(error.message || 'Не удалось загрузить график поставок')
