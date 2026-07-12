@@ -1,7 +1,22 @@
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
 
-CREATE TYPE public.material_category AS ENUM ('chain_cord', 'knives', 'pipe', 'components', 'other');
+DO $$
+BEGIN
+  CREATE ROLE anon NOLOGIN;
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END;
+$$;
+DO $$
+BEGIN
+  CREATE ROLE authenticated NOLOGIN;
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END;
+$$;
+
+CREATE TYPE public.material_category AS ENUM ('sheet_metal', 'chain_cord', 'knives', 'pipe', 'components', 'other');
 CREATE TYPE public.inventory_transaction_type AS ENUM ('receipt', 'reserve', 'unreserve', 'write_off', 'adjustment');
 CREATE TYPE public.stage_type AS ENUM ('cutting', 'welding', 'painting', 'assembly', 'shipping');
 
@@ -12,6 +27,10 @@ CREATE TABLE public.material_variants (id uuid PRIMARY KEY);
 CREATE TABLE public.machines (
   id uuid PRIMARY KEY,
   factory_id uuid REFERENCES public.factories(id)
+);
+CREATE TABLE public.technologist_requests (
+  id uuid PRIMARY KEY,
+  machine_id uuid NOT NULL REFERENCES public.machines(id)
 );
 
 CREATE TABLE public.inventory (
@@ -84,6 +103,8 @@ CREATE TABLE public.inventory_reservations (
   consumed_at timestamptz,
   consumed_by uuid REFERENCES public.users(id),
   consumed_cutting_event_id uuid,
+  reservation_source text NOT NULL DEFAULT 'stock',
+  supply_order_schedule_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE public.inventory
@@ -107,7 +128,13 @@ CREATE TABLE public.inventory_transactions (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE public.request_sheet_metal (id uuid PRIMARY KEY, reserved_from_stock_kg numeric NOT NULL DEFAULT 0);
+CREATE TABLE public.request_sheet_metal (
+  id uuid PRIMARY KEY,
+  request_id uuid REFERENCES public.technologist_requests(id),
+  material_id uuid REFERENCES public.materials(id),
+  material_variant_id uuid REFERENCES public.material_variants(id),
+  reserved_from_stock_kg numeric NOT NULL DEFAULT 0
+);
 CREATE TABLE public.request_round_tube (id uuid PRIMARY KEY, reserved_from_stock_kg numeric NOT NULL DEFAULT 0, reserved_from_stock_m numeric NOT NULL DEFAULT 0);
 CREATE TABLE public.request_circle (id uuid PRIMARY KEY, reserved_from_stock_mm numeric NOT NULL DEFAULT 0);
 CREATE TABLE public.request_pipe (
@@ -118,7 +145,13 @@ CREATE TABLE public.request_pipe (
   reserved_from_stock_kg numeric NOT NULL DEFAULT 0
 );
 CREATE TABLE public.request_knives (id uuid PRIMARY KEY, reserved_from_stock_mm numeric NOT NULL DEFAULT 0, reserved_from_stock_qty numeric NOT NULL DEFAULT 0);
-CREATE TABLE public.request_components (id uuid PRIMARY KEY, reserved_from_stock numeric NOT NULL DEFAULT 0);
+CREATE TABLE public.request_components (
+  id uuid PRIMARY KEY,
+  request_id uuid REFERENCES public.technologist_requests(id),
+  material_id uuid REFERENCES public.materials(id),
+  material_variant_id uuid REFERENCES public.material_variants(id),
+  reserved_from_stock numeric NOT NULL DEFAULT 0
+);
 CREATE TABLE public.request_paint (id uuid PRIMARY KEY, reserved_from_stock_kg numeric NOT NULL DEFAULT 0);
 CREATE TABLE public.request_mesh (id uuid PRIMARY KEY, reserved_from_stock_qty numeric NOT NULL DEFAULT 0);
 CREATE TABLE public.request_chain_cord (
@@ -127,6 +160,36 @@ CREATE TABLE public.request_chain_cord (
   reserved_from_stock_meters numeric NOT NULL DEFAULT 0
 );
 
+ALTER TABLE public.request_round_tube
+  ADD COLUMN request_id uuid REFERENCES public.technologist_requests(id),
+  ADD COLUMN material_id uuid REFERENCES public.materials(id),
+  ADD COLUMN material_variant_id uuid REFERENCES public.material_variants(id);
+ALTER TABLE public.request_circle
+  ADD COLUMN request_id uuid REFERENCES public.technologist_requests(id),
+  ADD COLUMN material_id uuid REFERENCES public.materials(id),
+  ADD COLUMN material_variant_id uuid REFERENCES public.material_variants(id);
+ALTER TABLE public.request_pipe
+  ADD COLUMN request_id uuid REFERENCES public.technologist_requests(id),
+  ADD COLUMN material_id uuid REFERENCES public.materials(id),
+  ADD COLUMN material_variant_id uuid REFERENCES public.material_variants(id);
+ALTER TABLE public.request_knives
+  ADD COLUMN request_id uuid REFERENCES public.technologist_requests(id),
+  ADD COLUMN material_id uuid REFERENCES public.materials(id),
+  ADD COLUMN material_variant_id uuid REFERENCES public.material_variants(id),
+  ADD COLUMN length_mm numeric;
+ALTER TABLE public.request_paint
+  ADD COLUMN request_id uuid REFERENCES public.technologist_requests(id),
+  ADD COLUMN material_id uuid REFERENCES public.materials(id),
+  ADD COLUMN material_variant_id uuid REFERENCES public.material_variants(id);
+ALTER TABLE public.request_mesh
+  ADD COLUMN request_id uuid REFERENCES public.technologist_requests(id),
+  ADD COLUMN material_id uuid REFERENCES public.materials(id),
+  ADD COLUMN material_variant_id uuid REFERENCES public.material_variants(id);
+ALTER TABLE public.request_chain_cord
+  ADD COLUMN request_id uuid REFERENCES public.technologist_requests(id),
+  ADD COLUMN material_id uuid REFERENCES public.materials(id),
+  ADD COLUMN material_variant_id uuid REFERENCES public.material_variants(id);
+
 CREATE TABLE public.supply_order_delivery_schedules (
   id uuid PRIMARY KEY,
   request_item_table text NOT NULL,
@@ -134,8 +197,19 @@ CREATE TABLE public.supply_order_delivery_schedules (
   quantity numeric NOT NULL,
   received_quantity numeric,
   unit text NOT NULL,
+  delivery_date date NOT NULL DEFAULT current_date,
+  status text NOT NULL DEFAULT 'planned',
+  delivered_at timestamptz,
+  received_by uuid REFERENCES public.users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE public.inventory_reservations
+  ADD CONSTRAINT inventory_reservation_supply_schedule_fk
+  FOREIGN KEY (supply_order_schedule_id) REFERENCES public.supply_order_delivery_schedules(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX inventory_reservation_supply_schedule_idx
+  ON public.inventory_reservations(supply_order_schedule_id)
+  WHERE supply_order_schedule_id IS NOT NULL;
 
 CREATE TABLE public.production_fact_sections (
   id uuid PRIMARY KEY,
@@ -155,7 +229,9 @@ CREATE TABLE public.production_machine_facts (
   id uuid PRIMARY KEY,
   machine_id uuid NOT NULL REFERENCES public.machines(id),
   section_id uuid NOT NULL REFERENCES public.production_fact_sections(id),
-  fact_date date NOT NULL
+  fact_date date NOT NULL,
+  created_by uuid REFERENCES public.users(id),
+  updated_by uuid REFERENCES public.users(id)
 );
 CREATE TABLE public.production_fact_cutting_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -199,17 +275,62 @@ INSERT INTO public.users (id) VALUES ('00000000-0000-0000-0000-000000000002');
 INSERT INTO public.machines (id, factory_id) VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001');
 INSERT INTO public.materials (id, category) VALUES
   ('00000000-0000-0000-0000-000000000010', 'chain_cord'),
-  ('00000000-0000-0000-0000-000000000011', 'chain_cord');
+  ('00000000-0000-0000-0000-000000000011', 'chain_cord'),
+  ('00000000-0000-0000-0000-000000000012', 'sheet_metal');
+INSERT INTO public.material_variants (id) VALUES ('00000000-0000-0000-0000-000000000013');
+INSERT INTO public.technologist_requests (id, machine_id)
+VALUES ('00000000-0000-0000-0000-000000000023', '00000000-0000-0000-0000-000000000003');
+INSERT INTO public.request_sheet_metal (id, request_id, material_id, material_variant_id)
+VALUES (
+  '00000000-0000-0000-0000-000000000022',
+  '00000000-0000-0000-0000-000000000023',
+  '00000000-0000-0000-0000-000000000012',
+  '00000000-0000-0000-0000-000000000013'
+);
 INSERT INTO public.request_chain_cord (id, remainder_meters, reserved_from_stock_meters) VALUES
   ('00000000-0000-0000-0000-000000000020', 6, 4),
   ('00000000-0000-0000-0000-000000000021', 6, 4000);
 INSERT INTO public.inventory (id, factory_id, material_id, total_quantity, reserved_quantity, unit, last_updated_by) VALUES
   ('00000000-0000-0000-0000-000000000030', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', 6, 4, 'м', '00000000-0000-0000-0000-000000000002'),
   ('00000000-0000-0000-0000-000000000031', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000011', 6000, 4000, 'мм', '00000000-0000-0000-0000-000000000002');
+INSERT INTO public.inventory (
+  id, factory_id, material_id, material_variant_id,
+  total_quantity, reserved_quantity, unit, last_updated_by
+) VALUES (
+  '00000000-0000-0000-0000-000000000032',
+  '00000000-0000-0000-0000-000000000001',
+  '00000000-0000-0000-0000-000000000012',
+  '00000000-0000-0000-0000-000000000013',
+  0, 0, 'шт', '00000000-0000-0000-0000-000000000002'
+);
 INSERT INTO public.inventory_reservations (id, inventory_id, material_id, machine_id, request_item_table, request_item_id, reserved_quantity, reserved_by) VALUES
   ('00000000-0000-0000-0000-000000000040', '00000000-0000-0000-0000-000000000030', '00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000003', 'request_chain_cord', '00000000-0000-0000-0000-000000000020', 4, '00000000-0000-0000-0000-000000000002'),
   ('00000000-0000-0000-0000-000000000041', '00000000-0000-0000-0000-000000000031', '00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000003', 'request_chain_cord', '00000000-0000-0000-0000-000000000021', 4000, '00000000-0000-0000-0000-000000000002');
+INSERT INTO public.inventory_reservations (
+  id, inventory_id, material_id, material_variant_id, machine_id,
+  request_item_table, request_item_id, reserved_quantity, reserved_by, consumed_at
+) VALUES (
+  '00000000-0000-0000-0000-000000000042',
+  '00000000-0000-0000-0000-000000000032',
+  '00000000-0000-0000-0000-000000000012',
+  '00000000-0000-0000-0000-000000000013',
+  '00000000-0000-0000-0000-000000000003',
+  'request_sheet_metal',
+  '00000000-0000-0000-0000-000000000022',
+  1,
+  '00000000-0000-0000-0000-000000000002',
+  '2026-07-02 00:00:00+00'
+);
 INSERT INTO public.inventory_transactions (inventory_id, material_id, transaction_type, quantity, machine_id, request_item_table, request_item_id, performed_by) VALUES
   ('00000000-0000-0000-0000-000000000030', '00000000-0000-0000-0000-000000000010', 'receipt', 6, '00000000-0000-0000-0000-000000000003', 'request_chain_cord', '00000000-0000-0000-0000-000000000020', '00000000-0000-0000-0000-000000000002');
 INSERT INTO public.supply_order_delivery_schedules (id, request_item_table, request_item_id, quantity, received_quantity, unit) VALUES
   ('00000000-0000-0000-0000-000000000050', 'request_chain_cord', '00000000-0000-0000-0000-000000000020', 6, 2, 'м');
+INSERT INTO public.supply_order_delivery_schedules (
+  id, request_item_table, request_item_id, quantity, received_quantity,
+  unit, status, delivered_at
+) VALUES (
+  '00000000-0000-0000-0000-000000000051',
+  'request_sheet_metal',
+  '00000000-0000-0000-0000-000000000022',
+  1, 1, 'шт', 'delivered', '2026-07-01 00:00:00+00'
+);

@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { after } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentUserContext } from '@/lib/auth/current-user'
@@ -340,6 +341,25 @@ async function ensureStandardProductionFactSections(admin: AdminClient, factoryI
   }
 }
 
+function hasStandardProductionFactSections(sections: ProductionFactSection[]) {
+  const activeSections = sections.filter((section) => section.is_active && !section.archived_at)
+
+  return PRODUCTION_FACT_STANDARD_STAGES.every((stage) => {
+    const parent = activeSections.find((section) => (
+      !section.parent_id
+      && section.name === stage.label
+      && section.production_stage_type === stage.productionStageType
+    ))
+    if (!parent) return false
+
+    return stage.children.every((child) => activeSections.some((section) => (
+      section.parent_id === parent.id
+      && section.name === child.label
+      && section.production_stage_type === stage.productionStageType
+    )))
+  })
+}
+
 async function getActiveMachineOptions(admin: AdminClient, factoryId: string) {
   const { data, error } = await admin
     .from('machines_with_totals')
@@ -570,17 +590,17 @@ async function assertActiveFactSection(
   if (section.parent_id) {
     const { data: parentRaw, error: parentError } = await looseDb(admin)
       .from('production_fact_sections')
-      .select('id, is_active, archived_at')
+      .select('*')
       .eq('id', section.parent_id)
       .maybeSingle()
 
-    const parent = parentRaw as Pick<ProductionFactSection, 'id' | 'is_active' | 'archived_at'> | null
+    const parent = parentRaw as ProductionFactSection | null
     if (parentError || !parent) throw new Error(parentError?.message || 'Родительский участок не найден')
     if (!isExistingSection && (!parent.is_active || parent.archived_at)) {
       throw new Error('Архивный участок нельзя выбрать для новой записи')
     }
 
-    return section
+    return { section, parent }
   }
 
   const { data: childRaw, error: childError } = await looseDb(admin)
@@ -595,7 +615,7 @@ async function assertActiveFactSection(
     throw new Error('Факт по участку можно вводить только если у него нет активных подучастков')
   }
 
-  return section
+  return { section, parent: null }
 }
 
 async function assertFactoryMachine(admin: AdminClient, factoryId: string, machineId: string) {
@@ -662,48 +682,31 @@ async function applyCuttingFactSideEffects(admin: AdminClient, factId: string, u
 }
 
 async function getCuttingRollbackAssignee(admin: AdminClient, factoryId: string | null, fallbackUserId: string) {
-  const { data: settingsRaw } = await looseDb(admin)
-    .from('company_settings')
-    .select('auto_task_technologist_user_id')
-    .limit(1)
+  const [settingsResult, technologistsResult] = await Promise.all([
+    looseDb(admin)
+      .from('company_settings')
+      .select('auto_task_technologist_user_id')
+      .limit(1),
+    looseDb(admin)
+      .from('users')
+      .select('id, factory_id')
+      .eq('role', 'technologist')
+      .eq('is_active', true)
+      .order('full_name', { ascending: true }),
+  ])
+
+  const settingsRaw = settingsResult.data
+  const technologists = (technologistsResult.data || []) as Array<{ id: string; factory_id: string | null }>
+  if (settingsResult.error) throw settingsResult.error
+  if (technologistsResult.error) throw technologistsResult.error
 
   const configuredId = ((settingsRaw || []) as Array<{ auto_task_technologist_user_id?: string | null }>)[0]
     ?.auto_task_technologist_user_id || null
 
-  if (configuredId) {
-    const { data: userRaw } = await looseDb(admin)
-      .from('users')
-      .select('id')
-      .eq('id', configuredId)
-      .eq('role', 'technologist')
-      .eq('is_active', true)
-      .maybeSingle()
-    if ((userRaw as { id?: string } | null)?.id) return configuredId
-  }
-
-  let technologistQuery = looseDb(admin)
-    .from('users')
-    .select('id')
-    .eq('role', 'technologist')
-    .eq('is_active', true)
-    .order('full_name', { ascending: true })
-    .limit(1)
-
-  if (factoryId) technologistQuery = technologistQuery.eq('factory_id', factoryId)
-
-  const { data: factoryTechnologists } = await technologistQuery
-  const factoryTechnologist = ((factoryTechnologists || []) as Array<{ id: string }>)[0]?.id
-  if (factoryTechnologist) return factoryTechnologist
-
-  const { data: anyTechnologists } = await looseDb(admin)
-    .from('users')
-    .select('id')
-    .eq('role', 'technologist')
-    .eq('is_active', true)
-    .order('full_name', { ascending: true })
-    .limit(1)
-
-  return ((anyTechnologists || []) as Array<{ id: string }>)[0]?.id || fallbackUserId
+  if (configuredId && technologists.some((user) => user.id === configuredId)) return configuredId
+  return technologists.find((user) => factoryId && user.factory_id === factoryId)?.id
+    || technologists[0]?.id
+    || fallbackUserId
 }
 
 async function ensureCuttingRollbackTask(admin: AdminClient, input: {
@@ -712,11 +715,21 @@ async function ensureCuttingRollbackTask(admin: AdminClient, input: {
   userId: string
   reason: string
 }) {
-  const { data: machineRaw } = await looseDb(admin)
-    .from('machines')
-    .select('id, name, factory_id')
-    .eq('id', input.machineId)
-    .maybeSingle()
+  const [machineResult, existingResult] = await Promise.all([
+    looseDb(admin)
+      .from('machines')
+      .select('id, name, factory_id')
+      .eq('id', input.machineId)
+      .maybeSingle(),
+    looseDb(admin)
+      .from('tasks')
+      .select('id, status')
+      .eq('machine_id', input.machineId)
+      .eq('task_type', CUTTING_ROLLBACK_TASK_TYPE)
+      .in('status', ['pending', 'in_progress'])
+      .limit(1),
+  ])
+  const machineRaw = machineResult.data
   const machine = machineRaw as { id: string; name: string | null; factory_id: string | null } | null
   const machineName = machine?.name || 'машина'
   const factoryId = machine?.factory_id || input.factoryId
@@ -730,15 +743,8 @@ async function ensureCuttingRollbackTask(admin: AdminClient, input: {
     `Причина: ${input.reason}`,
   ].join('\n')
 
-  const { data: existingRaw, error: existingError } = await looseDb(admin)
-    .from('tasks')
-    .select('id, status')
-    .eq('machine_id', input.machineId)
-    .eq('task_type', CUTTING_ROLLBACK_TASK_TYPE)
-    .in('status', ['pending', 'in_progress'])
-    .limit(1)
-
-  if (existingError) throw existingError
+  const existingRaw = existingResult.data
+  if (existingResult.error) throw existingResult.error
 
   const existing = ((existingRaw || []) as Array<{ id: string; status: string }>)[0] || null
   let taskId = existing?.id || null
@@ -777,25 +783,33 @@ async function ensureCuttingRollbackTask(admin: AdminClient, input: {
     taskId = (insertedRaw as { id: string }).id
   }
 
-  const { error: eventsError } = await looseDb(admin)
-    .from('production_fact_cutting_events')
-    .update({ rollback_task_id: taskId })
-    .eq('machine_id', input.machineId)
-    .eq('status', 'applied')
-  if (eventsError) throw eventsError
-
-  const { error: notificationError } = await looseDb(admin)
-    .from('notifications')
-    .insert({
-      user_id: assignedTo,
-      type: 'task_created',
-      title: 'Нужен review отката заготовки',
-      message: `По машине "${machineName}" удален или перенесен последний факт заготовки. Откройте задачу для preview автоматического отката.`,
-      related_machine_id: input.machineId,
-    })
+  const [eventsResult, notificationResult] = await Promise.all([
+    looseDb(admin)
+      .from('production_fact_cutting_events')
+      .update({ rollback_task_id: taskId })
+      .eq('machine_id', input.machineId)
+      .eq('status', 'applied'),
+    looseDb(admin)
+      .from('notifications')
+      .insert({
+        user_id: assignedTo,
+        type: 'task_created',
+        title: 'Нужен review отката заготовки',
+        message: `По машине "${machineName}" удален или перенесен последний факт заготовки. Откройте задачу для preview автоматического отката.`,
+        related_machine_id: input.machineId,
+      }),
+  ])
+  if (eventsResult.error) throw eventsResult.error
+  const notificationError = notificationResult.error
   if (notificationError) throw notificationError
 
-  await dispatchPendingTelegramDeliveries({ userId: assignedTo })
+  after(async () => {
+    try {
+      await dispatchPendingTelegramDeliveries({ userId: assignedTo })
+    } catch {
+      // CRM notification is already persisted; Telegram retries on the next delivery run.
+    }
+  })
   return taskId
 }
 
@@ -837,11 +851,9 @@ export async function getProductionFactWorkspaceData(input: {
   }
 
   assertFactoryAccess(role, userFactoryId, selectedFactoryId)
-  await ensureStandardProductionFactSections(admin, selectedFactoryId, userId)
-
   const previousDate = addDays(selectedDate, -1)
   const [
-    sections,
+    initialSections,
     machineOptions,
     shippingMachinesForDate,
     machineFacts,
@@ -856,21 +868,32 @@ export async function getProductionFactWorkspaceData(input: {
     getTonnageFacts(admin, selectedFactoryId, previousDate),
   ])
 
+  let sections = initialSections
+  if (!hasStandardProductionFactSections(sections)) {
+    await ensureStandardProductionFactSections(admin, selectedFactoryId, userId)
+    sections = await getFactorySections(admin, selectedFactoryId)
+  }
+
   const sectionById = new Map(sections.map((section) => [section.id, section]))
-  const machineIds = Array.from(new Set([
-    ...machineOptions.map((machine) => machine.id),
-    ...shippingMachinesForDate.map((machine) => machine.id),
-    ...machineFacts.map((fact) => fact.machine_id),
-  ]))
+  const machinesById = new Map<string, ProductionFactMachineOption>([
+    ...machineOptions,
+    ...shippingMachinesForDate,
+  ].map((machine) => [machine.id, machine]))
+  const missingMachineIds = Array.from(new Set(
+    machineFacts
+      .map((fact) => fact.machine_id)
+      .filter((machineId) => !machinesById.has(machineId)),
+  ))
   const userIds = Array.from(new Set([
     ...machineFacts.flatMap((fact) => [fact.created_by, fact.updated_by]),
     ...tonnageFacts.flatMap((fact) => [fact.created_by, fact.updated_by]),
   ].filter(Boolean))) as string[]
 
-  const [machinesById, usersById] = await Promise.all([
-    getMachinesByIds(admin, machineIds),
+  const [missingMachinesById, usersById] = await Promise.all([
+    getMachinesByIds(admin, missingMachineIds),
     getUsersByIds(admin, userIds),
   ])
+  for (const [machineId, machine] of missingMachinesById) machinesById.set(machineId, machine)
 
   const machineFactRows = machineFacts.map((fact): ProductionFactMachineFactRow => {
     const section = sectionById.get(fact.section_id) || null
@@ -1148,11 +1171,12 @@ export async function saveProductionMachineFact(input: {
       existingWasCutting = await isCuttingFact(admin, existing)
     }
 
-    await assertFactoryMachine(admin, input.factory_id, input.machine_id)
-    await assertActiveFactSection(admin, input.factory_id, input.section_id, {
-      allowArchivedSectionId: existing?.section_id === input.section_id ? input.section_id : null,
-    })
-    const nextSectionContext = await getFactSectionContext(admin, input.section_id)
+    const [, nextSectionContext] = await Promise.all([
+      assertFactoryMachine(admin, input.factory_id, input.machine_id),
+      assertActiveFactSection(admin, input.factory_id, input.section_id, {
+        allowArchivedSectionId: existing?.section_id === input.section_id ? input.section_id : null,
+      }),
+    ])
     const nextIsCutting = isCuttingFactSection(nextSectionContext.section, nextSectionContext.parent)
 
     const payload = {
@@ -1221,9 +1245,12 @@ export async function deleteProductionMachineFact(id: string): Promise<Productio
     if (factError || !fact) throw new Error(factError?.message || 'Запись факта не найдена')
     assertFactoryAccess(role, userFactoryId, fact.factory_id)
     assertCanEditFactDate(role, fact.fact_date)
-    const wasCutting = await isCuttingFact(admin, fact)
+    const [wasCutting, deleteResult] = await Promise.all([
+      isCuttingFact(admin, fact),
+      looseDb(admin).from('production_machine_facts').delete().eq('id', id),
+    ])
 
-    const { error } = await looseDb(admin).from('production_machine_facts').delete().eq('id', id)
+    const { error } = deleteResult
     if (error) throw error
 
     if (wasCutting) {
@@ -1406,9 +1433,8 @@ export async function saveUnifiedProductionFact(input: {
     const machineIds = Array.from(new Set(input.machine_ids)).filter(Boolean)
     if (machineIds.length === 0) throw new Error('Выберите машины')
 
-    await assertFactoryMachines(admin, input.factory_id, machineIds)
-
     if (stageDefinition.isShipping) {
+      await assertFactoryMachines(admin, input.factory_id, machineIds)
       let shippingUpdated = 0
       await runLimited(machineIds, 6, async (machineId) => {
         const result = await updateMachineDate(machineId, 'actual_shipping_date', factDate)
@@ -1423,8 +1449,10 @@ export async function saveUnifiedProductionFact(input: {
       }
     }
 
-    await assertActiveFactSection(admin, input.factory_id, input.section_id)
-    const sectionContext = await getFactSectionContext(admin, input.section_id)
+    const [, sectionContext] = await Promise.all([
+      assertFactoryMachines(admin, input.factory_id, machineIds),
+      assertActiveFactSection(admin, input.factory_id, input.section_id),
+    ])
     const isCuttingSection = isCuttingFactSection(sectionContext.section, sectionContext.parent)
 
     const { data: existingRaw, error: existingError } = await looseDb(admin)
