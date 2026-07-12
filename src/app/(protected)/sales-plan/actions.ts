@@ -74,6 +74,7 @@ type LooseQuery = PromiseLike<DbResult> & {
   update: (values: unknown) => LooseQuery
   delete: () => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
+  neq: (column: string, value: unknown) => LooseQuery
   is: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
@@ -859,6 +860,7 @@ async function loadSupplyOrderActualMaterialDates(db: LooseDb, machineIds: strin
         .from('supply_order_delivery_schedules')
         .select('request_item_table, request_item_id, delivery_date, status, delivered_at')
         .in('request_item_id', itemIds)
+        .neq('status', 'cancelled')
     : { data: [], error: null }
 
   if (schedulesError) throw new Error(schedulesError.message || 'Не удалось загрузить график снабжения')

@@ -27,6 +27,7 @@ export const ROUTES = {
   FINANCE_CALENDAR:'/finance/calendar',
   TASKS:          '/tasks',
   MATERIAL_REQUESTS: '/material-requests',
+  BUSINESS_SCRAP_RESERVATIONS: '/technologist/business-scrap-reservations',
   PRODUCTION:     '/production',
   GANTT:          '/production/gantt',
   PRODUCTION_FACT: '/production/fact',

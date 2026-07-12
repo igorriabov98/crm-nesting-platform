@@ -10,6 +10,7 @@
     "start": "node node_modules/next/dist/bin/next start",
     "lint": "node node_modules/eslint/bin/eslint.js",
     "test:inventory": "node scripts/test-inventory-stock-lifecycle.mjs",
+    "test:business-scrap-corrections": "node scripts/test-business-scrap-corrections.mjs",
     "test:supply-reservation-scope": "tsx scripts/test-supply-reservation-scope.ts",
     "test:supply-receiving": "node scripts/test-supply-partial-receiving.mjs",
     "smoke:prod": "tsx scripts/prod-smoke.ts",

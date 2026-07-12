@@ -225,6 +225,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
   let appliedDepartmentRows = 0
   let materialRequestQueueConfigured = false
   let supplyMaterialRequestsConfigured = false
+  let businessScrapReservationsConfigured = false
   if (departmentIds.length > 0) {
     const { data: accessData } = await db
       .from('department_access_permissions')
@@ -239,6 +240,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
         if (row.department_id !== membership.departmentId || row.subject_scope !== scope) continue
         if (row.resource_key === 'material_request_queue') materialRequestQueueConfigured = true
         if (row.resource_key === 'supply_material_requests') supplyMaterialRequestsConfigured = true
+        if (row.resource_key === 'business_scrap_reservations') businessScrapReservationsConfigured = true
         applyAccessRow(permissions, sources, row, label)
         appliedDepartmentRows += 1
       }
@@ -277,6 +279,15 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
     permissions.supply_material_requests = fallbackPermission
     if (fallbackPermission.canView || fallbackPermission.canManage) {
       addPermissionSource(sources, 'supply_material_requests', 'Значение по умолчанию для новой страницы')
+    }
+  }
+
+  if (!businessScrapReservationsConfigured && userRow.role) {
+    const resource = RESOURCE_BY_KEY.business_scrap_reservations
+    const fallbackPermission = getDefaultPermission(resource, userRow.role)
+    permissions.business_scrap_reservations = fallbackPermission
+    if (fallbackPermission.canView || fallbackPermission.canManage) {
+      addPermissionSource(sources, 'business_scrap_reservations', 'Значение по умолчанию для новой страницы')
     }
   }
 

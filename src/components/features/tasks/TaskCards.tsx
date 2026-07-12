@@ -55,6 +55,7 @@ import {
   type TaskWithRelations,
 } from '@/lib/actions/tasks'
 import { saveProductProjectEngineeringDeliverables } from '@/lib/actions/products'
+import { BusinessScrapCorrectionApprovalButton } from '@/components/features/business-scrap/BusinessScrapCorrectionApprovalButton'
 import type { TaskDelegationStatus, TaskStatus, TaskType } from '@/lib/types'
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -86,6 +87,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   production_plan_preparation: 'Подготовка плана',
   outsourcing_transport: 'Транспорт аутсорсинга',
   product_version_incomplete: 'Дозаполнить карточку товара',
+  business_scrap_correction_approval: 'Корректировка делового остатка',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {
@@ -238,11 +240,16 @@ function isProductionPlanDateChangeTask(taskType: TaskType) {
   return taskType === 'production_plan_date_change_approval'
 }
 
+function isBusinessScrapCorrectionTask(taskType: TaskType) {
+  return taskType === 'business_scrap_correction_approval'
+}
+
 function getTaskTypeBadgeClass(taskType: TaskType) {
   if (isConsumableTask(taskType)) return 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
   if (isSupplyReceiptTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (isCuttingRollbackTask(taskType)) return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (isProductionPlanDateChangeTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
+  if (isBusinessScrapCorrectionTask(taskType)) return 'border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm'
   if (taskType === 'production_plan_preparation') return 'border-violet-200 bg-violet-50 text-violet-800 shadow-sm'
   if (taskType === 'material_type_selection') return 'border-cyan-200 bg-cyan-50 text-cyan-700 shadow-sm'
   if (taskType === 'machine_layout') return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
@@ -744,6 +751,19 @@ export function TaskCards({
     }
 
     if (context === 'outgoing' && pendingDelegation) return null
+
+    if (isBusinessScrapCorrectionTask(task.task_type)) {
+      if (task.status === 'completed' || task.status === 'cancelled') return null
+      return (
+        <div className={groupClass}>
+          <BusinessScrapCorrectionApprovalButton
+            taskId={task.id}
+            disabled={updatingId === task.id}
+            className={buttonClass}
+          />
+        </div>
+      )
+    }
 
     if (isProductionPlanDateChangeTask(task.task_type)) {
       if (task.status === 'completed' || task.status === 'cancelled') return null
