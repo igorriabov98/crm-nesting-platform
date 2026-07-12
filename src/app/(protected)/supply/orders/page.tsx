@@ -17,11 +17,11 @@ export default async function SupplyOrdersRoute({
 }) {
   const resolvedSearchParams = await searchParams
   const page = Math.max(0, Number(resolvedSearchParams?.page || 1) - 1)
-  const activeView = resolvedSearchParams?.view === 'summary'
-    ? 'summary'
+  const activeView = resolvedSearchParams?.view === 'details'
+    ? 'details'
     : resolvedSearchParams?.view === 'history'
       ? 'history'
-      : 'details'
+      : 'summary'
 
   return (
     <div className="space-y-6">
@@ -39,14 +39,14 @@ export default async function SupplyOrdersRoute({
 
       <div className="flex w-full overflow-x-auto rounded-lg border border-[#E8ECF0] bg-white p-1 sm:w-fit">
         <Link
-          href={ROUTES.SUPPLY_ORDERS}
+          href={`${ROUTES.SUPPLY_ORDERS}?view=details`}
           className={viewLinkClass(activeView === 'details')}
           aria-current={activeView === 'details' ? 'page' : undefined}
         >
           По заявкам
         </Link>
         <Link
-          href={`${ROUTES.SUPPLY_ORDERS}?view=summary`}
+          href={ROUTES.SUPPLY_ORDERS}
           className={viewLinkClass(activeView === 'summary')}
           aria-current={activeView === 'summary' ? 'page' : undefined}
         >
@@ -80,7 +80,9 @@ function viewLinkClass(isActive: boolean) {
 }
 
 async function SummaryView({ requestedFactoryId }: { requestedFactoryId: string | null }) {
-  const { data: factories, error: factoriesError } = await getSupplyOrderFactories()
+  const factoriesPromise = getSupplyOrderFactories()
+  const suppliersPromise = getSuppliers({ active_only: true })
+  const { data: factories, error: factoriesError } = await factoriesPromise
 
   if (factoriesError) {
     return <div className="rounded-lg bg-red-500/10 p-4 text-sm text-[#DC2626]">{factoriesError}</div>
@@ -96,7 +98,7 @@ async function SummaryView({ requestedFactoryId }: { requestedFactoryId: string 
 
   const [{ data: aggregates, error }, { data: suppliers }] = await Promise.all([
     getSupplyOrderAggregates(activeFactoryId),
-    getSuppliers({ active_only: true }),
+    suppliersPromise,
   ])
 
   if (error) {
