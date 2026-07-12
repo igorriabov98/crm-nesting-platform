@@ -601,7 +601,14 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
             </thead>
             <tbody className="divide-y divide-[#E8ECF0]">
               {filtered.map((row) => (
-                <tr key={row.id} className={row.available_quantity <= 0 ? 'bg-red-50/60' : 'bg-white'}>
+                <tr
+                  key={row.id}
+                  className={row.active_cut_reservations.length > 0
+                    ? 'bg-blue-50/70'
+                    : row.available_quantity <= 0
+                      ? 'bg-red-50/60'
+                      : 'bg-white'}
+                >
                   <td className="px-4 py-3 font-medium text-[#1B3A6B]">
                     <div>{row.material?.name || 'Материал'}</div>
                     {row.is_business_scrap && (
@@ -614,6 +621,16 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                         Будущий остаток · доступен с {row.available_from_date ? formatInventoryDate(row.available_from_date) : 'даты заготовки'}
                       </div>
                     )}
+                    {row.active_cut_reservations.map((reservation) => (
+                      <div key={reservation.id} className="mt-1 text-xs font-semibold text-blue-700">
+                        Забронировано под: {reservation.machine_name} · {quantityText(
+                          reservation.quantity,
+                          row.unit,
+                          reservation.secondary_quantity,
+                          row.secondary_unit,
+                        )}
+                      </div>
+                    ))}
                     {row.is_legacy_variant && (
                       <div className="mt-1 text-xs font-normal text-amber-700">
                         Остаток без привязки к характеристикам
@@ -643,10 +660,10 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                   ) : (
                     <td className="px-4 py-3 text-[#6B7280]">{inventoryCharacteristicsSummary(row, steelTypes)}</td>
                   )}
-                  <td className="px-4 py-3">{quantityText(row.total_quantity, row.unit, row.total_secondary_quantity, row.secondary_unit)}</td>
-                  <td className="px-4 py-3">{quantityText(row.reserved_quantity, row.unit, row.reserved_secondary_quantity, row.secondary_unit)}</td>
+                  <td className="px-4 py-3">{quantityText(row.display_total_quantity, row.unit, row.display_total_secondary_quantity, row.secondary_unit)}</td>
+                  <td className="px-4 py-3">{quantityText(row.display_reserved_quantity, row.unit, row.display_reserved_secondary_quantity, row.secondary_unit)}</td>
                   <td className="px-4 py-3 font-semibold">{quantityText(row.available_quantity, row.unit, row.available_secondary_quantity, row.secondary_unit)}</td>
-                  <td className="px-4 py-3">{formatWeight(row.calculated_weight_kg)}</td>
+                  <td className="px-4 py-3">{formatWeight(row.display_calculated_weight_kg)}</td>
                   {showPieceLengthColumn && <td className="px-4 py-3">{formatPieceLength(row.piece_length_mm)}</td>}
                   <td className="px-4 py-3">{row.unit}{row.secondary_unit ? ` / ${row.secondary_unit}` : ''}</td>
                   <td className="px-4 py-3 text-[#6B7280]">{formatInventoryDateTime(row.updated_at)}</td>

@@ -597,6 +597,7 @@ function summarizeComponents(rows: RequestComponents[]): SupplyRequestSectionSum
 function revalidateSupplyRequest(requestId: string, machineId?: string) {
   revalidatePath(`${ROUTES.SUPPLY_REQUEST}/${requestId}`)
   revalidatePath(ROUTES.SUPPLY_ORDERS)
+  revalidatePath(ROUTES.SUPPLY_MATERIAL_REQUESTS)
   revalidatePath(ROUTES.SUPPLY)
   revalidatePath(ROUTES.INVENTORY)
   if (machineId) {

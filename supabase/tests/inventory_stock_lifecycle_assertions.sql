@@ -115,6 +115,76 @@ BEGIN
 END;
 $$;
 
+-- A fully reserved measured remnant remains visible through the active cut
+-- reservation projection even though the physical inventory row is zeroed.
+DO $$
+DECLARE
+  v_factory uuid := '21000000-0000-0000-0000-000000000001';
+  v_user uuid := '21000000-0000-0000-0000-000000000002';
+  v_material uuid := '21000000-0000-0000-0000-000000000003';
+  v_variant uuid := '21000000-0000-0000-0000-000000000004';
+  v_machine uuid := '21000000-0000-0000-0000-000000000005';
+  v_source uuid := '21000000-0000-0000-0000-000000000006';
+  v_request uuid := '21000000-0000-0000-0000-000000000007';
+  v_reservation uuid;
+  v_value numeric;
+BEGIN
+  INSERT INTO public.factories (id, name) VALUES (v_factory, 'Projection factory');
+  INSERT INTO public.users (id) VALUES (v_user);
+  INSERT INTO public.materials (id, category) VALUES (v_material, 'knives');
+  INSERT INTO public.material_variants (id) VALUES (v_variant);
+  INSERT INTO public.machines (id, factory_id) VALUES (v_machine, v_factory);
+  INSERT INTO public.request_knives (id) VALUES (v_request);
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit, total_secondary_quantity,
+    reserved_secondary_quantity, secondary_unit, last_updated_by, is_business_scrap
+  ) VALUES (
+    v_source, v_factory, v_material, v_variant, 2000,
+    2000, 0, 'мм', 1, 0, 'шт', v_user, true
+  );
+
+  v_reservation := public.fn_reserve_inventory_row_for_machine(
+    v_source, v_machine, 2000, 'request_knives', v_request, v_user, NULL, true
+  );
+
+  SELECT i.total_quantity + COALESCE(SUM(r.reserved_quantity), 0)
+  INTO v_value
+  FROM public.inventory i
+  LEFT JOIN public.inventory_reservations r
+    ON COALESCE(r.source_inventory_id, r.inventory_id) = i.id
+   AND r.is_cut_reservation = true
+   AND r.consumed_at IS NULL
+  WHERE i.id = v_source
+  GROUP BY i.total_quantity;
+  PERFORM public.test_assert_numeric(v_value, 2000, 'active 2000 cut reservation restores displayed total');
+
+  SELECT i.reserved_quantity + COALESCE(SUM(r.reserved_quantity), 0)
+  INTO v_value
+  FROM public.inventory i
+  LEFT JOIN public.inventory_reservations r
+    ON COALESCE(r.source_inventory_id, r.inventory_id) = i.id
+   AND r.is_cut_reservation = true
+   AND r.consumed_at IS NULL
+  WHERE i.id = v_source
+  GROUP BY i.reserved_quantity;
+  PERFORM public.test_assert_numeric(v_value, 2000, 'active 2000 cut reservation restores displayed reserved quantity');
+
+  SELECT available_quantity INTO v_value FROM public.inventory WHERE id = v_source;
+  PERFORM public.test_assert_numeric(v_value, 0, 'fully reserved measured remnant has zero physical availability');
+  SELECT reserved_secondary_quantity INTO v_value FROM public.inventory_reservations WHERE id = v_reservation;
+  PERFORM public.test_assert_numeric(v_value, 1, 'active measured reservation keeps one reserved piece');
+
+  PERFORM public.fn_unreserve_inventory_reservation(v_reservation, v_user, 'test projection removal');
+  SELECT COUNT(*) INTO v_value
+  FROM public.inventory_reservations
+  WHERE source_inventory_id = v_source AND is_cut_reservation = true AND consumed_at IS NULL;
+  PERFORM public.test_assert_numeric(v_value, 0, 'unreserve removes active cut projection');
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_source;
+  PERFORM public.test_assert_numeric(v_value, 2000, 'unreserve restores fully reserved measured remnant');
+END;
+$$;
+
 DO $$
 DECLARE
   v_factory uuid := '20000000-0000-0000-0000-000000000001';

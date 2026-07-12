@@ -22,6 +22,7 @@ export type ResourceKey =
   | 'consumable_requests'
   | 'consumables'
   | 'supply'
+  | 'supply_material_requests'
   | 'supply_consumable_requests'
   | 'supply_transport'
   | 'supply_orders'
@@ -348,6 +349,17 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: SUPPLY_AND_DIRECTORS,
     routes: [{ path: ROUTES.SUPPLY_ORDERS, match: 'prefix', operation: 'view' }],
     sidebar: { section: 'supply', icon: 'orders', order: 10 },
+  },
+  {
+    key: 'supply_material_requests',
+    label: 'Бронь склада',
+    description: 'Очередь переданных заявок для бронирования обычного склада',
+    group: 'Снабжение',
+    defaultHref: ROUTES.SUPPLY_MATERIAL_REQUESTS,
+    defaultViewRoles: SUPPLY_AND_DIRECTORS,
+    defaultManageRoles: SUPPLY_AND_DIRECTORS,
+    routes: [{ path: ROUTES.SUPPLY_MATERIAL_REQUESTS, match: 'prefix', operation: 'view', priority: 120 }],
+    sidebar: { section: 'supply', icon: 'materialRequests', order: 6 },
   },
   {
     key: 'supply_consumable_requests',
