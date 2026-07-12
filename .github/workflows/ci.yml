@@ -66,6 +66,22 @@ jobs:
   tests:
     name: tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: inventory_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d inventory_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/inventory_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -79,6 +95,8 @@ jobs:
       - name: Generate fixtures
         run: npm run fixtures
         working-directory: nesting-service
+      - name: Inventory stock lifecycle
+        run: node scripts/test-inventory-stock-lifecycle.mjs
       - name: Fixtures are stable
         run: git diff --exit-code -- nesting-service/src/lib/__tests__/fixtures/
       - name: Phase 0

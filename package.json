@@ -9,6 +9,7 @@
     "prestart": "node scripts/ensure-nesting-service.mjs",
     "start": "node node_modules/next/dist/bin/next start",
     "lint": "node node_modules/eslint/bin/eslint.js",
+    "test:inventory": "node scripts/test-inventory-stock-lifecycle.mjs",
     "smoke:prod": "tsx scripts/prod-smoke.ts",
     "smoke:user:create": "tsx scripts/create-smoke-user.ts",
     "supabase:migrate": "tsx scripts/apply-supabase-migrations.ts"
