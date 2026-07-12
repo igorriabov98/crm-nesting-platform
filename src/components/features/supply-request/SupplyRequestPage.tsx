@@ -76,7 +76,7 @@ export function SupplyRequestPage({ data }: Props) {
         return
       }
       toast.success('Бронь завершена. Заявка передана в снабжение.')
-      router.refresh()
+      router.replace(ROUTES.MATERIAL_REQUESTS)
     })
   }
 

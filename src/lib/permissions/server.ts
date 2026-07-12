@@ -223,6 +223,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
   const departmentIds = Array.from(new Set(memberships.map((membership) => membership.departmentId).filter(Boolean)))
 
   let appliedDepartmentRows = 0
+  let materialRequestQueueConfigured = false
   if (departmentIds.length > 0) {
     const { data: accessData } = await db
       .from('department_access_permissions')
@@ -235,6 +236,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
       const label = `${membership.departmentName || 'Отдел'} · ${scope === 'head' ? 'Начальник отдела' : 'Подчинённый'}`
       for (const row of accessRows) {
         if (row.department_id !== membership.departmentId || row.subject_scope !== scope) continue
+        if (row.resource_key === 'material_request_queue') materialRequestQueueConfigured = true
         applyAccessRow(permissions, sources, row, label)
         appliedDepartmentRows += 1
       }
@@ -255,6 +257,15 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
       usedLegacyFallback: true,
       memberships,
       sources: legacySources,
+    }
+  }
+
+  if (!materialRequestQueueConfigured && userRow.role) {
+    const resource = RESOURCE_BY_KEY.material_request_queue
+    const fallbackPermission = getDefaultPermission(resource, userRow.role)
+    permissions.material_request_queue = fallbackPermission
+    if (fallbackPermission.canView || fallbackPermission.canManage) {
+      addPermissionSource(sources, 'material_request_queue', 'Значение по умолчанию для новой страницы')
     }
   }
 

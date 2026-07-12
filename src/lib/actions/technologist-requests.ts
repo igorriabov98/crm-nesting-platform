@@ -677,6 +677,7 @@ export async function completeStockReservation(requestId: string): Promise<Actio
     revalidatePath(ROUTES.SUPPLY)
     revalidatePath(ROUTES.SUPPLY_ORDERS)
     revalidatePath(ROUTES.TASKS)
+    revalidatePath(ROUTES.MATERIAL_REQUESTS)
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось завершить бронь' }

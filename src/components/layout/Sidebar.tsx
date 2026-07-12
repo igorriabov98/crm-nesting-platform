@@ -66,6 +66,7 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   invoices: Receipt,
   finance: Landmark,
   tasks: ListChecks,
+  materialRequests: FileText,
   production: FactoryIcon,
   consumableRequests: ClipboardList,
   consumables: Warehouse,
