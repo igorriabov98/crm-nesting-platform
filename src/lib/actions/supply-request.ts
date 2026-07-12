@@ -3,6 +3,10 @@
 import { revalidatePath } from 'next/cache'
 import { ROUTES } from '@/lib/constants/routes'
 import { reserveForMachine, unreserveFromMachine } from '@/lib/actions/inventory'
+import {
+  filterReservationsByStockScope,
+  type ReservationStockScope,
+} from '@/lib/inventory/reservation-stock-scope'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type {
@@ -60,6 +64,7 @@ export type SupplyRequestRow<T> = T & {
   stock_items: SupplyStockItem[]
   reservation_id: string | null
   reserved_quantity: number
+  covered_quantity: number
   reserved_secondary_quantity: number | null
 }
 
@@ -133,6 +138,8 @@ type InventoryRow = {
 
 type ReservationRow = {
   id: string | null
+  inventory_id: string | null
+  source_inventory_id: string | null
   request_item_table: string
   request_item_id: string
   reserved_quantity: number
@@ -140,7 +147,7 @@ type ReservationRow = {
   consumed_at: string | null
 }
 
-type ReservationStockSource = 'business_scrap' | 'regular_stock'
+type ReservationStockSource = ReservationStockScope
 
 const REQUEST_TABLES: RequestItemTable[] = [
   'request_sheet_metal',
@@ -480,16 +487,45 @@ async function getRequestIdForItem(db: LooseDb, table: RequestItemTable, id: str
   return row.request_id
 }
 
-async function getReservationIdsForItem(db: LooseDb, table: string, id: string) {
+async function getReservationIdsForItem(
+  db: LooseDb,
+  table: string,
+  id: string,
+  reservationSource: ReservationStockSource,
+) {
   const { data, error } = await db
     .from('inventory_reservations')
-    .select('id')
+    .select('id, inventory_id, source_inventory_id')
     .eq('request_item_table', table)
     .eq('request_item_id', id)
     .is('consumed_at', null)
     .order('created_at', { ascending: false })
-  if (error) throw new Error(error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð±Ñ€Ð¾Ð½ÑŒ')
-  return ((data || []) as { id?: string }[]).map((row) => row.id).filter((id): id is string => Boolean(id))
+  if (error) throw new Error(error.message || 'Не удалось загрузить бронь')
+  const reservations = (data || []) as Array<{
+    id?: string
+    inventory_id: string | null
+    source_inventory_id: string | null
+  }>
+  const inventoryIds = Array.from(new Set(
+    reservations
+      .map((reservation) => reservation.source_inventory_id || reservation.inventory_id)
+      .filter((inventoryId): inventoryId is string => Boolean(inventoryId)),
+  ))
+  if (!inventoryIds.length) return []
+
+  const { data: inventoryData, error: inventoryError } = await db
+    .from('inventory')
+    .select('id, is_business_scrap')
+    .in('id', inventoryIds)
+  if (inventoryError) throw new Error(inventoryError.message || 'Не удалось определить источник брони')
+  const inventoryById = new Map(
+    ((inventoryData || []) as Array<{ id: string; is_business_scrap?: boolean | null }>)
+      .map((inventory) => [inventory.id, inventory] as const),
+  )
+
+  return filterReservationsByStockScope(reservations, inventoryById, reservationSource)
+    .map((reservation) => reservation.id)
+    .filter((reservationId): reservationId is string => Boolean(reservationId))
 }
 
 function buildReservationMap(rows: ReservationRow[]) {
@@ -531,6 +567,7 @@ function withStock<T extends { id: string; material_id: string | null; material_
         null
       : null
     const reservation = reservationMap.get(reservationKey(table, row.id))
+    const coveredQuantity = getReservedForRow(table, rowRecord)
     const hasReservableStock = hasAvailableStock(table, rowRecord, stockItems)
     const incompatibleStockAvailable = row.material_id && requiresExactVariant(table, rowRecord) && !hasReservableStock
       ? materialItems.reduce((sum, item) => sum + getRawAvailableQuantity(item), 0)
@@ -565,6 +602,7 @@ function withStock<T extends { id: string; material_id: string | null; material_
       })),
       reservation_id: reservation?.id || null,
       reserved_quantity: reservation?.reserved_quantity ?? 0,
+      covered_quantity: coveredQuantity,
       reserved_secondary_quantity: reservation?.reserved_secondary_quantity ?? null,
     }
   })
@@ -573,11 +611,12 @@ function withStock<T extends { id: string; material_id: string | null; material_
 function summarize(rows: Array<Record<string, unknown>>, table: RequestItemTable, unit?: string): SupplyRequestSectionSummary {
   const needed = rows.reduce((sum, row) => sum + getNeededForRow(table, row), 0)
   const reserved = rows.reduce((sum, row) => sum + getReservedForRow(table, row), 0)
+  const covered = rows.reduce((sum, row) => sum + asNumber(row.covered_quantity ?? getReservedForRow(table, row)), 0)
   return {
     positions: rows.length,
     needed,
     reserved,
-    toOrder: Math.max(needed - reserved, 0),
+    toOrder: Math.max(needed - covered, 0),
     unit,
   }
 }
@@ -585,11 +624,15 @@ function summarize(rows: Array<Record<string, unknown>>, table: RequestItemTable
 function summarizeComponents(rows: RequestComponents[]): SupplyRequestSectionSummary {
   const needed = rows.reduce((sum, row) => sum + getNeededForRow('request_components', row as unknown as Record<string, unknown>), 0)
   const reserved = rows.reduce((sum, row) => sum + getReservedForRow('request_components', row as unknown as Record<string, unknown>), 0)
+  const covered = rows.reduce((sum, row) => {
+    const rowRecord = row as unknown as Record<string, unknown>
+    return sum + asNumber(rowRecord.covered_quantity ?? getReservedForRow('request_components', rowRecord))
+  }, 0)
   return {
     positions: rows.length,
     needed,
     reserved,
-    toOrder: Math.max(needed - reserved, 0),
+    toOrder: Math.max(needed - covered, 0),
     unit: 'шт',
   }
 }
@@ -649,7 +692,7 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
         ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds).eq('factory_id', request.machine.factory_id)
         : Promise.resolve({ data: [], error: null } as DbResult),
       itemIds.length
-        ? db.from('inventory_reservations').select('id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity, consumed_at').in('request_item_id', itemIds)
+        ? db.from('inventory_reservations').select('id, inventory_id, source_inventory_id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity, consumed_at').in('request_item_id', itemIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       steelTypeIds.length
         ? db.from('steel_types').select('id, name').in('id', steelTypeIds)
@@ -660,7 +703,8 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
     if (steelTypesRes.error) throw new Error(steelTypesRes.error.message || 'Не удалось загрузить типы стали')
     const steelTypeMap = new Map(((steelTypesRes.data || []) as { id: string; name: string }[]).map((steelType) => [steelType.id, steelType.name]))
 
-    const inventoryRows = ((inventoryRes.data || []) as InventoryRow[]).filter((row) => !row.deleted_at && (row.business_scrap_state || 'available') !== 'future')
+    const allInventoryRows = (inventoryRes.data || []) as InventoryRow[]
+    const inventoryRows = allInventoryRows.filter((row) => !row.deleted_at && (row.business_scrap_state || 'available') !== 'future')
     const inventoryVariantIds = Array.from(new Set(inventoryRows.map((row) => row.material_variant_id).filter(Boolean))) as string[]
     const variantMap = new Map<string, MaterialVariant>()
     if (inventoryVariantIds.length) {
@@ -688,35 +732,47 @@ export async function getRequestForSupply(requestId: string): Promise<{ data: Su
     for (const rows of materialInventoryMap.values()) {
       rows.sort((a, b) => Number(Boolean(b.is_business_scrap)) - Number(Boolean(a.is_business_scrap)) || Number(a.piece_length_mm ?? 0) - Number(b.piece_length_mm ?? 0))
     }
-    const reservationMap = buildReservationMap((reservationsRes.data || []) as ReservationRow[])
+    const inventoryById = new Map(
+      allInventoryRows.flatMap((inventory) => inventory.id ? [[inventory.id, {
+        id: inventory.id,
+        is_business_scrap: inventory.is_business_scrap,
+      }] as const] : []),
+    )
+    const scopedReservations = filterReservationsByStockScope(
+      (reservationsRes.data || []) as ReservationRow[],
+      inventoryById,
+      reservationSource,
+    )
+    const reservationMap = buildReservationMap(scopedReservations)
+    const sections = {
+      sheetMetal: withStock('request_sheet_metal', sheetMetal, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      // @deprecated — round_tube excluded from new UI
+      roundTube: withStock('request_round_tube', roundTube, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      circles: withStock('request_circle', circles, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      pipes: withStock('request_pipe', pipes, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      knives: withStock('request_knives', knives, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      components: withStock('request_components', components, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      paint: withStock('request_paint', paint, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      meshItems: withStock('request_mesh', meshItems, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      chainCords: withStock('request_chain_cord', chainCords, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+    }
 
     return {
       data: {
         current_role: role,
         request,
-        sections: {
-          sheetMetal: withStock('request_sheet_metal', sheetMetal, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-          // @deprecated — round_tube excluded from new UI
-          roundTube: withStock('request_round_tube', roundTube, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-          circles: withStock('request_circle', circles, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-          pipes: withStock('request_pipe', pipes, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-          knives: withStock('request_knives', knives, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-          components: withStock('request_components', components, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-          paint: withStock('request_paint', paint, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-          meshItems: withStock('request_mesh', meshItems, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-          chainCords: withStock('request_chain_cord', chainCords, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-        },
+        sections,
         summary: {
-          sheetMetal: summarize(sheetMetal, 'request_sheet_metal', 'шт'),
+          sheetMetal: summarize(sections.sheetMetal, 'request_sheet_metal', 'шт'),
           // @deprecated — round_tube excluded from new UI
-          roundTube: summarize(roundTube, 'request_round_tube', 'кг'),
-          circles: summarize(circles, 'request_circle', 'мм'),
-          pipes: summarize(pipes, 'request_pipe', 'мм'),
-          knives: summarize(knives, 'request_knives', 'мм'),
-          components: summarizeComponents(components),
-          paint: summarize(paint, 'request_paint', 'кг'),
-          meshItems: summarize(meshItems, 'request_mesh', 'шт'),
-          chainCords: summarize(chainCords, 'request_chain_cord', 'мм'),
+          roundTube: summarize(sections.roundTube, 'request_round_tube', 'кг'),
+          circles: summarize(sections.circles, 'request_circle', 'мм'),
+          pipes: summarize(sections.pipes, 'request_pipe', 'мм'),
+          knives: summarize(sections.knives, 'request_knives', 'мм'),
+          components: summarizeComponents(sections.components),
+          paint: summarize(sections.paint, 'request_paint', 'кг'),
+          meshItems: summarize(sections.meshItems, 'request_mesh', 'шт'),
+          chainCords: summarize(sections.chainCords, 'request_chain_cord', 'мм'),
         },
       },
       error: null,
@@ -825,7 +881,13 @@ export async function unreserveItem(data: { request_item_table: RequestItemTable
     if (!REQUEST_TABLES.includes(data.request_item_table)) throw new Error('ÐÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ð°Ñ Ñ‚Ð°Ð±Ð»Ð¸Ñ†Ð° Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸')
     const requestId = await getRequestIdForItem(db, data.request_item_table, data.request_item_id)
     const request = await getRequestMeta(db, requestId)
-    const reservationIds = await getReservationIdsForItem(db, data.request_item_table, data.request_item_id)
+    const reservationSource = assertReservationAllowedForRequest(request)
+    const reservationIds = await getReservationIdsForItem(
+      db,
+      data.request_item_table,
+      data.request_item_id,
+      reservationSource,
+    )
     if (!reservationIds.length) return { success: true }
 
     for (const reservationId of reservationIds) {
@@ -857,8 +919,7 @@ export async function reserveAllAvailable(requestId: string) {
         return
       }
       const needed = getNeededForRow(table, row)
-      const reserved = getReservedForRow(table, row)
-      const remaining = Math.max(needed - reserved, 0)
+      const remaining = Math.max(needed - row.covered_quantity, 0)
       const reservableStockItems = row.stock_items.filter((item) => Number(item.available_quantity || 0) > 0)
       if (reservableStockItems.length !== 1) {
         skippedCount += 1

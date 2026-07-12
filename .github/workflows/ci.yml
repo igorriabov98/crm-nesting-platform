@@ -30,6 +30,8 @@ jobs:
         working-directory: nesting-service
       - name: Typecheck root
         run: npx tsc --noEmit
+      - name: Supply reservation stock scope
+        run: npm run test:supply-reservation-scope
       - name: Typecheck nesting-service
         run: npx tsc --noEmit
         working-directory: nesting-service
