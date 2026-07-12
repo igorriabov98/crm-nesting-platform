@@ -37,6 +37,19 @@ BEGIN
   WHERE id = '00000000-0000-0000-0000-000000000050';
   PERFORM public.test_assert_numeric(v_value, 6000, 'delivery schedule converted to millimeters');
   IF v_unit IS DISTINCT FROM 'мм' THEN RAISE EXCEPTION 'delivery schedule unit was not converted to mm'; END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.inventory_reservations
+    WHERE id = '00000000-0000-0000-0000-000000000042'
+      AND reservation_source = 'supply_receipt'
+      AND supply_order_schedule_id = '00000000-0000-0000-0000-000000000051'
+  ) THEN
+    RAISE EXCEPTION 'legacy consumed delivery was not reconciled with its schedule';
+  END IF;
+  SELECT reserved_from_stock_kg INTO v_value FROM public.request_sheet_metal
+  WHERE id = '00000000-0000-0000-0000-000000000022';
+  PERFORM public.test_assert_numeric(v_value, 0, 'reconciled delivery is excluded from stock mirror');
 END;
 $$;
 
@@ -313,6 +326,98 @@ BEGIN
   SELECT COUNT(*) INTO v_value FROM public.inventory_transactions
   WHERE machine_id = v_normal_machine AND transaction_type = 'write_off';
   PERFORM public.test_assert_numeric(v_value, 2, 'repeated fact without new normal reservation does not double write off');
+END;
+$$;
+
+DO $$
+DECLARE
+  v_factory uuid := '40000000-0000-0000-0000-000000000001';
+  v_user uuid := '40000000-0000-0000-0000-000000000002';
+  v_material uuid := '40000000-0000-0000-0000-000000000003';
+  v_variant uuid := '40000000-0000-0000-0000-000000000004';
+  v_machine uuid := '40000000-0000-0000-0000-000000000005';
+  v_request uuid := '40000000-0000-0000-0000-000000000006';
+  v_item uuid := '40000000-0000-0000-0000-000000000007';
+  v_inventory uuid := '40000000-0000-0000-0000-000000000008';
+  v_section uuid := '40000000-0000-0000-0000-000000000009';
+  v_fact uuid := '40000000-0000-0000-0000-00000000000a';
+  v_schedule_one uuid := '40000000-0000-0000-0000-00000000000b';
+  v_schedule_two uuid := '40000000-0000-0000-0000-00000000000c';
+  v_value numeric;
+BEGIN
+  INSERT INTO public.factories (id, name) VALUES (v_factory, 'Delivered supply factory');
+  INSERT INTO public.users (id) VALUES (v_user);
+  INSERT INTO public.materials (id, category) VALUES (v_material, 'sheet_metal');
+  INSERT INTO public.material_variants (id) VALUES (v_variant);
+  INSERT INTO public.machines (id, factory_id) VALUES (v_machine, v_factory);
+  INSERT INTO public.technologist_requests (id, machine_id) VALUES (v_request, v_machine);
+  INSERT INTO public.request_sheet_metal (id, request_id, material_id, material_variant_id)
+  VALUES (v_item, v_request, v_material, v_variant);
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id,
+    total_quantity, reserved_quantity, unit, last_updated_by
+  ) VALUES (
+    v_inventory, v_factory, v_material, v_variant,
+    1, 0, 'шт', v_user
+  );
+  INSERT INTO public.supply_order_delivery_schedules (
+    id, request_item_table, request_item_id, quantity, received_quantity,
+    unit, status, delivered_at, received_by
+  ) VALUES (
+    v_schedule_one, 'request_sheet_metal', v_item, 1, 1,
+    'шт', 'delivered', now(), v_user
+  );
+  INSERT INTO public.production_fact_sections (id, production_stage_type) VALUES (v_section, 'cutting');
+  INSERT INTO public.production_machine_facts (id, machine_id, section_id, fact_date)
+  VALUES (v_fact, v_machine, v_section, '2026-07-12');
+
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 0, 'first delivered schedule is deducted at cutting fact');
+  SELECT COUNT(*) INTO v_value FROM public.inventory_reservations
+  WHERE supply_order_schedule_id = v_schedule_one
+    AND reservation_source = 'supply_receipt'
+    AND consumed_at IS NOT NULL;
+  PERFORM public.test_assert_numeric(v_value, 1, 'first delivered schedule creates one consumed reservation');
+  SELECT reserved_from_stock_kg INTO v_value FROM public.request_sheet_metal WHERE id = v_item;
+  PERFORM public.test_assert_numeric(v_value, 0, 'delivered supply reservation does not alter stock mirror');
+
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+  SELECT COUNT(*) INTO v_value FROM public.inventory_transactions
+  WHERE machine_id = v_machine AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, 1, 'repeated fact without delivery stays idempotent');
+
+  UPDATE public.inventory
+  SET total_quantity = total_quantity + 1,
+      updated_at = now()
+  WHERE id = v_inventory;
+  INSERT INTO public.supply_order_delivery_schedules (
+    id, request_item_table, request_item_id, quantity, received_quantity,
+    unit, status, delivered_at, received_by
+  ) VALUES (
+    v_schedule_two, 'request_sheet_metal', v_item, 1, 1,
+    'шт', 'delivered', now(), v_user
+  );
+
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 0, 'later delivered schedule is deducted by repeated fact');
+  SELECT COUNT(*) INTO v_value FROM public.inventory_reservations
+  WHERE request_item_id = v_item
+    AND reservation_source = 'supply_receipt'
+    AND consumed_at IS NOT NULL;
+  PERFORM public.test_assert_numeric(v_value, 2, 'each delivered schedule is consumed exactly once');
+  SELECT COUNT(*) INTO v_value FROM public.inventory_transactions
+  WHERE machine_id = v_machine AND transaction_type = 'reserve';
+  PERFORM public.test_assert_numeric(v_value, 2, 'two delivered schedules create two reserve transactions');
+  SELECT COUNT(*) INTO v_value FROM public.inventory_transactions
+  WHERE machine_id = v_machine AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, 2, 'two delivered schedules create two write-offs');
+
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+  SELECT COUNT(*) INTO v_value FROM public.inventory_transactions
+  WHERE machine_id = v_machine AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, 2, 'third fact call does not double write off');
 END;
 $$;
 

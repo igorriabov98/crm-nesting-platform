@@ -283,7 +283,6 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
         return
       }
       toast.success('Запись удалена')
-      router.refresh()
     })
   }
 
