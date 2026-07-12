@@ -26,6 +26,7 @@ export const ROUTES = {
   CONTRACTS:      '/contracts',
   FINANCE_CALENDAR:'/finance/calendar',
   TASKS:          '/tasks',
+  MATERIAL_REQUESTS: '/material-requests',
   PRODUCTION:     '/production',
   GANTT:          '/production/gantt',
   PRODUCTION_FACT: '/production/fact',

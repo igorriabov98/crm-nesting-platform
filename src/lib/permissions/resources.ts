@@ -8,6 +8,7 @@ export type ResourceKey =
   | 'sales_plan'
   | 'client_prices'
   | 'technologist_requests'
+  | 'material_request_queue'
   | 'products'
   | 'product_projects'
   | 'clients'
@@ -56,6 +57,7 @@ export type SidebarIconKey =
   | 'invoices'
   | 'finance'
   | 'tasks'
+  | 'materialRequests'
   | 'production'
   | 'consumableRequests'
   | 'consumables'
@@ -183,6 +185,17 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: REQUEST_VIEW_ROLES,
     defaultManageRoles: REQUEST_MANAGE_ROLES,
     routes: [{ regex: /^\/sales-plan\/[^/]+\/request(?:\/.*)?$/, operation: 'view', priority: 90 }],
+  },
+  {
+    key: 'material_request_queue',
+    label: 'Заявки на материалы',
+    description: 'Очередь машин и готовность заявок технолога',
+    group: 'Работа',
+    defaultHref: ROUTES.MATERIAL_REQUESTS,
+    defaultViewRoles: ['technologist', ...DIRECTORS],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.MATERIAL_REQUESTS, match: 'prefix', operation: 'view', priority: 100 }],
+    sidebar: { section: 'workflow', icon: 'materialRequests', order: 20 },
   },
   {
     key: 'products',
