@@ -872,11 +872,6 @@ export async function getProductionFactWorkspaceData(input: {
     getUsersByIds(admin, userIds),
   ])
 
-  const previousTonnageBySection = previousTonnageFacts.reduce<Record<string, number>>((acc, fact) => {
-    acc[fact.section_id] = Number(fact.tonnage || 0)
-    return acc
-  }, {})
-
   const machineFactRows = machineFacts.map((fact): ProductionFactMachineFactRow => {
     const section = sectionById.get(fact.section_id) || null
     const parentSection = section ? (section.parent_id ? sectionById.get(section.parent_id) || null : section) : null
@@ -891,10 +886,25 @@ export async function getProductionFactWorkspaceData(input: {
     }
   })
 
-  const tonnageFactRows = tonnageFacts.map((fact): ProductionFactTonnageFactRow => {
+  const nonCuttingTonnageFacts = tonnageFacts.filter((fact) => {
+    const section = sectionById.get(fact.section_id) || null
+    const parent = section?.parent_id ? sectionById.get(section.parent_id) || null : null
+    return !isCuttingFactSection(section, parent)
+  })
+  const nonCuttingPreviousTonnageFacts = previousTonnageFacts.filter((fact) => {
+    const section = sectionById.get(fact.section_id) || null
+    const parent = section?.parent_id ? sectionById.get(section.parent_id) || null : null
+    return !isCuttingFactSection(section, parent)
+  })
+  const visiblePreviousTonnageBySection = nonCuttingPreviousTonnageFacts.reduce<Record<string, number>>((acc, fact) => {
+    acc[fact.section_id] = Number(fact.tonnage || 0)
+    return acc
+  }, {})
+
+  const tonnageFactRows = nonCuttingTonnageFacts.map((fact): ProductionFactTonnageFactRow => {
     const section = sectionById.get(fact.section_id) || null
     const parentSection = section ? (section.parent_id ? sectionById.get(section.parent_id) || null : section) : null
-    const previousTonnage = previousTonnageBySection[fact.section_id] || 0
+    const previousTonnage = visiblePreviousTonnageBySection[fact.section_id] || 0
     const tonnage = Number(fact.tonnage || 0)
     return {
       ...fact,
@@ -910,7 +920,7 @@ export async function getProductionFactWorkspaceData(input: {
   })
 
   const totalTonnage = tonnageFactRows.reduce((sum, fact) => sum + Number(fact.tonnage || 0), 0)
-  const previousTotalTonnage = previousTonnageFacts.reduce((sum, fact) => sum + Number(fact.tonnage || 0), 0)
+  const previousTotalTonnage = nonCuttingPreviousTonnageFacts.reduce((sum, fact) => sum + Number(fact.tonnage || 0), 0)
 
   return {
     factories,
@@ -921,7 +931,7 @@ export async function getProductionFactWorkspaceData(input: {
     shippingMachinesForDate,
     machineFacts: machineFactRows,
     tonnageFacts: tonnageFactRows,
-    previousTonnageBySection,
+    previousTonnageBySection: visiblePreviousTonnageBySection,
     canEditSelectedDate: canEditFactDate(role, selectedDate),
     isDirector: isDirector(role),
     stats: {
@@ -1419,7 +1429,7 @@ export async function saveUnifiedProductionFact(input: {
 
     const { data: existingRaw, error: existingError } = await looseDb(admin)
       .from('production_machine_facts')
-      .select('machine_id')
+      .select('id, machine_id')
       .eq('factory_id', input.factory_id)
       .eq('fact_date', factDate)
       .eq('shift', input.shift)
@@ -1427,23 +1437,12 @@ export async function saveUnifiedProductionFact(input: {
       .in('machine_id', machineIds)
 
     if (existingError) throw existingError
-    const existingMachineIds = new Set(((existingRaw || []) as Array<{ machine_id: string }>).map((fact) => fact.machine_id))
+    const existingFacts = (existingRaw || []) as Array<{ id: string; machine_id: string }>
+    const existingMachineIds = new Set(existingFacts.map((fact) => fact.machine_id))
     const missingMachineIds = machineIds.filter((machineId) => !existingMachineIds.has(machineId))
-    let inserted = missingMachineIds.length
+    let insertedFacts: Array<{ id: string; machine_id: string }> = []
 
-    if (missingMachineIds.length > 0 && isCuttingSection) {
-      await runLimited(missingMachineIds, 4, async (machineId) => {
-        const result = await saveProductionMachineFact({
-          factory_id: input.factory_id,
-          fact_date: factDate,
-          machine_id: machineId,
-          section_id: input.section_id,
-          shift: input.shift,
-          comment: input.comment,
-        })
-        if (!result.success) throw new Error(result.error || 'Не удалось сохранить факт машины')
-      })
-    } else if (missingMachineIds.length > 0) {
+    if (missingMachineIds.length > 0) {
       const machineFactPayload = missingMachineIds.map((machineId) => ({
         factory_id: input.factory_id,
         fact_date: factDate,
@@ -1461,8 +1460,31 @@ export async function saveUnifiedProductionFact(input: {
         .select('id, machine_id')
 
       if (insertError) throw insertError
-      const insertedFacts = (insertedRaw || []) as Array<{ id: string; machine_id: string }>
-      inserted = insertedFacts.length
+      insertedFacts = (insertedRaw || []) as Array<{ id: string; machine_id: string }>
+    }
+
+    const inserted = insertedFacts.length
+    if (isCuttingSection) {
+      const cuttingFactIds = [...existingFacts, ...insertedFacts].map((fact) => fact.id)
+      await runLimited(cuttingFactIds, 6, async (factId) => {
+        await applyCuttingFactSideEffects(admin, factId, userId)
+      })
+
+      revalidateProductionCuttingFlow()
+      for (const machineId of machineIds) {
+        revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+      }
+
+      return {
+        success: true,
+        data: {
+          inserted,
+          skipped: machineIds.length - inserted,
+          shippingUpdated: 0,
+          tonnageSaved: false,
+        },
+        error: null,
+      }
     }
 
     const tonnage = Number(input.tonnage || 0)

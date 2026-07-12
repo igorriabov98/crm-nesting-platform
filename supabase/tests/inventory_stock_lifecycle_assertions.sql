@@ -161,7 +161,13 @@ DECLARE
   v_section uuid := '30000000-0000-0000-0000-00000000000b';
   v_cut_fact uuid := '30000000-0000-0000-0000-00000000000c';
   v_normal_fact uuid := '30000000-0000-0000-0000-00000000000d';
+  v_later_cut_source uuid := '30000000-0000-0000-0000-00000000000e';
+  v_later_cut_request uuid := '30000000-0000-0000-0000-00000000000f';
+  v_later_normal_request uuid := '30000000-0000-0000-0000-000000000010';
   v_cut_reservation uuid;
+  v_later_cut_reservation uuid;
+  v_later_normal_reservation uuid;
+  v_later_cut_scrap uuid;
   v_value numeric;
   v_before numeric;
 BEGIN
@@ -170,8 +176,8 @@ BEGIN
   INSERT INTO public.materials (id, category) VALUES (v_material, 'knives');
   INSERT INTO public.material_variants (id) VALUES (v_variant);
   INSERT INTO public.machines (id, factory_id) VALUES (v_cut_machine, v_factory), (v_normal_machine, v_factory);
-  INSERT INTO public.request_knives (id) VALUES (v_cut_request);
-  INSERT INTO public.request_components (id) VALUES (v_normal_request);
+  INSERT INTO public.request_knives (id) VALUES (v_cut_request), (v_later_cut_request);
+  INSERT INTO public.request_components (id) VALUES (v_normal_request), (v_later_normal_request);
   INSERT INTO public.inventory (
     id, factory_id, material_id, material_variant_id, piece_length_mm,
     total_quantity, reserved_quantity, unit, total_secondary_quantity,
@@ -218,9 +224,50 @@ BEGIN
   WHERE machine_id = v_cut_machine AND transaction_type = 'write_off';
   PERFORM public.test_assert_numeric(v_value, 0, 'cut reservation produces no second write-off');
 
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit, total_secondary_quantity,
+    reserved_secondary_quantity, secondary_unit, last_updated_by
+  ) VALUES (
+    v_later_cut_source, v_factory, v_material, v_variant, 3000,
+    3000, 0, 'мм', 1, 0, 'шт', v_user
+  );
+  v_later_cut_reservation := public.fn_reserve_inventory_row_for_machine(
+    v_later_cut_source, v_cut_machine, 1000, 'request_knives', v_later_cut_request, v_user, NULL, true
+  );
+  SELECT business_scrap_inventory_id INTO v_later_cut_scrap
+  FROM public.inventory_reservations WHERE id = v_later_cut_reservation;
+
+  PERFORM public.fn_apply_production_fact_cutting(v_cut_fact, v_user);
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory_reservations
+    WHERE id = v_later_cut_reservation AND consumed_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'later cut reservation was not consumed by repeated cutting fact';
+  END IF;
+  SELECT COUNT(*) INTO v_value
+  FROM public.production_fact_cutting_event_reservations er
+  JOIN public.production_fact_cutting_events e ON e.id = er.event_id
+  WHERE e.fact_id = v_cut_fact;
+  PERFORM public.test_assert_numeric(v_value, 2, 'repeated cutting fact links only the newly arrived cut reservation');
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory
+    WHERE id = v_later_cut_scrap AND business_scrap_state = 'available'
+  ) THEN
+    RAISE EXCEPTION 'later cut business scrap was not promoted to available';
+  END IF;
+  SELECT COUNT(*) INTO v_value FROM public.inventory_transactions
+  WHERE machine_id = v_cut_machine AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, 0, 'later cut reservation still produces no second write-off');
+
   PERFORM public.fn_apply_production_fact_cutting(v_cut_fact, v_user);
   SELECT COUNT(*) INTO v_value FROM public.production_fact_cutting_events WHERE fact_id = v_cut_fact;
-  PERFORM public.test_assert_numeric(v_value, 1, 'repeated cutting fact is idempotent');
+  PERFORM public.test_assert_numeric(v_value, 1, 'repeated cutting fact reuses one event');
+  SELECT COUNT(*) INTO v_value
+  FROM public.production_fact_cutting_event_reservations er
+  JOIN public.production_fact_cutting_events e ON e.id = er.event_id
+  WHERE e.fact_id = v_cut_fact;
+  PERFORM public.test_assert_numeric(v_value, 2, 'repeated cutting fact without a new delivery is idempotent');
 
   PERFORM public.fn_apply_production_fact_cutting(v_normal_fact, v_user);
   SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_normal_source;
@@ -230,6 +277,42 @@ BEGIN
   SELECT COUNT(*) INTO v_value FROM public.inventory_transactions
   WHERE machine_id = v_normal_machine AND transaction_type = 'write_off' AND quantity = -40;
   PERFORM public.test_assert_numeric(v_value, 1, 'normal reservation creates one write-off');
+
+  UPDATE public.inventory
+  SET total_quantity = total_quantity + 30,
+      reserved_quantity = reserved_quantity + 30
+  WHERE id = v_normal_source;
+  INSERT INTO public.inventory_reservations (
+    inventory_id, material_id, machine_id, request_item_table, request_item_id,
+    reserved_quantity, reserved_by
+  ) VALUES (
+    v_normal_source, v_material, v_normal_machine, 'request_components', v_later_normal_request,
+    30, v_user
+  ) RETURNING id INTO v_later_normal_reservation;
+  PERFORM public.fn_set_request_reserved_quantity('request_components', v_later_normal_request);
+
+  PERFORM public.fn_apply_production_fact_cutting(v_normal_fact, v_user);
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_normal_source;
+  PERFORM public.test_assert_numeric(v_value, 60, 'later normal delivery is deducted by repeated cutting fact');
+  SELECT reserved_quantity INTO v_value FROM public.inventory WHERE id = v_normal_source;
+  PERFORM public.test_assert_numeric(v_value, 0, 'later normal reservation is released by repeated cutting fact');
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory_reservations
+    WHERE id = v_later_normal_reservation AND consumed_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'later normal reservation was not consumed by repeated cutting fact';
+  END IF;
+  SELECT COUNT(*) INTO v_value FROM public.inventory_transactions
+  WHERE machine_id = v_normal_machine AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, 2, 'two delivery batches create exactly two write-offs');
+  SELECT COALESCE(SUM(quantity), 0) INTO v_value FROM public.inventory_transactions
+  WHERE machine_id = v_normal_machine AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, -70, 'write-offs match both delivered reservation batches');
+
+  PERFORM public.fn_apply_production_fact_cutting(v_normal_fact, v_user);
+  SELECT COUNT(*) INTO v_value FROM public.inventory_transactions
+  WHERE machine_id = v_normal_machine AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, 2, 'repeated fact without new normal reservation does not double write off');
 END;
 $$;
 
