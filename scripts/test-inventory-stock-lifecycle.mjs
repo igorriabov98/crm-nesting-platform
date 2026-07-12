@@ -42,7 +42,7 @@ function extractFunction(source, qualifiedName) {
 const factoryMigration = read('supabase/migrations/20260626153000_inventory_factory_scope.sql')
 const cutMigration = read('supabase/migrations/90_reapply_cut_reservation_functions.sql')
 const chainCordMigration = read('supabase/migrations/20260712125529_normalize_chain_cord_inventory_mm.sql')
-const cuttingFactMigration = read('supabase/migrations/20260629133000_production_fact_cutting_flow.sql')
+const cuttingFactMigration = read('supabase/migrations/20260712142522_replay_cutting_fact_new_reservations.sql')
 const archiveScrapMigration = read('supabase/migrations/92_archive_empty_business_scrap_on_unreserve.sql')
 
 const sql = [

@@ -93,6 +93,7 @@ type DayOverviewRow = {
   sectionLabel: string
   facts: ProductionFactMachineFactRow[]
   tonnage: number
+  tracksTonnage: boolean
 }
 
 type MachineMonthGroup = {
@@ -127,6 +128,8 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   const selectedStage = availableStages.find((stage) => stage.definition.key === effectiveStageKey) || availableStages[0] || null
   const selectedStageDefinition = selectedStage?.definition || getProductionFactStageDefinition(effectiveStageKey)
   const isShippingStage = Boolean(selectedStageDefinition.isShipping)
+  const isCuttingStage = selectedStageDefinition.key === 'cutting'
+  const requiresTonnage = !isShippingStage && !isCuttingStage
   const availableSections = selectedStage?.sections.filter((section) => section.section) || []
   const effectiveSectionId = availableSections.some((section) => section.section?.id === selectedSectionId)
     ? selectedSectionId
@@ -181,6 +184,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
           sectionLabel: item.label,
           facts,
           tonnage: Number(tonnageFact?.tonnage || 0),
+          tracksTonnage: stage.definition.key !== 'cutting',
         })
       }
     }
@@ -232,7 +236,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
       toast.error('Выберите машины')
       return
     }
-    if (!isShippingStage) {
+    if (requiresTonnage) {
       const value = Number(tonnageValue || 0)
       if (!Number.isFinite(value) || value < 0) {
         toast.error('Тоннаж должен быть числом от 0')
@@ -248,7 +252,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
         section_id: selectedSection.id,
         machine_ids: selectedMachineIds,
         shift,
-        tonnage: isShippingStage ? null : Number(tonnageValue || 0),
+        tonnage: requiresTonnage ? Number(tonnageValue || 0) : null,
         comment,
       })
 
@@ -259,13 +263,14 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
 
       if (isShippingStage) {
         toast.success(`Факт отгрузки сохранён: ${result.data?.shippingUpdated || 0}`)
+      } else if (isCuttingStage) {
+        toast.success('Факт заготовки сохранён. Новые складские резервы обработаны')
       } else {
         toast.success(`Факт сохранён: добавлено ${result.data?.inserted || 0}, уже было ${result.data?.skipped || 0}`)
       }
       setSelectedMachineIds([])
       setMachineDropdownOpen(false)
       setComment('')
-      router.refresh()
     })
   }
 
@@ -456,7 +461,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
             </select>
           </label>
 
-          {!isShippingStage ? (
+          {requiresTonnage ? (
             <label className="space-y-1 text-sm font-medium text-[#334155]">
               <span>Тоннаж, т</span>
               <Input
@@ -473,7 +478,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
             </label>
           ) : (
             <div className="rounded-md border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-2 text-sm text-[#1E3A8A]">
-              Тоннаж не нужен
+              Для этого участка тоннаж не нужен
             </div>
           )}
 
@@ -488,7 +493,11 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
           </Button>
         </div>
 
-        {duplicateSelectedCount > 0 && !isShippingStage ? (
+        {duplicateSelectedCount > 0 && isCuttingStage ? (
+          <div className="rounded-md border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-sm text-[#1E3A8A]">
+            По {duplicateSelectedCount} выбранным машинам факт заготовки уже есть. Система проверит и спишет только новые складские резервы.
+          </div>
+        ) : duplicateSelectedCount > 0 && !isShippingStage ? (
           <div className="rounded-md border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2 text-sm text-[#92400E]">
             {duplicateSelectedCount} выбранных машин уже есть в этом участке и смене. При сохранении они будут пропущены.
           </div>
@@ -527,11 +536,17 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                   </div>
                 )}
               </div>
-              <div className="grid gap-3 px-4 py-3 md:grid-cols-3">
-                <Metric label="Тоннаж участка" value={`${formatNumber(Number(selectedTonnageFact?.tonnage || 0), 3)} т`} />
-                <Metric label="Вчера" value={`${formatNumber(Number(selectedTonnageFact?.previousTonnage || 0), 3)} т`} />
-                <Metric label="Изменено" value={selectedTonnageFact ? formatDateTime(selectedTonnageFact.updated_at) : '—'} />
-              </div>
+              {isCuttingStage ? (
+                <div className="border-t border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
+                  Для заготовки учитываются машины и складские списания; тоннаж участка не вводится.
+                </div>
+              ) : (
+                <div className="grid gap-3 px-4 py-3 md:grid-cols-3">
+                  <Metric label="Тоннаж участка" value={`${formatNumber(Number(selectedTonnageFact?.tonnage || 0), 3)} т`} />
+                  <Metric label="Вчера" value={`${formatNumber(Number(selectedTonnageFact?.previousTonnage || 0), 3)} т`} />
+                  <Metric label="Изменено" value={selectedTonnageFact ? formatDateTime(selectedTonnageFact.updated_at) : '—'} />
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -549,7 +564,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                   <Badge variant="outline" className="border-[#DBEAFE] text-[#1E40AF]">{row.facts.length}</Badge>
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-2 text-xs text-[#64748B]">
-                  <span>{formatNumber(row.tonnage, 3)} т</span>
+                  <span>{row.tracksTonnage ? `${formatNumber(row.tonnage, 3)} т` : 'тоннаж не учитывается'}</span>
                   <span>{row.facts.filter((fact) => fact.shift === 'day').length}/{row.facts.filter((fact) => fact.shift === 'night').length}</span>
                 </div>
               </div>
