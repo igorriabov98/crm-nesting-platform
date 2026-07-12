@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { ROUTES } from '@/lib/constants/routes'
+import { committedScheduleQuantity, outstandingReceivingQuantity } from '@/lib/supply-orders/receiving-quantity.mjs'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { PermissionOperation } from '@/lib/permissions/resources'
@@ -811,13 +812,13 @@ async function loadOneOrderItem(db: LooseDb, table: string, id: string) {
 async function getPlannedScheduleTotal(db: LooseDb, table: string, id: string, excludeId?: string) {
   const { data, error } = await db
     .from('supply_order_delivery_schedules')
-    .select('id, quantity')
+    .select('id, quantity, status, received_quantity')
     .eq('request_item_table', table)
     .eq('request_item_id', id)
   if (error) throw new Error(error.message || 'Не удалось загрузить график поставок')
-  return ((data || []) as { id: string; quantity: number }[])
+  return ((data || []) as Array<{ id: string; quantity: number; status: string; received_quantity: number | null }>)
     .filter((row) => row.id !== excludeId)
-    .reduce((sum, row) => sum + Number(row.quantity || 0), 0)
+    .reduce((sum, row) => sum + committedScheduleQuantity(row), 0)
 }
 
 async function assertScheduleTotalFits(db: LooseDb, item: RawOrderItem, quantity: number, excludeId?: string) {
@@ -1544,12 +1545,14 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
     }
 
-    const supplierNameMap = await loadSupplierNameMap(db, [
-      ...items.map((item) => item.supplier_id).filter(Boolean),
-      ...schedules.map((schedule) => schedule.supplier_id).filter(Boolean),
-    ] as string[])
     const factoryIds = Array.from(new Set(items.map((item) => item.factory_id).filter(Boolean))) as string[]
-    const factoryNameMap = await loadFactoryNameMap(db, factoryIds)
+    const [supplierNameMap, factoryNameMap] = await Promise.all([
+      loadSupplierNameMap(db, [
+        ...items.map((item) => item.supplier_id).filter(Boolean),
+        ...schedules.map((schedule) => schedule.supplier_id).filter(Boolean),
+      ] as string[]),
+      loadFactoryNameMap(db, factoryIds),
+    ])
 
     type MutableFactory = {
       factory_id: string | null
@@ -1876,13 +1879,15 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
       return { data: { factories, activeFactoryId: null, groups: [] }, error: null }
     }
 
-    const allItems = await loadAggregateInputItems(db)
+    const allItems = await loadAggregateInputItems(db, activeFactoryId)
     const items = allItems.filter((item) => (
       item.order_status === 'ordered'
       && item.factory_id === activeFactoryId
     ))
-    const factoryNameMap = await loadFactoryNameMap(db, [activeFactoryId])
-    const schedules = await loadReceivingSchedules(db, items)
+    const [factoryNameMap, schedules] = await Promise.all([
+      loadFactoryNameMap(db, [activeFactoryId]),
+      loadReceivingSchedules(db, items),
+    ])
     const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
 
     for (const schedule of schedules) {
@@ -1899,8 +1904,8 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
 
     for (const item of items) {
       const factoryName = item.factory_id ? factoryNameMap.get(item.factory_id) || 'Завод' : 'Без завода'
-      const itemSchedules = (schedulesByItem.get(itemKey(item)) || [])
-        .filter((schedule) => schedule.status !== 'delivered')
+      const allItemSchedules = schedulesByItem.get(itemKey(item)) || []
+      const itemSchedules = allItemSchedules.filter((schedule) => schedule.status !== 'delivered')
 
       if (itemSchedules.length > 0) {
         for (const schedule of itemSchedules) {
@@ -1918,13 +1923,15 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
 
       const deliveryDate = effectiveSupplyDeliveryDate(item, item.planned_material_date)
       if (!deliveryDate) continue
+      const outstandingQuantity = outstandingReceivingQuantity(item.to_order, allItemSchedules)
+      if (outstandingQuantity <= 0) continue
       receivingItems.push(makeReceivingItem(
         item,
         factoryName,
         supplierNameMap,
         null,
         deliveryDate,
-        item.to_order,
+        outstandingQuantity,
       ))
     }
 

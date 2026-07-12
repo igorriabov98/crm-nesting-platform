@@ -727,7 +727,7 @@ function FactoryDeliveryEditor({
             {scheduleDrafts.map((draft, index) => {
               const quantity = parseQuantity(draft.quantity)
               return (
-                <div key={draft.id} className="grid gap-3 rounded-md border border-[#E8ECF0] p-3 sm:grid-cols-2 lg:grid-cols-[minmax(150px,180px)_minmax(150px,180px)_minmax(260px,1fr)_44px] lg:items-start">
+                <div key={draft.id} className="grid min-w-0 gap-3 rounded-md border border-[#E8ECF0] p-3 sm:grid-cols-2 sm:items-start">
                   <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
                     Дата
                     <input
@@ -748,13 +748,13 @@ function FactoryDeliveryEditor({
                       className="h-9 w-full rounded-md border border-[#CBD5E1] px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
                     />
                   </label>
-                  <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569] sm:col-span-2 lg:col-span-1">
+                  <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569] sm:col-span-2">
                     Поставщик для этой даты
                     <select
                       value={draft.supplier_id}
                       disabled={isPending}
                       onChange={(event) => updateDraft(index, { supplier_id: event.target.value })}
-                      className="h-9 w-full rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="h-9 min-w-0 w-full max-w-full truncate rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <option value="">По позициям</option>
                       {suppliers.map((supplier) => (
@@ -769,7 +769,7 @@ function FactoryDeliveryEditor({
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    className="self-end justify-self-start lg:justify-self-end"
+                    className="justify-self-start sm:col-span-2 sm:justify-self-end"
                     disabled={isPending || scheduleDrafts.length <= 1}
                     onClick={() => removeDraft(index)}
                     aria-label="Удалить дату поставки"
