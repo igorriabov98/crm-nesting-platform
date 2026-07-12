@@ -47,7 +47,7 @@ export const CATEGORY_UNITS: Record<string, { primary: string; secondary?: strin
   paint: { primary: 'кг' },
   components: { primary: 'шт' },
   mesh: { primary: 'шт' },
-  chain_cord: { primary: 'м' },
+  chain_cord: { primary: 'мм' },
 }
 
 export const WIRE_UNIT = 'кг'
