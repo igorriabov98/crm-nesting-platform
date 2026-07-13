@@ -468,7 +468,7 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
 
 export async function getRolePermissionsPageData(): Promise<{ data: RolePermissionsPageData | null; error: string | null }> {
   try {
-    await requireAccessSettingsPermission()
+    const context = await requireAccessSettingsPermission()
     const db = createAdminClient() as unknown as LooseAuthAdminClient
     const [departments, users, memberships, accessRows, auditRows] = await Promise.all([
       getDepartments(db),
@@ -509,7 +509,7 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
             changedByName: relationOne(row.user)?.full_name || null,
           })),
         adminUsers: userSummaries.filter((user) => user.isAdminPosition),
-        previewUsers: userSummaries,
+        previewUsers: userSummaries.filter((user) => user.isActive && user.id !== context.userId),
       },
       error: null,
     }

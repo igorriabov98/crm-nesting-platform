@@ -6,12 +6,10 @@ import { useRouter } from 'next/navigation'
 import {
   Building2,
   Check,
-  CheckCircle2,
   Clock3,
   Eye,
   History,
   Layers3,
-  LockKeyhole,
   PencilLine,
   RefreshCw,
   RotateCcw,
@@ -24,13 +22,12 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  getAccessPreviewForUser,
   saveDepartmentAccessPermissions,
   type DepartmentAccessPermissionInput,
   type DepartmentAccessSubjectScope,
   type RolePermissionsPageData,
-  type UserAccessPreview,
 } from '@/lib/actions/role-permissions'
+import { startUserImpersonation } from '@/lib/actions/impersonation'
 import type { ResourceKey } from '@/lib/permissions/resources'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -66,7 +63,6 @@ type PermissionState = {
 
 type PermissionStateMap = Record<string, PermissionState>
 type PermissionField = 'view' | 'manage'
-type PreviewFilter = 'granted' | 'denied' | 'all'
 type Resource = RolePermissionsPageData['resources'][number]
 
 const SUBJECT_SCOPES = ['head', 'member'] as const satisfies readonly DepartmentAccessSubjectScope[]
@@ -182,12 +178,10 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
   const [selectedDepartmentId, setSelectedDepartmentId] = useState(data.departments[0]?.id || '')
   const [selectedPreviewUserId, setSelectedPreviewUserId] = useState(data.previewUsers[0]?.id || '')
   const [permissions, setPermissions] = useState(() => buildState(data.permissions))
-  const [preview, setPreview] = useState<UserAccessPreview | null>(null)
   const [isSaving, setIsSaving] = useState(false)
-  const [isPreviewLoading, setIsPreviewLoading] = useState(false)
+  const [isStartingUserSession, setIsStartingUserSession] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeGroup, setActiveGroup] = useState('all')
-  const [previewFilter, setPreviewFilter] = useState<PreviewFilter>('granted')
   const [showAllAudit, setShowAllAudit] = useState(false)
 
   const selectedDepartment = data.departments.find((department) => department.id === selectedDepartmentId)
@@ -255,26 +249,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
     return stats
   }, [data.resources, permissions, selectedDepartment])
 
-  const previewCounts = useMemo(() => {
-    const list = preview?.permissions || []
-    return {
-      view: list.filter((permission) => permission.canView).length,
-      manage: list.filter((permission) => permission.canManage).length,
-      denied: list.filter((permission) => !permission.canView).length,
-    }
-  }, [preview])
-
-  const groupedPreview = useMemo(() => {
-    const groups = new Map<string, NonNullable<UserAccessPreview['permissions']>>()
-    for (const permission of preview?.permissions || []) {
-      const visible = previewFilter === 'all'
-        || (previewFilter === 'granted' && permission.canView)
-        || (previewFilter === 'denied' && !permission.canView)
-      if (!visible) continue
-      groups.set(permission.group, [...(groups.get(permission.group) || []), permission])
-    }
-    return Array.from(groups.entries())
-  }, [preview, previewFilter])
+  const selectedPreviewUser = data.previewUsers.find((user) => user.id === selectedPreviewUserId) || null
 
   const visibleAudit = showAllAudit ? data.auditLog : data.auditLog.slice(0, 6)
 
@@ -336,18 +311,21 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
     }
   }
 
-  async function onLoadPreview() {
+  async function onStartUserSession() {
     if (!selectedPreviewUserId) return
-    setIsPreviewLoading(true)
+    setIsStartingUserSession(true)
     try {
-      const result = await getAccessPreviewForUser(selectedPreviewUserId)
-      if (!result.data) throw new Error(result.error || 'Не удалось проверить доступ пользователя')
-      setPreview(result.data)
-      setPreviewFilter('granted')
+      const result = await startUserImpersonation(selectedPreviewUserId)
+      if (!result.success) {
+        if (result.redirectTo) window.location.assign(result.redirectTo)
+        throw new Error(result.error || 'Не удалось открыть CRM пользователя')
+      }
+      toast.success('Открываем CRM с правами выбранного пользователя')
+      window.location.assign(result.redirectTo)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Неизвестная ошибка')
     } finally {
-      setIsPreviewLoading(false)
+      setIsStartingUserSession(false)
     }
   }
 
@@ -686,9 +664,9 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
             <CardHeader className="border-b">
               <CardTitle className="flex items-center gap-2">
                 <UserCheck className="size-4.5 text-primary" />
-                Проверить пользователя
+                Проверить доступ
               </CardTitle>
-              <CardDescription>Показывает итоговые права с учётом всех отделов.</CardDescription>
+              <CardDescription>Открывает CRM так, как её видит выбранный сотрудник.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-2">
@@ -710,122 +688,36 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
               </div>
               <LoadingButton
                 className="h-10 w-full"
-                onClick={onLoadPreview}
-                loading={isPreviewLoading}
-                loadingText="Проверяем…"
+                onClick={onStartUserSession}
+                loading={isStartingUserSession}
+                loadingText="Открываем CRM…"
                 disabled={!selectedPreviewUserId}
               >
-                <Search className="size-4" />
+                <UserCheck className="size-4" />
                 Проверить доступ
               </LoadingButton>
 
-              {preview && (
-                <div className="space-y-3 border-t pt-3">
-                  <div className="rounded-xl border bg-muted/35 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate font-semibold text-foreground">{preview.fullName || preview.email}</div>
-                        {preview.fullName && <p className="mt-0.5 truncate text-xs text-muted-foreground">{preview.email}</p>}
-                      </div>
-                      <Badge variant={preview.isActive ? 'outline' : 'destructive'}>
-                        {preview.isActive ? 'Активен' : 'Заблокирован'}
-                      </Badge>
+              {selectedPreviewUser && (
+                <div className="space-y-3 rounded-xl border bg-muted/35 p-3">
+                  <div>
+                    <div className="truncate font-semibold text-foreground">
+                      {selectedPreviewUser.fullName || selectedPreviewUser.email}
                     </div>
-
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {preview.isAdminPosition && <Badge><ShieldCheck />Администратор CRM</Badge>}
-                      {preview.usedLegacyFallback && <Badge variant="outline">Ролевой fallback</Badge>}
-                      {!preview.isAdminPosition && !preview.usedLegacyFallback && (
-                        <Badge variant="outline" className="border-success/20 bg-success/10 text-success">
-                          <Building2 />Права отделов
-                        </Badge>
-                      )}
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                      <div className="rounded-lg bg-card px-2 py-2 ring-1 ring-border">
-                        <div className="text-lg font-semibold tabular-nums text-foreground">{previewCounts.view}</div>
-                        <div className="text-[10px] text-muted-foreground">вид</div>
-                      </div>
-                      <div className="rounded-lg bg-card px-2 py-2 ring-1 ring-border">
-                        <div className="text-lg font-semibold tabular-nums text-foreground">{previewCounts.manage}</div>
-                        <div className="text-[10px] text-muted-foreground">упр</div>
-                      </div>
-                      <div className="rounded-lg bg-card px-2 py-2 ring-1 ring-border">
-                        <div className="text-lg font-semibold tabular-nums text-muted-foreground">{previewCounts.denied}</div>
-                        <div className="text-[10px] text-muted-foreground">закрыто</div>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 space-y-1 text-xs leading-5 text-muted-foreground">
-                      {preview.memberships.length === 0 ? (
-                        <div>Нет назначений в отделах.</div>
-                      ) : (
-                        preview.memberships.map((membership, index) => (
-                          <div key={`${membership.departmentId}-${membership.positionId || index}`} className="flex items-start gap-1.5">
-                            <Building2 className="mt-1 size-3 shrink-0" />
-                            <span>
-                              {membership.departmentName || 'Отдел'} · {membership.positionName || 'Без должности'} · {membership.isDepartmentHead ? 'начальник' : 'сотрудник'}
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
+                    {selectedPreviewUser.fullName && (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{selectedPreviewUser.email}</p>
+                    )}
                   </div>
-
-                  <div className="flex rounded-lg bg-muted p-1" role="group" aria-label="Фильтр итоговых прав">
-                    {([
-                      ['granted', `Доступно ${previewCounts.view}`],
-                      ['denied', `Закрыто ${previewCounts.denied}`],
-                      ['all', 'Все'],
-                    ] as const).map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        className={cn(
-                          'min-h-8 flex-1 cursor-pointer rounded-md px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                          previewFilter === value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                        )}
-                        aria-pressed={previewFilter === value}
-                        onClick={() => setPreviewFilter(value)}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                  <div className="space-y-1 text-xs leading-5 text-muted-foreground">
+                    {selectedPreviewUser.departments.length > 0 && (
+                      <p>Отделы: {selectedPreviewUser.departments.join(', ')}</p>
+                    )}
+                    {selectedPreviewUser.positions.length > 0 && (
+                      <p>Должности: {selectedPreviewUser.positions.join(', ')}</p>
+                    )}
                   </div>
-
-                  <div className="max-h-[420px] space-y-3 overflow-y-auto overscroll-contain pr-1">
-                    {groupedPreview.map(([group, items]) => (
-                      <section key={`preview-${group}`}>
-                        <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group}</h3>
-                        <div className="space-y-1.5">
-                          {items.map((permission) => (
-                            <div key={`preview-${permission.resourceKey}`} className="rounded-lg border bg-card p-2.5">
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex min-w-0 items-start gap-2">
-                                  {permission.canView ? (
-                                    <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
-                                  ) : (
-                                    <LockKeyhole className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                                  )}
-                                  <div className="min-w-0">
-                                    <div className="text-sm font-medium text-foreground">{permission.label}</div>
-                                    {permission.sources.length > 0 && (
-                                      <div className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{permission.sources.join(', ')}</div>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="flex shrink-0 gap-1">
-                                  {permission.canView && <Badge variant="outline" className="h-5 px-1.5 text-[10px]">Вид</Badge>}
-                                  {permission.canManage && <Badge className="h-5 px-1.5 text-[10px]">Упр</Badge>}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </section>
-                    ))}
-                  </div>
+                  <p className="border-t pt-3 text-xs leading-5 text-muted-foreground">
+                    Откроется настоящая сессия сотрудника с его задачами и данными. Все действия будут записаны от его имени. Вернуться можно через тонкую панель сверху.
+                  </p>
                 </div>
               )}
             </CardContent>

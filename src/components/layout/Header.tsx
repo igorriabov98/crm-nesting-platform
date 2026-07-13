@@ -23,6 +23,7 @@ import { Breadcrumbs } from '@/components/features/layout/Breadcrumbs'
 import { useNavigationProgress } from '@/lib/hooks/useNavigationProgress'
 import type { PermissionMap } from '@/lib/permissions/resources'
 import type { CurrentUser } from '@/lib/types'
+import { stopUserImpersonation } from '@/lib/actions/impersonation'
 
 const PAGE_TITLES: Record<string, string> = {
   [ROUTES.PROFILE]: 'Профиль',
@@ -51,9 +52,10 @@ const PAGE_TITLES: Record<string, string> = {
 interface HeaderProps {
   user: CurrentUser
   permissions: PermissionMap
+  isImpersonating?: boolean
 }
 
-export function Header({ user, permissions }: HeaderProps) {
+export function Header({ user, permissions, isImpersonating = false }: HeaderProps) {
   const router = useRouter()
   const pathname = usePathname()
   const { reset } = useUserStore()
@@ -62,6 +64,17 @@ export function Header({ user, permissions }: HeaderProps) {
 
   async function handleLogout() {
     start()
+    if (isImpersonating) {
+      try {
+        const result = await stopUserImpersonation()
+        reset()
+        if (!result.success) toast.error(result.error)
+        window.location.assign(result.redirectTo || ROUTES.LOGIN)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Не удалось вернуть сессию администратора')
+      }
+      return
+    }
     const supabase = createClient()
     await supabase.auth.signOut()
     reset()
@@ -156,7 +169,7 @@ export function Header({ user, permissions }: HeaderProps) {
               onClick={handleLogout}
             >
               <LogOut className="mr-2 h-4 w-4" />
-              Выйти
+              {isImpersonating ? 'Вернуться к администратору' : 'Выйти'}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
