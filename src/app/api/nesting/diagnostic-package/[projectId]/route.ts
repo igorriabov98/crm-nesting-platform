@@ -35,10 +35,6 @@ export async function GET(
   const headers = new Headers()
   headers.set('Content-Type', res.headers.get('Content-Type') || 'application/zip')
   headers.set('Content-Disposition', res.headers.get('Content-Disposition') || `attachment; filename="nesting-${projectId}-diagnostic.zip"`)
-  const contentLength = res.headers.get('Content-Length')
-  if (contentLength) headers.set('Content-Length', contentLength)
-  const warnings = res.headers.get('X-Diagnostic-Warnings')
-  if (warnings) headers.set('X-Diagnostic-Warnings', warnings)
   const cacheControl = res.headers.get('Cache-Control')
   if (cacheControl) headers.set('Cache-Control', cacheControl)
 
