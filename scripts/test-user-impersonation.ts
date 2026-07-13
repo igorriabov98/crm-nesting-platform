@@ -61,15 +61,18 @@ const banner = readFileSync(
   'utf8',
 )
 assert.doesNotMatch(banner, /['"]use client['"]/)
-assert.match(banner, /<form action=\{stopUserImpersonationAndRedirect\}>/)
+assert.match(banner, /<form action="\/api\/impersonation\/stop" method="post">/)
 assert.match(banner, /<button[\s\S]*type="submit"/)
 assert.doesNotMatch(banner, /onClick=/)
 
-const impersonationActions = readFileSync(
-  path.resolve('src/lib/actions/impersonation.ts'),
+const stopRoute = readFileSync(
+  path.resolve('src/app/api/impersonation/stop/route.ts'),
   'utf8',
 )
-assert.match(impersonationActions, /export async function stopUserImpersonationAndRedirect\(\)/)
-assert.match(impersonationActions, /redirect\(result\.redirectTo \|\| ROUTES\.LOGIN\)/)
+assert.match(stopRoute, /export async function POST\(request: Request\)/)
+assert.match(stopRoute, /if \(!isSameOrigin\(request\)\)/)
+assert.match(stopRoute, /new Response\('Forbidden', \{ status: 403 \}\)/)
+assert.match(stopRoute, /redirect\(result\.redirectTo \|\| ROUTES\.LOGIN\)/)
+assert.doesNotMatch(stopRoute, /export async function GET/)
 
 console.log('User impersonation session helpers: OK')

@@ -109,7 +109,8 @@ assert(
   'Загрузка детали должна проверять nesting.manage',
 )
 
-const explicitlyPublicOrSecretApiRoutes = new Set([
+const apiRoutesWithDedicatedAuthorization = new Set([
+  'src/app/api/impersonation/stop/route.ts',
   'src/app/api/meetings/reminders/route.ts',
   'src/app/api/tasks/due/route.ts',
   'src/app/api/telegram/webhook/route.ts',
@@ -117,7 +118,7 @@ const explicitlyPublicOrSecretApiRoutes = new Set([
 ])
 for (const filePath of walk(join(root, 'src/app/api'), 'route.ts')) {
   const relativePath = relative(root, filePath)
-  if (explicitlyPublicOrSecretApiRoutes.has(relativePath)) continue
+  if (apiRoutesWithDedicatedAuthorization.has(relativePath)) continue
   const source = readFileSync(filePath, 'utf8')
   assert(
     /(?:get|require)NestingProxyAccess\(|requirePermission\(/u.test(source),
