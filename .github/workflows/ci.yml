@@ -32,6 +32,8 @@ jobs:
         run: npx tsc --noEmit
       - name: Access control registry and policies
         run: npm run test:access-control
+      - name: Product PDF and STEP upload rules
+        run: npm run test:product-file-uploads
       - name: User impersonation session helpers
         run: npm run test:user-impersonation
       - name: Supply reservation stock scope

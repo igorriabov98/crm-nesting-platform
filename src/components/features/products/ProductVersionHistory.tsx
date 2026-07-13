@@ -1,8 +1,19 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
-import { Download, FileText, History, Loader2, RotateCcw, Save, Upload } from 'lucide-react'
+import {
+  CheckCircle2,
+  CircleAlert,
+  Download,
+  FileBox,
+  FileText,
+  History,
+  Loader2,
+  RotateCcw,
+  Save,
+  Upload,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -49,6 +60,11 @@ import {
   updateCurrentVersionCompletion,
   type ProductVersionWithFiles,
 } from '@/lib/actions/product-versions'
+import {
+  cleanupDirectProductUploads,
+  uploadProductFileDirect,
+} from '@/lib/products/direct-product-upload-client'
+import { versionDocumentState, type DirectProductUpload } from '@/lib/products/product-file-upload'
 import type { ProductFile } from '@/lib/types'
 import { usePermissions } from '@/components/providers/PermissionProvider'
 
@@ -79,6 +95,12 @@ function formatVersionDate(value: string | null) {
   return versionDateFormatter.format(new Date(value))
 }
 
+function formatFileSize(bytes: number | null) {
+  if (!bytes) return '—'
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`
+  return `${Math.round((bytes / 1024 / 1024) * 10) / 10} МБ`
+}
+
 function authorName(version: ProductVersionWithFiles, authorsById: Record<string, ProductVersionAuthor>) {
   if (!version.created_by) return '—'
   return authorsById[version.created_by]?.full_name || 'Пользователь'
@@ -95,15 +117,7 @@ function getActionError(error: unknown) {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
 }
 
-function hasVersionFiles(version: ProductVersionWithFiles) {
-  return version.product_files.length > 0
-}
-
-function toggleFasteningValue(
-  current: ProductFasteningType[],
-  value: ProductFasteningType,
-  checked: boolean,
-) {
+function toggleFasteningValue(current: ProductFasteningType[], value: ProductFasteningType, checked: boolean) {
   if (checked) return Array.from(new Set([...current, value]))
   return current.filter((item) => item !== value)
 }
@@ -111,14 +125,15 @@ function toggleFasteningValue(
 function ActionError({ message }: { message: string | null }) {
   if (!message) return null
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-[#DC2626]">
-      {message}
+    <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>{message}</span>
     </div>
   )
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <label className="text-sm font-medium text-[#374151]">{children}</label>
+function FieldLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?: string }) {
+  return <label htmlFor={htmlFor} className="text-sm font-medium text-slate-700">{children}</label>
 }
 
 function FasteningCheckboxes({
@@ -137,7 +152,11 @@ function FasteningCheckboxes({
         return (
           <label
             key={type}
-            className="flex min-h-10 items-center gap-2 rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] px-3 py-2 text-sm text-[#374151]"
+            className={cn(
+              'flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors',
+              checked ? 'border-blue-200 bg-blue-50 text-blue-950' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+              disabled && 'cursor-not-allowed opacity-60',
+            )}
           >
             <Checkbox
               checked={checked}
@@ -161,19 +180,18 @@ function CompletionSelect({
   onChange: (nextValue: ProductCompletionType | null) => void
   disabled?: boolean
 }) {
-  const label = value ? PRODUCT_COMPLETION_TYPE_LABELS[value] : 'не заполнено'
-
+  const label = value ? PRODUCT_COMPLETION_TYPE_LABELS[value] : 'Не заполнено'
   return (
     <Select
       value={value || 'none'}
       onValueChange={(nextValue) => onChange(nextValue === 'none' ? null : nextValue as ProductCompletionType)}
       disabled={disabled}
     >
-      <SelectTrigger className="h-10 w-full border-[#E8ECF0] bg-[#F8F9FA]">
+      <SelectTrigger className="h-11 w-full border-slate-200 bg-white">
         <SelectValue>{label}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="none">не заполнено</SelectItem>
+        <SelectItem value="none">Не заполнено</SelectItem>
         {COMPLETION_OPTIONS.map(([type, optionLabel]) => (
           <SelectItem key={type} value={type}>{optionLabel}</SelectItem>
         ))}
@@ -182,23 +200,60 @@ function CompletionSelect({
   )
 }
 
-function VersionFilesActionDialog({
-  productId,
-  version,
+function FilePicker({
+  id,
+  title,
+  description,
+  accept,
+  file,
+  onChange,
+  disabled,
 }: {
-  productId: string
-  version: ProductVersionWithFiles
+  id: string
+  title: string
+  description: string
+  accept: string
+  file: File | null
+  onChange: (file: File | null) => void
+  disabled: boolean
 }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-blue-700 shadow-sm ring-1 ring-slate-200">
+          <FileText className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <FieldLabel htmlFor={id}>{title}</FieldLabel>
+          <p className="mt-0.5 text-xs leading-5 text-slate-500">{description}</p>
+          <Input
+            id={id}
+            type="file"
+            accept={accept}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.files?.[0] || null)}
+            className="mt-3 min-h-11 cursor-pointer border-slate-200 bg-white file:cursor-pointer"
+          />
+          {file && <p className="mt-2 truncate text-xs font-medium text-emerald-700">Выбран: {file.name}</p>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function VersionFilesActionDialog({ productId, version }: { productId: string; version: ProductVersionWithFiles }) {
   const router = useRouter()
-  const drawingFileRef = useRef<HTMLInputElement>(null)
-  const stepFileRef = useRef<HTMLInputElement>(null)
-  const isNewVersionMode = hasVersionFiles(version)
+  const documentState = versionDocumentState(version.product_files)
+  const isNewVersionMode = documentState.complete
   const [open, setOpen] = useState(false)
   const [drawingNumber, setDrawingNumber] = useState(version.drawing_number || '')
   const [changeSummary, setChangeSummary] = useState('')
   const [fasteningTypes, setFasteningTypes] = useState<ProductFasteningType[]>(version.fastening_types || [])
   const [completionType, setCompletionType] = useState<ProductCompletionType | null>(version.completion_type || null)
+  const [drawingFile, setDrawingFile] = useState<File | null>(null)
+  const [stepFile, setStepFile] = useState<File | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -207,157 +262,163 @@ function VersionFilesActionDialog({
     setChangeSummary('')
     setFasteningTypes(version.fastening_types || [])
     setCompletionType(version.completion_type || null)
+    setDrawingFile(null)
+    setStepFile(null)
+    setUploadStatus(null)
     setError(null)
-    if (drawingFileRef.current) drawingFileRef.current.value = ''
-    if (stepFileRef.current) stepFileRef.current.value = ''
   }, [open, version])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const drawingFile = drawingFileRef.current?.files?.[0]
-    const stepFile = stepFileRef.current?.files?.[0]
-
-    if (!drawingFile || !stepFile) {
-      const message = 'Загрузите чертеж и STEP файл'
+    if (!drawingFile && !stepFile) {
+      const message = 'Добавьте PDF или STEP файл'
       setError(message)
-      toast.error(message)
       return
     }
     if (isNewVersionMode && !changeSummary.trim()) {
-      const message = 'Опишите изменения в версии'
-      setError(message)
-      toast.error(message)
+      setError('Опишите изменения в новой версии')
       return
     }
 
+    const uploadedFiles: DirectProductUpload[] = []
     setIsSubmitting(true)
     setError(null)
+
     try {
+      if (drawingFile) {
+        setUploadStatus('Загружаю PDF…')
+        uploadedFiles.push(await uploadProductFileDirect(productId, 'drawing', drawingFile))
+      }
+      if (stepFile) {
+        setUploadStatus('Загружаю STEP…')
+        uploadedFiles.push(await uploadProductFileDirect(productId, 'step', stepFile))
+      }
+
+      setUploadStatus('Сохраняю версию…')
       const result = isNewVersionMode
         ? await createProductVersion(productId, {
             drawingNumber,
             changeSummary,
             fasteningTypes,
             completionType,
-            drawingFile,
-            stepFile,
+            files: uploadedFiles,
           })
         : await completeCurrentVersionFiles(productId, {
             drawingNumber,
-            drawingFile,
-            stepFile,
+            files: uploadedFiles,
           })
 
-      if (!result.success) throw new Error(result.error || 'Не удалось сохранить версию товара')
-      toast.success(isNewVersionMode ? 'Новая версия создана' : 'Файлы версии загружены')
+      if (!result.success) throw new Error(result.error || 'Не удалось сохранить файлы версии')
+      toast.success(isNewVersionMode ? 'Новая версия создана' : 'Файлы добавлены в текущую версию')
       setOpen(false)
       router.refresh()
     } catch (submitError) {
+      await cleanupDirectProductUploads(productId, uploadedFiles)
       const message = getActionError(submitError)
       setError(message)
       toast.error(message)
     } finally {
+      setUploadStatus(null)
       setIsSubmitting(false)
     }
   }
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !isSubmitting && setOpen(nextOpen)}>
-      <Button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="bg-[#1B3A6B] text-white hover:bg-[#152D54]"
-      >
+      <Button type="button" onClick={() => setOpen(true)} className="min-h-11 bg-blue-700 text-white hover:bg-blue-800">
         {isNewVersionMode ? <History className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
-        {isNewVersionMode ? 'Новая версия' : 'Загрузить чертёж и STEP'}
+        {isNewVersionMode ? 'Создать новую версию' : 'Добавить файлы'}
       </Button>
-      <DialogContent className="max-h-[92dvh] overflow-y-auto border-[#E8ECF0] bg-white text-[#1B3A6B] sm:max-w-2xl">
+      <DialogContent className="max-h-[92dvh] overflow-y-auto border-slate-200 bg-white text-slate-950 sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{isNewVersionMode ? 'Новая версия товара' : 'Загрузить файлы текущей версии'}</DialogTitle>
+          <DialogTitle>{isNewVersionMode ? 'Новая версия изделия' : 'Дополнить текущую версию'}</DialogTitle>
           <DialogDescription>
-            {isNewVersionMode
-              ? 'Новая версия станет текущей после сохранения.'
-              : 'Файлы будут привязаны к текущей версии товара.'}
+            PDF и STEP загружаются независимо. Можно сохранить один файл сейчас и добавить второй позже.
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-5">
           <ActionError message={error} />
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <FieldLabel>Номер чертежа</FieldLabel>
-              <Input
-                value={drawingNumber}
-                onChange={(event) => setDrawingNumber(event.target.value)}
-                required
-                disabled={isSubmitting}
-                className="border-[#E8ECF0] bg-[#F8F9FA]"
-              />
-            </div>
-            {isNewVersionMode && (
-              <div className="space-y-1.5 md:col-span-2">
-                <FieldLabel>Что изменилось</FieldLabel>
-                <Textarea
-                  value={changeSummary}
-                  onChange={(event) => setChangeSummary(event.target.value)}
-                  required
-                  disabled={isSubmitting}
-                  className="min-h-24 border-[#E8ECF0] bg-[#F8F9FA]"
-                />
-              </div>
-            )}
-            {isNewVersionMode && (
-              <>
-                <div className="space-y-1.5 md:col-span-2">
-                  <FieldLabel>Крепление</FieldLabel>
-                  <FasteningCheckboxes
-                    value={fasteningTypes}
-                    onChange={setFasteningTypes}
-                    disabled={isSubmitting}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <FieldLabel>Комплектация</FieldLabel>
-                  <CompletionSelect
-                    value={completionType}
-                    onChange={setCompletionType}
-                    disabled={isSubmitting}
-                  />
-                </div>
-              </>
-            )}
-            <div className="space-y-1.5">
-              <FieldLabel>Файл чертежа</FieldLabel>
-              <Input
-                ref={drawingFileRef}
-                type="file"
-                accept=".pdf,application/pdf"
-                required
-                disabled={isSubmitting}
-                className="border-[#E8ECF0] bg-[#F8F9FA]"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <FieldLabel>STEP файл</FieldLabel>
-              <Input
-                ref={stepFileRef}
-                type="file"
-                accept=".step,.stp"
-                required
-                disabled={isSubmitting}
-                className="border-[#E8ECF0] bg-[#F8F9FA]"
-              />
-            </div>
+          <div className="space-y-1.5">
+            <FieldLabel htmlFor="version-drawing-number">Номер чертежа</FieldLabel>
+            <Input
+              id="version-drawing-number"
+              value={drawingNumber}
+              onChange={(event) => setDrawingNumber(event.target.value)}
+              required
+              disabled={isSubmitting}
+              className="h-11 border-slate-200 bg-white"
+            />
           </div>
 
+          {isNewVersionMode && (
+            <div className="space-y-1.5">
+              <FieldLabel htmlFor="version-change-summary">Что изменилось</FieldLabel>
+              <Textarea
+                id="version-change-summary"
+                value={changeSummary}
+                onChange={(event) => setChangeSummary(event.target.value)}
+                required
+                disabled={isSubmitting}
+                placeholder="Коротко опишите изменения в чертеже или конструкции"
+                className="min-h-24 border-slate-200 bg-white"
+              />
+            </div>
+          )}
+
+          <div className="grid gap-3 md:grid-cols-2">
+            {(isNewVersionMode || !documentState.hasDrawing) && (
+              <FilePicker
+                id="version-pdf-file"
+                title="PDF-чертёж"
+                description="Необязательно добавлять вместе со STEP · до 50 МБ"
+                accept=".pdf,application/pdf"
+                file={drawingFile}
+                onChange={setDrawingFile}
+                disabled={isSubmitting}
+              />
+            )}
+            {(isNewVersionMode || !documentState.hasStep) && (
+              <FilePicker
+                id="version-step-file"
+                title="STEP-модель"
+                description="Можно добавить позже · форматы STEP и STP · до 50 МБ"
+                accept=".step,.stp"
+                file={stepFile}
+                onChange={setStepFile}
+                disabled={isSubmitting}
+              />
+            )}
+          </div>
+
+          {!isNewVersionMode && (documentState.hasDrawing || documentState.hasStep) && (
+            <div className="flex flex-wrap gap-2 rounded-xl bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
+              {documentState.hasDrawing && <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" /> PDF уже загружен</span>}
+              {documentState.hasStep && <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" /> STEP уже загружен</span>}
+            </div>
+          )}
+
+          {isNewVersionMode && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1.5 md:col-span-2">
+                <FieldLabel>Крепление</FieldLabel>
+                <FasteningCheckboxes value={fasteningTypes} onChange={setFasteningTypes} disabled={isSubmitting} />
+              </div>
+              <div className="space-y-1.5">
+                <FieldLabel>Комплектация</FieldLabel>
+                <CompletionSelect value={completionType} onChange={setCompletionType} disabled={isSubmitting} />
+              </div>
+            </div>
+          )}
+
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isSubmitting}>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isSubmitting} className="min-h-11">
               Отмена
             </Button>
-            <Button type="submit" disabled={isSubmitting} className="bg-[#1B3A6B] text-white hover:bg-[#152D54]">
-              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isSubmitting ? 'Сохранение...' : 'Сохранить'}
+            <Button type="submit" disabled={isSubmitting} className="min-h-11 bg-blue-700 text-white hover:bg-blue-800">
+              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />}
+              {uploadStatus || 'Сохранить'}
             </Button>
           </DialogFooter>
         </form>
@@ -366,13 +427,7 @@ function VersionFilesActionDialog({
   )
 }
 
-function VersionCompletionEditor({
-  productId,
-  version,
-}: {
-  productId: string
-  version: ProductVersionWithFiles
-}) {
+function VersionCompletionEditor({ productId, version }: { productId: string; version: ProductVersionWithFiles }) {
   const router = useRouter()
   const [fasteningTypes, setFasteningTypes] = useState<ProductFasteningType[]>(version.fastening_types || [])
   const [completionType, setCompletionType] = useState<ProductCompletionType | null>(version.completion_type || null)
@@ -389,14 +444,10 @@ function VersionCompletionEditor({
     event.preventDefault()
     setIsSubmitting(true)
     setError(null)
-
     try {
-      const result = await updateCurrentVersionCompletion(productId, {
-        fasteningTypes,
-        completionType,
-      })
-      if (!result.success) throw new Error(result.error || 'Не удалось сохранить крепление и комплектацию')
-      toast.success('Крепление и комплектация сохранены')
+      const result = await updateCurrentVersionCompletion(productId, { fasteningTypes, completionType })
+      if (!result.success) throw new Error(result.error || 'Не удалось сохранить комплектацию')
+      toast.success('Комплектация сохранена')
       router.refresh()
     } catch (submitError) {
       const message = getActionError(submitError)
@@ -408,28 +459,25 @@ function VersionCompletionEditor({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3 rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-4">
+    <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
       <div>
-        <h3 className="text-sm font-semibold text-[#1B3A6B]">Крепление и комплектация</h3>
+        <h3 className="text-sm font-semibold text-slate-900">Крепление и комплектация</h3>
+        <p className="mt-1 text-xs text-slate-500">Параметры относятся только к текущей версии.</p>
       </div>
       <ActionError message={error} />
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_auto]">
+      <div className="space-y-4">
         <div className="space-y-1.5">
           <FieldLabel>Крепление</FieldLabel>
           <FasteningCheckboxes value={fasteningTypes} onChange={setFasteningTypes} disabled={isSubmitting} />
         </div>
-        <div className="space-y-1.5">
-          <FieldLabel>Комплектация</FieldLabel>
-          <CompletionSelect value={completionType} onChange={setCompletionType} disabled={isSubmitting} />
-        </div>
-        <div className="flex items-end">
-          <Button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full bg-[#1B3A6B] text-white hover:bg-[#152D54] lg:w-auto"
-          >
-            {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {isSubmitting ? 'Сохранение...' : 'Сохранить'}
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <div className="space-y-1.5">
+            <FieldLabel>Комплектация</FieldLabel>
+            <CompletionSelect value={completionType} onChange={setCompletionType} disabled={isSubmitting} />
+          </div>
+          <Button type="submit" disabled={isSubmitting} className="min-h-11 bg-slate-900 text-white hover:bg-slate-800">
+            {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Save className="h-4 w-4" />}
+            {isSubmitting ? 'Сохранение…' : 'Сохранить'}
           </Button>
         </div>
       </div>
@@ -437,13 +485,7 @@ function VersionCompletionEditor({
   )
 }
 
-function RollbackVersionAction({
-  productId,
-  version,
-}: {
-  productId: string
-  version: ProductVersionWithFiles
-}) {
+function RollbackVersionAction({ productId, version }: { productId: string; version: ProductVersionWithFiles }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -452,7 +494,6 @@ function RollbackVersionAction({
   async function handleRollback() {
     setIsSubmitting(true)
     setError(null)
-
     try {
       const result = await rollbackToVersion(productId, version.id)
       if (!result.success) throw new Error(result.error || 'Не удалось сделать версию актуальной')
@@ -470,29 +511,23 @@ function RollbackVersionAction({
 
   return (
     <AlertDialog open={open} onOpenChange={(nextOpen) => !isSubmitting && setOpen(nextOpen)}>
-      <AlertDialogTrigger render={<Button type="button" variant="outline" size="sm" />}>
+      <AlertDialogTrigger render={<Button type="button" variant="outline" size="sm" className="min-h-10" />}>
         <RotateCcw className="h-3.5 w-3.5" />
         Сделать актуальной
       </AlertDialogTrigger>
-      <AlertDialogContent className="border-[#E8ECF0] bg-white text-[#1B3A6B]">
+      <AlertDialogContent className="border-slate-200 bg-white text-slate-950">
         <AlertDialogHeader>
-          <AlertDialogTitle>Сделать версию v{version.version_number} актуальной?</AlertDialogTitle>
-          <AlertDialogDescription className="text-[#6B7280]">
-            Эта версия станет актуальной и будет подставляться по умолчанию в новые заказы.
-            Текущая актуальная версия перейдет в архив.
+          <AlertDialogTitle>Вернуть версию v{version.version_number}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Она станет текущей для новых заказов, а нынешняя версия перейдёт в архив.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <ActionError message={error} />
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isSubmitting}>Отмена</AlertDialogCancel>
-          <AlertDialogAction
-            type="button"
-            disabled={isSubmitting}
-            onClick={() => void handleRollback()}
-            className="bg-[#1B3A6B] text-white hover:bg-[#152D54]"
-          >
-            {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isSubmitting ? 'Сохранение...' : 'Сделать актуальной'}
+          <AlertDialogAction type="button" disabled={isSubmitting} onClick={() => void handleRollback()} className="bg-blue-700 text-white hover:bg-blue-800">
+            {isSubmitting && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />}
+            {isSubmitting ? 'Сохранение…' : 'Сделать актуальной'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -501,10 +536,7 @@ function RollbackVersionAction({
 }
 
 function FileLinks({ files }: { files: ProductFile[] }) {
-  if (files.length === 0) {
-    return <span className="text-sm text-[#9CA3AF]">—</span>
-  }
-
+  if (files.length === 0) return <span className="text-sm text-slate-400">Не загружен</span>
   return (
     <div className="flex flex-wrap gap-2">
       {files.map((file) => (
@@ -513,70 +545,51 @@ function FileLinks({ files }: { files: ProductFile[] }) {
           href={`/api/products/files/${file.id}`}
           target="_blank"
           rel="noreferrer"
-          className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 gap-1 px-2 text-xs')}
+          className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'min-h-10 max-w-full gap-1.5 border-slate-200 bg-white px-3 text-xs')}
         >
-          <Download className="h-3.5 w-3.5" />
-          {file.file_name}
+          <Download className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{file.file_name}</span>
+          <span className="shrink-0 text-slate-400">{formatFileSize(file.file_size)}</span>
         </a>
       ))}
     </div>
   )
 }
 
-function MissingBadge() {
-  return (
-    <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
-      не заполнено
-    </Badge>
-  )
-}
-
 function FasteningBadges({ version }: { version: ProductVersionWithFiles }) {
-  if (version.fastening_types.length === 0) return <MissingBadge />
-
+  if (!version.fastening_types?.length) return <span className="text-sm text-slate-400">Не заполнено</span>
   return (
     <div className="flex flex-wrap gap-1.5">
-      {version.fastening_types.map((type) => (
-        <Badge key={type} variant="secondary">
-          {PRODUCT_FASTENING_TYPE_LABELS[type]}
-        </Badge>
-      ))}
+      {version.fastening_types.map((type) => <Badge key={type} variant="secondary">{PRODUCT_FASTENING_TYPE_LABELS[type]}</Badge>)}
     </div>
   )
 }
 
 function CompletionBadge({ version }: { version: ProductVersionWithFiles }) {
-  if (!version.completion_type) return <MissingBadge />
+  if (!version.completion_type) return <span className="text-sm text-slate-400">Не заполнено</span>
   return <Badge variant="secondary">{PRODUCT_COMPLETION_TYPE_LABELS[version.completion_type]}</Badge>
 }
 
-function VersionFiles({ version }: { version: ProductVersionWithFiles }) {
-  const files = fileGroups(version.product_files)
-  const hasFiles = files.drawing.length > 0 || files.step.length > 0
-
-  if (!hasFiles) {
-    return <div className="text-sm text-[#9CA3AF]">Файлы не загружены</div>
-  }
-
+function DocumentCard({ title, files, ready }: { title: string; files: ProductFile[]; ready: boolean }) {
   return (
-    <div className="space-y-2">
-      <div className="grid gap-2 sm:grid-cols-[90px_1fr]">
-        <div className="text-xs font-medium uppercase text-[#6B7280]">Чертеж</div>
-        <FileLinks files={files.drawing} />
+    <div className={cn('rounded-2xl border p-4', ready ? 'border-emerald-200 bg-emerald-50/70' : 'border-amber-200 bg-amber-50/70')}>
+      <div className="flex items-center gap-2">
+        {ready ? <CheckCircle2 className="h-5 w-5 text-emerald-700" /> : <CircleAlert className="h-5 w-5 text-amber-700" />}
+        <div>
+          <p className="text-sm font-semibold text-slate-900">{title}</p>
+          <p className={cn('text-xs', ready ? 'text-emerald-700' : 'text-amber-700')}>{ready ? 'Файл готов' : 'Можно добавить позже'}</p>
+        </div>
       </div>
-      <div className="grid gap-2 sm:grid-cols-[90px_1fr]">
-        <div className="text-xs font-medium uppercase text-[#6B7280]">STEP</div>
-        <FileLinks files={files.step} />
-      </div>
+      <div className="mt-3"><FileLinks files={files} /></div>
     </div>
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function InfoField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="text-xs font-medium uppercase text-[#6B7280]">{label}</div>
-      <div className="mt-1 text-sm text-[#374151]">{children}</div>
+    <div className="min-w-0">
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 text-sm text-slate-800">{children}</div>
     </div>
   )
 }
@@ -586,46 +599,55 @@ function CurrentVersionCard({
   version,
   authorsById,
   canManageVersions,
-  canManageCompletion,
 }: {
   productId: string
   version: ProductVersionWithFiles
   authorsById: Record<string, ProductVersionAuthor>
   canManageVersions: boolean
-  canManageCompletion: boolean
 }) {
+  const groups = fileGroups(version.product_files)
+  const state = versionDocumentState(version.product_files)
   return (
-    <section className="space-y-5 rounded-xl border border-[#E8ECF0] bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-semibold text-[#1B3A6B]">Текущая версия</h2>
-            <Badge>v{version.version_number}</Badge>
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-200 bg-slate-50/80 p-5 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-700 text-white"><FileBox className="h-5 w-5" /></span>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Текущая версия</p>
+                <h2 className="text-xl font-semibold text-slate-950">Версия {version.version_number}</h2>
+              </div>
+              <Badge className={state.complete ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}>
+                {state.complete ? 'Комплект готов' : 'Файлы не полные'}
+              </Badge>
+            </div>
+            <p className="mt-2 text-sm text-slate-500">{formatVersionDate(version.created_at)} · {authorName(version, authorsById)}</p>
           </div>
-          <p className="mt-1 text-sm text-[#6B7280]">
-            {formatVersionDate(version.created_at)} · {authorName(version, authorsById)}
-          </p>
+          {canManageVersions && <VersionFilesActionDialog productId={productId} version={version} />}
         </div>
-        {canManageVersions && <VersionFilesActionDialog productId={productId} version={version} />}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Field label="Номер чертежа">{version.drawing_number}</Field>
-        <Field label="Комментарий изменений">{version.change_summary || '—'}</Field>
-        <Field label="Крепление"><FasteningBadges version={version} /></Field>
-        <Field label="Комплектация"><CompletionBadge version={version} /></Field>
-      </div>
+      <div className="space-y-5 p-5 sm:p-6">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <DocumentCard title="PDF-чертёж" files={groups.drawing} ready={state.hasDrawing} />
+          <DocumentCard title="STEP-модель" files={groups.step} ready={state.hasStep} />
+        </div>
 
-      {canManageCompletion && <VersionCompletionEditor productId={productId} version={version} />}
+        <div className="grid gap-4 rounded-2xl border border-slate-200 p-4 sm:grid-cols-2">
+          <InfoField label="Номер чертежа">{version.drawing_number}</InfoField>
+          <InfoField label="Комментарий">{version.change_summary || 'Первая версия'}</InfoField>
+          <InfoField label="Крепление"><FasteningBadges version={version} /></InfoField>
+          <InfoField label="Комплектация"><CompletionBadge version={version} /></InfoField>
+        </div>
 
-      <div className="border-t border-[#E8ECF0] pt-4">
-        <VersionFiles version={version} />
+        {canManageVersions && <VersionCompletionEditor productId={productId} version={version} />}
       </div>
     </section>
   )
 }
 
-function ArchivedVersionsTable({
+function ArchivedVersions({
   productId,
   versions,
   authorsById,
@@ -636,85 +658,68 @@ function ArchivedVersionsTable({
   authorsById: Record<string, ProductVersionAuthor>
   canManageVersions: boolean
 }) {
-  const columnCount = canManageVersions ? 8 : 7
-
   return (
-    <section className="space-y-4 rounded-xl border border-[#E8ECF0] bg-white p-5">
-      <div>
-        <h2 className="text-lg font-semibold text-[#1B3A6B]">Архивные версии</h2>
-        <p className="text-sm text-[#6B7280]">Предыдущие версии карточки продукта.</p>
-      </div>
-
-      <div className="overflow-hidden rounded-lg border border-[#E8ECF0]">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-left text-sm">
-            <thead className="bg-[#F8F9FA] text-[#6B7280]">
-              <tr>
-                <th className="px-4 py-3">Версия</th>
-                <th className="px-4 py-3">Дата и автор</th>
-                <th className="px-4 py-3">Чертеж</th>
-                <th className="px-4 py-3">Файлы</th>
-                <th className="px-4 py-3">Крепление</th>
-                <th className="px-4 py-3">Комплектация</th>
-                <th className="px-4 py-3">Комментарий</th>
-                {canManageVersions && <th className="px-4 py-3 text-right">Действия</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#E8ECF0]">
-              {versions.length === 0 ? (
-                <tr>
-                  <td colSpan={columnCount} className="px-4 py-8 text-center text-[#9CA3AF]">
-                    Архивных версий пока нет.
-                  </td>
-                </tr>
-              ) : versions.map((version) => (
-                <tr key={version.id} className="bg-white text-[#6B7280]">
-                  <td className="px-4 py-3 font-semibold text-[#374151]">v{version.version_number}</td>
-                  <td className="px-4 py-3">
-                    <div>{formatVersionDate(version.created_at)}</div>
-                    <div className="text-xs text-[#9CA3AF]">{authorName(version, authorsById)}</div>
-                  </td>
-                  <td className="px-4 py-3 text-[#374151]">{version.drawing_number}</td>
-                  <td className="px-4 py-3"><VersionFiles version={version} /></td>
-                  <td className="px-4 py-3"><FasteningBadges version={version} /></td>
-                  <td className="px-4 py-3"><CompletionBadge version={version} /></td>
-                  <td className="max-w-[220px] px-4 py-3 text-[#374151]">{version.change_summary || '—'}</td>
-                  {canManageVersions && (
-                    <td className="px-4 py-3 text-right">
-                      <RollbackVersionAction productId={productId} version={version} />
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex items-start gap-3">
+        <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700"><History className="h-5 w-5" /></span>
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">История версий</h2>
+          <p className="text-sm text-slate-500">Предыдущие комплекты документов и параметры изделия.</p>
         </div>
       </div>
+
+      {versions.length === 0 ? (
+        <div className="mt-5 rounded-2xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
+          Архивных версий пока нет.
+        </div>
+      ) : (
+        <div className="mt-5 space-y-3">
+          {versions.map((version) => {
+            const groups = fileGroups(version.product_files)
+            return (
+              <article key={version.id} className="rounded-2xl border border-slate-200 p-4 transition-colors hover:bg-slate-50/60">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="border-slate-300 bg-white text-slate-700">v{version.version_number}</Badge>
+                      <span className="font-medium text-slate-900">{version.drawing_number}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">{formatVersionDate(version.created_at)} · {authorName(version, authorsById)}</p>
+                  </div>
+                  {canManageVersions && <RollbackVersionAction productId={productId} version={version} />}
+                </div>
+                <div className="mt-4 grid gap-4 border-t border-slate-100 pt-4 md:grid-cols-2">
+                  <InfoField label="PDF"><FileLinks files={groups.drawing} /></InfoField>
+                  <InfoField label="STEP"><FileLinks files={groups.step} /></InfoField>
+                  <InfoField label="Крепление"><FasteningBadges version={version} /></InfoField>
+                  <InfoField label="Комплектация"><CompletionBadge version={version} /></InfoField>
+                </div>
+                {version.change_summary && <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">{version.change_summary}</p>}
+              </article>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
 
-export function ProductVersionHistory({
-  productId,
-  versions,
-  authorsById,
-}: ProductVersionHistoryProps) {
+export function ProductVersionHistory({ productId, versions, authorsById }: ProductVersionHistoryProps) {
   const { can } = usePermissions()
   const currentVersion = versions.find((version) => version.status === 'current') || null
   const archivedVersions = versions
     .filter((version) => version.status === 'archived')
     .sort((left, right) => right.version_number - left.version_number)
   const canManageVersions = can('products', 'manage')
-  const canManageCompletion = canManageVersions
 
   if (versions.length === 0) {
     return (
-      <section className="rounded-xl border border-[#E8ECF0] bg-white p-5">
-        <div className="flex items-start gap-3 text-[#6B7280]">
-          <FileText className="mt-0.5 h-5 w-5 shrink-0" />
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-start gap-3 text-slate-600">
+          <FileBox className="mt-0.5 h-5 w-5 shrink-0" />
           <div>
-            <h2 className="text-lg font-semibold text-[#1B3A6B]">Версии продукта</h2>
-            <p className="mt-1 text-sm">Для этого продукта пока нет ни одной версии.</p>
+            <h2 className="text-lg font-semibold text-slate-950">Версии изделия</h2>
+            <p className="mt-1 text-sm">Для этого изделия пока нет ни одной версии.</p>
           </div>
         </div>
       </section>
@@ -722,21 +727,20 @@ export function ProductVersionHistory({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {currentVersion ? (
         <CurrentVersionCard
           productId={productId}
           version={currentVersion}
           authorsById={authorsById}
           canManageVersions={canManageVersions}
-          canManageCompletion={canManageCompletion}
         />
       ) : (
-        <section className="rounded-xl border border-[#E8ECF0] bg-white p-5 text-sm text-[#6B7280]">
-          Текущая версия продукта не найдена.
+        <section role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          Текущая версия изделия не найдена.
         </section>
       )}
-      <ArchivedVersionsTable
+      <ArchivedVersions
         productId={productId}
         versions={archivedVersions}
         authorsById={authorsById}

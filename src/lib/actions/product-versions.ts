@@ -5,9 +5,15 @@ import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import { requireProductAccess, requireProductManageAccess, uploadStorageFile } from '@/lib/actions/products'
+import { requireProductAccess, requireProductManageAccess } from '@/lib/actions/products'
 import { buildProductVersionFileInsert } from '@/lib/actions/product-version-file-helpers'
 import { completeProductVersionCompletionTasksIfFilled } from '@/lib/actions/product-version-completion-tasks'
+import {
+  validateDirectProductUploads,
+  validateProductUploadRequest,
+  versionDocumentState,
+  type DirectProductUpload,
+} from '@/lib/products/product-file-upload'
 import type { Database } from '@/lib/types/database'
 
 type DbError = { message?: string; details?: string; hint?: string; code?: string }
@@ -33,7 +39,6 @@ type ProductFileInsert = Database['public']['Tables']['product_files']['Insert']
 type ProductFileKind = ProductFileInsert['file_kind']
 type ProductFasteningType = Database['public']['Enums']['product_fastening_type']
 type ProductCompletionType = Database['public']['Enums']['product_completion_type']
-type RequestSupabaseClient = Awaited<ReturnType<typeof requireProductManageAccess>>['supabase']
 
 export type ProductVersionWithFiles = ProductVersion & {
   product_files: ProductFile[]
@@ -44,14 +49,12 @@ export type CreateProductVersionInput = {
   changeSummary: string
   fasteningTypes?: ProductFasteningType[] | null
   completionType?: ProductCompletionType | null
-  drawingFile: File
-  stepFile: File
+  files: DirectProductUpload[]
 }
 
 export type CompleteCurrentVersionFilesInput = {
   drawingNumber: string
-  drawingFile: File
-  stepFile: File
+  files: DirectProductUpload[]
 }
 
 export type UpdateCurrentVersionCompletionInput = {
@@ -75,9 +78,7 @@ const FASTENING_TYPES: ProductFasteningType[] = [
 
 const COMPLETION_TYPES: ProductCompletionType[] = ['mounting_set', 'chain_set']
 const VERSION_DISPLAY_FILE_KINDS: ProductFileKind[] = ['drawing', 'step', 'pdf']
-const VERSION_COMPLETION_FILE_KINDS: ProductFileKind[] = ['drawing', 'step']
-const DRAWING_FILE_EXTENSIONS = ['.pdf']
-const STEP_FILE_EXTENSIONS = ['.step', '.stp']
+const VERSION_COMPLETION_FILE_KINDS: ProductFileKind[] = ['drawing', 'step', 'pdf']
 
 function dbFrom(supabase: unknown): LooseDb {
   return supabase as LooseDb
@@ -87,18 +88,6 @@ function cleanRequiredString(value: unknown, message: string) {
   const text = String(value || '').trim()
   if (!text) throw new Error(message)
   return text
-}
-
-function validateFileExtension(file: File, allowedExtensions: string[], label: string) {
-  const name = file.name.toLowerCase()
-  if (!allowedExtensions.some((extension) => name.endsWith(extension))) {
-    throw new Error(`${label}: допустимые форматы ${allowedExtensions.join(', ')}`)
-  }
-}
-
-function requireFile(value: unknown, label: string): File {
-  if (!(value instanceof File) || value.size <= 0) throw new Error(`Загрузите ${label}`)
-  return value
 }
 
 function normalizeFasteningTypes(value: ProductFasteningType[] | null | undefined) {
@@ -159,7 +148,12 @@ async function loadVersionWithFiles(db: LooseDb, versionId: string) {
 
   if (error || !data) throw new Error(error?.message || 'Версия товара не найдена')
   const files = await loadVersionFiles(db, [versionId])
-  return { ...(data as ProductVersion), product_files: files } satisfies ProductVersionWithFiles
+  const version = data as ProductVersion
+  return {
+    ...version,
+    fastening_types: version.fastening_types || [],
+    product_files: files,
+  } satisfies ProductVersionWithFiles
 }
 
 async function loadMaxVersionNumber(db: LooseDb, productId: string) {
@@ -174,53 +168,39 @@ async function loadMaxVersionNumber(db: LooseDb, productId: string) {
   return ((data || []) as Array<{ version_number: number }>)[0]?.version_number || 0
 }
 
-async function uploadVersionFiles(
-  supabase: RequestSupabaseClient,
+async function verifiedVersionFileRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
   productId: string,
   versionId: string,
   userId: string,
-  drawingFile: File,
-  stepFile: File,
+  uploads: DirectProductUpload[],
 ) {
-  const uploadedPaths: string[] = []
-  const drawingPath = await uploadStorageFile(supabase, `products/${productId}/${versionId}`, drawingFile)
-  uploadedPaths.push(drawingPath)
-  const stepPath = await uploadStorageFile(supabase, `products/${productId}/${versionId}`, stepFile)
-  uploadedPaths.push(stepPath)
+  const normalizedUploads = validateDirectProductUploads(productId, uploads, { versionFilesOnly: true })
+  return Promise.all(normalizedUploads.map(async (upload) => {
+    const { data: info, error } = await adminSupabase.storage.from('product-files').info(upload.objectPath)
+    if (error || !info) throw new Error(error?.message || `Файл ${upload.fileName} не найден в хранилище`)
+    const actualSize = Number(info.size || 0)
+    validateProductUploadRequest({
+      fileKind: upload.fileKind,
+      fileName: upload.fileName,
+      fileSize: actualSize,
+    })
 
-  const files: ProductFileInsert[] = [
-    buildProductVersionFileInsert({
+    return buildProductVersionFileInsert({
       productId,
       productVersionId: versionId,
-      fileKind: 'drawing',
-      fileName: drawingFile.name,
-      filePath: drawingPath,
-      mimeType: drawingFile.type || null,
-      fileSize: drawingFile.size,
+      fileKind: upload.fileKind as ProductFileKind,
+      fileName: upload.fileName,
+      filePath: upload.objectPath,
+      mimeType: info.contentType || upload.mimeType,
+      fileSize: actualSize,
       uploadedBy: userId,
-    }),
-    buildProductVersionFileInsert({
-      productId,
-      productVersionId: versionId,
-      fileKind: 'step',
-      fileName: stepFile.name,
-      filePath: stepPath,
-      mimeType: stepFile.type || null,
-      fileSize: stepFile.size,
-      uploadedBy: userId,
-    }),
-  ]
-
-  return { files, uploadedPaths }
-}
-
-function validateVersionFiles(drawingFile: File, stepFile: File) {
-  validateFileExtension(drawingFile, DRAWING_FILE_EXTENSIONS, 'Файл чертежа')
-  validateFileExtension(stepFile, STEP_FILE_EXTENSIONS, 'STEP файл')
+    })
+  }))
 }
 
 async function cleanupUploadedFiles(
-  supabase: RequestSupabaseClient | null,
+  supabase: ReturnType<typeof createAdminClient> | null,
   paths: string[],
 ) {
   if (!supabase || paths.length === 0) return
@@ -262,6 +242,7 @@ export async function getProductVersions(productId: string): Promise<{ data: Pro
     return {
       data: versions.map((version) => ({
         ...version,
+        fastening_types: version.fastening_types || [],
         product_files: filesByVersion.get(version.id) || [],
       })),
       error: null,
@@ -276,32 +257,30 @@ export async function createProductVersion(
   input: CreateProductVersionInput,
 ): Promise<ActionResult<ProductVersionWithFiles>> {
   let db: LooseDb | null = null
-  let supabase: RequestSupabaseClient | null = null
+  let adminSupabase: ReturnType<typeof createAdminClient> | null = null
   let archivedVersionId: string | null = null
   let createdVersionId: string | null = null
   let uploadedPaths: string[] = []
 
   try {
-    const { db: requestDb, supabase: requestSupabase, userId } = await requireProductVersionEngineeringAccess()
+    const { db: requestDb, userId } = await requireProductVersionEngineeringAccess()
     db = requestDb
-    supabase = requestSupabase
+    adminSupabase = createAdminClient()
 
     const drawingNumber = cleanRequiredString(input.drawingNumber, 'Укажите номер чертежа')
     const changeSummary = cleanRequiredString(input.changeSummary, 'Опишите изменения в версии')
-    const drawingFile = requireFile(input.drawingFile, 'чертеж')
-    const stepFile = requireFile(input.stepFile, 'STEP файл')
-    validateVersionFiles(drawingFile, stepFile)
+    const normalizedUploads = validateDirectProductUploads(productId, input.files, { versionFilesOnly: true })
+    uploadedPaths = normalizedUploads.map((upload) => upload.objectPath)
 
     const currentVersion = await loadCurrentVersion(db, productId)
     const currentFiles = await loadVersionFiles(db, [currentVersion.id])
-    if (currentFiles.length === 0) {
-      throw new Error('У текущей версии еще нет файлов, используйте первичную загрузку файлов текущей версии')
+    if (!versionDocumentState(currentFiles).complete) {
+      throw new Error('Сначала добавьте недостающие файлы в текущую версию')
     }
 
     const nextVersionNumber = (await loadMaxVersionNumber(db, productId)) + 1
     const newVersionId = randomUUID()
-    const uploaded = await uploadVersionFiles(supabase, productId, newVersionId, userId, drawingFile, stepFile)
-    uploadedPaths = uploaded.uploadedPaths
+    const fileRows = await verifiedVersionFileRows(adminSupabase, productId, newVersionId, userId, normalizedUploads)
 
     const { error: archiveError } = await db
       .from('product_versions')
@@ -330,10 +309,11 @@ export async function createProductVersion(
     if (insertError || !versionData) throw insertError || new Error('Не удалось создать версию товара')
     createdVersionId = newVersionId
 
-    const { error: filesError } = await db.from('product_files').insert(uploaded.files)
+    const { error: filesError } = await db.from('product_files').insert(fileRows)
     if (filesError) throw filesError
 
     const version = await loadVersionWithFiles(db, newVersionId)
+    uploadedPaths = []
     revalidateProduct(productId)
     return { success: true, data: version, error: null }
   } catch (error) {
@@ -348,7 +328,7 @@ export async function createProductVersion(
           .eq('id', archivedVersionId)
       )
     }
-    await cleanupUploadedFiles(supabase, uploadedPaths)
+    await cleanupUploadedFiles(adminSupabase, uploadedPaths)
     return { success: false, data: null, error: getErrorMessage(error) }
   }
 }
@@ -358,32 +338,36 @@ export async function completeCurrentVersionFiles(
   input: CompleteCurrentVersionFilesInput,
 ): Promise<ActionResult<ProductVersionWithFiles>> {
   let db: LooseDb | null = null
-  let supabase: RequestSupabaseClient | null = null
+  let adminSupabase: ReturnType<typeof createAdminClient> | null = null
   let currentVersion: ProductVersion | null = null
   let insertedFileIds: string[] = []
   let uploadedPaths: string[] = []
 
   try {
-    const { db: requestDb, supabase: requestSupabase, userId } = await requireProductVersionEngineeringAccess()
+    const { db: requestDb, userId } = await requireProductVersionEngineeringAccess()
     db = requestDb
-    supabase = requestSupabase
+    adminSupabase = createAdminClient()
 
     const drawingNumber = cleanRequiredString(input.drawingNumber, 'Укажите номер чертежа')
-    const drawingFile = requireFile(input.drawingFile, 'чертеж')
-    const stepFile = requireFile(input.stepFile, 'STEP файл')
-    validateVersionFiles(drawingFile, stepFile)
+    const normalizedUploads = validateDirectProductUploads(productId, input.files, { versionFilesOnly: true })
+    uploadedPaths = normalizedUploads.map((upload) => upload.objectPath)
 
     currentVersion = await loadCurrentVersion(db, productId)
     const currentFiles = await loadVersionFiles(db, [currentVersion.id], VERSION_COMPLETION_FILE_KINDS)
-    if (currentFiles.length > 0) {
-      throw new Error('У этой версии уже есть файлы, используйте «Новая версия» для замены')
+    const currentState = versionDocumentState(currentFiles)
+    for (const upload of normalizedUploads) {
+      if (upload.fileKind === 'drawing' && currentState.hasDrawing) {
+        throw new Error('PDF уже загружен в текущую версию')
+      }
+      if (upload.fileKind === 'step' && currentState.hasStep) {
+        throw new Error('STEP уже загружен в текущую версию')
+      }
     }
 
-    const uploaded = await uploadVersionFiles(supabase, productId, currentVersion.id, userId, drawingFile, stepFile)
-    uploadedPaths = uploaded.uploadedPaths
-    insertedFileIds = uploaded.files.map((file) => String(file.id))
+    const fileRows = await verifiedVersionFileRows(adminSupabase, productId, currentVersion.id, userId, normalizedUploads)
+    insertedFileIds = fileRows.map((file) => String(file.id))
 
-    const { error: filesError } = await db.from('product_files').insert(uploaded.files)
+    const { error: filesError } = await db.from('product_files').insert(fileRows)
     if (filesError) throw filesError
 
     const { error: versionError } = await db
@@ -394,13 +378,14 @@ export async function completeCurrentVersionFiles(
     if (versionError) throw versionError
 
     const version = await loadVersionWithFiles(db, currentVersion.id)
+    uploadedPaths = []
     revalidateProduct(productId)
     return { success: true, data: version, error: null }
   } catch (error) {
     if (db && insertedFileIds.length > 0) {
       await ignoreQueryError(db.from('product_files').delete().in('id', insertedFileIds))
     }
-    await cleanupUploadedFiles(supabase, uploadedPaths)
+    await cleanupUploadedFiles(adminSupabase, uploadedPaths)
     return { success: false, data: null, error: getErrorMessage(error) }
   }
 }
