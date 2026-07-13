@@ -1,6 +1,6 @@
 import { Image, Text, View } from '@react-pdf/renderer'
 import type { DocumentData } from '@/lib/actions/document-generation'
-import { formatMoney, formatQuantity, groupItemsByHsCode } from './format'
+import { formatDocumentItemName, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
 import { pdfStyles, tableWidths } from './styles'
 
 type DocumentProps = {
@@ -49,8 +49,8 @@ export function CommercialItemsTable({ data }: DocumentProps) {
               <View key={`${group.uktzed}-${currentNumber}`} style={rowStyle(currentNumber % 2 === 0)} wrap={false}>
                 <Text style={[pdfStyles.cell, pdfStyles.cellCenter, tableWidths.no]}>{currentNumber}</Text>
                 <View style={[pdfStyles.cell, tableWidths.item]}>
-                  <Text style={pdfStyles.itemNameEn}>{item.product_name_en}</Text>
-                  <Text>{item.product_name_uk}</Text>
+                  <Text style={pdfStyles.itemNameEn}>{formatDocumentItemName(item, 'en')}</Text>
+                  <Text>{formatDocumentItemName(item, 'uk')}</Text>
                 </View>
                 <Text style={[pdfStyles.cell, pdfStyles.cellCenter, tableWidths.measurement]}>Pcs/шт</Text>
                 <Text style={[pdfStyles.cell, pdfStyles.cellCenter, tableWidths.quantity]}>{formatQuantity(item.quantity)}</Text>

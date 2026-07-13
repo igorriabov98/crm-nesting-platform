@@ -5,6 +5,34 @@ type ItemGroup = {
   items: DocumentItem[]
 }
 
+type DocumentItemLanguage = 'en' | 'uk'
+
+const TRAILING_RAL_CODE_PATTERN = /\s*\(?RAL\s*[-:]?\s*\d{4}\)?\s*$/i
+
+function withoutTrailingRalCode(value: string) {
+  return value.trim().replace(TRAILING_RAL_CODE_PATTERN, '').trim()
+}
+
+function documentRalLabel(item: DocumentItem) {
+  if (item.coating !== 'powder_coating') return ''
+
+  const code = item.ral_number
+    .trim()
+    .replace(/^RAL\s*[-:]?\s*/i, '')
+    .replace(/\s+/g, '')
+
+  return code ? `RAL${code.toUpperCase()}` : ''
+}
+
+export function formatDocumentItemName(item: DocumentItem, language: DocumentItemLanguage) {
+  const sourceName = language === 'en'
+    ? item.product_name_en || item.product_name_uk || 'Item'
+    : item.product_name_uk || item.product_name_en || 'Товар'
+  const baseName = withoutTrailingRalCode(sourceName)
+
+  return [baseName, documentRalLabel(item)].filter(Boolean).join(' ')
+}
+
 const EN_ONES = [
   'zero',
   'one',

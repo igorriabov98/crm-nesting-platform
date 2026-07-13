@@ -243,6 +243,11 @@ function itemCoating(item: { coating?: CoatingType | null }) {
   return (item.coating || 'none') as CoatingType
 }
 
+function ralNumberForCoating(coating: CoatingType | null | undefined, value: string | null | undefined) {
+  if (coating !== 'powder_coating') return null
+  return value?.trim() || null
+}
+
 async function resolveProductBackedPrice(
   db: ClientPriceDb,
   lookup: ClientProductPriceLookup,
@@ -491,7 +496,7 @@ function productBackedItemPayload(
     price: priceEur,
     quantity: item.quantity,
     coating: item.coating,
-    ral_number: item.ral_number || null,
+    ral_number: ralNumberForCoating(item.coating, item.ral_number),
     is_sample: item.is_sample ?? false,
     sort_order: index,
   }
@@ -519,7 +524,7 @@ function projectSampleItemPayload(
     price: Number(sample.base_price_eur),
     quantity: item.quantity,
     coating: item.coating,
-    ral_number: item.ral_number || null,
+    ral_number: ralNumberForCoating(item.coating, item.ral_number),
     is_sample: true,
     sort_order: index,
   }
@@ -533,7 +538,7 @@ function productBackedItemUpdate(
   const payload: MachineItemUpdate = {
     quantity: item.quantity,
     coating: item.coating,
-    ral_number: item.ral_number || null,
+    ral_number: ralNumberForCoating(item.coating, item.ral_number),
     is_sample: item.is_sample ?? false,
     sort_order: index,
   }
@@ -1776,7 +1781,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
               price: item.price,
               quantity: item.quantity,
               coating: item.coating,
-              ral_number: item.ral_number || null,
+              ral_number: ralNumberForCoating(item.coating, item.ral_number),
               is_sample: item.is_sample ?? false,
               sort_order: index
             } satisfies MachineItemUpdate).eq('id', itemObj.id)
@@ -2067,12 +2072,12 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
     const parsed = machineItemUpdateSchema.parse(data)
     const { data: existingData, error: existingError } = await db
       .from('machine_items')
-      .select('id, product_id, product_version_id, product_project_id, product_project_version_id, quantity, coating, price, is_sample, sort_order')
+      .select('id, product_id, product_version_id, product_project_id, product_project_version_id, quantity, coating, ral_number, price, is_sample, sort_order')
       .eq('id', itemId)
       .eq('machine_id', machineId)
       .single()
     if (existingError || !existingData) throw existingError || new Error('Позиция не найдена')
-    const existing = existingData as Pick<MachineItem, 'id' | 'product_id' | 'product_version_id' | 'product_project_id' | 'product_project_version_id' | 'quantity' | 'coating' | 'price' | 'is_sample' | 'sort_order'>
+    const existing = existingData as Pick<MachineItem, 'id' | 'product_id' | 'product_version_id' | 'product_project_id' | 'product_project_version_id' | 'quantity' | 'coating' | 'ral_number' | 'price' | 'is_sample' | 'sort_order'>
     const clientId = await getMachineClientId(db, machineId)
     let updatePayload: MachineItemUpdate
     let productVersionTaskToEnsure: { productVersion: ProductVersionCompletionSnapshot; productName: string } | null = null
@@ -2084,7 +2089,7 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
       updatePayload = {
         quantity: parsed.quantity,
         coating: parsed.coating,
-        ral_number: parsed.ral_number || null,
+        ral_number: ralNumberForCoating(parsed.coating || existing.coating, parsed.ral_number ?? existing.ral_number),
       }
       if (existing.product_id && parsed.coating && parsed.coating !== existing.coating) {
         const priceDb = clientPriceDb()
@@ -2108,6 +2113,7 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
         ...parsed,
         quantity: parsed.quantity || existing.quantity,
         coating: parsed.coating || existing.coating,
+        ral_number: parsed.ral_number ?? existing.ral_number ?? undefined,
         is_sample: true,
       } as NonNullable<CreateMachineInput['items']>[number], sample, existing.sort_order)
       void machine_id
@@ -2137,6 +2143,7 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
         ...parsed,
         quantity: parsed.quantity || existing.quantity,
         coating: parsed.coating || existing.coating,
+        ral_number: parsed.ral_number ?? existing.ral_number ?? undefined,
         is_sample: parsed.is_sample ?? existing.is_sample,
       } as NonNullable<CreateMachineInput['items']>[number], product, productVersion, priceEur, existing.sort_order)
       void machine_id
@@ -2158,7 +2165,14 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
       void _ignoredProductVersionIdCamel
       void _ignoredProjectId
       void _ignoredVersionId
-      updatePayload = legacyPayload
+      updatePayload = {
+        ...legacyPayload,
+        ...(
+          parsed.coating !== undefined || parsed.ral_number !== undefined
+            ? { ral_number: ralNumberForCoating(parsed.coating || existing.coating, parsed.ral_number ?? existing.ral_number) }
+            : {}
+        ),
+      }
     }
     const { error } = await db.from('machine_items').update(updatePayload).eq('id', itemId).eq('machine_id', machineId)
     if (error) throw error

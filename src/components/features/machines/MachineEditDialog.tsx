@@ -890,6 +890,9 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                               onValueChange={(value) => {
                                 const coating = value as CoatingType
                                 field.onChange(coating)
+                                if (coating !== 'powder_coating') {
+                                  setRowValue('items', index, 'ral_number', '')
+                                }
                                 applyClientPriceToItem(index, productId, coating)
                               }}
                               value={field.value || ''}
@@ -1071,7 +1074,16 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                       <FormField control={form.control} name={`samples.${index}.coating`} render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-xs text-[#374151]">Покрытие *</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value || ''}>
+                          <Select
+                            onValueChange={(value) => {
+                              const coating = value as CoatingType
+                              field.onChange(coating)
+                              if (coating !== 'powder_coating') {
+                                setRowValue('samples', index, 'ral_number', '')
+                              }
+                            }}
+                            value={field.value || ''}
+                          >
                             <FormControl><SelectTrigger className="h-8 text-sm bg-white"><SelectValue /></SelectTrigger></FormControl>
                             <SelectContent>
                               {Object.entries(COATINGS).map(([val, {label}]) => (

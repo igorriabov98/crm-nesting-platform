@@ -4,7 +4,7 @@ import type { DocumentData, DocumentItem, DocumentPackingGroup } from '@/lib/act
 import { documentGrossWeight, packingSummaryFromGroups, totalPackingPlaces } from '@/lib/packing-summary'
 import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
-import { formatDate, formatQuantity, formatWeight, groupItemsByHsCode } from './format'
+import { formatDate, formatDocumentItemName, formatQuantity, formatWeight, groupItemsByHsCode } from './format'
 
 registerPdfFonts()
 
@@ -372,8 +372,8 @@ function ItemRow({ item, number }: NumberedItem) {
         <Text style={styles.valueText}>{number}</Text>
       </View>
       <View style={[styles.cell, styles.itemTextBlock, { width: COLS.item }]}>
-        <Text style={styles.itemTextEn}>{item.product_name_en}</Text>
-        <Text style={styles.itemTextUa}>{item.product_name_uk}</Text>
+        <Text style={styles.itemTextEn}>{formatDocumentItemName(item, 'en')}</Text>
+        <Text style={styles.itemTextUa}>{formatDocumentItemName(item, 'uk')}</Text>
       </View>
       <View style={[styles.cell, styles.centerCell, { width: COLS.measurement }]}>
         <Text style={styles.valueTextBold}>Pcs/шт</Text>

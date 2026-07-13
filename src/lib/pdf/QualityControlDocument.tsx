@@ -1,6 +1,7 @@
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
 import type { DocumentData, DocumentItem } from '@/lib/actions/document-generation'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
+import { formatDocumentItemName } from './format'
 
 registerPdfFonts()
 
@@ -134,7 +135,7 @@ function safeQuantity(value: number) {
 }
 
 function itemName(item: DocumentItem) {
-  return item.product_name_uk || item.product_name_en || 'Товар'
+  return formatDocumentItemName(item, 'uk')
 }
 
 function buildQualityRows(items: DocumentItem[]) {

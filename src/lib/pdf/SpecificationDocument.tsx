@@ -2,7 +2,7 @@ import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
 import type { DocumentData, DocumentExpense, DocumentItem } from '@/lib/actions/document-generation'
 import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
-import { amountToWordsEn, amountToWordsUa, formatDate, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
+import { amountToWordsEn, amountToWordsUa, formatDate, formatDocumentItemName, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
 
 registerPdfFonts()
 
@@ -424,8 +424,8 @@ function SpecificationItemsTable({
                 <Text style={styles.itemRowText}>{row.number}</Text>
               </View>
               <View style={[styles.cell, { width: COLS.item }, styles.itemRowCell, styles.itemRowCellLeft]}>
-                <Text style={styles.itemNameEn}>{row.item.product_name_en}</Text>
-                <Text style={styles.itemNameUa}>{row.item.product_name_uk}</Text>
+                <Text style={styles.itemNameEn}>{formatDocumentItemName(row.item, 'en')}</Text>
+                <Text style={styles.itemNameUa}>{formatDocumentItemName(row.item, 'uk')}</Text>
               </View>
               <View style={[styles.cell, { width: COLS.measurement }, styles.itemRowCell, styles.itemRowCellCenter]}>
                 <Text style={styles.itemRowText}>Pcs/шт</Text>
