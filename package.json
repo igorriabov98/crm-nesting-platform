@@ -14,6 +14,7 @@
     "test:supply-reservation-scope": "tsx scripts/test-supply-reservation-scope.ts",
     "test:access-control": "tsx scripts/test-access-control.ts",
     "test:product-file-uploads": "tsx scripts/test-product-file-uploads.ts",
+    "test:document-ral": "tsx scripts/test-document-ral-format.ts",
     "test:user-impersonation": "tsx scripts/test-user-impersonation.ts",
     "test:supply-receiving": "node scripts/test-supply-partial-receiving.mjs",
     "smoke:prod": "tsx scripts/prod-smoke.ts",

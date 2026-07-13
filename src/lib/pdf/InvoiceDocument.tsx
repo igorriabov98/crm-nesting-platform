@@ -3,7 +3,7 @@ import type { DocumentData, DocumentExpense } from '@/lib/actions/document-gener
 import { isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
-import { amountToWordsEn, amountToWordsUa, formatDate, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
+import { amountToWordsEn, amountToWordsUa, formatDate, formatDocumentItemName, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
 
 registerPdfFonts()
 
@@ -310,8 +310,8 @@ function InvoiceItemsTable({ data }: { data: DocumentData }) {
               <View key={`${group.uktzed}-${currentNumber}`} style={styles.tableRow} wrap={false}>
                 <Text style={COLS.no}>{currentNumber}</Text>
                 <View style={COLS.name}>
-                  <Text style={styles.itemNameEn}>{item.product_name_en}</Text>
-                  <Text>{item.product_name_uk}</Text>
+                  <Text style={styles.itemNameEn}>{formatDocumentItemName(item, 'en')}</Text>
+                  <Text>{formatDocumentItemName(item, 'uk')}</Text>
                 </View>
                 <Text style={COLS.measurement}>Pcs/шт</Text>
                 <Text style={COLS.quantity}>{formatQuantity(item.quantity)}</Text>

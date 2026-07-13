@@ -653,6 +653,9 @@ export function MachineCreateForm({
                               onValueChange={(value) => {
                                 const coating = value as CoatingType
                                 field.onChange(coating)
+                                if (coating !== 'powder_coating') {
+                                  setRowValue('items', index, 'ral_number', '')
+                                }
                                 applyClientPriceToItem(index, productId, coating)
                               }}
                               value={field.value || ''}
@@ -850,7 +853,16 @@ export function MachineCreateForm({
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="text-xs">Покрытие *</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value || ''}>
+                            <Select
+                              onValueChange={(value) => {
+                                const coating = value as CoatingType
+                                field.onChange(coating)
+                                if (coating !== 'powder_coating') {
+                                  setRowValue('samples', index, 'ral_number', '')
+                                }
+                              }}
+                              value={field.value || ''}
+                            >
                               <FormControl>
                                 <SelectTrigger className="h-8 text-sm bg-white">
                                   <SelectValue placeholder="Выберите покрытие">
@@ -1075,4 +1087,3 @@ export function MachineCreateForm({
     </Card>
   )
 }
-
