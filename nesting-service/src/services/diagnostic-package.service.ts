@@ -118,6 +118,7 @@ export class DiagnosticPackageService {
       { name: 'validation.json', content: stableJson(validationReport) },
       { name: 'reconciliation.json', content: stableJson(reconciliation) },
       { name: 'reconciliation.md', content: buildReconciliationMarkdown(reconciliation.rows) },
+      { name: 'warnings.json', content: stableJson({ warnings }) },
       { name: 'summary.md', content: buildSummaryMarkdown(project, resultJson, validationReport, reconciliation.rows, warnings) },
       ...svgFiles,
       ...dxfFiles,
@@ -422,6 +423,7 @@ function buildSummaryMarkdown(
     '- dxf/*.dxf',
     '- reconciliation.json',
     '- reconciliation.md',
+    '- warnings.json',
     '- summary.md',
     '',
   ].join('\n');
