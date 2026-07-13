@@ -21,8 +21,8 @@ interface ExpensesTabProps {
 }
 
 export function ExpensesTab({ machine }: ExpensesTabProps) {
-  const { role, isDirector } = useRole()
-  const canEdit = isDirector || role === 'sales_manager'
+  const { can } = useRole()
+  const canEdit = can('sales_plan', 'manage')
   const [isEditOpen, setIsEditOpen] = useState(false)
 
   const allExpenses = machine.machine_expenses || []

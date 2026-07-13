@@ -3,8 +3,9 @@ import { renderToBuffer } from '@react-pdf/renderer'
 import JSZip from 'jszip'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { getDocumentData, type DocumentData } from '@/lib/actions/document-generation'
+import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
+import { AuthRequiredError } from '@/lib/auth/current-user'
 import { SpecificationDocument } from '@/lib/pdf/SpecificationDocument'
 import { InvoiceDocument } from '@/lib/pdf/InvoiceDocument'
 import { PackingListDocument } from '@/lib/pdf/PackingListDocument'
@@ -57,12 +58,12 @@ function errorMessage(error: unknown) {
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createServerSupabaseClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
     const body = await request.json().catch(() => null)
     const parsed = requestSchema.parse(body)
+    await requirePermission('sales_plan', 'view')
+    if (parsed.type === 'invoice' || parsed.type === 'all') {
+      await requirePermission('invoices', 'view')
+    }
     const data = await getDocumentData(parsed.machineId)
     const number = safeFilePart(data.machine.specification_number || data.machine.id)
 
@@ -92,7 +93,13 @@ export async function POST(request: Request) {
       headers: attachmentHeaders('application/pdf', `${definition.fileBase}_${number}.pdf`),
     })
   } catch (error) {
-    const status = error instanceof z.ZodError ? 400 : 500
+    const status = error instanceof z.ZodError
+      ? 400
+      : error instanceof PermissionDeniedError
+        ? 403
+        : error instanceof AuthRequiredError
+          ? 401
+          : 500
     return NextResponse.json({ error: errorMessage(error) }, { status })
   }
 }

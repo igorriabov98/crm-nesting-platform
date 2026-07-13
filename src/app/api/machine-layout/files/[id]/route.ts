@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requirePermission } from '@/lib/permissions/server'
 
 type LayoutFileRow = { pdf_file_path: string | null }
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  await getCurrentUserContext()
+  await requirePermission('nesting', 'view')
   const admin = createAdminClient()
 
   const { data, error } = await admin

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requirePermission } from '@/lib/permissions/server'
 
 type FileRow = { file_path: string | null; file_name: string | null; mime_type: string | null }
 
@@ -12,7 +12,7 @@ function contentDisposition(fileName: string) {
 
 export async function GET(_request: Request, { params }: { params: Promise<{ source: string; id: string }> }) {
   const { source, id } = await params
-  await getCurrentUserContext()
+  await requirePermission('nesting', 'view')
   const admin = createAdminClient()
 
   let filePath: string | null = null

@@ -122,8 +122,8 @@ function SortableHeader({
 
 export function ProductionTable({ data, filters: externalFilters, onFiltersChange, hideFilters = false, visibleStageTypes }: ProductionTableProps) {
   const tableScrollRef = useRef<HTMLDivElement>(null)
-  const { isProductionManager, isDirector } = useRole()
-  const canEdit = isProductionManager || isDirector
+  const { canManageProduction } = useRole()
+  const canEdit = canManageProduction
   const [localData, setLocalData] = useState(data)
   const [internalFilters, setInternalFilters] = useState<ProductionFilterValues>({
     search: '',

@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { requirePermission } from '@/lib/permissions/server'
+import type { PermissionOperation } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
 import { TASKS_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
@@ -113,8 +114,8 @@ const PRODUCTION_PLAN_DATE_CHANGE_TASK_TYPE = 'production_plan_date_change_appro
 const MATERIAL_TYPE_SELECTION_TASK_TYPE = 'material_type_selection' as const
 const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
 
-async function getCurrentUser() {
-  const { supabase, userId, user, role, factoryId } = await getCurrentUserContext()
+async function getCurrentUser(operation: PermissionOperation = 'view') {
+  const { supabase, userId, user, role, factoryId } = await requirePermission('tasks', operation)
   return { supabase, userId, user, role, factoryId }
 }
 
@@ -864,7 +865,7 @@ export async function delegateTask(input: {
   note?: string
 }) {
   try {
-    const { userId, user } = await getCurrentUser()
+    const { userId, user } = await getCurrentUser('manage')
     const db = getAdminTaskDb()
     const task = await assertTaskCanBeDelegated(db, input.taskId, userId)
     const candidate = await assertDelegationCandidate(db, userId, input.delegatedTo, input.departmentId)
@@ -909,7 +910,7 @@ export async function delegateTask(input: {
 
 export async function acceptTaskDelegation(delegationId: string) {
   try {
-    const { userId } = await getCurrentUser()
+    const { userId } = await getCurrentUser('manage')
     const db = getAdminTaskDb()
     const delegation = await getDelegationById(db, delegationId)
     if (!isOpenDelegationStatus(delegation.status)) throw new Error('Делегирование уже обработано')
@@ -954,7 +955,7 @@ export async function declineTaskDelegation(delegationId: string, reason: string
   }
 
   try {
-    const { userId } = await getCurrentUser()
+    const { userId } = await getCurrentUser('manage')
     const db = getAdminTaskDb()
     const delegation = await getDelegationById(db, delegationId)
     if (!isOpenDelegationStatus(delegation.status)) throw new Error('Делегирование уже обработано')
@@ -994,7 +995,7 @@ export async function declineTaskDelegation(delegationId: string, reason: string
 
 export async function cancelTaskDelegation(delegationId: string) {
   try {
-    const { userId } = await getCurrentUser()
+    const { userId } = await getCurrentUser('manage')
     const db = getAdminTaskDb()
     const delegation = await getDelegationById(db, delegationId)
     if (!isOpenDelegationStatus(delegation.status)) throw new Error('Делегирование уже обработано')
@@ -1039,7 +1040,7 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
   }
 
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser()
+    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
 
     const { data: task, error: fetchError } = await db
@@ -1230,7 +1231,7 @@ export async function getProductionCuttingRollbackPreview(taskId: string) {
 
 export async function applyProductionCuttingRollbackTask(taskId: string, comment?: string | null) {
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser()
+    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
     const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
 
@@ -1254,7 +1255,7 @@ export async function applyProductionCuttingRollbackTask(taskId: string, comment
 
 export async function keepProductionCuttingRollbackTask(taskId: string, comment?: string | null) {
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser()
+    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
     const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
 
@@ -1283,7 +1284,7 @@ export async function completeTechnologistTaskWithoutRequest(taskId: string, rea
   }
 
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser()
+    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
 
     const { data: task, error: fetchError } = await db

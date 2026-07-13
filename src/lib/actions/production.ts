@@ -2,8 +2,8 @@
 
 import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { requirePermission } from '@/lib/permissions/server'
 import { ROUTES } from '@/lib/constants/routes'
-import { isDirector } from '@/lib/utils/permissions'
 import { STAGE_ORDER, stageHasSingleDate, stageHasWorkshop } from '@/lib/constants/stages'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
@@ -178,18 +178,8 @@ async function reconcileMachineStatus(supabase: Awaited<ReturnType<typeof create
 }
 
 async function requireAuth() {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Не авторизован')
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile) throw new Error('Профиль не найден')
-  return { supabase, user: profile as unknown as CurrentUser }
+  const { supabase, user } = await requirePermission('production', 'manage')
+  return { supabase, user: user as CurrentUser }
 }
 
 export async function updateProductionStage(stageId: string, data: ProductionStageUpdate, options: ProductionMutationOptions = {}) {
@@ -200,9 +190,6 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
     if ('manual_overdue' in data) {
       throw new Error('Ручная просрочка отключена')
     }
-
-    const canEdit = user.role === 'production_manager' || isDirector(user.role)
-    if (!canEdit) throw new Error('Недостаточно прав для редактирования этапа производства')
 
     let hasNightShiftDatesColumn = true
     const currentStageResult = await supabase
@@ -392,22 +379,6 @@ export async function updateMachineDate(
 
     if (field === 'actual_material_date') {
       throw new Error('Факт поставки материала заполняется автоматически после приемки всех материалов по заявке')
-    }
-
-    const salesFields: MachineDateField[] = ['desired_shipping_date', 'delivery_to_client_date']
-    const productionFields: MachineDateField[] = [
-      'planned_material_date',
-      'actual_shipping_date',
-    ]
-
-    const canEditSalesDate = user.role === 'sales_manager' || isDirector(user.role)
-    const canEditProductionDate = user.role === 'production_manager' || isDirector(user.role)
-
-    if (
-      (salesFields.includes(field) && !canEditSalesDate) ||
-      (productionFields.includes(field) && !canEditProductionDate)
-    ) {
-      throw new Error('Недостаточно прав для редактирования даты')
     }
 
     const { data: machine, error: machineError } = await supabase

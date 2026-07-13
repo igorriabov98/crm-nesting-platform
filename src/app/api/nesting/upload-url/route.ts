@@ -5,7 +5,7 @@ import { requireNestingProxyAccess } from '@/lib/nesting/proxy-auth'
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
-  const denied = await requireNestingProxyAccess('nesting')
+  const denied = await requireNestingProxyAccess({ resourceKey: 'nesting', operation: 'manage' })
   if (denied) return denied
 
   try {
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const denied = await requireNestingProxyAccess('nesting')
+  const denied = await requireNestingProxyAccess({ resourceKey: 'nesting', operation: 'manage' })
   if (denied) return denied
 
   try {

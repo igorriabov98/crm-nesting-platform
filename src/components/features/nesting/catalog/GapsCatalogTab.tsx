@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/table'
 import { createGap, deleteGap, updateGap, type GapItem } from '@/lib/nesting/catalog-api'
 import { RangeRuleDialog } from '@/components/features/nesting/catalog/RangeRuleDialog'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import {
   MATERIAL_OPTIONS,
   formatMm,
@@ -112,6 +113,8 @@ export function GapsCatalogTab({
   material?: string
 }) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManage = can('nesting_catalog', 'manage')
   const updateParams = useCatalogSearchUpdater()
   const [createOpen, setCreateOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<GapItem | undefined>()
@@ -124,10 +127,10 @@ export function GapsCatalogTab({
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-base font-semibold text-[#1B3A6B]">Перемычки (зазоры между деталями)</h2>
-        <Button onClick={() => setCreateOpen(true)}>
+        {canManage && <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
           Добавить
-        </Button>
+        </Button>}
       </div>
 
       <div className="rounded-lg border border-[#E8ECF0] bg-white p-4">
@@ -164,7 +167,7 @@ export function GapsCatalogTab({
                   <TableCell>{formatMm(item.thicknessMax)}</TableCell>
                   <TableCell>{formatMm(item.gap)}</TableCell>
                   <TableCell>
-                    <GapActions item={item} onEdit={() => setEditingItem(item)} onChanged={refresh} />
+                    {canManage ? <GapActions item={item} onEdit={() => setEditingItem(item)} onChanged={refresh} /> : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -187,7 +190,7 @@ export function GapsCatalogTab({
         </p>
       </div>
 
-      <RangeRuleDialog<GapItem>
+      {canManage && <RangeRuleDialog<GapItem>
         open={createOpen}
         onOpenChange={setCreateOpen}
         title={{ create: 'Добавить перемычку', edit: 'Редактировать перемычку' }}
@@ -197,8 +200,8 @@ export function GapsCatalogTab({
         create={(data) => createGap(data as { material: string; thicknessMin: number; thicknessMax: number; gap: number })}
         update={(id, data) => updateGap(id, data as { material: string; thicknessMin: number; thicknessMax: number; gap: number })}
         onSaved={refresh}
-      />
-      <RangeRuleDialog<GapItem>
+      />}
+      {canManage && <RangeRuleDialog<GapItem>
         open={Boolean(editingItem)}
         onOpenChange={(open) => {
           if (!open) setEditingItem(undefined)
@@ -211,7 +214,7 @@ export function GapsCatalogTab({
         create={(data) => createGap(data as { material: string; thicknessMin: number; thicknessMax: number; gap: number })}
         update={(id, data) => updateGap(id, data as { material: string; thicknessMin: number; thicknessMax: number; gap: number })}
         onSaved={refresh}
-      />
+      />}
     </div>
   )
 }

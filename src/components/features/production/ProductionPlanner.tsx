@@ -1463,8 +1463,8 @@ export function ProductionPlanner({
   height = 'clamp(430px, 62dvh, 700px)',
 }: ProductionPlannerProps) {
   const router = useRouter()
-  const { isProductionManager, isDirector } = useRole()
-  const canEdit = isProductionManager || isDirector
+  const { isProductionManager, isDirector, can } = useRole()
+  const canEdit = can('production', 'manage')
   const [dayWidth, setDayWidth] = useState(38)
   const [rangeStart, setRangeStart] = useState<Date>(() => subDays(findEarliestDate(data), 30))
   const [rangeEnd, setRangeEnd] = useState<Date>(() => addDays(findLatestDate(data), 60))

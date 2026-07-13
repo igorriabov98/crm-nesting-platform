@@ -38,6 +38,7 @@ import { deleteSheet, updateSheet, type SheetCatalogItem } from '@/lib/nesting/c
 import type { PaginatedResponse } from '@/lib/nesting/api'
 import { InlineNumberEdit } from '@/components/features/nesting/catalog/InlineNumberEdit'
 import { SheetDialog } from '@/components/features/nesting/catalog/SheetDialog'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import {
   MATERIAL_OPTIONS,
   formatMm,
@@ -128,6 +129,8 @@ export function SheetsCatalogTab({
   thicknessOptions: number[]
 }) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManage = can('nesting_catalog', 'manage')
   const updateParams = useCatalogSearchUpdater()
   const [createOpen, setCreateOpen] = useState(false)
   const [editingSheet, setEditingSheet] = useState<SheetCatalogItem | undefined>()
@@ -155,10 +158,10 @@ export function SheetsCatalogTab({
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-base font-semibold text-[#1B3A6B]">Листы</h2>
-        <Button onClick={() => setCreateOpen(true)}>
+        {canManage && <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
           Добавить
-        </Button>
+        </Button>}
       </div>
 
       <div className="flex flex-col gap-3 rounded-lg border border-[#E8ECF0] bg-white p-4 sm:flex-row">
@@ -218,6 +221,7 @@ export function SheetsCatalogTab({
                       value={sheet.price}
                       allowNull
                       displayValue={formatPrice(sheet.price)}
+                      disabled={!canManage}
                       onSave={(value) => savePrice(sheet, value)}
                     />
                   </TableCell>
@@ -226,6 +230,7 @@ export function SheetsCatalogTab({
                       value={sheet.stock}
                       integer
                       displayValue={String(sheet.stock)}
+                      disabled={!canManage}
                       onSave={(value) => saveStock(sheet, value)}
                     />
                   </TableCell>
@@ -237,7 +242,7 @@ export function SheetsCatalogTab({
                     )}
                   </TableCell>
                   <TableCell>
-                    <SheetActions sheet={sheet} onEdit={() => setEditingSheet(sheet)} onChanged={refresh} />
+                    {canManage ? <SheetActions sheet={sheet} onEdit={() => setEditingSheet(sheet)} onChanged={refresh} /> : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -277,15 +282,15 @@ export function SheetsCatalogTab({
         )}
       </div>
 
-      <SheetDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={refresh} />
-      <SheetDialog
+      {canManage && <SheetDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={refresh} />}
+      {canManage && <SheetDialog
         open={Boolean(editingSheet)}
         onOpenChange={(open) => {
           if (!open) setEditingSheet(undefined)
         }}
         item={editingSheet}
         onSaved={refresh}
-      />
+      />}
     </div>
   )
 }

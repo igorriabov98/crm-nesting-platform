@@ -6,6 +6,7 @@ import { AlertTriangle, Bot, CheckCircle2, Info, Loader2, Undo2, XCircle } from 
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -49,6 +50,8 @@ export function AIAnalysisPanel({
   parts: NestingPart[]
   onReloadParts: () => Promise<void>
 }) {
+  const { can } = usePermissions()
+  const canManage = can('nesting', 'manage')
   const [status, setStatus] = useState<AIStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<AIAnalysisResponse['data'] | null>(null)
@@ -296,7 +299,7 @@ export function AIAnalysisPanel({
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" onClick={analyze} disabled={isAnalyzing || !status}>
+              <Button type="button" onClick={analyze} disabled={!canManage || isAnalyzing || !status}>
                 {isAnalyzing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Bot className="mr-2 h-4 w-4" />}
                 {isAnalyzing ? 'AI анализирует PDF...' : 'Извлечь спецификацию из PDF'}
               </Button>
@@ -376,7 +379,7 @@ export function AIAnalysisPanel({
                         const applied = isApplied(match)
                         const proposed = isProposed(match)
                         const needsForce = canForce(match, part)
-                        const canSelect = proposed || applied
+                        const canSelect = canManage && (proposed || applied)
 
                         return (
                           <TableRow key={match.partId}>
@@ -533,13 +536,13 @@ export function AIAnalysisPanel({
                                   />
                                 ) : null}
                                 {needsForce ? (
-                                  <Button type="button" variant="outline" size="sm" onClick={() => forceMatch(match)} disabled={isApplying}>
+                                  <Button type="button" variant="outline" size="sm" onClick={() => forceMatch(match)} disabled={!canManage || isApplying}>
                                     <AlertTriangle className="mr-1 h-3.5 w-3.5" />
                                     Применить принудительно
                                   </Button>
                                 ) : null}
                                 {applied ? (
-                                  <Button type="button" variant="outline" size="sm" onClick={() => revertMatches([match.partId])} disabled={isApplying}>
+                                  <Button type="button" variant="outline" size="sm" onClick={() => revertMatches([match.partId])} disabled={!canManage || isApplying}>
                                     <Undo2 className="mr-1 h-3.5 w-3.5" />
                                     Отменить
                                   </Button>
@@ -572,7 +575,7 @@ export function AIAnalysisPanel({
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <p>{dimensionMismatch.note}</p>
-                      <Button type="button" variant="outline" onClick={applyForced} disabled={isApplying}>
+                      <Button type="button" variant="outline" onClick={applyForced} disabled={!canManage || isApplying}>
                         {isApplying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertTriangle className="mr-2 h-4 w-4" />}
                         Применить принудительно
                       </Button>
@@ -598,18 +601,18 @@ export function AIAnalysisPanel({
                 )}
 
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={applySelected} disabled={isApplying || proposedMatches.length === 0}>
+                  <Button type="button" onClick={applySelected} disabled={!canManage || isApplying || proposedMatches.length === 0}>
                     {isApplying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Применить выбранные
                   </Button>
-                  <Button type="button" variant="outline" onClick={revertSelected} disabled={isApplying || selectedAppliedMatches.length === 0}>
+                  <Button type="button" variant="outline" onClick={revertSelected} disabled={!canManage || isApplying || selectedAppliedMatches.length === 0}>
                     <Undo2 className="mr-2 h-4 w-4" />
                     Отменить выбранные
                   </Button>
-                  <Button type="button" variant="outline" onClick={revertAllApplied} disabled={isApplying || appliedMatches.length === 0}>
+                  <Button type="button" variant="outline" onClick={revertAllApplied} disabled={!canManage || isApplying || appliedMatches.length === 0}>
                     Отменить все применённые
                   </Button>
-                  <Button type="button" variant="outline" onClick={() => setSelected({})} disabled={isApplying || (proposedMatches.length === 0 && selectedAppliedMatches.length === 0)}>
+                  <Button type="button" variant="outline" onClick={() => setSelected({})} disabled={!canManage || isApplying || (proposedMatches.length === 0 && selectedAppliedMatches.length === 0)}>
                     Отклонить все
                   </Button>
                 </div>

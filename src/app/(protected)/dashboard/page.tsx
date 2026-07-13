@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
+import { requirePermission } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
 import { DIRECTOR_ROLES, ROLES } from '@/lib/constants/roles'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -381,7 +382,8 @@ export default async function DashboardPage({
 }: {
   searchParams?: Promise<{ factory?: string; month?: string }>
 }) {
-  const { user: currentUser, canViewInvoices: showInvoices } = await getCurrentUserContextOrRedirect()
+  const { user: currentUser, permissions } = await requirePermission('dashboard', 'view')
+  const showInvoices = hasPermission(permissions, 'invoices', 'view')
   const resolvedSearchParams = await searchParams
   const factoryFilter = resolvedSearchParams?.factory || 'all'
   const monthFilter = normalizeMonthValue(resolvedSearchParams?.month)

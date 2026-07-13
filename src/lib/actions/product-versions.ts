@@ -3,14 +3,12 @@
 import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { requireProductAccess, requireProductManageAccess, uploadStorageFile } from '@/lib/actions/products'
 import { buildProductVersionFileInsert } from '@/lib/actions/product-version-file-helpers'
 import { completeProductVersionCompletionTasksIfFilled } from '@/lib/actions/product-version-completion-tasks'
 import type { Database } from '@/lib/types/database'
-import type { UserRole } from '@/lib/types'
 
 type DbError = { message?: string; details?: string; hint?: string; code?: string }
 type LooseDbResult = { data: unknown; error: DbError | null }
@@ -35,7 +33,7 @@ type ProductFileInsert = Database['public']['Tables']['product_files']['Insert']
 type ProductFileKind = ProductFileInsert['file_kind']
 type ProductFasteningType = Database['public']['Enums']['product_fastening_type']
 type ProductCompletionType = Database['public']['Enums']['product_completion_type']
-type RequestSupabaseClient = Awaited<ReturnType<typeof getCurrentUserContext>>['supabase']
+type RequestSupabaseClient = Awaited<ReturnType<typeof requireProductManageAccess>>['supabase']
 
 export type ProductVersionWithFiles = ProductVersion & {
   product_files: ProductFile[]
@@ -66,13 +64,6 @@ type ActionResult<T> = {
   data: T | null
   error: string | null
 }
-
-const PRODUCT_VERSION_ENGINEERING_ROLES: UserRole[] = [
-  'planning_director',
-  'financial_director',
-  'commercial_director',
-  'engineer',
-]
 
 const FASTENING_TYPES: ProductFasteningType[] = [
   'metal_plate',
@@ -127,13 +118,10 @@ function normalizeCompletionType(value: ProductCompletionType | null | undefined
 }
 
 async function requireProductVersionEngineeringAccess() {
-  const context = await getCurrentUserContext()
-  if (!PRODUCT_VERSION_ENGINEERING_ROLES.includes(context.role)) {
-    throw new Error('Недостаточно прав для изменения версий товара')
-  }
+  const context = await requireProductManageAccess()
   return {
     ...context,
-    db: dbFrom(context.supabase),
+    userId: context.user.id,
   }
 }
 

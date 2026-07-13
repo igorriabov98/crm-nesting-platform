@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { ROUTES } from '@/lib/constants/routes'
 import { fetchNestingService, getNestingServiceUrl, type NestingMaterial, type PaginatedResponse } from '@/lib/nesting/api'
+import { requirePermission } from '@/lib/permissions/server'
 
 type ErrorPayload = {
   error?: string
@@ -94,6 +95,7 @@ export async function getSheets(params?: {
   page?: number
   limit?: number
 }): Promise<PaginatedResponse<SheetCatalogItem>> {
+  await requirePermission('nesting_catalog', 'view')
   const res = await request(
     buildCatalogUrl('/api/catalog/sheets', params),
     { cache: 'no-store' },
@@ -103,6 +105,7 @@ export async function getSheets(params?: {
 }
 
 export async function getSheetThicknessOptions(params?: { material?: string }): Promise<number[]> {
+  await requirePermission('nesting_catalog', 'view')
   const thicknesses = new Set<number>()
   let page = 1
   let totalPages = 1
@@ -125,6 +128,7 @@ export async function createSheet(data: {
   price?: number
   stock?: number
 }): Promise<SheetCatalogItem> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl('/api/catalog/sheets'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -144,6 +148,7 @@ export async function updateSheet(id: string, data: Partial<{
   price: number | null
   stock: number
 }>): Promise<void> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl(`/api/catalog/sheets/${id}`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -155,12 +160,14 @@ export async function updateSheet(id: string, data: Partial<{
 }
 
 export async function deleteSheet(id: string): Promise<void> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl(`/api/catalog/sheets/${id}`), { method: 'DELETE' }, 'Не удалось удалить лист')
   if (!res.ok) await readJson(res, 'Не удалось удалить лист')
   revalidateCatalog()
 }
 
 export async function getGaps(material?: string): Promise<{ data: GapItem[] }> {
+  await requirePermission('nesting_catalog', 'view')
   const res = await request(
     buildCatalogUrl('/api/catalog/gaps', { material }),
     { cache: 'no-store' },
@@ -175,6 +182,7 @@ export async function createGap(data: {
   thicknessMax: number
   gap: number
 }): Promise<GapItem> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl('/api/catalog/gaps'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -192,6 +200,7 @@ export async function updateGap(id: string, data: Partial<{
   thicknessMax: number
   gap: number
 }>): Promise<void> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl(`/api/catalog/gaps/${id}`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -203,12 +212,14 @@ export async function updateGap(id: string, data: Partial<{
 }
 
 export async function deleteGap(id: string): Promise<void> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl(`/api/catalog/gaps/${id}`), { method: 'DELETE' }, 'Не удалось удалить перемычку')
   if (!res.ok) await readJson(res, 'Не удалось удалить перемычку')
   revalidateCatalog()
 }
 
 export async function getKFactors(material?: string): Promise<{ data: KFactorItem[] }> {
+  await requirePermission('nesting_catalog', 'view')
   const res = await request(
     buildCatalogUrl('/api/catalog/kfactors', { material }),
     { cache: 'no-store' },
@@ -223,6 +234,7 @@ export async function createKFactor(data: {
   thicknessMax: number
   kFactor: number
 }): Promise<KFactorItem> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl('/api/catalog/kfactors'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -240,6 +252,7 @@ export async function updateKFactor(id: string, data: Partial<{
   thicknessMax: number
   kFactor: number
 }>): Promise<void> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl(`/api/catalog/kfactors/${id}`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -251,6 +264,7 @@ export async function updateKFactor(id: string, data: Partial<{
 }
 
 export async function deleteKFactor(id: string): Promise<void> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl(`/api/catalog/kfactors/${id}`), { method: 'DELETE' }, 'Не удалось удалить K-фактор')
   if (!res.ok) await readJson(res, 'Не удалось удалить K-фактор')
   revalidateCatalog()
@@ -261,6 +275,7 @@ export async function getRemnants(params?: {
   thickness?: number
   availableOnly?: boolean
 }): Promise<{ data: RemnantItem[] }> {
+  await requirePermission('nesting_catalog', 'view')
   const res = await request(
     buildCatalogUrl('/api/catalog/remnants', params),
     { cache: 'no-store' },
@@ -276,6 +291,7 @@ export async function createRemnant(data: {
   height: number
   sourceOrder?: string
 }): Promise<RemnantItem> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl('/api/catalog/remnants'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -288,6 +304,7 @@ export async function createRemnant(data: {
 }
 
 export async function deleteRemnant(id: string): Promise<void> {
+  await requirePermission('nesting_catalog', 'manage')
   const res = await request(buildCatalogUrl(`/api/catalog/remnants/${id}`), { method: 'DELETE' }, 'Не удалось удалить остаток')
   if (!res.ok) await readJson(res, 'Не удалось удалить остаток')
   revalidateCatalog()

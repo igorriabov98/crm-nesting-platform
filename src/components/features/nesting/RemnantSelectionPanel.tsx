@@ -5,6 +5,7 @@ import { Loader2, Save } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import type { RemnantGeom, SheetResult } from '@/lib/nesting/api'
 
 type Props = {
@@ -31,6 +32,8 @@ function selectedIdsForSheet(sheet: SheetResult) {
 }
 
 export function RemnantSelectionPanel({ projectId, sheet, onHoverRemnant, onSaved }: Props) {
+  const { can } = usePermissions()
+  const canManage = can('nesting', 'manage')
   const [selected, setSelected] = useState<Set<string>>(() => selectedIdsForSheet(sheet))
   const [isPending, startTransition] = useTransition()
   const selectedIds = useMemo(() => Array.from(selected), [selected])
@@ -94,7 +97,7 @@ export function RemnantSelectionPanel({ projectId, sheet, onHoverRemnant, onSave
           <h3 className="font-semibold text-[#1B3A6B]">Деловые остатки</h3>
           <p className="text-[#6B7280]">Отметьте зоны, которые нужно оставить как будущий деловой остаток.</p>
         </div>
-        <Button size="sm" onClick={save} disabled={!dirty || isPending}>
+        <Button size="sm" onClick={save} disabled={!canManage || !dirty || isPending}>
           {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           Сохранить выбор
         </Button>
@@ -112,7 +115,7 @@ export function RemnantSelectionPanel({ projectId, sheet, onHoverRemnant, onSave
               onMouseEnter={() => onHoverRemnant(remnant.id)}
               onMouseLeave={() => onHoverRemnant(null)}
             >
-              <Checkbox checked={checked} onCheckedChange={(value) => toggle(remnant, value === true)} className="mt-0.5" />
+              <Checkbox disabled={!canManage} checked={checked} onCheckedChange={(value) => toggle(remnant, value === true)} className="mt-0.5" />
               <span className="min-w-0">
                 <span className="block font-medium text-[#374151]">Кандидат {index + 1}: {formatSize(remnant)}</span>
                 <span className="block text-[#6B7280]">{formatArea(remnant.area)} · x {Math.round(remnant.x)}, y {Math.round(remnant.y)}</span>

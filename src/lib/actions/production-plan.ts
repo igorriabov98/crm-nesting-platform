@@ -5,7 +5,7 @@ import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { requirePermission } from '@/lib/permissions/server'
 import { ROUTES } from '@/lib/constants/routes'
 import { STAGES } from '@/lib/constants/stages'
 import { isDirector } from '@/lib/utils/permissions'
@@ -228,9 +228,7 @@ function isProductionManagerScoped(role: UserRole, userFactoryId: string | null,
 }
 
 async function requireProductionManage(factoryId: string) {
-  const context = await getCurrentUserContext()
-  const canManage = context.role === 'production_manager' || context.role === 'sales_manager' || isDirector(context.role)
-  if (!canManage) throw new Error('Недостаточно прав для управления планом производства')
+  const context = await requirePermission('production', 'manage')
   if (!isProductionManagerScoped(context.role, context.factoryId, factoryId)) throw new Error('Доступ запрещён')
   return context
 }
@@ -396,7 +394,7 @@ async function findPlanningDepartmentHead(db: LooseDb) {
 
 export async function getProductionMonthPlans(factoryId: string): Promise<{ data: ProductionMonthPlanSummary[]; error: string | null }> {
   try {
-    const context = await getCurrentUserContext()
+    const context = await requirePermission('production', 'view')
     if (!isProductionManagerScoped(context.role, context.factoryId, factoryId)) {
       throw new Error('Доступ запрещён')
     }
@@ -541,9 +539,7 @@ export async function createProductionPlanDateChangeRequest(input: {
 }) {
   try {
     const parsed = createRequestSchema.parse(input)
-    const context = await getCurrentUserContext()
-    const canRequest = context.role === 'production_manager' || isDirector(context.role)
-    if (!canRequest) throw new Error('Запрос на изменение дат может отправить начальник производства или директор')
+    const context = await requirePermission('production', 'manage')
 
     const db = dbFrom(createAdminClient())
     const { data: machineData, error: machineError } = await db
@@ -699,7 +695,7 @@ export async function createProductionPlanDateChangeRequest(input: {
 
 export async function getProductionPlanDateChangeApproval(taskId: string): Promise<{ data: ProductionPlanDateChangeApprovalPayload | null; error: string | null }> {
   try {
-    const context = await getCurrentUserContext()
+    const context = await requirePermission('tasks', 'view')
     const db = dbFrom(createAdminClient())
     const { data: taskData, error: taskError } = await db
       .from('tasks')
@@ -903,7 +899,7 @@ export async function decideProductionPlanDateChangeRequest(input: {
 }) {
   try {
     const parsed = decideRequestSchema.parse(input)
-    const context = await getCurrentUserContext()
+    const context = await requirePermission('tasks', 'manage')
     const db = dbFrom(createAdminClient())
     const request = await loadRequestWithTask(db, parsed.requestId)
     const task = relationOne(request.task)

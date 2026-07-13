@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { requirePermission } from '@/lib/permissions/server'
 import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
@@ -132,9 +132,6 @@ const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
 const SETTINGS_ID = '00000000-0000-0000-0000-000000000001'
 const MAX_PDF_SIZE = 50 * 1024 * 1024
 
-const REQUEST_ROLES: UserRole[] = ['sales_manager', ...DIRECTOR_ROLES]
-const UPLOAD_ROLES: UserRole[] = ['technologist', ...DIRECTOR_ROLES]
-
 function dbFrom(client: unknown): LooseDb {
   return client as LooseDb
 }
@@ -175,10 +172,6 @@ async function loadStructuralTechnologists(db: LooseDb) {
       const rightName = relationOne(right.user)?.full_name || ''
       return leftName.localeCompare(rightName, 'ru')
     })
-}
-
-function assertRole(role: UserRole, allowed: UserRole[], message = 'Недостаточно прав') {
-  if (!allowed.includes(role)) throw new Error(message)
 }
 
 function datePlusDays(days: number) {
@@ -811,7 +804,7 @@ async function notifyManagerAboutLayoutUpload(db: LooseDb, input: {
 
 export async function getMachineLayout(machineId: string): Promise<ActionResult<MachineLayoutPayload>> {
   try {
-    await getCurrentUserContext()
+    await requirePermission('nesting', 'view')
     const db = dbFrom(createAdminClient())
     const data = await loadLayoutPayload(db, machineId)
     return { success: true, data }
@@ -822,8 +815,7 @@ export async function getMachineLayout(machineId: string): Promise<ActionResult<
 
 export async function requestMachineLayout(machineId: string): Promise<ActionResult<MachineLayoutPayload>> {
   try {
-    const { userId, role } = await getCurrentUserContext()
-    assertRole(role, REQUEST_ROLES, 'Запрос на расстановку может отправить менеджер или директор')
+    const { userId } = await requirePermission('sales_plan', 'manage')
 
     const db = dbFrom(createAdminClient())
     const machine = await loadMachine(db, machineId)
@@ -875,8 +867,7 @@ export async function uploadMachineLayoutPdf(formData: FormData): Promise<Action
   let uploadedPath: string | null = null
 
   try {
-    const { userId, role } = await getCurrentUserContext()
-    assertRole(role, UPLOAD_ROLES, 'PDF расстановки может загрузить технолог или директор')
+    const { userId, role } = await requirePermission('nesting', 'manage')
 
     const requestId = String(formData.get('request_id') || '')
     const file = formData.get('file')

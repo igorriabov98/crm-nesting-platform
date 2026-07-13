@@ -50,7 +50,7 @@ import {
   type ProductVersionWithFiles,
 } from '@/lib/actions/product-versions'
 import type { ProductFile } from '@/lib/types'
-import type { UserRole } from '@/lib/types'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 
 type ProductVersionAuthor = {
   id: string
@@ -61,20 +61,7 @@ type ProductVersionHistoryProps = {
   productId: string
   versions: ProductVersionWithFiles[]
   authorsById: Record<string, ProductVersionAuthor>
-  currentUserRole: UserRole
 }
-
-const PRODUCT_VERSION_ACTION_ROLES: UserRole[] = [
-  'planning_director',
-  'financial_director',
-  'commercial_director',
-  'engineer',
-]
-
-const PRODUCT_COMPLETION_MANAGE_ROLES: UserRole[] = [
-  ...PRODUCT_VERSION_ACTION_ROLES,
-  'sales_manager',
-]
 
 const FASTENING_OPTIONS = Object.entries(PRODUCT_FASTENING_TYPE_LABELS) as Array<[ProductFasteningType, string]>
 const COMPLETION_OPTIONS = Object.entries(PRODUCT_COMPLETION_TYPE_LABELS) as Array<[ProductCompletionType, string]>
@@ -711,14 +698,14 @@ export function ProductVersionHistory({
   productId,
   versions,
   authorsById,
-  currentUserRole,
 }: ProductVersionHistoryProps) {
+  const { can } = usePermissions()
   const currentVersion = versions.find((version) => version.status === 'current') || null
   const archivedVersions = versions
     .filter((version) => version.status === 'archived')
     .sort((left, right) => right.version_number - left.version_number)
-  const canManageVersions = PRODUCT_VERSION_ACTION_ROLES.includes(currentUserRole)
-  const canManageCompletion = PRODUCT_COMPLETION_MANAGE_ROLES.includes(currentUserRole)
+  const canManageVersions = can('products', 'manage')
+  const canManageCompletion = canManageVersions
 
   if (versions.length === 0) {
     return (

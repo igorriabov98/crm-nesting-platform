@@ -59,14 +59,14 @@ function ProductionMonthPlanPanel({
   error?: string | null
 }) {
   const router = useRouter()
-  const { role, isDirector, isProductionManager, isSalesManager } = useRole()
+  const { canManageProduction } = useRole()
   const [savingStatus, setSavingStatus] = useState<'preliminary_ready' | 'confirmed' | null>(null)
   const plan = useMemo(
     () => plans.find((item) => item.factory_id === factoryId && item.production_month === selectedMonth) || null,
     [factoryId, plans, selectedMonth],
   )
   const status = plan?.status || 'draft'
-  const canManage = Boolean(role && (isDirector || isProductionManager || isSalesManager))
+  const canManage = canManageProduction
   const hasSelectedMonth = Boolean(selectedMonth)
   const isConfirmed = status === 'confirmed'
 

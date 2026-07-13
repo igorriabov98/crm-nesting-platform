@@ -32,10 +32,10 @@ function todayDateOnly() {
 
 export function ProductionTab({ machine }: ProductionTabProps) {
   const router = useRouter()
-  const { isProductionManager, isSalesManager, isDirector } = useRole()
-  const canEdit = isProductionManager || isDirector
-  const canEditSalesDates = isSalesManager || isDirector
-  const canEditProductionDates = isProductionManager || isDirector
+  const { can } = useRole()
+  const canEdit = can('production', 'manage')
+  const canEditSalesDates = canEdit
+  const canEditProductionDates = canEdit
   const [clearingStageId, setClearingStageId] = useState<string | null>(null)
 
   const stages = useMemo(() => {

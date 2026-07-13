@@ -1,6 +1,6 @@
 "use server"
 
-import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { requirePermission } from '@/lib/permissions/server'
 import type { StageType } from '@/lib/types'
 import { STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
 import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
@@ -144,7 +144,7 @@ function applyProductionManagerFactoryScope<T>(query: T, factoryId: string | nul
 }
 
 export async function getProductionData(factoryFilter?: string | null) {
-  const { supabase, role: userRole, factoryId: userFactoryId } = await getCurrentUserContext()
+  const { supabase, role: userRole, factoryId: userFactoryId } = await requirePermission('production', 'view')
 
   const selectWithDeadline = `
     id, name, created_at, total_weight, has_zinc, has_painting, factory_id,

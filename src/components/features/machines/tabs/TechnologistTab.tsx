@@ -220,7 +220,7 @@ export function TechnologistTab({
 }: Props) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { role, isDirector } = useRole()
+  const { isDirector, can } = useRole()
   const { user } = useUser()
   const [isUpdatingMaterialType, setIsUpdatingMaterialType] = useState(false)
   const [isRequestingLayout, setIsRequestingLayout] = useState(false)
@@ -232,13 +232,13 @@ export function TechnologistTab({
   const visibleItems = latest?.items?.length ? latest.items : currentItems
   const openLayoutVersion = latest?.status === 'requested' ? latest : null
   const hasOpenLayoutRequest = Boolean(openLayoutVersion)
-  const canRequestLayout = !machine.is_archived && currentItems.length > 0 && !hasOpenLayoutRequest && (isDirector || role === 'sales_manager')
+  const canRequestLayout = !machine.is_archived && currentItems.length > 0 && !hasOpenLayoutRequest && can('sales_plan', 'manage')
   const canUploadPdf = !machine.is_archived && latest?.status === 'requested' && (
-    isDirector || (role === 'technologist' && latest.assignedTo === user?.id)
+    can('nesting', 'manage') && (isDirector || latest.assignedTo === user?.id)
   )
   const materialTypeValue = (machine.material_type || 'undefined') as MaterialType
   const materialTypeLabel = MATERIAL_TYPE_LABELS[materialTypeValue] ?? MATERIAL_TYPE_LABELS['undefined']
-  const canEditMaterialType = isDirector || role === 'technologist'
+  const canEditMaterialType = can('technologist_requests', 'manage')
 
   const handleMaterialTypeChange = async (value: MaterialType | null) => {
     if (!value) return

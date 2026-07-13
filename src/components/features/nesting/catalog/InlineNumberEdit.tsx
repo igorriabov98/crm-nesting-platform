@@ -11,6 +11,7 @@ type InlineNumberEditProps = {
   integer?: boolean
   min?: number
   inputClassName?: string
+  disabled?: boolean
   onSave: (value: number | null) => Promise<void>
 }
 
@@ -29,6 +30,7 @@ export function InlineNumberEdit({
   integer = false,
   min = 0,
   inputClassName = 'w-24',
+  disabled = false,
   onSave,
 }: InlineNumberEditProps) {
   const [editing, setEditing] = useState(false)
@@ -80,11 +82,12 @@ export function InlineNumberEdit({
     }
   }
 
-  if (!editing) {
+  if (!editing || disabled) {
     return (
       <button
         type="button"
-        className="cursor-pointer rounded px-1 text-left hover:bg-[#F4F6F9] hover:underline"
+        className="rounded px-1 text-left enabled:cursor-pointer enabled:hover:bg-[#F4F6F9] enabled:hover:underline disabled:cursor-default"
+        disabled={disabled}
         onClick={() => setEditing(true)}
       >
         {displayValue}
@@ -98,7 +101,7 @@ export function InlineNumberEdit({
       min={min}
       step={integer ? 1 : 'any'}
       value={draft}
-      disabled={saving}
+      disabled={disabled || saving}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={() => void commit()}
       onKeyDown={(event) => {

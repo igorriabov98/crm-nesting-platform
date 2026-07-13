@@ -186,12 +186,12 @@ async function assertMachineNotArchived(db: LooseDb, machineId: string) {
   }
 }
 
-function assertRole(role: UserRole, allowed: UserRole[], message = 'Недостаточно прав') {
-  if (!allowed.includes(role)) throw new Error(message)
-}
-
 function isDirector(role: UserRole) {
   return DIRECTOR_ROLES.includes(role)
+}
+
+function assertRole(role: UserRole, allowed: UserRole[], message = 'Недостаточно прав') {
+  if (!allowed.includes(role)) throw new Error(message)
 }
 
 function requestPath(machineId: string) {

@@ -5,7 +5,7 @@ import { forwardJsonResponse, requireNestingProxyAccess, serviceUnavailable } fr
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
-  const denied = await requireNestingProxyAccess('director')
+  const denied = await requireNestingProxyAccess({ resourceKey: 'nesting_settings', operation: 'view' })
   if (denied) return denied
 
   const limit = request.nextUrl.searchParams.get('limit') || '50'

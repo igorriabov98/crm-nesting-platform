@@ -26,6 +26,7 @@ import {
 import { deleteNestingProject } from '@/lib/nesting/actions'
 import type { NestingProject } from '@/lib/nesting/api'
 import { isCompletedNestingStatus } from '@/lib/nesting/status'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 
 function getProjectHref(project: NestingProject) {
   return isCompletedNestingStatus(project.status) ? `/nesting/${project.id}/result` : `/nesting/${project.id}/parts`
@@ -33,6 +34,8 @@ function getProjectHref(project: NestingProject) {
 
 export function ProjectActions({ project }: { project: NestingProject }) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManage = can('nesting', 'manage')
 
   async function handleDelete() {
     try {
@@ -73,15 +76,19 @@ export function ProjectActions({ project }: { project: NestingProject }) {
                 Скачать DXF
               </DropdownMenuItem>
             )}
-            <DropdownMenuSeparator />
-            <AlertDialogTrigger className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-sm text-red-600 hover:bg-red-50 focus:outline-none">
-              <Trash2 className="h-4 w-4" />
-              Удалить
-            </AlertDialogTrigger>
+            {canManage && (
+              <>
+                <DropdownMenuSeparator />
+                <AlertDialogTrigger className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-sm text-red-600 hover:bg-red-50 focus:outline-none">
+                  <Trash2 className="h-4 w-4" />
+                  Удалить
+                </AlertDialogTrigger>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <AlertDialogContent className="bg-white">
+        {canManage && <AlertDialogContent className="bg-white">
           <AlertDialogHeader>
             <AlertDialogTitle>Удалить проект {project.orderNumber}?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -94,7 +101,7 @@ export function ProjectActions({ project }: { project: NestingProject }) {
               Удалить
             </AlertDialogAction>
           </AlertDialogFooter>
-        </AlertDialogContent>
+        </AlertDialogContent>}
       </AlertDialog>
     </div>
   )

@@ -55,7 +55,7 @@ function isAllowedManualStorageUri(value: unknown) {
 
 export async function POST(request: NextRequest) {
   try {
-    const access = await getNestingProxyAccess('nesting')
+    const access = await getNestingProxyAccess({ resourceKey: 'nesting', operation: 'manage' })
     if (access.response) return access.response
     const userId = access.context!.userId
 

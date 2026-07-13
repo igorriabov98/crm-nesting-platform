@@ -1,9 +1,7 @@
 import { getMachines } from './actions'
 import { MachineTable } from '@/components/features/machines/MachineTable'
-import { AccessDenied } from '@/components/ui/AccessDenied'
-import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
-import { canViewSalesPlan } from '@/lib/utils/permissions'
-import { INVOICE_VISIBLE_ROLES } from '@/lib/constants/roles'
+import { requirePermission } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 
 export const metadata = {
@@ -15,11 +13,7 @@ export default async function SalesPlanPage({
 }: {
   searchParams?: Promise<{ factory?: string; productionMonth?: string; view?: string }>
 }) {
-  const { supabase, user } = await getCurrentUserContextOrRedirect()
-
-  if (!canViewSalesPlan(user.role)) {
-    return <AccessDenied />
-  }
+  const { supabase, user, permissions } = await requirePermission('sales_plan', 'view')
 
   const resolvedSearchParams = await searchParams
   const factoryFilter = resolvedSearchParams?.factory || 'all'
@@ -72,8 +66,7 @@ export default async function SalesPlanPage({
 
       <MachineTable
         machines={machines || []}
-        userRole={user.role}
-        canViewInvoice={INVOICE_VISIBLE_ROLES.includes(user.role)}
+        canViewInvoice={hasPermission(permissions, 'invoices', 'view')}
         isDirector={['financial_director', 'commercial_director', 'planning_director'].includes(user.role)}
         factories={factoriesData || []}
         factoryFilter={factoryFilter}
