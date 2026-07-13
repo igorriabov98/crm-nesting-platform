@@ -1,5 +1,4 @@
 import { ArrowLeft } from 'lucide-react'
-import { stopUserImpersonationAndRedirect } from '@/lib/actions/impersonation'
 
 type ImpersonationBannerProps = {
   adminName: string
@@ -14,7 +13,7 @@ export function ImpersonationBanner({ adminName, targetName }: ImpersonationBann
         вы работаете от лица <strong>{targetName}</strong>
         <span className="hidden sm:inline"> — все действия выполняются с его правами</span>
       </p>
-      <form action={stopUserImpersonationAndRedirect}>
+      <form action="/api/impersonation/stop" method="post">
         <button
           type="submit"
           className="inline-flex min-h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 font-semibold text-amber-950 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"

@@ -2,7 +2,6 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
 import { requireAccessSettingsPermission } from '@/lib/permissions/server'
 import { PERMISSION_RESOURCES } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
@@ -162,11 +161,6 @@ export async function stopUserImpersonation() {
       redirectTo: ROUTES.LOGIN,
     }
   }
-}
-
-export async function stopUserImpersonationAndRedirect() {
-  const result = await stopUserImpersonation()
-  redirect(result.redirectTo || ROUTES.LOGIN)
 }
 
 function getTargetLandingPath(preview: UserAccessPreview) {
