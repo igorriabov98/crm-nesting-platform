@@ -15,7 +15,7 @@ export async function GET(request: Request) {
   const marker = await getImpersonationContext()
   const auditId = new URL(request.url).searchParams.get('audit')
 
-  if (!marker || auditId !== marker.auditId || !isSameOriginNavigation(request)) {
+  if (!marker || auditId !== marker.auditId || !isTrustedNavigation(request)) {
     return new Response('Forbidden', { status: 403 })
   }
 
@@ -33,18 +33,9 @@ function isSameOrigin(request: Request) {
   }
 }
 
-function isSameOriginNavigation(request: Request) {
-  const referer = request.headers.get('referer')
-  if (!referer) return false
-
-  try {
-    if (new URL(referer).origin !== new URL(request.url).origin) return false
-  } catch {
-    return false
-  }
-
+function isTrustedNavigation(request: Request) {
   const fetchSite = request.headers.get('sec-fetch-site')
-  return !fetchSite || fetchSite === 'same-origin'
+  return !fetchSite || fetchSite === 'same-origin' || fetchSite === 'none'
 }
 
 async function stopAndRedirect(): Promise<never> {
