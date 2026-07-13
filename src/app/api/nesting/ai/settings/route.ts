@@ -5,7 +5,7 @@ import { forwardJsonResponse, requireNestingProxyAccess, serviceUnavailable } fr
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const denied = await requireNestingProxyAccess('director')
+  const denied = await requireNestingProxyAccess({ resourceKey: 'nesting_settings', operation: 'view' })
   if (denied) return denied
 
   try {
@@ -17,7 +17,7 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  const denied = await requireNestingProxyAccess('director')
+  const denied = await requireNestingProxyAccess({ resourceKey: 'nesting_settings', operation: 'manage' })
   if (denied) return denied
 
   try {

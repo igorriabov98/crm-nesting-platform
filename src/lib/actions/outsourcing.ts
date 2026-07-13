@@ -5,7 +5,8 @@ import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { requirePermission } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { isDirector } from '@/lib/utils/permissions'
@@ -286,12 +287,16 @@ function isProductionManagerScoped(role: UserRole, userFactoryId: string | null,
   return role !== 'production_manager' || Boolean(factoryId && userFactoryId === factoryId)
 }
 
-function canManageSource(role: UserRole, userFactoryId: string | null, factoryId: string | null) {
-  return isDirector(role) || role === 'sales_manager' || (role === 'production_manager' && isProductionManagerScoped(role, userFactoryId, factoryId))
-}
-
-function canManageTransport(role: UserRole) {
-  return isDirector(role) || role === 'supply_manager' || role === 'procurement_head'
+function canManageSource(
+  role: UserRole,
+  userFactoryId: string | null,
+  factoryId: string | null,
+  isAdminPosition = false,
+) {
+  return isAdminPosition
+    || isDirector(role)
+    || role === 'sales_manager'
+    || Boolean(factoryId && userFactoryId === factoryId)
 }
 
 async function getMachineOrThrow(db: LooseDb, machineId: string) {
@@ -323,11 +328,12 @@ async function getProductionPlanStatus(db: LooseDb, machine: Pick<MachineRow, 'f
 }
 
 async function requireMachineOutsourcingAccess(machineId: string, manage = false) {
-  const context = await getCurrentUserContext()
+  const context = await requirePermission('production', manage ? 'manage' : 'view')
   const db = dbFrom(createAdminClient())
   const machine = await getMachineOrThrow(db, machineId)
   const planStatus = await getProductionPlanStatus(db, machine)
-  const canManage = canManageSource(context.role, context.factoryId, machine.factory_id)
+  const canManage = hasPermission(context.permissions, 'production', 'manage')
+    && canManageSource(context.role, context.factoryId, machine.factory_id, context.permissionDetails.isAdminPosition)
 
   if (manage && !canManage) throw new Error('Недостаточно прав для управления аутсорсингом')
   if (!canManage && context.role === 'production_manager' && !isProductionManagerScoped(context.role, context.factoryId, machine.factory_id)) {
@@ -338,7 +344,7 @@ async function requireMachineOutsourcingAccess(machineId: string, manage = false
 }
 
 async function requireExecutorFactoryAccess(operationId: string) {
-  const context = await getCurrentUserContext()
+  const context = await requirePermission('production', 'manage')
   const db = dbFrom(createAdminClient())
   const { data, error } = await db
     .from('machine_outsourcing_operations')
@@ -350,7 +356,7 @@ async function requireExecutorFactoryAccess(operationId: string) {
   const operation = data as { id: string; executor_type: ExecutorType; executor_factory_id: string | null; machine_id: string; archived_at: string | null }
   if (operation.archived_at) throw new Error('Операция архивирована')
   if (operation.executor_type !== 'factory' || !operation.executor_factory_id) throw new Error('Это не внутренняя работа завода')
-  if (!isDirector(context.role) && !(context.role === 'production_manager' && context.factoryId === operation.executor_factory_id)) {
+  if (!canManageSource(context.role, context.factoryId, operation.executor_factory_id, context.permissionDetails.isAdminPosition)) {
     throw new Error('Недостаточно прав для управления входящей работой')
   }
 
@@ -935,8 +941,8 @@ export async function archiveOutsourcingOperation(operationId: string) {
 export async function upsertZincOutsourcingDefault(input: z.infer<typeof zincDefaultSchema>) {
   try {
     const parsed = zincDefaultSchema.parse(input)
-    const context = await getCurrentUserContext()
-    if (!canManageSource(context.role, context.factoryId, parsed.factoryId)) {
+    const context = await requirePermission('production', 'manage')
+    if (!canManageSource(context.role, context.factoryId, parsed.factoryId, context.permissionDetails.isAdminPosition)) {
       throw new Error('Недостаточно прав для настройки цинка')
     }
     if (parsed.executorType === 'supplier' && !parsed.supplierId) throw new Error('Выберите поставщика для цинка')
@@ -1059,7 +1065,7 @@ export async function syncZincOutsourcingForMachine(machineId: string) {
 
 export async function getProductionOutsourcingSummary(factoryId: string): Promise<{ data: ProductionOutsourcingSummary; error: string | null }> {
   try {
-    const context = await getCurrentUserContext()
+    const context = await requirePermission('production', 'view')
     if (!isProductionManagerScoped(context.role, context.factoryId, factoryId)) throw new Error('Доступ запрещён')
     const db = dbFrom(createAdminClient())
     const [{ data: outgoingMachinesData, error: outgoingMachinesError }, { data: incomingData, error: incomingError }] = await Promise.all([
@@ -1227,8 +1233,7 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
 
 export async function getOutsourcingTransportWorkspace(): Promise<{ data: OutsourcingTransportWorkspace; error: string | null }> {
   try {
-    const context = await getCurrentUserContext()
-    if (!canManageTransport(context.role)) throw new Error('Недостаточно прав для транспорта аутсорсинга')
+    await requirePermission('supply_transport', 'view')
     const db = dbFrom(createAdminClient())
     const [{ data: ordersData, error: ordersError }, carriers, allNeeds] = await Promise.all([
       db.from('machine_outsourcing_transport_orders').select('*').order('created_at', { ascending: false }),
@@ -1280,8 +1285,7 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
 }
 
 async function requireTransportAccess() {
-  const context = await getCurrentUserContext()
-  if (!canManageTransport(context.role)) throw new Error('Недостаточно прав для управления транспортом')
+  const context = await requirePermission('supply_transport', 'manage')
   return { db: dbFrom(createAdminClient()), context }
 }
 

@@ -12,7 +12,7 @@ import { useRole } from '@/lib/hooks/useRole'
 import { Plus, Loader2 } from 'lucide-react'
 
 export function SupplyItemCreateDialog({ machineId }: { machineId: string }) {
-  const { isTechnologist, isSupplyManager, isDirector } = useRole()
+  const { isSupplyManager, isDirector, can } = useRole()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -24,7 +24,7 @@ export function SupplyItemCreateDialog({ machineId }: { machineId: string }) {
   const [date, setDate] = useState<Date | undefined>()
   const [comment, setComment] = useState('')
 
-  const canCreate = isTechnologist || isSupplyManager || isDirector
+  const canCreate = can('supply', 'manage')
   if (!canCreate) return null
 
   const handleSave = async () => {
@@ -89,7 +89,7 @@ export function SupplyItemCreateDialog({ machineId }: { machineId: string }) {
             </div>
           </div>
 
-          {(isSupplyManager || isDirector) && (
+          {canCreate && (isSupplyManager || isDirector) && (
             <>
               <div className="grid grid-cols-2 gap-4 border-t border-[#E8ECF0] pt-4">
                 <div className="space-y-1.5">

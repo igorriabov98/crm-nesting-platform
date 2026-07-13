@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, Info, Wrench } from 'lucide-react'
 import { toast } from 'sonner'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import {
   Table,
   TableBody,
@@ -143,6 +144,8 @@ export function PartsTable({
   steelTypes: SteelType[]
   onPartsChange: (parts: NestingPart[]) => void
 }) {
+  const { can } = usePermissions()
+  const canManage = can('nesting', 'manage')
   const [onlySheetMetal, setOnlySheetMetal] = useState(false)
   const [savingPartId, setSavingPartId] = useState<string | null>(null)
   const [editingThicknessPartId, setEditingThicknessPartId] = useState<string | null>(null)
@@ -267,7 +270,7 @@ export function PartsTable({
               const typeMeta = partTypeMeta(partType)
               const autoTyped = part.classificationMethod !== null && part.classificationMethod !== 'manual'
               const inactive = part.isActive === false
-              const controlsDisabled = disabled || inactive
+              const controlsDisabled = !canManage || disabled || inactive
 
               return (
                 <TableRow key={part.id} className={cn(!sheetPart && 'bg-slate-50/40', inactive && 'bg-slate-100/70 text-slate-500')}>
@@ -293,7 +296,7 @@ export function PartsTable({
                       <Switch
                         size="sm"
                         checked={!inactive}
-                        disabled={disabled}
+                        disabled={!canManage || disabled}
                         onCheckedChange={(checked) => savePart(part, { isActive: checked === true })}
                       />
                       {inactive ? (

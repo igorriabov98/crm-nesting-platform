@@ -1,10 +1,19 @@
 import { NextResponse } from 'next/server'
 import { DIRECTOR_ROLES } from '@/lib/constants/roles'
+import {
+  AuthRequiredError,
+  UserInactiveError,
+  UserProfileMissingError,
+} from '@/lib/auth/current-user'
+import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { canViewNesting } from '@/lib/utils/permissions'
+import type { PermissionOperation, ResourceKey } from '@/lib/permissions/resources'
 import type { UserRole } from '@/lib/types'
 
-type AccessMode = 'nesting' | 'director'
+export type NestingProxyAccessRequirement = {
+  resourceKey: Extract<ResourceKey, 'nesting' | 'nesting_settings'>
+  operation: PermissionOperation
+}
 
 export type NestingProxyContext = {
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>
@@ -13,48 +22,41 @@ export type NestingProxyContext = {
   isDirector: boolean
 }
 
-export async function getNestingProxyAccess(mode: AccessMode): Promise<{
+export async function getNestingProxyAccess(requirement: NestingProxyAccessRequirement): Promise<{
   context: NestingProxyContext | null
   response: NextResponse | null
 }> {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (!user) {
-    return { context: null, response: NextResponse.json({ error: 'Необходима авторизация' }, { status: 401 }) }
-  }
-
-  const { data: profile, error } = await supabase
-    .from('users')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-
-  if (error || !profile) {
-    return { context: null, response: NextResponse.json({ error: 'Профиль пользователя не найден' }, { status: 403 }) }
-  }
-
-  const role = (profile as unknown as { role: UserRole }).role
-  const isDirector = DIRECTOR_ROLES.includes(role)
-  const allowed = mode === 'director' ? isDirector : canViewNesting(role)
-
-  if (!allowed) {
-    return { context: null, response: NextResponse.json({ error: 'Нет доступа' }, { status: 403 }) }
-  }
-
-  return {
-    context: {
-      supabase,
-      userId: user.id,
-      role,
-      isDirector,
-    },
-    response: null,
+  try {
+    const permissionContext = await requirePermission(requirement.resourceKey, requirement.operation)
+    const role = permissionContext.role as UserRole
+    return {
+      context: {
+        supabase: permissionContext.supabase,
+        userId: permissionContext.userId,
+        role,
+        isDirector: DIRECTOR_ROLES.includes(role),
+      },
+      response: null,
+    }
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return { context: null, response: NextResponse.json({ error: error.message }, { status: 401 }) }
+    }
+    if (error instanceof PermissionDeniedError || error instanceof UserProfileMissingError || error instanceof UserInactiveError) {
+      return { context: null, response: NextResponse.json({ error: error.message }, { status: 403 }) }
+    }
+    return {
+      context: null,
+      response: NextResponse.json(
+        { error: `Не удалось проверить доступ: ${error instanceof Error ? error.message : 'неизвестная ошибка'}` },
+        { status: 503 },
+      ),
+    }
   }
 }
 
-export async function requireNestingProxyAccess(mode: AccessMode): Promise<NextResponse | null> {
-  const access = await getNestingProxyAccess(mode)
+export async function requireNestingProxyAccess(requirement: NestingProxyAccessRequirement): Promise<NextResponse | null> {
+  const access = await getNestingProxyAccess(requirement)
   return access.response
 }
 

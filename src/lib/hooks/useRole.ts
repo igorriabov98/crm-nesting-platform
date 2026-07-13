@@ -3,12 +3,10 @@
 // Хук для проверки прав доступа текущего пользователя
 // Основан на роли из useUser, предоставляет удобные boolean-геттеры
 import { useUser } from './useUser'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import {
   canEditField as checkCanEditField,
   isDirector,
-  canViewInvoices,
-  canManageUsers,
-  canCreateMachines,
 } from '@/lib/utils/permissions'
 import type { UserRole } from '@/lib/types'
 
@@ -18,6 +16,7 @@ import type { UserRole } from '@/lib/types'
  */
 export function useRole() {
   const { user, loading } = useUser()
+  const { can } = usePermissions()
 
   const role = user?.role as UserRole | undefined
 
@@ -29,13 +28,19 @@ export function useRole() {
     isDirector: role ? isDirector(role) : false,
 
     // Может ли управлять пользователями системы (только planning_director)
-    canManageUsers: role ? canManageUsers(role) : false,
+    canManageUsers: can('admin_users', 'manage'),
 
     // Может ли видеть раздел инвойсов
-    canViewInvoices: role ? canViewInvoices(role) : false,
+    canViewInvoices: can('invoices', 'view'),
 
     // Может ли создавать новые машины (контракты)
-    canCreateMachines: role ? canCreateMachines(role) : false,
+    canCreateMachines: can('sales_plan', 'manage'),
+
+    can,
+    canManageSalesPlan: can('sales_plan', 'manage'),
+    canManageProduction: can('production', 'manage'),
+    canManageSupply: can('supply', 'manage'),
+    canManageNesting: can('nesting', 'manage'),
 
     // Может ли редактировать конкретное поле конкретной таблицы
     canEditField: (table: string, field: string): boolean => {

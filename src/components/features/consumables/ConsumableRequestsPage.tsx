@@ -53,19 +53,17 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import type {
   ConsumablePriority,
   ConsumableRequest,
   ConsumableRequestStatus,
   ConsumableStockRow,
   FactorySummary,
-  UserRole,
 } from '@/lib/types'
 
 type Props = {
   mode: 'production' | 'supply'
-  role: UserRole
-  isCrmAdmin?: boolean
   factories: FactorySummary[]
   selectedFactoryId: string
   requests: ConsumableRequest[]
@@ -152,7 +150,8 @@ function staleTracking(value: string | null) {
   return Date.now() - new Date(value).getTime() > 15 * 60 * 1000
 }
 
-export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factories, selectedFactoryId, requests, stock }: Props) {
+export function ConsumableRequestsPage({ mode, factories, selectedFactoryId, requests, stock }: Props) {
+  const { can } = usePermissions()
   const router = useRouter()
   const searchParams = useSearchParams()
   const [isPending, startTransition] = useTransition()
@@ -178,8 +177,8 @@ export function ConsumableRequestsPage({ mode, role, isCrmAdmin = false, factori
   const [details, setDetails] = useState<ConsumableRequest | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
 
-  const canSupply = isCrmAdmin || ['supply_manager', 'procurement_head', 'financial_director', 'commercial_director', 'planning_director'].includes(role)
-  const canProduction = isCrmAdmin || ['production_manager', 'financial_director', 'commercial_director', 'planning_director'].includes(role)
+  const canSupply = can('supply_consumable_requests', 'manage')
+  const canProduction = can('consumable_requests', 'manage')
 
   const factoryOptions = useMemo<IndustrialPickerOption[]>(() => [
     ...(mode === 'supply' ? [{ value: 'all', label: 'Все заводы', description: 'Берегово и Ужгород' }] : []),

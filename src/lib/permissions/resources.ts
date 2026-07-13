@@ -283,7 +283,7 @@ export const PERMISSION_RESOURCES = [
     defaultHref: ROUTES.SUPPLY_FINANCE,
     defaultViewRoles: FINANCE_VIEW_ROLES,
     defaultManageRoles: FINANCE_MANAGE_ROLES,
-    routes: [{ path: ROUTES.SUPPLY_FINANCE, match: 'prefix', operation: 'view' }],
+    routes: [{ path: ROUTES.SUPPLY_FINANCE, match: 'prefix', operation: 'view', priority: 90 }],
     sidebar: { section: 'finance', icon: 'finance', order: 30 },
   },
   {
@@ -359,7 +359,7 @@ export const PERMISSION_RESOURCES = [
     defaultHref: ROUTES.SUPPLY_ORDERS,
     defaultViewRoles: SUPPLY_AND_DIRECTORS,
     defaultManageRoles: SUPPLY_AND_DIRECTORS,
-    routes: [{ path: ROUTES.SUPPLY_ORDERS, match: 'prefix', operation: 'view' }],
+    routes: [{ path: ROUTES.SUPPLY_ORDERS, match: 'prefix', operation: 'view', priority: 90 }],
     sidebar: { section: 'supply', icon: 'orders', order: 10 },
   },
   {

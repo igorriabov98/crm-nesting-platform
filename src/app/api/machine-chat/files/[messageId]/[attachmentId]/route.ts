@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { decodeMachineChatBody } from '@/lib/machine-chat-attachments'
+import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 
 type MachineRelation = { id: string; factory_id: string | null }
 type MessageFileRow = {
@@ -22,7 +22,7 @@ export async function GET(
 ) {
   try {
     const { messageId, attachmentId } = await params
-    const { role, factoryId } = await getCurrentUserContext()
+    const { role, factoryId } = await requirePermission('sales_plan', 'view')
     const admin = createAdminClient()
 
     const { data, error } = await admin
@@ -54,7 +54,8 @@ export async function GET(
 
     if (signedError || !signed?.signedUrl) return NextResponse.json({ error: 'Cannot open file' }, { status: 500 })
     return NextResponse.redirect(signed.signedUrl)
-  } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  } catch (error) {
+    const status = error instanceof PermissionDeniedError ? 403 : 401
+    return NextResponse.json({ error: status === 403 ? 'Forbidden' : 'Unauthorized' }, { status })
   }
 }

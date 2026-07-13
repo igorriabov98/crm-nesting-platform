@@ -8,6 +8,7 @@ import { getNestingQueue } from '@/lib/actions/nesting-batches'
 import { getProjects, type NestingStatus } from '@/lib/nesting/api'
 import { nestingStatuses } from '@/lib/nesting/status'
 import { cn } from '@/lib/utils'
+import { requirePermission } from '@/lib/permissions/server'
 
 export const metadata = { title: 'Раскладка металла - CRM Завода' }
 
@@ -18,6 +19,7 @@ export default async function NestingProjectsPage({
 }: {
   searchParams?: Promise<{ page?: string; status?: string; search?: string; view?: string; scope?: string }>
 }) {
+  await requirePermission('nesting', 'view')
   const params = await searchParams
   const view = params?.view === 'history' ? 'history' : 'queue'
   const scope = params?.scope === 'tasks' ? 'tasks' : 'all'

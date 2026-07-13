@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/table'
 import { deleteRemnant, type RemnantItem } from '@/lib/nesting/catalog-api'
 import { RemnantDialog } from '@/components/features/nesting/catalog/RemnantDialog'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import {
   MATERIAL_OPTIONS,
   formatCatalogDate,
@@ -145,6 +146,8 @@ export function RemnantsCatalogTab({
   availableOnly: boolean
 }) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManage = can('nesting_catalog', 'manage')
   const updateParams = useCatalogSearchUpdater()
   const [createOpen, setCreateOpen] = useState(false)
 
@@ -162,10 +165,10 @@ export function RemnantsCatalogTab({
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-base font-semibold text-[#1B3A6B]">Склад остатков</h2>
-        <Button onClick={() => setCreateOpen(true)}>
+        {canManage && <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
           Добавить вручную
-        </Button>
+        </Button>}
       </div>
 
       <div className="flex flex-col gap-3 rounded-lg border border-[#E8ECF0] bg-white p-4 md:flex-row md:items-center">
@@ -231,7 +234,7 @@ export function RemnantsCatalogTab({
                   <TableCell>{remnantSource(item)}</TableCell>
                   <TableCell>{formatCatalogDate(item.createdAt)}</TableCell>
                   <TableCell><RemnantStatus item={item} /></TableCell>
-                  <TableCell><RemnantActions item={item} onChanged={refresh} /></TableCell>
+                  <TableCell>{canManage ? <RemnantActions item={item} onChanged={refresh} /> : null}</TableCell>
                 </TableRow>
               ))}
               {items.length === 0 && (
@@ -253,7 +256,7 @@ export function RemnantsCatalogTab({
         </p>
       </div>
 
-      <RemnantDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={refresh} />
+      {canManage && <RemnantDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={refresh} />}
     </div>
   )
 }

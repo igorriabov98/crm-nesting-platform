@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { createFutureFillBatch, finalizeFutureFill, type FutureFillContext } from '@/lib/actions/nesting-future-fill'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 
 type Props = {
   context: FutureFillContext | null
@@ -27,6 +28,8 @@ function formatArea(value: number) {
 
 export function FutureFillPanel({ context }: Props) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManage = can('nesting', 'manage')
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [isPending, startTransition] = useTransition()
   const selectedIds = Array.from(selected)
@@ -92,12 +95,12 @@ export function FutureFillPanel({ context }: Props) {
           </div>
 
           {context.isFutureFillProject ? (
-            <Button onClick={finalize} disabled={!context.canFinalize || context.finalized || isPending}>
+            <Button onClick={finalize} disabled={!canManage || !context.canFinalize || context.finalized || isPending}>
               {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
               {context.finalized ? 'Зафиксировано' : 'Зафиксировать future-fill'}
             </Button>
           ) : (
-            <Button onClick={createBatch} disabled={!context.eligible || selectedIds.length === 0 || isPending}>
+            <Button onClick={createBatch} disabled={!canManage || !context.eligible || selectedIds.length === 0 || isPending}>
               {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               Создать batch ({selectedIds.length})
             </Button>
@@ -142,6 +145,7 @@ export function FutureFillPanel({ context }: Props) {
                       <span className="flex items-center">
                         <input
                           type="checkbox"
+                          disabled={!canManage}
                           checked={selected.has(candidate.machineItemId)}
                           onChange={(event) => toggle(candidate.machineItemId, event.target.checked)}
                           className="h-4 w-4"

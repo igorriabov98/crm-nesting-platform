@@ -11,8 +11,7 @@ import { format, differenceInDays, isPast } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { INVOICE_VISIBLE_ROLES } from '@/lib/constants/roles'
-import type { InvoiceStatus, MachineDetails, UserRole } from '@/lib/types'
+import type { InvoiceStatus, MachineDetails } from '@/lib/types'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { DatePicker } from '@/components/ui/date-picker'
@@ -23,7 +22,7 @@ interface InvoiceTabProps {
 
 export function InvoiceTab({ machine }: InvoiceTabProps) {
   const router = useRouter()
-  const { role } = useRole()
+  const { canViewInvoices, can } = useRole()
   const invoice = Array.isArray(machine.invoice) ? machine.invoice[0] || null : machine.invoice
   const [paidAmount, setPaidAmount] = useState('')
   const [balanceDueDate, setBalanceDueDate] = useState<string | null>(null)
@@ -33,11 +32,11 @@ export function InvoiceTab({ machine }: InvoiceTabProps) {
   const [isDownloadingDocument, setIsDownloadingDocument] = useState(false)
 
   // Ensure user has access
-  if (!role || !INVOICE_VISIBLE_ROLES.includes(role as UserRole)) {
+  if (!canViewInvoices) {
     return null
   }
 
-  const canEdit = ['financial_director', 'planning_director', 'sales_manager'].includes(role)
+  const canEdit = can('invoices', 'manage')
 
   const downloadInvoiceDocument = async ({ quiet = false }: { quiet?: boolean } = {}) => {
     const number = machine.specification_number?.trim() || ''

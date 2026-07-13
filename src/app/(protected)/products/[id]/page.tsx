@@ -26,7 +26,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     getProductVersions(id),
     getCurrentUserContextOrRedirect(),
   ])
-  const { supabase, role } = currentUserContext
+  const { supabase } = currentUserContext
   const versions = versionsData || []
   const authorIds = Array.from(new Set(
     versions.map((version) => version.created_by).filter((value): value is string => Boolean(value))
@@ -63,7 +63,6 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
           productId={data.id}
           versions={versions}
           authorsById={authorsById}
-          currentUserRole={role}
         />
       )}
       <ProductFileManager productId={data.id} files={data.product_files || []} />

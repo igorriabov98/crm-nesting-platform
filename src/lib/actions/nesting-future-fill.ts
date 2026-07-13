@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { createNestingBatch } from '@/lib/actions/nesting-batches'
 import { resolveSheetMetalMaterialForRequestRow } from '@/lib/actions/request-sheet-metal-materials'
@@ -171,8 +172,8 @@ const finalizeFutureFillSchema = z.object({
 })
 
 async function requireNestingAccess(operation: PermissionOperation = 'view') {
-  const { supabase, userId } = await requirePermission('nesting', operation)
-  return { db: supabase as unknown as LooseDb, userId }
+  const { userId } = await requirePermission('nesting', operation)
+  return { db: createAdminClient() as unknown as LooseDb, userId }
 }
 
 function isStepFile(file: ProductFileRow) {

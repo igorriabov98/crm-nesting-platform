@@ -30,8 +30,8 @@ import {
 } from 'lucide-react'
 
 import { ROUTES } from '@/lib/constants/routes'
-import { canCreateMachines } from '@/lib/utils/permissions'
-import type { CoatingType, FactorySummary, Invoice, MachineListItem, UserRole } from '@/lib/types'
+import type { CoatingType, FactorySummary, Invoice, MachineListItem } from '@/lib/types'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -309,7 +309,6 @@ function MachineActions({
 
 interface MachineTableProps {
   machines: MachineListItem[]
-  userRole: UserRole
   canViewInvoice: boolean
   isDirector: boolean
   factories: FactorySummary[]
@@ -322,7 +321,6 @@ interface MachineTableProps {
 
 export function MachineTable({
   machines,
-  userRole,
   canViewInvoice,
   isDirector,
   factories,
@@ -332,6 +330,7 @@ export function MachineTable({
   productionMonthOptions,
   initialView = 'kanban',
 }: MachineTableProps) {
+  const { can } = usePermissions()
   const [filters, setFilters] = useState<SalesPlanFilters>(initialFilters)
   const [sort, setSort] = useState<SalesPlanSort>('newest')
   const [selectedFactoryFilter, setSelectedFactoryFilter] = useState(initialView === 'kanban' ? 'all' : factoryFilter || 'all')
@@ -342,9 +341,9 @@ export function MachineTable({
   const [deleteMachine, setDeleteMachine] = useState<MachineListItem | null>(null)
   const [assignMachine, setAssignMachine] = useState<MachineListItem | null>(null)
 
-  const canCreate = canCreateMachines(userRole)
-  const canEdit = canCreateMachines(userRole)
-  const canDelete = isDirector
+  const canCreate = can('sales_plan', 'manage')
+  const canEdit = canCreate
+  const canDelete = canCreate
 
   const replaceUrlFilters = useCallback((updates: Partial<Record<'factory' | 'productionMonth' | 'view', string>>) => {
     const params = new URLSearchParams(window.location.search)

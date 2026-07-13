@@ -10,7 +10,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string; sheetId: string }> }
 ) {
   const { id, sheetId } = await params
-  const access = await getNestingProxyAccess('nesting')
+  const access = await getNestingProxyAccess({ resourceKey: 'nesting', operation: 'manage' })
   if (access.response) return access.response
   const deniedProject = await requireNestingProjectProxyAccess(id, access.context!)
   if (deniedProject) return deniedProject

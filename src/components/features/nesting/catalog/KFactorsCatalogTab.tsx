@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/table'
 import { createKFactor, deleteKFactor, updateKFactor, type KFactorItem } from '@/lib/nesting/catalog-api'
 import { RangeRuleDialog } from '@/components/features/nesting/catalog/RangeRuleDialog'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import {
   MATERIAL_OPTIONS,
   formatMm,
@@ -112,6 +113,8 @@ export function KFactorsCatalogTab({
   material?: string
 }) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManage = can('nesting_catalog', 'manage')
   const updateParams = useCatalogSearchUpdater()
   const [createOpen, setCreateOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<KFactorItem | undefined>()
@@ -130,10 +133,10 @@ export function KFactorsCatalogTab({
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-base font-semibold text-[#1B3A6B]">K-факторы</h2>
-        <Button onClick={() => setCreateOpen(true)}>
+        {canManage && <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
           Добавить
-        </Button>
+        </Button>}
       </div>
 
       <div className="rounded-lg border border-[#E8ECF0] bg-white p-4">
@@ -170,7 +173,7 @@ export function KFactorsCatalogTab({
                   <TableCell>{formatMm(item.thicknessMax)}</TableCell>
                   <TableCell>{item.kFactor.toFixed(2)}</TableCell>
                   <TableCell>
-                    <KFactorActions item={item} onEdit={() => setEditingItem(item)} onChanged={refresh} />
+                    {canManage ? <KFactorActions item={item} onEdit={() => setEditingItem(item)} onChanged={refresh} /> : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -193,7 +196,7 @@ export function KFactorsCatalogTab({
         </p>
       </div>
 
-      <RangeRuleDialog<KFactorItem>
+      {canManage && <RangeRuleDialog<KFactorItem>
         open={createOpen}
         onOpenChange={setCreateOpen}
         title={{ create: 'Добавить K-фактор', edit: 'Редактировать K-фактор' }}
@@ -203,8 +206,8 @@ export function KFactorsCatalogTab({
         create={(data) => createKFactor(data as { material: string; thicknessMin: number; thicknessMax: number; kFactor: number })}
         update={(id, data) => updateKFactor(id, data as { material: string; thicknessMin: number; thicknessMax: number; kFactor: number })}
         onSaved={refresh}
-      />
-      <RangeRuleDialog<KFactorItem>
+      />}
+      {canManage && <RangeRuleDialog<KFactorItem>
         open={Boolean(editingItem)}
         onOpenChange={(open) => {
           if (!open) setEditingItem(undefined)
@@ -217,7 +220,7 @@ export function KFactorsCatalogTab({
         create={(data) => createKFactor(data as { material: string; thicknessMin: number; thicknessMax: number; kFactor: number })}
         update={(id, data) => updateKFactor(id, data as { material: string; thicknessMin: number; thicknessMax: number; kFactor: number })}
         onSaved={refresh}
-      />
+      />}
     </div>
   )
 }

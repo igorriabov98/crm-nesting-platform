@@ -12,7 +12,7 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params
-  const access = await getNestingProxyAccess('nesting')
+  const access = await getNestingProxyAccess({ resourceKey: 'nesting', operation: 'view' })
   if (access.response) return access.response
   const deniedProject = await requireNestingProjectProxyAccess(projectId, access.context!)
   if (deniedProject) return deniedProject

@@ -4,7 +4,8 @@ import { revalidatePath } from 'next/cache'
 import { after } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { requirePermission } from '@/lib/permissions/server'
+import type { PermissionOperation, ResourceKey } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { updateMachineDate } from '@/lib/actions/production'
@@ -122,7 +123,6 @@ export type ProductionFactActionResult<T = undefined> = {
 }
 
 const DIRECTORS: UserRole[] = ['financial_director', 'commercial_director', 'planning_director']
-const PRODUCTION_FACT_ROLES: UserRole[] = ['production_manager', ...DIRECTORS]
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const CHISINAU_TIME_ZONE = 'Europe/Chisinau'
 const CUTTING_STAGE_TYPE = 'cutting' as const
@@ -146,15 +146,9 @@ function isDirector(role: UserRole) {
   return DIRECTORS.includes(role)
 }
 
-function assertProductionFactRole(role: UserRole) {
-  if (!PRODUCTION_FACT_ROLES.includes(role)) {
-    throw new Error('Недостаточно прав для факта производства')
-  }
-}
-
 function assertFactoryAccess(role: UserRole, userFactoryId: string | null, factoryId: string) {
   if (isDirector(role)) return
-  if (role === 'production_manager' && userFactoryId === factoryId) return
+  if (userFactoryId === factoryId) return
   throw new Error('Недостаточно прав для выбранного завода')
 }
 
@@ -217,9 +211,11 @@ function userDisplayName(user: UserNameRow | undefined) {
   return user.full_name || user.email || null
 }
 
-async function getContext() {
-  const context = await getCurrentUserContext()
-  assertProductionFactRole(context.role)
+async function getContext(
+  resourceKey: Extract<ResourceKey, 'production_fact' | 'production_fact_settings'>,
+  operation: PermissionOperation,
+) {
+  const context = await requirePermission(resourceKey, operation)
   return {
     ...context,
     admin: createAdminClient() as AdminClient,
@@ -228,7 +224,7 @@ async function getContext() {
 
 async function getVisibleFactories(admin: AdminClient, role: UserRole, userFactoryId: string | null) {
   let query = admin.from('factories').select('id, name').order('name')
-  if (role === 'production_manager') {
+  if (!isDirector(role) && userFactoryId) {
     query = query.eq('id', userFactoryId || '00000000-0000-0000-0000-000000000000')
   }
 
@@ -817,7 +813,7 @@ export async function getProductionFactWorkspaceData(input: {
   factoryId?: string | null
   date?: string | null
 } = {}): Promise<ProductionFactWorkspaceData> {
-  const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+  const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'view')
   const factories = await getVisibleFactories(admin, role, userFactoryId)
   const selectedFactoryId = factories.some((factory) => factory.id === input.factoryId)
     ? input.factoryId!
@@ -972,8 +968,7 @@ export async function getProductionFactWorkspaceData(input: {
 export async function getProductionFactSettingsData(input: {
   factoryId?: string | null
 } = {}): Promise<ProductionFactSettingsData> {
-  const { admin, role, factoryId: userFactoryId, userId } = await getContext()
-  if (!isDirector(role)) throw new Error('Недостаточно прав для настроек факта производства')
+  const { admin, role, factoryId: userFactoryId } = await getContext('production_fact_settings', 'view')
 
   const factories = await getVisibleFactories(admin, role, userFactoryId)
   const selectedFactoryId = factories.some((factory) => factory.id === input.factoryId)
@@ -985,7 +980,6 @@ export async function getProductionFactSettingsData(input: {
   }
 
   assertFactoryAccess(role, userFactoryId, selectedFactoryId)
-  await ensureStandardProductionFactSections(admin, selectedFactoryId, userId)
   const sections = await getFactorySections(admin, selectedFactoryId)
 
   return { factories, selectedFactoryId, sections }
@@ -995,8 +989,7 @@ export async function ensureProductionFactStandardSections(input: {
   factory_id: string
 }): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
-    if (!isDirector(role)) throw new Error('Недостаточно прав для настроек факта производства')
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact_settings', 'manage')
     assertFactoryAccess(role, userFactoryId, input.factory_id)
     await ensureStandardProductionFactSections(admin, input.factory_id, userId)
     revalidateProductionFact()
@@ -1015,7 +1008,7 @@ export async function createProductionFactSection(input: {
   production_stage_type?: Database['public']['Enums']['stage_type'] | null
 }): Promise<ProductionFactActionResult<{ id: string }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact_settings', 'manage')
     assertFactoryAccess(role, userFactoryId, input.factory_id)
     const name = normalizeText(input.name)
     if (!name) throw new Error('Укажите название участка')
@@ -1063,7 +1056,7 @@ export async function updateProductionFactSection(input: {
   production_stage_type?: Database['public']['Enums']['stage_type'] | null
 }): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact_settings', 'manage')
     const { data: sectionRaw, error: sectionError } = await looseDb(admin)
       .from('production_fact_sections')
       .select('*')
@@ -1100,7 +1093,7 @@ export async function updateProductionFactSection(input: {
 
 export async function archiveProductionFactSection(id: string): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact_settings', 'manage')
     const { data: sectionRaw, error: sectionError } = await looseDb(admin)
       .from('production_fact_sections')
       .select('*')
@@ -1149,7 +1142,7 @@ export async function saveProductionMachineFact(input: {
   comment?: string | null
 }): Promise<ProductionFactActionResult<{ id: string }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
     const factDate = dateOnly(input.fact_date)
     assertFactoryAccess(role, userFactoryId, input.factory_id)
     assertCanEditFactDate(role, factDate)
@@ -1234,7 +1227,7 @@ export async function saveProductionMachineFact(input: {
 
 export async function deleteProductionMachineFact(id: string): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
     const { data: factRaw, error: factError } = await looseDb(admin)
       .from('production_machine_facts')
       .select('*')
@@ -1277,7 +1270,7 @@ export async function copyProductionMachineFactsFromPreviousDay(input: {
   fact_date: string
 }): Promise<ProductionFactActionResult<{ inserted: number; skipped: number }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
     const targetDate = dateOnly(input.fact_date)
     const sourceDate = addDays(targetDate, -1)
     assertFactoryAccess(role, userFactoryId, input.factory_id)
@@ -1337,7 +1330,7 @@ export async function saveProductionTonnageFact(input: {
   comment?: string | null
 }): Promise<ProductionFactActionResult<{ id: string }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
     const factDate = dateOnly(input.fact_date)
     const tonnage = Number(input.tonnage)
     if (!Number.isFinite(tonnage) || tonnage < 0) throw new Error('Тоннаж должен быть числом от 0')
@@ -1422,7 +1415,7 @@ export async function saveUnifiedProductionFact(input: {
   comment?: string | null
 }): Promise<ProductionFactActionResult<{ inserted: number; skipped: number; shippingUpdated: number; tonnageSaved: boolean }>> {
   try {
-    const { admin, role, factoryId: userFactoryId, userId } = await getContext()
+    const { admin, role, factoryId: userFactoryId, userId } = await getContext('production_fact', 'manage')
     const factDate = dateOnly(input.fact_date)
     assertFactoryAccess(role, userFactoryId, input.factory_id)
     assertCanEditFactDate(role, factDate)
@@ -1568,7 +1561,7 @@ export async function saveUnifiedProductionFact(input: {
 
 export async function deleteProductionTonnageFact(id: string): Promise<ProductionFactActionResult> {
   try {
-    const { admin, role, factoryId: userFactoryId } = await getContext()
+    const { admin, role, factoryId: userFactoryId } = await getContext('production_fact', 'manage')
     const { data: factRaw, error: factError } = await looseDb(admin)
       .from('production_tonnage_facts')
       .select('*')

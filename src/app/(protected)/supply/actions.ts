@@ -2,6 +2,7 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { SUPPLY_DASHBOARD_MACHINE_LIMIT } from '@/lib/constants/performance-limits'
+import { requirePermission } from '@/lib/permissions/server'
 import { differenceInDays } from 'date-fns'
 
 function applyProductionManagerFactoryScope<T>(query: T, factoryId: string | null): T {
@@ -53,6 +54,7 @@ type SupplyMachineSummaryRow = {
 }
 
 export async function getSupplyDashboard(factoryFilter?: string | null) {
+  await requirePermission('supply', 'view')
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Не авторизован')
@@ -181,6 +183,7 @@ export async function getSupplyDashboard(factoryFilter?: string | null) {
 }
 
 export async function getSupplyByMachine(machineId: string) {
+  await requirePermission('supply', 'view')
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Не авторизован')

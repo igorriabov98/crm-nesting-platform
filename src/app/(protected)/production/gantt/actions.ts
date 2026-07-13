@@ -1,6 +1,6 @@
 "use server"
 
-import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { requirePermission } from '@/lib/permissions/server'
 import { STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
 import { differenceInCalendarDays, isPast, addDays } from 'date-fns'
 import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
@@ -120,11 +120,6 @@ type SelectedGanttMachine = {
   machine_items?: SelectedMachineItem[] | null
   production_stages?: SelectedGanttStage[] | null
   supply_items?: SelectedSupplyItem[] | null
-}
-
-type ProfileScope = {
-  factory_id: string | null
-  role: string | null
 }
 
 type GanttDbResult = { data: unknown; error: { message?: string } | null }
@@ -598,15 +593,7 @@ export async function getGanttData(
     showSupply?: boolean
   }
 ): Promise<GanttData> {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Не авторизован')
-
-  const { data: profile } = await supabase.from('users').select('factory_id, role').eq('id', user.id).single()
-  if (!profile) throw new Error('Профиль не найден')
-  const profileScope = profile as ProfileScope
-  const userFactoryId = profileScope.factory_id
-  const userRole = profileScope.role
+  const { supabase, factoryId: userFactoryId, role: userRole } = await requirePermission('production', 'view')
 
   const selectWithDeadline = `
     id, name, created_at, total_weight, factory_id, production_month, production_workshop,

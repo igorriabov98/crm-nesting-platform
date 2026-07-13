@@ -36,8 +36,8 @@ interface ItemsTabProps {
 }
 
 export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNesting = false }: ItemsTabProps) {
-  const { role, isDirector } = useRole()
-  const canEdit = isDirector || role === 'sales_manager'
+  const { can } = useRole()
+  const canEdit = can('sales_plan', 'manage')
   const canNest = canManageNesting
   const [isEditOpen, setIsEditOpen] = useState(false)
 

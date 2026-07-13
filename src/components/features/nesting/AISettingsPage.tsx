@@ -13,6 +13,7 @@ import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import type { AISettings, AIUsageHistoryItem } from '@/lib/nesting/api'
 
 const models = [
@@ -53,6 +54,8 @@ export function AISettingsPage({
   initialUsage: AIUsageHistoryItem[]
 }) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManage = can('nesting_settings', 'manage')
   const [settings, setSettings] = useState(initialSettings)
   const [usage] = useState(initialUsage)
   const [apiKey, setApiKey] = useState('')
@@ -145,6 +148,7 @@ export function AISettingsPage({
                     placeholder={settings.hasApiKey ? 'sk-or-••••••••••••••••' : 'sk-or-...'}
                     autoComplete="off"
                     className="bg-white font-mono"
+                    disabled={!canManage}
                   />
                   <Button type="button" variant="outline" onClick={() => setShowApiKey((value) => !value)}>
                     {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -168,7 +172,7 @@ export function AISettingsPage({
 
               <div className="space-y-2">
                 <Label>Модель</Label>
-                <Select value={model} onValueChange={(value) => value && setModel(value)}>
+                <Select value={model} disabled={!canManage} onValueChange={(value) => value && setModel(value)}>
                   <SelectTrigger className="bg-white">
                     <SelectValue />
                   </SelectTrigger>
@@ -189,6 +193,7 @@ export function AISettingsPage({
                   value={baseUrl}
                   onChange={(event) => setBaseUrl(event.target.value)}
                   className="bg-white"
+                  disabled={!canManage}
                 />
               </div>
 
@@ -202,6 +207,7 @@ export function AISettingsPage({
                   value={maxTokens}
                   onChange={(event) => setMaxTokens(event.target.value)}
                   className="bg-white"
+                  disabled={!canManage}
                 />
               </div>
 
@@ -215,6 +221,7 @@ export function AISettingsPage({
                   value={monthlyBudget}
                   onChange={(event) => setMonthlyBudget(event.target.value)}
                   className="bg-white"
+                  disabled={!canManage}
                 />
               </div>
 
@@ -226,17 +233,18 @@ export function AISettingsPage({
                 <Switch
                   id="ai-auto-apply"
                   checked={autoApplyResults}
+                  disabled={!canManage}
                   onCheckedChange={(checked) => setAutoApplyResults(checked === true)}
                 />
               </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button type="button" onClick={saveSettings} disabled={isSaving}>
+              <Button type="button" onClick={saveSettings} disabled={!canManage || isSaving}>
                 <Save className="mr-2 h-4 w-4" />
                 {isSaving ? 'Сохранение...' : 'Сохранить'}
               </Button>
-              <Button type="button" variant="outline" onClick={testConnection} disabled={isTesting || !settings.hasApiKey}>
+              <Button type="button" variant="outline" onClick={testConnection} disabled={!canManage || isTesting || !settings.hasApiKey}>
                 <RefreshCw className="mr-2 h-4 w-4" />
                 {isTesting ? 'Проверка...' : 'Проверить подключение'}
               </Button>

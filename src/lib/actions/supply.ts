@@ -4,9 +4,9 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { ROUTES } from '@/lib/constants/routes'
+import { requirePermission } from '@/lib/permissions/server'
 import { isDirector } from '@/lib/utils/permissions'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import type { CurrentUser } from '@/lib/types'
 
 const createSupplyItemSchema = z.object({
   nomenclature: z.string().trim().min(1, 'Введите номенклатуру'),
@@ -28,21 +28,13 @@ const updateSupplyItemSchema = z.object({
   status: z.enum(['received', 'ordered', 'not_ordered']).optional(),
   comment: z.string().trim().optional(),
   planned_delivery_date: z.string().optional(),
+  technologist_deadline: z.string().optional(),
+  engineer_deadline: z.string().optional(),
 }).strict()
 
-async function requireAuth() {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Не авторизован')
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile) throw new Error('Профиль не найден')
-  return { supabase, user: profile as unknown as CurrentUser }
+async function requireSupplyManage() {
+  const { supabase, user } = await requirePermission('supply', 'manage')
+  return { supabase, user }
 }
 
 function handleRevalidate(machineId: string) {
@@ -66,12 +58,9 @@ async function assertMachineNotArchived(supabase: Awaited<ReturnType<typeof crea
 
 export async function createSupplyItem(machineId: string, rawData: unknown) {
   try {
-    const { supabase, user } = await requireAuth()
+    const { supabase, user } = await requireSupplyManage()
     const data = createSupplyItemSchema.parse(rawData)
     await assertMachineNotArchived(supabase, machineId)
-
-    const canCreate = ['technologist', 'supply_manager'].includes(user.role) || isDirector(user.role)
-    if (!canCreate) throw new Error('Нет прав для добавления позиций')
 
     const { error: insertErr } = await supabase.from('supply_items').insert({
       machine_id: machineId,
@@ -96,7 +85,7 @@ export async function createSupplyItem(machineId: string, rawData: unknown) {
 
 export async function updateSupplyItem(itemId: string, rawData: unknown, machineId: string) {
   try {
-    const { supabase, user } = await requireAuth()
+    const { supabase, user } = await requireSupplyManage()
     const role = user.role
     const data = updateSupplyItemSchema.parse(rawData)
     await assertMachineNotArchived(supabase, machineId)
@@ -105,13 +94,15 @@ export async function updateSupplyItem(itemId: string, rawData: unknown, machine
     if (isDirector(role)) {
       Object.assign(allowedFields, data)
     } else {
-      if (role === 'engineer' && data.engineer_confirmation !== undefined) {
-        allowedFields.engineer_confirmation = data.engineer_confirmation
+      if (role === 'engineer') {
+        if (data.engineer_confirmation !== undefined) allowedFields.engineer_confirmation = data.engineer_confirmation
+        if (data.engineer_deadline !== undefined) allowedFields.engineer_deadline = data.engineer_deadline
       }
       if (role === 'technologist') {
         if (data.nomenclature !== undefined) allowedFields.nomenclature = data.nomenclature
         if (data.unit !== undefined) allowedFields.unit = data.unit
         if (data.quantity !== undefined) allowedFields.quantity = data.quantity
+        if (data.technologist_deadline !== undefined) allowedFields.technologist_deadline = data.technologist_deadline
       }
       if (role === 'supply_manager') {
         if (data.supplier !== undefined) allowedFields.supplier = data.supplier
@@ -142,7 +133,7 @@ export async function updateSupplyItem(itemId: string, rawData: unknown, machine
 
 export async function deleteSupplyItem(itemId: string, machineId: string) {
   try {
-    const { supabase, user } = await requireAuth()
+    const { supabase, user } = await requireSupplyManage()
     await assertMachineNotArchived(supabase, machineId)
     const { data: item } = await supabase.from('supply_items').select('created_by').eq('id', itemId).single()
     const isOwner = (item as { created_by?: string } | null)?.created_by === user.id

@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
+import { hasPermission, type PermissionOperation } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
@@ -266,9 +267,9 @@ function applyProductionManagerMachineScope<T>(query: T, factoryId: string | nul
   return scopedQuery.or(`factory_id.eq.${factoryId},factory_id.is.null`)
 }
 
-async function requireMachineAccess(machineId: string) {
+async function requireMachineAccess(machineId: string, operation: PermissionOperation = 'view') {
   const parsedMachineId = machineIdSchema.parse(machineId)
-  const context = await requirePermission('sales_plan', 'view')
+  const context = await requirePermission('sales_plan', operation)
 
   let query = context.supabase
     .from('machines')
@@ -286,6 +287,7 @@ async function requireMachineAccess(machineId: string) {
   return {
     machine: data as MachineAccessRow,
     user: context.user,
+    canManageModule: hasPermission(context.permissions, 'sales_plan', 'manage'),
   }
 }
 
@@ -453,7 +455,7 @@ function revalidateActivity(machineId: string) {
 
 export async function getMachineActivity(machineId: string): Promise<{ data: MachineActivityPayload | null; error: string | null }> {
   try {
-    const { machine, user } = await requireMachineAccess(machineId)
+    const { machine, user, canManageModule } = await requireMachineAccess(machineId)
     const db = dbFrom(createAdminClient())
 
     const [{ data: updatesData, error: updatesError }, { data: messagesData, error: messagesError }, mentionUsers] = await Promise.all([
@@ -509,8 +511,8 @@ export async function getMachineActivity(machineId: string): Promise<{ data: Mac
         updates: updates.map((update) => mapUpdate(update, usersById)),
         messages: messages.map((message) => mapMessage(message, usersById, mentionsByMessage)),
         mentionUsers,
-        canManageUpdates: !machine.is_archived && canManageMachineUpdates(user, machine),
-        canSendChat: !machine.is_archived,
+        canManageUpdates: !machine.is_archived && canManageModule && canManageMachineUpdates(user, machine),
+        canSendChat: !machine.is_archived && canManageModule,
       },
       error: null,
     }
@@ -522,7 +524,7 @@ export async function getMachineActivity(machineId: string): Promise<{ data: Mac
 export async function createMachineUpdate(machineId: string, body: string) {
   try {
     const parsedBody = bodySchema.parse(body)
-    const { machine, user } = await requireMachineAccess(machineId)
+    const { machine, user } = await requireMachineAccess(machineId, 'manage')
     assertMachineWritable(machine)
     assertCanManageUpdates(user, machine)
 
@@ -546,7 +548,7 @@ export async function editMachineUpdate(machineId: string, updateId: string, bod
   try {
     const parsedUpdateId = updateIdSchema.parse(updateId)
     const parsedBody = bodySchema.parse(body)
-    const { machine, user } = await requireMachineAccess(machineId)
+    const { machine, user } = await requireMachineAccess(machineId, 'manage')
     assertMachineWritable(machine)
     assertCanManageUpdates(user, machine)
 
@@ -581,7 +583,7 @@ export async function editMachineUpdate(machineId: string, updateId: string, bod
 export async function deleteMachineUpdate(machineId: string, updateId: string) {
   try {
     const parsedUpdateId = updateIdSchema.parse(updateId)
-    const { machine, user } = await requireMachineAccess(machineId)
+    const { machine, user } = await requireMachineAccess(machineId, 'manage')
     assertMachineWritable(machine)
     assertCanManageUpdates(user, machine)
 
@@ -635,7 +637,7 @@ export async function sendMachineChatMessage(machineId: string, formData: FormDa
       throw new Error('Введите сообщение или добавьте файл')
     }
 
-    const { machine, user } = await requireMachineAccess(machineId)
+    const { machine, user } = await requireMachineAccess(machineId, 'manage')
     assertMachineWritable(machine)
 
     const admin = createAdminClient()

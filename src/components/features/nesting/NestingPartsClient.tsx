@@ -21,6 +21,7 @@ import { syncNestingBatchProjectStatus } from '@/lib/actions/nesting-batches'
 import type { SteelType } from '@/lib/types/database'
 import type { NestingPart, NestingProject, NestingStatus, NestingStrategy } from '@/lib/nesting/api'
 import { isCompletedNestingStatus } from '@/lib/nesting/status'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 
 const validStrategies = ['minWaste', 'remnant', 'minSheets']
 
@@ -48,6 +49,8 @@ export function NestingPartsClient({
   machineContext?: MachineItemNestingContext | null
 }) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManage = can('nesting', 'manage')
   const [status, setStatus] = useState<NestingStatus | string>(project.status)
   const [parts, setParts] = useState<NestingPart[]>([])
   const [isLoadingParts, setIsLoadingParts] = useState(false)
@@ -178,6 +181,7 @@ export function NestingPartsClient({
           status={status}
           isImporting={isImporting}
           onImport={handleImportResult}
+          canManage={canManage}
         />
       )}
 
@@ -205,12 +209,12 @@ export function NestingPartsClient({
                   <CardTitle>Стратегия раскладки</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <StrategySelector value={strategy} onChange={setStrategy} disabled={status === 'calculating'} />
+                  <StrategySelector value={strategy} onChange={setStrategy} disabled={!canManage || status === 'calculating'} />
                   <div className="flex flex-wrap items-center gap-2">
                     <LoadingButton
                       loading={isCalculating || status === 'calculating'}
                       loadingText="Расчёт раскладки..."
-                      disabled={sheetMetalCount === 0 || !(status === 'parsed' || isCompletedNestingStatus(status))}
+                      disabled={!canManage || sheetMetalCount === 0 || !(status === 'parsed' || isCompletedNestingStatus(status))}
                       onClick={handleStartCalculation}
                     >
                       Рассчитать раскладку
@@ -243,14 +247,16 @@ function MachineNestingContextCard({
   status,
   isImporting,
   onImport,
+  canManage,
 }: {
   context: MachineItemNestingContext
   status: NestingStatus | string
   isImporting: boolean
   onImport: () => void
+  canManage: boolean
 }) {
   const isImported = context.status === 'imported'
-  const canImport = isCompletedNestingStatus(status) && !isImported
+  const canImport = canManage && isCompletedNestingStatus(status) && !isImported
 
   return (
     <Card className="bg-white">

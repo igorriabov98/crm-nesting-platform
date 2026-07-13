@@ -72,8 +72,8 @@ type CreatedNestingProject = {
 }
 
 async function requireNestingPermission(operation: PermissionOperation = 'view') {
-  const { supabase, userId } = await requirePermission('nesting', operation)
-  return { supabase, userId }
+  const { userId } = await requirePermission('nesting', operation)
+  return { supabase: createAdminClient(), userId }
 }
 
 function isStepFile(file: ProductFileRow) {

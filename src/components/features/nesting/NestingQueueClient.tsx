@@ -13,6 +13,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { createNestingBatch, type NestingQueueData, type NestingQueueItem, type NestingQueueMachine } from '@/lib/actions/nesting-batches'
 import { isCompletedNestingStatus } from '@/lib/nesting/status'
 import { cn } from '@/lib/utils'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 
 function formatDate(value: string | null) {
   if (!value) return '—'
@@ -61,6 +62,8 @@ function machineStatus(machine: NestingQueueMachine) {
 
 export function NestingQueueClient({ queue }: { queue: NestingQueueData }) {
   const router = useRouter()
+  const { can } = usePermissions()
+  const canManage = can('nesting', 'manage')
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [isPending, startTransition] = useTransition()
   const selectableIds = useMemo(
@@ -131,10 +134,10 @@ export function NestingQueueClient({ queue }: { queue: NestingQueueData }) {
           <Link href="/nesting?scope=tasks">
             <Button variant={queue.scope === 'tasks' ? 'default' : 'outline'} size="sm">По задачам</Button>
           </Link>
-          <Button variant="outline" size="sm" disabled={selectedIds.length === 0 || isPending} onClick={clearSelection}>
+          <Button variant="outline" size="sm" disabled={!canManage || selectedIds.length === 0 || isPending} onClick={clearSelection}>
             Сбросить
           </Button>
-          <Button disabled={selectedIds.length === 0 || isPending} onClick={createBatch}>
+          <Button disabled={!canManage || selectedIds.length === 0 || isPending} onClick={createBatch}>
             {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
             Запустить пакет ({selectedIds.length})
           </Button>
@@ -154,6 +157,7 @@ export function NestingQueueClient({ queue }: { queue: NestingQueueData }) {
             selected={selected}
             onToggleMachine={toggleMachine}
             onToggleItem={toggleItem}
+            canManage={canManage}
           />
         ))
       )}
@@ -166,11 +170,13 @@ function MachineQueueCard({
   selected,
   onToggleMachine,
   onToggleItem,
+  canManage,
 }: {
   machine: NestingQueueMachine
   selected: Set<string>
   onToggleMachine: (machine: NestingQueueMachine, checked: boolean) => void
   onToggleItem: (item: NestingQueueItem, checked: boolean) => void
+  canManage: boolean
 }) {
   const status = machineStatus(machine)
   const selectableItems = machine.items.filter((item) => item.selectable)
@@ -183,7 +189,7 @@ function MachineQueueCard({
         <div className="flex min-w-0 items-start gap-3">
           <Checkbox
             checked={allSelected}
-            disabled={selectableItems.length === 0}
+            disabled={!canManage || selectableItems.length === 0}
             onCheckedChange={(checked) => onToggleMachine(machine, checked === true)}
             className="mt-1"
           />
@@ -223,7 +229,7 @@ function MachineQueueCard({
           <div className="p-4 text-sm text-[#9CA3AF]">Нет товарных позиций для раскладки</div>
         ) : (
           machine.items.map((item) => (
-            <ItemRow key={item.id} item={item} checked={selected.has(item.id)} onToggle={onToggleItem} />
+            <ItemRow key={item.id} item={item} checked={selected.has(item.id)} onToggle={onToggleItem} canManage={canManage} />
           ))
         )}
       </div>
@@ -235,10 +241,12 @@ function ItemRow({
   item,
   checked,
   onToggle,
+  canManage,
 }: {
   item: NestingQueueItem
   checked: boolean
   onToggle: (item: NestingQueueItem, checked: boolean) => void
+  canManage: boolean
 }) {
   const status = itemStatus(item)
   const Icon = status.icon
@@ -247,7 +255,7 @@ function ItemRow({
     <div className="grid gap-3 p-4 lg:grid-cols-[32px_minmax(220px,1fr)_130px_140px_180px] lg:items-center">
       <Checkbox
         checked={checked}
-        disabled={!item.selectable}
+        disabled={!canManage || !item.selectable}
         onCheckedChange={(value) => onToggle(item, value === true)}
       />
       <div className="min-w-0">

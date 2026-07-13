@@ -49,7 +49,7 @@ type SupplyMachineDetailData = {
 
 export function SupplyMachineDetail({ data }: { data: SupplyMachineDetailData }) {
   const router = useRouter()
-  const { isEngineer, isTechnologist, isSupplyManager, isDirector } = useRole()
+  const { isEngineer, isTechnologist, isSupplyManager, isDirector, can } = useRole()
   const { machine, items, summary } = data
   const [filterMode, setFilterMode] = useState('all')
 
@@ -80,10 +80,11 @@ export function SupplyMachineDetail({ data }: { data: SupplyMachineDetailData })
     return true
   })
 
-  const canDelete = (userId: string | null) => isDirector || (!!userId && userId === data.currentUser?.id)
-  const disableEng = !isEngineer && !isDirector
-  const disableTech = !isTechnologist && !isDirector
-  const disableSup = !isSupplyManager && !isDirector
+  const canManage = can('supply', 'manage')
+  const canDelete = (userId: string | null) => canManage && (isDirector || (!!userId && userId === data.currentUser?.id))
+  const disableEng = !canManage || (!isEngineer && !isDirector)
+  const disableTech = !canManage || (!isTechnologist && !isDirector)
+  const disableSup = !canManage || (!isSupplyManager && !isDirector)
 
   async function handleUpdate(id: string, field: string, value: string | number | boolean | null) {
     const res = await updateSupplyItem(id, { [field]: value }, machine.id)

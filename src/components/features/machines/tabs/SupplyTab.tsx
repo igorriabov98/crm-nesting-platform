@@ -232,7 +232,8 @@ export function SupplyTab({
   machine,
   requestData = null,
 }: SupplyTabProps) {
-  const { isDirector, isEngineer, isTechnologist, isSupplyManager } = useRole()
+  const { isDirector, isEngineer, isTechnologist, isSupplyManager, can } = useRole()
+  const canManageSupply = can('supply', 'manage')
 
   const items = machine.supply_items || []
   const requestMaterialRows = useMemo(() => buildRequestMaterialRows(requestData), [requestData])
@@ -402,9 +403,9 @@ export function SupplyTab({
           <tbody>
             {items.map((item: SupplyItem, idx: number) => {
               // Права редактирования для полей
-              const canEditTech = isDirector || isTechnologist
-              const canEditSupply = isDirector || isSupplyManager
-              const canEditEng = isDirector || isEngineer
+              const canEditTech = canManageSupply && (isDirector || isTechnologist)
+              const canEditSupply = canManageSupply && (isDirector || isSupplyManager)
+              const canEditEng = canManageSupply && (isDirector || isEngineer)
 
               return (
                 <tr key={item.id} className="border-b border-[#E8ECF0] bg-white hover:bg-[#F8F9FA]">
@@ -573,9 +574,9 @@ export function SupplyTab({
           </div>
         ) : (
           items.map((item: SupplyItem, idx: number) => {
-            const canEditTech = isDirector || isTechnologist
-            const canEditSupply = isDirector || isSupplyManager
-            const canEditEng = isDirector || isEngineer
+            const canEditTech = canManageSupply && (isDirector || isTechnologist)
+            const canEditSupply = canManageSupply && (isDirector || isSupplyManager)
+            const canEditEng = canManageSupply && (isDirector || isEngineer)
 
             return (
               <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

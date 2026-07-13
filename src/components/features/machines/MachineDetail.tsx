@@ -32,10 +32,9 @@ import { MachineDeleteDialog } from './MachineDeleteDialog'
 import { AssignFactoryDialog } from '@/components/features/meetings/AssignFactoryDialog'
 
 import { useRole } from '@/lib/hooks/useRole'
-import { INVOICE_VISIBLE_ROLES } from '@/lib/constants/roles'
 import { getDesiredShippingInfo } from '@/lib/utils/desired-shipping'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
-import type { FactorySummary, MachineDetails, UserRole } from '@/lib/types'
+import type { FactorySummary, MachineDetails } from '@/lib/types'
 import type { TaskWithRelations } from '@/lib/actions/tasks'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 import type { MachineItemNestingState } from '@/lib/actions/machine-item-nesting'
@@ -137,7 +136,7 @@ export function MachineDetail({
 }: MachineDetailProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { role, isDirector } = useRole()
+  const { isDirector, can } = useRole()
   
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [isArchiveOpen, setIsArchiveOpen] = useState(false)
@@ -146,10 +145,10 @@ export function MachineDetail({
   const [isConfirming, setIsConfirming] = useState(false)
 
   const isArchived = machine.is_archived
-  const canEdit = !isArchived && (isDirector || role === 'sales_manager')
+  const canEdit = !isArchived && can('sales_plan', 'manage')
   const canEditConfirmation = canEdit
-  const canDelete = isDirector
-  const showInvoiceTab = role && INVOICE_VISIBLE_ROLES.includes(role as UserRole)
+  const canDelete = can('sales_plan', 'manage')
+  const showInvoiceTab = can('invoices', 'view')
   const tabParam = searchParams.get('tab')
   const defaultTab = tabParam && MACHINE_TAB_VALUES.includes(tabParam) && (tabParam !== 'invoice' || showInvoiceTab)
     ? tabParam

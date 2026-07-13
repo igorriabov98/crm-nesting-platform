@@ -1,7 +1,7 @@
 ﻿'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { requirePermission } from '@/lib/permissions/server'
 import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import {
   bulkUpdateComponentStock,
@@ -42,23 +42,12 @@ export type PaintingCheckListItem = {
   uncheckedPaint: number
 }
 
-async function requireStockRole(allowed: UserRole[]) {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('ÐÐµÐ¾Ð±Ñ…Ð¾Ð´Ð¸Ð¼Ð° Ð°Ð²Ñ‚Ð¾Ñ€Ð¸Ð·Ð°Ñ†Ð¸Ñ')
-
-  const { data: profile, error } = await supabase
-    .from('users')
-    .select('id, role, full_name')
-    .eq('id', user.id)
-    .single()
-
-  if (error || !profile) throw new Error('ÐŸÑ€Ð¾Ñ„Ð¸Ð»ÑŒ Ð¿Ð¾Ð»ÑŒÐ·Ð¾Ð²Ð°Ñ‚ÐµÐ»Ñ Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½')
-  const current = profile as unknown as { id: string; role: UserRole; full_name: string }
-  const roleAllowed = allowed.includes(current.role) || DIRECTOR_ROLES.includes(current.role)
-  if (!roleAllowed) throw new Error('ÐÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð¿Ñ€Ð°Ð²')
-
-  return { db: supabase as unknown as LooseDb, user: current }
+async function requireStockAccess(operation: 'view' | 'manage', allowed: UserRole[]) {
+  const { supabase, user, role } = await requirePermission('technologist_requests', operation)
+  if (!allowed.includes(role) && !DIRECTOR_ROLES.includes(role)) {
+    throw new Error('Недостаточно прав для этой проверки склада')
+  }
+  return { db: supabase as unknown as LooseDb, user }
 }
 
 async function getRequests(db: LooseDb) {
@@ -98,7 +87,7 @@ async function getRequestHeader(db: LooseDb, requestId: string) {
 
 export async function getProcurementCheckList() {
   try {
-    const { db } = await requireStockRole(['procurement_head'])
+    const { db } = await requireStockAccess('view', ['procurement_head'])
     const requests = await getRequests(db)
     const result: ProcurementCheckListItem[] = []
 
@@ -129,7 +118,7 @@ export async function getProcurementCheckList() {
 
 export async function getProcurementCheckDetail(requestId: string) {
   try {
-    const { db } = await requireStockRole(['procurement_head'])
+    const { db } = await requireStockAccess('view', ['procurement_head'])
     const request = await getRequestHeader(db, requestId)
     const [knives, components] = await Promise.all([
       getSectionRows<RequestKnives>(db, 'request_knives', requestId),
@@ -156,7 +145,7 @@ export async function saveProcurementCheck(
   components: { id: string; stock_remainder: number; availability: AvailabilityInput }[]
 ) {
   try {
-    const { db } = await requireStockRole(['procurement_head'])
+    const { db } = await requireStockAccess('manage', ['procurement_head'])
     const request = await getRequestHeader(db, requestId)
 
     const knifeResult = await bulkUpdateKnifeStock(knives)
@@ -175,7 +164,7 @@ export async function saveProcurementCheck(
 
 export async function getPaintingCheckList() {
   try {
-    const { db } = await requireStockRole(['painting_head'])
+    const { db } = await requireStockAccess('view', ['painting_head'])
     const requests = await getRequests(db)
     const result: PaintingCheckListItem[] = []
 
@@ -200,7 +189,7 @@ export async function getPaintingCheckList() {
 
 export async function getPaintingCheckDetail(requestId: string) {
   try {
-    const { db } = await requireStockRole(['painting_head'])
+    const { db } = await requireStockAccess('view', ['painting_head'])
     const request = await getRequestHeader(db, requestId)
     const paint = await getSectionRows<RequestPaint>(db, 'request_paint', requestId)
 
@@ -219,7 +208,7 @@ export async function getPaintingCheckDetail(requestId: string) {
 
 export async function savePaintingCheck(requestId: string, paint: { id: string; stock_remainder_kg: number }[]) {
   try {
-    const { db } = await requireStockRole(['painting_head'])
+    const { db } = await requireStockAccess('manage', ['painting_head'])
     const request = await getRequestHeader(db, requestId)
 
     const paintResult = await bulkUpdatePaintStock(paint)

@@ -20,11 +20,15 @@ import {
   requireAccessSettingsPermission,
   type DepartmentPermissionMembership,
 } from '@/lib/permissions/server'
+import {
+  resolveDepartmentPermissions,
+  type DepartmentAccessPermissionRow,
+} from '@/lib/permissions/resolve'
 import type { UserRole } from '@/lib/types'
 
 export type DepartmentAccessSubjectScope = 'head' | 'member'
 
-type DepartmentAccessRow = {
+type DepartmentAccessRow = DepartmentAccessPermissionRow & {
   department_id: string
   subject_scope: DepartmentAccessSubjectScope
   resource_key: string
@@ -380,14 +384,6 @@ async function getLegacyPermissionMap(db: LooseDb, role: UserRole): Promise<Perm
   return map
 }
 
-function addSource(
-  sources: Partial<Record<ResourceKey, string[]>>,
-  resourceKey: ResourceKey,
-  source: string,
-) {
-  sources[resourceKey] = Array.from(new Set([...(sources[resourceKey] || []), source]))
-}
-
 async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<UserAccessPreview> {
   const { data: userData, error: userError } = await db
     .from<UserRow>('users')
@@ -421,8 +417,7 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
     permissions = getEmptyPermissionMap()
   } else {
     const departmentIds = Array.from(new Set(memberships.map((membership) => membership.departmentId).filter(Boolean)))
-    let appliedDepartmentRows = 0
-    const configuredResourceKeys = new Set<ResourceKey>()
+    let accessRows: DepartmentAccessRow[] = []
 
     if (departmentIds.length > 0) {
       const { data: accessData } = await db
@@ -430,39 +425,14 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
         .select('department_id, subject_scope, resource_key, can_view, can_manage')
         .in('department_id', departmentIds)
 
-      const rows = Array.isArray(accessData) ? accessData : []
-      for (const membership of memberships) {
-        const subjectScope: DepartmentAccessSubjectScope = membership.isDepartmentHead ? 'head' : 'member'
-        const source = `${membership.departmentName || 'Отдел'} · ${subjectScope === 'head' ? 'Начальник отдела' : 'Подчинённый'}`
-        for (const row of rows) {
-          if (row.department_id !== membership.departmentId || row.subject_scope !== subjectScope) continue
-          if (!(row.resource_key in RESOURCE_BY_KEY)) continue
-          const resourceKey = row.resource_key as ResourceKey
-          configuredResourceKeys.add(resourceKey)
-          const current = permissions[resourceKey] || { canView: false, canManage: false }
-          permissions[resourceKey] = {
-            canView: current.canView || row.can_view || row.can_manage,
-            canManage: current.canManage || row.can_manage,
-          }
-          if (row.can_view || row.can_manage) addSource(sources, resourceKey, source)
-          appliedDepartmentRows += 1
-        }
-      }
+      accessRows = Array.isArray(accessData) ? accessData : []
     }
 
-    if (appliedDepartmentRows > 0 && userData.role) {
-      for (const resourceKey of ['material_request_queue', 'supply_material_requests', 'business_scrap_reservations'] as const) {
-        if (configuredResourceKeys.has(resourceKey)) continue
-        const resource = RESOURCE_BY_KEY[resourceKey]
-        const fallback = getDefaultPermission(resource, userData.role)
-        permissions[resourceKey] = fallback
-        if (fallback.canView || fallback.canManage) {
-          addSource(sources, resourceKey, 'Значение по умолчанию для новой страницы')
-        }
-      }
-    }
+    const resolved = resolveDepartmentPermissions(memberships, accessRows)
+    permissions = resolved.permissions
+    Object.assign(sources, resolved.sources)
 
-    if (appliedDepartmentRows === 0 && userData.role) {
+    if (resolved.appliedDepartmentRows === 0 && userData.role) {
       permissions = await getLegacyPermissionMap(db, userData.role)
       usedLegacyFallback = true
       for (const resource of PERMISSION_RESOURCES) {

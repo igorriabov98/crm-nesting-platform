@@ -4,6 +4,11 @@ import { cache } from 'react'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { getCurrentUserContext } from '@/lib/auth/current-user'
 import {
+  resolveDepartmentPermissions,
+  shouldUseLegacyPermissionFallback,
+  type DepartmentAccessPermissionRow,
+} from '@/lib/permissions/resolve'
+import {
   PERMISSION_RESOURCES,
   RESOURCE_BY_KEY,
   getDefaultPermission,
@@ -30,16 +35,6 @@ type PermissionRow = {
   can_manage: boolean
   updated_by?: string | null
   updated_at?: string | null
-}
-
-type DepartmentAccessSubjectScope = 'head' | 'member'
-
-type DepartmentAccessRow = {
-  department_id: string
-  subject_scope: DepartmentAccessSubjectScope
-  resource_key: string
-  can_view: boolean
-  can_manage: boolean
 }
 
 export type DepartmentPermissionMembership = {
@@ -94,14 +89,6 @@ function normalizePermission(row: Pick<PermissionRow, 'can_view' | 'can_manage'>
   }
 }
 
-function addPermissionSource(
-  sources: Partial<Record<ResourceKey, string[]>>,
-  resourceKey: ResourceKey,
-  source: string,
-) {
-  sources[resourceKey] = Array.from(new Set([...(sources[resourceKey] || []), source]))
-}
-
 function relationOne<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] || null
   return value || null
@@ -117,25 +104,6 @@ function normalizeMembership(row: MembershipQueryRow): DepartmentPermissionMembe
     positionName: position?.name ?? null,
     positionLevel: typeof position?.level === 'number' ? position.level : null,
     isDepartmentHead: Boolean(row.is_department_head),
-  }
-}
-
-function applyAccessRow(
-  permissions: PermissionMap,
-  sources: Partial<Record<ResourceKey, string[]>>,
-  row: DepartmentAccessRow,
-  source: string,
-) {
-  if (!(row.resource_key in RESOURCE_BY_KEY)) return
-  const resourceKey = row.resource_key as ResourceKey
-  const current = permissions[resourceKey] || { canView: false, canManage: false }
-  const next = {
-    canView: current.canView || row.can_view || row.can_manage,
-    canManage: current.canManage || row.can_manage,
-  }
-  permissions[resourceKey] = next
-  if (row.can_view || row.can_manage) {
-    addPermissionSource(sources, resourceKey, source)
   }
 }
 
@@ -205,10 +173,14 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
     }
   }
 
-  const { data: membershipData } = await db
+  const { data: membershipData, error: membershipError } = await db
     .from('department_members')
     .select('department_id, position_id, is_department_head, department:departments(id, name), position:positions(id, name, level)')
     .eq('user_id', userId)
+
+  if (membershipError) {
+    throw new Error(membershipError.message || 'Не удалось проверить отделы пользователя')
+  }
 
   const memberships = Array.isArray(membershipData)
     ? (membershipData as MembershipQueryRow[]).map(normalizeMembership)
@@ -218,36 +190,25 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
     return makeFullAdminPermissionDetails(memberships)
   }
 
-  const permissions = getEmptyPermissionMap()
-  const sources: Partial<Record<ResourceKey, string[]>> = {}
   const departmentIds = Array.from(new Set(memberships.map((membership) => membership.departmentId).filter(Boolean)))
 
-  let appliedDepartmentRows = 0
-  let materialRequestQueueConfigured = false
-  let supplyMaterialRequestsConfigured = false
-  let businessScrapReservationsConfigured = false
+  let accessRows: DepartmentAccessPermissionRow[] = []
   if (departmentIds.length > 0) {
-    const { data: accessData } = await db
+    const { data: accessData, error: accessError } = await db
       .from('department_access_permissions')
       .select('department_id, subject_scope, resource_key, can_view, can_manage')
       .in('department_id', departmentIds)
 
-    const accessRows = Array.isArray(accessData) ? (accessData as DepartmentAccessRow[]) : []
-    for (const membership of memberships) {
-      const scope: DepartmentAccessSubjectScope = membership.isDepartmentHead ? 'head' : 'member'
-      const label = `${membership.departmentName || 'Отдел'} · ${scope === 'head' ? 'Начальник отдела' : 'Подчинённый'}`
-      for (const row of accessRows) {
-        if (row.department_id !== membership.departmentId || row.subject_scope !== scope) continue
-        if (row.resource_key === 'material_request_queue') materialRequestQueueConfigured = true
-        if (row.resource_key === 'supply_material_requests') supplyMaterialRequestsConfigured = true
-        if (row.resource_key === 'business_scrap_reservations') businessScrapReservationsConfigured = true
-        applyAccessRow(permissions, sources, row, label)
-        appliedDepartmentRows += 1
-      }
+    if (accessError) {
+      throw new Error(accessError.message || 'Не удалось проверить матрицу доступов отделов')
     }
+
+    accessRows = Array.isArray(accessData) ? (accessData as DepartmentAccessPermissionRow[]) : []
   }
 
-  if (appliedDepartmentRows === 0 && userRow.role) {
+  const { permissions, sources, appliedDepartmentRows } = resolveDepartmentPermissions(memberships, accessRows)
+
+  if (shouldUseLegacyPermissionFallback(appliedDepartmentRows) && userRow.role) {
     const legacyPermissions = await getRolePermissionMap(userRow.role)
     const legacySources: Partial<Record<ResourceKey, string[]>> = {}
     for (const resource of PERMISSION_RESOURCES) {
@@ -261,33 +222,6 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
       usedLegacyFallback: true,
       memberships,
       sources: legacySources,
-    }
-  }
-
-  if (!materialRequestQueueConfigured && userRow.role) {
-    const resource = RESOURCE_BY_KEY.material_request_queue
-    const fallbackPermission = getDefaultPermission(resource, userRow.role)
-    permissions.material_request_queue = fallbackPermission
-    if (fallbackPermission.canView || fallbackPermission.canManage) {
-      addPermissionSource(sources, 'material_request_queue', 'Значение по умолчанию для новой страницы')
-    }
-  }
-
-  if (!supplyMaterialRequestsConfigured && userRow.role) {
-    const resource = RESOURCE_BY_KEY.supply_material_requests
-    const fallbackPermission = getDefaultPermission(resource, userRow.role)
-    permissions.supply_material_requests = fallbackPermission
-    if (fallbackPermission.canView || fallbackPermission.canManage) {
-      addPermissionSource(sources, 'supply_material_requests', 'Значение по умолчанию для новой страницы')
-    }
-  }
-
-  if (!businessScrapReservationsConfigured && userRow.role) {
-    const resource = RESOURCE_BY_KEY.business_scrap_reservations
-    const fallbackPermission = getDefaultPermission(resource, userRow.role)
-    permissions.business_scrap_reservations = fallbackPermission
-    if (fallbackPermission.canView || fallbackPermission.canManage) {
-      addPermissionSource(sources, 'business_scrap_reservations', 'Значение по умолчанию для новой страницы')
     }
   }
 
@@ -312,12 +246,31 @@ export async function canCurrentUserAccessPath(permissions: PermissionMap, pathn
   return hasPermission(permissions, requirement.resourceKey, requirement.operation)
 }
 
-export async function requirePermission(resourceKey: ResourceKey, operation: PermissionOperation) {
+export class PermissionDeniedError extends Error {
+  readonly resourceKey: ResourceKey
+  readonly operation: PermissionOperation
+
+  constructor(resourceKey: ResourceKey, operation: PermissionOperation) {
+    super('Недостаточно прав')
+    this.name = 'PermissionDeniedError'
+    this.resourceKey = resourceKey
+    this.operation = operation
+  }
+}
+
+type PermissionRequirement = {
+  resourceKey: ResourceKey
+  operation: PermissionOperation
+}
+
+export async function requireAnyPermission(requirements: readonly PermissionRequirement[]) {
+  if (requirements.length === 0) throw new Error('Не задано ни одного требуемого права')
   const context = await getCurrentUserContext()
   const permissionDetails = await getCurrentUserPermissions(context.user.id)
 
-  if (!hasPermission(permissionDetails.permissions, resourceKey, operation)) {
-    throw new Error('Недостаточно прав')
+  if (!requirements.some(({ resourceKey, operation }) =>
+    hasPermission(permissionDetails.permissions, resourceKey, operation))) {
+    throw new PermissionDeniedError(requirements[0].resourceKey, requirements[0].operation)
   }
 
   return {
@@ -325,6 +278,10 @@ export async function requirePermission(resourceKey: ResourceKey, operation: Per
     permissions: permissionDetails.permissions,
     permissionDetails,
   }
+}
+
+export async function requirePermission(resourceKey: ResourceKey, operation: PermissionOperation) {
+  return requireAnyPermission([{ resourceKey, operation }])
 }
 
 export async function requireAccessSettingsPermission() {
