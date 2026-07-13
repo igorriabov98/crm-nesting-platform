@@ -1,40 +1,46 @@
-"use client"
+'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, CheckCircle2 } from 'lucide-react'
+import {
+  ArrowUpRight,
+  Bell,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  Inbox,
+} from 'lucide-react'
 import { format, isToday, isYesterday } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { toast } from 'sonner'
 
+import { NotificationGlyph } from './NotificationGlyph'
+import {
+  getNotificationDestination,
+  isConsumableNotification,
+  type NotificationItem,
+} from './notification-model'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { LoadingButton } from '@/components/ui/loading-button'
-import { NOTIFICATION_TYPES, DEFAULT_NOTIFICATION_ICON, NotificationType } from '@/lib/constants/notifications'
-import { markAsRead, markAllAsRead } from '@/app/(protected)/notifications/actions'
-import { ROUTES } from '@/lib/constants/routes'
+import { markAllAsRead, markAsRead } from '@/app/(protected)/notifications/actions'
 import { createClient } from '@/lib/supabase/client'
 import { useUser } from '@/lib/hooks/useUser'
 import { cn } from '@/lib/utils'
 
-type NotificationItem = {
-  id: string
-  type: string
-  title: string
-  message: string
-  created_at: string
-  is_read: boolean
-  related_machine_id: string | null
-  consumable_request_id: string | null
-}
+type NotificationFilter = 'all' | 'unread'
 
-function isConsumableNotification(type: string) {
-  return type.startsWith('consumable_request_')
+function getGroupLabel(date: Date) {
+  if (isToday(date)) return 'Сегодня'
+  if (isYesterday(date)) return 'Вчера'
+  return format(date, 'd MMMM yyyy', { locale: ru })
 }
 
 export function NotificationList({ initialData }: { initialData: NotificationItem[] }) {
   const router = useRouter()
   const { user } = useUser()
   const [data, setData] = useState(initialData)
-  const [filter, setFilter] = useState<'all' | 'unread'>('all')
+  const [filter, setFilter] = useState<NotificationFilter>('all')
   const [markAllLoading, setMarkAllLoading] = useState(false)
   const [readingId, setReadingId] = useState<string | null>(null)
 
@@ -54,9 +60,19 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
         },
         (payload) => {
           if (payload.eventType === 'INSERT') {
-            setData((prev) => [payload.new as NotificationItem, ...prev])
+            setData((current) => {
+              const incoming = payload.new as NotificationItem
+              if (current.some((item) => item.id === incoming.id)) return current
+              return [incoming, ...current]
+            })
           } else if (payload.eventType === 'UPDATE') {
-            setData((prev) => prev.map((item) => item.id === payload.new.id ? { ...item, ...(payload.new as NotificationItem) } : item))
+            setData((current) =>
+              current.map((item) =>
+                item.id === payload.new.id
+                  ? { ...item, ...(payload.new as NotificationItem) }
+                  : item
+              )
+            )
           }
         }
       )
@@ -71,34 +87,35 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
     setMarkAllLoading(true)
     try {
       await markAllAsRead()
-      setData((prev) => prev.map((item) => ({ ...item, is_read: true })))
-      toast.success('Все уведомления прочитаны')
+      setData((current) =>
+        current.map((item) => ({ ...item, is_read: true }))
+      )
+      toast.success('Все уведомления отмечены прочитанными')
       router.refresh()
     } catch {
-      toast.error('Произошла ошибка')
+      toast.error('Не удалось отметить уведомления')
     } finally {
       setMarkAllLoading(false)
     }
   }
 
   const handleRead = async (notification: NotificationItem, navigate = true) => {
-    const id = notification.id
-    setReadingId(id)
-    try {
-      await markAsRead(id)
-      setData((prev) => prev.map((item) => item.id === id ? { ...item, is_read: true } : item))
+    const destination = getNotificationDestination(notification)
+    setReadingId(notification.id)
 
-      if (navigate && notification.related_machine_id) {
-        router.push(`${ROUTES.SALES_PLAN}/${notification.related_machine_id}`)
-      } else if (navigate && notification.consumable_request_id) {
-        const supplyTypes = ['consumable_request_new', 'consumable_request_shortage']
-        const route = supplyTypes.includes(notification.type)
-          ? ROUTES.SUPPLY_CONSUMABLE_REQUESTS
-          : ROUTES.PRODUCTION_CONSUMABLE_REQUESTS
-        router.push(`${route}?request=${notification.consumable_request_id}`)
+    try {
+      if (!notification.is_read) {
+        await markAsRead(notification.id)
+        setData((current) =>
+          current.map((item) =>
+            item.id === notification.id ? { ...item, is_read: true } : item
+          )
+        )
       }
+
+      if (navigate && destination) router.push(destination.href)
     } catch {
-      toast.error('Произошла ошибка')
+      toast.error('Не удалось обновить уведомление')
     } finally {
       setReadingId(null)
     }
@@ -115,17 +132,7 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
     const groups: Record<string, NotificationItem[]> = {}
 
     filteredData.forEach((notification) => {
-      const date = new Date(notification.created_at)
-      let label = ''
-
-      if (isToday(date)) {
-        label = 'Сегодня'
-      } else if (isYesterday(date)) {
-        label = 'Вчера'
-      } else {
-        label = format(date, 'd MMMM yyyy', { locale: ru })
-      }
-
+      const label = getGroupLabel(new Date(notification.created_at))
       if (!groups[label]) groups[label] = []
       groups[label].push(notification)
     })
@@ -134,146 +141,237 @@ export function NotificationList({ initialData }: { initialData: NotificationIte
   }, [filteredData])
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div className="flex w-fit rounded-lg border border-[#E8ECF0] bg-white p-1">
-          <button
+    <div className="mx-auto w-full max-w-5xl space-y-6 pb-8">
+      <section className="relative overflow-hidden rounded-3xl border border-border/80 bg-card shadow-sm">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-0 w-2/5 bg-gradient-to-l from-blue-50/80 to-transparent"
+        />
+        <div className="relative flex flex-col gap-6 p-5 sm:p-7 lg:flex-row lg:items-end lg:justify-between lg:p-8">
+          <div className="max-w-2xl">
+            <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/15">
+              <Bell className="size-6" strokeWidth={1.8} aria-hidden="true" />
+            </div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">
+              Центр событий
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+              Уведомления
+            </h1>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
+              Изменения по машинам, срокам и заявкам собраны в одном месте.
+              Новые события появляются автоматически.
+            </p>
+          </div>
+
+          <div className="grid w-full grid-cols-2 gap-3 sm:w-auto sm:min-w-72">
+            <div className="rounded-2xl border border-border/70 bg-background/80 p-4 backdrop-blur-sm">
+              <p className="text-xs font-medium text-muted-foreground">Всего событий</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">
+                {data.length}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-blue-100 bg-blue-50/80 p-4 backdrop-blur-sm">
+              <p className="text-xs font-medium text-blue-700">Непрочитано</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-blue-700">
+                {unreadCount}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div
+          className="grid grid-cols-2 rounded-xl bg-muted p-1"
+          aria-label="Фильтр уведомлений"
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            aria-pressed={filter === 'all'}
             onClick={() => setFilter('all')}
             className={cn(
-              'rounded-md px-4 py-1.5 text-sm font-medium transition-all duration-200',
-              filter === 'all'
-                ? 'bg-[#F8F9FA] text-[#1B3A6B] shadow'
-                : 'text-[#6B7280] hover:bg-[#F8F9FA] hover:text-[#374151]'
+              'min-h-11 rounded-lg px-4 text-muted-foreground shadow-none',
+              filter === 'all' &&
+                'bg-card text-foreground shadow-sm hover:bg-card hover:text-foreground'
             )}
           >
-            Все
-          </button>
-          <button
+            Все события
+            <Badge variant="secondary" className="ml-1 tabular-nums">
+              {data.length}
+            </Badge>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            aria-pressed={filter === 'unread'}
             onClick={() => setFilter('unread')}
             className={cn(
-              'flex items-center gap-2 rounded-md px-4 py-1.5 text-sm font-medium transition-all duration-200',
-              filter === 'unread'
-                ? 'bg-[#F8F9FA] text-[#1B3A6B] shadow'
-                : 'text-[#6B7280] hover:bg-[#F8F9FA] hover:text-[#374151]'
+              'min-h-11 rounded-lg px-4 text-muted-foreground shadow-none',
+              filter === 'unread' &&
+                'bg-card text-foreground shadow-sm hover:bg-card hover:text-foreground'
             )}
           >
             Непрочитанные
-            {unreadCount > 0 && (
-              <span className="rounded-full bg-blue-500 px-1.5 py-0.5 text-[10px] text-[#1B3A6B]">
-                {unreadCount}
-              </span>
-            )}
-          </button>
+            <Badge
+              className={cn(
+                'ml-1 tabular-nums',
+                unreadCount > 0 ? 'bg-blue-600 text-white' : 'bg-muted text-muted-foreground'
+              )}
+            >
+              {unreadCount}
+            </Badge>
+          </Button>
         </div>
 
         {unreadCount > 0 && (
           <LoadingButton
-            onClick={handleMarkAll}
+            type="button"
+            onClick={() => void handleMarkAll()}
             loading={markAllLoading}
+            loadingText="Отмечаем..."
             variant="outline"
-            className="border-[#E8ECF0] bg-white text-[#374151] hover:bg-[#F8F9FA] hover:text-[#1B3A6B]"
+            className="min-h-11 rounded-xl px-4"
           >
-            <Check className="mr-2 h-4 w-4" />
+            <Check className="size-4" aria-hidden="true" />
             Прочитать все
           </LoadingButton>
         )}
       </div>
 
       {Object.keys(grouped).length === 0 ? (
-        <div className="rounded-xl border border-[#E8ECF0] bg-white py-20 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#F8F9FA]">
-            <CheckCircle2 className="h-8 w-8 text-[#9CA3AF]" />
-          </div>
-          <h3 className="text-lg font-medium text-[#374151]">Нет уведомлений</h3>
-          <p className="mt-1 text-[#9CA3AF]">
-            {filter === 'unread' ? 'У вас нет непрочитанных уведомлений' : 'История уведомлений пуста'}
+        <div className="rounded-3xl border border-dashed border-border bg-card px-6 py-16 text-center sm:py-20">
+          <span className="mx-auto flex size-16 items-center justify-center rounded-3xl bg-muted text-muted-foreground">
+            {filter === 'unread' ? (
+              <CheckCircle2 className="size-8" aria-hidden="true" />
+            ) : (
+              <Inbox className="size-8" aria-hidden="true" />
+            )}
+          </span>
+          <h2 className="mt-5 text-lg font-semibold text-foreground">
+            {filter === 'unread' ? 'Всё прочитано' : 'Событий пока нет'}
+          </h2>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+            {filter === 'unread'
+              ? 'Новых уведомлений нет. Можно вернуться к полному списку.'
+              : 'Когда в CRM произойдут важные изменения, они появятся на этой странице.'}
           </p>
+          {filter === 'unread' && data.length > 0 && (
+            <Button
+              variant="outline"
+              className="mt-5 min-h-11"
+              onClick={() => setFilter('all')}
+            >
+              Показать все события
+            </Button>
+          )}
         </div>
       ) : (
         <div className="space-y-8">
           {Object.entries(grouped).map(([label, items]) => (
-            <div key={label} className="space-y-3">
-              <h4 className="px-1 text-sm font-semibold uppercase tracking-widest text-[#6B7280]">
-                {label}
-              </h4>
-              <div className="overflow-hidden rounded-xl border border-[#E8ECF0] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)]">
-                <div className="divide-y divide-[#E8ECF0]">
-                  {items.map((notification) => {
-                    const config = NOTIFICATION_TYPES[notification.type as NotificationType] || DEFAULT_NOTIFICATION_ICON
-                    const Icon = config.icon
-                    const isConsumable = isConsumableNotification(notification.type)
+            <section key={label} aria-label={label} className="space-y-3">
+              <div className="flex items-center gap-3 px-1">
+                <span className="flex size-8 items-center justify-center rounded-xl bg-card text-muted-foreground ring-1 ring-border">
+                  <CalendarDays className="size-4" aria-hidden="true" />
+                </span>
+                <h2 className="text-sm font-semibold text-foreground">{label}</h2>
+                <span className="h-px flex-1 bg-border/80" aria-hidden="true" />
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {items.length}
+                </span>
+              </div>
 
-                    return (
-                      <div
-                        key={notification.id}
-                        className={cn(
-                          'flex items-start gap-4 p-4 transition-colors hover:bg-[#FAFBFC] sm:p-5',
-                          !notification.is_read ? (isConsumable ? 'bg-blue-50/40' : 'bg-white') : 'bg-white/40'
-                        )}
-                      >
-                        <div className={cn('mt-1 flex-shrink-0 rounded-xl p-3', isConsumable ? 'bg-blue-50 text-blue-700' : cn(config.bg, config.color))}>
-                          <Icon className="h-5 w-5" />
-                        </div>
+              <div className="space-y-3">
+                {items.map((notification) => {
+                  const destination = getNotificationDestination(notification)
+                  const consumable = isConsumableNotification(notification.type)
+                  const isReading = readingId === notification.id
+
+                  return (
+                    <article
+                      key={notification.id}
+                      className={cn(
+                        'relative overflow-hidden rounded-2xl border bg-card shadow-sm transition-[border-color,box-shadow] duration-200 hover:border-primary/20 hover:shadow-md motion-reduce:transition-none',
+                        notification.is_read
+                          ? 'border-border/70'
+                          : 'border-blue-200/80 bg-gradient-to-r from-blue-50/80 via-card to-card'
+                      )}
+                    >
+                      {!notification.is_read && (
+                        <span
+                          className="absolute inset-y-0 left-0 w-1 bg-blue-600"
+                          aria-hidden="true"
+                        />
+                      )}
+
+                      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:p-5">
+                        <NotificationGlyph type={notification.type} />
 
                         <div className="min-w-0 flex-1">
-                          <div className="mb-1 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                            <h5 className={cn('text-base font-medium', notification.is_read ? 'text-[#374151]' : 'text-[#1B3A6B]')}>
-                              {notification.title}
-                            </h5>
-                            <span className="whitespace-nowrap text-xs text-[#9CA3AF]">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="text-base font-semibold leading-6 text-foreground">
+                                  {notification.title}
+                                </h3>
+                                {!notification.is_read && (
+                                  <Badge className="bg-blue-600 text-white">Новое</Badge>
+                                )}
+                                {consumable && (
+                                  <Badge variant="secondary">Расходники</Badge>
+                                )}
+                              </div>
+                            </div>
+                            <time
+                              dateTime={notification.created_at}
+                              className="shrink-0 text-xs tabular-nums text-muted-foreground"
+                            >
                               {format(new Date(notification.created_at), 'HH:mm')}
-                            </span>
+                            </time>
                           </div>
 
-                          <p className={cn('text-sm', notification.is_read ? 'text-[#9CA3AF]' : 'text-[#374151]')}>
+                          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
                             {notification.message}
                           </p>
-                          {isConsumable && (
-                            <span className="mt-3 inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-700">
-                              Расходники
-                            </span>
-                          )}
 
-                          {(notification.related_machine_id || notification.consumable_request_id || !notification.is_read) && (
-                            <div className="mt-4 flex items-center gap-3">
-                              {(notification.related_machine_id || notification.consumable_request_id) && (
+                          {(destination || !notification.is_read) && (
+                            <div className="mt-4 flex flex-col gap-2 border-t border-border/60 pt-4 sm:flex-row sm:items-center">
+                              {destination && (
                                 <LoadingButton
-                                  size="sm"
+                                  type="button"
                                   variant="secondary"
-                                  loading={readingId === notification.id}
-                                  className={cn(
-                                    'bg-[#F8F9FA] text-[#2563EB] hover:bg-[#E8ECF0]',
-                                    isConsumable && 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-                                  )}
-                                  onClick={() => handleRead(notification)}
+                                  loading={isReading}
+                                  loadingText="Открываем..."
+                                  className="min-h-11 justify-center rounded-xl px-4 sm:w-auto"
+                                  onClick={() => void handleRead(notification)}
                                 >
-                                  {notification.related_machine_id ? 'Перейти к машине' : 'Открыть заявку'}
+                                  {destination.label}
+                                  <ArrowUpRight className="size-4" aria-hidden="true" />
                                 </LoadingButton>
                               )}
                               {!notification.is_read && (
                                 <LoadingButton
-                                  size="sm"
+                                  type="button"
                                   variant="ghost"
-                                  loading={readingId === notification.id}
-                                  className="text-[#6B7280] hover:text-[#1B3A6B]"
-                                  onClick={() => handleRead(notification, false)}
+                                  loading={isReading}
+                                  loadingText="Сохраняем..."
+                                  className="min-h-11 justify-center rounded-xl px-4 text-muted-foreground sm:w-auto"
+                                  onClick={() => void handleRead(notification, false)}
                                 >
-                                  Прочитано
+                                  <Check className="size-4" aria-hidden="true" />
+                                  Отметить прочитанным
                                 </LoadingButton>
                               )}
                             </div>
                           )}
                         </div>
-
-                        {!notification.is_read && (
-                          <div className="mt-2 h-2.5 w-2.5 flex-shrink-0 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]" />
-                        )}
                       </div>
-                    )
-                  })}
-                </div>
+                    </article>
+                  )
+                })}
               </div>
-            </div>
+            </section>
           ))}
         </div>
       )}
