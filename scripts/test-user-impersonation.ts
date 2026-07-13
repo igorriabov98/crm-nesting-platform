@@ -61,8 +61,9 @@ const banner = readFileSync(
   'utf8',
 )
 assert.doesNotMatch(banner, /['"]use client['"]/)
-assert.match(banner, /<form action="\/api\/impersonation\/stop" method="post">/)
-assert.match(banner, /<button[\s\S]*type="submit"/)
+assert.match(banner, /const returnHref = `\/api\/impersonation\/stop\?audit=\$\{encodeURIComponent\(auditId\)\}`/)
+assert.match(banner, /<a[\s\S]*href=\{returnHref\}/)
+assert.doesNotMatch(banner, /<form/)
 assert.doesNotMatch(banner, /onClick=/)
 
 const stopRoute = readFileSync(
@@ -73,6 +74,10 @@ assert.match(stopRoute, /export async function POST\(request: Request\)/)
 assert.match(stopRoute, /if \(!isSameOrigin\(request\)\)/)
 assert.match(stopRoute, /new Response\('Forbidden', \{ status: 403 \}\)/)
 assert.match(stopRoute, /redirect\(result\.redirectTo \|\| ROUTES\.LOGIN\)/)
-assert.doesNotMatch(stopRoute, /export async function GET/)
+assert.match(stopRoute, /export async function GET\(request: Request\)/)
+assert.match(stopRoute, /auditId !== marker\.auditId/)
+assert.match(stopRoute, /isSameOriginNavigation\(request\)/)
+assert.match(stopRoute, /new URL\(referer\)\.origin !== new URL\(request\.url\)\.origin/)
+assert.match(stopRoute, /fetchSite === 'same-origin'/)
 
 console.log('User impersonation session helpers: OK')

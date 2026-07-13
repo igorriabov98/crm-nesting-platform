@@ -28,6 +28,7 @@ export default async function ProtectedLayout({
       <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#F4F6F9]">
         {impersonation && (
           <ImpersonationBanner
+            auditId={impersonation.auditId}
             adminName={impersonation.adminName}
             targetName={impersonation.targetName}
           />
