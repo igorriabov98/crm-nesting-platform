@@ -9,6 +9,11 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { buildProductVersionFileInsert } from '@/lib/actions/product-version-file-helpers'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import {
+  validateDirectProductUploads,
+  validateProductUploadRequest,
+  type DirectProductUpload,
+} from '@/lib/products/product-file-upload'
 import type { ResourceKey } from '@/lib/permissions/resources'
 import {
   productFileKindSchema,
@@ -784,6 +789,59 @@ export async function uploadProductFile(formData: FormData) {
     revalidatePath(`${ROUTES.PRODUCTS}/${productId}`)
     return { success: true, error: null }
   } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function registerProductFileUpload(productId: string, input: DirectProductUpload) {
+  let adminSupabase: ReturnType<typeof createAdminClient> | null = null
+  let uploadedPath: string | null = null
+
+  try {
+    const { db, user } = await requireProductManageAccess()
+    const [upload] = validateDirectProductUploads(productId, [input])
+    uploadedPath = upload.objectPath
+
+    const { data: product, error: productError } = await db
+      .from('products')
+      .select('id')
+      .eq('id', productId)
+      .single()
+    if (productError || !product) throw new Error('Изделие не найдено')
+
+    adminSupabase = createAdminClient()
+    const { data: info, error: infoError } = await adminSupabase.storage
+      .from('product-files')
+      .info(upload.objectPath)
+    if (infoError || !info) throw new Error(infoError?.message || 'Файл не найден в хранилище')
+
+    const actualSize = Number(info.size || 0)
+    validateProductUploadRequest({
+      fileKind: upload.fileKind,
+      fileName: upload.fileName,
+      fileSize: actualSize,
+    })
+
+    const payload: ProductFileInsert = {
+      id: randomUUID(),
+      product_id: productId,
+      file_kind: upload.fileKind,
+      file_name: upload.fileName,
+      file_path: upload.objectPath,
+      mime_type: info.contentType || upload.mimeType,
+      file_size: actualSize,
+      uploaded_by: user.id,
+    }
+    const { error } = await db.from('product_files').insert(payload)
+    if (error) throw error
+
+    uploadedPath = null
+    revalidatePath(`${ROUTES.PRODUCTS}/${productId}`)
+    return { success: true, error: null }
+  } catch (error) {
+    if (adminSupabase && uploadedPath) {
+      await adminSupabase.storage.from('product-files').remove([uploadedPath]).catch(() => undefined)
+    }
     return { success: false, error: getErrorMessage(error) }
   }
 }

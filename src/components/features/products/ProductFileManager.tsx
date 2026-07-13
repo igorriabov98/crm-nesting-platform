@@ -1,136 +1,186 @@
-"use client"
+'use client'
 
-import { useRef, useState } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
+import { useRouter } from 'next/navigation'
+import { Download, FileArchive, FilePlus2, Loader2, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { AlertTriangle, Download, Trash2, Upload } from 'lucide-react'
-import { deleteProductFile, uploadProductFile } from '@/lib/actions/products'
+import { deleteProductFile, registerProductFileUpload } from '@/lib/actions/products'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  cleanupDirectProductUploads,
+  uploadProductFileDirect,
+} from '@/lib/products/direct-product-upload-client'
+import { cn } from '@/lib/utils'
+import { usePermissions } from '@/components/providers/PermissionProvider'
 import type { ProductFile } from '@/lib/types'
 
 const fileKindLabels: Record<ProductFile['file_kind'], string> = {
-  drawing: 'Чертеж',
-  step: 'STEP',
-  pdf: 'PDF',
+  drawing: 'Дополнительный чертёж',
+  step: 'Дополнительная STEP-модель',
+  pdf: 'PDF-документ',
   photo: 'Фото',
-  other: 'Другое',
+  other: 'Другой файл',
+}
+
+const fileKindAccept: Partial<Record<ProductFile['file_kind'], string>> = {
+  drawing: '.pdf,.dxf,.dwg',
+  step: '.step,.stp',
+  pdf: '.pdf,application/pdf',
+  photo: 'image/png,image/jpeg,image/webp,image/gif,.heic,.heif',
 }
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
 }
 
-export function ProductFileManager({ productId, files }: { productId: string; files: ProductFile[] }) {
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [fileKind, setFileKind] = useState<ProductFile['file_kind']>('drawing')
-  const [isUploading, setIsUploading] = useState(false)
-  const duplicateKindFiles = fileKind === 'step' || fileKind === 'pdf'
-    ? files.filter((file) => file.file_kind === fileKind)
-    : []
+function formatFileSize(bytes: number | null) {
+  if (!bytes) return '—'
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`
+  return `${Math.round((bytes / 1024 / 1024) * 10) / 10} МБ`
+}
 
-  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+export function ProductFileManager({ productId, files }: { productId: string; files: ProductFile[] }) {
+  const router = useRouter()
+  const { can } = usePermissions()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [fileKind, setFileKind] = useState<ProductFile['file_kind']>('other')
+  const [file, setFile] = useState<File | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const canManage = can('products', 'manage')
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const file = fileInputRef.current?.files?.[0]
     if (!file) {
       toast.error('Выберите файл')
       return
     }
 
     setIsUploading(true)
+    let uploaded = null
     try {
-      const formData = new FormData()
-      formData.append('product_id', productId)
-      formData.append('file_kind', fileKind)
-      formData.append('file', file)
-      const result = await uploadProductFile(formData)
-      if (!result.success) throw new Error(result.error || 'Не удалось загрузить файл')
-      toast.success('Файл загружен')
+      uploaded = await uploadProductFileDirect(productId, fileKind, file)
+      const result = await registerProductFileUpload(productId, uploaded)
+      if (!result.success) throw new Error(result.error || 'Не удалось сохранить файл')
+      toast.success('Дополнительный файл загружен')
+      setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
+      router.refresh()
     } catch (error) {
+      if (uploaded) await cleanupDirectProductUploads(productId, [uploaded])
       toast.error(errorMessage(error))
     } finally {
       setIsUploading(false)
     }
   }
 
-  async function onDelete(file: ProductFile) {
-    const result = await deleteProductFile(file.id, productId)
-    if (!result.success) {
-      toast.error(result.error || 'Не удалось удалить файл')
-      return
+  async function onDelete(productFile: ProductFile) {
+    setDeletingId(productFile.id)
+    try {
+      const result = await deleteProductFile(productFile.id, productId)
+      if (!result.success) throw new Error(result.error || 'Не удалось удалить файл')
+      toast.success('Файл удалён')
+      router.refresh()
+    } catch (error) {
+      toast.error(errorMessage(error))
+    } finally {
+      setDeletingId(null)
     }
-    toast.success('Файл удален')
   }
 
   return (
-    <div className="space-y-4 rounded-xl border border-[#E8ECF0] bg-white p-5">
-      <div>
-        <h2 className="text-lg font-semibold text-[#1B3A6B]">Файлы продукта</h2>
-        <p className="text-sm text-[#6B7280]">Чертежи, STEP и дополнительные материалы карточки продукта.</p>
+    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex items-start gap-3">
+        <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-violet-100 text-violet-700">
+          <FileArchive className="h-5 w-5" />
+        </span>
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">Дополнительные материалы</h2>
+          <p className="mt-1 text-sm text-slate-500">Фото, инструкции и прочие файлы. Основные PDF и STEP находятся в текущей версии выше.</p>
+        </div>
       </div>
-      <form onSubmit={onSubmit} className="grid gap-3 md:grid-cols-[180px_1fr_auto]">
-        <Select value={fileKind} onValueChange={(value) => setFileKind((value || 'other') as ProductFile['file_kind'])}>
-          <SelectTrigger>
-            <SelectValue>{fileKindLabels[fileKind]}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(fileKindLabels).map(([value, label]) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input ref={fileInputRef} type="file" />
-        <Button type="submit" disabled={isUploading} className="bg-[#1B3A6B] text-white hover:bg-[#152D54]">
-          <Upload className="mr-2 h-4 w-4" />
-          Загрузить
-        </Button>
-      </form>
-      {duplicateKindFiles.length > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            {fileKindLabels[fileKind]} уже есть: {duplicateKindFiles.map((file) => file.file_name).join(', ')}.
-            Новая загрузка добавит ещё один файл этого типа.
-          </p>
+
+      {canManage && (
+        <form onSubmit={onSubmit} className="mt-5 grid gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 lg:grid-cols-[220px_minmax(0,1fr)_auto] lg:items-end">
+          <div className="space-y-1.5">
+            <Label htmlFor="supplementary-file-kind">Тип материала</Label>
+            <Select value={fileKind} onValueChange={(value) => setFileKind((value || 'other') as ProductFile['file_kind'])}>
+              <SelectTrigger id="supplementary-file-kind" className="min-h-11 border-slate-200 bg-white">
+                <SelectValue>{fileKindLabels[fileKind]}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(fileKindLabels).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="supplementary-product-file">Файл до 50 МБ</Label>
+            <Input
+              key={fileKind}
+              ref={fileInputRef}
+              id="supplementary-product-file"
+              type="file"
+              accept={fileKindAccept[fileKind]}
+              disabled={isUploading}
+              onChange={(event) => setFile(event.target.files?.[0] || null)}
+              className="min-h-11 cursor-pointer border-slate-200 bg-white file:cursor-pointer"
+            />
+          </div>
+          <Button type="submit" disabled={isUploading} className="min-h-11 bg-slate-900 text-white hover:bg-slate-800">
+            {isUploading ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <FilePlus2 className="h-4 w-4" />}
+            {isUploading ? 'Загрузка…' : 'Добавить файл'}
+          </Button>
+        </form>
+      )}
+
+      {files.length === 0 ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
+          Дополнительных материалов пока нет.
+        </div>
+      ) : (
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {files.map((productFile) => (
+            <article key={productFile.id} className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-200 p-3">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                <FileArchive className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-slate-900">{productFile.file_name}</p>
+                <p className="mt-0.5 text-xs text-slate-500">{fileKindLabels[productFile.file_kind]} · {formatFileSize(productFile.file_size)}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <a
+                  href={`/api/products/files/${productFile.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Открыть ${productFile.file_name}`}
+                  className={cn(buttonVariants({ variant: 'outline', size: 'icon' }), 'h-10 w-10')}
+                >
+                  <Download className="h-4 w-4" />
+                </a>
+                {canManage && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Удалить ${productFile.file_name}`}
+                    disabled={deletingId === productFile.id}
+                    onClick={() => void onDelete(productFile)}
+                    className="h-10 w-10 text-red-600 hover:bg-red-50 hover:text-red-700"
+                  >
+                    {deletingId === productFile.id ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Trash2 className="h-4 w-4" />}
+                  </Button>
+                )}
+              </div>
+            </article>
+          ))}
         </div>
       )}
-      <div className="overflow-hidden rounded-lg border border-[#E8ECF0]">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-[#F8F9FA] text-[#6B7280]">
-            <tr>
-              <th className="px-4 py-3">Тип</th>
-              <th className="px-4 py-3">Файл</th>
-              <th className="px-4 py-3">Размер</th>
-              <th className="px-4 py-3 text-right">Действия</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#E8ECF0]">
-            {files.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-[#9CA3AF]">Файлов пока нет.</td>
-              </tr>
-            ) : files.map((file) => (
-              <tr key={file.id}>
-                <td className="px-4 py-3">{fileKindLabels[file.file_kind]}</td>
-                <td className="px-4 py-3 font-medium text-[#1B3A6B]">{file.file_name}</td>
-                <td className="px-4 py-3 text-[#6B7280]">{file.file_size ? `${Math.round(file.file_size / 1024)} KB` : '—'}</td>
-                <td className="px-4 py-3">
-                  <div className="flex justify-end gap-2">
-                    <a href={`/api/products/files/${file.id}`} target="_blank" rel="noreferrer" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-                      <Download className="mr-1 h-4 w-4" />
-                      Открыть
-                    </a>
-                    <Button type="button" variant="ghost" size="icon" onClick={() => void onDelete(file)}>
-                      <Trash2 className="h-4 w-4 text-red-500" />
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    </section>
   )
 }
