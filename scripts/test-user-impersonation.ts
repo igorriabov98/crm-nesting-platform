@@ -56,4 +56,20 @@ assert.match(migration, /GRANT SELECT, INSERT, UPDATE[^;]+TO service_role/i)
 assert.doesNotMatch(migration, /GRANT DELETE[^;]+TO service_role/i)
 assert.doesNotMatch(migration, /access_token|refresh_token/i)
 
+const banner = readFileSync(
+  path.resolve('src/components/layout/ImpersonationBanner.tsx'),
+  'utf8',
+)
+assert.doesNotMatch(banner, /['"]use client['"]/)
+assert.match(banner, /<form action=\{stopUserImpersonationAndRedirect\}>/)
+assert.match(banner, /<button[\s\S]*type="submit"/)
+assert.doesNotMatch(banner, /onClick=/)
+
+const impersonationActions = readFileSync(
+  path.resolve('src/lib/actions/impersonation.ts'),
+  'utf8',
+)
+assert.match(impersonationActions, /export async function stopUserImpersonationAndRedirect\(\)/)
+assert.match(impersonationActions, /redirect\(result\.redirectTo \|\| ROUTES\.LOGIN\)/)
+
 console.log('User impersonation session helpers: OK')
