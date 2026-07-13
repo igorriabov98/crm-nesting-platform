@@ -1,8 +1,9 @@
-"use client"
+'use client'
 
-import { useEffect } from "react"
-import { Button } from "@/components/ui/button"
-import { AlertTriangle, RefreshCcw } from "lucide-react"
+import { useEffect } from 'react'
+import { AlertTriangle, RefreshCcw } from 'lucide-react'
+
+import { Button } from '@/components/ui/button'
 
 export default function ErrorBoundary({
   error,
@@ -12,24 +13,30 @@ export default function ErrorBoundary({
   reset: () => void
 }) {
   useEffect(() => {
-    console.error("Route Error:", error)
+    console.error('Ошибка страницы уведомлений:', error)
   }, [error])
 
   return (
-    <div className="flex flex-col items-center justify-center p-12 bg-white border border-[#E8ECF0] rounded-xl space-y-4 text-center">
-      <AlertTriangle className="w-10 h-10 text-[#DC2626]" />
-      <div className="space-y-1">
-        <h2 className="text-xl font-semibold text-[#1B3A6B]">Что-то пошло не так!</h2>
-        <p className="text-[#6B7280] text-sm">{error.message || "Ошибка загрузки модуля."}</p>
+    <div className="mx-auto flex min-h-[420px] w-full max-w-5xl items-center justify-center rounded-3xl border border-border/80 bg-card p-6 text-center shadow-sm">
+      <div className="max-w-md">
+        <span className="mx-auto flex size-16 items-center justify-center rounded-3xl bg-destructive/10 text-destructive">
+          <AlertTriangle className="size-8" aria-hidden="true" />
+        </span>
+        <h1 className="mt-5 text-xl font-semibold text-foreground">
+          Уведомления временно недоступны
+        </h1>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Не удалось получить свежие события. Повторите загрузку — текущие данные в CRM не изменены.
+        </p>
+        <Button
+          onClick={reset}
+          variant="outline"
+          className="mt-6 min-h-11 rounded-xl px-5"
+        >
+          <RefreshCcw className="size-4" aria-hidden="true" />
+          Попробовать снова
+        </Button>
       </div>
-      <Button 
-        onClick={() => reset()}
-        variant="outline"
-        className="mt-4 border-[#E8ECF0] bg-[#F8F9FA] hover:bg-[#E8ECF0] text-[#1B3A6B]"
-      >
-        <RefreshCcw className="w-4 h-4 mr-2" />
-        Попробовать снова
-      </Button>
     </div>
   )
 }
