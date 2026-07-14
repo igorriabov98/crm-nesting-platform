@@ -206,10 +206,38 @@ export function groupSupplyOrderAggregates(aggregates: SupplyOrderAggregate[], s
     .map(([dateKey, rows]) => ({ dateKey, rows }))
 }
 
+export function partitionSupplyOrderAggregatesBySchedule(aggregates: SupplyOrderAggregate[]) {
+  const unscheduled: SupplyOrderAggregate[] = []
+  const scheduled: SupplyOrderAggregate[] = []
+
+  for (const aggregate of aggregates) {
+    if (aggregate.unscheduled_quantity > 0) unscheduled.push(aggregate)
+    else scheduled.push(aggregate)
+  }
+
+  return { unscheduled, scheduled }
+}
+
 export function summarizeSupplyOrderMachineRoutes(items: SupplyOrderAggregateSourceItem[]): SupplyOrderMachineRoute[] {
+  return summarizeMachineRoutes(items, (item) => item.quantity)
+}
+
+export function summarizeSupplyOrderUnscheduledMachineRoutes(
+  items: SupplyOrderAggregateSourceItem[]
+): SupplyOrderMachineRoute[] {
+  return summarizeMachineRoutes(items, (item) => item.unscheduled_quantity)
+}
+
+function summarizeMachineRoutes(
+  items: SupplyOrderAggregateSourceItem[],
+  getQuantity: (item: SupplyOrderAggregateSourceItem) => number
+): SupplyOrderMachineRoute[] {
   const routes = new Map<string, SupplyOrderMachineRoute & { hasUnknownWeight: boolean }>()
 
   for (const item of items) {
+    const quantity = Math.max(Number(getQuantity(item) || 0), 0)
+    if (quantity <= 0) continue
+
     const key = item.machine_id || item.machine_name
     const current = routes.get(key) || {
       machineId: item.machine_id,
@@ -222,12 +250,12 @@ export function summarizeSupplyOrderMachineRoutes(items: SupplyOrderAggregateSou
       hasUnknownWeight: false,
     }
 
-    current.quantity += item.quantity
+    current.quantity += quantity
     current.itemCount += 1
     current.pendingCount += item.order_status === 'pending' ? 1 : 0
     current.orderedCount += item.order_status === 'ordered' ? 1 : 0
-    if (item.weight_kg === null) current.hasUnknownWeight = true
-    else current.weightKg = (current.weightKg || 0) + item.weight_kg
+    if (item.weight_kg === null || item.quantity <= 0) current.hasUnknownWeight = true
+    else current.weightKg = (current.weightKg || 0) + item.weight_kg * quantity / item.quantity
     routes.set(key, current)
   }
 

@@ -5,7 +5,9 @@ import {
   filterAndSortHistory,
   filterSupplyOrderItems,
   groupSupplyOrderItems,
+  partitionSupplyOrderAggregatesBySchedule,
   summarizeSupplyOrderMachineRoutes,
+  summarizeSupplyOrderUnscheduledMachineRoutes,
   sortSupplyOrderItems,
   type OrderFiltersState,
 } from '@/components/features/supply-orders/supply-order-view'
@@ -66,6 +68,30 @@ assert.equal(filterAndSortAggregates([{ ...aggregate, ordered_count: 0, delivere
   query: '', supplier: 'all', category: 'all', status: 'closed', sort: 'date_asc',
 }).length, 1, 'fully accepted material must appear under closed deliveries')
 
+const partiallyAccepted = {
+  ...aggregate,
+  id: 'partially-accepted',
+  quantity: 10,
+  planned_schedule_quantity: 1,
+  delivered_schedule_quantity: 1,
+  unscheduled_quantity: 9,
+}
+const prioritized = partitionSupplyOrderAggregatesBySchedule([
+  aggregate,
+  partiallyAccepted,
+  { ...aggregate, id: 'later-date', planned_material_date: '2026-08-01' },
+])
+assert.deepEqual(
+  prioritized.unscheduled.map((row) => row.id),
+  ['partially-accepted'],
+  'a partially accepted material with nine units left must be placed in the no-schedule section'
+)
+assert.deepEqual(
+  prioritized.scheduled.map((row) => row.id),
+  ['aggregate', 'later-date'],
+  'only fully scheduled materials may remain in the dated sections'
+)
+
 const machineRoutes = summarizeSupplyOrderMachineRoutes([
   makeAggregateSourceItem({ id: 'machine-a-1', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 3, weight_kg: 30, order_status: 'pending' }),
   makeAggregateSourceItem({ id: 'machine-a-2', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 2, weight_kg: 20, order_status: 'ordered' }),
@@ -76,6 +102,16 @@ assert.deepEqual(machineRoutes, [
   { machineId: 'machine-a', machineName: 'Машина А', quantity: 5, weightKg: 50, itemCount: 2, pendingCount: 1, orderedCount: 1 },
   { machineId: 'machine-b', machineName: 'Машина Б', quantity: 4, weightKg: null, itemCount: 2, pendingCount: 0, orderedCount: 2 },
 ], 'material card must show every destination machine and avoid displaying partial weight as a full machine total')
+
+const unscheduledMachineRoutes = summarizeSupplyOrderUnscheduledMachineRoutes([
+  makeAggregateSourceItem({ id: 'machine-a', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 10, unscheduled_quantity: 9, weight_kg: 100, order_status: 'ordered' }),
+  makeAggregateSourceItem({ id: 'machine-b', machine_id: 'machine-b', machine_name: 'Машина Б', quantity: 4, unscheduled_quantity: 0, weight_kg: 40, order_status: 'ordered' }),
+  makeAggregateSourceItem({ id: 'machine-c', machine_id: 'machine-c', machine_name: 'Машина В', quantity: 3, unscheduled_quantity: 2, weight_kg: 30, order_status: 'pending' }),
+])
+assert.deepEqual(unscheduledMachineRoutes, [
+  { machineId: 'machine-a', machineName: 'Машина А', quantity: 9, weightKg: 90, itemCount: 1, pendingCount: 0, orderedCount: 1 },
+  { machineId: 'machine-c', machineName: 'Машина В', quantity: 2, weightKg: 20, itemCount: 1, pendingCount: 1, orderedCount: 0 },
+], 'no-schedule section must preserve the uncovered quantity and proportional weight for each destination machine')
 
 const history = [
   makeHistory({ id: 'old', accepted_at: '2026-07-12T10:00:00Z', supplier_name: 'Металл А', quantity: 2 }),

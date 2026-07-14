@@ -35,6 +35,22 @@ test('normal receipt closes the earliest preparation demands and leaves excess f
   assert.equal(result.excessQuantity, 3)
 })
 
+test('receipt keeps a separate target request for every destination machine', () => {
+  const result = allocateReceiptByPriority({
+    receivedQuantity: 9,
+    candidates: [
+      candidate('machine-later', '2026-07-25', 5),
+      candidate('machine-nearest', '2026-07-20', 4, { isSource: true }),
+    ],
+  })
+
+  assert.deepEqual(result.allocations.map((row) => ({ id: row.id, quantity: row.quantity })), [
+    { id: 'machine-nearest', quantity: 4 },
+    { id: 'machine-later', quantity: 5 },
+  ])
+  assert.equal(result.excessQuantity, 0)
+})
+
 test('a committed future shipment is not duplicated by receipt spillover', () => {
   const result = allocateReceiptByPriority({
     receivedQuantity: 12,

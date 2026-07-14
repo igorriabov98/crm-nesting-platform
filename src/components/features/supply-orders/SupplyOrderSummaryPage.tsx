@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
   CalendarDays,
+  CalendarX2,
   Check,
   ChevronDown,
   Cog,
@@ -41,7 +42,9 @@ import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import {
   filterAndSortAggregates,
   groupSupplyOrderAggregates,
+  partitionSupplyOrderAggregatesBySchedule,
   summarizeSupplyOrderMachineRoutes,
+  summarizeSupplyOrderUnscheduledMachineRoutes,
   type AggregateFiltersState,
   type SupplyOrderAggregateSort,
   type SupplyOrderAggregateStatusFilter,
@@ -92,9 +95,12 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
   const [filters, setFilters] = useState<AggregateFiltersState>(defaultFilters)
   const visibleAggregates = useMemo(() => filterAndSortAggregates(aggregates, filters), [aggregates, filters])
 
+  const prioritizedAggregates = useMemo(() => {
+    return partitionSupplyOrderAggregatesBySchedule(visibleAggregates)
+  }, [visibleAggregates])
   const grouped = useMemo(() => {
-    return groupSupplyOrderAggregates(visibleAggregates, filters.sort)
-  }, [filters.sort, visibleAggregates])
+    return groupSupplyOrderAggregates(prioritizedAggregates.scheduled, filters.sort)
+  }, [filters.sort, prioritizedAggregates.scheduled])
 
   const totals = useMemo(() => ({
     aggregateCount: visibleAggregates.length,
@@ -161,6 +167,40 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
             />
           </div>
 
+          {prioritizedAggregates.unscheduled.length > 0 && (
+            <section className="space-y-3" aria-labelledby="unscheduled-deliveries-heading">
+              <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
+                    <CalendarX2 className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 id="unscheduled-deliveries-heading" className="text-base font-semibold text-amber-950 sm:text-lg">
+                      Без графика поставки
+                    </h2>
+                    <p className="text-xs text-amber-800/80">Этим материалам ещё нужно назначить дату поступления</p>
+                  </div>
+                </div>
+                <Badge variant="outline" className="w-fit border-amber-300 bg-white/80 text-amber-900">
+                  {prioritizedAggregates.unscheduled.length} материалов
+                </Badge>
+              </div>
+
+              <div className="space-y-3">
+                {prioritizedAggregates.unscheduled.map((aggregate) => (
+                  <MaterialOrderCard
+                    key={aggregate.id}
+                    aggregate={aggregate}
+                    factory={aggregate.factories[0]}
+                    suppliers={suppliers}
+                    isExpanded={expanded.has(aggregate.id)}
+                    onToggle={() => toggle(aggregate.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
           {grouped.map((group) => (
             <section key={group.dateKey} className="space-y-3" aria-labelledby={`aggregate-date-${group.dateKey}`}>
               <div className="flex items-center gap-3 px-1">
@@ -208,6 +248,8 @@ function MaterialOrderCard({
 }) {
   const [deliveryOpen, setDeliveryOpen] = useState(false)
   const routes = factory ? summarizeSupplyOrderMachineRoutes(factory.items) : []
+  const unscheduledRoutes = factory ? summarizeSupplyOrderUnscheduledMachineRoutes(factory.items) : []
+  const unscheduledByMachine = new Map(unscheduledRoutes.map((route) => [route.machineId || route.machineName, route]))
   const detailsId = `machine-details-${aggregate.id}`
   const deliveryId = `delivery-details-${aggregate.id}`
   const supplyPlan = factory ? makeSupplyPlanDateInfo(factory) : null
@@ -230,6 +272,17 @@ function MaterialOrderCard({
             </div>
           </div>
           <h3 className="mt-1 break-words text-lg font-semibold text-foreground sm:text-xl">{aggregate.item_name}</h3>
+
+          {factory && factory.unscheduled_quantity > 0 && (
+            <div className="mt-3 flex w-fit flex-wrap items-center gap-x-1.5 gap-y-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-sm text-amber-950">
+              <CalendarX2 className="h-4 w-4 shrink-0 text-amber-700" />
+              <span className="font-semibold">Без графика:</span>
+              <span className="font-medium tabular-nums">{formatAmount(factory.unscheduled_quantity)} {aggregate.unit}</span>
+              {formatWeightForQuantity(factory.unscheduled_quantity, factory) && (
+                <span className="text-amber-800">· {formatWeightForQuantity(factory.unscheduled_quantity, factory)}</span>
+              )}
+            </div>
+          )}
 
           <dl className="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2 xl:flex xl:flex-wrap">
             {aggregate.characteristics.map((part) => (
@@ -280,7 +333,14 @@ function MaterialOrderCard({
                     className="flex min-h-12 items-center justify-between gap-3 px-3 py-2 text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
                   >
                     <span className="min-w-0 break-words font-medium text-primary">{route.machineName}</span>
-                    <span className="shrink-0 font-semibold text-foreground tabular-nums">{formatAmount(route.quantity)} {aggregate.unit}</span>
+                    <span className="flex shrink-0 flex-col items-end gap-0.5 tabular-nums">
+                      <span className="font-semibold text-foreground">{formatAmount(route.quantity)} {aggregate.unit}</span>
+                      {unscheduledByMachine.get(route.machineId || route.machineName) && (
+                        <span className="text-xs font-medium text-amber-700">
+                          Без графика {formatAmount(unscheduledByMachine.get(route.machineId || route.machineName)!.quantity)} {aggregate.unit}
+                        </span>
+                      )}
+                    </span>
                   </Link>
                 </li>
               ))}
