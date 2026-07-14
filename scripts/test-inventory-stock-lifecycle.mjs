@@ -43,6 +43,7 @@ const factoryMigration = read('supabase/migrations/20260626153000_inventory_fact
 const cutMigration = read('supabase/migrations/90_reapply_cut_reservation_functions.sql')
 const chainCordMigration = read('supabase/migrations/20260712125529_normalize_chain_cord_inventory_mm.sql')
 const deliveredSupplyCuttingMigration = read('supabase/migrations/20260712152924_auto_reserve_delivered_supply_for_cutting.sql')
+const knifeSupplyFutureScrapMigration = read('supabase/migrations/20260714120049_knife_supply_future_scrap.sql')
 const archiveScrapMigration = read('supabase/migrations/92_archive_empty_business_scrap_on_unreserve.sql')
 
 const sql = [
@@ -57,6 +58,7 @@ const sql = [
   extractFunction(factoryMigration, 'public.fn_unreserve_inventory_reservation'),
   archiveScrapMigration,
   deliveredSupplyCuttingMigration,
+  knifeSupplyFutureScrapMigration,
   read('supabase/tests/inventory_stock_lifecycle_assertions.sql'),
 ].join('\n\n')
 

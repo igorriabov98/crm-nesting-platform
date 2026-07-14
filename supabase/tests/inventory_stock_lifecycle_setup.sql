@@ -15,6 +15,13 @@ EXCEPTION WHEN duplicate_object THEN
   NULL;
 END;
 $$;
+DO $$
+BEGIN
+  CREATE ROLE service_role NOLOGIN;
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END;
+$$;
 
 CREATE TYPE public.material_category AS ENUM ('sheet_metal', 'chain_cord', 'knives', 'pipe', 'components', 'other');
 CREATE TYPE public.inventory_transaction_type AS ENUM ('receipt', 'reserve', 'unreserve', 'write_off', 'adjustment');
@@ -196,6 +203,8 @@ CREATE TABLE public.supply_order_delivery_schedules (
   request_item_id uuid NOT NULL,
   quantity numeric NOT NULL,
   received_quantity numeric,
+  allocated_quantity numeric,
+  allocated_physical_quantity numeric,
   unit text NOT NULL,
   delivery_date date NOT NULL DEFAULT current_date,
   status text NOT NULL DEFAULT 'planned',
@@ -245,7 +254,10 @@ CREATE TABLE public.production_fact_cutting_events (
   applied_stage_date_start date,
   status text NOT NULL DEFAULT 'applied',
   created_by uuid NOT NULL REFERENCES public.users(id),
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  rolled_back_by uuid REFERENCES public.users(id),
+  rolled_back_at timestamptz,
+  rollback_comment text
 );
 ALTER TABLE public.inventory_reservations
   ADD CONSTRAINT inventory_reservation_cutting_event_fk
@@ -269,6 +281,15 @@ CREATE TABLE public.production_fact_cutting_event_scrap_promotions (
   previous_business_scrap_state text NOT NULL,
   PRIMARY KEY (event_id, inventory_id)
 );
+
+CREATE OR REPLACE FUNCTION public.fn_get_production_cutting_rollback_preview(
+  p_machine_id uuid
+)
+RETURNS jsonb
+LANGUAGE sql
+AS $$
+  SELECT jsonb_build_object('canRollback', true, 'blockers', '[]'::jsonb);
+$$;
 
 INSERT INTO public.factories (id, name) VALUES ('00000000-0000-0000-0000-000000000001', 'Test factory');
 INSERT INTO public.users (id) VALUES ('00000000-0000-0000-0000-000000000002');

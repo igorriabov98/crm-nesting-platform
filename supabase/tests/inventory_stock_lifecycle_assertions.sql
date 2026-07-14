@@ -491,4 +491,206 @@ BEGIN
 END;
 $$;
 
+DO $$
+DECLARE
+  v_factory uuid := '50000000-0000-0000-0000-000000000001';
+  v_user uuid := '50000000-0000-0000-0000-000000000002';
+  v_material uuid := '50000000-0000-0000-0000-000000000003';
+  v_variant uuid := '50000000-0000-0000-0000-000000000004';
+  v_machine uuid := '50000000-0000-0000-0000-000000000005';
+  v_request uuid := '50000000-0000-0000-0000-000000000006';
+  v_item uuid := '50000000-0000-0000-0000-000000000007';
+  v_inventory uuid := '50000000-0000-0000-0000-000000000008';
+  v_section uuid := '50000000-0000-0000-0000-000000000009';
+  v_fact uuid := '50000000-0000-0000-0000-00000000000a';
+  v_schedule uuid := '50000000-0000-0000-0000-00000000000b';
+  v_reservation uuid := '50000000-0000-0000-0000-00000000000c';
+  v_scrap uuid;
+  v_value numeric;
+BEGIN
+  INSERT INTO public.factories (id, name) VALUES (v_factory, 'Knife receipt factory');
+  INSERT INTO public.users (id) VALUES (v_user);
+  INSERT INTO public.materials (id, category) VALUES (v_material, 'knives');
+  INSERT INTO public.material_variants (id) VALUES (v_variant);
+  INSERT INTO public.machines (id, factory_id) VALUES (v_machine, v_factory);
+  INSERT INTO public.technologist_requests (id, machine_id) VALUES (v_request, v_machine);
+  INSERT INTO public.request_knives (
+    id, request_id, material_id, material_variant_id, length_mm
+  ) VALUES (
+    v_item, v_request, v_material, v_variant, 12000
+  );
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit, total_secondary_quantity,
+    reserved_secondary_quantity, secondary_unit, last_updated_by
+  ) VALUES (
+    v_inventory, v_factory, v_material, v_variant, 12000,
+    12000, 0, 'мм', 1, 0, 'шт', v_user
+  );
+  INSERT INTO public.supply_order_delivery_schedules (
+    id, request_item_table, request_item_id, quantity, received_quantity,
+    allocated_quantity, allocated_physical_quantity, unit, status,
+    delivered_at, received_by
+  ) VALUES (
+    v_schedule, 'request_knives', v_item, 6000, 12000,
+    6000, 12000, 'мм', 'delivered', now(), v_user
+  );
+  INSERT INTO public.production_stages (
+    machine_id, stage_type, date_start, updated_by
+  ) VALUES (
+    v_machine, 'cutting', '2026-07-15', v_user
+  );
+
+  INSERT INTO public.inventory_reservations (
+    id, inventory_id, material_id, material_variant_id, machine_id,
+    request_item_table, request_item_id, reserved_quantity,
+    reserved_secondary_quantity, reserved_by, source_inventory_id,
+    original_piece_length_mm, is_cut_reservation, reservation_source,
+    supply_order_schedule_id
+  ) VALUES (
+    v_reservation, v_inventory, v_material, v_variant, v_machine,
+    'request_knives', v_item, 12000, 1, v_user, v_inventory,
+    12000, false, 'supply_receipt', v_schedule
+  );
+  UPDATE public.inventory
+  SET reserved_quantity = 12000,
+      reserved_secondary_quantity = 1
+  WHERE id = v_inventory;
+
+  SELECT business_scrap_inventory_id, business_scrap_quantity
+  INTO v_scrap, v_value
+  FROM public.inventory_reservations
+  WHERE id = v_reservation;
+  IF v_scrap IS NULL THEN
+    RAISE EXCEPTION 'future business scrap was not linked to received knife reservation';
+  END IF;
+  PERFORM public.test_assert_numeric(v_value, 6000, 'received 12000 mm bar creates 6000 mm future business scrap');
+
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 12000, 'full physical knife bar remains on main stock before cutting');
+  SELECT reserved_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 12000, 'full physical knife bar is reserved before cutting');
+  SELECT total_secondary_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 1, 'one physical knife bar remains on main stock before cutting');
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.inventory
+    WHERE id = v_scrap
+      AND is_business_scrap = true
+      AND business_scrap_state = 'future'
+      AND total_quantity = 6000
+      AND piece_length_mm = 6000
+      AND total_secondary_quantity = 1
+      AND source_inventory_id = v_inventory
+      AND source_reservation_id = v_reservation
+      AND source_machine_id = v_machine
+      AND source_piece_length_mm = 12000
+  ) THEN
+    RAISE EXCEPTION 'future business scrap does not preserve knife bar provenance';
+  END IF;
+
+  SELECT public.fn_promote_due_future_business_scrap('2026-07-20') INTO v_value;
+  PERFORM public.test_assert_numeric(v_value, 0, 'future knife scrap cannot become available before cutting consumes its reservation');
+
+  INSERT INTO public.production_fact_sections (id, production_stage_type)
+  VALUES (v_section, 'cutting');
+  INSERT INTO public.production_machine_facts (
+    id, machine_id, section_id, fact_date
+  ) VALUES (
+    v_fact, v_machine, v_section, '2026-07-15'
+  );
+
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 0, 'physical 12000 mm bar leaves main stock on cutting fact');
+  SELECT reserved_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 0, 'physical knife reservation is released on cutting fact');
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory_reservations
+    WHERE id = v_reservation AND consumed_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'received knife reservation was not consumed on cutting fact';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory
+    WHERE id = v_scrap
+      AND business_scrap_state = 'available'
+      AND total_quantity = 6000
+      AND total_secondary_quantity = 1
+  ) THEN
+    RAISE EXCEPTION 'future 6000 mm knife scrap was not promoted on cutting fact';
+  END IF;
+
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine
+    AND transaction_type = 'write_off'
+    AND quantity = -6000;
+  PERFORM public.test_assert_numeric(v_value, 1, 'cutting fact writes off only technologist 6000 mm demand');
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine
+    AND transaction_type = 'write_off'
+    AND quantity = -12000;
+  PERFORM public.test_assert_numeric(v_value, 0, 'cutting fact never writes off the full 12000 mm bar as consumption');
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine
+    AND transaction_type = 'adjustment'
+    AND quantity IN (-6000, 6000);
+  PERFORM public.test_assert_numeric(v_value, 2, '6000 mm remainder transfer is audited on both stock rows');
+
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine
+    AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, 1, 'repeated cutting fact does not duplicate knife consumption');
+
+  PERFORM public.fn_apply_production_cutting_rollback(
+    v_machine,
+    NULL,
+    v_user,
+    'Integration test rollback'
+  );
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 12000, 'rollback restores full physical knife bar to main stock');
+  SELECT reserved_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 12000, 'rollback restores full physical knife reservation');
+  SELECT total_secondary_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 1, 'rollback restores one physical knife bar');
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory
+    WHERE id = v_scrap AND business_scrap_state = 'future' AND total_quantity = 6000
+  ) THEN
+    RAISE EXCEPTION 'rollback did not return knife scrap to future state';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory_reservations
+    WHERE id = v_reservation AND consumed_at IS NULL AND consumed_cutting_event_id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'rollback did not restore received knife reservation';
+  END IF;
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine
+    AND transaction_type = 'receipt'
+    AND quantity = 6000;
+  PERFORM public.test_assert_numeric(v_value, 1, 'rollback restores only consumed 6000 mm as receipt movement');
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine
+    AND transaction_type = 'receipt'
+    AND quantity = 12000;
+  PERFORM public.test_assert_numeric(v_value, 0, 'rollback does not misreport 12000 mm as consumed material');
+  SELECT COALESCE(sum(quantity), 0) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine
+    AND transaction_type IN ('write_off', 'receipt', 'adjustment');
+  PERFORM public.test_assert_numeric(v_value, 0, 'cutting and rollback inventory movements balance to zero');
+END;
+$$;
+
 SELECT 'inventory_stock_lifecycle_ok' AS result;
