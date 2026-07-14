@@ -5,6 +5,7 @@ import {
   filterAndSortHistory,
   filterSupplyOrderItems,
   groupSupplyOrderItems,
+  summarizeSupplyOrderMachineRoutes,
   sortSupplyOrderItems,
   type OrderFiltersState,
 } from '@/components/features/supply-orders/supply-order-view'
@@ -58,6 +59,17 @@ assert.equal(filterAndSortAggregates([aggregate], {
 assert.equal(filterAndSortAggregates([aggregate], {
   query: '', supplier: 'supplier-a', category: 'all', status: 'ordered', sort: 'date_asc',
 }).length, 1, 'aggregate filters must inspect nested supplier and status data')
+
+const machineRoutes = summarizeSupplyOrderMachineRoutes([
+  makeAggregateSourceItem({ id: 'machine-a-1', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 3, weight_kg: 30, order_status: 'pending' }),
+  makeAggregateSourceItem({ id: 'machine-a-2', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 2, weight_kg: 20, order_status: 'ordered' }),
+  makeAggregateSourceItem({ id: 'machine-b-1', machine_id: 'machine-b', machine_name: 'Машина Б', quantity: 3, weight_kg: 30, order_status: 'ordered' }),
+  makeAggregateSourceItem({ id: 'machine-b-2', machine_id: 'machine-b', machine_name: 'Машина Б', quantity: 1, weight_kg: null, order_status: 'ordered' }),
+])
+assert.deepEqual(machineRoutes, [
+  { machineId: 'machine-a', machineName: 'Машина А', quantity: 5, weightKg: 50, itemCount: 2, pendingCount: 1, orderedCount: 1 },
+  { machineId: 'machine-b', machineName: 'Машина Б', quantity: 4, weightKg: null, itemCount: 2, pendingCount: 0, orderedCount: 2 },
+], 'material card must show every destination machine and avoid displaying partial weight as a full machine total')
 
 const history = [
   makeHistory({ id: 'old', accepted_at: '2026-07-12T10:00:00Z', supplier_name: 'Металл А', quantity: 2 }),
@@ -155,6 +167,30 @@ function makeAggregate(): SupplyOrderAggregate {
         delivered_schedule_quantity: 0, unscheduled_quantity: 0, delivery_schedules: [],
       }],
     }],
+  }
+}
+
+function makeAggregateSourceItem(
+  patch: Partial<SupplyOrderAggregate['factories'][number]['items'][number]>
+): SupplyOrderAggregate['factories'][number]['items'][number] {
+  return {
+    table: 'request_sheet',
+    id: 'item',
+    request_id: 'request-id',
+    machine_id: 'machine-id',
+    machine_name: 'Машина',
+    quantity: 1,
+    unit: 'шт.',
+    supplier_id: null,
+    supplier_name: null,
+    weight_kg: null,
+    order_status: 'pending',
+    supply_delivery_date: null,
+    planned_schedule_quantity: 0,
+    delivered_schedule_quantity: 0,
+    unscheduled_quantity: 1,
+    delivery_schedules: [],
+    ...patch,
   }
 }
 
