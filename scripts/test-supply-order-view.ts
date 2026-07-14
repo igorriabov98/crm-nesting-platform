@@ -59,6 +59,12 @@ assert.equal(filterAndSortAggregates([aggregate], {
 assert.equal(filterAndSortAggregates([aggregate], {
   query: '', supplier: 'supplier-a', category: 'all', status: 'ordered', sort: 'date_asc',
 }).length, 1, 'aggregate filters must inspect nested supplier and status data')
+assert.equal(filterAndSortAggregates([{ ...aggregate, unscheduled_quantity: 3 }], {
+  query: '', supplier: 'all', category: 'all', status: 'unscheduled', sort: 'date_asc',
+}).length, 1, 'partial receipt remainder must appear under the no-arrival-date tab')
+assert.equal(filterAndSortAggregates([{ ...aggregate, ordered_count: 0, delivered_count: 1 }], {
+  query: '', supplier: 'all', category: 'all', status: 'closed', sort: 'date_asc',
+}).length, 1, 'fully accepted material must appear under closed deliveries')
 
 const machineRoutes = summarizeSupplyOrderMachineRoutes([
   makeAggregateSourceItem({ id: 'machine-a-1', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 3, weight_kg: 30, order_status: 'pending' }),
@@ -137,6 +143,7 @@ function makeAggregate(): SupplyOrderAggregate {
     machine_count: 1,
     pending_count: 0,
     ordered_count: 1,
+    delivered_count: 0,
     planned_schedule_quantity: 8,
     delivered_schedule_quantity: 0,
     unscheduled_quantity: 0,
@@ -151,6 +158,7 @@ function makeAggregate(): SupplyOrderAggregate {
       machine_count: 1,
       pending_count: 0,
       ordered_count: 1,
+      delivered_count: 0,
       planned_schedule_quantity: 8,
       delivered_schedule_quantity: 0,
       unscheduled_quantity: 0,
@@ -159,7 +167,7 @@ function makeAggregate(): SupplyOrderAggregate {
       production_date: '2026-07-20',
       supply_delivery_date: '2026-07-18',
       has_mixed_supply_delivery_dates: false,
-      suppliers: [{ id: 'supplier-a', name: 'Металл А', item_count: 1, pending_count: 0, ordered_count: 1 }],
+      suppliers: [{ id: 'supplier-a', name: 'Металл А', item_count: 1, pending_count: 0, ordered_count: 1, delivered_count: 0 }],
       items: [{
         table: 'request_sheet', id: 'item', request_id: 'request-id', machine_id: 'machine-id', machine_name: 'Машина А',
         quantity: 8, unit: 'шт.', supplier_id: 'supplier-a', supplier_name: 'Металл А', weight_kg: 100,
