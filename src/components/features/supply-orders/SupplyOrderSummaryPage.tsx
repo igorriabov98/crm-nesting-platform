@@ -5,8 +5,6 @@ import { useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
-  type LucideIcon,
-  Boxes,
   CalendarDays,
   Check,
   ChevronDown,
@@ -14,12 +12,9 @@ import {
   CreditCard,
   ExternalLink,
   Factory,
-  ListTree,
   PackageCheck,
   Plus,
-  Route,
   RotateCcw,
-  Scale,
   Search,
   SlidersHorizontal,
   Save,
@@ -154,14 +149,14 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
         </div>
       ) : (
         <>
-          <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-            <Metric label="Материалов/дней" value={totals.aggregateCount} />
-            <Metric label="Позиций заявок" value={totals.itemCount} />
-            <Metric label="Статусы" value={`${totals.pendingCount} / ${totals.orderedCount}`} hint="не заказано / заказано" />
+          <div className="grid grid-cols-2 gap-2 text-sm xl:grid-cols-4">
+            <Metric label="Материалы" value={totals.aggregateCount} />
+            <Metric label="Позиции" value={totals.itemCount} />
+            <Metric label="Не зак. / зак." value={`${totals.pendingCount} / ${totals.orderedCount}`} />
             <Metric
-              label="График"
+              label="План / факт"
               value={`${formatAmount(totals.plannedQuantity)} / ${formatAmount(totals.deliveredQuantity)}`}
-              hint={`план / факт, остаток ${formatAmount(totals.remainingQuantity)}`}
+              hint={`Остаток ${formatAmount(totals.remainingQuantity)}`}
             />
           </div>
 
@@ -210,131 +205,143 @@ function MaterialOrderCard({
   isExpanded: boolean
   onToggle: () => void
 }) {
+  const [deliveryOpen, setDeliveryOpen] = useState(false)
   const routes = factory ? summarizeSupplyOrderMachineRoutes(factory.items) : []
   const detailsId = `machine-details-${aggregate.id}`
+  const deliveryId = `delivery-details-${aggregate.id}`
+  const supplyPlan = factory ? makeSupplyPlanDateInfo(factory) : null
 
   return (
-    <article className="overflow-hidden rounded-[26px] border border-border/80 bg-card shadow-[0_12px_30px_-24px_rgba(15,23,42,0.7)] transition-[border-color,box-shadow] hover:border-primary/25 hover:shadow-[0_18px_38px_-26px_rgba(15,23,42,0.75)] motion-reduce:transition-none">
-      <header className="border-b border-border/60 bg-gradient-to-br from-card via-card to-muted/30 p-4 sm:p-5">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-          <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="border-primary/20 bg-primary/5 text-primary">
-                {MATERIAL_CATEGORY_LABELS[aggregate.category]}
-              </Badge>
-              {aggregate.pending_count > 0 && <Badge variant="secondary">{aggregate.pending_count} не заказано</Badge>}
-              {aggregate.ordered_count > 0 && <Badge>{aggregate.ordered_count} заказано</Badge>}
-            </div>
-            <h3 className="break-words text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
-              {aggregate.item_name}
-            </h3>
-            <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-              {aggregate.characteristics.map((part) => (
-                <span key={`${part.label}:${part.value}`} className="rounded-lg border border-border/60 bg-background/80 px-2.5 py-1.5">
-                  <span className="font-medium text-foreground">{part.label}:</span> {part.value}
-                </span>
-              ))}
+    <article className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_220px]">
+        <header className="p-4 sm:p-5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs leading-5">
+            <div className="text-sm text-muted-foreground">{MATERIAL_CATEGORY_LABELS[aggregate.category]}</div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {aggregate.ordered_count > 0 && (
+                <div className="flex items-center gap-1.5 font-medium text-primary">
+                  <Check className="h-3.5 w-3.5" />
+                  {aggregate.ordered_count} заказано
+                </div>
+              )}
+              {aggregate.pending_count > 0 && <div className="text-muted-foreground">{aggregate.pending_count} не заказано</div>}
             </div>
           </div>
+          <h3 className="mt-1 break-words text-lg font-semibold text-foreground sm:text-xl">{aggregate.item_name}</h3>
 
-          <dl className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:min-w-[420px]">
-            <MaterialMetric icon={PackageCheck} label="Заказать" value={`${formatAmount(aggregate.quantity)} ${aggregate.unit}`} />
-            <MaterialMetric icon={Scale} label="Общий вес" value={aggregate.weight_kg !== null ? `${formatAmount(aggregate.weight_kg)} кг` : 'Не рассчитан'} />
-            <MaterialMetric icon={ListTree} label="Строк заявок" value={String(aggregate.item_count)} className="col-span-2 sm:col-span-1" />
+          <dl className="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2 xl:flex xl:flex-wrap">
+            {aggregate.characteristics.map((part) => (
+              <div key={`${part.label}:${part.value}`} className="flex min-w-0 gap-1.5 text-sm">
+                <dt className="shrink-0 text-muted-foreground">{part.label}:</dt>
+                <dd className="break-words font-medium text-foreground">{part.value}</dd>
+              </div>
+            ))}
           </dl>
-        </div>
-      </header>
+        </header>
 
-      <section className="p-4 sm:p-5" aria-label="Машины назначения материала">
-        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <Route className="h-5 w-5" />
-            </div>
-            <div>
-              <h4 className="font-semibold text-foreground">Машины назначения</h4>
-              <p className="text-xs text-muted-foreground">
-                Куда распределён этот материал · {routes.length} маш.
-              </p>
-            </div>
+        <dl className="border-t border-border bg-muted/20 p-4 lg:border-l lg:border-t-0 lg:p-5">
+          <div className="flex items-baseline justify-between gap-3 lg:block">
+            <dt className="text-sm text-muted-foreground">Количество</dt>
+            <dd className="text-xl font-semibold text-foreground tabular-nums lg:mt-1">
+              {formatAmount(aggregate.quantity)} {aggregate.unit}
+            </dd>
           </div>
-        </div>
+          <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+            <dt className="text-muted-foreground">Вес</dt>
+            <dd className="font-medium text-foreground tabular-nums">
+              {aggregate.weight_kg !== null ? `${formatAmount(aggregate.weight_kg)} кг` : 'Не рассчитан'}
+            </dd>
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-3 text-sm">
+            <dt className="text-muted-foreground">Позиций</dt>
+            <dd className="font-medium text-foreground tabular-nums">{aggregate.item_count}</dd>
+          </div>
+        </dl>
+      </div>
 
-        {routes.length > 0 ? (
-          <div className="grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
-            {routes.map((route) => (
-              <Link
-                key={route.machineId || route.machineName}
-                href={`${ROUTES.SALES_PLAN}/${route.machineId}`}
-                className="group flex min-h-20 min-w-0 items-center gap-3 rounded-2xl border border-border/70 bg-muted/25 p-3 transition-colors hover:border-primary/30 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
-              >
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background text-primary shadow-sm ring-1 ring-border/70">
-                  <Cog className="h-5 w-5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-semibold text-foreground group-hover:text-primary">{route.machineName}</span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground tabular-nums">
-                    {formatAmount(route.quantity)} {aggregate.unit} · {route.itemCount} поз.
-                    {route.weightKg !== null && ` · ${formatAmount(route.weightKg)} кг`}
+      <div className="border-t border-border lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        <section className="p-4 sm:p-5" aria-label="Машины назначения материала">
+          <div className="flex items-center justify-between gap-3 xl:max-w-3xl">
+            <h4 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <Cog className="h-4 w-4 text-primary" />
+              Машины
+            </h4>
+            <span className="text-xs text-muted-foreground">{routes.length}</span>
+          </div>
+
+          {routes.length > 0 ? (
+            <ul className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border xl:max-w-3xl">
+              {routes.map((route) => (
+                <li key={route.machineId || route.machineName}>
+                  <Link
+                    href={`${ROUTES.SALES_PLAN}/${route.machineId}`}
+                    className="flex min-h-12 items-center justify-between gap-3 px-3 py-2 text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
+                  >
+                    <span className="min-w-0 break-words font-medium text-primary">{route.machineName}</span>
+                    <span className="shrink-0 font-semibold text-foreground tabular-nums">{formatAmount(route.quantity)} {aggregate.unit}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="mt-2 rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground xl:max-w-3xl">
+              Машины для этого материала не найдены.
+            </div>
+          )}
+
+          {factory && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="mt-2 min-h-11 w-full justify-between rounded-lg px-3 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground xl:max-w-3xl"
+              aria-expanded={isExpanded}
+              aria-controls={detailsId}
+              onClick={onToggle}
+            >
+              <span>{isExpanded ? 'Скрыть позиции заявок' : `Показать позиции заявок (${factory.item_count})`}</span>
+              <ChevronDown className={`h-4 w-4 transition-transform motion-reduce:transition-none ${isExpanded ? 'rotate-180' : ''}`} />
+            </Button>
+          )}
+        </section>
+
+        {factory ? (
+          <section className="border-t border-border lg:border-l lg:border-t-0">
+            <button
+              type="button"
+              className="flex min-h-20 h-full w-full items-center justify-between gap-3 px-4 py-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none sm:px-5"
+              aria-expanded={deliveryOpen}
+              aria-controls={deliveryId}
+              onClick={() => setDeliveryOpen((current) => !current)}
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                <Truck className="h-4 w-4 shrink-0 text-primary" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-foreground">Поставка · {factory.factory_name}</span>
+                  <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                    Мат.план {factory.production_date ? formatDate(factory.production_date) : 'не указан'} · снабжение {supplyPlan?.value || 'не указано'}
+                  </span>
+                  <span className="block text-xs leading-5 text-muted-foreground">
+                    График {factory.has_delivery_schedules ? dateCountLabel(factory.delivery_schedule_count) : 'не создан'}
+                    {factory.unscheduled_quantity > 0 && ` · остаток ${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit}`}
                   </span>
                 </span>
-                <span className="shrink-0 text-right text-[11px] leading-4 text-muted-foreground">
-                  {route.orderedCount > 0 && <span className="block text-primary">{route.orderedCount} зак.</span>}
-                  {route.pendingCount > 0 && <span className="block">{route.pendingCount} не зак.</span>}
-                </span>
-              </Link>
-            ))}
-          </div>
+              </span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${deliveryOpen ? 'rotate-180' : ''}`} />
+            </button>
+          </section>
         ) : (
-          <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
-            Машины для этого материала не найдены.
-          </div>
+          <div className="border-t border-border p-4 text-sm text-muted-foreground lg:border-l lg:border-t-0">Нет заводской строки для выбранного фильтра.</div>
         )}
-
-        {factory && (
-          <Button
-            type="button"
-            variant="ghost"
-            className="mt-3 min-h-11 w-full justify-between rounded-xl px-3 text-primary hover:bg-primary/5"
-            aria-expanded={isExpanded}
-            aria-controls={detailsId}
-            onClick={onToggle}
-          >
-            <span>{isExpanded ? 'Скрыть позиции заявок' : `Показать позиции заявок (${factory.item_count})`}</span>
-            <ChevronDown className={`h-4 w-4 transition-transform motion-reduce:transition-none ${isExpanded ? 'rotate-180' : ''}`} />
-          </Button>
-        )}
-      </section>
+      </div>
 
       {isExpanded && factory && <MachineItems id={detailsId} factory={factory} />}
 
-      <div className="border-t border-border/60 bg-muted/15 p-4 sm:p-5">
-        {factory ? (
+      {factory && (
+        <div id={deliveryId} hidden={!deliveryOpen} className="border-t border-border bg-muted/15 p-3 sm:p-4">
           <FactoryDeliveryEditor aggregate={aggregate} factory={factory} suppliers={suppliers} />
-        ) : (
-          <div className="rounded-2xl border border-dashed border-border bg-background p-4 text-sm text-muted-foreground">
-            Нет заводской строки для выбранного фильтра.
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </article>
-  )
-}
-
-function MaterialMetric({ icon: Icon, label, value, className }: {
-  icon: LucideIcon
-  label: string
-  value: string
-  className?: string
-}) {
-  return (
-    <div className={`rounded-2xl border border-border/70 bg-background/90 p-3 ${className || ''}`}>
-      <dt className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-        <Icon className="h-3.5 w-3.5" />
-        {label}
-      </dt>
-      <dd className="mt-1 text-sm font-semibold text-foreground tabular-nums sm:text-base">{value}</dd>
-    </div>
   )
 }
 
@@ -1108,13 +1115,10 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
 
 function Metric({ label, value, hint }: { label: string; value: number | string; hint?: string }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
-      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-        <Boxes className="h-3.5 w-3.5" />
-        {label}
-      </div>
-      <div className="mt-1 text-xl font-semibold text-foreground tabular-nums">{value}</div>
-      {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
+    <div className="rounded-xl border border-border bg-card p-3">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-foreground tabular-nums">{value}</div>
+      {hint && <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>}
     </div>
   )
 }
