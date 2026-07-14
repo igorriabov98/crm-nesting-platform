@@ -20,6 +20,15 @@ type ParsedBOMLine = {
   widthMm: number | null;
   heightMm: number | null;
   sourcePage?: number;
+  parentAssembly?: string;
+  sourcePageGroup?: string;
+};
+
+type BOMPageContext = {
+  sourcePage: number;
+  parentAssembly: string;
+  sourcePageGroup: string;
+  initialBomSection: string;
 };
 
 export async function extractDeterministicBOMFromPdf(pdfFilePath: string): Promise<BOMEntry[]> {
@@ -31,17 +40,24 @@ export async function extractDeterministicBOMFromPdf(pdfFilePath: string): Promi
 export async function extractDeterministicPdfDataFromPdf(pdfFilePath: string): Promise<{ bom: BOMEntry[]; details: DetailEntry[] }> {
   const buffer = await fs.readFile(pdfFilePath);
   const pages = await parsePdfPages(buffer);
-  const text = pages.join('\n');
   return {
     bom: parseDeterministicBOMPages(pages),
-    details: parseDeterministicDetailText(text),
+    details: parseDeterministicDetailPages(pages),
   };
 }
 
-export function parseDeterministicBOMText(text: string, sourcePage?: number): BOMEntry[] {
+export function parseDeterministicBOMText(
+  text: string,
+  sourcePage?: number,
+  context: Pick<BOMPageContext, 'parentAssembly' | 'sourcePageGroup' | 'initialBomSection'> = {
+    parentAssembly: detectParentAssembly(text),
+    sourcePageGroup: sourcePage ? `page:${sourcePage}` : '',
+    initialBomSection: '',
+  }
+): BOMEntry[] {
   const entries = new Map<string, BOMEntry>();
   const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
-  let currentSection = '';
+  let currentSection = context.initialBomSection;
 
   for (const line of lines) {
     const section = detectBomSection(line);
@@ -56,7 +72,12 @@ export function parseDeterministicBOMText(text: string, sourcePage?: number): BO
       parseMaterialLine(line, currentSection);
     if (!parsed) continue;
 
-    addEntry(entries, createBOMEntry({ ...parsed, sourcePage }));
+    addEntry(entries, createBOMEntry({
+      ...parsed,
+      sourcePage,
+      parentAssembly: context.parentAssembly,
+      sourcePageGroup: context.sourcePageGroup,
+    }));
   }
 
   const candidates = buildCandidateSegments(text);
@@ -66,18 +87,25 @@ export function parseDeterministicBOMText(text: string, sourcePage?: number): BO
     const parsed = parseRussianAssemblyLine(line, '') ?? parseMaterialLine(line, '');
     if (!parsed) continue;
 
-    addEntry(entries, createBOMEntry({ ...parsed, sourcePage }));
+    addEntry(entries, createBOMEntry({
+      ...parsed,
+      sourcePage,
+      parentAssembly: context.parentAssembly,
+      sourcePageGroup: context.sourcePageGroup,
+    }));
   }
 
   return Array.from(entries.values());
 }
 
-function parseDeterministicBOMPages(pages: string[]): BOMEntry[] {
+export function parseDeterministicBOMPages(pages: string[]): BOMEntry[] {
   const merged = new Map<string, BOMEntry>();
   const order: string[] = [];
+  const contexts = buildBOMPageContexts(pages);
 
   pages.forEach((pageText, index) => {
-    for (const entry of parseDeterministicBOMText(pageText, index + 1)) {
+    const context = contexts[index];
+    for (const entry of parseDeterministicBOMText(pageText, index + 1, context)) {
       const key = buildBOMKey(entry);
       if (!merged.has(key)) order.push(key);
       merged.set(key, merged.has(key) ? mergeBOMEntry(merged.get(key)!, entry) : entry);
@@ -85,6 +113,92 @@ function parseDeterministicBOMPages(pages: string[]): BOMEntry[] {
   });
 
   return order.map((key) => merged.get(key)!).filter(Boolean);
+}
+
+function parseDeterministicDetailPages(pages: string[]): DetailEntry[] {
+  const details = new Map<string, DetailEntry>();
+
+  pages.forEach((pageText, index) => {
+    for (const entry of parseDeterministicDetailText(pageText)) {
+      const enriched = { ...entry, sourcePage: index + 1, source: 'deterministic-fallback' as const };
+      const key = normalizeDetailKey(enriched.designation);
+      details.set(key, mergeDetailEntry(details.get(key), enriched));
+    }
+  });
+
+  return Array.from(details.values());
+}
+
+function buildBOMPageContexts(pages: string[]): BOMPageContext[] {
+  let anonymousGroupStart = 0;
+  let previousWasBomPage = false;
+  let activeParentAssembly = '';
+  let activeBomSection = '';
+
+  return pages.map((pageText, index) => {
+    const sourcePage = index + 1;
+    const explicitParentAssembly = detectParentAssembly(pageText);
+    const bomPage = looksLikeBOMPage(pageText);
+    const startsNewParentAssembly = Boolean(
+      explicitParentAssembly && explicitParentAssembly !== activeParentAssembly
+    );
+    const parentAssembly = explicitParentAssembly || (bomPage && previousWasBomPage ? activeParentAssembly : '');
+    const initialBomSection = bomPage && previousWasBomPage && !startsNewParentAssembly
+      ? activeBomSection
+      : '';
+    const pageSections = findBomSections(pageText);
+
+    if (explicitParentAssembly) {
+      activeParentAssembly = explicitParentAssembly;
+      anonymousGroupStart = sourcePage;
+    } else if (bomPage && !previousWasBomPage) {
+      activeParentAssembly = '';
+      anonymousGroupStart = sourcePage;
+    }
+
+    if (pageSections.length > 0) {
+      activeBomSection = pageSections[pageSections.length - 1];
+    } else if (!bomPage || startsNewParentAssembly) {
+      activeBomSection = '';
+    }
+    previousWasBomPage = bomPage;
+
+    return {
+      sourcePage,
+      parentAssembly,
+      initialBomSection,
+      sourcePageGroup: parentAssembly
+        ? `assembly:${parentAssembly.toLowerCase()}`
+        : bomPage
+          ? `pages:${anonymousGroupStart}`
+          : `page:${sourcePage}`,
+    };
+  });
+}
+
+function detectParentAssembly(text: string): string {
+  const normalized = normalizeCadText(text).replace(/õ/g, 'х');
+  const candidates = normalized.split(/\r?\n/).flatMap((line) =>
+    Array.from(line.matchAll(/([A-ZА-ЯЁ]{2,}\.?\d{2,3}\.\d{2}\.(\d{3}))(СБ)?/gu))
+      .filter((match) => match[2] === '000' || Boolean(match[3]))
+      .filter((match) => !/^\s*\d{1,3}\s*$/u.test(line.slice(0, match.index).trim()))
+      .map((match) => ({ designation: match[1], hasAssemblySuffix: Boolean(match[3]) }))
+  );
+  const candidate = candidates.find((item) => item.hasAssemblySuffix) ?? candidates[0];
+  return candidate?.designation.replace(/([A-ZА-ЯЁ]{2,})\.?/, '$1.').trim() ?? '';
+}
+
+function looksLikeBOMPage(text: string): boolean {
+  const normalized = normalizeCadText(text);
+  return /MATERIALLISTE|STÜCKLISTE|BILL OF MATERIALS|СПЕЦИФИКАЦИЯ|7\d{10,}|(?:^|\n)\s*(?:Детали|Прочие изделия|Стандартные изделия)\s*(?:\n|$)|(?:^|\n)\s*\d{1,3}\s*[A-ZА-ЯЁ]{2,}\.?\d{2,3}\.\d{2}\.\d{3}/iu.test(normalized);
+}
+
+function findBomSections(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map(normalizeLine)
+    .map(detectBomSection)
+    .filter((section): section is string => Boolean(section));
 }
 
 async function parsePdfPages(buffer: Buffer): Promise<string[]> {
@@ -129,12 +243,19 @@ export function mergeDeterministicBOM(aiBom: BOMEntry[], deterministicBom: BOMEn
 
   for (const entry of aiBom) {
     const key = buildBOMKey(entry);
-    entries.set(key, entry);
-    order.push(key);
+    if (!entries.has(key)) order.push(key);
+    entries.set(key, entries.has(key) ? mergeBOMEntry(entries.get(key)!, entry) : entry);
   }
 
   for (const entry of deterministicBom) {
-    const key = buildBOMKey(entry);
+    const exactKey = buildBOMKey(entry);
+    const compatibleKeys = entry.parentAssembly
+      ? []
+      : order.filter((key) => buildBOMIdentityKey(entries.get(key)!) === buildBOMIdentityKey(entry));
+    if (!entries.has(exactKey) && compatibleKeys.length > 1) {
+      continue;
+    }
+    const key = entries.has(exactKey) ? exactKey : compatibleKeys[0] ?? exactKey;
     if (!entries.has(key)) order.push(key);
     entries.set(key, entries.has(key) ? mergeBOMEntry(entries.get(key)!, entry) : entry);
   }
@@ -195,7 +316,29 @@ export function parseDeterministicDetailText(text: string): DetailEntry[] {
     }
   }
 
-  return Array.from(details.values());
+  return inheritExecutionDetailMaterial(Array.from(details.values()));
+}
+
+function inheritExecutionDetailMaterial(details: DetailEntry[]): DetailEntry[] {
+  const byDesignation = new Map(
+    details.map((detail) => [normalizeDetailKey(detail.designation), detail])
+  );
+
+  return details.map((detail) => {
+    const baseDesignation = detail.designation.replace(/-\d{1,3}$/, '');
+    if (baseDesignation === detail.designation) return detail;
+
+    const base = byDesignation.get(normalizeDetailKey(baseDesignation));
+    if (!base) return detail;
+
+    return {
+      ...detail,
+      materialFull: detail.materialFull || base.materialFull,
+      materialType: detail.materialType || base.materialType,
+      materialGrade: detail.materialGrade || base.materialGrade,
+      thicknessMm: detail.thicknessMm || base.thicknessMm,
+    };
+  });
 }
 
 export function mergeDeterministicDetails(aiDetails: DetailEntry[], deterministicDetails: DetailEntry[]): DetailEntry[] {
@@ -478,6 +621,10 @@ function createBOMEntry(input: ParsedBOMLine): BOMEntry {
     thickness: input.thicknessMm,
     notes: input.norm,
     bomSources,
+    sourcePage: input.sourcePage ?? null,
+    parentAssembly: input.parentAssembly ?? '',
+    sourcePageGroup: input.sourcePageGroup,
+    source: 'deterministic-fallback',
   };
 }
 
@@ -505,6 +652,8 @@ function createDetailEntry(input: {
     massKg: null,
     isSheetMetal: true,
     notes: mergeUnfoldingWarning(input.notes, input.warnings ?? []),
+    sourcePage: null,
+    source: 'deterministic-fallback',
   };
 }
 
@@ -535,6 +684,10 @@ function mergeBOMEntry(base: BOMEntry, override: BOMEntry): BOMEntry {
     thickness: override.thickness ?? base.thickness,
     notes: mergeNotes(base.notes, override.notes),
     bomSources: sourcePages.length > 0 ? sourcePages : undefined,
+    sourcePage: base.sourcePage ?? override.sourcePage ?? null,
+    parentAssembly: base.parentAssembly || override.parentAssembly || '',
+    sourcePageGroup: base.sourcePageGroup || override.sourcePageGroup,
+    source: base.source === 'ai' || override.source === 'ai' ? 'ai' : 'deterministic-fallback',
   };
 }
 
@@ -553,6 +706,8 @@ function mergeDetailEntry(base: DetailEntry | undefined, override: DetailEntry):
     massKg: override.massKg ?? base.massKg,
     isSheetMetal: override.isSheetMetal || base.isSheetMetal,
     notes: mergeNotes(base.notes, override.notes),
+    sourcePage: base.sourcePage ?? override.sourcePage ?? null,
+    source: base.source === 'ai' || override.source === 'ai' ? 'ai' : 'deterministic-fallback',
   };
 }
 
@@ -624,7 +779,12 @@ function parseDescriptionGeometry(description: string): {
   return { partType: 'other', thicknessMm: null, widthMm: null, heightMm: null };
 }
 
-function buildBOMKey(entry: Pick<BOMEntry, 'articleNumber' | 'designation' | 'description' | 'name' | 'partType' | 'thicknessMm' | 'widthMm' | 'heightMm'>): string {
+function buildBOMKey(entry: Pick<BOMEntry, 'articleNumber' | 'designation' | 'description' | 'name' | 'partType' | 'thicknessMm' | 'widthMm' | 'heightMm' | 'parentAssembly' | 'sourcePageGroup'>): string {
+  const scope = normalizeDescription(entry.parentAssembly || entry.sourcePageGroup || 'unscoped');
+  return `${scope}:${buildBOMIdentityKey(entry)}`;
+}
+
+function buildBOMIdentityKey(entry: Pick<BOMEntry, 'articleNumber' | 'designation' | 'description' | 'name' | 'partType' | 'thicknessMm' | 'widthMm' | 'heightMm'>): string {
   const article = entry.articleNumber.trim().toLowerCase();
   if (article) return `article:${article}`;
   const designation = entry.designation.trim().toLowerCase();

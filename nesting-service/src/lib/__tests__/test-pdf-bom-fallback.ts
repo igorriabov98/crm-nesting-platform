@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { extractDeterministicBOMFromPdf, extractDeterministicPdfDataFromPdf, parseDeterministicBOMText } from '../ai/pdf-bom-fallback';
+import {
+  extractDeterministicBOMFromPdf,
+  extractDeterministicPdfDataFromPdf,
+  mergeDeterministicBOM,
+  parseDeterministicBOMPages,
+  parseDeterministicBOMText,
+} from '../ai/pdf-bom-fallback';
 
 const materialListText = `
 70000000006505 U 80 - 690 FZ 4 690 DIN1026 S235JRG2 80009 5,971 kg 23,883 kg
@@ -19,6 +25,19 @@ const materialListText = `
 
 const parsed = parseDeterministicBOMText(materialListText);
 assert.equal(parsed.length, 10);
+
+const scopedAi = {
+  ...parsed[0],
+  sourcePage: 4,
+  parentAssembly: '10461020050000',
+  sourcePageGroup: '10461020050000',
+  source: 'ai' as const,
+};
+assert.equal(
+  mergeDeterministicBOM([scopedAi], [parsed[0]]).length,
+  1,
+  'unscoped deterministic row must enrich one matching AI row without duplication'
+);
 
 const support = parsed.find((entry) => entry.articleNumber === '70000000006512');
 assert.ok(support);
@@ -57,12 +76,30 @@ assert.equal(tube.quantity, 1);
 
 const localPdf = '/Users/igorrabov/Downloads/10461020050000_Detail.pdf';
 const ledaPdf = path.resolve(__dirname, 'fixtures/real/LEDA_024_00_000_Stol_vanna.pdf');
+const bulkSkipPdf = path.resolve(__dirname, 'fixtures/real/LEDA525_Detail.pdf');
 main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
 
 async function main(): Promise<void> {
+  const hierarchy = parseDeterministicBOMPages([
+    'Спецификация\nЛЕДА.228.02.000СБ\nДетали\n3ЛЕДА.228.02.001Лист передний1',
+    'Лист 2\nЛЕДА.228.02.001\n3ЛЕДА.228.02.001Лист передний1',
+    'Спецификация\nЛЕДА.228.03.000\nДетали\n3ЛЕДА.228.02.001Лист передний1',
+  ]);
+  assert.equal(hierarchy.length, 2, 'same row in different parent assemblies must not be deduplicated');
+  assert.deepEqual(
+    hierarchy.map((entry) => entry.parentAssembly),
+    ['ЛЕДА.228.02.000', 'ЛЕДА.228.03.000']
+  );
+  assert.deepEqual(hierarchy[0].bomSources, [1, 2], 'neighboring pages of one specification must merge');
+
+  if (existsSync(bulkSkipPdf)) {
+    const bulkSkip = await extractDeterministicPdfDataFromPdf(bulkSkipPdf);
+    assert.equal(bulkSkip.bom.length, 9, '12-page Bulk skip Materialliste must stay deduplicated to 9 rows');
+  }
+
   if (existsSync(localPdf)) {
     const pdfParsed = await extractDeterministicBOMFromPdf(localPdf);
     assert.equal(pdfParsed.length, 9);
@@ -105,6 +142,7 @@ async function main(): Promise<void> {
     assert.equal(angle03.thicknessMm, 3);
     assert.equal(angle03.unfoldingWidth, 780);
     assert.equal(angle03.unfoldingHeight, 55);
+    assert.equal(angle03.sourcePage, 7);
   }
 
   console.log('[pdf-bom-fallback] all tests passed');

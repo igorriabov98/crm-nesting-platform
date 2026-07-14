@@ -16,6 +16,7 @@ export type LayoutViolationType =
   | 'NESTING_FAILED'
   | 'UNPLACED_WITHOUT_REASON'
   | 'BODY_COUNT_MISMATCH'
+  | 'AI_ANALYSIS_FAILED'
   | 'hole_outside'
   | 'part_in_hole';
 

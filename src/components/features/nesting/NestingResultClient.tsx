@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft } from 'lucide-react'
+import { AlertTriangle, ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
@@ -33,6 +33,9 @@ export function NestingResultClient({
   const [selectedPart, setSelectedPart] = useState<string | null>(null)
   const [hoveredRemnantId, setHoveredRemnantId] = useState<string | null>(null)
   const activeSheet = currentResult.sheets[activeSheetIndex] ?? currentResult.sheets[0]
+  const aiFailure = currentResult.validationReport?.violations.find(
+    (violation) => violation.type === 'AI_ANALYSIS_FAILED' && violation.severity === 'error'
+  )
   const currentFutureFillContext = futureFillContext ? {
     ...futureFillContext,
     usableRemnants: usableRemnantsFromResult(currentResult),
@@ -75,6 +78,17 @@ export function NestingResultClient({
         </div>
       </div>
 
+      {aiFailure && (
+        <div className="flex items-start gap-3 rounded-lg border-2 border-red-400 bg-red-50 p-4 text-red-950">
+          <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-red-600" />
+          <div>
+            <p className="font-bold uppercase">Недостоверная раскладка</p>
+            <p className="mt-1 text-sm">{aiFailure.message}</p>
+            <p className="mt-1 text-sm font-medium">DXF заблокирован. Доступна только диагностика для проверки причины.</p>
+          </div>
+        </div>
+      )}
+
       <ResultStatsCards result={currentResult} />
 
       <GroupedDemandSummary result={currentResult} />
@@ -114,6 +128,7 @@ export function NestingResultClient({
             sheetId={activeSheet.id}
             orderNumber={project.orderNumber}
             sheetIndex={activeSheet.sheetIndex}
+            disabledReason={aiFailure?.message}
           />
         </>
       ) : (

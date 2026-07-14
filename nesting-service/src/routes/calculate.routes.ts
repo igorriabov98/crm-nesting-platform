@@ -5,6 +5,7 @@ import { idParamSchema } from '../schemas/common.schema';
 import { calculateSchema } from '../schemas/project.schema';
 import { isCompletedProjectStatus } from '../lib/project-status';
 import { queueService } from '../services/queue.service';
+import { parseStoredAnalysis } from '../lib/ai/analysis-state';
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -24,7 +25,11 @@ export async function calculateRoutes(app: FastifyInstance) {
 
     const project = await prisma.nestingProject.findUnique({
       where: { id },
-      select: { id: true, status: true },
+      select: {
+        id: true,
+        status: true,
+        specification: { select: { rawResponse: true } },
+      },
     });
 
     if (!project) {
@@ -34,6 +39,13 @@ export async function calculateRoutes(app: FastifyInstance) {
     if (!(project.status === 'parsed' || isCompletedProjectStatus(project.status))) {
       throw new ValidationError(
         `Проект в статусе "${project.status}", расчёт можно запустить для "parsed", "done" или "completed_with_warnings"`
+      );
+    }
+
+    const analysis = project.specification ? parseStoredAnalysis(project.specification.rawResponse) : null;
+    if (analysis?.audit.status === 'failed') {
+      throw new ValidationError(
+        analysis.audit.warning || 'AI-анализ не выполнен, а текстовый fallback не нашёл BOM. Раскладка заблокирована.'
       );
     }
 

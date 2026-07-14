@@ -67,6 +67,8 @@ assert.equal(parsed.details[2].materialType, 'Нержавейка');
 const germanParsed = parsePDFAnalysisResponse(JSON.stringify({
   bom: [
     {
+      source_page: 4,
+      parent_assembly: '10461',
       position: '1',
       article_number: '70000000006505',
       designation: '10461.geo',
@@ -123,6 +125,9 @@ assert.equal(germanParsed.bom[0].widthMm, 995);
 assert.equal(germanParsed.bom[0].heightMm, 2318);
 assert.equal(germanParsed.bom[0].massKg, 54.41);
 assert.equal(germanParsed.bom[0].materialType, 'Сталь');
+assert.equal(germanParsed.bom[0].sourcePage, 4);
+assert.equal(germanParsed.bom[0].parentAssembly, '10461');
+assert.equal(germanParsed.bom[0].source, 'ai');
 assert.equal(germanParsed.bom[1].partType, 'channel');
 assert.equal(germanParsed.bom[1].widthMm, 80);
 assert.equal(germanParsed.bom[1].heightMm, 690);

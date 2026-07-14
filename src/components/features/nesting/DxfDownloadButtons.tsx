@@ -28,11 +28,13 @@ export function DxfDownloadButtons({
   sheetId,
   orderNumber,
   sheetIndex,
+  disabledReason,
 }: {
   projectId: string
   sheetId: string
   orderNumber: string
   sheetIndex: number
+  disabledReason?: string
 }) {
   const router = useRouter()
   const [loadingType, setLoadingType] = useState<DownloadType | null>(null)
@@ -67,7 +69,8 @@ export function DxfDownloadButtons({
     <div className="flex flex-wrap gap-3">
       <Button
         variant="outline"
-        disabled={isDownloading}
+        disabled={isDownloading || Boolean(disabledReason)}
+        title={disabledReason ? `DXF заблокирован: ${disabledReason}` : undefined}
         aria-busy={loadingType === 'sheet'}
         onClick={() => handleDownload('sheet', `/api/nesting/dxf/${projectId}/${sheetId}`, `${safeOrderNumber}-sheet-${sheetIndex}.dxf`)}
       >
@@ -75,7 +78,8 @@ export function DxfDownloadButtons({
         Скачать DXF (этот лист)
       </Button>
       <Button
-        disabled={isDownloading}
+        disabled={isDownloading || Boolean(disabledReason)}
+        title={disabledReason ? `DXF заблокирован: ${disabledReason}` : undefined}
         aria-busy={loadingType === 'all'}
         onClick={() => handleDownload('all', `/api/nesting/dxf/${projectId}`, `${safeOrderNumber}-dxf.zip`)}
       >

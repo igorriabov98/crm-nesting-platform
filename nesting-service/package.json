@@ -23,7 +23,8 @@
     "test:phase2": "tsx src/lib/__tests__/test-bend-detector.ts && tsx src/lib/__tests__/test-unfold.ts && tsx src/lib/__tests__/test-unfold-pipeline.ts",
     "test:all": "tsx scripts/run-tests.ts",
     "test:real": "tsx scripts/run-tests.ts --real",
-    "test:full": "tsx scripts/run-tests.ts --all"
+    "test:full": "tsx scripts/run-tests.ts --all",
+    "ai:pdf:run": "tsx scripts/run-ai-pdf-analysis.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

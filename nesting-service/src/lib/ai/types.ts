@@ -1,6 +1,6 @@
-export const DEFAULT_OPENROUTER_MODEL = 'anthropic/claude-sonnet-4-6';
+export const DEFAULT_OPENROUTER_MODEL = 'anthropic/claude-sonnet-4.6';
 export const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
-export const DEFAULT_AI_MAX_TOKENS = 4000;
+export const DEFAULT_AI_MAX_TOKENS = 128000;
 export const DEFAULT_AI_MONTHLY_BUDGET = 50;
 export const DEFAULT_AI_AUTO_APPLY_RESULTS = true;
 
@@ -20,6 +20,22 @@ export interface SteelTypeCatalogItem {
 
 export type BOMPartType = 'sheet' | 'channel' | 'angle' | 'round_bar' | 'tube' | 'flat_bar' | 'other';
 export type PartType = 'SHEET' | 'PROFILE' | 'PURCHASED';
+export type PDFAnalysisFailureKind = 'config_error' | 'api_error' | 'connection_error' | 'truncated' | 'parse_error' | 'empty_bom';
+export type AIAnalysisStatus = 'completed' | 'deterministic_fallback' | 'failed';
+export type AIExtractionSource = 'ai' | 'deterministic-fallback' | 'none';
+
+export interface AIAnalysisAudit {
+  status: AIAnalysisStatus;
+  source: AIExtractionSource;
+  warning: string | null;
+  aiError: string | null;
+  failureKind: PDFAnalysisFailureKind | null;
+  finishReason: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  maxTokens: number;
+}
 
 export interface BOMEntry {
   articleNumber: string;
@@ -45,6 +61,10 @@ export interface BOMEntry {
   thickness: number | null;
   notes: string;
   bomSources?: number[];
+  sourcePage?: number | null;
+  parentAssembly?: string;
+  sourcePageGroup?: string;
+  source?: Exclude<AIExtractionSource, 'none'>;
 }
 
 export interface DetailEntry {
@@ -59,6 +79,8 @@ export interface DetailEntry {
   massKg: number | null;
   isSheetMetal: boolean;
   notes: string;
+  sourcePage?: number | null;
+  source?: Exclude<AIExtractionSource, 'none'>;
 }
 
 export interface PDFAnalysisResult {
@@ -68,6 +90,11 @@ export interface PDFAnalysisResult {
   rawResponse: string;
   model: string;
   tokensUsed: number;
+  promptTokens: number;
+  completionTokens: number;
+  finishReason: string | null;
+  maxTokens: number;
+  failureKind: PDFAnalysisFailureKind | null;
   error: string | null;
 }
 

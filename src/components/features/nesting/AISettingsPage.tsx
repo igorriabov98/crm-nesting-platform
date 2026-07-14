@@ -18,8 +18,8 @@ import type { AISettings, AIUsageHistoryItem } from '@/lib/nesting/api'
 
 const models = [
   {
-    value: 'anthropic/claude-sonnet-4-6',
-    label: 'anthropic/claude-sonnet-4-6',
+    value: 'anthropic/claude-sonnet-4.6',
+    label: 'Claude Sonnet 4.6',
     description: 'Рекомендуемая (новейшая). Лучшее качество чтения чертежей.',
   },
   {
@@ -40,7 +40,7 @@ const models = [
 ]
 
 const modelDescriptions: Record<string, string> = {
-  'anthropic/claude-sonnet-4-6': 'Рекомендуемая (новейшая). Лучшее качество чтения чертежей.',
+  'anthropic/claude-sonnet-4.6': 'Рекомендуемая (новейшая). Лучшее качество чтения чертежей.',
   'anthropic/claude-sonnet-4-20250514': 'Стабильная. Проверенная версия.',
   'anthropic/claude-haiku-4-5-20251001': 'Бюджетная. Дешевле в 5 раз.',
   'google/gemini-2.5-flash': 'Альтернатива. Быстрая, поддерживает PDF нативно.',
@@ -174,7 +174,7 @@ export function AISettingsPage({
                 <Label>Модель</Label>
                 <Select value={model} disabled={!canManage} onValueChange={(value) => value && setModel(value)}>
                   <SelectTrigger className="bg-white">
-                    <SelectValue />
+                    <SelectValue>{models.find((item) => item.value === model)?.label ?? model}</SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-white">
                     {models.map((item) => (
@@ -202,8 +202,8 @@ export function AISettingsPage({
                 <Input
                   id="openrouter-max-tokens"
                   type="number"
-                  min={256}
-                  max={32000}
+                  min={100}
+                  max={128000}
                   value={maxTokens}
                   onChange={(event) => setMaxTokens(event.target.value)}
                   className="bg-white"

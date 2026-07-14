@@ -254,21 +254,31 @@ async function processStepJob(job: StepJob) {
           autoApply: true,
         });
 
-        if (aiResult.success) {
+        if (aiResult.success && aiResult.analysisStatus === 'completed') {
           const matchedCount = aiResult.matches.filter((match) => match.matchType !== 'none').length;
           const autoAppliedCount = aiResult.matches.filter((match) => match.autoApplied).length;
           const budgetSuffix = aiResult.budgetWarning ? ', budget warning: monthly limit exceeded' : '';
           console.log(
             `[step-worker] BOM matched: ${matchedCount}/${parsedParts.length}, auto-applied: ${autoAppliedCount}${budgetSuffix}`
           );
+        } else if (aiResult.success) {
+          console.warn('[step-worker] AI PDF analysis failed; deterministic fallback requires review:', aiResult.warning);
         } else {
-          console.warn('[step-worker] AI PDF analysis failed (non-blocking):', aiResult.error);
+          console.error('[step-worker] AI PDF analysis failed; nesting is blocked:', aiResult.error);
         }
       } catch (aiError) {
-        console.warn(
-          '[step-worker] AI PDF analysis failed (non-blocking):',
-          aiError instanceof Error ? aiError.message : aiError
+        const aiMessage = aiError instanceof Error ? aiError.message : String(aiError);
+        console.error(
+          '[step-worker] AI PDF analysis failed unexpectedly:',
+          aiMessage
         );
+        await prisma.nestingProject.update({
+          where: { id: projectId },
+          data: {
+            status: 'error',
+            errorMessage: truncateErrorMessage(`AI-анализ не выполнен: ${aiMessage}`),
+          },
+        });
       }
     }
 
