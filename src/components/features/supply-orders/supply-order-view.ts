@@ -1,6 +1,7 @@
 import { addDays, endOfWeek, isWithinInterval, startOfWeek } from 'date-fns'
 import type {
   SupplyOrderAggregate,
+  SupplyOrderAggregateSourceItem,
   SupplyOrderHistoryItem,
   SupplyOrderItem,
 } from '@/lib/actions/supply-orders'
@@ -49,6 +50,16 @@ export type HistoryFiltersState = {
   supplier: string
   category: MaterialCategory | 'all'
   sort: SupplyOrderHistorySort
+}
+
+export type SupplyOrderMachineRoute = {
+  machineId: string
+  machineName: string
+  quantity: number
+  weightKg: number | null
+  itemCount: number
+  pendingCount: number
+  orderedCount: number
 }
 
 export type SupplyOrderDateGroup = {
@@ -188,6 +199,39 @@ export function groupSupplyOrderAggregates(aggregates: SupplyOrderAggregate[], s
   return Array.from(map.entries())
     .sort(([left], [right]) => compareDateGroupKeys(left, right, sort === 'date_desc' ? 'desc' : 'asc', 'no_planned_date'))
     .map(([dateKey, rows]) => ({ dateKey, rows }))
+}
+
+export function summarizeSupplyOrderMachineRoutes(items: SupplyOrderAggregateSourceItem[]): SupplyOrderMachineRoute[] {
+  const routes = new Map<string, SupplyOrderMachineRoute & { hasUnknownWeight: boolean }>()
+
+  for (const item of items) {
+    const key = item.machine_id || item.machine_name
+    const current = routes.get(key) || {
+      machineId: item.machine_id,
+      machineName: item.machine_name,
+      quantity: 0,
+      weightKg: null,
+      itemCount: 0,
+      pendingCount: 0,
+      orderedCount: 0,
+      hasUnknownWeight: false,
+    }
+
+    current.quantity += item.quantity
+    current.itemCount += 1
+    current.pendingCount += item.order_status === 'pending' ? 1 : 0
+    current.orderedCount += item.order_status === 'ordered' ? 1 : 0
+    if (item.weight_kg === null) current.hasUnknownWeight = true
+    else current.weightKg = (current.weightKg || 0) + item.weight_kg
+    routes.set(key, current)
+  }
+
+  return Array.from(routes.values())
+    .map(({ hasUnknownWeight, ...route }) => ({
+      ...route,
+      weightKg: hasUnknownWeight ? null : route.weightKg,
+    }))
+    .sort((left, right) => compareText(left.machineName, right.machineName))
 }
 
 export function filterAndSortHistory(items: SupplyOrderHistoryItem[], filters: HistoryFiltersState) {
