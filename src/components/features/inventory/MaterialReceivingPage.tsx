@@ -16,7 +16,13 @@ type Props = {
   data: MaterialReceivingPageData
 }
 
-type DraftMap = Record<string, string>
+type ReceiptDraft = {
+  quantity: string
+  pieceLength: string
+  pieceCount: string
+}
+
+type DraftMap = Record<string, ReceiptDraft>
 
 export function MaterialReceivingPage({ data }: Props) {
   const router = useRouter()
@@ -27,19 +33,28 @@ export function MaterialReceivingPage({ data }: Props) {
     [data.groups],
   )
   const [openDates, setOpenDates] = useState<Set<string>>(initialOpenDates)
-  const draftKey = useMemo(() => data.groups.flatMap((group) => group.items.map((item) => `${item.key}:${item.planned_quantity}`)).join('|'), [data.groups])
+  const draftKey = useMemo(() => data.groups.flatMap((group) => group.items.map((item) => (
+    `${item.key}:${item.planned_quantity}:${item.piece_length_mm || ''}:${item.piece_count || ''}`
+  ))).join('|'), [data.groups])
   const defaultDrafts = useMemo<DraftMap>(() => Object.fromEntries(
-    data.groups.flatMap((group) => group.items.map((item) => [item.key, String(item.planned_quantity)])),
+    data.groups.flatMap((group) => group.items.map((item) => [item.key, {
+      quantity: String(item.planned_quantity),
+      pieceLength: item.piece_length_mm ? String(item.piece_length_mm) : '',
+      pieceCount: item.piece_count ? String(item.piece_count) : '',
+    }])),
   ), [data.groups])
   const [draftState, setDraftState] = useState(() => ({ key: draftKey, drafts: defaultDrafts }))
   const drafts = draftState.key === draftKey ? draftState.drafts : defaultDrafts
 
-  function setDraft(itemKey: string, value: string) {
+  function setDraft(itemKey: string, patch: Partial<ReceiptDraft>) {
     setDraftState((current) => ({
       key: draftKey,
       drafts: {
         ...(current.key === draftKey ? current.drafts : defaultDrafts),
-        [itemKey]: value,
+        [itemKey]: {
+          ...(current.key === draftKey ? current.drafts[itemKey] : defaultDrafts[itemKey]),
+          ...patch,
+        },
       },
     }))
   }
@@ -54,9 +69,21 @@ export function MaterialReceivingPage({ data }: Props) {
   }
 
   function receive(item: MaterialReceivingItem) {
-    const receivedQuantity = Number((drafts[item.key] || '').replace(',', '.'))
+    const draft = drafts[item.key] || defaultDrafts[item.key]
+    const pieceLength = Number((draft?.pieceLength || '').replace(',', '.'))
+    const pieceCount = Number((draft?.pieceCount || '').replace(',', '.'))
+    const receivedQuantity = item.category === 'knives'
+      ? pieceLength * pieceCount
+      : Number((draft?.quantity || '').replace(',', '.'))
     if (!Number.isFinite(receivedQuantity) || receivedQuantity <= 0) {
       toast.error('Введите фактическое количество прихода')
+      return
+    }
+    if (item.category === 'knives' && (
+      !Number.isFinite(pieceLength) || pieceLength <= 0 ||
+      !Number.isInteger(pieceCount) || pieceCount <= 0
+    )) {
+      toast.error('Укажите длину бруска и целое количество брусков')
       return
     }
 
@@ -69,6 +96,8 @@ export function MaterialReceivingPage({ data }: Props) {
         delivery_date: item.delivery_date,
         planned_quantity: item.planned_quantity,
         received_quantity: receivedQuantity,
+        piece_length_mm: item.category === 'knives' ? pieceLength : null,
+        piece_count: item.category === 'knives' ? pieceCount : null,
       })
       setPendingKey(null)
 
@@ -161,8 +190,12 @@ export function MaterialReceivingPage({ data }: Props) {
                     </thead>
                     <tbody className="divide-y divide-[#E8ECF0]">
                       {group.items.map((item) => {
-                        const draft = drafts[item.key] || ''
-                        const actualQuantity = Number(draft.replace(',', '.'))
+                        const draft = drafts[item.key] || defaultDrafts[item.key]
+                        const pieceLength = Number((draft?.pieceLength || '').replace(',', '.'))
+                        const pieceCount = Number((draft?.pieceCount || '').replace(',', '.'))
+                        const actualQuantity = item.category === 'knives'
+                          ? pieceLength * pieceCount
+                          : Number((draft?.quantity || '').replace(',', '.'))
                         const variance = getVariance(item.planned_quantity, actualQuantity)
                         const actualWeight = weightForQuantity(item, actualQuantity)
                         return (
@@ -201,17 +234,51 @@ export function MaterialReceivingPage({ data }: Props) {
                               {item.weight_kg !== null && <div className="text-xs font-normal text-[#64748B]">Вес план: {formatAmount(item.weight_kg)} кг</div>}
                             </td>
                             <td className="px-4 py-3">
-                              <label className="sr-only" htmlFor={`receive-${item.key}`}>Фактически пришло</label>
-                              <input
-                                id={`receive-${item.key}`}
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={draft}
-                                onChange={(event) => setDraft(item.key, event.target.value)}
-                                disabled={isPending && pendingKey === item.key}
-                                className="h-10 w-36 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm tabular-nums outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
-                              />
+                              {item.category === 'knives' ? (
+                                <div className="grid w-72 grid-cols-2 gap-2">
+                                  <label className="grid gap-1 text-xs text-[#64748B]">
+                                    Длина бруска, мм
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      value={draft?.pieceLength || ''}
+                                      onChange={(event) => setDraft(item.key, { pieceLength: event.target.value })}
+                                      disabled={isPending && pendingKey === item.key}
+                                      className="h-10 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm tabular-nums outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                    />
+                                  </label>
+                                  <label className="grid gap-1 text-xs text-[#64748B]">
+                                    Брусков, шт
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      value={draft?.pieceCount || ''}
+                                      onChange={(event) => setDraft(item.key, { pieceCount: event.target.value })}
+                                      disabled={isPending && pendingKey === item.key}
+                                      className="h-10 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm tabular-nums outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                    />
+                                  </label>
+                                  <div className="col-span-2 rounded-md bg-[#F8F9FA] px-3 py-2 text-xs text-[#475569]">
+                                    Общая длина: <strong className="tabular-nums text-[#111827]">{Number.isFinite(actualQuantity) ? formatAmount(actualQuantity) : '0'} мм</strong>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <label className="sr-only" htmlFor={`receive-${item.key}`}>Фактически пришло</label>
+                                  <input
+                                    id={`receive-${item.key}`}
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={draft?.quantity || ''}
+                                    onChange={(event) => setDraft(item.key, { quantity: event.target.value })}
+                                    disabled={isPending && pendingKey === item.key}
+                                    className="h-10 w-36 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm tabular-nums outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                  />
+                                </>
+                              )}
                               {actualWeight !== null && (
                                 <div className="mt-1 text-xs text-[#64748B]">Вес факт: {formatAmount(actualWeight)} кг</div>
                               )}

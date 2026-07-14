@@ -18,7 +18,7 @@
     "test:notification-bell": "tsx scripts/test-notification-bell-state.ts",
     "test:supply-order-view": "tsx scripts/test-supply-order-view.ts",
     "test:user-impersonation": "tsx scripts/test-user-impersonation.ts",
-    "test:supply-receiving": "node scripts/test-supply-partial-receiving.mjs",
+    "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && node scripts/test-supply-partial-receiving.mjs",
     "smoke:prod": "tsx scripts/prod-smoke.ts",
     "smoke:user:create": "tsx scripts/create-smoke-user.ts",
     "supabase:migrate": "tsx scripts/apply-supabase-migrations.ts"

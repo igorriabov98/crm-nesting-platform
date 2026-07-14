@@ -17,7 +17,6 @@ import {
   RotateCcw,
   Search,
   SlidersHorizontal,
-  Save,
   Trash2,
   Truck,
 } from 'lucide-react'
@@ -25,25 +24,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { MATERIAL_CATEGORIES, MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
 import {
   clearAggregateDeliverySchedule,
-  markOrderPlaced,
   markOrderPlacedWithFinance,
   saveAggregateDeliverySchedule,
-  updateAggregateSupplyDeliveryDate,
   type MaterialReceivingFactory,
   type SupplyFinancePaymentInput,
-  type SupplyOrderPlacementInput,
   type SupplyOrderAggregate,
   type SupplyOrderAggregateFactory,
   type SupplyOrderAggregateScheduleInput,
@@ -71,6 +59,8 @@ type ScheduleDraft = {
   delivery_date: string
   quantity: string
   supplier_id: string
+  piece_length_mm: string
+  piece_count: string
 }
 
 type ScheduleGroup = {
@@ -80,6 +70,8 @@ type ScheduleGroup = {
   supplier_name: string | null
   quantity: number
   received_quantity: number
+  piece_length_mm: number | null
+  piece_count: number | null
 }
 
 type FinanceDraft = {
@@ -87,8 +79,6 @@ type FinanceDraft = {
   currency: 'UAH' | 'EUR'
   plannedDate: string
 }
-
-type OrderPlacementDraft = SupplyOrderPlacementInput
 
 export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId, suppliers }: SupplyOrderSummaryPageProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -129,6 +119,17 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
     <div className="space-y-5">
       <FactoryToggle factories={factories} activeFactoryId={activeFactoryId} />
 
+      <DeliveryStateTabs
+        value={filters.status}
+        onChange={(status) => setFilters((current) => ({ ...current, status }))}
+        counts={{
+          all: aggregates.length,
+          scheduled: aggregates.filter((row) => row.planned_schedule_quantity > 0).length,
+          unscheduled: aggregates.filter((row) => row.unscheduled_quantity > 0).length,
+          closed: aggregates.filter((row) => row.delivered_count === row.item_count && row.unscheduled_quantity <= 0).length,
+        }}
+      />
+
       <AggregateFilters
         value={filters}
         suppliers={suppliers}
@@ -141,7 +142,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
       {visibleAggregates.length === 0 ? (
         <div className="rounded-xl border border-[#E8ECF0] bg-white p-10 text-center text-[#6B7280]">
           {aggregates.length === 0
-            ? 'Нет позиций со статусом «Не заказано» или «Заказано» для выбранного завода.'
+            ? 'Нет материалов для закупки или истории закрытых поставок по выбранному заводу.'
             : 'По выбранным фильтрам материалы не найдены.'}
           {aggregates.length > 0 && (
             <div><Button type="button" variant="outline" className="mt-4" onClick={() => setFilters(defaultFilters)}>Сбросить фильтры</Button></div>
@@ -225,6 +226,7 @@ function MaterialOrderCard({
                 </div>
               )}
               {aggregate.pending_count > 0 && <div className="text-muted-foreground">{aggregate.pending_count} не заказано</div>}
+              {aggregate.delivered_count > 0 && <div className="font-medium text-emerald-700">{aggregate.delivered_count} принято</div>}
             </div>
           </div>
           <h3 className="mt-1 break-words text-lg font-semibold text-foreground sm:text-xl">{aggregate.item_name}</h3>
@@ -347,8 +349,33 @@ function MaterialOrderCard({
 
 const aggregateStatusLabels: Record<SupplyOrderAggregateStatusFilter, string> = {
   all: 'Все статусы',
+  scheduled: 'С датой поступления',
+  unscheduled: 'Без даты поступления',
+  closed: 'Поставка закрыта',
   pending: 'Есть незаказанные',
   ordered: 'Есть заказанные',
+}
+
+function DeliveryStateTabs({ value, onChange, counts }: {
+  value: SupplyOrderAggregateStatusFilter
+  onChange: (value: SupplyOrderAggregateStatusFilter) => void
+  counts: { all: number; scheduled: number; unscheduled: number; closed: number }
+}) {
+  const tabs: Array<[SupplyOrderAggregateStatusFilter, string, number]> = [
+    ['all', 'Все', counts.all],
+    ['scheduled', 'С датой поступления', counts.scheduled],
+    ['unscheduled', 'Без даты поступления', counts.unscheduled],
+    ['closed', 'Закрытые', counts.closed],
+  ]
+  return (
+    <div className="flex w-full gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1" aria-label="Состояние поставки">
+      {tabs.map(([key, label, count]) => (
+        <button key={key} type="button" onClick={() => onChange(key)} aria-pressed={value === key} className={`min-h-10 shrink-0 rounded-lg px-3 text-sm font-medium transition-colors ${value === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+          {label} <span className="ml-1 tabular-nums opacity-75">{count}</span>
+        </button>
+      ))}
+    </div>
+  )
 }
 
 const aggregateSortLabels: Record<SupplyOrderAggregateSort, string> = {
@@ -501,31 +528,19 @@ function FactoryDeliveryEditor({
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [dateValue, setDateValue] = useState(factory.has_mixed_supply_delivery_dates ? '' : factory.supply_delivery_date || '')
-  const [splitOpen, setSplitOpen] = useState(false)
   const [scheduleDrafts, setScheduleDrafts] = useState<ScheduleDraft[]>(() => makeInitialScheduleDrafts(factory))
   const [financeOpen, setFinanceOpen] = useState(false)
   const [financeDrafts, setFinanceDrafts] = useState<Record<string, FinanceDraft>>({})
-  const [orderPlacementOpen, setOrderPlacementOpen] = useState(false)
-  const [orderPlacementDraft, setOrderPlacementDraft] = useState<OrderPlacementDraft>(() => makeInitialOrderPlacementDraft(factory))
   const itemKeys = useMemo(() => factory.items.map((item) => ({ table: item.table, id: item.id })), [factory.items])
-  const pendingItemKeys = useMemo(() => factory.items
-    .filter((item) => item.order_status === 'pending')
-    .map((item) => ({ table: item.table, id: item.id })), [factory.items])
-  const orderPlacementItemKeys = useMemo(() => factory.items
-    .filter((item) => item.order_status === 'pending' || (
-      item.order_status === 'ordered' && (!item.supplier_id || !item.supply_delivery_date)
-    ))
-    .map((item) => ({ table: item.table, id: item.id })), [factory.items])
-  const initialDate = factory.has_mixed_supply_delivery_dates ? '' : factory.supply_delivery_date || ''
   const deliveredGroups = useMemo(() => makeDeliveredScheduleGroups(factory), [factory])
   const plannedTotal = scheduleDrafts.reduce((sum, draft) => sum + parseQuantity(draft.quantity), 0)
   const remainingQuantity = Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
-  const canSaveDate = factory.has_mixed_supply_delivery_dates
-    ? Boolean(dateValue)
-    : dateValue !== initialDate
-  const missingFinanceSuppliers = factory.items.some((item) => item.order_status === 'pending' && !item.supplier_id)
-  const missingScheduleSuppliers = factory.items.some((item) => !item.supplier_id)
+  const isClosed = factory.delivered_count === factory.item_count && factory.unscheduled_quantity <= 0
+  const missingFinanceSuppliers = factory.items.some((item) => (
+    (item.order_status === 'pending' || item.order_status === 'ordered')
+    && !item.supplier_id
+    && !item.delivery_schedules.some((schedule) => schedule.status === 'planned' && schedule.supplier_id)
+  ))
   const hasPlannedSchedules = factory.items.some((item) => item.delivery_schedules.some((schedule) => schedule.status === 'planned'))
   const financeGroups = useMemo(() => makeFinanceGroups(factory), [factory])
   const financePayments = makeFinancePayments(financeGroups, financeDrafts)
@@ -533,62 +548,28 @@ function FactoryDeliveryEditor({
     financeGroups.length === 0 ||
     financePayments.some((payment) => !payment.plannedDate || !Number.isFinite(payment.amount) || payment.amount <= 0)
   )
-  const orderPlacementInvalid = !orderPlacementDraft.supplierId || !orderPlacementDraft.supplyDeliveryDate
-
-  useEffect(() => {
-    setDateValue(initialDate)
-  }, [initialDate])
 
   useEffect(() => {
     setScheduleDrafts(makeInitialScheduleDrafts(factory))
   }, [factory])
 
-  useEffect(() => {
-    if (!orderPlacementOpen) {
-      setOrderPlacementDraft(makeInitialOrderPlacementDraft(factory))
-    }
-  }, [factory, orderPlacementOpen])
-
-  const saveDate = (nextDate: string | null) => {
-    startTransition(async () => {
-      const result = await updateAggregateSupplyDeliveryDate(itemKeys, nextDate)
-      if (!result.success) {
-        toast.error(result.error || 'Не удалось обновить дату снабжения')
-        return
-      }
-      toast.success('Дата снабжения обновлена')
-      router.refresh()
-    })
-  }
-
-  const markOrdered = (withFinance: boolean, placement?: SupplyOrderPlacementInput) => {
-    const targetItemKeys = placement ? orderPlacementItemKeys : pendingItemKeys
+  const markOrderedWithPayments = () => {
+    const targetKeys = new Set(financePayments.flatMap((payment) => payment.itemKeys))
+    const targetItemKeys = factory.items
+      .filter((item) => targetKeys.has(`${item.table}:${item.id}`))
+      .map((item) => ({ table: item.table, id: item.id }))
     if (targetItemKeys.length === 0) return
     startTransition(async () => {
-      const result = withFinance
-        ? await markOrderPlacedWithFinance(pendingItemKeys, financePayments)
-        : await markOrderPlaced(targetItemKeys, placement)
+      const result = await markOrderPlacedWithFinance(targetItemKeys, financePayments)
       if (!result.success) {
         toast.error(result.error || 'Не удалось отметить материал заказанным')
         return
       }
-      toast.success(withFinance ? 'Материал заказан, платежи созданы' : 'Материал отмечен как заказанный')
-      setOrderPlacementOpen(false)
+      toast.success('Плановые платежи созданы')
       setFinanceOpen(false)
       setFinanceDrafts({})
       router.refresh()
     })
-  }
-
-  const openOrderPlacement = () => {
-    if (orderPlacementItemKeys.length === 0) return
-    setOrderPlacementDraft(makeInitialOrderPlacementDraft(factory))
-    setOrderPlacementOpen(true)
-  }
-
-  const submitOrderPlacement = () => {
-    if (orderPlacementInvalid) return
-    markOrdered(false, orderPlacementDraft)
   }
 
   const openFinance = () => {
@@ -600,16 +581,13 @@ function FactoryDeliveryEditor({
     setFinanceOpen(true)
   }
 
-  const openSplit = () => {
-    setScheduleDrafts(makeInitialScheduleDrafts(factory))
-    setSplitOpen(true)
-  }
-
   const saveSchedule = () => {
     const schedules: SupplyOrderAggregateScheduleInput[] = scheduleDrafts.map((draft) => ({
       delivery_date: draft.delivery_date,
       quantity: parseQuantity(draft.quantity),
       supplier_id: draft.supplier_id || null,
+      piece_length_mm: aggregate.category === 'knives' ? parseQuantity(draft.piece_length_mm) : null,
+      piece_count: aggregate.category === 'knives' ? parseQuantity(draft.piece_count) : null,
     }))
 
     startTransition(async () => {
@@ -619,14 +597,15 @@ function FactoryDeliveryEditor({
         return
       }
       toast.success('График поставки сохранен, материал отмечен как заказанный')
-      setSplitOpen(false)
       router.refresh()
     })
   }
 
   const updateDraft = (index: number, patch: Partial<ScheduleDraft>) => {
     setScheduleDrafts((current) => current.map((draft, draftIndex) => (
-      draftIndex === index ? { ...draft, ...patch } : draft
+      draftIndex === index
+        ? recalculateKnifeDraft({ ...draft, ...patch }, aggregate.category === 'knives')
+        : draft
     )))
   }
 
@@ -637,7 +616,9 @@ function FactoryDeliveryEditor({
         id: `new:${Date.now()}:${current.length}`,
         delivery_date: factory.supply_delivery_date || factory.production_date || todayIsoDate(),
         quantity: '',
-        supplier_id: '',
+        supplier_id: current[0]?.supplier_id || '',
+        piece_length_mm: '',
+        piece_count: '',
       },
     ])
   }
@@ -657,15 +638,18 @@ function FactoryDeliveryEditor({
         return
       }
       toast.success('Плановые даты графика сброшены')
-      setSplitOpen(false)
       router.refresh()
     })
   }
 
   const scheduleInvalid = scheduleDrafts.length === 0 ||
     scheduleDrafts.some((draft) => !draft.delivery_date || parseQuantity(draft.quantity) <= 0) ||
-    (missingScheduleSuppliers && scheduleDrafts.some((draft) => !draft.supplier_id)) ||
-    plannedTotal > remainingQuantity + 0.000001
+    scheduleDrafts.some((draft) => !draft.supplier_id) ||
+    (aggregate.category === 'knives' && scheduleDrafts.some((draft) => (
+      parseQuantity(draft.piece_length_mm) <= 0 ||
+      !Number.isInteger(parseQuantity(draft.piece_count)) ||
+      parseQuantity(draft.piece_count) <= 0
+    )))
   const supplyPlanDateInfo = makeSupplyPlanDateInfo(factory)
 
   return (
@@ -686,6 +670,7 @@ function FactoryDeliveryEditor({
         <div className="flex flex-wrap gap-1">
           {factory.pending_count > 0 && <Badge variant="secondary">{factory.pending_count} не зак.</Badge>}
           {factory.ordered_count > 0 && <Badge>{factory.ordered_count} зак.</Badge>}
+          {factory.delivered_count > 0 && <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">{factory.delivered_count} принято</Badge>}
         </div>
       </div>
 
@@ -708,57 +693,9 @@ function FactoryDeliveryEditor({
         />
       </div>
 
-      {!factory.has_delivery_schedules && (
-        <div className="mx-3 mb-3 grid gap-2 rounded-xl border border-border/60 bg-card p-3 md:grid-cols-[1fr_auto] md:items-end">
-          <label className="grid gap-1 text-xs font-medium text-[#475569]">
-            Мат.план снабжения
-            <input
-              type="date"
-              value={dateValue}
-              disabled={isPending}
-              onChange={(event) => setDateValue(event.target.value)}
-              className="h-9 rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
-            />
-            {factory.has_mixed_supply_delivery_dates && (
-              <span className="text-[11px] font-normal text-[#D97706]">Сейчас разные даты</span>
-            )}
-          </label>
-          <div className="flex gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={isPending || !canSaveDate}
-              onClick={() => saveDate(dateValue || null)}
-              aria-label={`Сохранить мат.план снабжения для ${factory.factory_name}`}
-            >
-              <Save className="h-3.5 w-3.5" />
-              Сохранить
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              disabled={isPending}
-              onClick={() => saveDate(null)}
-              aria-label={`Сбросить мат.план снабжения для ${factory.factory_name}`}
-              title="Сбросить к Мат.план производства"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {factory.has_delivery_schedules && (
-        <div className="mx-3 mb-3 rounded-xl border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-2 text-xs text-[#1E40AF]">
-          Мат.план снабжения управляется графиком split-поставок. Плановые строки можно заменить через «Разбить поставку».
-        </div>
-      )}
-
       {deliveredGroups.length > 0 && (
         <div className="mx-3 mb-3 rounded-xl border border-[#DCFCE7] bg-[#F0FDF4] p-3 text-xs text-[#166534]">
-          <div className="font-semibold">Принятые поставки заблокированы</div>
+          <div className="font-semibold">Принято на склад</div>
           <div className="mt-1 space-y-1">
             {deliveredGroups.map((group) => (
               <div key={group.key} className="flex flex-wrap justify-between gap-2">
@@ -770,41 +707,28 @@ function FactoryDeliveryEditor({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 bg-card px-3 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-y border-border/60 bg-card px-3 py-3">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <PackageCheck className="h-4 w-4 text-primary" />
-          <span>{factory.unscheduled_quantity > 0 ? `${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit} еще без графика` : 'Весь объем распределен по графику'}</span>
+          <span className={isClosed ? 'font-semibold text-emerald-700' : undefined}>
+            {isClosed
+              ? 'Поставка закрыта'
+              : factory.unscheduled_quantity > 0
+                ? `${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit} без даты поступления · прежний Мат.план ${factory.production_date ? formatDate(factory.production_date) : 'не указан'}`
+                : 'Весь объем распределен по графику'}
+          </span>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isPending || orderPlacementItemKeys.length === 0}
-            onClick={openOrderPlacement}
-          >
-            <Check className="h-3.5 w-3.5" />
-            Отметить заказано
-          </Button>
+        {!isClosed && <div className="flex flex-wrap gap-1.5">
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            disabled={isPending || pendingItemKeys.length === 0 || missingFinanceSuppliers}
+            disabled={isPending || financeGroups.length === 0 || missingFinanceSuppliers}
             onClick={openFinance}
             title={missingFinanceSuppliers ? 'Для платежа поставщик должен быть назначен в позиции' : undefined}
           >
             <CreditCard className="h-3.5 w-3.5" />
             С платежом
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isPending || remainingQuantity <= 0}
-            onClick={openSplit}
-          >
-            {factory.has_delivery_schedules ? 'Редактировать график' : 'Разбить поставку'}
           </Button>
           {hasPlannedSchedules && (
             <Button
@@ -817,76 +741,8 @@ function FactoryDeliveryEditor({
               Сбросить даты
             </Button>
           )}
-        </div>
+        </div>}
       </div>
-
-      <Dialog open={orderPlacementOpen} onOpenChange={setOrderPlacementOpen}>
-        <DialogContent className="bg-white text-[#111827] sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="text-[#1B3A6B]">Отметить заказано</DialogTitle>
-            <DialogDescription>
-              Укажите поставщика и дату мат.плана снабжения для выбранных позиций.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault()
-              submitOrderPlacement()
-            }}
-          >
-            <label className="grid gap-1 text-sm font-medium text-[#475569]">
-              Поставщик
-              <select
-                value={orderPlacementDraft.supplierId}
-                disabled={isPending}
-                onChange={(event) => setOrderPlacementDraft((current) => ({
-                  ...current,
-                  supplierId: event.target.value,
-                }))}
-                className="h-10 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm text-[#111827] outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <option value="">Выберите поставщика</option>
-                {suppliers.map((supplier) => (
-                  <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-sm font-medium text-[#475569]">
-              Мат.план снабжения
-              <input
-                type="date"
-                value={orderPlacementDraft.supplyDeliveryDate}
-                disabled={isPending}
-                onChange={(event) => setOrderPlacementDraft((current) => ({
-                  ...current,
-                  supplyDeliveryDate: event.target.value,
-                }))}
-                className="h-10 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm text-[#111827] outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </label>
-            {orderPlacementInvalid && (
-              <div className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-[#B45309]">
-                Укажите поставщика и мат.план снабжения.
-              </div>
-            )}
-            <DialogFooter className="gap-2 bg-white">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={isPending}
-                onClick={() => setOrderPlacementOpen(false)}
-              >
-                Отмена
-              </Button>
-              <Button type="submit" disabled={isPending || orderPlacementInvalid}>
-                <Check className="h-3.5 w-3.5" />
-                Подтвердить заказ
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       {financeOpen && (
         <div className="mt-3 rounded-md border border-[#E8ECF0] bg-white p-3">
@@ -936,7 +792,7 @@ function FactoryDeliveryEditor({
               type="button"
               size="sm"
               disabled={isPending || financeInvalid}
-              onClick={() => markOrdered(true)}
+              onClick={markOrderedWithPayments}
             >
               Подтвердить заказ и платежи
             </Button>
@@ -947,7 +803,7 @@ function FactoryDeliveryEditor({
         </div>
       )}
 
-      {splitOpen && (
+      {!isClosed && (
         <div className="mt-3 rounded-md border border-[#E8ECF0] bg-white p-3">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -968,49 +824,51 @@ function FactoryDeliveryEditor({
             {scheduleDrafts.map((draft, index) => {
               const quantity = parseQuantity(draft.quantity)
               return (
-                <div key={draft.id} className="grid min-w-0 gap-3 rounded-md border border-[#E8ECF0] p-3 sm:grid-cols-2 sm:items-start">
+                <div key={draft.id} className={`grid min-w-0 gap-3 rounded-xl border border-[#E8ECF0] bg-[#F8F9FA] p-3 ${aggregate.category === 'knives' ? 'md:grid-cols-[minmax(180px,1.3fr)_150px_120px_150px_160px_auto]' : 'md:grid-cols-[minmax(200px,1fr)_160px_160px_auto]'} md:items-end`}>
                   <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
-                    Дата
-                    <input
-                      type="date"
-                      value={draft.delivery_date}
-                      disabled={isPending}
-                      onChange={(event) => updateDraft(index, { delivery_date: event.target.value })}
-                      className="h-9 w-full rounded-md border border-[#CBD5E1] px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
-                    />
-                  </label>
-                  <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
-                    Количество, {aggregate.unit}
-                    <input
-                      value={draft.quantity}
-                      disabled={isPending}
-                      inputMode="decimal"
-                      onChange={(event) => updateDraft(index, { quantity: event.target.value })}
-                      className="h-9 w-full rounded-md border border-[#CBD5E1] px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
-                    />
-                  </label>
-                  <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569] sm:col-span-2">
-                    Поставщик для этой даты
+                    Поставщик
                     <select
                       value={draft.supplier_id}
                       disabled={isPending}
                       onChange={(event) => updateDraft(index, { supplier_id: event.target.value })}
                       className="h-9 min-w-0 w-full max-w-full truncate rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <option value="">По позициям</option>
+                      <option value="">Выберите поставщика</option>
                       {suppliers.map((supplier) => (
                         <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
                       ))}
                     </select>
-                    {quantity > 0 && (
-                      <span className="text-[11px] font-normal text-[#64748B]">{formatWeightForQuantity(quantity, factory)}</span>
-                    )}
+                  </label>
+                  {aggregate.category === 'knives' ? (
+                    <>
+                      <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
+                        Длина бруска, мм
+                        <input value={draft.piece_length_mm} disabled={isPending} inputMode="decimal" onChange={(event) => updateDraft(index, { piece_length_mm: event.target.value })} className="h-9 w-full rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:opacity-50" />
+                      </label>
+                      <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
+                        Брусков, шт
+                        <input value={draft.piece_count} disabled={isPending} inputMode="numeric" onChange={(event) => updateDraft(index, { piece_count: event.target.value })} className="h-9 w-full rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:opacity-50" />
+                      </label>
+                      <div className="grid gap-1 text-xs font-medium text-[#475569]">
+                        Общая длина
+                        <div className="flex h-9 items-center rounded-md border border-[#E8ECF0] bg-white px-2 text-sm font-semibold tabular-nums text-[#1B3A6B]">{formatAmount(quantity)} мм</div>
+                      </div>
+                    </>
+                  ) : (
+                    <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
+                      Количество, {aggregate.unit}
+                      <input value={draft.quantity} disabled={isPending} inputMode="decimal" onChange={(event) => updateDraft(index, { quantity: event.target.value })} className="h-9 w-full rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:opacity-50" />
+                    </label>
+                  )}
+                  <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
+                    Дата поступления
+                    <input type="date" value={draft.delivery_date} disabled={isPending} onChange={(event) => updateDraft(index, { delivery_date: event.target.value })} className="h-9 w-full rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:opacity-50" />
                   </label>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    className="justify-self-start sm:col-span-2 sm:justify-self-end"
+                    className="justify-self-start md:justify-self-end"
                     disabled={isPending || scheduleDrafts.length <= 1}
                     onClick={() => removeDraft(index)}
                     aria-label="Удалить дату поставки"
@@ -1023,13 +881,13 @@ function FactoryDeliveryEditor({
           </div>
 
           {plannedTotal > remainingQuantity + 0.000001 && (
-            <div className="mt-2 rounded-md bg-red-500/10 px-2 py-1.5 text-xs text-[#DC2626]">
-              Сумма графика превышает остаток после принятых поставок.
+            <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              Сверх потребности: {formatAmount(plannedTotal - remainingQuantity)} {aggregate.unit}. После приемки CRM сначала закроет ближайшие потребности по Мат.план, а свободный излишек оставит на складе.
             </div>
           )}
-          {missingScheduleSuppliers && scheduleDrafts.some((draft) => !draft.supplier_id) && (
+          {scheduleDrafts.some((draft) => !draft.supplier_id) && (
             <div className="mt-2 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-[#B45309]">
-              Для строк «По позициям» у всех позиций должен быть поставщик. Укажите поставщика в строке графика или в позиции.
+              Выберите поставщика для каждой даты поступления.
             </div>
           )}
 
@@ -1042,9 +900,6 @@ function FactoryDeliveryEditor({
                 Сбросить плановые даты
               </Button>
             )}
-            <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => setSplitOpen(false)}>
-              Отмена
-            </Button>
           </div>
         </div>
       )}
@@ -1070,7 +925,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
               {item.machine_name}
             </Link>
             <span className="tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</span>
-            <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className="w-fit">
+            <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className={item.order_status === 'delivered' ? 'w-fit border-emerald-200 bg-emerald-50 text-emerald-700' : 'w-fit'}>
               {ORDER_STATUS_LABELS[item.order_status]}
             </Badge>
             <span className="text-xs text-muted-foreground tabular-nums">
@@ -1078,7 +933,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
             </span>
             <span className="text-xs text-muted-foreground">
               {item.delivery_schedules.length > 0
-                ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ')
+                ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ')
                 : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}
             </span>
             <Link
@@ -1096,12 +951,12 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
           <article key={`${item.table}:${item.id}`} className="rounded-xl border border-border/70 bg-background p-3">
             <div className="flex items-start justify-between gap-3">
               <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}</Link>
-              <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'}>{ORDER_STATUS_LABELS[item.order_status]}</Badge>
+              <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className={item.order_status === 'delivered' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : undefined}>{ORDER_STATUS_LABELS[item.order_status]}</Badge>
             </div>
             <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
               <div><dt className="text-muted-foreground">Количество</dt><dd className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</dd></div>
               <div><dt className="text-muted-foreground">График</dt><dd className="mt-1 text-foreground">{formatAmount(item.planned_schedule_quantity)} план / {formatAmount(item.delivered_schedule_quantity)} факт</dd></div>
-              <div><dt className="text-muted-foreground">Поставки</dt><dd className="mt-1 text-foreground">{item.delivery_schedules.length > 0 ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ') : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}</dd></div>
+              <div><dt className="text-muted-foreground">Поставки</dt><dd className="mt-1 text-foreground">{item.delivery_schedules.length > 0 ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ') : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}</dd></div>
             </dl>
             <Link href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`} className="mt-3 inline-flex min-h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-muted">
               <ExternalLink className="h-3.5 w-3.5" />Открыть заявку
@@ -1169,10 +1024,6 @@ function uniqueSortedDates(dates: Array<string | null | undefined>) {
   return Array.from(new Set(dates.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b))
 }
 
-function uniqueSortedValues(values: Array<string | null | undefined>) {
-  return Array.from(new Set(values.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b))
-}
-
 function dateCountLabel(count: number) {
   const remainder10 = count % 10
   const remainder100 = count % 100
@@ -1184,23 +1035,12 @@ function dateCountLabel(count: number) {
   return `${count} ${word}`
 }
 
-function makeInitialOrderPlacementDraft(factory: SupplyOrderAggregateFactory): OrderPlacementDraft {
-  const supplierIds = uniqueSortedValues(factory.items
-    .filter((item) => item.order_status === 'pending' || item.order_status === 'ordered')
-    .map((item) => item.supplier_id))
-
-  return {
-    supplierId: supplierIds.length === 1 ? supplierIds[0] : '',
-    supplyDeliveryDate: factory.supply_delivery_date || factory.production_date || todayIsoDate(),
-  }
-}
-
 function makeInitialScheduleDrafts(factory: SupplyOrderAggregateFactory): ScheduleDraft[] {
   const plannedGroups = new Map<string, ScheduleGroup>()
   for (const item of factory.items) {
     for (const schedule of item.delivery_schedules) {
       if (schedule.status !== 'planned') continue
-      const key = `${schedule.delivery_date}:${schedule.supplier_id || 'none'}`
+      const key = `${schedule.delivery_date}:${schedule.supplier_id || 'none'}:${schedule.received_piece_length_mm || 'bulk'}`
       const current = plannedGroups.get(key) || {
         key,
         delivery_date: schedule.delivery_date,
@@ -1208,6 +1048,8 @@ function makeInitialScheduleDrafts(factory: SupplyOrderAggregateFactory): Schedu
         supplier_name: schedule.supplier_name,
         quantity: 0,
         received_quantity: 0,
+        piece_length_mm: schedule.received_piece_length_mm,
+        piece_count: schedule.received_piece_count,
       }
       current.quantity += Number(schedule.quantity || 0)
       plannedGroups.set(key, current)
@@ -1221,16 +1063,21 @@ function makeInitialScheduleDrafts(factory: SupplyOrderAggregateFactory): Schedu
       delivery_date: group.delivery_date,
       quantity: String(roundDisplay(group.quantity)),
       supplier_id: group.supplier_id || '',
+      piece_length_mm: group.piece_length_mm ? String(roundDisplay(group.piece_length_mm)) : '',
+      piece_count: group.piece_count ? String(roundDisplay(group.piece_count)) : '',
     }))
 
   if (existing.length > 0) return existing
 
   const remaining = Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
+  const supplierIds = Array.from(new Set(factory.items.map((item) => item.supplier_id).filter(Boolean))) as string[]
   return [{
     id: 'initial',
     delivery_date: factory.supply_delivery_date || factory.production_date || todayIsoDate(),
     quantity: remaining > 0 ? String(roundDisplay(remaining)) : '',
-    supplier_id: '',
+    supplier_id: supplierIds.length === 1 ? supplierIds[0] : '',
+    piece_length_mm: '',
+    piece_count: '',
   }]
 }
 
@@ -1247,9 +1094,11 @@ function makeDeliveredScheduleGroups(factory: SupplyOrderAggregateFactory) {
         supplier_name: schedule.supplier_name,
         quantity: 0,
         received_quantity: 0,
+        piece_length_mm: schedule.received_piece_length_mm,
+        piece_count: schedule.received_piece_count,
       }
       current.quantity += Number(schedule.quantity || 0)
-      current.received_quantity += Number(schedule.received_quantity ?? schedule.quantity ?? 0)
+      current.received_quantity += Number(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0)
       groups.set(key, current)
     }
   }
@@ -1267,20 +1116,39 @@ function makeFinanceGroups(factory: SupplyOrderAggregateFactory) {
   }>()
 
   for (const item of factory.items) {
-    if (item.order_status !== 'pending' || !item.supplier_id) continue
-    const plannedDate = item.supply_delivery_date || factory.supply_delivery_date || factory.production_date || todayIsoDate()
-    const key = `${item.supplier_id}:${plannedDate}`
-    const current = groups.get(key) || {
-      key,
-      supplierId: item.supplier_id,
-      supplierName: item.supplier_name || 'Поставщик',
-      plannedDate,
-      itemKeys: [],
-      items: [],
+    if (item.order_status !== 'pending' && item.order_status !== 'ordered') continue
+    const scheduledSuppliers = item.delivery_schedules.filter((schedule) => (
+      schedule.status === 'planned' && schedule.supplier_id
+    ))
+    const financeSources = scheduledSuppliers.length > 0
+      ? scheduledSuppliers.map((schedule) => ({
+        supplierId: schedule.supplier_id as string,
+        supplierName: schedule.supplier_name || 'Поставщик',
+        plannedDate: schedule.delivery_date,
+      }))
+      : item.supplier_id
+        ? [{
+          supplierId: item.supplier_id,
+          supplierName: item.supplier_name || 'Поставщик',
+          plannedDate: item.supply_delivery_date || factory.supply_delivery_date || factory.production_date || todayIsoDate(),
+        }]
+        : []
+
+    for (const source of financeSources) {
+      const key = `${source.supplierId}:${source.plannedDate}`
+      const current = groups.get(key) || {
+        key,
+        supplierId: source.supplierId,
+        supplierName: source.supplierName,
+        plannedDate: source.plannedDate,
+        itemKeys: [],
+        items: [],
+      }
+      const itemKey = `${item.table}:${item.id}`
+      if (!current.itemKeys.includes(itemKey)) current.itemKeys.push(itemKey)
+      if (!current.items.some((row) => row.table === item.table && row.id === item.id)) current.items.push(item)
+      groups.set(key, current)
     }
-    current.itemKeys.push(`${item.table}:${item.id}`)
-    current.items.push(item)
-    groups.set(key, current)
   }
 
   return Array.from(groups.values()).sort((a, b) => a.supplierName.localeCompare(b.supplierName, 'ru'))
@@ -1338,6 +1206,12 @@ function supplierSummary(factory: SupplyOrderAggregateFactory) {
 function parseQuantity(value: string) {
   const parsed = Number(value.replace(',', '.'))
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+function recalculateKnifeDraft(draft: ScheduleDraft, isKnife: boolean) {
+  if (!isKnife) return draft
+  const total = parseQuantity(draft.piece_length_mm) * parseQuantity(draft.piece_count)
+  return { ...draft, quantity: total > 0 ? String(roundDisplay(total)) : '' }
 }
 
 function roundDisplay(value: number) {

@@ -27,7 +27,7 @@ export type OrderFiltersState = {
   sort: SupplyOrderSort
 }
 
-export type SupplyOrderAggregateStatusFilter = 'all' | 'pending' | 'ordered'
+export type SupplyOrderAggregateStatusFilter = 'all' | 'scheduled' | 'unscheduled' | 'closed' | 'pending' | 'ordered'
 export type SupplyOrderAggregateSort =
   | 'date_asc'
   | 'date_desc'
@@ -159,6 +159,11 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
     if (filters.category !== 'all' && aggregate.category !== filters.category) return false
     if (filters.status === 'pending' && aggregate.pending_count <= 0) return false
     if (filters.status === 'ordered' && aggregate.ordered_count <= 0) return false
+    if (filters.status === 'scheduled' && aggregate.planned_schedule_quantity <= 0) return false
+    if (filters.status === 'unscheduled' && aggregate.unscheduled_quantity <= 0) return false
+    if (filters.status === 'closed' && !(
+      aggregate.delivered_count === aggregate.item_count && aggregate.unscheduled_quantity <= 0
+    )) return false
     if (filters.supplier !== 'all' && !aggregate.factories.some((factory) => (
       factory.items.some((item) => item.supplier_id === filters.supplier) ||
       factory.items.some((item) => item.delivery_schedules.some((schedule) => schedule.supplier_id === filters.supplier))
