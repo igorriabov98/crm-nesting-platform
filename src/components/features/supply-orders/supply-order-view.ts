@@ -62,6 +62,10 @@ export type SupplyOrderMachineRoute = {
   orderedCount: number
 }
 
+export type SupplyOrderRedeliveryMachineRoute = SupplyOrderMachineRoute & {
+  originalDeliveryDates: string[]
+}
+
 export type SupplyOrderDateGroup = {
   dateKey: string
   groups: Array<{
@@ -160,7 +164,7 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
     if (filters.status === 'pending' && aggregate.pending_count <= 0) return false
     if (filters.status === 'ordered' && aggregate.ordered_count <= 0) return false
     if (filters.status === 'scheduled' && aggregate.planned_schedule_quantity <= 0) return false
-    if (filters.status === 'unscheduled' && aggregate.unscheduled_quantity <= 0) return false
+    if (filters.status === 'unscheduled' && !hasSupplyOrderRedelivery(aggregate)) return false
     if (filters.status === 'closed' && !(
       aggregate.delivered_count === aggregate.item_count && aggregate.unscheduled_quantity <= 0
     )) return false
@@ -206,16 +210,43 @@ export function groupSupplyOrderAggregates(aggregates: SupplyOrderAggregate[], s
     .map(([dateKey, rows]) => ({ dateKey, rows }))
 }
 
-export function partitionSupplyOrderAggregatesBySchedule(aggregates: SupplyOrderAggregate[]) {
-  const unscheduled: SupplyOrderAggregate[] = []
-  const scheduled: SupplyOrderAggregate[] = []
+export function partitionSupplyOrderAggregatesByRedelivery(aggregates: SupplyOrderAggregate[]) {
+  const redeliveries: SupplyOrderAggregate[] = []
+  const regular: SupplyOrderAggregate[] = []
 
   for (const aggregate of aggregates) {
-    if (aggregate.unscheduled_quantity > 0) unscheduled.push(aggregate)
-    else scheduled.push(aggregate)
+    if (!hasSupplyOrderRedelivery(aggregate)) {
+      regular.push(aggregate)
+      continue
+    }
+
+    const redelivery = projectSupplyOrderAggregate(aggregate, isSupplyOrderRedeliveryItem, 'redelivery')
+    const rest = projectSupplyOrderAggregate(aggregate, (item) => !isSupplyOrderRedeliveryItem(item), 'regular')
+    if (redelivery) redeliveries.push(redelivery)
+    if (rest) regular.push(rest)
   }
 
-  return { unscheduled, scheduled }
+  return { redeliveries, regular }
+}
+
+export function hasSupplyOrderRedelivery(aggregate: SupplyOrderAggregate) {
+  return aggregate.factories.some((factory) => factory.items.some(isSupplyOrderRedeliveryItem))
+}
+
+export function isSupplyOrderRedeliveryItem(item: SupplyOrderAggregateSourceItem) {
+  return item.unscheduled_quantity > 0 && getSupplyOrderRedeliveryDates(item).length > 0
+}
+
+export function getSupplyOrderRedeliveryDates(item: SupplyOrderAggregateSourceItem) {
+  return Array.from(new Set(item.delivery_schedules
+    .filter((schedule) => (
+      schedule.status === 'delivered'
+      && !schedule.receipt_parent_schedule_id
+      && receivedScheduleQuantity(schedule) + 0.000001 < Number(schedule.quantity || 0)
+    ))
+    .map((schedule) => schedule.delivery_date)
+    .filter(Boolean)))
+    .sort()
 }
 
 export function summarizeSupplyOrderMachineRoutes(items: SupplyOrderAggregateSourceItem[]): SupplyOrderMachineRoute[] {
@@ -226,6 +257,26 @@ export function summarizeSupplyOrderUnscheduledMachineRoutes(
   items: SupplyOrderAggregateSourceItem[]
 ): SupplyOrderMachineRoute[] {
   return summarizeMachineRoutes(items, (item) => item.unscheduled_quantity)
+}
+
+export function summarizeSupplyOrderRedeliveryMachineRoutes(
+  items: SupplyOrderAggregateSourceItem[]
+): SupplyOrderRedeliveryMachineRoute[] {
+  const redeliveryItems = items.filter(isSupplyOrderRedeliveryItem)
+  const datesByMachine = new Map<string, Set<string>>()
+
+  for (const item of redeliveryItems) {
+    const key = item.machine_id || item.machine_name
+    const dates = datesByMachine.get(key) || new Set<string>()
+    for (const date of getSupplyOrderRedeliveryDates(item)) dates.add(date)
+    datesByMachine.set(key, dates)
+  }
+
+  return summarizeMachineRoutes(redeliveryItems, (item) => item.unscheduled_quantity)
+    .map((route) => ({
+      ...route,
+      originalDeliveryDates: Array.from(datesByMachine.get(route.machineId || route.machineName) || []).sort(),
+    }))
 }
 
 function summarizeMachineRoutes(
@@ -265,6 +316,107 @@ function summarizeMachineRoutes(
       weightKg: hasUnknownWeight ? null : route.weightKg,
     }))
     .sort((left, right) => compareText(left.machineName, right.machineName))
+}
+
+function receivedScheduleQuantity(schedule: SupplyOrderAggregateSourceItem['delivery_schedules'][number]) {
+  const value = schedule.received_quantity ?? schedule.allocated_quantity
+  if (value === null || value === undefined) return Number(schedule.quantity || 0)
+  const quantity = Number(value)
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 0
+}
+
+function projectSupplyOrderAggregate(
+  aggregate: SupplyOrderAggregate,
+  predicate: (item: SupplyOrderAggregateSourceItem) => boolean,
+  idSuffix: 'redelivery' | 'regular',
+): SupplyOrderAggregate | null {
+  const factories = aggregate.factories
+    .map((factory) => projectSupplyOrderFactory(factory, predicate))
+    .filter((factory): factory is SupplyOrderAggregate['factories'][number] => factory !== null)
+
+  if (factories.length === 0) return null
+
+  const quantity = factories.reduce((sum, factory) => sum + factory.quantity, 0)
+  const ratio = aggregate.quantity > 0 ? quantity / aggregate.quantity : 0
+  return {
+    ...aggregate,
+    id: `${aggregate.id}|${idSuffix}`,
+    quantity,
+    requested_quantity: aggregate.requested_quantity * ratio,
+    reserved_quantity: aggregate.reserved_quantity * ratio,
+    weight_kg: sumNullableWeights(factories.map((factory) => factory.weight_kg)),
+    item_count: factories.reduce((sum, factory) => sum + factory.item_count, 0),
+    machine_count: new Set(factories.flatMap((factory) => factory.items.map((item) => item.machine_id))).size,
+    pending_count: factories.reduce((sum, factory) => sum + factory.pending_count, 0),
+    ordered_count: factories.reduce((sum, factory) => sum + factory.ordered_count, 0),
+    delivered_count: factories.reduce((sum, factory) => sum + factory.delivered_count, 0),
+    planned_schedule_quantity: factories.reduce((sum, factory) => sum + factory.planned_schedule_quantity, 0),
+    delivered_schedule_quantity: factories.reduce((sum, factory) => sum + factory.delivered_schedule_quantity, 0),
+    unscheduled_quantity: factories.reduce((sum, factory) => sum + factory.unscheduled_quantity, 0),
+    factories,
+  }
+}
+
+function projectSupplyOrderFactory(
+  factory: SupplyOrderAggregate['factories'][number],
+  predicate: (item: SupplyOrderAggregateSourceItem) => boolean,
+): SupplyOrderAggregate['factories'][number] | null {
+  const items = factory.items.filter(predicate)
+  if (items.length === 0) return null
+
+  const quantity = items.reduce((sum, item) => sum + item.quantity, 0)
+  const ratio = factory.quantity > 0 ? quantity / factory.quantity : 0
+  const supplyDates = Array.from(new Set(items.map((item) => item.supply_delivery_date || 'no_supply_date')))
+  const deliveryDates = new Set(items.flatMap((item) => item.delivery_schedules.map((schedule) => schedule.delivery_date)))
+  const suppliers = summarizeProjectedSuppliers(items)
+
+  return {
+    ...factory,
+    quantity,
+    requested_quantity: factory.requested_quantity * ratio,
+    reserved_quantity: factory.reserved_quantity * ratio,
+    weight_kg: sumNullableWeights(items.map((item) => item.weight_kg)),
+    item_count: items.length,
+    machine_count: new Set(items.map((item) => item.machine_id)).size,
+    pending_count: items.filter((item) => item.order_status === 'pending').length,
+    ordered_count: items.filter((item) => item.order_status === 'ordered').length,
+    delivered_count: items.filter((item) => item.order_status === 'delivered').length,
+    planned_schedule_quantity: items.reduce((sum, item) => sum + item.planned_schedule_quantity, 0),
+    delivered_schedule_quantity: items.reduce((sum, item) => sum + item.delivered_schedule_quantity, 0),
+    unscheduled_quantity: items.reduce((sum, item) => sum + item.unscheduled_quantity, 0),
+    delivery_schedule_count: deliveryDates.size,
+    has_delivery_schedules: deliveryDates.size > 0,
+    supply_delivery_date: supplyDates.length === 1 && supplyDates[0] !== 'no_supply_date' ? supplyDates[0] : null,
+    has_mixed_supply_delivery_dates: supplyDates.length > 1,
+    suppliers,
+    items,
+  }
+}
+
+function summarizeProjectedSuppliers(items: SupplyOrderAggregateSourceItem[]) {
+  const suppliers = new Map<string, SupplyOrderAggregate['factories'][number]['suppliers'][number]>()
+  for (const item of items) {
+    const key = item.supplier_id || 'none'
+    const current = suppliers.get(key) || {
+      id: item.supplier_id,
+      name: item.supplier_name || 'Без поставщика',
+      item_count: 0,
+      pending_count: 0,
+      ordered_count: 0,
+      delivered_count: 0,
+    }
+    current.item_count += 1
+    current.pending_count += item.order_status === 'pending' ? 1 : 0
+    current.ordered_count += item.order_status === 'ordered' ? 1 : 0
+    current.delivered_count += item.order_status === 'delivered' ? 1 : 0
+    suppliers.set(key, current)
+  }
+  return Array.from(suppliers.values()).sort((left, right) => compareText(left.name, right.name))
+}
+
+function sumNullableWeights(weights: Array<number | null>) {
+  const known = weights.filter((weight): weight is number => weight !== null && Number.isFinite(weight))
+  return known.length > 0 ? known.reduce((sum, weight) => sum + weight, 0) : null
 }
 
 export function filterAndSortHistory(items: SupplyOrderHistoryItem[], filters: HistoryFiltersState) {
