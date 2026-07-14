@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict'
-import type { SupplyOrderAggregate, SupplyOrderHistoryItem, SupplyOrderItem } from '@/lib/actions/supply-orders'
+import type {
+  SupplyOrderAggregate,
+  SupplyOrderDeliverySchedule,
+  SupplyOrderHistoryItem,
+  SupplyOrderItem,
+} from '@/lib/actions/supply-orders'
 import {
   filterAndSortAggregates,
   filterAndSortHistory,
   filterSupplyOrderItems,
+  getSupplyOrderRedeliveryDates,
   groupSupplyOrderItems,
-  partitionSupplyOrderAggregatesBySchedule,
+  isSupplyOrderRedeliveryItem,
+  partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderMachineRoutes,
+  summarizeSupplyOrderRedeliveryMachineRoutes,
   summarizeSupplyOrderUnscheduledMachineRoutes,
   sortSupplyOrderItems,
   type OrderFiltersState,
@@ -63,33 +71,80 @@ assert.equal(filterAndSortAggregates([aggregate], {
 }).length, 1, 'aggregate filters must inspect nested supplier and status data')
 assert.equal(filterAndSortAggregates([{ ...aggregate, unscheduled_quantity: 3 }], {
   query: '', supplier: 'all', category: 'all', status: 'unscheduled', sort: 'date_asc',
-}).length, 1, 'partial receipt remainder must appear under the no-arrival-date tab')
+}).length, 0, 'an ordinary unscheduled request must not appear under redelivery')
 assert.equal(filterAndSortAggregates([{ ...aggregate, ordered_count: 0, delivered_count: 1 }], {
   query: '', supplier: 'all', category: 'all', status: 'closed', sort: 'date_asc',
 }).length, 1, 'fully accepted material must appear under closed deliveries')
 
-const partiallyAccepted = {
-  ...aggregate,
-  id: 'partially-accepted',
-  quantity: 10,
-  planned_schedule_quantity: 1,
-  delivered_schedule_quantity: 1,
-  unscheduled_quantity: 9,
-}
-const prioritized = partitionSupplyOrderAggregatesBySchedule([
+const partiallyAccepted = makePartiallyAcceptedAggregate()
+assert.equal(filterAndSortAggregates([partiallyAccepted], {
+  query: '', supplier: 'all', category: 'all', status: 'unscheduled', sort: 'date_asc',
+}).length, 1, 'a receipt of one sheet from ten must appear under redelivery')
+
+const prioritized = partitionSupplyOrderAggregatesByRedelivery([
   aggregate,
   partiallyAccepted,
   { ...aggregate, id: 'later-date', planned_material_date: '2026-08-01' },
 ])
 assert.deepEqual(
-  prioritized.unscheduled.map((row) => row.id),
-  ['partially-accepted'],
-  'a partially accepted material with nine units left must be placed in the no-schedule section'
+  prioritized.redeliveries.map((row) => row.id),
+  ['partially-accepted|redelivery'],
+  'a partially accepted material with nine units left must be placed in redelivery'
 )
 assert.deepEqual(
-  prioritized.scheduled.map((row) => row.id),
+  prioritized.regular.map((row) => row.id),
   ['aggregate', 'later-date'],
-  'only fully scheduled materials may remain in the dated sections'
+  'ordinary materials must remain in the dated sections'
+)
+
+const partialItem = partiallyAccepted.factories[0].items[0]
+assert.equal(isSupplyOrderRedeliveryItem(partialItem), true, 'partial receipt must be recognized from actual schedule quantities')
+assert.deepEqual(getSupplyOrderRedeliveryDates(partialItem), ['2026-07-21'], 'the original promised date must be preserved')
+assert.deepEqual(summarizeSupplyOrderRedeliveryMachineRoutes([partialItem]), [{
+  machineId: 'machine-a',
+  machineName: 'Машина А',
+  quantity: 9,
+  weightKg: 90,
+  itemCount: 1,
+  pendingCount: 0,
+  orderedCount: 1,
+  originalDeliveryDates: ['2026-07-21'],
+}], 'redelivery card must show the uncovered quantity and original date for its machine')
+
+const mixed = makeMixedRedeliveryAggregate()
+const splitMixed = partitionSupplyOrderAggregatesByRedelivery([mixed])
+assert.deepEqual(
+  splitMixed.redeliveries[0].factories[0].items.map((item) => item.machine_id),
+  ['machine-a'],
+  'redelivery projection must contain only the machine that received less than promised'
+)
+assert.deepEqual(
+  splitMixed.regular[0].factories[0].items.map((item) => item.machine_id),
+  ['machine-b'],
+  'a machine that never had a partial receipt must stay outside redelivery'
+)
+assert.equal(
+  isSupplyOrderRedeliveryItem(makeAggregateSourceItem({
+    quantity: 10,
+    unscheduled_quantity: 9,
+    delivery_schedules: [makeDeliverySchedule({ quantity: 1, received_quantity: 1, allocated_quantity: 1 })],
+  })),
+  false,
+  'a fully received one-unit schedule must not turn the other nine unscheduled units into redelivery'
+)
+assert.equal(
+  isSupplyOrderRedeliveryItem(makeAggregateSourceItem({
+    quantity: 10,
+    unscheduled_quantity: 4,
+    delivery_schedules: [makeDeliverySchedule({
+      quantity: 9,
+      received_quantity: 5,
+      allocated_quantity: 5,
+      receipt_parent_schedule_id: 'parent-schedule',
+    })],
+  })),
+  false,
+  'receipt allocation child rows must not be mistaken for a supplier promise'
 )
 
 const machineRoutes = summarizeSupplyOrderMachineRoutes([
@@ -214,6 +269,97 @@ function makeAggregate(): SupplyOrderAggregate {
   }
 }
 
+function makePartiallyAcceptedAggregate(): SupplyOrderAggregate {
+  const base = makeAggregate()
+  const item = makeAggregateSourceItem({
+    id: 'partially-accepted-item',
+    machine_id: 'machine-a',
+    machine_name: 'Машина А',
+    quantity: 10,
+    supplier_id: 'supplier-a',
+    supplier_name: 'Металл А',
+    weight_kg: 100,
+    order_status: 'ordered',
+    planned_schedule_quantity: 0,
+    delivered_schedule_quantity: 1,
+    unscheduled_quantity: 9,
+    delivery_schedules: [makeDeliverySchedule({
+      delivery_date: '2026-07-21',
+      quantity: 10,
+      received_quantity: 1,
+      allocated_quantity: 1,
+      allocated_physical_quantity: 1,
+    })],
+  })
+
+  return {
+    ...base,
+    id: 'partially-accepted',
+    quantity: 10,
+    requested_quantity: 10,
+    weight_kg: 100,
+    planned_schedule_quantity: 0,
+    delivered_schedule_quantity: 1,
+    unscheduled_quantity: 9,
+    factories: [{
+      ...base.factories[0],
+      quantity: 10,
+      requested_quantity: 10,
+      weight_kg: 100,
+      planned_schedule_quantity: 0,
+      delivered_schedule_quantity: 1,
+      unscheduled_quantity: 9,
+      supply_delivery_date: null,
+      items: [item],
+    }],
+  }
+}
+
+function makeMixedRedeliveryAggregate(): SupplyOrderAggregate {
+  const partial = makePartiallyAcceptedAggregate()
+  const regularItem = makeAggregateSourceItem({
+    id: 'ordinary-unscheduled-item',
+    machine_id: 'machine-b',
+    machine_name: 'Машина Б',
+    quantity: 5,
+    supplier_id: null,
+    supplier_name: null,
+    weight_kg: 50,
+    order_status: 'pending',
+    planned_schedule_quantity: 0,
+    delivered_schedule_quantity: 0,
+    unscheduled_quantity: 5,
+    delivery_schedules: [],
+  })
+
+  return {
+    ...partial,
+    id: 'mixed',
+    quantity: 15,
+    requested_quantity: 15,
+    weight_kg: 150,
+    item_count: 2,
+    machine_count: 2,
+    pending_count: 1,
+    unscheduled_quantity: 14,
+    factories: [{
+      ...partial.factories[0],
+      quantity: 15,
+      requested_quantity: 15,
+      weight_kg: 150,
+      item_count: 2,
+      machine_count: 2,
+      pending_count: 1,
+      unscheduled_quantity: 14,
+      suppliers: [
+        ...partial.factories[0].suppliers,
+        { id: null, name: 'Без поставщика', item_count: 1, pending_count: 1, ordered_count: 0, delivered_count: 0 },
+      ],
+      items: [...partial.factories[0].items, regularItem],
+    }],
+  }
+}
+
 function makeAggregateSourceItem(
   patch: Partial<SupplyOrderAggregate['factories'][number]['items'][number]>
 ): SupplyOrderAggregate['factories'][number]['items'][number] {
@@ -234,6 +380,32 @@ function makeAggregateSourceItem(
     delivered_schedule_quantity: 0,
     unscheduled_quantity: 1,
     delivery_schedules: [],
+    ...patch,
+  }
+}
+
+function makeDeliverySchedule(patch: Partial<SupplyOrderDeliverySchedule>): SupplyOrderDeliverySchedule {
+  return {
+    id: 'schedule-id',
+    delivery_date: '2026-07-21',
+    quantity: 1,
+    unit: 'шт.',
+    supplier_id: 'supplier-a',
+    supplier_name: 'Металл А',
+    change_reason: null,
+    status: 'delivered',
+    received_quantity: 1,
+    allocated_quantity: 1,
+    allocated_physical_quantity: 1,
+    received_piece_length_mm: null,
+    received_piece_count: null,
+    allocated_piece_count: null,
+    excess_quantity: 0,
+    receipt_parent_schedule_id: null,
+    delivered_at: '2026-07-21T10:00:00Z',
+    received_by: 'user-id',
+    created_at: '2026-07-20T10:00:00Z',
+    updated_at: '2026-07-21T10:00:00Z',
     ...patch,
   }
 }
