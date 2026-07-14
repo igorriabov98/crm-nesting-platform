@@ -343,7 +343,7 @@ export interface AIAnalysisResponse {
     analysisStatus: 'completed' | 'deterministic_fallback' | 'failed'
     source: 'ai' | 'deterministic-fallback' | 'none'
     warning: string | null
-    failureKind: 'config_error' | 'api_error' | 'connection_error' | 'truncated' | 'parse_error' | 'empty_bom' | null
+    failureKind: 'config_error' | 'provider_error' | 'connection_error' | 'truncated' | 'parse_error' | 'empty_bom' | null
     createdAt?: string
     updatedAt?: string
   }

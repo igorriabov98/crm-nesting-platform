@@ -319,8 +319,8 @@ export async function analyzePDF(
         rawResponse: errorBody,
         model: cfg.model,
         maxTokens,
-        failureKind: 'api_error',
-        error: `OpenRouter API ошибка: ${response.status}. ${sanitizeError(errorBody).slice(0, 200)}`,
+        failureKind: 'provider_error',
+        error: `Ошибка провайдера OpenRouter: HTTP ${response.status}. ${sanitizeError(errorBody).slice(0, 200)}`,
       });
     }
 

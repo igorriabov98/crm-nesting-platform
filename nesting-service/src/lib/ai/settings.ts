@@ -9,6 +9,7 @@ import {
   DEFAULT_AI_MONTHLY_BUDGET,
   DEFAULT_OPENROUTER_BASE_URL,
   DEFAULT_OPENROUTER_MODEL,
+  MAX_AI_MAX_TOKENS,
   type AISettingsView,
   type AIUsageHistoryItem,
   type OpenRouterConfig,
@@ -26,7 +27,7 @@ export const aiSettingsInputSchema = z.object({
   apiKey: z.string().trim().optional(),
   model: z.string().trim().min(1).optional(),
   baseUrl: z.string().trim().url().optional(),
-  maxTokens: z.coerce.number().int().min(100).max(DEFAULT_AI_MAX_TOKENS).optional(),
+  maxTokens: z.coerce.number().int().min(100).max(MAX_AI_MAX_TOKENS).optional(),
   monthlyBudget: z.coerce.number().min(0).max(100000).optional(),
   autoApplyResults: z.boolean().optional(),
 });
