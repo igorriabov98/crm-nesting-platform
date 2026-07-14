@@ -38,6 +38,8 @@ jobs:
         run: npm run test:user-impersonation
       - name: Supply reservation stock scope
         run: npm run test:supply-reservation-scope
+      - name: Supply order filters and sorting
+        run: npm run test:supply-order-view
       - name: Typecheck nesting-service
         run: npx tsc --noEmit
         working-directory: nesting-service

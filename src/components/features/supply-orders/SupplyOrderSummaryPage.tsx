@@ -14,11 +14,15 @@ import {
   Factory,
   Plus,
   RotateCcw,
+  Search,
+  SlidersHorizontal,
   Save,
   Trash2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -27,7 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
+import { MATERIAL_CATEGORIES, MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
 import {
   clearAggregateDeliverySchedule,
@@ -44,6 +48,13 @@ import {
   type SupplyOrderAggregateSourceItem,
 } from '@/lib/actions/supply-orders'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
+import {
+  filterAndSortAggregates,
+  groupSupplyOrderAggregates,
+  type AggregateFiltersState,
+  type SupplyOrderAggregateSort,
+  type SupplyOrderAggregateStatusFilter,
+} from './supply-order-view'
 
 type SupplyOrderSummaryPageProps = {
   aggregates: SupplyOrderAggregate[]
@@ -78,25 +89,29 @@ type OrderPlacementDraft = SupplyOrderPlacementInput
 
 export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId, suppliers }: SupplyOrderSummaryPageProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const defaultFilters = useMemo<AggregateFiltersState>(() => ({
+    query: '',
+    supplier: 'all',
+    category: 'all',
+    status: 'all',
+    sort: 'date_asc',
+  }), [])
+  const [filters, setFilters] = useState<AggregateFiltersState>(defaultFilters)
+  const visibleAggregates = useMemo(() => filterAndSortAggregates(aggregates, filters), [aggregates, filters])
 
   const grouped = useMemo(() => {
-    const map = new Map<string, SupplyOrderAggregate[]>()
-    for (const aggregate of aggregates) {
-      const key = aggregate.planned_material_date || 'no_planned_date'
-      map.set(key, [...(map.get(key) || []), aggregate])
-    }
-    return Array.from(map.entries()).map(([dateKey, rows]) => ({ dateKey, rows }))
-  }, [aggregates])
+    return groupSupplyOrderAggregates(visibleAggregates, filters.sort)
+  }, [filters.sort, visibleAggregates])
 
   const totals = useMemo(() => ({
-    aggregateCount: aggregates.length,
-    itemCount: aggregates.reduce((sum, aggregate) => sum + aggregate.item_count, 0),
-    pendingCount: aggregates.reduce((sum, aggregate) => sum + aggregate.pending_count, 0),
-    orderedCount: aggregates.reduce((sum, aggregate) => sum + aggregate.ordered_count, 0),
-    plannedQuantity: aggregates.reduce((sum, aggregate) => sum + aggregate.planned_schedule_quantity, 0),
-    deliveredQuantity: aggregates.reduce((sum, aggregate) => sum + aggregate.delivered_schedule_quantity, 0),
-    remainingQuantity: aggregates.reduce((sum, aggregate) => sum + aggregate.unscheduled_quantity, 0),
-  }), [aggregates])
+    aggregateCount: visibleAggregates.length,
+    itemCount: visibleAggregates.reduce((sum, aggregate) => sum + aggregate.item_count, 0),
+    pendingCount: visibleAggregates.reduce((sum, aggregate) => sum + aggregate.pending_count, 0),
+    orderedCount: visibleAggregates.reduce((sum, aggregate) => sum + aggregate.ordered_count, 0),
+    plannedQuantity: visibleAggregates.reduce((sum, aggregate) => sum + aggregate.planned_schedule_quantity, 0),
+    deliveredQuantity: visibleAggregates.reduce((sum, aggregate) => sum + aggregate.delivered_schedule_quantity, 0),
+    remainingQuantity: visibleAggregates.reduce((sum, aggregate) => sum + aggregate.unscheduled_quantity, 0),
+  }), [visibleAggregates])
 
   const toggle = (id: string) => {
     setExpanded((current) => {
@@ -111,13 +126,27 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
     <div className="space-y-5">
       <FactoryToggle factories={factories} activeFactoryId={activeFactoryId} />
 
-      {aggregates.length === 0 ? (
+      <AggregateFilters
+        value={filters}
+        suppliers={suppliers}
+        resultCount={visibleAggregates.length}
+        totalCount={aggregates.length}
+        onChange={setFilters}
+        onReset={() => setFilters(defaultFilters)}
+      />
+
+      {visibleAggregates.length === 0 ? (
         <div className="rounded-xl border border-[#E8ECF0] bg-white p-10 text-center text-[#6B7280]">
-          Нет позиций со статусом «Не заказано» или «Заказано» для выбранного завода.
+          {aggregates.length === 0
+            ? 'Нет позиций со статусом «Не заказано» или «Заказано» для выбранного завода.'
+            : 'По выбранным фильтрам материалы не найдены.'}
+          {aggregates.length > 0 && (
+            <div><Button type="button" variant="outline" className="mt-4" onClick={() => setFilters(defaultFilters)}>Сбросить фильтры</Button></div>
+          )}
         </div>
       ) : (
         <>
-          <div className="grid gap-3 rounded-xl border border-[#E8ECF0] bg-white p-4 text-sm sm:grid-cols-4">
+          <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
             <Metric label="Материалов/дней" value={totals.aggregateCount} />
             <Metric label="Позиций заявок" value={totals.itemCount} />
             <Metric label="Статусы" value={`${totals.pendingCount} / ${totals.orderedCount}`} hint="не заказано / заказано" />
@@ -129,36 +158,29 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
           </div>
 
           {grouped.map((group) => (
-            <section key={group.dateKey} className="space-y-3">
-              <div className="flex items-center gap-2 text-lg font-semibold text-[#1B3A6B]">
-                <CalendarDays className="h-5 w-5" />
-                {group.dateKey === 'no_planned_date' ? 'Без даты Мат.план' : formatDate(group.dateKey)}
-                <Badge variant="outline" className="ml-1 border-[#DBEAFE] bg-[#EFF6FF] text-[#1E40AF]">
-                  {group.rows.length} поз.
-                </Badge>
+            <section key={group.dateKey} className="space-y-3" aria-labelledby={`aggregate-date-${group.dateKey}`}>
+              <div className="flex items-center gap-3 px-1">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><CalendarDays className="h-4 w-4" /></div>
+                <div>
+                  <h2 id={`aggregate-date-${group.dateKey}`} className="text-base font-semibold text-foreground sm:text-lg">
+                    {group.dateKey === 'no_planned_date' ? 'Без даты Мат.план' : formatDate(group.dateKey)}
+                  </h2>
+                  <p className="text-xs text-muted-foreground">{group.rows.length} агрегированных материалов</p>
+                </div>
               </div>
 
-              <div className="overflow-x-auto rounded-xl border border-[#E8ECF0] bg-white">
-                <div className="min-w-[1180px]">
-                  <div className="grid grid-cols-[44px_minmax(260px,1fr)_150px_minmax(560px,1.8fr)_120px] items-center gap-3 border-b border-[#E8ECF0] bg-[#F8FAFC] px-3 py-2 text-xs font-semibold uppercase text-[#64748B]">
-                    <span />
-                    <span>Материал и характеристики</span>
-                    <span>Итого</span>
-                    <span>Заказ и поставка</span>
-                    <span>Машины</span>
-                  </div>
-
+              <div className="space-y-3">
                   {group.rows.map((aggregate) => {
                     const isExpanded = expanded.has(aggregate.id)
                     const factory = aggregate.factories[0]
                     return (
-                      <div key={aggregate.id} className="border-b border-[#E8ECF0] last:border-b-0">
-                        <div className="grid grid-cols-[44px_minmax(260px,1fr)_150px_minmax(560px,1.8fr)_120px] items-start gap-3 px-3 py-3 text-sm">
+                      <article key={aggregate.id} className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm transition-shadow hover:shadow-md motion-reduce:transition-none">
+                        <div className="grid gap-4 p-4 text-sm md:grid-cols-[44px_minmax(220px,1fr)_150px] xl:grid-cols-[44px_minmax(250px,1fr)_150px_minmax(460px,1.7fr)_100px]">
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon-sm"
-                            className="mt-1 text-[#1B3A6B]"
+                            className="text-primary"
                             aria-label={isExpanded ? 'Скрыть машины' : 'Показать машины'}
                             aria-expanded={isExpanded}
                             onClick={() => toggle(aggregate.id)}
@@ -166,30 +188,32 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
                             <ChevronDown className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                           </Button>
 
-                          <div className="min-w-0 space-y-1">
+                          <div className="min-w-0 space-y-2">
                             <div className="flex flex-wrap items-center gap-2">
-                              <div className="font-semibold text-[#111827]">{aggregate.item_name}</div>
-                              <Badge variant="outline" className="border-[#E8ECF0] bg-white text-[#475569]">
+                              <div className="font-semibold text-foreground">{aggregate.item_name}</div>
+                              <Badge variant="outline" className="border-border bg-background text-muted-foreground">
                                 {MATERIAL_CATEGORY_LABELS[aggregate.category]}
                               </Badge>
                             </div>
-                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#64748B]">
+                            <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
                               {aggregate.characteristics.map((part) => (
-                                <span key={`${part.label}:${part.value}`}>
-                                  <span className="font-medium text-[#475569]">{part.label}:</span> {part.value}
+                                <span key={`${part.label}:${part.value}`} className="rounded-lg bg-muted/60 px-2 py-1">
+                                  <span className="font-medium text-foreground">{part.label}:</span> {part.value}
                                 </span>
                               ))}
                             </div>
                           </div>
 
-                          <div className="space-y-1 font-medium text-[#111827] tabular-nums">
-                            <div>{formatAmount(aggregate.quantity)} {aggregate.unit}</div>
+                          <div className="rounded-xl border border-border/60 bg-muted/25 p-3 font-medium text-foreground tabular-nums md:col-start-3 xl:col-start-auto">
+                            <div className="text-xs font-normal text-muted-foreground">Итого</div>
+                            <div className="mt-1 text-lg font-semibold">{formatAmount(aggregate.quantity)} {aggregate.unit}</div>
                             {aggregate.weight_kg !== null && (
                               <div className="text-xs font-normal text-[#64748B]">{formatAmount(aggregate.weight_kg)} кг</div>
                             )}
                             <div className="text-xs font-normal text-[#64748B]">{aggregate.item_count} строк</div>
                           </div>
 
+                          <div className="md:col-span-3 xl:col-span-1">
                           {factory ? (
                             <FactoryDeliveryEditor aggregate={aggregate} factory={factory} suppliers={suppliers} />
                           ) : (
@@ -197,19 +221,20 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
                               Нет заводской строки для выбранного фильтра.
                             </div>
                           )}
+                          </div>
 
-                          <div className="text-sm font-medium text-[#1B3A6B] tabular-nums">
-                            {aggregate.machine_count}
+                          <div className="flex items-center justify-between rounded-xl bg-primary/5 px-3 py-2 text-sm font-medium text-primary md:col-span-3 xl:col-span-1 xl:flex-col xl:justify-center">
+                            <span className="text-xs text-muted-foreground">Машины</span>
+                            <span className="text-lg font-semibold tabular-nums">{aggregate.machine_count}</span>
                           </div>
                         </div>
 
                         {isExpanded && factory && (
                           <MachineItems factory={factory} />
                         )}
-                      </div>
+                      </article>
                     )
                   })}
-                </div>
               </div>
             </section>
           ))}
@@ -219,20 +244,126 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
   )
 }
 
+const aggregateStatusLabels: Record<SupplyOrderAggregateStatusFilter, string> = {
+  all: 'Все статусы',
+  pending: 'Есть незаказанные',
+  ordered: 'Есть заказанные',
+}
+
+const aggregateSortLabels: Record<SupplyOrderAggregateSort, string> = {
+  date_asc: 'Мат.план: сначала ранние',
+  date_desc: 'Мат.план: сначала поздние',
+  material_asc: 'Материал: А–Я',
+  quantity_desc: 'Количество: по убыванию',
+  remaining_desc: 'Без графика: по убыванию',
+}
+
+function AggregateFilters({ value, suppliers, resultCount, totalCount, onChange, onReset }: {
+  value: AggregateFiltersState
+  suppliers: SupplierWithRelations[]
+  resultCount: number
+  totalCount: number
+  onChange: (value: AggregateFiltersState) => void
+  onReset: () => void
+}) {
+  const activeCount = [value.query, value.supplier !== 'all', value.category !== 'all', value.status !== 'all', value.sort !== 'date_asc']
+    .filter(Boolean).length
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm" aria-label="Фильтры итогов по дню">
+      <div className="flex flex-col gap-3 border-b border-border/60 bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><SlidersHorizontal className="h-4 w-4" /></div>
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Отбор сводных материалов</h2>
+            <p className="text-xs text-muted-foreground">Показано {resultCount} из {totalCount}</p>
+          </div>
+        </div>
+        <Button type="button" variant="ghost" size="sm" className="min-h-9 justify-start" disabled={activeCount === 0} onClick={onReset}>
+          <RotateCcw className="h-4 w-4" />Сбросить{activeCount > 0 ? ` (${activeCount})` : ''}
+        </Button>
+      </div>
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-12">
+        <label className="grid gap-1.5 md:col-span-2 xl:col-span-4">
+          <span className="text-xs font-medium text-muted-foreground">Поиск</span>
+          <span className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input type="search" value={value.query} onChange={(event) => onChange({ ...value, query: event.target.value })} placeholder="Материал, характеристика, машина" className="h-11 pl-9" />
+          </span>
+        </label>
+        <SummaryFilterSelect
+          className="xl:col-span-3"
+          label="Поставщик"
+          value={value.supplier}
+          display={value.supplier === 'all' ? 'Все поставщики' : suppliers.find((supplier) => supplier.id === value.supplier)?.name || 'Все поставщики'}
+          items={['all', ...suppliers.map((supplier) => supplier.id)].map((id) => [id, id === 'all' ? 'Все поставщики' : suppliers.find((supplier) => supplier.id === id)?.name || 'Поставщик'])}
+          onValueChange={(supplier) => onChange({ ...value, supplier })}
+        />
+        <SummaryFilterSelect
+          className="xl:col-span-2"
+          label="Категория"
+          value={value.category}
+          display={value.category === 'all' ? 'Все категории' : MATERIAL_CATEGORY_LABELS[value.category]}
+          items={[['all', 'Все категории'], ...MATERIAL_CATEGORIES.map((category) => [category, MATERIAL_CATEGORY_LABELS[category]])]}
+          onValueChange={(category) => onChange({ ...value, category: category as AggregateFiltersState['category'] })}
+        />
+        <SummaryFilterSelect
+          className="xl:col-span-3"
+          label="Статус"
+          value={value.status}
+          display={aggregateStatusLabels[value.status]}
+          items={Object.entries(aggregateStatusLabels)}
+          onValueChange={(status) => onChange({ ...value, status: status as SupplyOrderAggregateStatusFilter })}
+        />
+        <SummaryFilterSelect
+          className="md:col-span-2 xl:col-span-12"
+          label="Сортировка"
+          value={value.sort}
+          display={aggregateSortLabels[value.sort]}
+          items={Object.entries(aggregateSortLabels)}
+          onValueChange={(sort) => onChange({ ...value, sort: sort as SupplyOrderAggregateSort })}
+        />
+      </div>
+    </section>
+  )
+}
+
+function SummaryFilterSelect({ label, value, display, items, onValueChange, className }: {
+  label: string
+  value: string
+  display: string
+  items: string[][]
+  onValueChange: (value: string) => void
+  className?: string
+}) {
+  return (
+    <label className={`grid min-w-0 gap-1.5 ${className || ''}`}>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <Select value={value} onValueChange={(nextValue) => onValueChange(nextValue || '')}>
+        <SelectTrigger className="h-11 w-full bg-background"><SelectValue>{display}</SelectValue></SelectTrigger>
+        <SelectContent>{items.map(([itemValue, itemLabel]) => <SelectItem key={itemValue} value={itemValue}>{itemLabel}</SelectItem>)}</SelectContent>
+      </Select>
+    </label>
+  )
+}
+
 function FactoryToggle({ factories, activeFactoryId }: { factories: MaterialReceivingFactory[]; activeFactoryId: string | null }) {
   if (factories.length === 0) {
     return (
-      <div className="rounded-xl border border-[#E8ECF0] bg-white p-4 text-sm text-[#6B7280]">
+      <div className="rounded-2xl border border-border/70 bg-card p-4 text-sm text-muted-foreground shadow-sm">
         В справочнике нет заводов для переключателя Берегово / Ужгород.
       </div>
     )
   }
 
   return (
-    <div className="rounded-xl border border-[#E8ECF0] bg-white p-4">
-      <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#1B3A6B]">
-        <Factory className="h-4 w-4" />
-        Завод: Берегово / Ужгород
+    <section className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm" aria-label="Выбор завода">
+      <div className="mb-3 flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><Factory className="h-4 w-4" /></div>
+        <div>
+          <div className="text-sm font-semibold text-foreground">Завод поставки</div>
+          <div className="text-xs text-muted-foreground">Сводка рассчитывается отдельно для каждого завода</div>
+        </div>
       </div>
       <div className="flex flex-wrap gap-2">
         {factories.map((factory) => {
@@ -243,10 +374,10 @@ function FactoryToggle({ factories, activeFactoryId }: { factories: MaterialRece
               href={`${ROUTES.SUPPLY_ORDERS}?view=summary&factory=${factory.id}`}
               aria-current={active ? 'page' : undefined}
               className={[
-                'inline-flex min-h-9 items-center rounded-md border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/30',
+                'inline-flex min-h-11 items-center rounded-xl border px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 active
-                  ? 'border-[#1B3A6B] bg-[#1B3A6B] text-white'
-                  : 'border-[#E8ECF0] bg-white text-[#1B3A6B] hover:bg-[#EFF6FF]',
+                  ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                  : 'border-border bg-background text-primary hover:bg-muted',
               ].join(' ')}
             >
               {factory.name}
@@ -254,7 +385,7 @@ function FactoryToggle({ factories, activeFactoryId }: { factories: MaterialRece
           )
         })}
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -813,8 +944,8 @@ function FactoryDeliveryEditor({
 
 function MachineItems({ factory }: { factory: SupplyOrderAggregateFactory }) {
   return (
-    <div className="border-t border-[#F1F5F9] bg-[#F8FAFC] px-12 py-3">
-      <div className="grid min-w-[960px] grid-cols-[minmax(220px,1fr)_130px_130px_170px_minmax(220px,1fr)_110px] gap-2 text-xs font-semibold uppercase text-[#64748B]">
+    <div className="border-t border-border/60 bg-muted/25 p-4">
+      <div className="hidden grid-cols-[minmax(200px,1fr)_120px_130px_170px_minmax(220px,1fr)_110px] gap-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground xl:grid">
         <span>Машина</span>
         <span>Количество</span>
         <span>Статус</span>
@@ -822,32 +953,50 @@ function MachineItems({ factory }: { factory: SupplyOrderAggregateFactory }) {
         <span>Поставки</span>
         <span>Заявка</span>
       </div>
-      <div className="mt-2 space-y-1">
+      <div className="mt-2 hidden space-y-2 xl:block">
         {factory.items.map((item) => (
-          <div key={`${item.table}:${item.id}`} className="grid min-w-[960px] grid-cols-[minmax(220px,1fr)_130px_130px_170px_minmax(220px,1fr)_110px] items-center gap-2 rounded-md bg-white px-2 py-2 text-sm">
-            <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-medium text-[#1B3A6B] hover:underline">
+          <div key={`${item.table}:${item.id}`} className="grid grid-cols-[minmax(200px,1fr)_120px_130px_170px_minmax(220px,1fr)_110px] items-center gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm">
+            <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-medium text-primary hover:underline">
               {item.machine_name}
             </Link>
-            <span className="tabular-nums text-[#111827]">{formatAmount(item.quantity)} {item.unit}</span>
+            <span className="tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</span>
             <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className="w-fit">
               {ORDER_STATUS_LABELS[item.order_status]}
             </Badge>
-            <span className="text-xs text-[#64748B] tabular-nums">
+            <span className="text-xs text-muted-foreground tabular-nums">
               {formatAmount(item.planned_schedule_quantity)} план / {formatAmount(item.delivered_schedule_quantity)} факт
             </span>
-            <span className="text-xs text-[#64748B]">
+            <span className="text-xs text-muted-foreground">
               {item.delivery_schedules.length > 0
                 ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ')
                 : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}
             </span>
             <Link
               href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`}
-              className="inline-flex h-8 w-fit items-center gap-1 rounded-md border border-[#E8ECF0] px-2 text-xs font-medium text-[#1B3A6B] hover:bg-[#EFF6FF]"
+              className="inline-flex min-h-9 w-fit items-center gap-1 rounded-lg border border-border px-2 text-xs font-medium text-primary hover:bg-muted"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Открыть
             </Link>
           </div>
+        ))}
+      </div>
+      <div className="grid gap-3 xl:hidden">
+        {factory.items.map((item) => (
+          <article key={`${item.table}:${item.id}`} className="rounded-xl border border-border/70 bg-background p-3">
+            <div className="flex items-start justify-between gap-3">
+              <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}</Link>
+              <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'}>{ORDER_STATUS_LABELS[item.order_status]}</Badge>
+            </div>
+            <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
+              <div><dt className="text-muted-foreground">Количество</dt><dd className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</dd></div>
+              <div><dt className="text-muted-foreground">График</dt><dd className="mt-1 text-foreground">{formatAmount(item.planned_schedule_quantity)} план / {formatAmount(item.delivered_schedule_quantity)} факт</dd></div>
+              <div><dt className="text-muted-foreground">Поставки</dt><dd className="mt-1 text-foreground">{item.delivery_schedules.length > 0 ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ') : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}</dd></div>
+            </dl>
+            <Link href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`} className="mt-3 inline-flex min-h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-muted">
+              <ExternalLink className="h-3.5 w-3.5" />Открыть заявку
+            </Link>
+          </article>
         ))}
       </div>
     </div>
@@ -856,13 +1005,13 @@ function MachineItems({ factory }: { factory: SupplyOrderAggregateFactory }) {
 
 function Metric({ label, value, hint }: { label: string; value: number | string; hint?: string }) {
   return (
-    <div className="rounded-lg border border-[#E8ECF0] bg-[#F8FAFC] px-3 py-2">
-      <div className="flex items-center gap-2 text-xs font-medium text-[#64748B]">
+    <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
         <Boxes className="h-3.5 w-3.5" />
         {label}
       </div>
-      <div className="mt-1 text-xl font-semibold text-[#1B3A6B] tabular-nums">{value}</div>
-      {hint && <div className="text-xs text-[#64748B]">{hint}</div>}
+      <div className="mt-1 text-xl font-semibold text-foreground tabular-nums">{value}</div>
+      {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
     </div>
   )
 }

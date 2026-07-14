@@ -1,10 +1,16 @@
+'use client'
+
 import Link from 'next/link'
-import type { ReactNode } from 'react'
-import { CalendarDays, CheckCircle2, ExternalLink, Factory, PackageCheck } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { CalendarDays, CheckCircle2, ExternalLink, Factory, PackageCheck, RotateCcw, Search, SlidersHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { SupplyOrderHistoryItem } from '@/lib/actions/supply-orders'
-import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
+import { MATERIAL_CATEGORIES, MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
+import { filterAndSortHistory, type HistoryFiltersState, type SupplyOrderHistorySort } from './supply-order-view'
 
 type SupplyOrderHistoryPageProps = {
   items: SupplyOrderHistoryItem[]
@@ -14,12 +20,26 @@ type SupplyOrderHistoryPageProps = {
 }
 
 export function SupplyOrderHistoryPage({ items, page, pageSize, total }: SupplyOrderHistoryPageProps) {
+  const defaultFilters = useMemo<HistoryFiltersState>(() => ({ query: '', supplier: 'all', category: 'all', sort: 'accepted_desc' }), [])
+  const [filters, setFilters] = useState<HistoryFiltersState>(defaultFilters)
+  const visibleItems = useMemo(() => filterAndSortHistory(items, filters), [filters, items])
+  const suppliers = useMemo(() => Array.from(new Set(items.map((item) => item.supplier_name || 'none')))
+    .sort((left, right) => left.localeCompare(right, 'ru')), [items])
   const pageCount = Math.max(1, Math.ceil(total / pageSize))
   const currentFrom = total === 0 ? 0 : page * pageSize + 1
   const currentTo = Math.min(total, (page + 1) * pageSize)
 
   return (
-    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+    <div className="space-y-4">
+      <HistoryFilters
+        value={filters}
+        suppliers={suppliers}
+        resultCount={visibleItems.length}
+        totalCount={items.length}
+        onChange={setFilters}
+        onReset={() => setFilters(defaultFilters)}
+      />
+    <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
       <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-950">История приемки металла</h2>
@@ -33,15 +53,16 @@ export function SupplyOrderHistoryPage({ items, page, pageSize, total }: SupplyO
         </div>
       </div>
 
-      {items.length === 0 ? (
+      {visibleItems.length === 0 ? (
         <div className="px-4 py-12 text-center">
           <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-500">
             <PackageCheck className="h-5 w-5" />
           </div>
-          <div className="mt-3 font-medium text-slate-950">В истории пока нет принятых поставок</div>
+          <div className="mt-3 font-medium text-slate-950">{items.length === 0 ? 'В истории пока нет принятых поставок' : 'По выбранным фильтрам ничего не найдено'}</div>
           <div className="mt-1 text-sm text-slate-600">
-            После приемки на склад строки появятся здесь автоматически.
+            {items.length === 0 ? 'После приемки на склад строки появятся здесь автоматически.' : 'Измените условия поиска или сбросьте фильтры.'}
           </div>
+          {items.length > 0 && <Button type="button" variant="outline" className="mt-4" onClick={() => setFilters(defaultFilters)}>Сбросить фильтры</Button>}
         </div>
       ) : (
         <>
@@ -51,18 +72,26 @@ export function SupplyOrderHistoryPage({ items, page, pageSize, total }: SupplyO
               <span>Материал</span>
               <span>Заявка</span>
               <span>План поставки</span>
-              <span>Принято</span>
+              <span role="columnheader" aria-sort={filters.sort === 'accepted_asc' ? 'ascending' : filters.sort === 'accepted_desc' ? 'descending' : 'none'}>
+                <button
+                  type="button"
+                  className="w-fit rounded-sm text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => setFilters((current) => ({ ...current, sort: current.sort === 'accepted_desc' ? 'accepted_asc' : 'accepted_desc' }))}
+                >
+                  Принято {filters.sort === 'accepted_asc' ? '↑' : filters.sort === 'accepted_desc' ? '↓' : ''}
+                </button>
+              </span>
               <span className="text-right">Количество</span>
             </div>
             <div className="divide-y divide-slate-100">
-              {items.map((item) => (
+              {visibleItems.map((item) => (
                 <HistoryRow key={item.id} item={item} />
               ))}
             </div>
           </div>
 
           <div className="grid gap-3 p-3 lg:hidden">
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <HistoryCard key={item.id} item={item} />
             ))}
           </div>
@@ -83,6 +112,85 @@ export function SupplyOrderHistoryPage({ items, page, pageSize, total }: SupplyO
         </div>
       </div>
     </section>
+    </div>
+  )
+}
+
+const historySortLabels: Record<SupplyOrderHistorySort, string> = {
+  accepted_desc: 'Принято: сначала новые',
+  accepted_asc: 'Принято: сначала старые',
+  material_asc: 'Материал: А–Я',
+  quantity_desc: 'Количество: по убыванию',
+}
+
+function HistoryFilters({ value, suppliers, resultCount, totalCount, onChange, onReset }: {
+  value: HistoryFiltersState
+  suppliers: string[]
+  resultCount: number
+  totalCount: number
+  onChange: (value: HistoryFiltersState) => void
+  onReset: () => void
+}) {
+  const activeCount = [value.query, value.supplier !== 'all', value.category !== 'all', value.sort !== 'accepted_desc'].filter(Boolean).length
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm" aria-label="Фильтры истории поставок">
+      <div className="flex flex-col gap-3 border-b border-border/60 bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><SlidersHorizontal className="h-4 w-4" /></div>
+          <div><h2 className="text-sm font-semibold text-foreground">Поиск в истории</h2><p className="text-xs text-muted-foreground">Показано {resultCount} из {totalCount} на странице</p></div>
+        </div>
+        <Button type="button" variant="ghost" size="sm" className="min-h-9 justify-start" disabled={activeCount === 0} onClick={onReset}><RotateCcw className="h-4 w-4" />Сбросить{activeCount > 0 ? ` (${activeCount})` : ''}</Button>
+      </div>
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-12">
+        <label className="grid gap-1.5 md:col-span-2 xl:col-span-4">
+          <span className="text-xs font-medium text-muted-foreground">Поиск</span>
+          <span className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input type="search" value={value.query} onChange={(event) => onChange({ ...value, query: event.target.value })} placeholder="Материал, машина, характеристика" className="h-11 pl-9" /></span>
+        </label>
+        <HistoryFilterSelect
+          className="xl:col-span-3"
+          label="Поставщик"
+          value={value.supplier}
+          display={value.supplier === 'all' ? 'Все поставщики' : value.supplier === 'none' ? 'Без поставщика' : value.supplier}
+          items={[['all', 'Все поставщики'], ...suppliers.map((supplier) => [supplier, supplier === 'none' ? 'Без поставщика' : supplier])]}
+          onValueChange={(supplier) => onChange({ ...value, supplier })}
+        />
+        <HistoryFilterSelect
+          className="xl:col-span-2"
+          label="Категория"
+          value={value.category}
+          display={value.category === 'all' ? 'Все категории' : MATERIAL_CATEGORY_LABELS[value.category]}
+          items={[['all', 'Все категории'], ...MATERIAL_CATEGORIES.map((category) => [category, MATERIAL_CATEGORY_LABELS[category]])]}
+          onValueChange={(category) => onChange({ ...value, category: category as HistoryFiltersState['category'] })}
+        />
+        <HistoryFilterSelect
+          className="xl:col-span-3"
+          label="Сортировка"
+          value={value.sort}
+          display={historySortLabels[value.sort]}
+          items={Object.entries(historySortLabels)}
+          onValueChange={(sort) => onChange({ ...value, sort: sort as SupplyOrderHistorySort })}
+        />
+      </div>
+    </section>
+  )
+}
+
+function HistoryFilterSelect({ label, value, display, items, onValueChange, className }: {
+  label: string
+  value: string
+  display: string
+  items: string[][]
+  onValueChange: (value: string) => void
+  className?: string
+}) {
+  return (
+    <label className={`grid min-w-0 gap-1.5 ${className || ''}`}>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <Select value={value} onValueChange={(nextValue) => onValueChange(nextValue || '')}>
+        <SelectTrigger className="h-11 w-full bg-background"><SelectValue>{display}</SelectValue></SelectTrigger>
+        <SelectContent>{items.map(([itemValue, itemLabel]) => <SelectItem key={itemValue} value={itemValue}>{itemLabel}</SelectItem>)}</SelectContent>
+      </Select>
+    </label>
   )
 }
 
