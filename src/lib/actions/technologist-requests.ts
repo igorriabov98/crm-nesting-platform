@@ -650,6 +650,16 @@ export async function completeStockReservation(requestId: string): Promise<Actio
       throw new Error('Бронь уже завершена или заявка не находится на проверке склада')
     }
 
+    const { data: detailingCheckData, error: detailingCheckError } = await db.rpc('fn_validate_detailing_request_check', {
+      p_request_id: requestId,
+      p_actor: userId,
+    })
+    if (detailingCheckError) throw new Error(detailingCheckError.message || 'Не удалось проверить деталировку')
+    const detailingCheck = detailingCheckData as { ready?: boolean; message?: string } | null
+    if (!detailingCheck?.ready) {
+      throw new Error(detailingCheck?.message || 'Проверьте подходящую деталировку перед отправкой заявки в снабжение')
+    }
+
     await validateRequestReadyForSupply(db, requestId, userId)
 
     const timestamp = new Date().toISOString()

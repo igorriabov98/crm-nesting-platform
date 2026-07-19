@@ -249,7 +249,7 @@ export function buildTaskNotification(
 export function buildTaskTelegramNotification(input: {
   title: string
   description?: string | null
-  deadline: string
+  deadline: string | null
   startDate?: string | null
   machineId?: string | null
   machineName?: string | null
@@ -260,7 +260,7 @@ export function buildTaskTelegramNotification(input: {
     input.machineName ? `Машина: <b>${escapeHtml(input.machineName)}</b>` : null,
     `Задача: ${escapeHtml(input.title)}`,
     input.startDate ? `Начать: <b>${escapeHtml(input.startDate)}</b>` : null,
-    `Дедлайн: <b>${escapeHtml(input.deadline)}</b>`,
+    `Дедлайн: <b>${escapeHtml(input.deadline || 'В ближайшее время')}</b>`,
     input.description ? `\n${escapeHtml(input.description)}` : null,
   ].filter(Boolean).join('\n')
 

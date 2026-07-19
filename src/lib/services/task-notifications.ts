@@ -21,7 +21,7 @@ type PendingTaskRow = {
   id: string
   title: string
   description: string | null
-  deadline: string
+  deadline: string | null
   start_date: string | null
   assigned_to: string
   machine_id: string | null

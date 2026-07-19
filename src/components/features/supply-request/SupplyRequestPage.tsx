@@ -22,14 +22,17 @@ import { SupplyPaintTable } from './SupplyPaintTable'
 import { SupplyPipeTable } from './SupplyPipeTable'
 import { SupplyRequestSummary } from './SupplyRequestSummary'
 import { SupplySheetMetalTable } from './SupplySheetMetalTable'
+import { DetailingRequestPanel } from './DetailingRequestPanel'
+import type { DetailingRequestWorkspace } from '@/lib/actions/detailing'
 
 type Props = {
   data: SupplyRequestPayload
+  detailing: DetailingRequestWorkspace | null
 }
 
 type TabKey = 'sheet_metal' | 'circle' | 'pipe' | 'knives' | 'paint' | 'components' | 'mesh' | 'chain_cord'
 
-export function SupplyRequestPage({ data }: Props) {
+export function SupplyRequestPage({ data, detailing }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [activeTab, setActiveTab] = useState<TabKey>('sheet_metal')
@@ -37,6 +40,7 @@ export function SupplyRequestPage({ data }: Props) {
   const isStockCheckMode = request.status === 'pending_stock_check' || request.status === 'stock_checked'
   const canCompleteReservation = isStockCheckMode && data.current_role !== 'supply_manager'
   const canManageOrders = request.status === 'submitted_to_supply' || request.status === 'completed'
+  const canManageDetailing = isStockCheckMode && ['technologist', 'planning_director', 'financial_director', 'commercial_director'].includes(data.current_role)
   const totalWeight = [
     ...data.sections.sheetMetal,
     ...data.sections.circles,
@@ -121,6 +125,8 @@ export function SupplyRequestPage({ data }: Props) {
           </p>
         )}
       </section>
+
+      {detailing && <DetailingRequestPanel workspace={detailing} canManage={canManageDetailing} />}
 
       <SupplyRequestSummary summary={data.summary} totalWeight={totalWeight} />
 

@@ -47,6 +47,7 @@ export const ROUTES = {
   SUPPLY_CONSUMABLE_REQUESTS: '/supply/production-requests',
   SUPPLY_TRANSPORT: '/supply/transport',
   INVENTORY:      '/inventory',
+  INVENTORY_DETAILING: '/inventory/detailing',
   INVENTORY_HISTORY: '/inventory/history',
   INVENTORY_RECEIVING: '/inventory/receiving',
   INVOICES:       '/invoices',

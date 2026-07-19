@@ -28,6 +28,8 @@ export type ResourceKey =
   | 'supply_transport'
   | 'supply_orders'
   | 'inventory'
+  | 'inventory_detailing'
+  | 'inventory_detailing_receiving'
   | 'inventory_history'
   | 'inventory_receiving'
   | 'suppliers'
@@ -138,6 +140,8 @@ const FINANCE_MANAGE_ROLES = ['financial_director', 'planning_director', 'supply
 const SUPPLY_AND_DIRECTORS = ['supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
 const TRANSPORT_SUPPLY_ROLES = ['supply_manager', 'procurement_head', ...DIRECTORS] as const satisfies readonly UserRole[]
 const INVENTORY_RECEIVING_ROLES = ['supply_manager', 'procurement_head', 'engineer', 'technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
+const INVENTORY_DETAILING_ROLES = ['technologist', 'procurement_head', ...DIRECTORS] as const satisfies readonly UserRole[]
+const INVENTORY_DETAILING_RECEIVING_ROLES = ['technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
 const REQUEST_VIEW_ROLES = ['engineer', 'technologist', 'supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
 const REQUEST_MANAGE_ROLES = ['technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
 const SUPPLY_MANAGE_ROLES = ['engineer', 'technologist', 'supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
@@ -392,6 +396,26 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: TRANSPORT_SUPPLY_ROLES,
     routes: [{ path: ROUTES.SUPPLY_TRANSPORT, match: 'prefix', operation: 'view', priority: 95 }],
     sidebar: { section: 'supply', icon: 'transport', order: 8 },
+  },
+  {
+    key: 'inventory_detailing',
+    label: 'Деталировка',
+    description: 'Каталог деталей, остатки и брони двух заводов',
+    group: 'Склад',
+    defaultHref: ROUTES.INVENTORY_DETAILING,
+    defaultViewRoles: INVENTORY_DETAILING_ROLES,
+    defaultManageRoles: INVENTORY_DETAILING_ROLES,
+    routes: [{ path: ROUTES.INVENTORY_DETAILING, match: 'prefix', operation: 'view', priority: 130 }],
+    sidebar: { section: 'inventory', icon: 'inventory', order: 15 },
+  },
+  {
+    key: 'inventory_detailing_receiving',
+    label: 'Приём деталировки',
+    description: 'Межскладская приёмка деталировки',
+    group: 'Склад',
+    defaultViewRoles: INVENTORY_DETAILING_RECEIVING_ROLES,
+    defaultManageRoles: INVENTORY_DETAILING_RECEIVING_ROLES,
+    routes: [],
   },
   {
     key: 'inventory',

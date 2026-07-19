@@ -6,7 +6,7 @@ export type MaterialRequestQueueItem = {
   machineId: string
   machineName: string
   totalWeight: number
-  deadline: string
+  deadline: string | null
   taskStatus: TaskStatus
   completedAt: string | null
   state: MaterialRequestQueueState
