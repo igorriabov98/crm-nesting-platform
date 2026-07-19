@@ -52,6 +52,15 @@ function statePriority(state: MaterialRequestQueueState) {
   return state === 'submitted' ? 1 : 0
 }
 
+function compareNullableDeadlines(left: string | null, right: string | null) {
+  const today = new Date().toISOString().slice(0, 10)
+  const leftGroup = left === null ? 1 : left <= today ? 0 : 2
+  const rightGroup = right === null ? 1 : right <= today ? 0 : 2
+  if (leftGroup !== rightGroup) return leftGroup - rightGroup
+  if (left && right) return left.localeCompare(right)
+  return 0
+}
+
 export async function getMaterialRequestQueue(): Promise<QueueResult> {
   try {
     const { supabase, userId, role } = await requirePermission('material_request_queue', 'view')
@@ -78,7 +87,7 @@ export async function getMaterialRequestQueue(): Promise<QueueResult> {
       .sort((left, right) => {
         const priorityDiff = taskPriority(left) - taskPriority(right)
         if (priorityDiff !== 0) return priorityDiff
-        const deadlineDiff = left.deadline.localeCompare(right.deadline)
+        const deadlineDiff = compareNullableDeadlines(left.deadline, right.deadline)
         if (deadlineDiff !== 0) return deadlineDiff
         return left.created_at.localeCompare(right.created_at)
       })
@@ -142,7 +151,7 @@ export async function getMaterialRequestQueue(): Promise<QueueResult> {
       .sort((left, right) => {
         const stateDiff = statePriority(left.state) - statePriority(right.state)
         if (stateDiff !== 0) return stateDiff
-        const deadlineDiff = left.deadline.localeCompare(right.deadline)
+        const deadlineDiff = compareNullableDeadlines(left.deadline, right.deadline)
         if (deadlineDiff !== 0) return deadlineDiff
         return left.machineName.localeCompare(right.machineName, 'ru')
       })

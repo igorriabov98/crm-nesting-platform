@@ -60,7 +60,7 @@ export function MyTasksView({
     [localTasks],
   )
   const overdueTasks = useMemo(
-    () => activeTasks.filter((task) => isBefore(new Date(task.deadline), today)),
+    () => activeTasks.filter((task) => Boolean(task.deadline) && isBefore(new Date(task.deadline as string), today)),
     [activeTasks, today],
   )
   const inProgressCount = useMemo(

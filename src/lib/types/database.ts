@@ -10,6 +10,157 @@ export interface SteelType {
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
+export type DetailingCheckDecision = 'auto_no_matches' | 'reserved' | 'declined'
+export type DetailingReservationStatus = 'active' | 'partially_consumed' | 'consumed' | 'released' | 'cancelled'
+export type DetailingTransferStatus = 'needs_date' | 'scheduled' | 'partially_received' | 'completed' | 'cancelled'
+export type DetailingMovementType = 'initial_receipt' | 'receipt' | 'adjustment' | 'reserve' | 'unreserve' | 'transfer_out' | 'transfer_in' | 'write_off' | 'rollback'
+
+export type DetailingPartRow = {
+  id: string
+  name: string
+  drawing_number: string
+  drawing_number_normalized: string
+  unit_weight_kg: number
+  is_active: boolean
+  created_by: string
+  updated_by: string
+  archived_by: string | null
+  archived_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type DetailingPartProductRow = {
+  id: string
+  part_id: string
+  product_id: string
+  applies_to_all_versions: boolean
+  created_at: string
+}
+
+export type DetailingPartProductVersionRow = {
+  part_product_id: string
+  product_version_id: string
+  created_at: string
+}
+
+export type DetailingBalanceRow = {
+  id: string
+  part_id: string
+  factory_id: string
+  on_hand_quantity: number
+  reserved_quantity: number
+  available_quantity: number
+  updated_by: string
+  created_at: string
+  updated_at: string
+}
+
+export type DetailingReservationRow = {
+  id: string
+  request_id: string
+  machine_id: string
+  machine_item_id: string | null
+  part_id: string
+  requested_quantity: number
+  consumed_quantity: number
+  released_quantity: number
+  status: DetailingReservationStatus
+  reserved_by: string
+  created_at: string
+  updated_at: string
+}
+
+export type DetailingReservationAllocationRow = {
+  id: string
+  reservation_id: string
+  factory_id: string
+  quantity: number
+  consumed_quantity: number
+  released_quantity: number
+  created_at: string
+  updated_at: string
+}
+
+export type DetailingRequestCheckRow = {
+  request_id: string
+  machine_id: string
+  machine_item_signature: string
+  decision: DetailingCheckDecision
+  decided_by: string
+  decided_at: string
+  updated_at: string
+}
+
+export type DetailingTransferRow = {
+  id: string
+  machine_id: string
+  source_factory_id: string
+  destination_factory_id: string
+  status: DetailingTransferStatus
+  expected_arrival_date: string | null
+  created_by: string
+  updated_by: string
+  completed_at: string | null
+  cancelled_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type DetailingTransferItemRow = {
+  id: string
+  transfer_id: string
+  reservation_id: string
+  part_id: string
+  requested_quantity: number
+  received_quantity: number
+  created_at: string
+  updated_at: string
+}
+
+export type DetailingConsumptionEventRow = {
+  id: string
+  cutting_event_id: string
+  production_fact_id: string
+  machine_id: string
+  factory_id: string
+  status: 'applied' | 'rolled_back'
+  performed_by: string
+  created_at: string
+  rolled_back_at: string | null
+  rolled_back_by: string | null
+}
+
+export type DetailingConsumptionItemRow = {
+  id: string
+  event_id: string
+  reservation_id: string
+  allocation_id: string
+  part_id: string
+  quantity: number
+  status: 'applied' | 'rolled_back'
+  created_at: string
+  rolled_back_at: string | null
+}
+
+export type DetailingMovementRow = {
+  id: string
+  part_id: string
+  factory_id: string
+  movement_type: DetailingMovementType
+  quantity_delta: number
+  reserved_delta: number
+  on_hand_after: number
+  reserved_after: number
+  machine_id: string | null
+  reservation_id: string | null
+  transfer_id: string | null
+  production_fact_id: string | null
+  performed_by: string
+  comment: string | null
+  created_at: string
+}
+
 export type Database = {
   public: {
     Tables: {
@@ -3189,6 +3340,90 @@ export type Database = {
           updated_at?: string
         }
       }
+      detailing_parts: {
+        Row: DetailingPartRow
+        Insert:
+          & Pick<DetailingPartRow, 'name' | 'drawing_number' | 'unit_weight_kg' | 'created_by' | 'updated_by'>
+          & Partial<Omit<DetailingPartRow, 'name' | 'drawing_number' | 'drawing_number_normalized' | 'unit_weight_kg' | 'created_by' | 'updated_by'>>
+        Update: Partial<Omit<DetailingPartRow, 'drawing_number_normalized'>>
+      }
+      detailing_part_products: {
+        Row: DetailingPartProductRow
+        Insert:
+          & Pick<DetailingPartProductRow, 'part_id' | 'product_id'>
+          & Partial<Omit<DetailingPartProductRow, 'part_id' | 'product_id'>>
+        Update: Partial<DetailingPartProductRow>
+      }
+      detailing_part_product_versions: {
+        Row: DetailingPartProductVersionRow
+        Insert:
+          & Pick<DetailingPartProductVersionRow, 'part_product_id' | 'product_version_id'>
+          & Partial<Omit<DetailingPartProductVersionRow, 'part_product_id' | 'product_version_id'>>
+        Update: Partial<DetailingPartProductVersionRow>
+      }
+      detailing_balances: {
+        Row: DetailingBalanceRow
+        Insert:
+          & Pick<DetailingBalanceRow, 'part_id' | 'factory_id' | 'updated_by'>
+          & Partial<Omit<DetailingBalanceRow, 'part_id' | 'factory_id' | 'available_quantity' | 'updated_by'>>
+        Update: Partial<Omit<DetailingBalanceRow, 'available_quantity'>>
+      }
+      detailing_reservations: {
+        Row: DetailingReservationRow
+        Insert:
+          & Pick<DetailingReservationRow, 'request_id' | 'machine_id' | 'part_id' | 'requested_quantity' | 'reserved_by'>
+          & Partial<Omit<DetailingReservationRow, 'request_id' | 'machine_id' | 'part_id' | 'requested_quantity' | 'reserved_by'>>
+        Update: Partial<DetailingReservationRow>
+      }
+      detailing_reservation_allocations: {
+        Row: DetailingReservationAllocationRow
+        Insert:
+          & Pick<DetailingReservationAllocationRow, 'reservation_id' | 'factory_id'>
+          & Partial<Omit<DetailingReservationAllocationRow, 'reservation_id' | 'factory_id'>>
+        Update: Partial<DetailingReservationAllocationRow>
+      }
+      detailing_request_checks: {
+        Row: DetailingRequestCheckRow
+        Insert:
+          & Pick<DetailingRequestCheckRow, 'request_id' | 'machine_id' | 'machine_item_signature' | 'decision' | 'decided_by'>
+          & Partial<Omit<DetailingRequestCheckRow, 'request_id' | 'machine_id' | 'machine_item_signature' | 'decision' | 'decided_by'>>
+        Update: Partial<DetailingRequestCheckRow>
+      }
+      detailing_transfers: {
+        Row: DetailingTransferRow
+        Insert:
+          & Pick<DetailingTransferRow, 'machine_id' | 'source_factory_id' | 'destination_factory_id' | 'created_by' | 'updated_by'>
+          & Partial<Omit<DetailingTransferRow, 'machine_id' | 'source_factory_id' | 'destination_factory_id' | 'created_by' | 'updated_by'>>
+        Update: Partial<DetailingTransferRow>
+      }
+      detailing_transfer_items: {
+        Row: DetailingTransferItemRow
+        Insert:
+          & Pick<DetailingTransferItemRow, 'transfer_id' | 'reservation_id' | 'part_id' | 'requested_quantity'>
+          & Partial<Omit<DetailingTransferItemRow, 'transfer_id' | 'reservation_id' | 'part_id' | 'requested_quantity'>>
+        Update: Partial<DetailingTransferItemRow>
+      }
+      detailing_consumption_events: {
+        Row: DetailingConsumptionEventRow
+        Insert:
+          & Pick<DetailingConsumptionEventRow, 'cutting_event_id' | 'production_fact_id' | 'machine_id' | 'factory_id' | 'performed_by'>
+          & Partial<Omit<DetailingConsumptionEventRow, 'cutting_event_id' | 'production_fact_id' | 'machine_id' | 'factory_id' | 'performed_by'>>
+        Update: Partial<DetailingConsumptionEventRow>
+      }
+      detailing_consumption_items: {
+        Row: DetailingConsumptionItemRow
+        Insert:
+          & Pick<DetailingConsumptionItemRow, 'event_id' | 'reservation_id' | 'allocation_id' | 'part_id' | 'quantity'>
+          & Partial<Omit<DetailingConsumptionItemRow, 'event_id' | 'reservation_id' | 'allocation_id' | 'part_id' | 'quantity'>>
+        Update: Partial<DetailingConsumptionItemRow>
+      }
+      detailing_movements: {
+        Row: DetailingMovementRow
+        Insert:
+          & Pick<DetailingMovementRow, 'part_id' | 'factory_id' | 'movement_type' | 'on_hand_after' | 'reserved_after' | 'performed_by'>
+          & Partial<Omit<DetailingMovementRow, 'part_id' | 'factory_id' | 'movement_type' | 'on_hand_after' | 'reserved_after' | 'performed_by'>>
+        Update: Partial<DetailingMovementRow>
+      }
       task_delegations: {
         Row: {
           id: string
@@ -3239,13 +3474,14 @@ export type Database = {
           product_version_id: string | null
           consumable_request_id: string | null
           supply_order_schedule_id: string | null
+          detailing_transfer_id: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
           description: string | null
           status: Database['public']['Enums']['task_status']
           start_date: string | null
-          deadline: string
+          deadline: string | null
           completed_at: string | null
           notified_at: string | null
           telegram_error: string | null
@@ -3260,13 +3496,14 @@ export type Database = {
           product_version_id?: string | null
           consumable_request_id?: string | null
           supply_order_schedule_id?: string | null
+          detailing_transfer_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
           description?: string | null
           status?: Database['public']['Enums']['task_status']
           start_date?: string | null
-          deadline: string
+          deadline?: string | null
           completed_at?: string | null
           notified_at?: string | null
           telegram_error?: string | null
@@ -3281,13 +3518,14 @@ export type Database = {
           product_version_id?: string | null
           consumable_request_id?: string | null
           supply_order_schedule_id?: string | null
+          detailing_transfer_id?: string | null
           assigned_to?: string
           task_type?: Database['public']['Enums']['task_type']
           title?: string
           description?: string | null
           status?: Database['public']['Enums']['task_status']
           start_date?: string | null
-          deadline?: string
+          deadline?: string | null
           completed_at?: string | null
           notified_at?: string | null
           telegram_error?: string | null
@@ -4119,7 +4357,11 @@ export type Database = {
       outsourcing_transport_order_status: 'needed' | 'found' | 'in_transit' | 'completed' | 'cancelled'
       product_completion_type: 'mounting_set' | 'chain_set'
       product_fastening_type: 'metal_plate' | 'wp_plate' | 'a4_plate' | 'white_sticker' | 'none_required'
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete'
+      detailing_check_decision: DetailingCheckDecision
+      detailing_reservation_status: DetailingReservationStatus
+      detailing_transfer_status: DetailingTransferStatus
+      detailing_movement_type: DetailingMovementType
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete' | 'detailing_transfer'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'
@@ -4130,6 +4372,73 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment'
     }
     Functions: {
+      fn_create_detailing_part: {
+        Args: {
+          p_name: string
+          p_drawing_number: string
+          p_unit_weight_kg: number
+          p_factory_id: string
+          p_initial_quantity: number
+          p_compatibilities: Json
+          p_actor: string
+        }
+        Returns: string
+      }
+      fn_receive_detailing_stock: {
+        Args: {
+          p_part_id: string
+          p_factory_id: string
+          p_quantity: number
+          p_comment: string | null
+          p_actor: string
+        }
+        Returns: number
+      }
+      fn_adjust_detailing_stock: {
+        Args: {
+          p_part_id: string
+          p_factory_id: string
+          p_on_hand_quantity: number
+          p_comment: string
+          p_actor: string
+        }
+        Returns: number
+      }
+      fn_validate_detailing_request_check: {
+        Args: { p_request_id: string; p_actor: string }
+        Returns: Json
+      }
+      fn_decline_detailing_for_request: {
+        Args: { p_request_id: string; p_actor: string }
+        Returns: undefined
+      }
+      fn_reserve_detailing: {
+        Args: {
+          p_request_id: string
+          p_machine_item_id: string
+          p_part_id: string
+          p_source_factory_id: string
+          p_quantity: number
+          p_actor: string
+        }
+        Returns: Json
+      }
+      fn_release_detailing_reservation: {
+        Args: { p_reservation_id: string; p_reason: string; p_actor: string }
+        Returns: number
+      }
+      fn_set_detailing_transfer_date: {
+        Args: { p_transfer_id: string; p_expected_arrival_date: string; p_actor: string }
+        Returns: DetailingTransferStatus
+      }
+      fn_receive_detailing_transfer: {
+        Args: { p_transfer_id: string; p_items: Json; p_actor: string }
+        Returns: DetailingTransferStatus
+      }
+      fn_archive_detailing_part: {
+        Args: { p_part_id: string; p_actor: string }
+        Returns: undefined
+      }
       create_consumable_item: {
         Args: {
           p_factory_id: string

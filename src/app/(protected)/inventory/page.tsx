@@ -11,7 +11,7 @@ export const metadata = {
 export default async function InventoryRoute({
   searchParams,
 }: {
-  searchParams?: Promise<{ factory?: string }>
+  searchParams?: Promise<{ factory?: string; mode?: string }>
 }) {
   const resolvedSearchParams = await searchParams
   const factoriesResult = await getInventoryFactories()
@@ -42,6 +42,7 @@ export default async function InventoryRoute({
           suppliers={suppliersResult.data || []}
           steelTypes={steelTypes}
           resultLimit={INVENTORY_LIST_LIMIT}
+          initialStockMode={resolvedSearchParams?.mode === 'business_scrap' || resolvedSearchParams?.mode === 'future_business_scrap' ? resolvedSearchParams.mode : 'main'}
         />
       )}
     </div>

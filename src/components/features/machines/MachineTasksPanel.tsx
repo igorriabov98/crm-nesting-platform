@@ -39,7 +39,7 @@ export function MachineTasksPanel({ tasks }: MachineTasksPanelProps) {
 
       if (task.status === 'cancelled') return groups
 
-      const overdue = isBefore(new Date(task.deadline), today)
+      const overdue = Boolean(task.deadline) && isBefore(new Date(task.deadline as string), today)
       if (overdue) {
         groups.overdue.push(task)
       } else {
