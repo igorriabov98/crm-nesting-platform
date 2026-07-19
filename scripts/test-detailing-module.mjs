@@ -7,9 +7,10 @@ import path from 'node:path'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (relativePath) => readFile(path.join(root, relativePath), 'utf8')
 
-const [migration, taskTypeMigration, actions, requestPage, transportPage, receivingPage, taskCards, databaseTypes] = await Promise.all([
+const [migration, taskTypeMigration, securityHardeningMigration, actions, requestPage, transportPage, receivingPage, taskCards, databaseTypes] = await Promise.all([
   read('supabase/migrations/20260719163223_detailing_module.sql'),
   read('supabase/migrations/20260719163222_detailing_task_type.sql'),
+  read('supabase/migrations/20260719212000_detailing_security_hardening.sql'),
   read('src/lib/actions/detailing.ts'),
   read('src/components/features/supply-request/DetailingRequestPanel.tsx'),
   read('src/components/features/supply/DetailingTransportPanel.tsx'),
@@ -20,6 +21,22 @@ const [migration, taskTypeMigration, actions, requestPage, transportPage, receiv
 
 assert.match(taskTypeMigration, /ADD VALUE IF NOT EXISTS 'detailing_transfer'/)
 assert.doesNotMatch(migration, /ALTER TYPE public\.task_type ADD VALUE/)
+for (const signature of [
+  'detailing_touch_updated_at\\(\\)',
+  'detailing_validate_product_version\\(\\)',
+  'detailing_reject_movement_changes\\(\\)',
+  'detailing_previous_workday\\(date\\)',
+]) {
+  assert.match(
+    securityHardeningMigration,
+    new RegExp(`ALTER FUNCTION public\\.${signature}[\\s\\S]*?SET search_path = public`),
+    `${signature} must have a fixed search_path`,
+  )
+}
+assert.match(
+  securityHardeningMigration,
+  /REVOKE ALL ON FUNCTION public\.detailing_role_allowed\(public\.user_role\[\]\)[\s\S]*FROM PUBLIC, anon, authenticated/,
+)
 for (const table of ['detailing_parts', 'detailing_balances', 'detailing_movements', 'detailing_reservations', 'detailing_transfers', 'detailing_consumption_events']) {
   assert.match(migration, new RegExp(`CREATE TABLE public\\.${table}`), `${table} is missing`)
   assert.match(migration, new RegExp(`ALTER TABLE public\\.%I ENABLE ROW LEVEL SECURITY|CREATE POLICY [\\s\\S]* ON public\\.${table}`), `${table} RLS is missing`)
