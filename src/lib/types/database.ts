@@ -161,6 +161,46 @@ export type DetailingMovementRow = {
   created_at: string
 }
 
+export type EmployeeAssignmentStatus = 'confirmed' | 'pending'
+
+export type EmployeeRow = {
+  id: string
+  full_name: string
+  factory_id: string
+  active: boolean
+  default_section_id: string | null
+  user_id: string | null
+  created_at: string
+  created_by: string | null
+  updated_at: string
+  updated_by: string | null
+}
+
+export type EmployeeRateRow = {
+  id: string
+  employee_id: string
+  section_id: string
+  kg_per_day: number
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type EmployeeAssignmentRow = {
+  id: string
+  employee_id: string
+  machine_id: string
+  section_id: string
+  work_date: string
+  half: 1 | 2
+  status: EmployeeAssignmentStatus
+  kg_planned: number
+  created_at: string
+  created_by: string | null
+  updated_at: string
+  updated_by: string | null
+}
+
 export type Database = {
   public: {
     Tables: {
@@ -183,6 +223,30 @@ export type Database = {
           created_at?: string
           updated_at?: string
         }
+      }
+      employees: {
+        Row: EmployeeRow
+        Insert:
+          & Pick<EmployeeRow, 'full_name' | 'factory_id'>
+          & Partial<Omit<EmployeeRow, 'id' | 'full_name' | 'factory_id' | 'created_at' | 'updated_at'>>
+          & { id?: string; created_at?: string; updated_at?: string }
+        Update: Partial<Omit<EmployeeRow, 'created_at'>>
+      }
+      employee_rates: {
+        Row: EmployeeRateRow
+        Insert:
+          & Pick<EmployeeRateRow, 'employee_id' | 'section_id' | 'kg_per_day'>
+          & Partial<Omit<EmployeeRateRow, 'id' | 'employee_id' | 'section_id' | 'kg_per_day' | 'created_at' | 'updated_at'>>
+          & { id?: string; created_at?: string; updated_at?: string }
+        Update: Partial<Omit<EmployeeRateRow, 'created_at'>>
+      }
+      employee_assignments: {
+        Row: EmployeeAssignmentRow
+        Insert:
+          & Pick<EmployeeAssignmentRow, 'employee_id' | 'machine_id' | 'section_id' | 'work_date' | 'half' | 'kg_planned'>
+          & Partial<Omit<EmployeeAssignmentRow, 'id' | 'employee_id' | 'machine_id' | 'section_id' | 'work_date' | 'half' | 'kg_planned' | 'created_at' | 'updated_at'>>
+          & { id?: string; created_at?: string; updated_at?: string }
+        Update: Partial<Omit<EmployeeAssignmentRow, 'created_at'>>
       }
       role_permissions: {
         Row: {
@@ -4361,6 +4425,7 @@ export type Database = {
       detailing_reservation_status: DetailingReservationStatus
       detailing_transfer_status: DetailingTransferStatus
       detailing_movement_type: DetailingMovementType
+      employee_assignment_status: EmployeeAssignmentStatus
       task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete' | 'detailing_transfer'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
@@ -4372,6 +4437,20 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment'
     }
     Functions: {
+      fn_people_schedule_assignment: {
+        Args: {
+          p_employee_id: string
+          p_machine_id: string
+          p_section_id: string
+          p_start_date: string
+          p_start_half?: number
+        }
+        Returns: EmployeeAssignmentRow[]
+      }
+      fn_people_confirm_assignment: {
+        Args: { p_assignment_id: string }
+        Returns: EmployeeAssignmentRow
+      }
       fn_create_detailing_part: {
         Args: {
           p_name: string
