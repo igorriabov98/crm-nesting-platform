@@ -8,14 +8,13 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DetailingCreateDialog } from '@/components/features/inventory/DetailingCreateDialog'
 import { ROUTES } from '@/lib/constants/routes'
 import {
   adjustDetailingStock,
   archiveDetailingPart,
-  createDetailingPart,
   receiveDetailingStock,
   type DetailingPartCard,
-  type DetailingProductOption,
   type DetailingWarehouseData,
 } from '@/lib/actions/detailing'
 
@@ -25,18 +24,19 @@ const MOVEMENT_LABELS: Record<string, string> = {
   transfer_in: 'Перемещение: приёмка', write_off: 'Списание', rollback: 'Откат списания',
 }
 
-type CompatibilityDraft = { productId: string; allVersions: boolean; versionIds: string[] }
 type StockDialog = { mode: 'receipt' | 'adjust'; part: DetailingPartCard; factoryId: string } | null
 
 function kg(value: number) {
   return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(value)} кг`
 }
 
-function productLabel(product: DetailingProductOption) {
-  return `${product.name} · ${product.drawingNumber}`
-}
-
-export function DetailingWarehousePage({ data }: { data: DetailingWarehouseData }) {
+export function DetailingWarehousePage({
+  data,
+  activeFactoryId,
+}: {
+  data: DetailingWarehouseData
+  activeFactoryId: string | null
+}) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [search, setSearch] = useState('')
@@ -44,43 +44,17 @@ export function DetailingWarehousePage({ data }: { data: DetailingWarehouseData 
   const [stockDialog, setStockDialog] = useState<StockDialog>(null)
   const [stockQuantity, setStockQuantity] = useState('')
   const [stockComment, setStockComment] = useState('')
-  const [name, setName] = useState('')
-  const [drawingNumber, setDrawingNumber] = useState('')
-  const [unitWeightKg, setUnitWeightKg] = useState('')
-  const [factoryId, setFactoryId] = useState(data.factories[0]?.id || '')
-  const [initialQuantity, setInitialQuantity] = useState('')
-  const [compatibilities, setCompatibilities] = useState<CompatibilityDraft[]>([])
-  const [productToAdd, setProductToAdd] = useState(data.products[0]?.id || '')
+  const activeFactory = data.factories.find((factory) => factory.id === activeFactoryId) || null
+  const inventoryFactoryQuery = activeFactoryId ? `factory=${encodeURIComponent(activeFactoryId)}&` : ''
+  const inventoryMainHref = activeFactoryId
+    ? `${ROUTES.INVENTORY}?factory=${encodeURIComponent(activeFactoryId)}`
+    : ROUTES.INVENTORY
 
   const filteredParts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase('ru')
     if (!query) return data.parts
     return data.parts.filter((part) => [part.name, part.drawingNumber, ...part.compatibilities.map((item) => item.productName)].join(' ').toLocaleLowerCase('ru').includes(query))
   }, [data.parts, search])
-
-  const addCompatibility = () => {
-    if (!productToAdd || compatibilities.some((item) => item.productId === productToAdd)) return
-    setCompatibilities((current) => [...current, { productId: productToAdd, allVersions: true, versionIds: [] }])
-  }
-
-  const resetCreate = () => {
-    setName(''); setDrawingNumber(''); setUnitWeightKg(''); setInitialQuantity(''); setCompatibilities([])
-  }
-
-  const submitCreate = () => {
-    startTransition(async () => {
-      const result = await createDetailingPart({
-        name, drawingNumber, unitWeightKg: Number(unitWeightKg), factoryId,
-        initialQuantity: Number(initialQuantity), compatibilities,
-      })
-      if (!result.success) {
-        toast.error(result.error || 'Не удалось создать карточку')
-        return
-      }
-      toast.success('Карточка детали создана, начальное поступление записано')
-      setShowCreate(false); resetCreate(); router.refresh()
-    })
-  }
 
   const submitStock = () => {
     if (!stockDialog) return
@@ -112,10 +86,27 @@ export function DetailingWarehousePage({ data }: { data: DetailingWarehouseData 
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-[#E8ECF0] bg-white p-4">
+        <div className="mb-4 flex flex-col gap-3 border-b border-[#E8ECF0] pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-sm font-medium text-[#1B3A6B]">
+            <Factory className="h-4 w-4" />
+            Склад завода{activeFactory ? `: ${activeFactory.name}` : ''}
+          </div>
+          <div className="inline-flex w-fit rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-1">
+            {data.factories.map((factory) => (
+              <Link
+                key={factory.id}
+                href={`${ROUTES.INVENTORY_DETAILING}?factory=${encodeURIComponent(factory.id)}`}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${factory.id === activeFactoryId ? 'bg-white text-[#1B3A6B] shadow-sm' : 'text-[#6B7280] hover:text-[#1B3A6B]'}`}
+              >
+                {factory.name}
+              </Link>
+            ))}
+          </div>
+        </div>
         <div className="mb-4 flex flex-wrap gap-2 border-b border-[#E8ECF0] pb-4">
-          <Link href={ROUTES.INVENTORY} className="rounded-lg px-3 py-2 text-sm font-medium text-[#6B7280] hover:bg-[#F3F6FA] hover:text-[#1B3A6B]">Склад</Link>
-          <Link href={`${ROUTES.INVENTORY}?mode=future_business_scrap`} className="rounded-lg px-3 py-2 text-sm font-medium text-[#6B7280] hover:bg-[#F3F6FA] hover:text-[#1B3A6B]">Будущий деловой отход</Link>
-          <Link href={`${ROUTES.INVENTORY}?mode=business_scrap`} className="rounded-lg px-3 py-2 text-sm font-medium text-[#6B7280] hover:bg-[#F3F6FA] hover:text-[#1B3A6B]">Деловой отход</Link>
+          <Link href={inventoryMainHref} className="rounded-lg px-3 py-2 text-sm font-medium text-[#6B7280] hover:bg-[#F3F6FA] hover:text-[#1B3A6B]">Склад</Link>
+          <Link href={`${ROUTES.INVENTORY}?${inventoryFactoryQuery}mode=future_business_scrap`} className="rounded-lg px-3 py-2 text-sm font-medium text-[#6B7280] hover:bg-[#F3F6FA] hover:text-[#1B3A6B]">Будущий деловой отход</Link>
+          <Link href={`${ROUTES.INVENTORY}?${inventoryFactoryQuery}mode=business_scrap`} className="rounded-lg px-3 py-2 text-sm font-medium text-[#6B7280] hover:bg-[#F3F6FA] hover:text-[#1B3A6B]">Деловой отход</Link>
           <span className="rounded-lg bg-[#EAF1FB] px-3 py-2 text-sm font-semibold text-[#1B3A6B]">Деталировка</span>
         </div>
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -123,7 +114,7 @@ export function DetailingWarehousePage({ data }: { data: DetailingWarehouseData 
             <label htmlFor="detailing-search" className="mb-1 block text-sm font-medium text-[#374151]">Поиск детали</label>
             <Input id="detailing-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Название, номер чертежа или изделие" />
           </div>
-          <Button className="h-10 bg-[#1B3A6B] px-4" onClick={() => setShowCreate(true)}><Plus />Добавить деталировку</Button>
+          <Button className="h-10 bg-[#1B3A6B] px-4" onClick={() => setShowCreate(true)} disabled={!activeFactory}><Plus />Добавить деталировку</Button>
         </div>
       </div>
 
@@ -166,20 +157,12 @@ export function DetailingWarehousePage({ data }: { data: DetailingWarehouseData 
         </article>
       ))}
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader><DialogTitle>Новая карточка деталировки</DialogTitle><DialogDescription>Карточка создаётся вместе с первым поступлением на выбранный завод.</DialogDescription></DialogHeader>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="text-sm font-medium">Название детали<Input className="mt-1" value={name} onChange={(event) => setName(event.target.value)} /></label>
-            <label className="text-sm font-medium">Номер чертежа<Input className="mt-1" value={drawingNumber} onChange={(event) => setDrawingNumber(event.target.value)} /></label>
-            <label className="text-sm font-medium">Вес одной детали, кг<Input className="mt-1" type="number" min="0.001" step="0.001" value={unitWeightKg} onChange={(event) => setUnitWeightKg(event.target.value)} /></label>
-            <label className="text-sm font-medium">Завод первого поступления<select className="mt-1 h-10 w-full rounded-lg border border-input bg-white px-3" value={factoryId} onChange={(event) => setFactoryId(event.target.value)}>{data.factories.map((factory) => <option key={factory.id} value={factory.id}>{factory.name}</option>)}</select></label>
-            <label className="text-sm font-medium">Количество, шт.<Input className="mt-1" type="number" min="1" step="1" value={initialQuantity} onChange={(event) => setInitialQuantity(event.target.value)} /></label>
-          </div>
-          <div className="rounded-lg border border-[#DCE3EC] p-3"><div className="mb-2 font-medium text-[#243B5A]">Совместимые изделия</div><div className="flex gap-2"><select className="h-10 min-w-0 flex-1 rounded-lg border border-input bg-white px-3" value={productToAdd} onChange={(event) => setProductToAdd(event.target.value)}>{data.products.map((product) => <option key={product.id} value={product.id}>{productLabel(product)}</option>)}</select><Button type="button" variant="outline" onClick={addCompatibility}>Добавить</Button></div><div className="mt-3 space-y-3">{compatibilities.map((compatibility) => { const product = data.products.find((item) => item.id === compatibility.productId); if (!product) return null; return <div key={compatibility.productId} className="rounded-lg bg-[#F7F9FC] p-3"><div className="flex items-start justify-between gap-2"><div className="font-medium">{productLabel(product)}</div><Button size="xs" variant="ghost" onClick={() => setCompatibilities((current) => current.filter((item) => item.productId !== compatibility.productId))}>Убрать</Button></div><label className="mt-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={compatibility.allVersions} onChange={(event) => setCompatibilities((current) => current.map((item) => item.productId === compatibility.productId ? { ...item, allVersions: event.target.checked, versionIds: [] } : item))} />Подходит для всех версий</label>{!compatibility.allVersions && <div className="mt-2 grid gap-2 sm:grid-cols-2">{product.versions.map((version) => <label key={version.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={compatibility.versionIds.includes(version.id)} onChange={(event) => setCompatibilities((current) => current.map((item) => item.productId === compatibility.productId ? { ...item, versionIds: event.target.checked ? [...item.versionIds, version.id] : item.versionIds.filter((id) => id !== version.id) } : item))} />Версия {version.versionNumber} · {version.drawingNumber}</label>)}</div>}</div>})}</div></div>
-          <DialogFooter><Button variant="outline" onClick={() => setShowCreate(false)}>Отмена</Button><Button className="bg-[#1B3A6B]" disabled={isPending} onClick={submitCreate}>{isPending ? 'Сохранение…' : 'Создать карточку'}</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DetailingCreateDialog
+        data={data}
+        activeFactoryId={activeFactoryId}
+        open={showCreate}
+        onOpenChange={setShowCreate}
+      />
 
       <Dialog open={Boolean(stockDialog)} onOpenChange={(open) => !open && setStockDialog(null)}>
         <DialogContent><DialogHeader><DialogTitle>{stockDialog?.mode === 'receipt' ? 'Поступление деталировки' : 'Корректировка остатка'}</DialogTitle><DialogDescription>{stockDialog?.part.name} · {stockDialog?.part.drawingNumber} · {data.factories.find((factory) => factory.id === stockDialog?.factoryId)?.name}</DialogDescription></DialogHeader><label className="text-sm font-medium">{stockDialog?.mode === 'receipt' ? 'Принято, шт.' : 'Новый фактический остаток, шт.'}<Input className="mt-1" type="number" min="0" step="1" value={stockQuantity} onChange={(event) => setStockQuantity(event.target.value)} /></label><label className="text-sm font-medium">Комментарий {stockDialog?.mode === 'adjust' ? '(обязательно)' : ''}<Input className="mt-1" value={stockComment} onChange={(event) => setStockComment(event.target.value)} /></label><DialogFooter><Button variant="outline" onClick={() => setStockDialog(null)}>Отмена</Button><Button disabled={isPending} onClick={submitStock}>{isPending ? 'Сохранение…' : 'Сохранить'}</Button></DialogFooter></DialogContent>
