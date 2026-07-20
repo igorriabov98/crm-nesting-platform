@@ -6,16 +6,17 @@ export const metadata = { title: 'Планирование людей — CRM LE
 export default async function PeoplePlanningPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ factory?: string; date?: string; view?: string }>
+  searchParams?: Promise<{ factory?: string; date?: string; month?: string; view?: string }>
 }) {
   const params = await searchParams
   try {
     const data = await getPeoplePlanningWorkspace({
       factoryId: params?.factory,
       date: params?.date,
+      month: params?.month,
       view: params?.view === 'week' ? 'week' : 'day',
     })
-    return <PeoplePlanningBoard key={`${data.selectedFactoryId}:${data.selectedDate}:${data.view}`} data={data} />
+    return <PeoplePlanningBoard key={`${data.selectedFactoryId}:${data.selectedDate}:${data.selectedMonth}:${data.view}`} data={data} />
   } catch (error) {
     return (
       <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
