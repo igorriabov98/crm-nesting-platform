@@ -8,7 +8,6 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Clock3,
   Copy,
   Factory,
   Layers3,
@@ -28,6 +27,7 @@ import {
   saveEmployeeAction,
   saveEmployeeRateAction,
   scheduleEmployeeAction,
+  scheduleEmployeeFullDayAction,
   updateEmployeeAssignmentAction,
 } from '@/lib/actions/people-planning'
 import { addPlanningDays, type PlanningHalf } from '@/lib/people-planning/slots'
@@ -105,6 +105,8 @@ export function PeoplePlanningBoard({ data }: Props) {
   const [scheduleMachineId, setScheduleMachineId] = useState('')
   const [scheduleDate, setScheduleDate] = useState(data.selectedDate)
   const [scheduleHalf, setScheduleHalf] = useState<PlanningHalf>(1)
+  const [scheduleMode, setScheduleMode] = useState<'half' | 'full-day'>('half')
+  const [scheduleSlotLocked, setScheduleSlotLocked] = useState(false)
   const [employeeName, setEmployeeName] = useState('')
   const [employeeSectionId, setEmployeeSectionId] = useState(data.sections[0]?.id || '')
   const [rateEmployeeId, setRateEmployeeId] = useState('')
@@ -121,7 +123,6 @@ export function PeoplePlanningBoard({ data }: Props) {
   const assignmentBySlot = useMemo(() => new Map(
     data.assignments.map((assignment) => [assignmentKey(assignment.employee_id, assignment.work_date, assignment.half), assignment]),
   ), [data.assignments])
-  const pendingCount = data.assignments.filter((assignment) => assignment.status === 'pending').length
   const completedStages = data.machines.reduce(
     (total, machine) => total + machine.stages.filter((stage) => stage.progressPercent >= 100).length,
     0,
@@ -170,6 +171,7 @@ export function PeoplePlanningBoard({ data }: Props) {
     machineId?: string
     date?: string
     half?: PlanningHalf
+    fullDay?: boolean
   }) {
     const requestedMachine = options?.machineId ? machineById.get(options.machineId) : null
     const machineSection = requestedMachine?.stages.find((stage) => (
@@ -183,6 +185,8 @@ export function PeoplePlanningBoard({ data }: Props) {
     setScheduleMachineId(nextMachine?.id || '')
     setScheduleDate(options?.date || data.selectedDate)
     setScheduleHalf(options?.half || 1)
+    setScheduleMode(options?.fullDay ? 'full-day' : 'half')
+    setScheduleSlotLocked(Boolean(options?.date && (options?.half || options?.fullDay)))
     setScheduleOpen(true)
   }
 
@@ -268,6 +272,35 @@ export function PeoplePlanningBoard({ data }: Props) {
     )
   }
 
+  function renderFullDayAction(sectionId: string, employeeId: string, date: string) {
+    const firstHalf = assignmentBySlot.get(assignmentKey(employeeId, date, 1))
+    const secondHalf = assignmentBySlot.get(assignmentKey(employeeId, date, 2))
+    const occupied = [firstHalf, secondHalf].filter((assignment): assignment is EmployeeAssignment => Boolean(assignment))
+
+    if (occupied.length === 0) {
+      return (
+        <button
+          type="button"
+          className="flex min-h-20 w-full min-w-36 flex-col items-center justify-center rounded-lg border border-dashed border-blue-200 bg-blue-50/60 px-3 text-xs font-semibold text-[#1B3A6B] transition-colors hover:border-[#6E8FB9] hover:bg-[#EAF0F8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/30"
+          aria-label={`Назначить ${employeeById.get(employeeId)?.full_name || 'сотрудника'}, ${formatDate(date)}, весь день`}
+          onClick={() => openSchedule({ sectionId, employeeId, date, fullDay: true })}
+        >
+          <CalendarDays className="mb-1 size-4" /> Весь день
+        </button>
+      )
+    }
+
+    const occupiedElsewhere = occupied.some((assignment) => assignment.section_id !== sectionId)
+    const occupiedHalves = [firstHalf ? 'первая' : '', secondHalf ? 'вторая' : ''].filter(Boolean).join(' и ')
+    return (
+      <div className={`flex min-h-20 min-w-36 flex-col justify-center rounded-lg border px-3 py-2.5 ${occupiedElsewhere ? 'border-red-200 bg-red-50 text-red-900' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+        <p className="text-xs font-semibold">{occupied.length === 2 ? 'День заполнен' : 'День занят частично'}</p>
+        <p className="mt-1 text-[11px] leading-snug">{occupiedHalves} половина</p>
+        {occupiedElsewhere && <p className="mt-1 text-[10px] font-medium text-red-700">Есть назначение на другом участке</p>}
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-full bg-[#F4F6F9] p-3 text-[#1B3A6B] sm:p-5">
       <div className="mx-auto max-w-[1920px] space-y-4">
@@ -302,7 +335,7 @@ export function PeoplePlanningBoard({ data }: Props) {
             {[
               { label: 'Сотрудников', value: activeEmployees.length, icon: Users, tone: 'text-blue-700 bg-blue-50' },
               { label: 'Занятых слотов', value: data.assignments.length, icon: CalendarDays, tone: 'text-violet-700 bg-violet-50' },
-              { label: 'Ждут подтверждения', value: pendingCount, icon: Clock3, tone: 'text-amber-700 bg-amber-50' },
+              { label: 'Машин в месяце', value: data.machines.length, icon: ListOrdered, tone: 'text-amber-700 bg-amber-50' },
               { label: 'Завершённых этапов', value: completedStages, icon: Layers3, tone: 'text-emerald-700 bg-emerald-50' },
             ].map(({ label, value, icon: Icon, tone }) => (
               <div key={label} className="flex items-center justify-between gap-3 bg-white px-5 py-3.5">
@@ -366,12 +399,18 @@ export function PeoplePlanningBoard({ data }: Props) {
                         <TableHeader>
                           <TableRow className="bg-[#F8FAFC] hover:bg-[#F8FAFC]">
                             <TableHead className="sticky left-0 z-20 min-w-72 border-r border-[#E8ECF0] bg-[#F8FAFC]">Сотрудник и ставка</TableHead>
-                            {data.dates.flatMap((date) => ([1, 2] as PlanningHalf[]).map((half) => (
-                              <TableHead key={`${date}:${half}`} className="min-w-44 text-center">
+                            {data.dates.flatMap((date) => [
+                              ...([1, 2] as PlanningHalf[]).map((half) => (
+                                <TableHead key={`${date}:${half}`} className="min-w-44 text-center">
+                                  <span className="block text-xs font-semibold capitalize text-[#1B3A6B]">{formatDate(date)}</span>
+                                  <span className="text-[11px] font-normal text-slate-500">{halfLabel(half)}</span>
+                                </TableHead>
+                              )),
+                              <TableHead key={`${date}:full-day`} className="min-w-36 border-l border-[#E8ECF0] text-center">
                                 <span className="block text-xs font-semibold capitalize text-[#1B3A6B]">{formatDate(date)}</span>
-                                <span className="text-[11px] font-normal text-slate-500">{halfLabel(half)}</span>
-                              </TableHead>
-                            )))}
+                                <span className="text-[11px] font-normal text-slate-500">Весь день</span>
+                              </TableHead>,
+                            ])}
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -396,9 +435,12 @@ export function PeoplePlanningBoard({ data }: Props) {
                                     </Button>
                                   </div>
                                 </TableCell>
-                                {data.dates.flatMap((date) => ([1, 2] as PlanningHalf[]).map((half) => (
-                                  <TableCell key={`${date}:${half}`} className="align-top">{renderAssignment(section.id, employee.id, date, half)}</TableCell>
-                                )))}
+                                {data.dates.flatMap((date) => [
+                                  ...([1, 2] as PlanningHalf[]).map((half) => (
+                                    <TableCell key={`${date}:${half}`} className="align-top">{renderAssignment(section.id, employee.id, date, half)}</TableCell>
+                                  )),
+                                  <TableCell key={`${date}:full-day`} className="border-l border-[#E8ECF0] align-top">{renderFullDayAction(section.id, employee.id, date)}</TableCell>,
+                                ])}
                               </TableRow>
                             )
                           })}
@@ -424,10 +466,28 @@ export function PeoplePlanningBoard({ data }: Props) {
 
       <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
         <DialogContent className="max-h-[92dvh] overflow-y-auto border-[#DDE4EC] bg-white sm:max-w-2xl">
-          <DialogHeader><DialogTitle className="text-lg text-[#1B3A6B]">Назначить сотрудника</DialogTitle><DialogDescription>Остаток рассчитывается только для выбранного участка. Первый слот подтверждается сразу, следующие создаются как предложения.</DialogDescription></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="text-lg text-[#1B3A6B]">{scheduleMode === 'full-day' ? 'Назначить сотрудника на весь день' : 'Назначить сотрудника'}</DialogTitle>
+            <DialogDescription>Назначение сохраняется сразу и только в выбранную клетку. Остаток рассчитывается отдельно для выбранного участка.</DialogDescription>
+          </DialogHeader>
           <div className="grid gap-4 py-2 sm:grid-cols-2">
-            <FieldSelect label="Участок" value={scheduleSectionId} onChange={changeScheduleSection} options={data.sections.map((section) => ({ value: section.id, label: section.displayName }))} />
-            <FieldSelect label="Сотрудник" value={scheduleEmployeeId} onChange={setScheduleEmployeeId} options={sectionEmployees(scheduleSectionId).map((employee) => ({ value: employee.id, label: employee.full_name }))} placeholder="Нет сотрудника со ставкой" />
+            {scheduleSlotLocked ? (
+              <div className="rounded-xl border border-[#C9D8EA] bg-[#F7F9FC] p-4 sm:col-span-2">
+                <div className="flex items-start gap-3">
+                  <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#EAF0F8] text-[#1B3A6B]"><CalendarDays className="size-5" /></div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-[#1B3A6B]">{employeeById.get(scheduleEmployeeId)?.full_name || 'Сотрудник'}</p>
+                    <p className="mt-0.5 text-xs text-slate-600">{sectionById.get(scheduleSectionId)?.displayName || 'Участок'}</p>
+                    <p className="mt-1 text-xs font-medium text-[#1B3A6B]">{formatDate(scheduleDate, true)} · {scheduleMode === 'full-day' ? 'Весь день' : halfLabel(scheduleHalf)}</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <FieldSelect label="Участок" value={scheduleSectionId} onChange={changeScheduleSection} options={data.sections.map((section) => ({ value: section.id, label: section.displayName }))} />
+                <FieldSelect label="Сотрудник" value={scheduleEmployeeId} onChange={setScheduleEmployeeId} options={sectionEmployees(scheduleSectionId).map((employee) => ({ value: employee.id, label: employee.full_name }))} placeholder="Нет сотрудника со ставкой" />
+              </>
+            )}
             <div className="space-y-1.5 sm:col-span-2">
               <Label>Машина месяца</Label>
               <MachineSelect machines={data.machines} sectionId={scheduleSectionId} value={scheduleMachineId} onChange={setScheduleMachineId} />
@@ -445,10 +505,29 @@ export function PeoplePlanningBoard({ data }: Props) {
                 </div>
               </div>
             )}
-            <div className="space-y-1.5"><Label htmlFor="schedule-date">Начать с даты</Label><Input id="schedule-date" type="date" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} /></div>
-            <FieldSelect label="Половина дня" value={String(scheduleHalf)} onChange={(value) => setScheduleHalf(Number(value) as PlanningHalf)} options={[{ value: '1', label: 'Первая половина' }, { value: '2', label: 'Вторая половина' }]} />
+            {!scheduleSlotLocked && (
+              <>
+                <div className="space-y-1.5"><Label htmlFor="schedule-date">Дата</Label><Input id="schedule-date" type="date" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} /></div>
+                <FieldSelect label="Половина дня" value={String(scheduleHalf)} onChange={(value) => setScheduleHalf(Number(value) as PlanningHalf)} options={[{ value: '1', label: 'Первая половина' }, { value: '2', label: 'Вторая половина' }]} />
+              </>
+            )}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setScheduleOpen(false)}>Отмена</Button><Button disabled={pending || !scheduleEmployeeId || !scheduleMachineId || !scheduleSectionId} className="bg-[#1B3A6B] text-white" onClick={() => runAction(() => scheduleEmployeeAction({ employeeId: scheduleEmployeeId, machineId: scheduleMachineId, sectionId: scheduleSectionId, startDate: scheduleDate, startHalf: scheduleHalf }), 'Назначение и предложения созданы', () => setScheduleOpen(false))}>{pending ? 'Сохраняем…' : 'Создать план'}</Button></DialogFooter>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setScheduleOpen(false)}>Отмена</Button>
+            <Button
+              disabled={pending || !scheduleEmployeeId || !scheduleMachineId || !scheduleSectionId}
+              className="bg-[#1B3A6B] text-white"
+              onClick={() => runAction(
+                () => scheduleMode === 'full-day'
+                  ? scheduleEmployeeFullDayAction({ employeeId: scheduleEmployeeId, machineId: scheduleMachineId, sectionId: scheduleSectionId, workDate: scheduleDate })
+                  : scheduleEmployeeAction({ employeeId: scheduleEmployeeId, machineId: scheduleMachineId, sectionId: scheduleSectionId, startDate: scheduleDate, startHalf: scheduleHalf }),
+                scheduleMode === 'full-day' ? 'Назначение на весь день сохранено' : 'Назначение сохранено',
+                () => setScheduleOpen(false),
+              )}
+            >
+              {pending ? 'Сохраняем…' : scheduleMode === 'full-day' ? 'Назначить на весь день' : 'Назначить'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

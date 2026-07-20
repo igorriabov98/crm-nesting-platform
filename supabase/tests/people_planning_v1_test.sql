@@ -76,25 +76,37 @@ BEGIN
   ORDER BY work_date, half LIMIT 1;
   SELECT count(*), count(*) FILTER (WHERE status = 'confirmed'), count(*) FILTER (WHERE status = 'pending')
     INTO v_count, v_confirmed, v_pending
-    FROM public.employee_assignments WHERE employee_id = v_employee;
-  IF v_count <> 5 OR v_confirmed <> 1 OR v_pending <> 4 THEN
-    RAISE EXCEPTION 'Expected one confirmed and four pending half-days, got %, %, %', v_count, v_confirmed, v_pending;
+    FROM public.employee_assignments
+    WHERE employee_id = v_employee
+      AND cancelled_at IS NULL;
+  IF v_count <> 1 OR v_confirmed <> 1 OR v_pending <> 0 THEN
+    RAISE EXCEPTION 'Expected exactly one confirmed half-day, got %, %, %', v_count, v_confirmed, v_pending;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.employee_assignments
+    WHERE id = v_assignment
+      AND work_date = DATE '2030-01-07'
+      AND half = 2
+      AND cancelled_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Exact assignment was shifted away from the requested slot';
   END IF;
   SELECT kg_planned INTO v_kg FROM public.employee_assignments WHERE id = v_assignment;
   IF v_kg <> 200 THEN RAISE EXCEPTION 'Half-day snapshot must be 200 kg, got %', v_kg; END IF;
 
   BEGIN
-    PERFORM public.fn_people_schedule_assignment(v_employee, v_machine, v_leaf_one, DATE '2030-01-10', 1::smallint);
-    RAISE EXCEPTION 'Duplicate pending chain was accepted';
+    PERFORM public.fn_people_schedule_assignment(v_employee, v_machine, v_leaf_one, DATE '2030-01-07', 2::smallint);
+    RAISE EXCEPTION 'Occupied employee slot was accepted';
   EXCEPTION WHEN raise_exception THEN
-    IF SQLERRM NOT LIKE '%pending people planning suggestions%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%already assigned in selected half-day%' THEN RAISE; END IF;
   END;
 
-  SELECT id INTO v_assignment FROM public.employee_assignments
-    WHERE employee_id = v_employee AND status = 'pending' ORDER BY work_date, half LIMIT 1;
-  PERFORM public.fn_people_confirm_assignment(v_assignment);
-  IF (SELECT status FROM public.employee_assignments WHERE id = v_assignment) <> 'confirmed' THEN
-    RAISE EXCEPTION 'Pending assignment was not confirmed';
+  PERFORM public.fn_people_schedule_assignment(
+    v_employee, v_machine, v_leaf_one, DATE '2030-01-08', 1::smallint
+  );
+  IF (SELECT count(*) FROM public.employee_assignments
+      WHERE employee_id = v_employee AND work_date = DATE '2030-01-08' AND cancelled_at IS NULL) <> 1 THEN
+    RAISE EXCEPTION 'A second exact slot was not created independently';
   END IF;
 
   PERFORM public.fn_people_schedule_assignment(
@@ -103,9 +115,23 @@ BEGIN
   SELECT count(*) INTO v_count
     FROM public.employee_assignments
     WHERE employee_id = v_section_employee
-      AND section_id = v_leaf_one_second;
-  IF v_count <> 5 THEN
-    RAISE EXCEPTION 'Second section must plan the full machine weight independently, got % slots', v_count;
+      AND section_id = v_leaf_one_second
+      AND cancelled_at IS NULL;
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'Second section must create one exact slot independently, got % slots', v_count;
+  END IF;
+
+  PERFORM public.fn_people_schedule_full_day(
+    v_employee, v_machine, v_leaf_one, DATE '2030-01-09'
+  );
+  SELECT count(*), count(*) FILTER (WHERE status = 'confirmed')
+    INTO v_count, v_confirmed
+    FROM public.employee_assignments
+    WHERE employee_id = v_employee
+      AND work_date = DATE '2030-01-09'
+      AND cancelled_at IS NULL;
+  IF v_count <> 2 OR v_confirmed <> 2 THEN
+    RAISE EXCEPTION 'Full-day scheduling must create two confirmed halves, got %, %', v_count, v_confirmed;
   END IF;
 
   INSERT INTO public.employee_assignments(
@@ -117,7 +143,8 @@ BEGIN
   SELECT count(*) INTO v_copied
     FROM public.employee_assignments
     WHERE employee_id = v_employee
-      AND work_date = DATE '2030-01-21';
+      AND work_date = DATE '2030-01-21'
+      AND cancelled_at IS NULL;
   IF v_copied <> 2 THEN
     RAISE EXCEPTION 'Expected both previous-day halves to be copied, got %', v_copied;
   END IF;
@@ -168,6 +195,21 @@ BEGIN
     'EXECUTE'
   ) THEN
     RAISE EXCEPTION 'Anon can execute fn_people_copy_previous_day';
+  END IF;
+
+  IF NOT has_function_privilege(
+    'authenticated',
+    'public.fn_people_schedule_full_day(uuid,uuid,uuid,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Authenticated execute is missing for fn_people_schedule_full_day';
+  END IF;
+  IF has_function_privilege(
+    'anon',
+    'public.fn_people_schedule_full_day(uuid,uuid,uuid,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Anon can execute fn_people_schedule_full_day';
   END IF;
 END;
 $$;

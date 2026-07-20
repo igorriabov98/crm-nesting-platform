@@ -199,6 +199,7 @@ export type EmployeeAssignmentRow = {
   created_by: string | null
   updated_at: string
   updated_by: string | null
+  cancelled_at: string | null
 }
 
 export type Database = {
@@ -4444,6 +4445,15 @@ export type Database = {
           p_section_id: string
           p_start_date: string
           p_start_half?: number
+        }
+        Returns: EmployeeAssignmentRow[]
+      }
+      fn_people_schedule_full_day: {
+        Args: {
+          p_employee_id: string
+          p_machine_id: string
+          p_section_id: string
+          p_work_date: string
         }
         Returns: EmployeeAssignmentRow[]
       }
