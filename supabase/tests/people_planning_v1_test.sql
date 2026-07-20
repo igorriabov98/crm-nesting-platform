@@ -22,6 +22,7 @@ DECLARE
   v_pending integer;
   v_kg numeric;
   v_copied integer;
+  v_cancelled integer;
 BEGIN
   INSERT INTO public.factories(id, name) VALUES
     (v_factory_one, 'PEOPLE-TEST-ONE'),
@@ -158,6 +159,37 @@ BEGIN
     RAISE EXCEPTION 'Employee slot uniqueness was not enforced';
   EXCEPTION WHEN unique_violation THEN NULL;
   END;
+
+  SELECT count(*) INTO v_count
+    FROM public.fn_people_planning_period(v_factory_one, DATE '2030-01-20', DATE '2030-01-21');
+  IF v_count <> 4 THEN
+    RAISE EXCEPTION 'Expected four active rows in the fast period read, got %', v_count;
+  END IF;
+
+  UPDATE public.employees SET active = false WHERE id = v_employee;
+  SELECT count(*) INTO v_cancelled
+    FROM public.fn_people_cancel_employee_day(v_employee, DATE '2030-01-21');
+  IF v_cancelled <> 2 THEN
+    RAISE EXCEPTION 'Expected both half-days to be cancelled, got %', v_cancelled;
+  END IF;
+  IF (SELECT count(*) FROM public.employee_assignments
+      WHERE employee_id = v_employee AND work_date = DATE '2030-01-21') <> 2 THEN
+    RAISE EXCEPTION 'Cancelled assignments were removed from history';
+  END IF;
+  IF (SELECT count(*) FROM public.employee_assignments
+      WHERE employee_id = v_employee AND work_date = DATE '2030-01-21' AND cancelled_at IS NULL) <> 0 THEN
+    RAISE EXCEPTION 'Cancelled assignments remain active';
+  END IF;
+  SELECT count(*) INTO v_cancelled
+    FROM public.fn_people_cancel_employee_day(v_employee, DATE '2030-01-21');
+  IF v_cancelled <> 0 THEN
+    RAISE EXCEPTION 'Repeated day cancellation is not idempotent';
+  END IF;
+  SELECT count(*) INTO v_count
+    FROM public.fn_people_planning_period(v_factory_one, DATE '2030-01-20', DATE '2030-01-21');
+  IF v_count <> 2 THEN
+    RAISE EXCEPTION 'Fast period read includes cancelled rows, got %', v_count;
+  END IF;
 END;
 $$;
 
@@ -210,6 +242,36 @@ BEGIN
     'EXECUTE'
   ) THEN
     RAISE EXCEPTION 'Anon can execute fn_people_schedule_full_day';
+  END IF;
+
+  IF NOT has_function_privilege(
+    'authenticated',
+    'public.fn_people_planning_period(uuid,date,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Authenticated execute is missing for fn_people_planning_period';
+  END IF;
+  IF has_function_privilege(
+    'anon',
+    'public.fn_people_planning_period(uuid,date,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Anon can execute fn_people_planning_period';
+  END IF;
+
+  IF NOT has_function_privilege(
+    'authenticated',
+    'public.fn_people_cancel_employee_day(uuid,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Authenticated execute is missing for fn_people_cancel_employee_day';
+  END IF;
+  IF has_function_privilege(
+    'anon',
+    'public.fn_people_cancel_employee_day(uuid,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Anon can execute fn_people_cancel_employee_day';
   END IF;
 END;
 $$;

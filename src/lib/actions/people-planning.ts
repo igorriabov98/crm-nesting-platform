@@ -1,8 +1,6 @@
 'use server'
 
-import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
-import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -103,6 +101,11 @@ const copyPreviousDaySchema = z.object({
   targetDate: dateOnly,
 })
 
+const cancelEmployeeDaySchema = z.object({
+  employeeId: uuid,
+  workDate: dateOnly,
+})
+
 function isDirector(role: UserRole) {
   return DIRECTORS.includes(role)
 }
@@ -199,10 +202,11 @@ export async function getPeoplePlanningWorkspace(input?: {
       .order('production_month', { ascending: false, nullsFirst: false })
       .order('production_queue_number', { ascending: true, nullsFirst: false })
       .order('name'),
-    admin.from('employee_assignments').select('*')
-      .gte('work_date', selectedDate).lte('work_date', endDate)
-      .is('cancelled_at', null)
-      .order('work_date').order('half'),
+    (context.supabase as unknown as PeopleRpc).rpc('fn_people_planning_period', {
+      p_factory_id: selectedFactoryId,
+      p_start_date: selectedDate,
+      p_end_date: endDate,
+    }),
   ])
   if (sectionsResult.error) throw sectionsResult.error
   if (employeesResult.error) throw employeesResult.error
@@ -247,7 +251,7 @@ export async function getPeoplePlanningWorkspace(input?: {
     employeeIds.length > 0
       ? admin.from('employee_rates').select('*').in('employee_id', employeeIds).order('created_at')
       : Promise.resolve({ data: [] as EmployeeRate[], error: null }),
-    admin.from('employee_assignments').select('machine_id, section_id, status, kg_planned')
+    admin.from('employee_assignments').select('*')
       .in('machine_id', selectedMachineRows.map((machine) => machine.id).length > 0
         ? selectedMachineRows.map((machine) => machine.id)
         : ['00000000-0000-0000-0000-000000000000'])
@@ -255,10 +259,7 @@ export async function getPeoplePlanningWorkspace(input?: {
   ])
   if (ratesResult.error) throw ratesResult.error
   if (planningAssignmentsResult.error) throw planningAssignmentsResult.error
-  const planningAssignments = (planningAssignmentsResult.data || []) as Array<Pick<
-    EmployeeAssignment,
-    'machine_id' | 'section_id' | 'status' | 'kg_planned'
-  >>
+  const planningAssignments = (planningAssignmentsResult.data || []) as EmployeeAssignment[]
   const machines: PeoplePlanningMachine[] = selectedMachineRows.map((machine) => {
     const totalWeightKg = Number(machine.total_weight || 0) * 1000
     return {
@@ -286,6 +287,7 @@ export async function getPeoplePlanningWorkspace(input?: {
     employees,
     rates: (ratesResult.data || []) as EmployeeRate[],
     assignments,
+    planningAssignments,
     machines,
     isDirector: isDirector(context.role),
   }
@@ -309,7 +311,6 @@ export async function saveEmployeeAction(input: z.input<typeof employeeSchema>):
       : admin.from('employees').insert({ ...payload, created_by: context.userId })
     const { data, error } = await query.select('*').single()
     if (error) throw error
-    revalidatePath(ROUTES.PRODUCTION_PEOPLE)
     return { success: true, data: data as Employee, error: null }
   } catch (error) {
     return { success: false, error: errorMessage(error) }
@@ -329,7 +330,6 @@ export async function saveEmployeeRateAction(input: z.input<typeof rateSchema>):
       active: parsed.active ?? true,
     }, { onConflict: 'employee_id,section_id' }).select('*').single()
     if (error) throw error
-    revalidatePath(ROUTES.PRODUCTION_PEOPLE)
     return { success: true, data: data as EmployeeRate, error: null }
   } catch (error) {
     return { success: false, error: errorMessage(error) }
@@ -350,7 +350,6 @@ export async function scheduleEmployeeAction(input: z.input<typeof scheduleSchem
       p_start_half: parsed.startHalf,
     })
     if (error) throw error
-    revalidatePath(ROUTES.PRODUCTION_PEOPLE)
     return { success: true, data: (data || []) as EmployeeAssignment[], error: null }
   } catch (error) {
     return { success: false, error: errorMessage(error) }
@@ -372,7 +371,6 @@ export async function scheduleEmployeeFullDayAction(
       p_work_date: parsed.workDate,
     })
     if (error) throw error
-    revalidatePath(ROUTES.PRODUCTION_PEOPLE)
     return { success: true, data: (data || []) as EmployeeAssignment[], error: null }
   } catch (error) {
     return { success: false, error: errorMessage(error) }
@@ -385,7 +383,6 @@ export async function confirmEmployeeAssignmentAction(id: string): Promise<Peopl
     const assignmentId = uuid.parse(id)
     const { data, error } = await (context.supabase as unknown as PeopleRpc).rpc('fn_people_confirm_assignment', { p_assignment_id: assignmentId })
     if (error) throw error
-    revalidatePath(ROUTES.PRODUCTION_PEOPLE)
     return { success: true, data: data as EmployeeAssignment, error: null }
   } catch (error) {
     return { success: false, error: errorMessage(error) }
@@ -411,7 +408,6 @@ export async function updateEmployeeAssignmentAction(input: z.input<typeof assig
       updated_by: context.userId,
     }).eq('id', parsed.id).is('cancelled_at', null).select('*').single()
     if (error) throw error
-    revalidatePath(ROUTES.PRODUCTION_PEOPLE)
     return { success: true, data: data as EmployeeAssignment, error: null }
   } catch (error) {
     return { success: false, error: errorMessage(error) }
@@ -431,7 +427,25 @@ export async function copyEmployeePreviousDayAction(
       p_target_date: parsed.targetDate,
     })
     if (error) throw error
-    revalidatePath(ROUTES.PRODUCTION_PEOPLE)
+    return { success: true, data: (data || []) as EmployeeAssignment[], error: null }
+  } catch (error) {
+    return { success: false, error: errorMessage(error) }
+  }
+}
+
+export async function cancelEmployeeDayAction(
+  input: z.input<typeof cancelEmployeeDaySchema>,
+): Promise<PeoplePlanningActionResult<EmployeeAssignment[]>> {
+  try {
+    const context = await requirePeoplePlanning('manage')
+    const parsed = cancelEmployeeDaySchema.parse(input)
+    const factoryId = await getEmployeeFactory(parsed.employeeId)
+    assertFactory(context.role, context.factoryId, factoryId)
+    const { data, error } = await (context.supabase as unknown as PeopleRpc).rpc('fn_people_cancel_employee_day', {
+      p_employee_id: parsed.employeeId,
+      p_work_date: parsed.workDate,
+    })
+    if (error) throw error
     return { success: true, data: (data || []) as EmployeeAssignment[], error: null }
   } catch (error) {
     return { success: false, error: errorMessage(error) }

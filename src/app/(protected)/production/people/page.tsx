@@ -16,7 +16,7 @@ export default async function PeoplePlanningPage({
       month: params?.month,
       view: params?.view === 'week' ? 'week' : 'day',
     })
-    return <PeoplePlanningBoard key={`${data.selectedFactoryId}:${data.selectedDate}:${data.selectedMonth}:${data.view}`} data={data} />
+    return <PeoplePlanningBoard data={data} />
   } catch (error) {
     return (
       <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">

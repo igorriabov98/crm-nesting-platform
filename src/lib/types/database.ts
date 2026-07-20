@@ -4465,6 +4465,14 @@ export type Database = {
         Args: { p_employee_id: string; p_target_date: string }
         Returns: EmployeeAssignmentRow[]
       }
+      fn_people_planning_period: {
+        Args: { p_factory_id: string; p_start_date: string; p_end_date: string }
+        Returns: EmployeeAssignmentRow[]
+      }
+      fn_people_cancel_employee_day: {
+        Args: { p_employee_id: string; p_work_date: string }
+        Returns: EmployeeAssignmentRow[]
+      }
       fn_create_detailing_part: {
         Args: {
           p_name: string

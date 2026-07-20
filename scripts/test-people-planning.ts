@@ -9,15 +9,20 @@ import {
   comparePeoplePlanningMachines,
   comparePeoplePlanningSections,
 } from '../src/lib/people-planning/presentation'
-import type { PeoplePlanningMachine, PeoplePlanningSection } from '../src/lib/people-planning/types'
+import { applyPeoplePlanningAssignmentChanges } from '../src/lib/people-planning/state'
+import type { EmployeeAssignment } from '../src/lib/types'
+import type { PeoplePlanningMachine, PeoplePlanningSection, PeoplePlanningWorkspace } from '../src/lib/people-planning/types'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (relativePath: string) => readFileSync(path.join(root, relativePath), 'utf8')
 const migration = read('supabase/migrations/20260720095019_people_planning_v1.sql')
 const correctionsMigration = read('supabase/migrations/20260720131352_people_planning_stage_progress.sql')
 const exactAssignmentsMigration = read('supabase/migrations/20260720143938_people_planning_exact_assignments.sql')
+const performanceMigration = read('supabase/migrations/20260720154447_people_planning_fast_period_and_day_cancel.sql')
 const actions = read('src/lib/actions/people-planning.ts')
 const board = read('src/components/features/production/PeoplePlanningBoard.tsx')
+const workspaceRoute = read('src/app/api/production/people/workspace/route.ts')
+const state = read('src/lib/people-planning/state.ts')
 const workOrder = read('src/lib/pdf/PeopleWorkOrderDocument.tsx')
 const databaseTypes = read('src/lib/types/database.ts')
 
@@ -94,6 +99,29 @@ assert.match(exactAssignmentsMigration, /source\.cancelled_at IS NULL/)
 assert.match(actions, /export async function scheduleEmployeeFullDayAction/)
 assert.match(actions, /\.is\('cancelled_at', null\)/)
 
+assert.match(performanceMigration, /CREATE FUNCTION public\.fn_people_planning_period/)
+assert.match(performanceMigration, /CREATE FUNCTION public\.fn_people_cancel_employee_day/)
+assert.match(performanceMigration, /SECURITY INVOKER/g)
+assert.match(performanceMigration, /SET cancelled_at = now\(\)/)
+assert.match(performanceMigration, /pg_advisory_xact_lock/)
+assert.match(performanceMigration, /OLD\.cancelled_at IS NULL[\s\S]*NEW\.cancelled_at IS NOT NULL/)
+assert.doesNotMatch(performanceMigration, /DELETE FROM public\.employee_assignments/)
+assert.match(performanceMigration, /REVOKE ALL ON FUNCTION public\.fn_people_planning_period\(uuid, date, date\) FROM PUBLIC, anon/)
+assert.match(performanceMigration, /GRANT EXECUTE ON FUNCTION public\.fn_people_cancel_employee_day\(uuid, date\) TO authenticated/)
+assert.match(actions, /export async function cancelEmployeeDayAction/)
+assert.doesNotMatch(actions, /revalidatePath/)
+assert.doesNotMatch(board, /router\.refresh/)
+assert.doesNotMatch(board, /useRouter/)
+assert.match(board, /window\.history\.pushState/)
+assert.match(board, /periodCache/)
+assert.match(board, /Очистить назначения за день/)
+assert.match(board, /applyPeoplePlanningAssignmentChanges/)
+assert.match(workspaceRoute, /params\.get\('scope'\) === 'period'/)
+assert.match(workspaceRoute, /private, no-store/)
+assert.match(state, /buildPeoplePlanningStageProgress/)
+assert.match(databaseTypes, /fn_people_planning_period:/)
+assert.match(databaseTypes, /fn_people_cancel_employee_day:/)
+
 const sections = [
   { id: 'cleanup', name: 'Зачистка', parentName: 'Зачистка', displayName: 'Зачистка · Зачистка', production_stage_type: null, sort_order: 10 },
   { id: 'assembly', name: 'Цех 1', parentName: 'Сборка/Сварка', displayName: 'Сборка/Сварка · Цех 1', production_stage_type: null, sort_order: 10 },
@@ -110,6 +138,59 @@ assert.equal(stageProgress.find((stage) => stage.sectionId === 'cutting')?.progr
 assert.equal(stageProgress.find((stage) => stage.sectionId === 'cutting')?.remainingPercent, 75)
 assert.equal(stageProgress.find((stage) => stage.sectionId === 'cutting')?.pendingKg, 125)
 assert.equal(stageProgress.find((stage) => stage.sectionId === 'cleanup')?.progressPercent, 10)
+
+const assignment = {
+  id: 'assignment-1',
+  employee_id: 'employee-1',
+  machine_id: 'machine-1',
+  section_id: 'cutting',
+  work_date: '2030-01-07',
+  half: 1,
+  status: 'confirmed',
+  kg_planned: 200,
+  created_at: '2030-01-01T00:00:00Z',
+  created_by: null,
+  updated_at: '2030-01-01T00:00:00Z',
+  updated_by: null,
+  cancelled_at: null,
+} as EmployeeAssignment
+const workspace = {
+  factories: [],
+  selectedFactoryId: 'factory-1',
+  selectedDate: '2030-01-07',
+  selectedMonth: '2030-01-01',
+  productionMonths: ['2030-01-01'],
+  view: 'day',
+  dates: ['2030-01-07'],
+  sections,
+  employees: [],
+  rates: [],
+  assignments: [],
+  planningAssignments: [],
+  machines: [{
+    id: 'machine-1',
+    name: 'Machine 1',
+    factoryId: 'factory-1',
+    totalWeightKg: 1000,
+    productionMonth: '2030-01-01',
+    productionWorkshop: 1,
+    queueNumber: 1,
+    createdAt: '2030-01-01T00:00:00Z',
+    stages: buildPeoplePlanningStageProgress('machine-1', 1000, sections, []),
+  }],
+  isDirector: true,
+} as PeoplePlanningWorkspace
+const assignedWorkspace = applyPeoplePlanningAssignmentChanges(workspace, [assignment])
+assert.equal(assignedWorkspace.assignments.length, 1)
+assert.equal(assignedWorkspace.planningAssignments.length, 1)
+assert.equal(assignedWorkspace.machines[0].stages.find((stage) => stage.sectionId === 'cutting')?.progressPercent, 20)
+const clearedWorkspace = applyPeoplePlanningAssignmentChanges(assignedWorkspace, [{
+  ...assignment,
+  cancelled_at: '2030-01-07T12:00:00Z',
+}])
+assert.equal(clearedWorkspace.assignments.length, 0)
+assert.equal(clearedWorkspace.planningAssignments.length, 0)
+assert.equal(clearedWorkspace.machines[0].stages.find((stage) => stage.sectionId === 'cutting')?.progressPercent, 0)
 
 const machines = [
   { id: 'later-workshop', productionWorkshop: 2, queueNumber: 1, createdAt: '2030-01-01', name: 'B' },
