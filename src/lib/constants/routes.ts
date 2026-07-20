@@ -31,6 +31,7 @@ export const ROUTES = {
   PRODUCTION:     '/production',
   GANTT:          '/production/gantt',
   PRODUCTION_FACT: '/production/fact',
+  PRODUCTION_PEOPLE: '/production/people',
   PRODUCTION_CONSUMABLE_REQUESTS: '/production/consumable-requests',
   PRODUCTION_CONSUMABLES: '/production/consumables',
   NESTING:        '/nesting',

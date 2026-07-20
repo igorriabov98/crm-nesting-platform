@@ -320,7 +320,10 @@ export const PERMISSION_RESOURCES = [
     defaultHref: ROUTES.PRODUCTION_FACT,
     defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
     defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
-    routes: [{ path: ROUTES.PRODUCTION_FACT, match: 'prefix', operation: 'view', priority: 100 }],
+    routes: [
+      { path: ROUTES.PRODUCTION_PEOPLE, match: 'prefix', operation: 'view', priority: 120 },
+      { path: ROUTES.PRODUCTION_FACT, match: 'prefix', operation: 'view', priority: 100 },
+    ],
     sidebar: { section: 'production', icon: 'history', order: 20 },
   },
   {
