@@ -402,7 +402,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
           Будущий деловой остаток ({futureBusinessScrapCount})
         </button>
           <Link
-            href={ROUTES.INVENTORY_DETAILING}
+            href={`${ROUTES.INVENTORY_DETAILING}${historyFactoryQuery}`}
             className="rounded-md px-3 py-1.5 text-sm font-medium text-[#6B7280] hover:bg-white hover:text-[#1B3A6B] hover:shadow-sm"
           >
             Деталировка

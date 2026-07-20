@@ -7,7 +7,21 @@ import path from 'node:path'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (relativePath) => readFile(path.join(root, relativePath), 'utf8')
 
-const [migration, taskTypeMigration, securityHardeningMigration, actions, requestPage, transportPage, receivingPage, taskCards, databaseTypes] = await Promise.all([
+const [
+  migration,
+  taskTypeMigration,
+  securityHardeningMigration,
+  actions,
+  requestPage,
+  transportPage,
+  receivingPage,
+  taskCards,
+  databaseTypes,
+  createDialog,
+  warehousePage,
+  inventoryPage,
+  detailingRoute,
+] = await Promise.all([
   read('supabase/migrations/20260719163223_detailing_module.sql'),
   read('supabase/migrations/20260719163222_detailing_task_type.sql'),
   read('supabase/migrations/20260719212000_detailing_security_hardening.sql'),
@@ -17,6 +31,10 @@ const [migration, taskTypeMigration, securityHardeningMigration, actions, reques
   read('src/components/features/inventory/DetailingReceivingPanel.tsx'),
   read('src/components/features/tasks/TaskCards.tsx'),
   read('src/lib/types/database.ts'),
+  read('src/components/features/inventory/DetailingCreateDialog.tsx'),
+  read('src/components/features/inventory/DetailingWarehousePage.tsx'),
+  read('src/components/features/inventory/InventoryPage.tsx'),
+  read('src/app/(protected)/inventory/detailing/page.tsx'),
 ])
 
 assert.match(taskTypeMigration, /ADD VALUE IF NOT EXISTS 'detailing_transfer'/)
@@ -61,6 +79,19 @@ assert.match(databaseTypes, /'detailing_transfer'/)
 for (const table of ['detailing_parts', 'detailing_balances', 'detailing_reservations', 'detailing_transfers', 'detailing_movements']) {
   assert.match(databaseTypes, new RegExp(`${table}:`), `${table} database type is missing`)
 }
+assert.match(createDialog, /id="detailing-product-search"/)
+assert.match(createDialog, /productSearch/)
+assert.match(createDialog, /overflow-y-auto overflow-x-hidden/)
+assert.match(createDialog, /factoryId: activeFactory\.id/)
+assert.match(createDialog, /Деталировка автоматически поступит на этот склад/)
+assert.match(createDialog, /Текущий склад/)
+assert.doesNotMatch(createDialog, /id="detailing-first-factory"/)
+assert.doesNotMatch(createDialog, /Завод первого поступления/)
+assert.match(warehousePage, /activeFactoryId=\{activeFactoryId\}/)
+assert.match(warehousePage, /INVENTORY_DETAILING\}\?factory=/)
+assert.match(inventoryPage, /INVENTORY_DETAILING\}\$\{historyFactoryQuery\}/)
+assert.match(detailingRoute, /searchParams\?: Promise<\{ factory\?: string \}>/)
+assert.match(detailingRoute, /activeFactoryId=\{activeFactory\?\.id \|\| null\}/)
 
 if (process.env.DETAILING_TEST_DATABASE_URL) {
   const result = spawnSync('psql', [
