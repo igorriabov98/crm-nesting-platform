@@ -49,9 +49,15 @@ export type PeoplePlanningWorkspace = {
   employees: Employee[]
   rates: EmployeeRate[]
   assignments: EmployeeAssignment[]
+  planningAssignments: EmployeeAssignment[]
   machines: PeoplePlanningMachine[]
   isDirector: boolean
 }
+
+export type PeoplePlanningPeriod = Pick<
+  PeoplePlanningWorkspace,
+  'selectedDate' | 'view' | 'dates' | 'assignments'
+>
 
 export type PeoplePlanningActionResult<T = undefined> = {
   success: boolean
