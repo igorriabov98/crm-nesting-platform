@@ -9,16 +9,19 @@ DECLARE
   v_actor uuid := gen_random_uuid();
   v_parent_one uuid := gen_random_uuid();
   v_leaf_one uuid := gen_random_uuid();
+  v_leaf_one_second uuid := gen_random_uuid();
   v_parent_two uuid := gen_random_uuid();
   v_leaf_two uuid := gen_random_uuid();
   v_machine uuid := gen_random_uuid();
   v_employee uuid := gen_random_uuid();
   v_other_employee uuid := gen_random_uuid();
+  v_section_employee uuid := gen_random_uuid();
   v_assignment uuid;
   v_count integer;
   v_confirmed integer;
   v_pending integer;
   v_kg numeric;
+  v_copied integer;
 BEGIN
   INSERT INTO public.factories(id, name) VALUES
     (v_factory_one, 'PEOPLE-TEST-ONE'),
@@ -32,6 +35,7 @@ BEGIN
     (v_parent_two, v_factory_two, 'Сборка/Сварка TEST', 10, v_actor, v_actor);
   INSERT INTO public.production_fact_sections(id, factory_id, parent_id, name, sort_order, created_by, updated_by) VALUES
     (v_leaf_one, v_factory_one, v_parent_one, 'Цех 1', 10, v_actor, v_actor),
+    (v_leaf_one_second, v_factory_one, v_parent_one, 'Цех 2', 20, v_actor, v_actor),
     (v_leaf_two, v_factory_two, v_parent_two, 'Цех 2', 10, v_actor, v_actor);
 
   INSERT INTO public.machines(id, factory_id, name, created_by)
@@ -43,6 +47,10 @@ BEGIN
   VALUES (v_employee, 'Тестовый сотрудник', v_factory_one, v_leaf_one, v_actor, v_actor);
   INSERT INTO public.employee_rates(employee_id, section_id, kg_per_day)
   VALUES (v_employee, v_leaf_one, 400);
+  INSERT INTO public.employees(id, full_name, factory_id, default_section_id, created_by, updated_by)
+  VALUES (v_section_employee, 'Сотрудник второго участка', v_factory_one, v_leaf_one_second, v_actor, v_actor);
+  INSERT INTO public.employee_rates(employee_id, section_id, kg_per_day)
+  VALUES (v_section_employee, v_leaf_one_second, 400);
 
   BEGIN
     INSERT INTO public.employee_rates(employee_id, section_id, kg_per_day) VALUES (v_employee, v_leaf_one, 500);
@@ -89,6 +97,31 @@ BEGIN
     RAISE EXCEPTION 'Pending assignment was not confirmed';
   END IF;
 
+  PERFORM public.fn_people_schedule_assignment(
+    v_section_employee, v_machine, v_leaf_one_second, DATE '2030-01-07', 1::smallint
+  );
+  SELECT count(*) INTO v_count
+    FROM public.employee_assignments
+    WHERE employee_id = v_section_employee
+      AND section_id = v_leaf_one_second;
+  IF v_count <> 5 THEN
+    RAISE EXCEPTION 'Second section must plan the full machine weight independently, got % slots', v_count;
+  END IF;
+
+  INSERT INTO public.employee_assignments(
+    employee_id, machine_id, section_id, work_date, half, status, kg_planned, created_by, updated_by
+  ) VALUES
+    (v_employee, v_machine, v_leaf_one, DATE '2030-01-20', 1, 'confirmed', 200, v_actor, v_actor),
+    (v_employee, v_machine, v_leaf_one, DATE '2030-01-20', 2, 'confirmed', 200, v_actor, v_actor);
+  PERFORM public.fn_people_copy_previous_day(v_employee, DATE '2030-01-21');
+  SELECT count(*) INTO v_copied
+    FROM public.employee_assignments
+    WHERE employee_id = v_employee
+      AND work_date = DATE '2030-01-21';
+  IF v_copied <> 2 THEN
+    RAISE EXCEPTION 'Expected both previous-day halves to be copied, got %', v_copied;
+  END IF;
+
   BEGIN
     INSERT INTO public.employee_assignments(
       employee_id, machine_id, section_id, work_date, half, status, kg_planned, created_by, updated_by
@@ -121,6 +154,21 @@ BEGIN
       RAISE EXCEPTION 'Anon has privileges for %', v_table;
     END IF;
   END LOOP;
+
+  IF NOT has_function_privilege(
+    'authenticated',
+    'public.fn_people_copy_previous_day(uuid,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Authenticated execute is missing for fn_people_copy_previous_day';
+  END IF;
+  IF has_function_privilege(
+    'anon',
+    'public.fn_people_copy_previous_day(uuid,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Anon can execute fn_people_copy_previous_day';
+  END IF;
 END;
 $$;
 

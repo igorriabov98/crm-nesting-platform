@@ -4451,6 +4451,10 @@ export type Database = {
         Args: { p_assignment_id: string }
         Returns: EmployeeAssignmentRow
       }
+      fn_people_copy_previous_day: {
+        Args: { p_employee_id: string; p_target_date: string }
+        Returns: EmployeeAssignmentRow[]
+      }
       fn_create_detailing_part: {
         Args: {
           p_name: string

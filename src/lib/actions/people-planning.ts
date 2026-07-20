@@ -15,6 +15,11 @@ import type {
   UserRole,
 } from '@/lib/types'
 import { planningDateRange, todayInUzhgorod } from '@/lib/people-planning/slots'
+import {
+  buildPeoplePlanningStageProgress,
+  comparePeoplePlanningMachines,
+  comparePeoplePlanningSections,
+} from '@/lib/people-planning/presentation'
 import type {
   PeoplePlanningActionResult,
   PeoplePlanningMachine,
@@ -52,6 +57,7 @@ const DIRECTORS: UserRole[] = ['financial_director', 'commercial_director', 'pla
 const ALLOWED_ROLES: UserRole[] = [...DIRECTORS, 'production_manager']
 const uuid = z.string().uuid()
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+const monthOnly = z.string().regex(/^\d{4}-\d{2}-01$/)
 
 const employeeSchema = z.object({
   id: uuid.optional(),
@@ -85,6 +91,11 @@ const assignmentUpdateSchema = z.object({
   half: z.union([z.literal(1), z.literal(2)]),
 })
 
+const copyPreviousDaySchema = z.object({
+  employeeId: uuid,
+  targetDate: dateOnly,
+})
+
 function isDirector(role: UserRole) {
   return DIRECTORS.includes(role)
 }
@@ -95,6 +106,15 @@ function errorMessage(error: unknown) {
   if (error && typeof error === 'object') {
     const dbError = error as { message?: string; details?: string; hint?: string; code?: string }
     if (dbError.code === '23505') return 'Этот сотрудник уже занят в выбранную половину дня'
+    if (dbError.message?.includes('Previous day must contain both half-day assignments')) {
+      return 'За вчера у сотрудника нет назначений на обе половины дня'
+    }
+    if (dbError.message?.includes('Machine section has no remaining weight to plan')) {
+      return 'На выбранном участке машина уже запланирована на 100%'
+    }
+    if (dbError.message?.includes('Machine section already has pending people planning suggestions')) {
+      return 'Для этой машины и участка уже есть предложения, ожидающие подтверждения'
+    }
     return [dbError.message, dbError.details, dbError.hint].filter(Boolean).join(' ')
   }
   return 'Неизвестная ошибка'
@@ -137,6 +157,7 @@ async function getAssignmentFactory(assignmentId: string) {
 export async function getPeoplePlanningWorkspace(input?: {
   factoryId?: string
   date?: string
+  month?: string
   view?: PeoplePlanningView
 }): Promise<PeoplePlanningWorkspace> {
   const context = await requirePeoplePlanning()
@@ -165,7 +186,7 @@ export async function getPeoplePlanningWorkspace(input?: {
       .order('sort_order').order('name'),
     admin.from('employees').select('*').eq('factory_id', selectedFactoryId).order('active', { ascending: false }).order('full_name'),
     admin.from('machines_with_totals')
-      .select('id, name, factory_id, total_weight, production_month, production_queue_number, is_archived')
+      .select('id, name, factory_id, total_weight, production_month, production_workshop, production_queue_number, created_at, is_archived')
       .eq('factory_id', selectedFactoryId).eq('is_archived', false)
       .order('production_month', { ascending: false, nullsFirst: false })
       .order('production_queue_number', { ascending: true, nullsFirst: false })
@@ -187,56 +208,68 @@ export async function getPeoplePlanningWorkspace(input?: {
       const parentName = parentMap.get(section.parent_id!)!.name
       return { ...section, parentName, displayName: `${parentName} · ${section.name}` }
     })
-    .sort((a, b) => a.sort_order - b.sort_order || a.displayName.localeCompare(b.displayName, 'ru'))
+    .sort(comparePeoplePlanningSections)
   const machineRows = (machinesResult.data || []) as Array<{
     id: string
     name: string
     factory_id: string | null
     total_weight: number
     production_month: string | null
+    production_workshop: number | null
     production_queue_number: number | null
+    created_at: string
   }>
+  const productionMonths = Array.from(new Set(
+    machineRows.map((machine) => machine.production_month).filter((month): month is string => Boolean(month)),
+  )).sort((left, right) => right.localeCompare(left))
+  const dateMonth = `${selectedDate.slice(0, 7)}-01`
+  const requestedMonth = monthOnly.safeParse(input?.month).success ? input!.month! : dateMonth
+  const selectedMonth = productionMonths.includes(requestedMonth)
+    ? requestedMonth
+    : (productionMonths[0] || requestedMonth)
+  const selectedMachineRows = machineRows.filter((machine) => machine.production_month === selectedMonth)
   const sectionIds = new Set(sections.map((section) => section.id))
   const employees = (employeesResult.data || []) as Employee[]
   const employeeIds = employees.map((employee) => employee.id)
   const assignments = ((assignmentsResult.data || []) as EmployeeAssignment[])
     .filter((assignment) => sectionIds.has(assignment.section_id) && employeeIds.includes(assignment.employee_id))
 
-  const [ratesResult, confirmedResult] = await Promise.all([
+  const [ratesResult, planningAssignmentsResult] = await Promise.all([
     employeeIds.length > 0
       ? admin.from('employee_rates').select('*').in('employee_id', employeeIds).order('created_at')
       : Promise.resolve({ data: [] as EmployeeRate[], error: null }),
-    admin.from('employee_assignments').select('machine_id, kg_planned')
-      .eq('status', 'confirmed')
-      .in('machine_id', machineRows.map((machine) => machine.id).length > 0
-        ? machineRows.map((machine) => machine.id)
+    admin.from('employee_assignments').select('machine_id, section_id, status, kg_planned')
+      .in('machine_id', selectedMachineRows.map((machine) => machine.id).length > 0
+        ? selectedMachineRows.map((machine) => machine.id)
         : ['00000000-0000-0000-0000-000000000000']),
   ])
   if (ratesResult.error) throw ratesResult.error
-  if (confirmedResult.error) throw confirmedResult.error
-  const confirmedByMachine = new Map<string, number>()
-  for (const row of (confirmedResult.data || []) as Array<{ machine_id: string; kg_planned: number }>) {
-    confirmedByMachine.set(row.machine_id, (confirmedByMachine.get(row.machine_id) || 0) + Number(row.kg_planned || 0))
-  }
-  const machines: PeoplePlanningMachine[] = machineRows.map((machine) => {
+  if (planningAssignmentsResult.error) throw planningAssignmentsResult.error
+  const planningAssignments = (planningAssignmentsResult.data || []) as Array<Pick<
+    EmployeeAssignment,
+    'machine_id' | 'section_id' | 'status' | 'kg_planned'
+  >>
+  const machines: PeoplePlanningMachine[] = selectedMachineRows.map((machine) => {
     const totalWeightKg = Number(machine.total_weight || 0) * 1000
-    const confirmedKg = confirmedByMachine.get(machine.id) || 0
     return {
       id: machine.id,
       name: machine.name,
       factoryId: machine.factory_id!,
       totalWeightKg,
-      confirmedKg,
-      progressPercent: totalWeightKg > 0 ? Math.round((confirmedKg / totalWeightKg) * 1000) / 10 : 0,
       productionMonth: machine.production_month,
+      productionWorkshop: machine.production_workshop,
       queueNumber: machine.production_queue_number,
+      createdAt: machine.created_at,
+      stages: buildPeoplePlanningStageProgress(machine.id, totalWeightKg, sections, planningAssignments),
     }
-  })
+  }).sort(comparePeoplePlanningMachines)
 
   return {
     factories,
     selectedFactoryId,
     selectedDate,
+    selectedMonth,
+    productionMonths,
     view,
     dates,
     sections,
@@ -348,6 +381,26 @@ export async function updateEmployeeAssignmentAction(input: z.input<typeof assig
     if (error) throw error
     revalidatePath(ROUTES.PRODUCTION_PEOPLE)
     return { success: true, data: data as EmployeeAssignment, error: null }
+  } catch (error) {
+    return { success: false, error: errorMessage(error) }
+  }
+}
+
+export async function copyEmployeePreviousDayAction(
+  input: z.input<typeof copyPreviousDaySchema>,
+): Promise<PeoplePlanningActionResult<EmployeeAssignment[]>> {
+  try {
+    const context = await requirePeoplePlanning('manage')
+    const parsed = copyPreviousDaySchema.parse(input)
+    const factoryId = await getEmployeeFactory(parsed.employeeId)
+    assertFactory(context.role, context.factoryId, factoryId)
+    const { data, error } = await (context.supabase as unknown as PeopleRpc).rpc('fn_people_copy_previous_day', {
+      p_employee_id: parsed.employeeId,
+      p_target_date: parsed.targetDate,
+    })
+    if (error) throw error
+    revalidatePath(ROUTES.PRODUCTION_PEOPLE)
+    return { success: true, data: (data || []) as EmployeeAssignment[], error: null }
   } catch (error) {
     return { success: false, error: errorMessage(error) }
   }
