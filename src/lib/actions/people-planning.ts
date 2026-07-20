@@ -82,6 +82,13 @@ const scheduleSchema = z.object({
   startHalf: z.union([z.literal(1), z.literal(2)]),
 })
 
+const fullDayScheduleSchema = z.object({
+  employeeId: uuid,
+  machineId: uuid,
+  sectionId: uuid,
+  workDate: dateOnly,
+})
+
 const assignmentUpdateSchema = z.object({
   id: uuid,
   employeeId: uuid,
@@ -112,8 +119,8 @@ function errorMessage(error: unknown) {
     if (dbError.message?.includes('Machine section has no remaining weight to plan')) {
       return 'На выбранном участке машина уже запланирована на 100%'
     }
-    if (dbError.message?.includes('Machine section already has pending people planning suggestions')) {
-      return 'Для этой машины и участка уже есть предложения, ожидающие подтверждения'
+    if (dbError.message?.includes('Employee already assigned in selected half-day')) {
+      return 'Сотрудник уже занят в выбранную половину дня'
     }
     return [dbError.message, dbError.details, dbError.hint].filter(Boolean).join(' ')
   }
@@ -149,6 +156,7 @@ async function getAssignmentFactory(assignmentId: string) {
   const { data: assignment, error: assignmentError } = await db.from('employee_assignments')
     .select('employee_id')
     .eq('id', assignmentId)
+    .is('cancelled_at', null)
     .maybeSingle()
   if (assignmentError || !assignment) throw new Error(assignmentError?.message || 'Назначение не найдено')
   return getEmployeeFactory((assignment as { employee_id: string }).employee_id)
@@ -193,6 +201,7 @@ export async function getPeoplePlanningWorkspace(input?: {
       .order('name'),
     admin.from('employee_assignments').select('*')
       .gte('work_date', selectedDate).lte('work_date', endDate)
+      .is('cancelled_at', null)
       .order('work_date').order('half'),
   ])
   if (sectionsResult.error) throw sectionsResult.error
@@ -241,7 +250,8 @@ export async function getPeoplePlanningWorkspace(input?: {
     admin.from('employee_assignments').select('machine_id, section_id, status, kg_planned')
       .in('machine_id', selectedMachineRows.map((machine) => machine.id).length > 0
         ? selectedMachineRows.map((machine) => machine.id)
-        : ['00000000-0000-0000-0000-000000000000']),
+        : ['00000000-0000-0000-0000-000000000000'])
+      .is('cancelled_at', null),
   ])
   if (ratesResult.error) throw ratesResult.error
   if (planningAssignmentsResult.error) throw planningAssignmentsResult.error
@@ -347,6 +357,28 @@ export async function scheduleEmployeeAction(input: z.input<typeof scheduleSchem
   }
 }
 
+export async function scheduleEmployeeFullDayAction(
+  input: z.input<typeof fullDayScheduleSchema>,
+): Promise<PeoplePlanningActionResult<EmployeeAssignment[]>> {
+  try {
+    const context = await requirePeoplePlanning('manage')
+    const parsed = fullDayScheduleSchema.parse(input)
+    const factoryId = await getEmployeeFactory(parsed.employeeId)
+    assertFactory(context.role, context.factoryId, factoryId)
+    const { data, error } = await (context.supabase as unknown as PeopleRpc).rpc('fn_people_schedule_full_day', {
+      p_employee_id: parsed.employeeId,
+      p_machine_id: parsed.machineId,
+      p_section_id: parsed.sectionId,
+      p_work_date: parsed.workDate,
+    })
+    if (error) throw error
+    revalidatePath(ROUTES.PRODUCTION_PEOPLE)
+    return { success: true, data: (data || []) as EmployeeAssignment[], error: null }
+  } catch (error) {
+    return { success: false, error: errorMessage(error) }
+  }
+}
+
 export async function confirmEmployeeAssignmentAction(id: string): Promise<PeoplePlanningActionResult<EmployeeAssignment>> {
   try {
     const context = await requirePeoplePlanning('manage')
@@ -377,7 +409,7 @@ export async function updateEmployeeAssignmentAction(input: z.input<typeof assig
       work_date: parsed.workDate,
       half: parsed.half,
       updated_by: context.userId,
-    }).eq('id', parsed.id).select('*').single()
+    }).eq('id', parsed.id).is('cancelled_at', null).select('*').single()
     if (error) throw error
     revalidatePath(ROUTES.PRODUCTION_PEOPLE)
     return { success: true, data: data as EmployeeAssignment, error: null }
