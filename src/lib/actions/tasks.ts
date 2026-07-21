@@ -1085,6 +1085,9 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
     if (taskRow.task_type === 'detailing_transfer' && (status === 'completed' || status === 'cancelled')) {
       throw new Error('Задача перемещения деталировки закрывается автоматически после полной приёмки или отмены перевозки')
     }
+    if (taskRow.task_type === 'inventory_transfer' && (status === 'completed' || status === 'cancelled')) {
+      throw new Error('Задача перемещения материалов закрывается автоматически после полной приёмки или отмены перевозки')
+    }
     if (
       role === 'production_manager' &&
       taskRow.machine_id &&

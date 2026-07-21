@@ -44,9 +44,19 @@ const TYPE_CLASSES: Record<InventoryTransactionType, string> = {
   unreserve: 'border-amber-200 bg-amber-50 text-amber-700',
   write_off: 'border-red-200 bg-red-50 text-red-700',
   adjustment: 'border-slate-200 bg-slate-100 text-slate-700',
+  transfer_out: 'border-violet-200 bg-violet-50 text-violet-700',
+  transfer_in: 'border-cyan-200 bg-cyan-50 text-cyan-700',
 }
 
-const TRANSACTION_TYPES: InventoryTransactionType[] = ['receipt', 'reserve', 'unreserve', 'write_off', 'adjustment']
+const TRANSACTION_TYPES: InventoryTransactionType[] = [
+  'receipt',
+  'reserve',
+  'unreserve',
+  'write_off',
+  'adjustment',
+  'transfer_out',
+  'transfer_in',
+]
 
 export function InventoryWarehouseHistoryPage({
   overview,

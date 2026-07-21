@@ -13,6 +13,7 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type DetailingCheckDecision = 'auto_no_matches' | 'reserved' | 'declined'
 export type DetailingReservationStatus = 'active' | 'partially_consumed' | 'consumed' | 'released' | 'cancelled'
 export type DetailingTransferStatus = 'needs_date' | 'scheduled' | 'partially_received' | 'completed' | 'cancelled'
+export type InventoryTransferStatus = 'needs_date' | 'scheduled' | 'partially_received' | 'completed' | 'cancelled'
 export type DetailingMovementType = 'initial_receipt' | 'receipt' | 'adjustment' | 'reserve' | 'unreserve' | 'transfer_out' | 'transfer_in' | 'write_off' | 'rollback'
 
 export type DetailingPartRow = {
@@ -114,6 +115,43 @@ export type DetailingTransferItemRow = {
   part_id: string
   requested_quantity: number
   received_quantity: number
+  created_at: string
+  updated_at: string
+}
+
+export type InventoryTransferRow = {
+  id: string
+  machine_id: string
+  source_factory_id: string
+  destination_factory_id: string
+  status: InventoryTransferStatus
+  expected_arrival_date: string | null
+  created_by: string
+  updated_by: string
+  completed_at: string | null
+  cancelled_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type InventoryTransferItemRow = {
+  id: string
+  transfer_id: string
+  source_inventory_id: string
+  destination_inventory_id: string | null
+  material_id: string
+  material_variant_id: string | null
+  request_item_table: string
+  request_item_id: string
+  requested_quantity: number
+  received_quantity: number
+  requested_secondary_quantity: number | null
+  received_secondary_quantity: number | null
+  unit: string
+  secondary_unit: string | null
+  piece_length_mm: number | null
+  is_cut_reservation: boolean
+  is_business_scrap: boolean
   created_at: string
   updated_at: string
 }
@@ -3273,6 +3311,7 @@ export type Database = {
           consumed_at: string | null
           consumed_by: string | null
           consumed_cutting_event_id: string | null
+          inventory_transfer_item_id: string | null
           reserved_by: string
           created_at: string
         }
@@ -3295,6 +3334,7 @@ export type Database = {
           consumed_at?: string | null
           consumed_by?: string | null
           consumed_cutting_event_id?: string | null
+          inventory_transfer_item_id?: string | null
           reserved_by: string
           created_at?: string
         }
@@ -3317,6 +3357,7 @@ export type Database = {
           consumed_at?: string | null
           consumed_by?: string | null
           consumed_cutting_event_id?: string | null
+          inventory_transfer_item_id?: string | null
           reserved_by?: string
           created_at?: string
         }
@@ -3468,6 +3509,20 @@ export type Database = {
           & Partial<Omit<DetailingTransferItemRow, 'transfer_id' | 'reservation_id' | 'part_id' | 'requested_quantity'>>
         Update: Partial<DetailingTransferItemRow>
       }
+      inventory_transfers: {
+        Row: InventoryTransferRow
+        Insert:
+          & Pick<InventoryTransferRow, 'machine_id' | 'source_factory_id' | 'destination_factory_id' | 'created_by' | 'updated_by'>
+          & Partial<Omit<InventoryTransferRow, 'machine_id' | 'source_factory_id' | 'destination_factory_id' | 'created_by' | 'updated_by'>>
+        Update: Partial<InventoryTransferRow>
+      }
+      inventory_transfer_items: {
+        Row: InventoryTransferItemRow
+        Insert:
+          & Pick<InventoryTransferItemRow, 'transfer_id' | 'source_inventory_id' | 'material_id' | 'request_item_table' | 'request_item_id' | 'requested_quantity' | 'unit'>
+          & Partial<Omit<InventoryTransferItemRow, 'transfer_id' | 'source_inventory_id' | 'material_id' | 'request_item_table' | 'request_item_id' | 'requested_quantity' | 'unit'>>
+        Update: Partial<InventoryTransferItemRow>
+      }
       detailing_consumption_events: {
         Row: DetailingConsumptionEventRow
         Insert:
@@ -3540,6 +3595,7 @@ export type Database = {
           consumable_request_id: string | null
           supply_order_schedule_id: string | null
           detailing_transfer_id: string | null
+          inventory_transfer_id: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -3562,6 +3618,7 @@ export type Database = {
           consumable_request_id?: string | null
           supply_order_schedule_id?: string | null
           detailing_transfer_id?: string | null
+          inventory_transfer_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -3584,6 +3641,7 @@ export type Database = {
           consumable_request_id?: string | null
           supply_order_schedule_id?: string | null
           detailing_transfer_id?: string | null
+          inventory_transfer_id?: string | null
           assigned_to?: string
           task_type?: Database['public']['Enums']['task_type']
           title?: string
@@ -4425,9 +4483,10 @@ export type Database = {
       detailing_check_decision: DetailingCheckDecision
       detailing_reservation_status: DetailingReservationStatus
       detailing_transfer_status: DetailingTransferStatus
+      inventory_transfer_status: InventoryTransferStatus
       detailing_movement_type: DetailingMovementType
       employee_assignment_status: EmployeeAssignmentStatus
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete' | 'detailing_transfer'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'
@@ -4435,7 +4494,7 @@ export type Database = {
       consumable_movement_type: 'initial' | 'manual_receipt' | 'request_receipt' | 'consumption' | 'adjustment'
       request_status: 'draft' | 'pending_stock_check' | 'stock_checked' | 'submitted_to_supply' | 'completed'
       order_item_status: 'pending' | 'ordered' | 'delivered'
-      inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment'
+      inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {
       fn_people_schedule_assignment: {
@@ -4535,6 +4594,27 @@ export type Database = {
       fn_receive_detailing_transfer: {
         Args: { p_transfer_id: string; p_items: Json; p_actor: string }
         Returns: DetailingTransferStatus
+      }
+      fn_set_inventory_transfer_date: {
+        Args: { p_transfer_id: string; p_expected_arrival_date: string; p_actor: string }
+        Returns: InventoryTransferStatus
+      }
+      fn_receive_inventory_transfer: {
+        Args: { p_transfer_id: string; p_items: Json; p_actor: string }
+        Returns: InventoryTransferStatus
+      }
+      fn_reserve_inventory_row_for_machine_transfer: {
+        Args: {
+          p_inventory_id: string
+          p_machine_id: string
+          p_quantity: number
+          p_request_item_table: string
+          p_request_item_id: string
+          p_reserved_by: string
+          p_secondary_quantity?: number | null
+          p_is_cut_reservation?: boolean | null
+        }
+        Returns: string
       }
       fn_archive_detailing_part: {
         Args: { p_part_id: string; p_actor: string }
