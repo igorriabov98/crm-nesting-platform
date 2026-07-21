@@ -72,6 +72,8 @@ export type SupplyRequestRow<T> = T & {
 export type SupplyStockItem = {
   id: string
   factory_id: string
+  factory_name: string
+  is_local_factory: boolean
   material_variant_id: string | null
   piece_length_mm: number | null
   is_business_scrap: boolean
@@ -135,6 +137,8 @@ type InventoryRow = {
   business_scrap_state?: 'available' | 'future' | null
   deleted_at?: string | null
   variant?: MaterialVariant | null
+  factory_name?: string
+  is_local_factory?: boolean
 }
 
 type ReservationRow = {
@@ -591,6 +595,8 @@ function withStock<T extends { id: string; material_id: string | null; material_
       stock_items: stockItems.map((item) => ({
         id: item.id || stockKey(item.material_id, item.material_variant_id, item.piece_length_mm),
         factory_id: item.factory_id,
+        factory_name: item.factory_name || 'Неизвестный завод',
+        is_local_factory: Boolean(item.is_local_factory),
         material_variant_id: item.material_variant_id,
         piece_length_mm: item.piece_length_mm,
         is_business_scrap: Boolean(item.is_business_scrap),
@@ -693,9 +699,9 @@ async function loadRequestForStockSource(
       ...knives.map((row) => row.steel_type_id).filter(Boolean),
     ])) as string[]
 
-    const [inventoryRes, reservationsRes, steelTypesRes] = await Promise.all([
+    const [inventoryRes, reservationsRes, steelTypesRes, factoriesRes] = await Promise.all([
       materialIds.length && request.machine.factory_id
-        ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds).eq('factory_id', request.machine.factory_id)
+        ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       itemIds.length
         ? db.from('inventory_reservations').select('id, inventory_id, source_inventory_id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity, consumed_at, reservation_source').in('request_item_id', itemIds)
@@ -703,14 +709,21 @@ async function loadRequestForStockSource(
       steelTypeIds.length
         ? db.from('steel_types').select('id, name').in('id', steelTypeIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
+      db.from('factories').select('id, name').order('name', { ascending: true }),
     ])
     if (inventoryRes.error) throw new Error(inventoryRes.error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð¾ÑÑ‚Ð°Ñ‚ÐºÐ¸')
     if (reservationsRes.error) throw new Error(reservationsRes.error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð±Ñ€Ð¾Ð½Ð¸Ñ€Ð¾Ð²Ð°Ð½Ð¸Ñ')
     if (steelTypesRes.error) throw new Error(steelTypesRes.error.message || 'Не удалось загрузить типы стали')
+    if (factoriesRes.error) throw new Error(factoriesRes.error.message || 'Не удалось загрузить заводы складских остатков')
     const steelTypeMap = new Map(((steelTypesRes.data || []) as { id: string; name: string }[]).map((steelType) => [steelType.id, steelType.name]))
+    const factoryMap = new Map(((factoriesRes.data || []) as { id: string; name: string }[]).map((factory) => [factory.id, factory.name]))
 
     const allInventoryRows = (inventoryRes.data || []) as InventoryRow[]
     const inventoryRows = allInventoryRows.filter((row) => !row.deleted_at && (row.business_scrap_state || 'available') !== 'future')
+    for (const row of inventoryRows) {
+      row.factory_name = factoryMap.get(row.factory_id) || 'Неизвестный завод'
+      row.is_local_factory = row.factory_id === request.machine.factory_id
+    }
     const inventoryVariantIds = Array.from(new Set(inventoryRows.map((row) => row.material_variant_id).filter(Boolean))) as string[]
     const variantMap = new Map<string, MaterialVariant>()
     if (inventoryVariantIds.length) {
@@ -723,7 +736,9 @@ async function loadRequestForStockSource(
       for (const row of inventoryRows) row.variant = row.material_variant_id ? variantMap.get(row.material_variant_id) || null : null
     }
     const reservationSource = stockSourceOverride || assertReservationAllowedForRequest(request)
-    const visibleInventoryRows = inventoryRows.filter((row) => inventoryMatchesReservationSource(row, reservationSource))
+    const visibleInventoryRows = inventoryRows
+      .filter((row) => inventoryMatchesReservationSource(row, reservationSource))
+      .sort((a, b) => Number(Boolean(b.is_local_factory)) - Number(Boolean(a.is_local_factory)))
     const inventoryMap = new Map(visibleInventoryRows.map((row) => [stockKey(row.material_id, row.material_variant_id, row.piece_length_mm), row]))
     const inventoryGroupMap = new Map<string, InventoryRow[]>()
     const materialInventoryMap = new Map<string, InventoryRow[]>()
@@ -733,10 +748,10 @@ async function loadRequestForStockSource(
       materialInventoryMap.set(row.material_id, [...(materialInventoryMap.get(row.material_id) || []), row])
     }
     for (const rows of inventoryGroupMap.values()) {
-      rows.sort((a, b) => Number(Boolean(b.is_business_scrap)) - Number(Boolean(a.is_business_scrap)) || Number(a.piece_length_mm ?? 0) - Number(b.piece_length_mm ?? 0))
+      rows.sort((a, b) => Number(Boolean(b.is_local_factory)) - Number(Boolean(a.is_local_factory)) || Number(Boolean(b.is_business_scrap)) - Number(Boolean(a.is_business_scrap)) || Number(a.piece_length_mm ?? 0) - Number(b.piece_length_mm ?? 0))
     }
     for (const rows of materialInventoryMap.values()) {
-      rows.sort((a, b) => Number(Boolean(b.is_business_scrap)) - Number(Boolean(a.is_business_scrap)) || Number(a.piece_length_mm ?? 0) - Number(b.piece_length_mm ?? 0))
+      rows.sort((a, b) => Number(Boolean(b.is_local_factory)) - Number(Boolean(a.is_local_factory)) || Number(Boolean(b.is_business_scrap)) - Number(Boolean(a.is_business_scrap)) || Number(a.piece_length_mm ?? 0) - Number(b.piece_length_mm ?? 0))
     }
     const inventoryById = new Map(
       allInventoryRows.flatMap((inventory) => inventory.id ? [[inventory.id, {
@@ -849,9 +864,8 @@ export async function reserveItemFromStock(data: {
     if (selectedInventoryError) throw new Error(selectedInventoryError.message || 'Не удалось проверить выбранный складской остаток')
     const selectedInventory = selectedInventoryData as InventoryRow | null
     if (!selectedInventory?.id || selectedInventory.deleted_at) throw new Error('Выбранный складской остаток не найден')
-    if (!request.machine.factory_id || selectedInventory.factory_id !== request.machine.factory_id) {
-      throw new Error('Выбранный складской остаток относится к другому заводу')
-    }
+    if (!request.machine.factory_id) throw new Error('Для машины не определён завод назначения')
+    const requiresInventoryTransfer = selectedInventory.factory_id !== request.machine.factory_id
     if ((selectedInventory.business_scrap_state || 'available') === 'future') throw new Error('Будущий деловой отход нельзя бронировать в этой заявке')
     if (!inventoryMatchesReservationSource(selectedInventory, reservationSource)) {
       throw new Error(getReservationSourceError(reservationSource))
@@ -903,6 +917,7 @@ export async function reserveItemFromStock(data: {
       quantity,
       secondary_quantity: secondaryQuantity,
       use_cut_reservation: isCutReservationTable(data.request_item_table, row),
+      use_inventory_transfer: requiresInventoryTransfer,
       request_item_table: data.request_item_table,
       request_item_id: data.request_item_id,
     })
@@ -959,12 +974,15 @@ export async function reserveAllAvailable(requestId: string) {
       }
       const needed = getNeededForRow(table, row)
       const remaining = Math.max(needed - row.covered_quantity, 0)
-      const reservableStockItems = row.stock_items.filter((item) => Number(item.available_quantity || 0) > 0)
+      const reservableStockItems = row.stock_items.filter((item) =>
+        item.factory_id === data.request.machine.factory_id
+        && Number(item.available_quantity || 0) > 0,
+      )
       if (reservableStockItems.length !== 1) {
         skippedCount += 1
         return
       }
-      const available = Number(row.available_stock || 0)
+      const available = Number(reservableStockItems[0]?.available_quantity || 0)
       const quantity = Math.min(remaining, available)
       if (quantity <= 0) {
         skippedCount += 1

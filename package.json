@@ -21,6 +21,7 @@
     "test:user-impersonation": "tsx scripts/test-user-impersonation.ts",
     "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && node scripts/test-supply-partial-receiving.mjs",
     "test:detailing": "node scripts/test-detailing-module.mjs",
+    "test:inventory-transfers": "node scripts/test-inventory-transfers.mjs",
     "test:people-planning": "tsx scripts/test-people-planning.ts",
     "smoke:prod": "tsx scripts/prod-smoke.ts",
     "smoke:user:create": "tsx scripts/create-smoke-user.ts",

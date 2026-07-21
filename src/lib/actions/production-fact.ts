@@ -644,6 +644,36 @@ async function assertFactoryMachines(admin: AdminClient, factoryId: string, mach
   }
 }
 
+async function assertInventoryTransfersReceived(admin: AdminClient, machineIds: string[]) {
+  const uniqueMachineIds = Array.from(new Set(machineIds)).filter(Boolean)
+  if (uniqueMachineIds.length === 0) return
+
+  const { data: transfersRaw, error: transfersError } = await looseDb(admin)
+    .from('inventory_transfers')
+    .select('id')
+    .in('machine_id', uniqueMachineIds)
+    .in('status', ['needs_date', 'scheduled', 'partially_received'])
+
+  if (transfersError) throw transfersError
+  const transferIds = ((transfersRaw || []) as Array<{ id: string }>).map((transfer) => transfer.id)
+  if (transferIds.length === 0) return
+
+  const { data: itemsRaw, error: itemsError } = await looseDb(admin)
+    .from('inventory_transfer_items')
+    .select('requested_quantity, received_quantity')
+    .in('transfer_id', transferIds)
+
+  if (itemsError) throw itemsError
+  const hasPendingItems = ((itemsRaw || []) as Array<{
+    requested_quantity: number
+    received_quantity: number
+  }>).some((item) => Number(item.received_quantity) < Number(item.requested_quantity))
+
+  if (hasPendingItems) {
+    throw new Error('Нельзя зафиксировать заготовку: не весь межзаводской материал принят на склад назначения')
+  }
+}
+
 function revalidateProductionFact() {
   revalidatePath(ROUTES.PRODUCTION_FACT)
 }
@@ -1171,6 +1201,7 @@ export async function saveProductionMachineFact(input: {
       }),
     ])
     const nextIsCutting = isCuttingFactSection(nextSectionContext.section, nextSectionContext.parent)
+    if (nextIsCutting) await assertInventoryTransfersReceived(admin, [input.machine_id])
 
     const payload = {
       factory_id: input.factory_id,
@@ -1302,6 +1333,15 @@ export async function copyProductionMachineFactsFromPreviousDay(input: {
     if (payload.length === 0) {
       return { success: true, data: { inserted: 0, skipped: sourceFacts.length }, error: null }
     }
+
+    const cuttingMachineIds = payload
+      .filter((fact) => {
+        const section = sectionById.get(fact.section_id) || null
+        const parent = section?.parent_id ? sectionById.get(section.parent_id) || null : null
+        return isCuttingFactSection(section, parent)
+      })
+      .map((fact) => fact.machine_id)
+    await assertInventoryTransfersReceived(admin, cuttingMachineIds)
 
     const { data: insertedRaw, error } = await looseDb(admin)
       .from('production_machine_facts')
@@ -1447,6 +1487,7 @@ export async function saveUnifiedProductionFact(input: {
       assertActiveFactSection(admin, input.factory_id, input.section_id),
     ])
     const isCuttingSection = isCuttingFactSection(sectionContext.section, sectionContext.parent)
+    if (isCuttingSection) await assertInventoryTransfersReceived(admin, machineIds)
 
     const { data: existingRaw, error: existingError } = await looseDb(admin)
       .from('production_machine_facts')

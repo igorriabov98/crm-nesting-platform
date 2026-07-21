@@ -23,6 +23,8 @@ const TYPE_CLASSES = {
   unreserve: 'border-orange-200 bg-orange-50 text-orange-700',
   write_off: 'border-red-200 bg-red-50 text-red-700',
   adjustment: 'border-slate-200 bg-slate-100 text-slate-700',
+  transfer_out: 'border-violet-200 bg-violet-50 text-violet-700',
+  transfer_in: 'border-cyan-200 bg-cyan-50 text-cyan-700',
 } as const
 
 export function InventoryHistoryPage({ rows, materialId, page, pageSize, total, factoryId }: Props) {

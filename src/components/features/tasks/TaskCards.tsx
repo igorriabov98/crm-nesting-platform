@@ -89,6 +89,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   product_version_incomplete: 'Дозаполнить карточку товара',
   business_scrap_correction_approval: 'Корректировка делового остатка',
   detailing_transfer: 'Перемещение деталировки',
+  inventory_transfer: 'Перемещение материалов',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {
@@ -260,6 +261,7 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (taskType === 'machine_layout') return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (taskType === 'outsourcing_transport') return 'border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm'
   if (taskType === 'detailing_transfer') return 'border-blue-200 bg-blue-50 text-blue-800 shadow-sm'
+  if (taskType === 'inventory_transfer') return 'border-cyan-200 bg-cyan-50 text-cyan-800 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
@@ -758,7 +760,7 @@ export function TaskCards({
 
     if (context === 'outgoing' && pendingDelegation) return null
 
-    if (task.task_type === 'detailing_transfer' && task.status === 'in_progress') return null
+    if (['detailing_transfer', 'inventory_transfer'].includes(task.task_type) && task.status === 'in_progress') return null
 
     if (isBusinessScrapCorrectionTask(task.task_type)) {
       if (task.status === 'completed' || task.status === 'cancelled') return null
@@ -1345,7 +1347,7 @@ export function TaskCards({
                 const Icon = getStatusIcon(task.status, overdue)
                 const nextStatus = getNextStatus(task.status)
                 const actionLabel = getActionLabel(task.status)
-                const deliveryRisk = task.task_type === 'detailing_transfer'
+                const deliveryRisk = ['detailing_transfer', 'inventory_transfer'].includes(task.task_type)
                   && task.description?.includes('РИСК ОПОЗДАНИЯ')
                 const tone = getTaskTone(task.status, overdue || Boolean(deliveryRisk))
                 const target = getTaskTarget(task)
@@ -1471,7 +1473,7 @@ export function TaskCards({
           const Icon = getStatusIcon(task.status, overdue)
           const nextStatus = getNextStatus(task.status)
           const actionLabel = getActionLabel(task.status)
-          const deliveryRisk = task.task_type === 'detailing_transfer'
+          const deliveryRisk = ['detailing_transfer', 'inventory_transfer'].includes(task.task_type)
             && task.description?.includes('РИСК ОПОЗДАНИЯ')
           const tone = getTaskTone(task.status, overdue || Boolean(deliveryRisk))
           const target = getTaskTarget(task)

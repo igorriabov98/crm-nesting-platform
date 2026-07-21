@@ -2,13 +2,16 @@ import { OutsourcingTransportPage } from '@/components/features/supply/Outsourci
 import { getOutsourcingTransportWorkspace } from '@/lib/actions/outsourcing'
 import { DetailingTransportPanel } from '@/components/features/supply/DetailingTransportPanel'
 import { getDetailingTransportWorkspace } from '@/lib/actions/detailing'
+import { InventoryTransferPanel } from '@/components/features/supply/InventoryTransferPanel'
+import { getInventoryTransportWorkspace } from '@/lib/actions/inventory-transfers'
 
 export const metadata = { title: 'Транспорт | CRM Завода' }
 
 export default async function SupplyTransportPage() {
-  const [{ data, error }, detailingResult] = await Promise.all([
+  const [{ data, error }, detailingResult, inventoryTransferResult] = await Promise.all([
     getOutsourcingTransportWorkspace(),
     getDetailingTransportWorkspace(),
+    getInventoryTransportWorkspace(),
   ])
 
   if (error) {
@@ -20,5 +23,11 @@ export default async function SupplyTransportPage() {
     )
   }
 
-  return <div className="space-y-5"><DetailingTransportPanel cards={detailingResult.data || []} error={detailingResult.error} /><OutsourcingTransportPage workspace={data} /></div>
+  return (
+    <div className="space-y-5">
+      <InventoryTransferPanel cards={inventoryTransferResult.data || []} error={inventoryTransferResult.error} />
+      <DetailingTransportPanel cards={detailingResult.data || []} error={detailingResult.error} />
+      <OutsourcingTransportPage workspace={data} />
+    </div>
+  )
 }
