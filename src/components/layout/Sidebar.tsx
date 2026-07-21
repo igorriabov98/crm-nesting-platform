@@ -30,6 +30,7 @@ import {
   PackagePlus,
   History,
   Tags,
+  Database,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -76,7 +77,7 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   inventory: Warehouse,
   history: History,
   receiving: PackagePlus,
-  suppliers: Truck,
+  suppliers: Database,
   materials: Boxes,
   nesting: Shapes,
   meetings: Calendar,
@@ -130,7 +131,10 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const productionItems = [
     ...sectionItems(user, permissions, 'production'),
     ...(permissions.production_fact?.canView && ['financial_director', 'commercial_director', 'planning_director', 'production_manager'].includes(user.role)
-      ? [{ href: ROUTES.PRODUCTION_PEOPLE, label: 'Планирование людей', icon: Users }]
+      ? [
+        { href: ROUTES.PRODUCTION_WORKERS, label: 'Работники', icon: Users },
+        { href: ROUTES.PRODUCTION_PEOPLE, label: 'Планирование людей', icon: ClipboardList },
+      ]
       : []),
   ]
   const supplyItems = sectionItems(user, permissions, 'supply')

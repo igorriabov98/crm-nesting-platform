@@ -94,6 +94,13 @@ async function replaceRelations(supplierId: string, deliveryDays: number[], cate
   }
 }
 
+function revalidateSupplierDirectory() {
+  revalidatePath('/admin/database')
+  revalidatePath('/admin/database/[section]', 'page')
+  revalidatePath('/admin/database/[section]/[id]', 'page')
+  revalidatePath('/admin/suppliers')
+}
+
 export async function getSuppliers(filters: { category?: MaterialCategory; active_only?: boolean } = {}) {
   try {
     const db = await getDb()
@@ -144,7 +151,7 @@ export async function createSupplier(input: SupplierInput) {
 
     const supplier = data as Supplier
     await replaceRelations(supplier.id, input.deliveryDays, input.categories)
-    revalidatePath('/admin/suppliers')
+    revalidateSupplierDirectory()
     return { success: true, data: supplier }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось создать поставщика' }
@@ -174,7 +181,7 @@ export async function updateSupplier(id: string, input: SupplierInput) {
     if (error) throw new Error(error.message || 'Не удалось обновить поставщика')
 
     await replaceRelations(id, input.deliveryDays, input.categories)
-    revalidatePath('/admin/suppliers')
+    revalidateSupplierDirectory()
     revalidatePath(`/admin/suppliers/${id}`)
     return { success: true }
   } catch (error) {
@@ -187,7 +194,7 @@ export async function deleteSupplier(id: string) {
     const { db } = await requireDirector()
     const { error } = await db.from('suppliers').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', id)
     if (error) throw new Error(error.message || 'Не удалось деактивировать поставщика')
-    revalidatePath('/admin/suppliers')
+    revalidateSupplierDirectory()
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось деактивировать поставщика' }

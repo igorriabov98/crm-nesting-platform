@@ -13,6 +13,7 @@
     "test:business-scrap-corrections": "node scripts/test-business-scrap-corrections.mjs",
     "test:supply-reservation-scope": "tsx scripts/test-supply-reservation-scope.ts",
     "test:access-control": "tsx scripts/test-access-control.ts",
+    "test:supplier-directory": "tsx scripts/test-supplier-directory.ts",
     "test:product-file-uploads": "tsx scripts/test-product-file-uploads.ts",
     "test:document-ral": "tsx scripts/test-document-ral-format.ts",
     "test:notification-bell": "tsx scripts/test-notification-bell-state.ts",
