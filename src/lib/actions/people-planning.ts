@@ -8,6 +8,7 @@ import type {
   Employee,
   EmployeeAssignment,
   EmployeeRate,
+  EmployeeVacation,
   FactorySummary,
   ProductionFactSection,
   UserRole,
@@ -24,6 +25,7 @@ import type {
   PeoplePlanningSection,
   PeoplePlanningView,
   PeoplePlanningWorkspace,
+  WorkersWorkspace,
 } from '@/lib/people-planning/types'
 
 type DbError = { message?: string; details?: string; hint?: string; code?: string }
@@ -70,6 +72,17 @@ const rateSchema = z.object({
   sectionId: uuid,
   kgPerDay: z.coerce.number().positive().max(1_000_000),
   active: z.boolean().optional(),
+})
+
+const vacationSchema = z.object({
+  id: uuid.optional(),
+  employeeId: uuid,
+  startDate: dateOnly,
+  endDate: dateOnly,
+  note: z.string().trim().max(500).nullable().optional(),
+}).refine((value) => value.endDate >= value.startDate, {
+  message: 'Дата окончания отпуска не может быть раньше даты начала',
+  path: ['endDate'],
 })
 
 const scheduleSchema = z.object({
@@ -125,6 +138,18 @@ function errorMessage(error: unknown) {
     if (dbError.message?.includes('Employee already assigned in selected half-day')) {
       return 'Сотрудник уже занят в выбранную половину дня'
     }
+    if (dbError.message?.includes('Employee is on vacation for selected date')) {
+      return 'На выбранную дату у сотрудника отпуск'
+    }
+    if (dbError.message?.includes('Employee vacation overlaps existing vacation')) {
+      return 'Период пересекается с другим отпуском сотрудника'
+    }
+    if (dbError.message?.includes('Employee has assignments in vacation period')) {
+      return 'На период отпуска уже есть нагрузка. Сначала очистите назначения в планировании людей'
+    }
+    if (dbError.message?.includes('Vacation employee must be active')) {
+      return 'Нельзя планировать отпуск для неактивного работника'
+    }
     return [dbError.message, dbError.details, dbError.hint].filter(Boolean).join(' ')
   }
   return 'Неизвестная ошибка'
@@ -163,6 +188,69 @@ async function getAssignmentFactory(assignmentId: string) {
     .maybeSingle()
   if (assignmentError || !assignment) throw new Error(assignmentError?.message || 'Назначение не найдено')
   return getEmployeeFactory((assignment as { employee_id: string }).employee_id)
+}
+
+function buildPeoplePlanningSections(rows: ProductionFactSection[]) {
+  const parentMap = new Map(rows.filter((section) => !section.parent_id).map((section) => [section.id, section]))
+  return rows
+    .filter((section) => section.parent_id && parentMap.has(section.parent_id))
+    .map((section) => {
+      const parentName = parentMap.get(section.parent_id!)!.name
+      return { ...section, parentName, displayName: `${parentName} · ${section.name}` }
+    })
+    .sort(comparePeoplePlanningSections)
+}
+
+export async function getWorkersWorkspace(input?: { factoryId?: string }): Promise<WorkersWorkspace> {
+  const context = await requirePeoplePlanning()
+  const admin = peopleDb(createAdminClient())
+  let factoryQuery = admin.from('factories').select('id, name').order('name')
+  if (!isDirector(context.role)) factoryQuery = factoryQuery.eq('id', context.factoryId!)
+  const { data: factoryRows, error: factoryError } = await factoryQuery
+  if (factoryError) throw factoryError
+  const factories = (factoryRows || []) as FactorySummary[]
+  if (factories.length === 0) throw new Error('Нет доступных заводов')
+
+  const selectedFactoryId = factories.some((factory) => factory.id === input?.factoryId)
+    ? input!.factoryId!
+    : (context.factoryId && factories.some((factory) => factory.id === context.factoryId)
+      ? context.factoryId
+      : factories[0].id)
+  assertFactory(context.role, context.factoryId, selectedFactoryId)
+
+  const [sectionsResult, employeesResult] = await Promise.all([
+    admin.from('production_fact_sections').select('*')
+      .eq('factory_id', selectedFactoryId).eq('is_active', true).is('archived_at', null)
+      .order('sort_order').order('name'),
+    admin.from('employees').select('*').eq('factory_id', selectedFactoryId)
+      .order('active', { ascending: false }).order('full_name'),
+  ])
+  if (sectionsResult.error) throw sectionsResult.error
+  if (employeesResult.error) throw employeesResult.error
+
+  const employees = (employeesResult.data || []) as Employee[]
+  const employeeIds = employees.map((employee) => employee.id)
+  const [ratesResult, vacationsResult] = await Promise.all([
+    employeeIds.length > 0
+      ? admin.from('employee_rates').select('*').in('employee_id', employeeIds).order('created_at')
+      : Promise.resolve({ data: [] as EmployeeRate[], error: null }),
+    employeeIds.length > 0
+      ? admin.from('employee_vacations').select('*').in('employee_id', employeeIds)
+        .is('cancelled_at', null).order('start_date', { ascending: false })
+      : Promise.resolve({ data: [] as EmployeeVacation[], error: null }),
+  ])
+  if (ratesResult.error) throw ratesResult.error
+  if (vacationsResult.error) throw vacationsResult.error
+
+  return {
+    factories,
+    selectedFactoryId,
+    sections: buildPeoplePlanningSections((sectionsResult.data || []) as ProductionFactSection[]),
+    employees,
+    rates: (ratesResult.data || []) as EmployeeRate[],
+    vacations: (vacationsResult.data || []) as EmployeeVacation[],
+    isDirector: isDirector(context.role),
+  }
 }
 
 export async function getPeoplePlanningWorkspace(input?: {
@@ -213,15 +301,9 @@ export async function getPeoplePlanningWorkspace(input?: {
   if (machinesResult.error) throw machinesResult.error
   if (assignmentsResult.error) throw assignmentsResult.error
 
-  const allSections = (sectionsResult.data || []) as ProductionFactSection[]
-  const parentMap = new Map(allSections.filter((section) => !section.parent_id).map((section) => [section.id, section]))
-  const sections: PeoplePlanningSection[] = allSections
-    .filter((section) => section.parent_id && parentMap.has(section.parent_id))
-    .map((section) => {
-      const parentName = parentMap.get(section.parent_id!)!.name
-      return { ...section, parentName, displayName: `${parentName} · ${section.name}` }
-    })
-    .sort(comparePeoplePlanningSections)
+  const sections: PeoplePlanningSection[] = buildPeoplePlanningSections(
+    (sectionsResult.data || []) as ProductionFactSection[],
+  )
   const machineRows = (machinesResult.data || []) as Array<{
     id: string
     name: string
@@ -247,7 +329,7 @@ export async function getPeoplePlanningWorkspace(input?: {
   const assignments = ((assignmentsResult.data || []) as EmployeeAssignment[])
     .filter((assignment) => sectionIds.has(assignment.section_id) && employeeIds.includes(assignment.employee_id))
 
-  const [ratesResult, planningAssignmentsResult] = await Promise.all([
+  const [ratesResult, planningAssignmentsResult, vacationsResult] = await Promise.all([
     employeeIds.length > 0
       ? admin.from('employee_rates').select('*').in('employee_id', employeeIds).order('created_at')
       : Promise.resolve({ data: [] as EmployeeRate[], error: null }),
@@ -256,9 +338,15 @@ export async function getPeoplePlanningWorkspace(input?: {
         ? selectedMachineRows.map((machine) => machine.id)
         : ['00000000-0000-0000-0000-000000000000'])
       .is('cancelled_at', null),
+    employeeIds.length > 0
+      ? admin.from('employee_vacations').select('*').in('employee_id', employeeIds)
+        .lte('start_date', endDate).gte('end_date', selectedDate).is('cancelled_at', null)
+        .order('start_date')
+      : Promise.resolve({ data: [] as EmployeeVacation[], error: null }),
   ])
   if (ratesResult.error) throw ratesResult.error
   if (planningAssignmentsResult.error) throw planningAssignmentsResult.error
+  if (vacationsResult.error) throw vacationsResult.error
   const planningAssignments = (planningAssignmentsResult.data || []) as EmployeeAssignment[]
   const machines: PeoplePlanningMachine[] = selectedMachineRows.map((machine) => {
     const totalWeightKg = Number(machine.total_weight || 0) * 1000
@@ -286,6 +374,7 @@ export async function getPeoplePlanningWorkspace(input?: {
     sections,
     employees,
     rates: (ratesResult.data || []) as EmployeeRate[],
+    vacations: (vacationsResult.data || []) as EmployeeVacation[],
     assignments,
     planningAssignments,
     machines,
@@ -331,6 +420,55 @@ export async function saveEmployeeRateAction(input: z.input<typeof rateSchema>):
     }, { onConflict: 'employee_id,section_id' }).select('*').single()
     if (error) throw error
     return { success: true, data: data as EmployeeRate, error: null }
+  } catch (error) {
+    return { success: false, error: errorMessage(error) }
+  }
+}
+
+export async function saveEmployeeVacationAction(
+  input: z.input<typeof vacationSchema>,
+): Promise<PeoplePlanningActionResult<EmployeeVacation>> {
+  try {
+    const context = await requirePeoplePlanning('manage')
+    const parsed = vacationSchema.parse(input)
+    const factoryId = await getEmployeeFactory(parsed.employeeId)
+    assertFactory(context.role, context.factoryId, factoryId)
+    const admin = peopleDb(createAdminClient())
+    const payload = {
+      employee_id: parsed.employeeId,
+      start_date: parsed.startDate,
+      end_date: parsed.endDate,
+      note: parsed.note || null,
+      updated_by: context.userId,
+    }
+    const query = parsed.id
+      ? admin.from('employee_vacations').update(payload)
+        .eq('id', parsed.id).eq('employee_id', parsed.employeeId).is('cancelled_at', null)
+      : admin.from('employee_vacations').insert({ ...payload, created_by: context.userId })
+    const { data, error } = await query.select('*').single()
+    if (error) throw error
+    return { success: true, data: data as EmployeeVacation, error: null }
+  } catch (error) {
+    return { success: false, error: errorMessage(error) }
+  }
+}
+
+export async function cancelEmployeeVacationAction(id: string): Promise<PeoplePlanningActionResult<EmployeeVacation>> {
+  try {
+    const context = await requirePeoplePlanning('manage')
+    const vacationId = uuid.parse(id)
+    const admin = peopleDb(createAdminClient())
+    const { data: vacation, error: vacationError } = await admin.from('employee_vacations')
+      .select('employee_id').eq('id', vacationId).is('cancelled_at', null).maybeSingle()
+    if (vacationError || !vacation) throw new Error(vacationError?.message || 'Отпуск не найден')
+    const factoryId = await getEmployeeFactory((vacation as { employee_id: string }).employee_id)
+    assertFactory(context.role, context.factoryId, factoryId)
+    const { data, error } = await admin.from('employee_vacations').update({
+      cancelled_at: new Date().toISOString(),
+      updated_by: context.userId,
+    }).eq('id', vacationId).is('cancelled_at', null).select('*').single()
+    if (error) throw error
+    return { success: true, data: data as EmployeeVacation, error: null }
   } catch (error) {
     return { success: false, error: errorMessage(error) }
   }

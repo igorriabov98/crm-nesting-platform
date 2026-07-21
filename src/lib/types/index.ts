@@ -19,6 +19,7 @@ export type ProductionStage = Database['public']['Tables']['production_stages'][
 export type ProductionFactSection = Database['public']['Tables']['production_fact_sections']['Row']
 export type Employee = Database['public']['Tables']['employees']['Row']
 export type EmployeeRate = Database['public']['Tables']['employee_rates']['Row']
+export type EmployeeVacation = Database['public']['Tables']['employee_vacations']['Row']
 export type EmployeeAssignment = Database['public']['Tables']['employee_assignments']['Row']
 export type ProductionMachineFact = Database['public']['Tables']['production_machine_facts']['Row']
 export type ProductionTonnageFact = Database['public']['Tables']['production_tonnage_facts']['Row']

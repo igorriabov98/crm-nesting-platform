@@ -2,6 +2,7 @@ import type {
   Employee,
   EmployeeAssignment,
   EmployeeRate,
+  EmployeeVacation,
   FactorySummary,
   ProductionFactSection,
 } from '@/lib/types'
@@ -48,6 +49,7 @@ export type PeoplePlanningWorkspace = {
   sections: PeoplePlanningSection[]
   employees: Employee[]
   rates: EmployeeRate[]
+  vacations: EmployeeVacation[]
   assignments: EmployeeAssignment[]
   planningAssignments: EmployeeAssignment[]
   machines: PeoplePlanningMachine[]
@@ -56,8 +58,18 @@ export type PeoplePlanningWorkspace = {
 
 export type PeoplePlanningPeriod = Pick<
   PeoplePlanningWorkspace,
-  'selectedDate' | 'view' | 'dates' | 'assignments'
+  'selectedDate' | 'view' | 'dates' | 'assignments' | 'vacations'
 >
+
+export type WorkersWorkspace = {
+  factories: FactorySummary[]
+  selectedFactoryId: string
+  sections: PeoplePlanningSection[]
+  employees: Employee[]
+  rates: EmployeeRate[]
+  vacations: EmployeeVacation[]
+  isDirector: boolean
+}
 
 export type PeoplePlanningActionResult<T = undefined> = {
   success: boolean

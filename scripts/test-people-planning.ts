@@ -10,7 +10,8 @@ import {
   comparePeoplePlanningSections,
 } from '../src/lib/people-planning/presentation'
 import { applyPeoplePlanningAssignmentChanges } from '../src/lib/people-planning/state'
-import type { EmployeeAssignment } from '../src/lib/types'
+import { findEmployeeVacationOnDate, vacationDurationDays } from '../src/lib/people-planning/vacations'
+import type { EmployeeAssignment, EmployeeVacation } from '../src/lib/types'
 import type { PeoplePlanningMachine, PeoplePlanningSection, PeoplePlanningWorkspace } from '../src/lib/people-planning/types'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -19,12 +20,16 @@ const migration = read('supabase/migrations/20260720095019_people_planning_v1.sq
 const correctionsMigration = read('supabase/migrations/20260720131352_people_planning_stage_progress.sql')
 const exactAssignmentsMigration = read('supabase/migrations/20260720143938_people_planning_exact_assignments.sql')
 const performanceMigration = read('supabase/migrations/20260720154447_people_planning_fast_period_and_day_cancel.sql')
+const vacationsMigration = read('supabase/migrations/20260721122405_production_employee_vacations.sql')
 const actions = read('src/lib/actions/people-planning.ts')
 const board = read('src/components/features/production/PeoplePlanningBoard.tsx')
 const workspaceRoute = read('src/app/api/production/people/workspace/route.ts')
 const state = read('src/lib/people-planning/state.ts')
 const workOrder = read('src/lib/pdf/PeopleWorkOrderDocument.tsx')
 const databaseTypes = read('src/lib/types/database.ts')
+const sidebar = read('src/components/layout/Sidebar.tsx')
+const workersPage = read('src/components/features/production/WorkersWorkspace.tsx')
+const resources = read('src/lib/permissions/resources.ts')
 
 for (const table of ['employees', 'employee_rates', 'employee_assignments']) {
   assert.match(migration, new RegExp(`CREATE TABLE public\\.${table} \\(`), `${table} table is missing`)
@@ -122,6 +127,31 @@ assert.match(state, /buildPeoplePlanningStageProgress/)
 assert.match(databaseTypes, /fn_people_planning_period:/)
 assert.match(databaseTypes, /fn_people_cancel_employee_day:/)
 
+assert.match(vacationsMigration, /CREATE TABLE public\.employee_vacations \(/)
+assert.match(vacationsMigration, /ALTER TABLE public\.employee_vacations ENABLE ROW LEVEL SECURITY/)
+assert.match(vacationsMigration, /CREATE POLICY employee_vacations_select/)
+assert.match(vacationsMigration, /GRANT SELECT, INSERT, UPDATE ON TABLE public\.employee_vacations TO authenticated/)
+assert.doesNotMatch(vacationsMigration, /GRANT[^;]*DELETE[^;]*employee_vacations/i)
+assert.doesNotMatch(vacationsMigration, /DELETE FROM public\.employee_vacations/)
+assert.match(vacationsMigration, /Employee is on vacation for selected date/)
+assert.match(vacationsMigration, /Employee has assignments in vacation period/)
+assert.match(vacationsMigration, /people-employee-availability:/)
+assert.match(vacationsMigration, /CREATE FUNCTION public\.fn_people_vacations_period/)
+assert.match(vacationsMigration, /SECURITY INVOKER/)
+assert.match(vacationsMigration, /REVOKE ALL ON FUNCTION public\.fn_people_vacations_period\(uuid, date, date\) FROM PUBLIC, anon/)
+assert.match(databaseTypes, /employee_vacations:/)
+assert.match(databaseTypes, /fn_people_vacations_period:/)
+assert.match(actions, /export async function getWorkersWorkspace/)
+assert.match(actions, /export async function saveEmployeeVacationAction/)
+assert.match(actions, /export async function cancelEmployeeVacationAction/)
+assert.match(board, /findEmployeeVacationOnDate/)
+assert.match(board, /Нагрузка недоступна/)
+assert.match(sidebar, /label: 'Работники'/)
+assert.match(resources, /ROUTES\.PRODUCTION_WORKERS/)
+assert.match(workersPage, /График отпусков/)
+assert.match(workersPage, /Нормы выработки/)
+assert.match(workersPage, /SelectValue placeholder=\{placeholder\}>\{selectedLabel\}/)
+
 const sections = [
   { id: 'cleanup', name: 'Зачистка', parentName: 'Зачистка', displayName: 'Зачистка · Зачистка', production_stage_type: null, sort_order: 10 },
   { id: 'assembly', name: 'Цех 1', parentName: 'Сборка/Сварка', displayName: 'Сборка/Сварка · Цех 1', production_stage_type: null, sort_order: 10 },
@@ -165,6 +195,7 @@ const workspace = {
   sections,
   employees: [],
   rates: [],
+  vacations: [],
   assignments: [],
   planningAssignments: [],
   machines: [{
@@ -198,6 +229,24 @@ const machines = [
   { id: 'first', productionWorkshop: 1, queueNumber: 1, createdAt: '2030-01-02', name: 'A' },
 ] as unknown as PeoplePlanningMachine[]
 assert.deepEqual([...machines].sort(comparePeoplePlanningMachines).map((machine) => machine.id), ['first', 'later-queue', 'later-workshop'])
+
+const vacation = {
+  id: 'vacation-1',
+  employee_id: 'employee-1',
+  start_date: '2030-01-10',
+  end_date: '2030-01-19',
+  note: null,
+  cancelled_at: null,
+  created_at: '2030-01-01T00:00:00Z',
+  created_by: null,
+  updated_at: '2030-01-01T00:00:00Z',
+  updated_by: null,
+} as EmployeeVacation
+assert.equal(findEmployeeVacationOnDate([vacation], 'employee-1', '2030-01-10')?.id, 'vacation-1')
+assert.equal(findEmployeeVacationOnDate([vacation], 'employee-1', '2030-01-19')?.id, 'vacation-1')
+assert.equal(findEmployeeVacationOnDate([vacation], 'employee-1', '2030-01-20'), null)
+assert.equal(findEmployeeVacationOnDate([{ ...vacation, cancelled_at: '2030-01-02T00:00:00Z' }], 'employee-1', '2030-01-12'), null)
+assert.equal(vacationDurationDays(vacation), 10)
 
 if (process.env.PEOPLE_PLANNING_TEST_DATABASE_URL) {
   const result = spawnSync('psql', [

@@ -321,6 +321,7 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
     defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
     routes: [
+      { path: ROUTES.PRODUCTION_WORKERS, match: 'prefix', operation: 'view', priority: 125 },
       { path: ROUTES.PRODUCTION_PEOPLE, match: 'prefix', operation: 'view', priority: 120 },
       { path: ROUTES.PRODUCTION_FACT, match: 'prefix', operation: 'view', priority: 100 },
     ],

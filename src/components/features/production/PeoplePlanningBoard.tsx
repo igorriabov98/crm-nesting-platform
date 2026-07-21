@@ -17,6 +17,7 @@ import {
   Printer,
   Settings2,
   Trash2,
+  Umbrella,
   UserRoundPlus,
   Users,
   Weight,
@@ -33,6 +34,7 @@ import {
   updateEmployeeAssignmentAction,
 } from '@/lib/actions/people-planning'
 import { addPlanningDays, planningDateRange, type PlanningHalf } from '@/lib/people-planning/slots'
+import { findEmployeeVacationOnDate } from '@/lib/people-planning/vacations'
 import type {
   PeoplePlanningActionResult,
   PeoplePlanningMachine,
@@ -195,6 +197,7 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
       view: initialData.view,
       dates: initialData.dates,
       assignments: initialData.assignments,
+      vacations: initialData.vacations,
     },
   ]]))
   const periodRequests = useRef(new Map<string, Promise<PeoplePlanningPeriod>>())
@@ -247,6 +250,7 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
         view: updated.view,
         dates: updated.dates,
         assignments: updated.assignments,
+        vacations: updated.vacations,
       })
       return updated
     })
@@ -264,6 +268,10 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
 
   const sectionEmployees = (sectionId: string) => activeEmployees.filter((employee) => (
     rateByEmployeeSection.get(`${employee.id}:${sectionId}`)?.active
+  ))
+
+  const availableSectionEmployees = (sectionId: string, date: string) => sectionEmployees(sectionId).filter((employee) => (
+    !findEmployeeVacationOnDate(data.vacations, employee.id, date)
   ))
 
   const getPeriod = useCallback((location: PlanningLocation) => {
@@ -311,6 +319,7 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
         view: next.view,
         dates: planningDateRange(next.selectedDate, next.view),
         assignments: [],
+        vacations: [],
       }))
       try {
         const period = await getPeriod(next)
@@ -342,6 +351,7 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
         view: workspace.view,
         dates: workspace.dates,
         assignments: workspace.assignments,
+        vacations: workspace.vacations,
       })
       commitWorkspace(workspace)
       window.history.replaceState(null, '', planningHref(workspace))
@@ -409,17 +419,18 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
     half?: PlanningHalf
     fullDay?: boolean
   }) {
+    const targetDate = options?.date || data.selectedDate
     const requestedMachine = options?.machineId ? machineById.get(options.machineId) : null
     const machineSection = requestedMachine?.stages.find((stage) => (
-      stage.remainingPercent > 0 && sectionEmployees(stage.sectionId).length > 0
+      stage.remainingPercent > 0 && availableSectionEmployees(stage.sectionId, targetDate).length > 0
     ))
     const nextSectionId = options?.sectionId || machineSection?.sectionId || scheduleSectionId || data.sections[0]?.id || ''
-    const candidates = sectionEmployees(nextSectionId)
+    const candidates = availableSectionEmployees(nextSectionId, targetDate)
     const nextMachine = requestedMachine || bestMachineForSection(nextSectionId)
     setScheduleSectionId(nextSectionId)
     setScheduleEmployeeId(options?.employeeId || candidates[0]?.id || '')
     setScheduleMachineId(nextMachine?.id || '')
-    setScheduleDate(options?.date || data.selectedDate)
+    setScheduleDate(targetDate)
     setScheduleHalf(options?.half || 1)
     setScheduleMode(options?.fullDay ? 'full-day' : 'half')
     setScheduleSlotLocked(Boolean(options?.date && (options?.half || options?.fullDay)))
@@ -428,16 +439,34 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
 
   function changeScheduleSection(sectionId: string) {
     setScheduleSectionId(sectionId)
-    setScheduleEmployeeId(sectionEmployees(sectionId)[0]?.id || '')
+    setScheduleEmployeeId(availableSectionEmployees(sectionId, scheduleDate)[0]?.id || '')
     const currentStage = selectedMachine?.stages.find((stage) => stage.sectionId === sectionId)
     if (!currentStage || currentStage.remainingPercent <= 0) {
       setScheduleMachineId(bestMachineForSection(sectionId)?.id || '')
     }
   }
 
+  function changeScheduleDate(date: string) {
+    setScheduleDate(date)
+    const candidates = availableSectionEmployees(scheduleSectionId, date)
+    if (!candidates.some((employee) => employee.id === scheduleEmployeeId)) {
+      setScheduleEmployeeId(candidates[0]?.id || '')
+    }
+  }
+
   function renderAssignment(sectionId: string, employeeId: string, date: string, half: PlanningHalf) {
     const assignment = assignmentBySlot.get(assignmentKey(employeeId, date, half))
     if (!assignment) {
+      const vacation = findEmployeeVacationOnDate(data.vacations, employeeId, date)
+      if (vacation) {
+        return (
+          <div className="flex min-h-20 w-full min-w-40 flex-col items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-3 text-center text-blue-800" aria-label={`${employeeById.get(employeeId)?.full_name || 'Сотрудник'} в отпуске ${formatDate(date)}`}>
+            <Umbrella className="mb-1 size-4" aria-hidden="true" />
+            <span className="text-xs font-semibold">Отпуск</span>
+            <span className="mt-0.5 text-[11px]">Нагрузка недоступна</span>
+          </div>
+        )
+      }
       return (
         <button
           type="button"
@@ -516,6 +545,15 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
     const occupied = [firstHalf, secondHalf].filter((assignment): assignment is EmployeeAssignment => Boolean(assignment))
 
     if (occupied.length === 0) {
+      const vacation = findEmployeeVacationOnDate(data.vacations, employeeId, date)
+      if (vacation) {
+        return (
+          <div className="flex min-h-20 w-full min-w-36 flex-col items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-3 text-center text-blue-800">
+            <Umbrella className="mb-1 size-4" aria-hidden="true" />
+            <span className="text-xs font-semibold">Весь день — отпуск</span>
+          </div>
+        )
+      }
       return (
         <button
           type="button"
@@ -661,6 +699,7 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
                         <TableBody>
                           {employees.map((employee) => {
                             const rate = rateByEmployeeSection.get(`${employee.id}:${section.id}`)!
+                            const selectedDayVacation = findEmployeeVacationOnDate(data.vacations, employee.id, data.selectedDate)
                             const hasSelectedDayAssignments = data.assignments.some((assignment) => (
                               assignment.employee_id === employee.id && assignment.work_date === data.selectedDate
                             ))
@@ -678,6 +717,7 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
                                         size="sm"
                                         className="text-slate-500 hover:text-[#1B3A6B]"
                                         title={`Скопировать оба назначения за ${formatDate(addPlanningDays(data.selectedDate, -1))}`}
+                                        disabled={Boolean(selectedDayVacation)}
                                         onClick={() => setCopyEmployeeId(employee.id)}
                                       >
                                         <Copy /> Вчера
@@ -751,7 +791,7 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
             ) : (
               <>
                 <FieldSelect label="Участок" value={scheduleSectionId} onChange={changeScheduleSection} options={data.sections.map((section) => ({ value: section.id, label: section.displayName }))} />
-                <FieldSelect label="Сотрудник" value={scheduleEmployeeId} onChange={setScheduleEmployeeId} options={sectionEmployees(scheduleSectionId).map((employee) => ({ value: employee.id, label: employee.full_name }))} placeholder="Нет сотрудника со ставкой" />
+                <FieldSelect label="Сотрудник" value={scheduleEmployeeId} onChange={setScheduleEmployeeId} options={availableSectionEmployees(scheduleSectionId, scheduleDate).map((employee) => ({ value: employee.id, label: employee.full_name }))} placeholder="Нет доступного сотрудника со ставкой" />
               </>
             )}
             <div className="space-y-1.5 sm:col-span-2">
@@ -773,7 +813,7 @@ export function PeoplePlanningBoard({ data: initialData }: Props) {
             )}
             {!scheduleSlotLocked && (
               <>
-                <div className="space-y-1.5"><Label htmlFor="schedule-date">Дата</Label><Input id="schedule-date" type="date" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} /></div>
+                <div className="space-y-1.5"><Label htmlFor="schedule-date">Дата</Label><Input id="schedule-date" type="date" value={scheduleDate} onChange={(event) => changeScheduleDate(event.target.value)} /></div>
                 <FieldSelect label="Половина дня" value={String(scheduleHalf)} onChange={(value) => setScheduleHalf(Number(value) as PlanningHalf)} options={[{ value: '1', label: 'Первая половина' }, { value: '2', label: 'Вторая половина' }]} />
               </>
             )}
@@ -994,10 +1034,41 @@ function AssignmentEditDialog({ assignment, data, pending, onClose, onSave }: { 
     workDate: workDate || assignment.work_date,
     half: half ?? assignment.half,
   } : null
+  const selectedVacation = initialized
+    ? findEmployeeVacationOnDate(data.vacations, initialized.employeeId, initialized.workDate)
+    : null
 
   function close() {
     setEmployeeId(''); setMachineId(''); setSectionId(''); setWorkDate(''); setHalf(null); onClose()
   }
 
-  return <Dialog key={stateKey} open={Boolean(assignment)} onOpenChange={(open) => !open && close()}><DialogContent className="border-[#DDE4EC] bg-white sm:max-w-lg"><DialogHeader><DialogTitle className="text-lg text-[#1B3A6B]">Изменить назначение</DialogTitle><DialogDescription>Можно перенести предложенный или подтверждённый слот. Вес останется снимком ставки на момент создания.</DialogDescription></DialogHeader>{assignment && initialized && <div className="grid gap-4 py-2 sm:grid-cols-2"><FieldSelect label="Сотрудник" value={initialized.employeeId} onChange={setEmployeeId} options={data.employees.filter((employee) => employee.active).map((employee) => ({ value: employee.id, label: employee.full_name }))} /><FieldSelect label="Участок" value={initialized.sectionId} onChange={setSectionId} options={data.sections.map((section) => ({ value: section.id, label: section.displayName }))} /><FieldSelect label="Машина" value={initialized.machineId} onChange={setMachineId} options={data.machines.map((machine) => ({ value: machine.id, label: machine.name }))} /><div className="space-y-1.5"><Label htmlFor="edit-date">Дата</Label><Input id="edit-date" type="date" value={initialized.workDate} onChange={(event) => setWorkDate(event.target.value)} /></div><FieldSelect label="Половина дня" value={String(initialized.half)} onChange={(value) => setHalf(Number(value) as PlanningHalf)} options={[{ value: '1', label: 'Первая половина' }, { value: '2', label: 'Вторая половина' }]} /></div>}<DialogFooter><Button variant="outline" onClick={close}>Отмена</Button><Button disabled={pending || !assignment || !initialized} className="bg-[#1B3A6B] text-white" onClick={() => assignment && initialized && onSave({ id: assignment.id, ...initialized })}>{pending ? 'Сохраняем…' : 'Сохранить'}</Button></DialogFooter></DialogContent></Dialog>
+  return (
+    <Dialog key={stateKey} open={Boolean(assignment)} onOpenChange={(open) => !open && close()}>
+      <DialogContent className="border-[#DDE4EC] bg-white sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-lg text-[#1B3A6B]">Изменить назначение</DialogTitle>
+          <DialogDescription>Можно перенести предложенный или подтверждённый слот. Вес останется снимком ставки на момент создания.</DialogDescription>
+        </DialogHeader>
+        {assignment && initialized && (
+          <div className="grid gap-4 py-2 sm:grid-cols-2">
+            <FieldSelect label="Сотрудник" value={initialized.employeeId} onChange={setEmployeeId} options={data.employees.filter((employee) => employee.active).map((employee) => ({ value: employee.id, label: employee.full_name }))} />
+            <FieldSelect label="Участок" value={initialized.sectionId} onChange={setSectionId} options={data.sections.map((section) => ({ value: section.id, label: section.displayName }))} />
+            <FieldSelect label="Машина" value={initialized.machineId} onChange={setMachineId} options={data.machines.map((machine) => ({ value: machine.id, label: machine.name }))} />
+            <div className="space-y-1.5"><Label htmlFor="edit-date">Дата</Label><Input id="edit-date" type="date" value={initialized.workDate} onChange={(event) => setWorkDate(event.target.value)} /></div>
+            <FieldSelect label="Половина дня" value={String(initialized.half)} onChange={(value) => setHalf(Number(value) as PlanningHalf)} options={[{ value: '1', label: 'Первая половина' }, { value: '2', label: 'Вторая половина' }]} />
+            {selectedVacation && (
+              <div className="flex items-start gap-2 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 sm:col-span-2" role="alert">
+                <Umbrella className="mt-0.5 size-4 shrink-0" />
+                <span>На выбранную дату у сотрудника отпуск. Перенесите назначение на другой день или выберите другого сотрудника.</span>
+              </div>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>Отмена</Button>
+          <Button disabled={pending || !assignment || !initialized || Boolean(selectedVacation)} className="bg-[#1B3A6B] text-white" onClick={() => assignment && initialized && onSave({ id: assignment.id, ...initialized })}>{pending ? 'Сохраняем…' : 'Сохранить'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }

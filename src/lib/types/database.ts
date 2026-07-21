@@ -186,6 +186,19 @@ export type EmployeeRateRow = {
   updated_at: string
 }
 
+export type EmployeeVacationRow = {
+  id: string
+  employee_id: string
+  start_date: string
+  end_date: string
+  note: string | null
+  cancelled_at: string | null
+  created_at: string
+  created_by: string | null
+  updated_at: string
+  updated_by: string | null
+}
+
 export type EmployeeAssignmentRow = {
   id: string
   employee_id: string
@@ -240,6 +253,14 @@ export type Database = {
           & Partial<Omit<EmployeeRateRow, 'id' | 'employee_id' | 'section_id' | 'kg_per_day' | 'created_at' | 'updated_at'>>
           & { id?: string; created_at?: string; updated_at?: string }
         Update: Partial<Omit<EmployeeRateRow, 'created_at'>>
+      }
+      employee_vacations: {
+        Row: EmployeeVacationRow
+        Insert:
+          & Pick<EmployeeVacationRow, 'employee_id' | 'start_date' | 'end_date'>
+          & Partial<Omit<EmployeeVacationRow, 'id' | 'employee_id' | 'start_date' | 'end_date' | 'created_at' | 'updated_at'>>
+          & { id?: string; created_at?: string; updated_at?: string }
+        Update: Partial<Omit<EmployeeVacationRow, 'created_at'>>
       }
       employee_assignments: {
         Row: EmployeeAssignmentRow
@@ -4468,6 +4489,10 @@ export type Database = {
       fn_people_planning_period: {
         Args: { p_factory_id: string; p_start_date: string; p_end_date: string }
         Returns: EmployeeAssignmentRow[]
+      }
+      fn_people_vacations_period: {
+        Args: { p_factory_id: string; p_start_date: string; p_end_date: string }
+        Returns: EmployeeVacationRow[]
       }
       fn_people_cancel_employee_day: {
         Args: { p_employee_id: string; p_work_date: string }
