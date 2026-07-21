@@ -4,6 +4,11 @@ import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
+import { DELIVERY_DAYS } from '@/lib/constants/procurement'
+import {
+  validateSupplierRoleConfiguration,
+  type SupplierPrimaryRole,
+} from '@/lib/suppliers/directory'
 import type { MaterialCategory, Supplier } from '@/lib/types'
 
 type DbResult = { data: unknown; error: { message?: string } | null }
@@ -31,8 +36,9 @@ export type SupplierInput = {
   email?: string | null
   notes?: string | null
   is_active?: boolean
-  can_outsource?: boolean
-  can_transport?: boolean
+  primary_role: SupplierPrimaryRole | null
+  supplies_metal: boolean | null
+  supplies_consumables: boolean | null
   delivery_lead_days?: number
   deliveryDays: number[]
   categories: MaterialCategory[]
@@ -131,10 +137,20 @@ export async function getSupplier(id: string) {
 export async function createSupplier(input: SupplierInput) {
   try {
     const { db } = await requireDirector()
-    if (!input.name.trim()) throw new Error('Укажите название поставщика')
-    const hasServiceCapability = Boolean(input.can_outsource || input.can_transport)
-    if (input.categories.length === 0 && !hasServiceCapability) throw new Error('Выберите категорию материала или сервисную возможность')
-    if (input.deliveryDays.length === 0 && !hasServiceCapability) throw new Error('Выберите день отгрузки или сервисную возможность')
+    if (!input.name.trim()) throw new Error('Укажите название компании')
+    const roleConfiguration = validateSupplierRoleConfiguration(input)
+    if (!roleConfiguration.success) throw new Error(roleConfiguration.error)
+    const deliveryDays = Array.isArray(input.deliveryDays) ? input.deliveryDays : []
+    if (input.primary_role === 'supplier' && deliveryDays.length === 0) {
+      throw new Error('Выберите хотя бы один день отгрузки для поставщика')
+    }
+    if (
+      input.primary_role === 'supplier'
+      && deliveryDays.some((day) => !(DELIVERY_DAYS as readonly number[]).includes(day))
+    ) {
+      throw new Error('Выбран некорректный день отгрузки')
+    }
+    const isMaterialSupplier = input.primary_role === 'supplier'
 
     const { data, error } = await db.from('suppliers').insert({
       name: input.name.trim(),
@@ -142,15 +158,19 @@ export async function createSupplier(input: SupplierInput) {
       phone: input.phone || null,
       email: input.email || null,
       notes: input.notes || null,
-      delivery_lead_days: Number(input.delivery_lead_days || 0),
+      delivery_lead_days: isMaterialSupplier ? Number(input.delivery_lead_days || 0) : 0,
       is_active: input.is_active ?? true,
-      can_outsource: input.can_outsource ?? false,
-      can_transport: input.can_transport ?? false,
+      can_outsource: roleConfiguration.data.can_outsource,
+      can_transport: roleConfiguration.data.can_transport,
     }).select('*').single()
     if (error || !data) throw new Error(error?.message || 'Не удалось создать поставщика')
 
     const supplier = data as Supplier
-    await replaceRelations(supplier.id, input.deliveryDays, input.categories)
+    await replaceRelations(
+      supplier.id,
+      isMaterialSupplier ? deliveryDays : [],
+      roleConfiguration.data.categories,
+    )
     revalidateSupplierDirectory()
     return { success: true, data: supplier }
   } catch (error) {
@@ -161,10 +181,20 @@ export async function createSupplier(input: SupplierInput) {
 export async function updateSupplier(id: string, input: SupplierInput) {
   try {
     const { db } = await requireDirector()
-    if (!input.name.trim()) throw new Error('Укажите название поставщика')
-    const hasServiceCapability = Boolean(input.can_outsource || input.can_transport)
-    if (input.categories.length === 0 && !hasServiceCapability) throw new Error('Выберите категорию материала или сервисную возможность')
-    if (input.deliveryDays.length === 0 && !hasServiceCapability) throw new Error('Выберите день отгрузки или сервисную возможность')
+    if (!input.name.trim()) throw new Error('Укажите название компании')
+    const roleConfiguration = validateSupplierRoleConfiguration(input)
+    if (!roleConfiguration.success) throw new Error(roleConfiguration.error)
+    const deliveryDays = Array.isArray(input.deliveryDays) ? input.deliveryDays : []
+    if (input.primary_role === 'supplier' && deliveryDays.length === 0) {
+      throw new Error('Выберите хотя бы один день отгрузки для поставщика')
+    }
+    if (
+      input.primary_role === 'supplier'
+      && deliveryDays.some((day) => !(DELIVERY_DAYS as readonly number[]).includes(day))
+    ) {
+      throw new Error('Выбран некорректный день отгрузки')
+    }
+    const isMaterialSupplier = input.primary_role === 'supplier'
 
     const { error } = await db.from('suppliers').update({
       name: input.name.trim(),
@@ -172,15 +202,19 @@ export async function updateSupplier(id: string, input: SupplierInput) {
       phone: input.phone || null,
       email: input.email || null,
       notes: input.notes || null,
-      delivery_lead_days: Number(input.delivery_lead_days || 0),
+      delivery_lead_days: isMaterialSupplier ? Number(input.delivery_lead_days || 0) : 0,
       is_active: input.is_active ?? true,
-      can_outsource: input.can_outsource ?? false,
-      can_transport: input.can_transport ?? false,
+      can_outsource: roleConfiguration.data.can_outsource,
+      can_transport: roleConfiguration.data.can_transport,
       updated_at: new Date().toISOString(),
     }).eq('id', id)
     if (error) throw new Error(error.message || 'Не удалось обновить поставщика')
 
-    await replaceRelations(id, input.deliveryDays, input.categories)
+    await replaceRelations(
+      id,
+      isMaterialSupplier ? deliveryDays : [],
+      roleConfiguration.data.categories,
+    )
     revalidateSupplierDirectory()
     revalidatePath(`/admin/suppliers/${id}`)
     return { success: true }
