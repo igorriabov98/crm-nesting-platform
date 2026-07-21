@@ -8,6 +8,7 @@ import {
   getSupplierDirectorySections,
   getSupplierEditHref,
   getSupplierPrimaryRole,
+  getSupplierPrimaryRoleForCreateSection,
   getUnmappedMaterialCategories,
   validateSupplierRoleConfiguration,
 } from '../src/lib/suppliers/directory'
@@ -150,6 +151,11 @@ for (const configuration of invalidConfigurations) {
 }
 assert.equal(getSupplierCreateHref('metal'), '/admin/database/metal/new')
 assert.equal(getSupplierEditHref('transport', 'supplier-1'), '/admin/database/transport/supplier-1')
+assert.equal(getSupplierPrimaryRoleForCreateSection('all'), 'supplier')
+assert.equal(getSupplierPrimaryRoleForCreateSection('metal'), 'supplier')
+assert.equal(getSupplierPrimaryRoleForCreateSection('consumables'), 'supplier')
+assert.equal(getSupplierPrimaryRoleForCreateSection('transport'), 'transport')
+assert.equal(getSupplierPrimaryRoleForCreateSection('outsourcing'), 'outsourcing')
 
 for (const [pathname, operation] of [
   ['/admin/database', 'view'],

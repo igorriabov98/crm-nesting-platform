@@ -42,7 +42,7 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ s
         </div>
       </header>
 
-      <SupplierForm supplier={data} directorySection={section} />
+      <SupplierForm key={`${section}:${data.id}`} supplier={data} directorySection={section} />
     </div>
   )
 }

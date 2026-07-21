@@ -36,6 +36,7 @@ import {
   METAL_SUPPLIER_CATEGORIES,
   SUPPLIER_DIRECTORY_SECTIONS,
   getSupplierPrimaryRole,
+  getSupplierPrimaryRoleForCreateSection,
   getSupplierDirectoryHref,
   supplierMatchesDirectorySection,
   type SupplierDirectorySection,
@@ -108,11 +109,7 @@ function getInitialSupplierInput(
     }
   }
 
-  const primaryRole: SupplierPrimaryRole = directorySection === 'transport'
-    ? 'transport'
-    : directorySection === 'outsourcing'
-      ? 'outsourcing'
-      : 'supplier'
+  const primaryRole = getSupplierPrimaryRoleForCreateSection(directorySection)
 
   return {
     name: '',
@@ -139,6 +136,17 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
   const [formError, setFormError] = useState<string | null>(null)
   const returnHref = getSupplierDirectoryHref(directorySection)
   const sectionContent = SUPPLIER_DIRECTORY_SECTIONS[directorySection]
+  const isPrimaryRoleFixed = !supplier && directorySection !== 'all'
+  const selectedRoleOption = PRIMARY_ROLE_OPTIONS.find(
+    (option) => option.value === form.primary_role,
+  )
+  const organizationTypeDescription = isPrimaryRoleFixed
+    ? form.primary_role === 'supplier'
+      ? 'Компания будет добавлена как поставщик. Отдельно укажите работу с металлом и расходниками.'
+      : form.primary_role === 'transport'
+        ? 'Компания будет добавлена как перевозчик. Поставка материалов и аутсорсинг для этого типа недоступны.'
+        : 'Компания будет добавлена как аутсорсинговый подрядчик. Поставка материалов и транспорт для этого типа недоступны.'
+    : 'Основной тип выбирается один. Поставщик может одновременно работать с металлом и расходниками.'
 
   function selectPrimaryRole(primaryRole: SupplierPrimaryRole) {
     setFormError(null)
@@ -258,7 +266,7 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
               <Badge variant="secondary">{sectionContent.shortTitle}</Badge>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              Основной тип выбирается один. Поставщик может одновременно работать с металлом и расходниками.
+              {organizationTypeDescription}
             </p>
           </div>
 
@@ -358,31 +366,60 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
             </p>
           )}
 
-          <fieldset
-            className="rounded-2xl border border-border bg-card p-4 sm:p-5"
-            aria-describedby="supplier-role-help"
-          >
-            <legend className="sr-only">Основной тип контрагента</legend>
-            <SectionTitle
-              icon={<Building2 className="h-5 w-5" aria-hidden="true" />}
-              title="Основной тип контрагента"
-              description="Выберите только один тип. Поставщик, перевозчик и аутсорсинг не совмещаются."
-            />
+          {isPrimaryRoleFixed && selectedRoleOption ? (
+            <section
+              aria-label="Основной тип контрагента"
+              className="rounded-2xl border border-border bg-card p-4 sm:p-5"
+            >
+              <SectionTitle
+                icon={<Building2 className="h-5 w-5" aria-hidden="true" />}
+                title="Основной тип контрагента"
+                description={`Тип задан каталогом «${sectionContent.title}» и не может противоречить выбранному разделу.`}
+              />
 
-            <div className="mt-5 grid gap-3 md:grid-cols-3">
-              {PRIMARY_ROLE_OPTIONS.map((option) => (
-                <RoleOptionCard
-                  key={option.value}
-                  {...option}
-                  checked={form.primary_role === option.value}
-                  onChange={() => selectPrimaryRole(option.value)}
-                />
-              ))}
-            </div>
-            <p id="supplier-role-help" className="mt-3 text-xs leading-5 text-muted-foreground">
-              Если выбрано «Поставщик», ниже нужно отдельно ответить про металл и расходники.
-            </p>
-          </fieldset>
+              <div className="mt-5 flex items-start gap-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                  {selectedRoleOption.icon}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-semibold text-foreground">{selectedRoleOption.title}</h3>
+                    <Badge variant="secondary">Задан разделом</Badge>
+                    <CircleCheckBig className="ml-auto h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
+                  </div>
+                  <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                    {selectedRoleOption.description}
+                  </p>
+                </div>
+              </div>
+            </section>
+          ) : (
+            <fieldset
+              className="rounded-2xl border border-border bg-card p-4 sm:p-5"
+              aria-describedby="supplier-role-help"
+            >
+              <legend className="sr-only">Основной тип контрагента</legend>
+              <SectionTitle
+                icon={<Building2 className="h-5 w-5" aria-hidden="true" />}
+                title="Основной тип контрагента"
+                description="Выберите только один тип. Поставщик, перевозчик и аутсорсинг не совмещаются."
+              />
+
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                {PRIMARY_ROLE_OPTIONS.map((option) => (
+                  <RoleOptionCard
+                    key={option.value}
+                    {...option}
+                    checked={form.primary_role === option.value}
+                    onChange={() => selectPrimaryRole(option.value)}
+                  />
+                ))}
+              </div>
+              <p id="supplier-role-help" className="mt-3 text-xs leading-5 text-muted-foreground">
+                Если выбрано «Поставщик», ниже нужно отдельно ответить про металл и расходники.
+              </p>
+            </fieldset>
+          )}
 
           {form.primary_role === 'supplier' ? (
             <fieldset className="rounded-2xl border border-border bg-card p-4 sm:p-5">
