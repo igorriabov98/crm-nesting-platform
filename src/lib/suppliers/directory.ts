@@ -18,6 +18,32 @@ export type SupplierDirectoryRecord = {
   can_outsource?: boolean | null
 }
 
+export const SUPPLIER_PRIMARY_ROLES = [
+  'supplier',
+  'transport',
+  'outsourcing',
+] as const
+
+export type SupplierPrimaryRole = typeof SUPPLIER_PRIMARY_ROLES[number]
+
+export type SupplierRoleConfigurationInput = {
+  primary_role: SupplierPrimaryRole | null
+  supplies_metal: boolean | null
+  supplies_consumables: boolean | null
+  categories: MaterialCategory[]
+}
+
+export type SupplierRoleConfigurationResult =
+  | {
+      success: true
+      data: {
+        can_transport: boolean
+        can_outsource: boolean
+        categories: MaterialCategory[]
+      }
+    }
+  | { success: false; error: string }
+
 export const METAL_SUPPLIER_CATEGORIES = [
   'sheet_metal',
   'circle',
@@ -51,9 +77,9 @@ export const SUPPLIER_DIRECTORY_SECTIONS: Record<SupplierDirectorySection, {
   all: {
     title: 'Все компании',
     shortTitle: 'Все записи',
-    description: 'Полный реестр организаций со всеми категориями материалов и сервисными возможностями.',
+    description: 'Полный реестр организаций с одним основным типом и направлениями поставки.',
     emptyTitle: 'База пока пуста',
-    emptyDescription: 'Добавьте первую организацию и укажите, в каких разделах она должна отображаться.',
+    emptyDescription: 'Добавьте первую организацию, выберите её тип и направления поставки.',
   },
   metal: {
     title: 'Поставщики металла',
@@ -74,14 +100,14 @@ export const SUPPLIER_DIRECTORY_SECTIONS: Record<SupplierDirectorySection, {
     shortTitle: 'Транспорт',
     description: 'Перевозчики и транспортные компании, доступные в сценариях снабжения и аутсорсинга.',
     emptyTitle: 'Транспортные компании не найдены',
-    emptyDescription: 'Добавьте организацию с включённой сервисной возможностью «Транспорт».',
+    emptyDescription: 'Добавьте организацию с основным типом «Перевозчик».',
   },
   outsourcing: {
     title: 'Аутсорсинговые компании',
     shortTitle: 'Аутсорсинг',
     description: 'Подрядчики для внешних производственных операций и связанных транспортных заказов.',
     emptyTitle: 'Аутсорсинговые компании не найдены',
-    emptyDescription: 'Добавьте организацию с включённой сервисной возможностью «Аутсорсинг».',
+    emptyDescription: 'Добавьте организацию с основным типом «Аутсорсинг».',
   },
 }
 
@@ -109,13 +135,131 @@ export function getSupplierEditHref(section: SupplierDirectorySection, supplierI
   return `${getSupplierDirectoryHref(section)}/${supplierId}`
 }
 
+function hasCategoryFrom(
+  categories: readonly MaterialCategory[],
+  categorySet: readonly MaterialCategory[],
+) {
+  return categories.some((category) => categorySet.includes(category))
+}
+
+export function getSupplierPrimaryRole(
+  supplier: SupplierDirectoryRecord,
+): SupplierPrimaryRole | null {
+  const hasSupplierDirection = hasCategoryFrom(supplier.categories, [
+    ...METAL_SUPPLIER_CATEGORIES,
+    ...CONSUMABLE_SUPPLIER_CATEGORIES,
+  ])
+  const directions = [
+    hasSupplierDirection,
+    supplier.can_transport === true,
+    supplier.can_outsource === true,
+  ].filter(Boolean).length
+
+  if (directions > 1) return null
+  if (supplier.can_transport === true) return 'transport'
+  if (supplier.can_outsource === true) return 'outsourcing'
+  return 'supplier'
+}
+
+export function validateSupplierRoleConfiguration(
+  input: SupplierRoleConfigurationInput,
+): SupplierRoleConfigurationResult {
+  if (
+    !input.primary_role
+    || !(SUPPLIER_PRIMARY_ROLES as readonly string[]).includes(input.primary_role)
+  ) {
+    return { success: false, error: 'Выберите один основной тип контрагента.' }
+  }
+
+  const categories = Array.from(new Set(input.categories))
+  const hasUnknownCategory = categories.some(
+    (category) => !(MATERIAL_CATEGORIES as readonly MaterialCategory[]).includes(category),
+  )
+  if (hasUnknownCategory) {
+    return { success: false, error: 'Выбрана неизвестная категория материалов.' }
+  }
+
+  if (input.primary_role === 'transport' || input.primary_role === 'outsourcing') {
+    if (
+      input.supplies_metal === true
+      || input.supplies_consumables === true
+      || categories.length > 0
+    ) {
+      const typeLabel = input.primary_role === 'transport' ? 'Перевозчик' : 'Аутсорсинговая компания'
+      return {
+        success: false,
+        error: `${typeLabel} не может одновременно быть поставщиком металла или расходников.`,
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        can_transport: input.primary_role === 'transport',
+        can_outsource: input.primary_role === 'outsourcing',
+        categories: [],
+      },
+    }
+  }
+
+  if (typeof input.supplies_metal !== 'boolean') {
+    return { success: false, error: 'Укажите, поставляет ли компания металл.' }
+  }
+  if (typeof input.supplies_consumables !== 'boolean') {
+    return {
+      success: false,
+      error: 'Укажите, поставляет ли компания расходники по заявкам производства.',
+    }
+  }
+  if (!input.supplies_metal && !input.supplies_consumables) {
+    return {
+      success: false,
+      error: 'Поставщик должен поставлять металл, расходники или оба направления.',
+    }
+  }
+
+  const metalCategories = categories.filter((category) =>
+    hasCategoryFrom([category], METAL_SUPPLIER_CATEGORIES)
+  )
+  const consumableCategories = categories.filter((category) =>
+    hasCategoryFrom([category], CONSUMABLE_SUPPLIER_CATEGORIES)
+  )
+
+  if (input.supplies_metal && metalCategories.length === 0) {
+    return { success: false, error: 'Выберите хотя бы одну категорию металла.' }
+  }
+  if (!input.supplies_metal && metalCategories.length > 0) {
+    return { success: false, error: 'Уберите категории металла или выберите для металла ответ «Да».' }
+  }
+  if (input.supplies_consumables && consumableCategories.length === 0) {
+    return { success: false, error: 'Выберите хотя бы одну категорию расходников.' }
+  }
+  if (!input.supplies_consumables && consumableCategories.length > 0) {
+    return {
+      success: false,
+      error: 'Уберите категории расходников или выберите для расходников ответ «Да».',
+    }
+  }
+
+  return {
+    success: true,
+    data: {
+      can_transport: false,
+      can_outsource: false,
+      categories,
+    },
+  }
+}
+
 export function supplierMatchesDirectorySection(
   supplier: SupplierDirectoryRecord,
   section: SupplierDirectorySection,
 ) {
   if (section === 'all') return true
-  if (section === 'transport') return supplier.can_transport === true
-  if (section === 'outsourcing') return supplier.can_outsource === true
+  const primaryRole = getSupplierPrimaryRole(supplier)
+  if (section === 'transport') return primaryRole === 'transport'
+  if (section === 'outsourcing') return primaryRole === 'outsourcing'
+  if (primaryRole !== 'supplier') return false
 
   const categorySet: readonly MaterialCategory[] = section === 'metal'
     ? METAL_SUPPLIER_CATEGORIES

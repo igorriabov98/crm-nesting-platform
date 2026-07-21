@@ -6,7 +6,9 @@ import {
   BriefcaseBusiness,
   Building2,
   CalendarDays,
+  CircleCheckBig,
   Loader2,
+  PackageCheck,
   Save,
   Tags,
   Truck,
@@ -33,9 +35,12 @@ import {
   CONSUMABLE_SUPPLIER_CATEGORIES,
   METAL_SUPPLIER_CATEGORIES,
   SUPPLIER_DIRECTORY_SECTIONS,
+  getSupplierPrimaryRole,
   getSupplierDirectoryHref,
   supplierMatchesDirectorySection,
   type SupplierDirectorySection,
+  type SupplierPrimaryRole,
+  validateSupplierRoleConfiguration,
 } from '@/lib/suppliers/directory'
 import type { MaterialCategory } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -48,30 +53,139 @@ type SupplierFormProps = {
 const SECTION_VALIDATION_MESSAGES: Partial<Record<SupplierDirectorySection, string>> = {
   metal: 'Выберите хотя бы одну категорию металла, чтобы компания появилась в этом разделе.',
   consumables: 'Выберите хотя бы одну категорию расходников, чтобы компания появилась в этом разделе.',
-  transport: 'Включите возможность «Транспорт», чтобы компания появилась в этом разделе.',
-  outsourcing: 'Включите возможность «Аутсорсинг», чтобы компания появилась в этом разделе.',
+  transport: 'Выберите основной тип «Перевозчик», чтобы компания появилась в этом разделе.',
+  outsourcing: 'Выберите основной тип «Аутсорсинг», чтобы компания появилась в этом разделе.',
+}
+
+const PRIMARY_ROLE_OPTIONS: Array<{
+  value: SupplierPrimaryRole
+  title: string
+  description: string
+  icon: ReactNode
+}> = [
+  {
+    value: 'supplier',
+    title: 'Поставщик',
+    description: 'Поставляет металл, расходники или оба направления.',
+    icon: <PackageCheck className="h-5 w-5" aria-hidden="true" />,
+  },
+  {
+    value: 'transport',
+    title: 'Перевозчик',
+    description: 'Только транспортные услуги, без поставки материалов.',
+    icon: <Truck className="h-5 w-5" aria-hidden="true" />,
+  },
+  {
+    value: 'outsourcing',
+    title: 'Аутсорсинг',
+    description: 'Только внешние производственные работы.',
+    icon: <BriefcaseBusiness className="h-5 w-5" aria-hidden="true" />,
+  },
+]
+
+function getInitialSupplierInput(
+  supplier: SupplierWithRelations | undefined,
+  directorySection: SupplierDirectorySection,
+): SupplierInput {
+  if (supplier) {
+    return {
+      name: supplier.name,
+      contact_person: supplier.contact_person || '',
+      phone: supplier.phone || '',
+      email: supplier.email || '',
+      notes: supplier.notes || '',
+      is_active: supplier.is_active,
+      primary_role: getSupplierPrimaryRole(supplier),
+      supplies_metal: supplier.categories.some((category) =>
+        (METAL_SUPPLIER_CATEGORIES as readonly MaterialCategory[]).includes(category)
+      ),
+      supplies_consumables: supplier.categories.some((category) =>
+        (CONSUMABLE_SUPPLIER_CATEGORIES as readonly MaterialCategory[]).includes(category)
+      ),
+      delivery_lead_days: supplier.delivery_lead_days || 0,
+      categories: supplier.categories,
+      deliveryDays: supplier.deliveryDays,
+    }
+  }
+
+  const primaryRole: SupplierPrimaryRole = directorySection === 'transport'
+    ? 'transport'
+    : directorySection === 'outsourcing'
+      ? 'outsourcing'
+      : 'supplier'
+
+  return {
+    name: '',
+    contact_person: '',
+    phone: '',
+    email: '',
+    notes: '',
+    is_active: true,
+    primary_role: primaryRole,
+    supplies_metal: primaryRole === 'supplier' ? null : false,
+    supplies_consumables: primaryRole === 'supplier' ? null : false,
+    delivery_lead_days: 0,
+    categories: [],
+    deliveryDays: [],
+  }
 }
 
 export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFormProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [form, setForm] = useState<SupplierInput>({
-    name: supplier?.name || '',
-    contact_person: supplier?.contact_person || '',
-    phone: supplier?.phone || '',
-    email: supplier?.email || '',
-    notes: supplier?.notes || '',
-    is_active: supplier?.is_active ?? true,
-    can_outsource: supplier?.can_outsource ?? (directorySection === 'outsourcing'),
-    can_transport: supplier?.can_transport ?? (directorySection === 'transport'),
-    delivery_lead_days: supplier?.delivery_lead_days || 0,
-    categories: supplier?.categories || [],
-    deliveryDays: supplier?.deliveryDays || [],
-  })
+  const [form, setForm] = useState<SupplierInput>(() =>
+    getInitialSupplierInput(supplier, directorySection)
+  )
+  const [formError, setFormError] = useState<string | null>(null)
   const returnHref = getSupplierDirectoryHref(directorySection)
   const sectionContent = SUPPLIER_DIRECTORY_SECTIONS[directorySection]
 
+  function selectPrimaryRole(primaryRole: SupplierPrimaryRole) {
+    setFormError(null)
+    setForm((current) => {
+      if (current.primary_role === primaryRole) return current
+      if (primaryRole !== 'supplier') {
+        return {
+          ...current,
+          primary_role: primaryRole,
+          supplies_metal: false,
+          supplies_consumables: false,
+          categories: [],
+          delivery_lead_days: 0,
+          deliveryDays: [],
+        }
+      }
+
+      return {
+        ...current,
+        primary_role: primaryRole,
+        supplies_metal: null,
+        supplies_consumables: null,
+        categories: [],
+      }
+    })
+  }
+
+  function setSupplyCapability(
+    capability: 'supplies_metal' | 'supplies_consumables',
+    value: boolean,
+  ) {
+    const categories: readonly MaterialCategory[] = capability === 'supplies_metal'
+      ? METAL_SUPPLIER_CATEGORIES
+      : CONSUMABLE_SUPPLIER_CATEGORIES
+
+    setFormError(null)
+    setForm((current) => ({
+      ...current,
+      [capability]: value,
+      categories: value
+        ? current.categories
+        : current.categories.filter((category) => !categories.includes(category)),
+    }))
+  }
+
   function toggleCategory(category: MaterialCategory) {
+    setFormError(null)
     setForm((current) => ({
       ...current,
       categories: current.categories.includes(category)
@@ -81,6 +195,7 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
   }
 
   function toggleDay(day: number) {
+    setFormError(null)
     setForm((current) => ({
       ...current,
       deliveryDays: current.deliveryDays.includes(day)
@@ -92,7 +207,25 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (!supplier && directorySection !== 'all' && !supplierMatchesDirectorySection(form, directorySection)) {
+    const roleConfiguration = validateSupplierRoleConfiguration(form)
+    if (!roleConfiguration.success) {
+      setFormError(roleConfiguration.error)
+      toast.error(roleConfiguration.error)
+      return
+    }
+
+    if (form.primary_role === 'supplier' && form.deliveryDays.length === 0) {
+      const error = 'Выберите хотя бы один день отгрузки для поставщика.'
+      setFormError(error)
+      toast.error(error)
+      return
+    }
+
+    if (
+      !supplier
+      && directorySection !== 'all'
+      && !supplierMatchesDirectorySection(roleConfiguration.data, directorySection)
+    ) {
       toast.error(SECTION_VALIDATION_MESSAGES[directorySection] || 'Укажите направление работы компании')
       return
     }
@@ -103,7 +236,9 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
         : await createSupplier(form)
 
       if (!result.success) {
-        toast.error(result.error || 'Не удалось сохранить компанию')
+        const error = result.error || 'Не удалось сохранить компанию'
+        setFormError(error)
+        toast.error(error)
         return
       }
 
@@ -112,16 +247,6 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
       router.refresh()
     })
   }
-
-  const categoryGroups = directorySection === 'consumables'
-    ? [
-        { title: 'Расходники и комплектующие', categories: CONSUMABLE_SUPPLIER_CATEGORIES },
-        { title: 'Металл', categories: METAL_SUPPLIER_CATEGORIES },
-      ]
-    : [
-        { title: 'Металл', categories: METAL_SUPPLIER_CATEGORIES },
-        { title: 'Расходники и комплектующие', categories: CONSUMABLE_SUPPLIER_CATEGORIES },
-      ]
 
   return (
     <form onSubmit={submit} className="space-y-5 [font-family:var(--font-industrial-sans)]">
@@ -133,7 +258,7 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
               <Badge variant="secondary">{sectionContent.shortTitle}</Badge>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              Одна карточка используется во всех выбранных каталогах и связанных процессах CRM.
+              Основной тип выбирается один. Поставщик может одновременно работать с металлом и расходниками.
             </p>
           </div>
 
@@ -223,112 +348,155 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
         </section>
 
         <div className="space-y-5">
-          <fieldset className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-            <legend className="sr-only">Сервисные возможности</legend>
+          {formError && (
+            <p
+              id="supplier-form-error"
+              role="alert"
+              className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive"
+            >
+              {formError}
+            </p>
+          )}
+
+          <fieldset
+            className="rounded-2xl border border-border bg-card p-4 sm:p-5"
+            aria-describedby="supplier-role-help"
+          >
+            <legend className="sr-only">Основной тип контрагента</legend>
             <SectionTitle
-              icon={<Truck className="h-5 w-5" aria-hidden="true" />}
-              title="Сервисные возможности"
-              description="Включите все роли, в которых компания может участвовать."
+              icon={<Building2 className="h-5 w-5" aria-hidden="true" />}
+              title="Основной тип контрагента"
+              description="Выберите только один тип. Поставщик, перевозчик и аутсорсинг не совмещаются."
             />
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <CapabilityCard
-                id="supplier-transport"
-                checked={Boolean(form.can_transport)}
-                icon={<Truck className="h-5 w-5" aria-hidden="true" />}
-                title="Транспорт"
-                description="Компания доступна как перевозчик."
-                onChange={() => setForm((current) => ({ ...current, can_transport: !current.can_transport }))}
-              />
-              <CapabilityCard
-                id="supplier-outsourcing"
-                checked={Boolean(form.can_outsource)}
-                icon={<BriefcaseBusiness className="h-5 w-5" aria-hidden="true" />}
-                title="Аутсорсинг"
-                description="Компания доступна как внешний подрядчик."
-                onChange={() => setForm((current) => ({ ...current, can_outsource: !current.can_outsource }))}
-              />
-            </div>
-          </fieldset>
-
-          <fieldset className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-            <legend className="sr-only">Категории материалов</legend>
-            <SectionTitle
-              icon={<Tags className="h-5 w-5" aria-hidden="true" />}
-              title="Категории материалов"
-              description="Категории определяют, в каких каталогах материалов появится компания."
-            />
-
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
-              {categoryGroups.map((group) => (
-                <CategoryGroup
-                  key={group.title}
-                  title={group.title}
-                  categories={group.categories}
-                  selected={form.categories}
-                  onToggle={toggleCategory}
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              {PRIMARY_ROLE_OPTIONS.map((option) => (
+                <RoleOptionCard
+                  key={option.value}
+                  {...option}
+                  checked={form.primary_role === option.value}
+                  onChange={() => selectPrimaryRole(option.value)}
                 />
               ))}
             </div>
+            <p id="supplier-role-help" className="mt-3 text-xs leading-5 text-muted-foreground">
+              Если выбрано «Поставщик», ниже нужно отдельно ответить про металл и расходники.
+            </p>
           </fieldset>
 
-          <fieldset className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-            <legend className="sr-only">Планирование отгрузки</legend>
-            <SectionTitle
-              icon={<CalendarDays className="h-5 w-5" aria-hidden="true" />}
-              title="Планирование отгрузки"
-              description="Срок и регулярные дни отгрузки используются в текущей логике снабжения."
-            />
+          {form.primary_role === 'supplier' ? (
+            <fieldset className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+              <legend className="sr-only">Направления поставки</legend>
+              <SectionTitle
+                icon={<Tags className="h-5 w-5" aria-hidden="true" />}
+                title="Что поставляет компания"
+                description="Для каждого направления обязательно выберите «Да» или «Нет». Можно включить оба."
+              />
 
-            <div className="mt-5 grid gap-5 md:grid-cols-[180px_minmax(0,1fr)]">
-              <FormField id="supplier-lead-days" label="Срок доставки, дней">
-                <Input
-                  id="supplier-lead-days"
-                  type="number"
-                  min={0}
-                  inputMode="numeric"
-                  value={form.delivery_lead_days || 0}
-                  className="h-11 bg-background"
-                  onChange={(event) => setForm((current) => ({
-                    ...current,
-                    delivery_lead_days: Number(event.target.value || 0),
-                  }))}
+              <div className="mt-5 grid gap-4 md:grid-cols-2">
+                <SupplierCapabilityPanel
+                  id="supplier-metal-capability"
+                  title="Поставляет металл?"
+                  description="Доступен в заявках и заказах на металл."
+                  value={form.supplies_metal}
+                  categories={METAL_SUPPLIER_CATEGORIES}
+                  categoryTitle="Категории металла"
+                  selected={form.categories}
+                  onDecision={(value) => setSupplyCapability('supplies_metal', value)}
+                  onToggle={toggleCategory}
                 />
-              </FormField>
-
-              <div>
-                <p className="text-sm font-medium text-foreground">Дни отгрузки</p>
-                <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
-                  {DELIVERY_DAYS.map((day) => {
-                    const checked = form.deliveryDays.includes(day)
-                    return (
-                      <label
-                        key={day}
-                        htmlFor={`delivery-day-${day}`}
-                        className={cn(
-                          'flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border px-2 text-sm font-medium transition-colors focus-within:ring-3 focus-within:ring-ring/40',
-                          checked
-                            ? 'border-primary bg-primary text-primary-foreground'
-                            : 'border-border bg-background text-muted-foreground hover:text-foreground'
-                        )}
-                      >
-                        <Checkbox
-                          id={`delivery-day-${day}`}
-                          checked={checked}
-                          onCheckedChange={() => toggleDay(day)}
-                          className={checked ? 'border-white/60 data-checked:border-white data-checked:bg-white data-checked:text-primary' : undefined}
-                        />
-                        {WEEKDAY_LABELS[day]}
-                      </label>
-                    )
-                  })}
-                </div>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  Для транспортных и аутсорсинговых компаний график можно не указывать.
-                </p>
+                <SupplierCapabilityPanel
+                  id="supplier-consumables-capability"
+                  title="Поставляет расходники?"
+                  description="Может закрывать позиции расходников, которые формирует производство."
+                  value={form.supplies_consumables}
+                  categories={CONSUMABLE_SUPPLIER_CATEGORIES}
+                  categoryTitle="Категории расходников"
+                  selected={form.categories}
+                  onDecision={(value) => setSupplyCapability('supplies_consumables', value)}
+                  onToggle={toggleCategory}
+                />
               </div>
-            </div>
-          </fieldset>
+            </fieldset>
+          ) : form.primary_role ? (
+            <section className="rounded-2xl border border-primary/20 bg-primary/5 p-4 sm:p-5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <CircleCheckBig className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">
+                    Материалы не назначаются
+                  </h2>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {form.primary_role === 'transport'
+                      ? 'Перевозчик будет отображаться только в разделе транспорта.'
+                      : 'Аутсорсинговая компания будет отображаться только в разделе внешних работ.'}
+                  </p>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {form.primary_role === 'supplier' && (
+            <fieldset className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+              <legend className="sr-only">Планирование отгрузки</legend>
+              <SectionTitle
+                icon={<CalendarDays className="h-5 w-5" aria-hidden="true" />}
+                title="Планирование отгрузки"
+                description="Срок и регулярные дни отгрузки используются в текущей логике снабжения."
+              />
+
+              <div className="mt-5 grid gap-5 md:grid-cols-[180px_minmax(0,1fr)]">
+                <FormField id="supplier-lead-days" label="Срок доставки, дней">
+                  <Input
+                    id="supplier-lead-days"
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    value={form.delivery_lead_days || 0}
+                    className="h-11 bg-background"
+                    onChange={(event) => setForm((current) => ({
+                      ...current,
+                      delivery_lead_days: Number(event.target.value || 0),
+                    }))}
+                  />
+                </FormField>
+
+                <div>
+                  <p className="text-sm font-medium text-foreground">Дни отгрузки</p>
+                  <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                    {DELIVERY_DAYS.map((day) => {
+                      const checked = form.deliveryDays.includes(day)
+                      return (
+                        <label
+                          key={day}
+                          htmlFor={`delivery-day-${day}`}
+                          className={cn(
+                            'flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border px-2 text-sm font-medium transition-colors focus-within:ring-3 focus-within:ring-ring/40',
+                            checked
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-border bg-background text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          <Checkbox
+                            id={`delivery-day-${day}`}
+                            checked={checked}
+                            onCheckedChange={() => toggleDay(day)}
+                            className={checked ? 'border-white/60 data-checked:border-white data-checked:bg-white data-checked:text-primary' : undefined}
+                          />
+                          {WEEKDAY_LABELS[day]}
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    Выберите хотя бы один регулярный день отгрузки.
+                  </p>
+                </div>
+              </div>
+            </fieldset>
+          )}
         </div>
       </div>
 
@@ -393,35 +561,163 @@ function FormField({
   )
 }
 
-function CapabilityCard({
-  id,
+function RoleOptionCard({
+  value,
   checked,
   icon,
   title,
   description,
   onChange,
 }: {
-  id: string
+  value: SupplierPrimaryRole
   checked: boolean
   icon: ReactNode
   title: string
   description: string
   onChange: () => void
 }) {
+  const id = `supplier-primary-role-${value}`
+
   return (
     <label
       htmlFor={id}
       className={cn(
-        'flex min-h-20 cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors focus-within:ring-3 focus-within:ring-ring/40',
-        checked ? 'border-primary bg-primary/5' : 'border-border bg-background hover:border-primary/30'
+        'relative flex min-h-28 cursor-pointer flex-col rounded-xl border p-3 transition-colors focus-within:ring-3 focus-within:ring-ring/40',
+        checked
+          ? 'border-primary bg-primary/5'
+          : 'border-border bg-background hover:border-primary/30'
       )}
     >
-      <span className={cn('mt-0.5 text-muted-foreground', checked && 'text-primary')}>{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold text-foreground">{title}</span>
-        <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
+      <input
+        id={id}
+        type="radio"
+        name="supplier-primary-role"
+        value={value}
+        checked={checked}
+        onChange={onChange}
+        className="sr-only"
+      />
+      <span className="flex items-start justify-between gap-3">
+        <span className={cn('text-muted-foreground', checked && 'text-primary')}>{icon}</span>
+        <span
+          className={cn(
+            'flex h-5 w-5 items-center justify-center rounded-full border',
+            checked ? 'border-primary bg-primary text-primary-foreground' : 'border-border'
+          )}
+          aria-hidden="true"
+        >
+          {checked && <CircleCheckBig className="h-3.5 w-3.5" />}
+        </span>
       </span>
-      <Checkbox id={id} checked={checked} onCheckedChange={onChange} />
+      <span className="mt-3 block text-sm font-semibold text-foreground">{title}</span>
+      <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
+    </label>
+  )
+}
+
+function SupplierCapabilityPanel({
+  id,
+  title,
+  description,
+  value,
+  categories,
+  categoryTitle,
+  selected,
+  onDecision,
+  onToggle,
+}: {
+  id: string
+  title: string
+  description: string
+  value: boolean | null
+  categories: readonly MaterialCategory[]
+  categoryTitle: string
+  selected: MaterialCategory[]
+  onDecision: (value: boolean) => void
+  onToggle: (category: MaterialCategory) => void
+}) {
+  return (
+    <fieldset
+      className={cn(
+        'rounded-xl border p-3',
+        value === null ? 'border-amber-500/50 bg-amber-500/5' : 'border-border bg-background'
+      )}
+    >
+      <legend className="px-1 text-sm font-semibold text-foreground">{title}</legend>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <DecisionOption
+          id={`${id}-yes`}
+          name={id}
+          label="Да"
+          checked={value === true}
+          onChange={() => onDecision(true)}
+        />
+        <DecisionOption
+          id={`${id}-no`}
+          name={id}
+          label="Нет"
+          checked={value === false}
+          onChange={() => onDecision(false)}
+        />
+      </div>
+
+      {value === true ? (
+        <div className="mt-3 border-t border-border pt-3">
+          <CategoryGroup
+            title={categoryTitle}
+            categories={categories}
+            selected={selected}
+            onToggle={onToggle}
+            nested
+          />
+        </div>
+      ) : value === false ? (
+        <p className="mt-3 rounded-lg bg-muted px-2.5 py-2 text-xs leading-5 text-muted-foreground">
+          Компания не будет отображаться в этом каталоге поставщиков.
+        </p>
+      ) : (
+        <p className="mt-3 text-xs font-medium text-amber-700 dark:text-amber-300">
+          Выберите обязательный ответ «Да» или «Нет».
+        </p>
+      )}
+    </fieldset>
+  )
+}
+
+function DecisionOption({
+  id,
+  name,
+  label,
+  checked,
+  onChange,
+}: {
+  id: string
+  name: string
+  label: string
+  checked: boolean
+  onChange: () => void
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className={cn(
+        'flex min-h-11 cursor-pointer items-center justify-center rounded-lg border px-3 text-sm font-semibold transition-colors focus-within:ring-3 focus-within:ring-ring/40',
+        checked
+          ? 'border-primary bg-primary text-primary-foreground'
+          : 'border-border bg-card text-muted-foreground hover:text-foreground'
+      )}
+    >
+      <input
+        id={id}
+        type="radio"
+        name={name}
+        checked={checked}
+        onChange={onChange}
+        className="sr-only"
+      />
+      {label}
     </label>
   )
 }
@@ -431,16 +727,18 @@ function CategoryGroup({
   categories,
   selected,
   onToggle,
+  nested = false,
 }: {
   title: string
   categories: readonly MaterialCategory[]
   selected: MaterialCategory[]
   onToggle: (category: MaterialCategory) => void
+  nested?: boolean
 }) {
   const selectedCount = categories.filter((category) => selected.includes(category)).length
 
   return (
-    <div className="rounded-xl border border-border bg-background p-3">
+    <div className={cn(!nested && 'rounded-xl border border-border bg-background p-3')}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
         <Badge variant="secondary">{selectedCount}</Badge>
