@@ -17,6 +17,7 @@ DECLARE
   v_other_employee uuid := gen_random_uuid();
   v_section_employee uuid := gen_random_uuid();
   v_assignment uuid;
+  v_vacation uuid;
   v_count integer;
   v_confirmed integer;
   v_pending integer;
@@ -166,6 +167,47 @@ BEGIN
     RAISE EXCEPTION 'Expected four active rows in the fast period read, got %', v_count;
   END IF;
 
+  INSERT INTO public.employee_vacations(
+    employee_id, start_date, end_date, note, created_by, updated_by
+  ) VALUES (
+    v_employee, DATE '2030-02-01', DATE '2030-02-05', 'Тестовый отпуск', v_actor, v_actor
+  ) RETURNING id INTO v_vacation;
+  IF (SELECT count(*) FROM public.fn_people_vacations_period(
+    v_factory_one, DATE '2030-02-01', DATE '2030-02-07'
+  )) <> 1 THEN
+    RAISE EXCEPTION 'Vacation period read did not return the active vacation';
+  END IF;
+  BEGIN
+    INSERT INTO public.employee_assignments(
+      employee_id, machine_id, section_id, work_date, half, status, kg_planned, created_by, updated_by
+    ) VALUES (v_employee, v_machine, v_leaf_one, DATE '2030-02-02', 1, 'confirmed', 200, v_actor, v_actor);
+    RAISE EXCEPTION 'Assignment inside vacation was accepted';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM NOT LIKE '%on vacation for selected date%' THEN RAISE; END IF;
+  END;
+  BEGIN
+    INSERT INTO public.employee_vacations(
+      employee_id, start_date, end_date, created_by, updated_by
+    ) VALUES (v_employee, DATE '2030-02-05', DATE '2030-02-10', v_actor, v_actor);
+    RAISE EXCEPTION 'Overlapping vacation was accepted';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM NOT LIKE '%overlaps existing vacation%' THEN RAISE; END IF;
+  END;
+  BEGIN
+    INSERT INTO public.employee_vacations(
+      employee_id, start_date, end_date, created_by, updated_by
+    ) VALUES (v_employee, DATE '2030-01-20', DATE '2030-01-20', v_actor, v_actor);
+    RAISE EXCEPTION 'Vacation over an active assignment was accepted';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM NOT LIKE '%assignments in vacation period%' THEN RAISE; END IF;
+  END;
+  UPDATE public.employee_vacations
+  SET cancelled_at = now(), updated_by = v_actor
+  WHERE id = v_vacation;
+  INSERT INTO public.employee_assignments(
+    employee_id, machine_id, section_id, work_date, half, status, kg_planned, created_by, updated_by
+  ) VALUES (v_employee, v_machine, v_leaf_one, DATE '2030-02-02', 1, 'confirmed', 200, v_actor, v_actor);
+
   UPDATE public.employees SET active = false WHERE id = v_employee;
   SELECT count(*) INTO v_cancelled
     FROM public.fn_people_cancel_employee_day(v_employee, DATE '2030-01-21');
@@ -200,7 +242,7 @@ DECLARE
   v_table text;
   v_rls boolean;
 BEGIN
-  FOREACH v_table IN ARRAY ARRAY['employees', 'employee_rates', 'employee_assignments'] LOOP
+  FOREACH v_table IN ARRAY ARRAY['employees', 'employee_rates', 'employee_vacations', 'employee_assignments'] LOOP
     SELECT relrowsecurity INTO v_rls FROM pg_class WHERE oid = ('public.' || v_table)::regclass;
     IF NOT v_rls THEN RAISE EXCEPTION 'RLS is disabled for %', v_table; END IF;
     IF NOT has_table_privilege('authenticated', 'public.' || v_table, 'SELECT,INSERT,UPDATE') THEN
@@ -272,6 +314,21 @@ BEGIN
     'EXECUTE'
   ) THEN
     RAISE EXCEPTION 'Anon can execute fn_people_cancel_employee_day';
+  END IF;
+
+  IF NOT has_function_privilege(
+    'authenticated',
+    'public.fn_people_vacations_period(uuid,date,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Authenticated execute is missing for fn_people_vacations_period';
+  END IF;
+  IF has_function_privilege(
+    'anon',
+    'public.fn_people_vacations_period(uuid,date,date)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Anon can execute fn_people_vacations_period';
   END IF;
 END;
 $$;

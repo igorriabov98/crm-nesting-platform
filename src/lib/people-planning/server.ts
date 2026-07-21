@@ -12,7 +12,7 @@ const uuid = z.string().uuid()
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 
 type PeriodRpc = {
-  rpc: (fn: 'fn_people_planning_period', args: {
+  rpc: (fn: 'fn_people_planning_period' | 'fn_people_vacations_period', args: {
     p_factory_id: string
     p_start_date: string
     p_end_date: string
@@ -36,17 +36,24 @@ export async function getPeoplePlanningPeriod(input: {
   }
 
   const dates = planningDateRange(selectedDate, view)
-  const { data, error } = await (context.supabase as unknown as PeriodRpc).rpc('fn_people_planning_period', {
+  const rpc = context.supabase as unknown as PeriodRpc
+  const args = {
     p_factory_id: factoryId,
     p_start_date: selectedDate,
     p_end_date: dates.at(-1)!,
-  })
-  if (error) throw new Error(error.message || 'Не удалось загрузить назначения')
+  }
+  const [assignmentsResult, vacationsResult] = await Promise.all([
+    rpc.rpc('fn_people_planning_period', args),
+    rpc.rpc('fn_people_vacations_period', args),
+  ])
+  if (assignmentsResult.error) throw new Error(assignmentsResult.error.message || 'Не удалось загрузить назначения')
+  if (vacationsResult.error) throw new Error(vacationsResult.error.message || 'Не удалось загрузить отпуска')
 
   return {
     selectedDate,
     view,
     dates,
-    assignments: (data || []) as PeoplePlanningPeriod['assignments'],
+    assignments: (assignmentsResult.data || []) as PeoplePlanningPeriod['assignments'],
+    vacations: (vacationsResult.data || []) as PeoplePlanningPeriod['vacations'],
   }
 }
