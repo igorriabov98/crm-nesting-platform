@@ -135,6 +135,14 @@ export function getSupplierEditHref(section: SupplierDirectorySection, supplierI
   return `${getSupplierDirectoryHref(section)}/${supplierId}`
 }
 
+export function getSupplierPrimaryRoleForCreateSection(
+  section: SupplierDirectorySection,
+): SupplierPrimaryRole {
+  if (section === 'transport') return 'transport'
+  if (section === 'outsourcing') return 'outsourcing'
+  return 'supplier'
+}
+
 function hasCategoryFrom(
   categories: readonly MaterialCategory[],
   categorySet: readonly MaterialCategory[],

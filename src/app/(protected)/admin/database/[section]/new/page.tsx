@@ -38,7 +38,7 @@ export default async function NewSupplierPage({ params }: { params: Promise<{ se
         </div>
       </header>
 
-      <SupplierForm directorySection={section} />
+      <SupplierForm key={section} directorySection={section} />
     </div>
   )
 }
