@@ -30,6 +30,7 @@ import {
   PackagePlus,
   History,
   Tags,
+  Database,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -76,7 +77,7 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   inventory: Warehouse,
   history: History,
   receiving: PackagePlus,
-  suppliers: Truck,
+  suppliers: Database,
   materials: Boxes,
   nesting: Shapes,
   meetings: Calendar,

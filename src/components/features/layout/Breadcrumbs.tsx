@@ -28,6 +28,10 @@ const routeMap: Record<string, string> = {
   "users": "Пользователи",
   "materials": "Материалы",
   "suppliers": "Поставщики",
+  "database": "База данных",
+  "all": "Все компании",
+  "metal": "Поставщики металла",
+  "outsourcing": "Аутсорсинговые компании",
 }
 
 export function Breadcrumbs() {
