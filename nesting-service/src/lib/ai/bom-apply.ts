@@ -193,7 +193,7 @@ export function prepareBOMApplyUpdate(
     return { status: 'skipped', partId: match.partId, partName: part.name };
   }
 
-  if (hasAIApplyTrackedChange(guarded.data)) {
+  if (hasAIApplyTrackedChange(guarded.data, part)) {
     guarded.data.aiApplySnapshot = buildAIApplySnapshot(part, {
       appliedBy: options.appliedBy ?? null,
       appliedAt,
@@ -206,7 +206,7 @@ export function prepareBOMApplyUpdate(
     update: {
       partId: match.partId,
       data: guarded.data,
-      needsUnfoldRecalculation: hasNestingAffectingChange(guarded.data),
+      needsUnfoldRecalculation: hasNestingAffectingChange(guarded.data, part),
     },
   };
 }

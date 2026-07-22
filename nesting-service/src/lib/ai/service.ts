@@ -6,7 +6,6 @@ import { estimateCost, getAISettingsView, recordAIUsage } from './settings';
 import { matchBOMToParts } from './bom-matcher';
 import { applyDimensionGuard, applyThicknessGuard } from './dimension-guard';
 import {
-  AI_RECALC_REQUIRED_MESSAGE,
   buildAIApplySnapshot,
   hasAIApplyTrackedChange,
   hasNestingAffectingChange,
@@ -18,6 +17,12 @@ import { parseStoredAnalysis, resolvePdfExtraction, serializeStoredAnalysis } fr
 import { resolveBOMSteelTypes } from './steel-types';
 import type { AIAnalysisAudit, BOMEntry, DetailEntry, MatchResult, PartForMatching, SteelTypeCatalogItem } from './types';
 import { normalizePartType, partTypeFromLegacySheetFlag } from '../part-type';
+import { markProjectRecalculationRequired } from './project-recalculation';
+import {
+  AI_ANALYSIS_ALREADY_IN_PROGRESS_MESSAGE,
+  coordinateProjectAnalysis,
+  createPrismaProjectAnalysisCoordination,
+} from './analysis-coordinator';
 
 export interface ProjectPdfAnalysisResult {
   success: boolean;
@@ -39,7 +44,11 @@ export interface ProjectPdfAnalysisResult {
   source: AIAnalysisAudit['source'];
   warning: string | null;
   failureKind: AIAnalysisAudit['failureKind'];
+  alreadyInProgress: boolean;
+  message: string | null;
 }
+
+type ProjectPdfAnalysisRunResult = Omit<ProjectPdfAnalysisResult, 'alreadyInProgress' | 'message'>;
 
 export async function analyzeProjectPdf(input: {
   projectId: string;
@@ -48,6 +57,35 @@ export async function analyzeProjectPdf(input: {
   appliedBy?: string | null;
   steelTypes?: SteelTypeCatalogItem[];
 }): Promise<ProjectPdfAnalysisResult> {
+  const coordinated = await coordinateProjectAnalysis(
+    () => runProjectPdfAnalysis(input),
+    createPrismaProjectAnalysisCoordination(input.projectId, async (startedAt) => {
+      const stored = await getProjectSpecification(input.projectId);
+      if (!stored || stored.updatedAt.getTime() < startedAt.getTime()) return null;
+
+      const { createdAt: _createdAt, updatedAt: _updatedAt, ...result } = stored;
+      return {
+        ...result,
+        success: result.analysisStatus !== 'failed',
+        error: result.analysisStatus === 'failed' ? result.warning : null,
+      };
+    })
+  );
+
+  return {
+    ...coordinated.result,
+    alreadyInProgress: coordinated.alreadyInProgress,
+    message: coordinated.alreadyInProgress ? AI_ANALYSIS_ALREADY_IN_PROGRESS_MESSAGE : null,
+  };
+}
+
+async function runProjectPdfAnalysis(input: {
+  projectId: string;
+  pdfFilePath: string;
+  autoApply?: boolean;
+  appliedBy?: string | null;
+  steelTypes?: SteelTypeCatalogItem[];
+}): Promise<ProjectPdfAnalysisRunResult> {
   const pdfResult = await analyzePDF(input.pdfFilePath, { steelTypes: input.steelTypes });
   const extraction = await resolvePdfExtraction(
     pdfResult,
@@ -184,7 +222,10 @@ export async function analyzeProjectPdf(input: {
   };
 }
 
-export async function getProjectSpecification(projectId: string): Promise<Omit<ProjectPdfAnalysisResult, 'success' | 'error'> & {
+export async function getProjectSpecification(projectId: string): Promise<Omit<
+  ProjectPdfAnalysisResult,
+  'success' | 'error' | 'alreadyInProgress' | 'message'
+> & {
   createdAt: Date;
   updatedAt: Date;
 } | null> {
@@ -328,11 +369,11 @@ async function autoApplyMatches(
     }
 
     if (Object.keys(data).length === 0) continue;
-    if (hasNestingAffectingChange(data)) {
+    if (!part || hasNestingAffectingChange(data, part)) {
       needsUnfoldRecalculation = true;
     }
 
-    if (part && hasAIApplyTrackedChange(data)) {
+    if (part && hasAIApplyTrackedChange(data, part)) {
       data.aiApplySnapshot = buildAIApplySnapshot(part, { appliedBy, appliedAt }) as unknown as Prisma.InputJsonValue;
     }
 
@@ -352,13 +393,7 @@ async function autoApplyMatches(
   }
 
   if (needsUnfoldRecalculation) {
-    await prisma.nestingProject.update({
-      where: { id: projectId },
-      data: {
-        status: 'parsed',
-        errorMessage: AI_RECALC_REQUIRED_MESSAGE,
-      },
-    });
+    await markProjectRecalculationRequired(projectId);
   }
 
   return nextMatches;

@@ -42,6 +42,9 @@ model NestingProject {
   errorMessage String?
   parseReport  Json?
   validationReport Json?
+  aiRecalcRequired Boolean        @default(false)
+  aiAnalysisRunId String?
+  aiAnalysisStartedAt DateTime?
   createdBy    String         @default("system")
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -57,6 +60,7 @@ model NestingProject {
 
   @@index([orderNumber])
   @@index([status])
+  @@index([aiAnalysisRunId])
   @@index([createdAt(sort: Desc)])
   @@schema("nesting")
 }

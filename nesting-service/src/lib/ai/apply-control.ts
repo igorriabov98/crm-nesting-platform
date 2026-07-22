@@ -1,4 +1,8 @@
 import { Prisma } from '@prisma/client';
+import {
+  THICKNESS_MISMATCH_TOLERANCE_MM,
+  isDimensionChangeSafe,
+} from './dimension-guard';
 
 export const AI_RECALC_REQUIRED_MESSAGE = 'требуется пересчёт после изменения параметров AI';
 
@@ -130,28 +134,63 @@ export function buildRestorePartData(snapshot: AIApplySnapshot): Prisma.PartUpda
   };
 }
 
-export function hasNestingAffectingChange(data: Prisma.PartUpdateInput): boolean {
+export function hasNestingAffectingChange(
+  data: Prisma.PartUpdateInput,
+  current: SnapshotPart
+): boolean {
+  const nextWidth = scalarNumber(data.width, current.width);
+  const nextHeight = scalarNumber(data.height, current.height);
+
   return (
-    data.material !== undefined ||
-    data.steelTypeId !== undefined ||
-    data.steelTypeName !== undefined ||
-    data.steelTypeRaw !== undefined ||
-    data.thickness !== undefined ||
-    data.width !== undefined ||
-    data.height !== undefined ||
-    data.isSheetMetal !== undefined ||
-    data.partType !== undefined ||
-    data.quantity !== undefined
+    scalarChanged(data.material, current.material) ||
+    scalarChanged(data.steelTypeId, current.steelTypeId) ||
+    scalarChanged(data.steelTypeName, current.steelTypeName) ||
+    scalarChanged(data.steelTypeRaw, current.steelTypeRaw) ||
+    nullableNumberChanged(data.thickness, current.thickness, THICKNESS_MISMATCH_TOLERANCE_MM) ||
+    dimensionsChanged(data, current, nextWidth, nextHeight) ||
+    scalarChanged(data.isSheetMetal, current.isSheetMetal) ||
+    scalarChanged(data.partType, current.partType ?? (current.isSheetMetal ? 'SHEET' : 'PROFILE')) ||
+    scalarChanged(data.quantity, current.quantity)
   );
 }
 
-export function hasAIApplyTrackedChange(data: Prisma.PartUpdateInput): boolean {
+export function hasAIApplyTrackedChange(data: Prisma.PartUpdateInput, current: SnapshotPart): boolean {
   return (
-    hasNestingAffectingChange(data) ||
-    data.hasBends !== undefined ||
-    data.classificationMethod !== undefined ||
-    data.classificationWarning !== undefined
+    hasNestingAffectingChange(data, current) ||
+    scalarChanged(data.hasBends, current.hasBends) ||
+    scalarChanged(data.classificationMethod, current.classificationMethod) ||
+    scalarChanged(data.classificationWarning, current.classificationWarning)
   );
+}
+
+function dimensionsChanged(
+  data: Prisma.PartUpdateInput,
+  current: SnapshotPart,
+  nextWidth: number,
+  nextHeight: number
+): boolean {
+  if (data.width === undefined && data.height === undefined) return false;
+  if (!Number.isFinite(nextWidth) || !Number.isFinite(nextHeight)) return true;
+
+  return !isDimensionChangeSafe(current, nextWidth, nextHeight);
+}
+
+function scalarNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' ? value : value === undefined ? fallback : Number.NaN;
+}
+
+function nullableNumberChanged(value: unknown, current: number | null, tolerance: number): boolean {
+  if (value === undefined) return false;
+  if (value === null) return current !== null;
+  if (typeof value !== 'number' || current === null) return true;
+
+  return Math.abs(value - current) > tolerance;
+}
+
+function scalarChanged(value: unknown, current: unknown): boolean {
+  if (value === undefined) return false;
+  if (value !== null && typeof value === 'object') return true;
+  return value !== current;
 }
 
 export function hasGeometryAffectingChange(data: Prisma.PartUpdateInput): boolean {

@@ -11,11 +11,11 @@ import {
   markSpecificationMatchesReverted,
 } from '../lib/ai/service';
 import {
-  AI_RECALC_REQUIRED_MESSAGE,
   buildRestorePartData,
   hasGeometryAffectingChange,
   parseAIApplySnapshot,
 } from '../lib/ai/apply-control';
+import { markProjectRecalculationRequired } from '../lib/ai/project-recalculation';
 import { prepareBOMApplyUpdate, type BOMApplyBlockedRow } from '../lib/ai/bom-apply';
 import {
   aiSettingsInputSchema,
@@ -146,6 +146,8 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         source: result.source,
         warning: result.warning,
         failureKind: result.failureKind,
+        alreadyInProgress: result.alreadyInProgress,
+        message: result.message,
       },
     };
   });
@@ -263,13 +265,7 @@ export async function aiProjectRoutes(app: FastifyInstance) {
       appliedBy: body.appliedBy ?? null,
     });
     if (needsUnfoldRecalculation) {
-      await prisma.nestingProject.update({
-        where: { id },
-        data: {
-          status: 'parsed',
-          errorMessage: AI_RECALC_REQUIRED_MESSAGE,
-        },
-      });
+      await markProjectRecalculationRequired(id);
     }
 
     return {
@@ -331,13 +327,7 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     await markSpecificationMatchesReverted(id, revertedPartIds, body.appliedBy ?? null, revertedAt);
 
     if (needsUnfoldRecalculation) {
-      await prisma.nestingProject.update({
-        where: { id },
-        data: {
-          status: 'parsed',
-          errorMessage: AI_RECALC_REQUIRED_MESSAGE,
-        },
-      });
+      await markProjectRecalculationRequired(id);
     }
 
     return { reverted: revertedPartIds.size };

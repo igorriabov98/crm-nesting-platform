@@ -18,6 +18,7 @@ export type LayoutViolationType =
   | 'BODY_COUNT_MISMATCH'
   | 'AI_ANALYSIS_FAILED'
   | 'AI_ANALYSIS_WARNING'
+  | 'AI_RECALC_REQUIRED'
   | 'hole_outside'
   | 'part_in_hole';
 

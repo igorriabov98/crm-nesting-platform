@@ -69,6 +69,7 @@ export async function calculateRoutes(app: FastifyInstance) {
           strategy: body.strategy,
           status: 'calculating',
           errorMessage: null,
+          aiRecalcRequired: false,
         },
       }),
     ]);

@@ -52,10 +52,52 @@ assert.equal(restoreData.contourStale, false);
 assert.equal(restoreData.isSheetMetal, true);
 assert.equal(restoreData.partType, 'SHEET');
 assert.equal(restoreData.hasBends, false);
-assert.equal(hasNestingAffectingChange(restoreData), true, 'restore should mark nesting data as changed');
+assert.equal(
+  hasNestingAffectingChange(restoreData, stepPart),
+  false,
+  'reapplying identical nesting values must be idempotent'
+);
+assert.equal(
+  hasNestingAffectingChange({ thickness: 4.29 }, stepPart),
+  false,
+  'thickness changes inside the 0.3 mm guard tolerance must not invalidate nesting'
+);
+assert.equal(
+  hasNestingAffectingChange({ thickness: 4.31 }, stepPart),
+  true,
+  'a real thickness change must invalidate nesting'
+);
+assert.equal(
+  hasNestingAffectingChange({ width: 1110, height: 650 }, stepPart),
+  false,
+  'dimension noise inside the 2% guard tolerance must be idempotent'
+);
+assert.equal(
+  hasNestingAffectingChange({ width: 1150, height: 650 }, stepPart),
+  true,
+  'a real dimension change must invalidate nesting'
+);
+assert.equal(
+  hasNestingAffectingChange({ quantity: 2 }, stepPart),
+  true,
+  'quantity changes must invalidate nesting'
+);
 assert.equal(hasGeometryAffectingChange(restoreData), true, 'restore should require recalculation for geometry fields');
-assert.equal(hasAIApplyTrackedChange({ classificationWarning: null }), true, 'classification changes should be snapshotted');
-assert.equal(hasAIApplyTrackedChange({ thumbnailSvg: '<svg />' }), false, 'untracked presentation fields should not create snapshots');
+assert.equal(
+  hasAIApplyTrackedChange({ classificationWarning: null }, stepPart),
+  false,
+  'identical classification values must not create snapshots'
+);
+assert.equal(
+  hasAIApplyTrackedChange({ classificationWarning: 'требует проверки' }, stepPart),
+  true,
+  'classification changes should be snapshotted'
+);
+assert.equal(
+  hasAIApplyTrackedChange({ thumbnailSvg: '<svg />' }, stepPart),
+  false,
+  'untracked presentation fields should not create snapshots'
+);
 
 const audit = appendForceAudit('STEP содержит 1100 x 650 мм', 'operator-1', appliedAt);
 assert.match(audit, /STEP содержит 1100 x 650 мм/);
