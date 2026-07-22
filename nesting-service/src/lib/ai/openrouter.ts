@@ -1,16 +1,37 @@
 import * as fs from 'node:fs/promises';
-import type { BOMEntry, BOMPartType, DetailEntry, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
+import {
+  DEFAULT_AI_MAX_TOKENS,
+  DEFAULT_OPENROUTER_MODEL,
+  type BOMEntry,
+  type BOMPartType,
+  type DetailEntry,
+  type OpenRouterConfig,
+  type PDFAnalysisFailureKind,
+  type PDFAnalysisResult,
+  type SteelTypeCatalogItem,
+} from './types';
+import { deduplicateBOMEntries } from './pdf-bom-fallback';
 import { mergeUnfoldingWarning, resolveUnfolding } from './unfolding-extraction';
 
 type OpenRouterResponse = {
   choices?: Array<{
+    finish_reason?: string | null;
+    native_finish_reason?: string | null;
     message?: {
       content?: string | Array<{ type?: string; text?: string }>;
     };
   }>;
   usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
     total_tokens?: number;
   };
+};
+
+type AnalyzePDFOptions = {
+  steelTypes?: SteelTypeCatalogItem[];
+  maxTokens?: number;
+  configOverride?: Pick<OpenRouterConfig, 'apiKey' | 'model' | 'baseUrl'>;
 };
 
 const systemPrompt = `Ты — опытный технолог на производстве металлоконструкций. Тебе дан PDF-чертёж изделия. Чертёж может быть на ЛЮБОМ языке: русском, немецком, английском или другом.
@@ -18,12 +39,14 @@ const systemPrompt = `Ты — опытный технолог на произв
 Извлеки ДВА набора данных:
 
 ## 1. СПЕЦИФИКАЦИЯ (BOM / MATERIALLISTE / BILL OF MATERIALS)
-Найди таблицу со списком материалов. Она может называться:
+Найди ВСЕ таблицы спецификаций на ВСЕХ страницах. Документ может содержать НЕСКОЛЬКО НЕЗАВИСИМЫХ спецификаций — по одной на каждую сборочную единицу в иерархии подсборок. Каждую спецификацию обработай отдельно. Таблица может называться:
 - Русский: "Спецификация", "Ведомость материалов"
 - Немецкий: "MATERIALLISTE", "STÜCKLISTE", "ZUSCHNITTSLISTE"
 - Английский: "BILL OF MATERIALS", "BOM", "PARTS LIST"
 
 Для каждой позиции извлеки:
+- source_page: номер страницы PDF, на которой найдена строка
+- parent_assembly: обозначение сборочной единицы, чьей спецификации принадлежит строка
 - bom_section: название раздела спецификации, под которым находится строка ("Детали", "Прочие изделия", "Стандартные изделия", "Zukaufteile", "Kaufteile")
 - position: номер позиции, если есть
 - article_number: артикул/номер, если есть
@@ -55,9 +78,13 @@ const systemPrompt = `Ты — опытный технолог на произв
 - "L 50 x 50 x 5 - 300" -> part_type="angle", thickness_mm=5, width_mm=50, height_mm=300
 - "Б-ПН-3 ГОСТ 19903-90" -> thickness_mm=3
 - "БТ-ПН-2,0 ГОСТ 19903-90" -> thickness_mm=2.0
+- "Труба 30х30х1,5 ГОСТ 8639-82" -> part_type="tube", width_mm=30, height_mm=30, thickness_mm=1.5
+
+Строки из РАЗНЫХ спецификаций (разных parent_assembly) — НЕ дубликаты, даже при совпадении обозначения. Объединяй только повторы ОДНОЙ таблицы на соседних страницах.
 
 ## 2. ДАННЫЕ ДЕТАЛЕЙ (из отдельных чертежей)
-Для каждой детали у которой есть отдельный чертёж, извлеки:
+Извлеки данные ВСЕХ отдельных чертежей деталей на всех страницах. Каждый чертёж имеет собственный штамп. Для каждой детали извлеки:
+- source_page: номер страницы PDF
 - designation: обозначение детали или имя файла
 - name: наименование детали
 - description: обозначение/описание детали
@@ -86,6 +113,8 @@ const systemPrompt = `Ты — опытный технолог на произв
 {
   "bom": [
     {
+      "source_page": 2,
+      "parent_assembly": "ЛЕДА.024.00.000",
       "bom_section": "Детали",
       "position": "1",
       "article_number": "70000000006505",
@@ -104,6 +133,7 @@ const systemPrompt = `Ты — опытный технолог на произв
   ],
   "details": [
     {
+      "source_page": 3,
       "designation": "ЛЕДА.024.00.001",
       "name": "Обшивка верхняя",
       "description": "Обшивка верхняя",
@@ -123,12 +153,25 @@ const systemPrompt = `Ты — опытный технолог на произв
 
 export async function analyzePDF(
   pdfFilePath: string,
-  options: { steelTypes?: SteelTypeCatalogItem[] } = {}
+  options: AnalyzePDFOptions = {}
 ): Promise<PDFAnalysisResult> {
-  const cfg = await loadOpenRouterConfig();
+  let cfg: Pick<OpenRouterConfig, 'apiKey' | 'model' | 'baseUrl' | 'maxTokens'>;
+  try {
+    cfg = options.configOverride
+      ? { ...options.configOverride, maxTokens: options.maxTokens ?? DEFAULT_AI_MAX_TOKENS }
+      : await loadOpenRouterConfig();
+  } catch (error) {
+    return failedPDFAnalysis({
+      model: options.configOverride?.model ?? DEFAULT_OPENROUTER_MODEL,
+      maxTokens: options.maxTokens ?? DEFAULT_AI_MAX_TOKENS,
+      failureKind: 'config_error',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   const pdfBuffer = await fs.readFile(pdfFilePath);
   const dataUrl = `data:application/pdf;base64,${pdfBuffer.toString('base64')}`;
   const knownSteelTypes = buildKnownSteelTypesText(options.steelTypes ?? []);
+  const maxTokens = options.maxTokens ?? cfg.maxTokens;
 
   const requestBody = {
     model: cfg.model,
@@ -155,7 +198,7 @@ export async function analyzePDF(
         ],
       },
     ],
-    max_tokens: cfg.maxTokens,
+    max_tokens: maxTokens,
     temperature: 0.1,
     response_format: {
       type: 'json_schema',
@@ -172,6 +215,8 @@ export async function analyzePDF(
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  source_page: { type: 'integer' },
+                  parent_assembly: { type: 'string' },
                   position: { type: 'string' },
                   article_number: { type: 'string' },
                   bom_section: { type: 'string' },
@@ -191,6 +236,8 @@ export async function analyzePDF(
                   norm: { type: 'string' },
                 },
                 required: [
+                  'source_page',
+                  'parent_assembly',
                   'position',
                   'article_number',
                   'bom_section',
@@ -214,13 +261,14 @@ export async function analyzePDF(
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  source_page: { type: 'integer' },
                   designation: { type: 'string' },
                   name: { type: 'string' },
                   description: { type: 'string' },
                   material_full: { type: 'string' },
                   material_type: { type: 'string' },
                   material_grade: { type: 'string' },
-                  thickness_mm: { type: 'number' },
+                  thickness_mm: { type: ['number', 'null'] },
                   unfolding_width: { type: ['number', 'null'] },
                   unfolding_height: { type: ['number', 'null'] },
                   mass_kg: { type: ['number', 'null'] },
@@ -229,6 +277,7 @@ export async function analyzePDF(
                   notes: { type: 'string' },
                 },
                 required: [
+                  'source_page',
                   'designation',
                   'name',
                   'description',
@@ -267,65 +316,108 @@ export async function analyzePDF(
     if (!response.ok) {
       const errorBody = await response.text();
       console.error('[openrouter] API error:', response.status, sanitizeError(errorBody));
-      return {
-        success: false,
-        bom: [],
-        details: [],
+      return failedPDFAnalysis({
         rawResponse: errorBody,
         model: cfg.model,
-        tokensUsed: 0,
-        error: `OpenRouter API ошибка: ${response.status}. ${sanitizeError(errorBody).slice(0, 200)}`,
-      };
+        maxTokens,
+        failureKind: 'provider_error',
+        error: `Ошибка провайдера OpenRouter: HTTP ${response.status}. ${sanitizeError(errorBody).slice(0, 200)}`,
+      });
     }
 
     const data = (await response.json()) as OpenRouterResponse;
-    const content = extractContent(data);
-    const tokensUsed = data.usage?.total_tokens || 0;
-    let bom: BOMEntry[] = [];
-    let details: DetailEntry[] = [];
-
-    try {
-      const parsed = parsePDFAnalysisResponse(content);
-      bom = parsed.bom;
-      details = parsed.details;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error('[openrouter] JSON parse error:', message);
-      return {
-        success: false,
-        bom: [],
-        details: [],
-        rawResponse: content,
-        model: cfg.model,
-        tokensUsed,
-        error: `Не удалось разобрать ответ AI: ${message}`,
-      };
+    const result = parseOpenRouterResponse(data, { model: cfg.model, maxTokens });
+    if (result.success) {
+      console.log(
+        `[openrouter] PDF analyzed: ${result.bom.length} BOM entries, ${result.details.length} detail entries, ` +
+        `${result.completionTokens} completion tokens, finish_reason=${result.finishReason}`
+      );
+    } else {
+      console.error('[openrouter] PDF analysis failed:', result.error);
     }
-
-    console.log(`[openrouter] PDF analyzed: ${bom.length} BOM entries, ${details.length} detail entries, ${tokensUsed} tokens`);
-
-    return {
-      success: true,
-      bom,
-      details,
-      rawResponse: content,
-      model: cfg.model,
-      tokensUsed,
-      error: null,
-    };
+    return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[openrouter] Request failed:', message);
-    return {
-      success: false,
-      bom: [],
-      details: [],
-      rawResponse: '',
+    return failedPDFAnalysis({
       model: cfg.model,
-      tokensUsed: 0,
+      maxTokens,
+      failureKind: 'connection_error',
       error: `Ошибка подключения к OpenRouter: ${message}`,
-    };
+    });
   }
+}
+
+export function parseOpenRouterResponse(
+  data: OpenRouterResponse,
+  context: { model: string; maxTokens: number }
+): PDFAnalysisResult {
+  const finishReason = normalizeFinishReason(data.choices?.[0]?.finish_reason ?? data.choices?.[0]?.native_finish_reason);
+  const promptTokens = positiveInteger(data.usage?.prompt_tokens);
+  const completionTokens = positiveInteger(data.usage?.completion_tokens);
+  const tokensUsed = positiveInteger(data.usage?.total_tokens) || promptTokens + completionTokens;
+  const content = extractContent(data);
+
+  if (finishReason === 'length' || finishReason === 'max_tokens') {
+    return failedPDFAnalysis({
+      rawResponse: content,
+      model: context.model,
+      maxTokens: context.maxTokens,
+      failureKind: 'truncated',
+      finishReason,
+      promptTokens,
+      completionTokens,
+      tokensUsed,
+      error: `AI response truncated: finish_reason=${finishReason}, completion=${completionTokens}/${context.maxTokens}`,
+    });
+  }
+
+  let parsed: { bom: BOMEntry[]; details: DetailEntry[] };
+  try {
+    parsed = parsePDFAnalysisResponse(content);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return failedPDFAnalysis({
+      rawResponse: content,
+      model: context.model,
+      maxTokens: context.maxTokens,
+      failureKind: 'parse_error',
+      finishReason,
+      promptTokens,
+      completionTokens,
+      tokensUsed,
+      error: `AI response parse error: ${message}`,
+    });
+  }
+
+  if (parsed.bom.length === 0) {
+    return failedPDFAnalysis({
+      rawResponse: content,
+      model: context.model,
+      maxTokens: context.maxTokens,
+      failureKind: 'empty_bom',
+      finishReason,
+      promptTokens,
+      completionTokens,
+      tokensUsed,
+      error: 'AI response contained empty BOM',
+    });
+  }
+
+  return {
+    success: true,
+    bom: parsed.bom,
+    details: parsed.details,
+    rawResponse: content,
+    model: context.model,
+    tokensUsed,
+    promptTokens,
+    completionTokens,
+    finishReason,
+    maxTokens: context.maxTokens,
+    failureKind: null,
+    error: null,
+  };
 }
 
 export async function testOpenRouterConnection(): Promise<{ ok: boolean; model: string; error: string | null }> {
@@ -402,14 +494,16 @@ export function parsePDFAnalysisResponse(content: string): { bom: BOMEntry[]; de
     if (Array.isArray(parsed.details)) detailEntries = parsed.details;
   }
 
-  const bom = bomEntries
-    .map((entry) => normalizeBOMEntry(entry))
-    .filter((entry): entry is BOMEntry => Boolean(entry && (
-      entry.description.length > 0 ||
-      entry.name.length > 0 ||
-      entry.designation.length > 0 ||
-      entry.articleNumber.length > 0
-    )));
+  const bom = deduplicateBOMEntries(
+    bomEntries
+      .map((entry) => normalizeBOMEntry(entry))
+      .filter((entry): entry is BOMEntry => Boolean(entry && (
+        entry.description.length > 0 ||
+        entry.name.length > 0 ||
+        entry.designation.length > 0 ||
+        entry.articleNumber.length > 0
+      )))
+  );
   const details = detailEntries
     .map((entry) => normalizeDetailEntry(entry))
     .filter((entry): entry is DetailEntry => Boolean(entry && entry.designation.length > 0));
@@ -435,6 +529,8 @@ function normalizeBOMEntry(entry: unknown): BOMEntry | null {
   const quantity = normalizePositiveNumber(entry.quantity ?? entry.stk ?? entry.qty ?? entry.count);
   const partType = normalizePartType(entry.part_type ?? entry.partType, description) ?? parsedGeometry.partType;
   const material = String(entry.material ?? materialType ?? materialGrade ?? 'Не указан').trim() || 'Не указан';
+  const sourcePage = normalizeSourcePage(entry.source_page ?? entry.sourcePage);
+  const parentAssembly = String(entry.parent_assembly ?? entry.parentAssembly ?? '').trim();
 
   return {
     articleNumber: String(entry.article_number ?? entry.articleNumber ?? entry.article ?? '').trim(),
@@ -461,6 +557,10 @@ function normalizeBOMEntry(entry: unknown): BOMEntry | null {
     quantity: quantity ? Math.max(1, Math.round(quantity)) : 1,
     thickness: thicknessMm,
     notes: String(entry.notes ?? norm ?? ''),
+    sourcePage,
+    parentAssembly,
+    sourcePageGroup: parentAssembly || (sourcePage ? `page:${sourcePage}` : undefined),
+    source: 'ai',
   };
 }
 
@@ -576,7 +676,51 @@ function normalizeDetailEntry(entry: unknown): DetailEntry | null {
     massKg: normalizePositiveNumber(entry.mass_kg ?? entry.massKg),
     isSheetMetal: normalizeBoolean(entry.is_sheet_metal ?? entry.isSheetMetal),
     notes: mergeUnfoldingWarning(baseNotes, unfolding.warnings),
+    sourcePage: normalizeSourcePage(entry.source_page ?? entry.sourcePage),
+    source: 'ai',
   };
+}
+
+function failedPDFAnalysis(input: {
+  rawResponse?: string;
+  model: string;
+  maxTokens: number;
+  failureKind: PDFAnalysisFailureKind;
+  finishReason?: string | null;
+  promptTokens?: number;
+  completionTokens?: number;
+  tokensUsed?: number;
+  error: string;
+}): PDFAnalysisResult {
+  return {
+    success: false,
+    bom: [],
+    details: [],
+    rawResponse: input.rawResponse ?? '',
+    model: input.model,
+    tokensUsed: input.tokensUsed ?? 0,
+    promptTokens: input.promptTokens ?? 0,
+    completionTokens: input.completionTokens ?? 0,
+    finishReason: input.finishReason ?? null,
+    maxTokens: input.maxTokens,
+    failureKind: input.failureKind,
+    error: input.error,
+  };
+}
+
+function normalizeFinishReason(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || null;
+}
+
+function positiveInteger(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.round(numeric) : 0;
+}
+
+function normalizeSourcePage(value: unknown): number | null {
+  const page = positiveInteger(value);
+  return page > 0 ? page : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -67,6 +67,8 @@ assert.equal(parsed.details[2].materialType, 'Нержавейка');
 const germanParsed = parsePDFAnalysisResponse(JSON.stringify({
   bom: [
     {
+      source_page: 4,
+      parent_assembly: '10461',
       position: '1',
       article_number: '70000000006505',
       designation: '10461.geo',
@@ -123,6 +125,9 @@ assert.equal(germanParsed.bom[0].widthMm, 995);
 assert.equal(germanParsed.bom[0].heightMm, 2318);
 assert.equal(germanParsed.bom[0].massKg, 54.41);
 assert.equal(germanParsed.bom[0].materialType, 'Сталь');
+assert.equal(germanParsed.bom[0].sourcePage, 4);
+assert.equal(germanParsed.bom[0].parentAssembly, '10461');
+assert.equal(germanParsed.bom[0].source, 'ai');
 assert.equal(germanParsed.bom[1].partType, 'channel');
 assert.equal(germanParsed.bom[1].widthMm, 80);
 assert.equal(germanParsed.bom[1].heightMm, 690);
@@ -130,5 +135,69 @@ assert.equal(germanParsed.bom[1].quantity, 4);
 assert.equal(germanParsed.bom[2].partType, 'round_bar');
 assert.equal(germanParsed.bom[2].widthMm, 16);
 assert.equal(germanParsed.bom[2].heightMm, 60);
+
+const deduplicatedGerman = parsePDFAnalysisResponse(JSON.stringify({
+  bom: [
+    {
+      source_page: 4,
+      parent_assembly: '10461020050000',
+      article_number: '70000000006505',
+      designation: '',
+      description: 'U 80 - 690',
+      part_type: 'channel',
+      quantity: 4,
+    },
+    {
+      source_page: 6,
+      parent_assembly: '10461020050000',
+      article_number: '70000000006505',
+      designation: '',
+      description: 'U 80 - 690',
+      part_type: 'channel',
+      quantity: 4,
+    },
+    {
+      source_page: 4,
+      parent_assembly: '10461020050000',
+      article_number: '70000000012443',
+      designation: '012442.geo',
+      description: 'BL 2 x 702 x 1656',
+      part_type: 'sheet',
+      quantity: 1,
+    },
+    {
+      source_page: 4,
+      parent_assembly: '10461020050000',
+      article_number: '70000000012442',
+      designation: '012442.geo',
+      description: 'BL 2 x 702 x 1656',
+      part_type: 'sheet',
+      quantity: 1,
+    },
+    {
+      source_page: 4,
+      parent_assembly: 'OTHER-ASSEMBLY',
+      article_number: '70000000006505',
+      designation: '',
+      description: 'U 80 - 690',
+      part_type: 'channel',
+      quantity: 1,
+    },
+  ],
+  details: [],
+}));
+
+assert.equal(deduplicatedGerman.bom.length, 4, 'only repeated rows inside one parent assembly must deduplicate');
+assert.deepEqual(deduplicatedGerman.bom[0].bomSources, [4, 6]);
+assert.equal(
+  deduplicatedGerman.bom.filter((entry) => entry.designation === '012442.geo').length,
+  2,
+  'different article numbers must remain separate even when designation and geometry match'
+);
+assert.equal(
+  deduplicatedGerman.bom.filter((entry) => entry.articleNumber === '70000000006505').length,
+  2,
+  'the same article in different parent assemblies must remain separate'
+);
 
 console.log('[openrouter-parser] all tests passed');

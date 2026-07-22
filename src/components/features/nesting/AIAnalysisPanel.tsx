@@ -155,8 +155,13 @@ export function AIAnalysisPanel({
       ))
       await onReloadParts()
       await loadSpecification()
-      toast.success('Спецификация извлечена из PDF')
+      if (result.analysisStatus === 'completed') {
+        toast.success('Спецификация извлечена из PDF')
+      } else {
+        toast.warning('AI не справился: использован текстовый парсер, результат требует проверки')
+      }
     } catch (error) {
+      await loadSpecification()
       toast.error(error instanceof Error ? error.message : 'Не удалось выполнить AI-анализ PDF')
     } finally {
       setIsAnalyzing(false)
@@ -331,10 +336,23 @@ export function AIAnalysisPanel({
 
             {analysis && (
               <div className="space-y-3">
+                {analysis.analysisStatus !== 'completed' && (
+                  <div className="flex items-start gap-3 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+                    <div>
+                      <p className="font-semibold">AI-анализ не выполнен</p>
+                      <p className="mt-1">{analysis.warning || 'Ответ AI нельзя использовать как достоверную спецификацию.'}</p>
+                      {analysis.analysisStatus === 'deterministic_fallback' && (
+                        <p className="mt-1 font-medium">Источник: deterministic fallback. Проверьте BOM до расчёта.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2 text-sm text-[#6B7280]">
                   <span className="font-medium text-[#1B3A6B]">Спецификация PDF</span>
                   <span>BOM строк: {analysis.bom.length}</span>
-                  <span>Токены: {analysis.tokensUsed}</span>
+                  <span>Токены: {analysis.promptTokens} + {analysis.completionTokens}</span>
+                  <span>finish_reason: {analysis.finishReason || '—'}</span>
                   <span>Модель: {analysis.model}</span>
                   {analysis.updatedAt && <span>Обновлено: {new Date(analysis.updatedAt).toLocaleString('ru-RU')}</span>}
                 </div>

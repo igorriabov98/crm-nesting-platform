@@ -9,6 +9,7 @@ import {
   DEFAULT_AI_MONTHLY_BUDGET,
   DEFAULT_OPENROUTER_BASE_URL,
   DEFAULT_OPENROUTER_MODEL,
+  MAX_AI_MAX_TOKENS,
   type AISettingsView,
   type AIUsageHistoryItem,
   type OpenRouterConfig,
@@ -16,13 +17,17 @@ import {
 
 const SETTINGS_ID = 'singleton';
 const ENCRYPTION_PREFIX = 'aes-gcm:v1:';
-const PREVIOUS_DEFAULT_OPENROUTER_MODEL: string = 'anthropic/claude-sonnet-4-20250514';
+const PREVIOUS_DEFAULT_OPENROUTER_MODELS: readonly string[] = [
+  'anthropic/claude-sonnet-4-20250514',
+  'anthropic/claude-sonnet-4-6',
+];
+const PREVIOUS_DEFAULT_AI_MAX_TOKENS = 4000;
 
 export const aiSettingsInputSchema = z.object({
   apiKey: z.string().trim().optional(),
   model: z.string().trim().min(1).optional(),
   baseUrl: z.string().trim().url().optional(),
-  maxTokens: z.coerce.number().int().min(256).max(32000).optional(),
+  maxTokens: z.coerce.number().int().min(100).max(MAX_AI_MAX_TOKENS).optional(),
   monthlyBudget: z.coerce.number().min(0).max(100000).optional(),
   autoApplyResults: z.boolean().optional(),
 });
@@ -30,12 +35,24 @@ export const aiSettingsInputSchema = z.object({
 export type AISettingsInput = z.infer<typeof aiSettingsInputSchema>;
 
 export async function getOpenRouterConfig(): Promise<OpenRouterConfig> {
-  const stored = await getStoredAISettings();
+  return loadOpenRouterConfig(await getStoredAISettings());
+}
+
+export async function getOpenRouterConfigReadOnly(): Promise<OpenRouterConfig> {
+  return loadOpenRouterConfig(await prisma.aISettings.findUnique({ where: { id: SETTINGS_ID } }));
+}
+
+async function loadOpenRouterConfig(stored: Awaited<ReturnType<typeof getStoredAISettings>>): Promise<OpenRouterConfig> {
   const storedKey = await decryptStoredApiKey(stored?.apiKey ?? null);
   const apiKey = storedKey || config.OPENROUTER_API_KEY || '';
-  const model = stored?.model || config.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL;
+  const configuredModel = stored?.model || config.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL;
+  const model = PREVIOUS_DEFAULT_OPENROUTER_MODELS.includes(configuredModel)
+    ? DEFAULT_OPENROUTER_MODEL
+    : configuredModel;
   const baseUrl = normalizeBaseUrl(stored?.baseUrl || config.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL);
-  const maxTokens = stored?.maxTokens || DEFAULT_AI_MAX_TOKENS;
+  const maxTokens = stored?.maxTokens === PREVIOUS_DEFAULT_AI_MAX_TOKENS
+    ? DEFAULT_AI_MAX_TOKENS
+    : stored?.maxTokens || DEFAULT_AI_MAX_TOKENS;
   const monthlyBudget = stored?.monthlyBudget ?? DEFAULT_AI_MONTHLY_BUDGET;
 
   if (!apiKey) {
@@ -229,19 +246,30 @@ function normalizeBaseUrl(value: string): string {
 
 async function getStoredAISettings() {
   await upgradeStoredDefaultModel();
+  await upgradeStoredDefaultMaxTokens();
   return prisma.aISettings.findUnique({ where: { id: SETTINGS_ID } });
 }
 
 async function upgradeStoredDefaultModel(): Promise<void> {
-  if (DEFAULT_OPENROUTER_MODEL === PREVIOUS_DEFAULT_OPENROUTER_MODEL) return;
-
   await prisma.aISettings.updateMany({
     where: {
       id: SETTINGS_ID,
-      model: PREVIOUS_DEFAULT_OPENROUTER_MODEL,
+      model: { in: [...PREVIOUS_DEFAULT_OPENROUTER_MODELS] },
     },
     data: {
       model: DEFAULT_OPENROUTER_MODEL,
+    },
+  });
+}
+
+async function upgradeStoredDefaultMaxTokens(): Promise<void> {
+  await prisma.aISettings.updateMany({
+    where: {
+      id: SETTINGS_ID,
+      maxTokens: PREVIOUS_DEFAULT_AI_MAX_TOKENS,
+    },
+    data: {
+      maxTokens: DEFAULT_AI_MAX_TOKENS,
     },
   });
 }

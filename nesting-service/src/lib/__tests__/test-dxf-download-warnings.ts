@@ -30,6 +30,9 @@ async function run(): Promise<void> {
   const tempDir = mkdtempSync(path.join(tmpdir(), 'dxf-download-warnings-'));
   const originalGenerateForSheet = dxfService.generateForSheet;
   const originalGenerateZip = dxfService.generateZip;
+  let validationReport: unknown = { valid: true, violations: [], checkedAt: 'test' };
+  let generateForSheetCalls = 0;
+  let generateZipCalls = 0;
 
   try {
     const singleDxfPath = path.join(tempDir, 'single.dxf');
@@ -40,22 +43,31 @@ async function run(): Promise<void> {
     const extractedWarnings = execFileSync('unzip', ['-p', zipPath, 'warnings.json'], { encoding: 'utf8' });
     assert.deepEqual(JSON.parse(extractedWarnings), { warnings });
 
-    dxfService.generateForSheet = async () => ({
-      filePath: singleDxfPath,
-      fileName: 'Проект оценка развёртки.dxf',
-      dxfContent: '0\nEOF\n',
-      storageUri: null,
-      warnings,
-    });
-    dxfService.generateZip = async () => ({
-      filePath: zipPath,
-      fileName: 'Проект оценка развёртки.zip',
-      storageUri: null,
-      warnings,
-    });
+    dxfService.generateForSheet = async () => {
+      generateForSheetCalls += 1;
+      return {
+        filePath: singleDxfPath,
+        fileName: 'Проект оценка развёртки.dxf',
+        dxfContent: '0\nEOF\n',
+        storageUri: null,
+        warnings,
+      };
+    };
+    dxfService.generateZip = async () => {
+      generateZipCalls += 1;
+      return {
+        filePath: zipPath,
+        fileName: 'Проект оценка развёртки.zip',
+        storageUri: null,
+        warnings,
+      };
+    };
 
     const app = Fastify({ logger: false });
-    await app.register(dxfRoutes, { prefix: '/api/projects' });
+    await app.register(dxfRoutes, {
+      prefix: '/api/projects',
+      loadValidationReport: async () => validationReport,
+    });
 
     const singleResponse = await app.inject('/api/projects/project-1/dxf/sheet-1');
     assert.equal(singleResponse.statusCode, 200);
@@ -66,6 +78,56 @@ async function run(): Promise<void> {
     assert.equal(zipResponse.statusCode, 200);
     assert.equal(zipResponse.headers['x-dxf-warnings'], undefined);
     assert.ok(isAsciiHeaderValue(String(zipResponse.headers['content-disposition'])));
+
+    assert.equal(generateForSheetCalls, 1);
+    assert.equal(generateZipCalls, 1);
+
+    validationReport = {
+      valid: false,
+      checkedAt: 'test',
+      violations: [{
+        type: 'AI_ANALYSIS_FAILED',
+        severity: 'error',
+        partIds: [],
+        message: 'AI response truncated: finish_reason=length, completion=100/100',
+      }],
+    };
+
+    const blockedSingleResponse = await app.inject('/api/projects/project-1/dxf/sheet-1');
+    assert.equal(blockedSingleResponse.statusCode, 400);
+    assert.match(blockedSingleResponse.body, /DXF заблокирован/);
+    assert.match(blockedSingleResponse.body, /finish_reason=length/);
+
+    const blockedZipResponse = await app.inject('/api/projects/project-1/dxf');
+    assert.equal(blockedZipResponse.statusCode, 400);
+    assert.match(blockedZipResponse.body, /DXF заблокирован/);
+
+    assert.equal(generateForSheetCalls, 1, 'blocked sheet DXF must not reach the generator');
+    assert.equal(generateZipCalls, 1, 'blocked ZIP must not reach the generator');
+
+    validationReport = {
+      valid: false,
+      checkedAt: 'test',
+      violations: [{
+        type: 'AI_ANALYSIS_FAILED',
+        severity: 'error',
+        partIds: [],
+        message: 'AI-анализ не выполнен: Ошибка провайдера OpenRouter: HTTP 402',
+      }],
+    };
+
+    const providerBlockedSingleResponse = await app.inject('/api/projects/project-1/dxf/sheet-1');
+    assert.equal(providerBlockedSingleResponse.statusCode, 400);
+    assert.match(providerBlockedSingleResponse.body, /DXF заблокирован/);
+    assert.match(providerBlockedSingleResponse.body, /HTTP 402/);
+
+    const providerBlockedZipResponse = await app.inject('/api/projects/project-1/dxf');
+    assert.equal(providerBlockedZipResponse.statusCode, 400);
+    assert.match(providerBlockedZipResponse.body, /DXF заблокирован/);
+    assert.match(providerBlockedZipResponse.body, /HTTP 402/);
+
+    assert.equal(generateForSheetCalls, 1, 'provider failure must block the sheet DXF generator');
+    assert.equal(generateZipCalls, 1, 'provider failure must block the ZIP generator');
 
     await app.close();
     console.log('[dxf-download-warnings] all tests passed');

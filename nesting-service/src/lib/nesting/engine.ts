@@ -13,6 +13,7 @@ import {
 import { validateLayout, type LayoutValidationReport } from '../validation/layout-validator';
 import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../part-type';
 import { getActivityQuantity, isPartActive, summarizePartActivity } from '../part-activity';
+import { appendAIAnalysisViolation, parseStoredAnalysis } from '../ai/analysis-state';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
 
@@ -32,7 +33,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
   const startTime = Date.now();
   const project = await prisma.nestingProject.findUnique({
     where: { id: projectId },
-    include: { parts: true },
+    include: { parts: true, specification: true },
   });
 
   if (!project) {
@@ -249,7 +250,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     computeTimeMs: Date.now() - startTime,
   };
   const stepSolidCount = readStepSolidCount(project.parseReport);
-  const validationReport = validateLayout(
+  const baseValidationReport = validateLayout(
     result.sheets,
     expectedParts,
     {
@@ -259,6 +260,8 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
       accountedBodies: activitySummary.totalBodies,
     }
   );
+  const storedAnalysis = project.specification ? parseStoredAnalysis(project.specification.rawResponse) : null;
+  const validationReport = appendAIAnalysisViolation(baseValidationReport, storedAnalysis?.audit);
 
   await saveResults(projectId, result, validationReport);
 

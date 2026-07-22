@@ -33,6 +33,7 @@ export type LayoutViolationType =
   | 'MISSING_THICKNESS'
   | 'NESTING_FAILED'
   | 'UNPLACED_WITHOUT_REASON'
+  | 'AI_ANALYSIS_FAILED'
   | 'hole_outside'
   | 'part_in_hole'
 
@@ -60,7 +61,7 @@ export interface LayoutViolation {
   thickness?: number | null
   requiredWidth?: number | null
   requiredHeight?: number | null
-  severity?: 'info' | 'warning'
+  severity?: 'info' | 'warning' | 'error'
   message: string
 }
 
@@ -269,6 +270,10 @@ export interface BOMEntry {
   thickness: number | null
   notes: string
   bomSources?: number[]
+  sourcePage?: number | null
+  parentAssembly?: string
+  sourcePageGroup?: string
+  source?: 'ai' | 'deterministic-fallback'
 }
 
 export interface DetailEntry {
@@ -283,6 +288,8 @@ export interface DetailEntry {
   massKg: number | null
   isSheetMetal: boolean
   notes: string
+  sourcePage?: number | null
+  source?: 'ai' | 'deterministic-fallback'
 }
 
 export interface AIMatchResult {
@@ -326,9 +333,17 @@ export interface AIAnalysisResponse {
     matches: AIMatchResult[]
     unmatchedBom: BOMEntry[]
     tokensUsed: number
+    promptTokens: number
+    completionTokens: number
+    finishReason: string | null
+    maxTokens: number
     model: string
     cost: number
     budgetWarning: boolean
+    analysisStatus: 'completed' | 'deterministic_fallback' | 'failed'
+    source: 'ai' | 'deterministic-fallback' | 'none'
+    warning: string | null
+    failureKind: 'config_error' | 'provider_error' | 'connection_error' | 'truncated' | 'parse_error' | 'empty_bom' | null
     createdAt?: string
     updatedAt?: string
   }

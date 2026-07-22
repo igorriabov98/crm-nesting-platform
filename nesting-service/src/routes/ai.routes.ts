@@ -135,9 +135,17 @@ export async function aiProjectRoutes(app: FastifyInstance) {
         unmatchedBom: result.unmatchedBom,
         details: result.details,
         tokensUsed: result.tokensUsed,
+        promptTokens: result.promptTokens,
+        completionTokens: result.completionTokens,
+        finishReason: result.finishReason,
+        maxTokens: result.maxTokens,
         model: result.model,
         cost: result.cost,
         budgetWarning: result.budgetWarning,
+        analysisStatus: result.analysisStatus,
+        source: result.source,
+        warning: result.warning,
+        failureKind: result.failureKind,
       },
     };
   });

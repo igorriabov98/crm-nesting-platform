@@ -13,9 +13,10 @@ import {
   type AIApplyStatus,
   type SnapshotPart,
 } from './apply-control';
-import { extractDeterministicPdfDataFromPdf, mergeDeterministicBOM, mergeDeterministicDetails } from './pdf-bom-fallback';
+import { extractDeterministicPdfDataFromPdf } from './pdf-bom-fallback';
+import { parseStoredAnalysis, resolvePdfExtraction, serializeStoredAnalysis } from './analysis-state';
 import { resolveBOMSteelTypes } from './steel-types';
-import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PDFAnalysisResult, SteelTypeCatalogItem } from './types';
+import type { AIAnalysisAudit, BOMEntry, DetailEntry, MatchResult, PartForMatching, SteelTypeCatalogItem } from './types';
 import { normalizePartType, partTypeFromLegacySheetFlag } from '../part-type';
 
 export interface ProjectPdfAnalysisResult {
@@ -25,11 +26,19 @@ export interface ProjectPdfAnalysisResult {
   matches: MatchResult[];
   unmatchedBom: BOMEntry[];
   tokensUsed: number;
+  promptTokens: number;
+  completionTokens: number;
+  finishReason: string | null;
+  maxTokens: number;
   model: string;
   cost: number;
   budgetWarning: boolean;
   error: string | null;
   rawResponse: string;
+  analysisStatus: AIAnalysisAudit['status'];
+  source: AIAnalysisAudit['source'];
+  warning: string | null;
+  failureKind: AIAnalysisAudit['failureKind'];
 }
 
 export async function analyzeProjectPdf(input: {
@@ -40,15 +49,63 @@ export async function analyzeProjectPdf(input: {
   steelTypes?: SteelTypeCatalogItem[];
 }): Promise<ProjectPdfAnalysisResult> {
   const pdfResult = await analyzePDF(input.pdfFilePath, { steelTypes: input.steelTypes });
+  const extraction = await resolvePdfExtraction(
+    pdfResult,
+    () => loadDeterministicPdfData(input.pdfFilePath)
+  );
+  const settings = await getAISettingsView();
+  const cost = estimateCost(pdfResult.tokensUsed, pdfResult.model);
 
-  if (!pdfResult.success) {
-    return buildFailedResult(pdfResult);
+  if (pdfResult.tokensUsed > 0) {
+    await recordAIUsage({
+      projectId: input.projectId,
+      tokensUsed: pdfResult.tokensUsed,
+      model: pdfResult.model,
+      cost,
+    });
   }
 
-  const deterministicPdfData = await loadDeterministicPdfData(input.pdfFilePath);
-  const extractedBom = mergeDeterministicBOM(pdfResult.bom, deterministicPdfData.bom);
-  const bom = resolveBOMSteelTypes(extractedBom, input.steelTypes ?? []);
-  const details = mergeDeterministicDetails(pdfResult.details, deterministicPdfData.details);
+  if (!extraction.usable) {
+    await persistProjectSpecification({
+      projectId: input.projectId,
+      bom: [],
+      details: extraction.details,
+      matches: [],
+      unmatchedBom: [],
+      tokensUsed: pdfResult.tokensUsed,
+      model: pdfResult.model,
+      cost,
+      budgetWarning: settings.budgetWarning,
+      rawResponse: pdfResult.rawResponse,
+      audit: extraction.audit,
+    });
+    await markProjectAIAnalysisFailed(input.projectId, extraction.audit.warning);
+
+    return {
+      success: false,
+      bom: [],
+      details: extraction.details,
+      matches: [],
+      unmatchedBom: [],
+      tokensUsed: pdfResult.tokensUsed,
+      promptTokens: pdfResult.promptTokens,
+      completionTokens: pdfResult.completionTokens,
+      finishReason: pdfResult.finishReason,
+      maxTokens: pdfResult.maxTokens,
+      model: pdfResult.model,
+      cost,
+      budgetWarning: settings.budgetWarning,
+      error: extraction.audit.warning,
+      rawResponse: pdfResult.rawResponse,
+      analysisStatus: extraction.audit.status,
+      source: extraction.audit.source,
+      warning: extraction.audit.warning,
+      failureKind: extraction.audit.failureKind,
+    };
+  }
+
+  const bom = resolveBOMSteelTypes(extraction.bom, input.steelTypes ?? []);
+  const details = extraction.details;
   const parts = await prisma.part.findMany({
     where: { projectId: input.projectId, isActive: true },
     select: {
@@ -79,21 +136,11 @@ export async function analyzeProjectPdf(input: {
   });
   const matches = matchBOMToParts(bom, parts, details, input.steelTypes ?? []);
   const partsById = new Map(parts.map((part) => [part.id, part]));
-  const settings = await getAISettingsView();
-  const shouldAutoApply = input.autoApply ?? settings.autoApplyResults;
+  const shouldAutoApply = extraction.audit.status === 'completed' && (input.autoApply ?? settings.autoApplyResults);
   const finalMatches = shouldAutoApply
     ? await autoApplyMatches(input.projectId, matches, partsById, input.appliedBy ?? null)
     : matches.map((match) => ({ ...match, applyStatus: 'suggested' as const }));
   const unmatchedBom = getUnmatchedBom(bom, finalMatches);
-  const cost = estimateCost(pdfResult.tokensUsed, pdfResult.model);
-
-  await recordAIUsage({
-    projectId: input.projectId,
-    tokensUsed: pdfResult.tokensUsed,
-    model: pdfResult.model,
-    cost,
-  });
-
   const budgetWarning = settings.budgetWarning;
 
   await persistProjectSpecification({
@@ -107,7 +154,12 @@ export async function analyzeProjectPdf(input: {
     cost,
     budgetWarning,
     rawResponse: pdfResult.rawResponse,
+    audit: extraction.audit,
   });
+
+  if (extraction.audit.status !== 'completed') {
+    await markProjectAIAnalysisFailed(input.projectId, extraction.audit.warning);
+  }
 
   return {
     success: true,
@@ -116,11 +168,19 @@ export async function analyzeProjectPdf(input: {
     matches: finalMatches,
     unmatchedBom,
     tokensUsed: pdfResult.tokensUsed,
+    promptTokens: pdfResult.promptTokens,
+    completionTokens: pdfResult.completionTokens,
+    finishReason: pdfResult.finishReason,
+    maxTokens: pdfResult.maxTokens,
     model: pdfResult.model,
     cost,
     budgetWarning,
     error: null,
     rawResponse: pdfResult.rawResponse,
+    analysisStatus: extraction.audit.status,
+    source: extraction.audit.source,
+    warning: extraction.audit.warning,
+    failureKind: extraction.audit.failureKind,
   };
 }
 
@@ -144,16 +204,38 @@ export async function getProjectSpecification(projectId: string): Promise<Omit<P
     return null;
   }
 
+  const storedAnalysis = parseStoredAnalysis(project.specification.rawResponse);
+  const audit: AIAnalysisAudit = storedAnalysis?.audit ?? {
+    status: 'completed',
+    source: 'ai',
+    warning: null,
+    aiError: null,
+    failureKind: null,
+    finishReason: null,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: project.specification.tokensUsed,
+    maxTokens: 0,
+  };
+
   return {
     bom: project.specification.bom as unknown as BOMEntry[],
-    details: parseStoredDetails(project.specification.rawResponse),
+    details: storedAnalysis?.details ?? parseStoredDetails(project.specification.rawResponse),
     matches: project.specification.matches as unknown as MatchResult[],
     unmatchedBom: project.specification.unmatchedBom as unknown as BOMEntry[],
     tokensUsed: project.specification.tokensUsed,
+    promptTokens: audit.promptTokens,
+    completionTokens: audit.completionTokens,
+    finishReason: audit.finishReason,
+    maxTokens: audit.maxTokens,
     model: project.specification.model,
     cost: project.specification.cost,
     budgetWarning: project.specification.budgetWarning,
-    rawResponse: project.specification.rawResponse,
+    rawResponse: storedAnalysis?.aiRawResponse ?? project.specification.rawResponse,
+    analysisStatus: audit.status,
+    source: audit.source,
+    warning: audit.warning,
+    failureKind: audit.failureKind,
     createdAt: project.specification.createdAt,
     updatedAt: project.specification.updatedAt,
   };
@@ -307,6 +389,7 @@ async function persistProjectSpecification(input: {
   cost: number;
   budgetWarning: boolean;
   rawResponse: string;
+  audit: AIAnalysisAudit;
 }): Promise<void> {
   const data = {
     bom: input.bom as unknown as Prisma.InputJsonValue,
@@ -316,7 +399,7 @@ async function persistProjectSpecification(input: {
     model: input.model,
     cost: input.cost,
     budgetWarning: input.budgetWarning,
-    rawResponse: input.rawResponse,
+    rawResponse: serializeStoredAnalysis(input.audit, input.details, input.rawResponse),
   };
 
   await prisma.projectSpecification.upsert({
@@ -435,20 +518,13 @@ function parseStoredDetails(rawResponse: string): DetailEntry[] {
   }
 }
 
-function buildFailedResult(pdfResult: PDFAnalysisResult): ProjectPdfAnalysisResult {
-  return {
-    success: false,
-    bom: [],
-    details: [],
-    matches: [],
-    unmatchedBom: [],
-    tokensUsed: pdfResult.tokensUsed,
-    model: pdfResult.model,
-    cost: 0,
-    budgetWarning: false,
-    error: pdfResult.error,
-    rawResponse: pdfResult.rawResponse,
-  };
+async function markProjectAIAnalysisFailed(projectId: string, warning: string | null): Promise<void> {
+  await prisma.nestingProject.update({
+    where: { id: projectId },
+    data: {
+      errorMessage: warning || 'AI-анализ не выполнен',
+    },
+  });
 }
 
 export type { MatchResult, PartForMatching };
