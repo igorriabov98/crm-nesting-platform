@@ -34,6 +34,7 @@ export type LayoutViolationType =
   | 'NESTING_FAILED'
   | 'UNPLACED_WITHOUT_REASON'
   | 'AI_ANALYSIS_FAILED'
+  | 'AI_ANALYSIS_WARNING'
   | 'hole_outside'
   | 'part_in_hole'
 

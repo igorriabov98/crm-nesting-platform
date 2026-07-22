@@ -14,6 +14,7 @@ import { validateLayout, type LayoutValidationReport } from '../validation/layou
 import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../part-type';
 import { getActivityQuantity, isPartActive, summarizePartActivity } from '../part-activity';
 import { appendAIAnalysisViolation, parseStoredAnalysis } from '../ai/analysis-state';
+import { resolveCompletedProjectStatus } from '../project-status';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
 
@@ -409,6 +410,7 @@ async function saveResults(
     ? `Не размещено деталей: ${realUnplacedParts.length}`
     : null;
   const warningMessage = [validationWarning, unplacedWarning].filter(Boolean).join('; ') || null;
+  const completedStatus = resolveCompletedProjectStatus(validationReport, realUnplacedParts.length > 0);
 
   await prisma.$transaction(async (tx) => {
     await tx.nestingSheet.deleteMany({ where: { projectId } });
@@ -460,7 +462,7 @@ async function saveResults(
     await tx.nestingProject.update({
       where: { id: projectId },
       data: {
-        status: validationReport.valid && realUnplacedParts.length === 0 ? 'done' : 'completed_with_warnings',
+        status: completedStatus,
         errorMessage: warningMessage,
         validationReport: validationReport as unknown as Prisma.InputJsonValue,
       },

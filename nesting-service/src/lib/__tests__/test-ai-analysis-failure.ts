@@ -149,6 +149,13 @@ async function main(): Promise<void> {
   });
   assert.equal(parseFallbackCalls, 1, 'parse error must invoke deterministic fallback');
   assert.equal(parseResolution.audit.status, 'deterministic_fallback');
+  const parseReport = appendAIAnalysisViolation(
+    { valid: true, violations: [], checkedAt: 'test' },
+    parseResolution.audit
+  );
+  assert.equal(parseReport.valid, false);
+  assert.equal(parseReport.violations[0].type, 'AI_ANALYSIS_FAILED');
+  assert.equal(parseReport.violations[0].severity, 'error');
 
   const detailsOnly = parseOpenRouterResponse({
     choices: [{
@@ -192,7 +199,7 @@ async function main(): Promise<void> {
     { valid: true, violations: [], checkedAt: 'test' },
     detailsOnlyResolution.audit
   );
-  assert.equal(detailsOnlyReport.valid, false);
+  assert.equal(detailsOnlyReport.valid, true);
   assert.equal(detailsOnlyReport.violations[0].type, 'AI_ANALYSIS_WARNING');
   assert.equal(detailsOnlyReport.violations[0].severity, 'warning');
   assert.equal(detailsOnlyReport.violations[0].message, BOM_NOT_FOUND_WARNING);
@@ -207,6 +214,13 @@ async function main(): Promise<void> {
   assert.equal(emptyResolution.usable, false);
   assert.equal(emptyResolution.audit.status, 'failed');
   assert.match(emptyResolution.audit.warning || '', /не нашёл ни одной строки BOM/);
+  const emptyReport = appendAIAnalysisViolation(
+    { valid: true, violations: [], checkedAt: 'test' },
+    emptyResolution.audit
+  );
+  assert.equal(emptyReport.valid, false);
+  assert.equal(emptyReport.violations[0].type, 'AI_ANALYSIS_FAILED');
+  assert.equal(emptyReport.violations[0].severity, 'error');
 
   const deterministicDetailsResolution = await resolvePdfExtraction(
     emptyBom,

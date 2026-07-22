@@ -66,9 +66,20 @@ async function main() {
       headers: serviceJsonHeaders(),
       body: JSON.stringify({ strategy: 'minWaste' }),
     });
-    await waitForProjectStatus(projectId, ['done', 'completed_with_warnings']);
+    const completedStatus = await waitForProjectStatus(projectId, ['done', 'completed_with_warnings']);
+    assertField(completedStatus, ['status'], 'completed_with_warnings', 'detail-only project status must preserve warning');
     const result = await readJson('result', serviceUrl(`/api/projects/${projectId}/result`), { headers: serviceHeaders() });
     assertField(result, ['data', 'validationReport', 'valid'], true, 'validationReport.valid must be true');
+    assertLayoutViolation(
+      result,
+      'AI_ANALYSIS_WARNING',
+      'warning',
+      'Спецификация не найдена — данные взяты из штампа чертежа, проверьте состав'
+    );
+
+    const currentDxf = await readBinary('current project dxf', serviceUrl(`/api/projects/${projectId}/dxf`), { headers: serviceHeaders() });
+    assert(currentDxf.status === 200, 'current project DXF must return HTTP 200');
+    assertAscii(currentDxf.headers.get('content-disposition') || '', 'current project DXF Content-Disposition');
 
     const diagnostic = await readBinary('diagnostic-package', serviceUrl(`/api/projects/${projectId}/diagnostic-package`), { headers: serviceHeaders() });
     assert(diagnostic.status === 200, 'diagnostic-package must return HTTP 200');
@@ -167,6 +178,17 @@ function assertDetailMatch(payload: Json) {
   assert(match.thicknessMismatch === false, 'thicknessMismatch must be false');
   assertClose(Number(match.suggestedUnfoldingWidth), 85.97, 0.2, 'unfolding width');
   assertClose(Number(match.suggestedUnfoldingHeight), 100, 0.2, 'unfolding height');
+}
+
+function assertLayoutViolation(payload: Json, type: string, severity: string, message: string) {
+  const violations = readPath<unknown[]>(payload, ['data', 'validationReport', 'violations']);
+  assert(Array.isArray(violations), 'validationReport.violations must be an array');
+  const violation = violations.find((candidate) => {
+    const item = candidate as Json;
+    return item.type === type && item.severity === severity;
+  }) as Json | undefined;
+  assert(violation, `expected ${type} violation with severity=${severity}`);
+  assert(violation.message === message, `${type} message mismatch`);
 }
 
 async function readJson(label: string, url: string, init: RequestInit = {}) {

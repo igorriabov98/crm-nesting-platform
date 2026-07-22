@@ -46,6 +46,10 @@ export type LayoutValidationReport = {
   checkedAt: string;
 };
 
+export function areLayoutViolationsValid(violations: LayoutViolation[]): boolean {
+  return !violations.some((violation) => (violation.severity ?? 'error') === 'error');
+}
+
 export type LayoutValidationPart = {
   id: string;
   name: string;
@@ -102,7 +106,7 @@ export function validateLayout(
   validateQuantities(parts, placedCounts, params.unplacedParts ?? [], violations);
 
   return {
-    valid: violations.every((violation) => violation.severity === 'info'),
+    valid: areLayoutViolationsValid(violations),
     violations,
     checkedAt: new Date().toISOString(),
   };
