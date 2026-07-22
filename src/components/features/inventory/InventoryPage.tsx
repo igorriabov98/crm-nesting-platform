@@ -34,6 +34,7 @@ type Props = {
   suppliers: Supplier[]
   steelTypes: SteelType[]
   resultLimit?: number
+  initialStockMode?: 'main' | 'business_scrap' | 'future_business_scrap'
 }
 
 type UnitPair = { primary: string; secondary?: string }
@@ -67,13 +68,13 @@ function formatInventoryDateTime(value: string) {
   }).format(new Date(value))
 }
 
-export function InventoryPage({ items, factories, activeFactoryId, suppliers, steelTypes, resultLimit }: Props) {
+export function InventoryPage({ items, factories, activeFactoryId, suppliers, steelTypes, resultLimit, initialStockMode = 'main' }: Props) {
   const router = useRouter()
   const rows = items
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string>('all')
   const [onlyAvailable, setOnlyAvailable] = useState(false)
-  const [stockMode, setStockMode] = useState<'main' | 'business_scrap' | 'future_business_scrap'>('main')
+  const [stockMode, setStockMode] = useState<'main' | 'business_scrap' | 'future_business_scrap'>(initialStockMode)
   const [receiptCategory, setReceiptCategory] = useState<MaterialCategory>('sheet_metal')
   const [receiptMaterial, setReceiptMaterial] = useState<{ id: string; name: string; category: MaterialCategory } | null>(null)
   const [receiptVariant, setReceiptVariant] = useState<MaterialVariant | null>(null)
@@ -400,6 +401,12 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
         >
           Будущий деловой остаток ({futureBusinessScrapCount})
         </button>
+          <Link
+            href={`${ROUTES.INVENTORY_DETAILING}${historyFactoryQuery}`}
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-[#6B7280] hover:bg-white hover:text-[#1B3A6B] hover:shadow-sm"
+          >
+            Деталировка
+          </Link>
         </div>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
           <div className="flex-1">

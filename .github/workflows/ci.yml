@@ -107,6 +107,8 @@ jobs:
         working-directory: nesting-service
       - name: Inventory stock lifecycle
         run: node scripts/test-inventory-stock-lifecycle.mjs
+      - name: Inventory factory transfers
+        run: npm run test:inventory-transfers
       - name: Supply partial receiving
         run: node scripts/test-supply-partial-receiving.mjs
       - name: Fixtures are stable

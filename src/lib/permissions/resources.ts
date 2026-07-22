@@ -28,6 +28,8 @@ export type ResourceKey =
   | 'supply_transport'
   | 'supply_orders'
   | 'inventory'
+  | 'inventory_detailing'
+  | 'inventory_detailing_receiving'
   | 'inventory_history'
   | 'inventory_receiving'
   | 'suppliers'
@@ -138,6 +140,8 @@ const FINANCE_MANAGE_ROLES = ['financial_director', 'planning_director', 'supply
 const SUPPLY_AND_DIRECTORS = ['supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
 const TRANSPORT_SUPPLY_ROLES = ['supply_manager', 'procurement_head', ...DIRECTORS] as const satisfies readonly UserRole[]
 const INVENTORY_RECEIVING_ROLES = ['supply_manager', 'procurement_head', 'engineer', 'technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
+const INVENTORY_DETAILING_ROLES = ['technologist', 'procurement_head', ...DIRECTORS] as const satisfies readonly UserRole[]
+const INVENTORY_DETAILING_RECEIVING_ROLES = ['technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
 const REQUEST_VIEW_ROLES = ['engineer', 'technologist', 'supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
 const REQUEST_MANAGE_ROLES = ['technologist', ...DIRECTORS] as const satisfies readonly UserRole[]
 const SUPPLY_MANAGE_ROLES = ['engineer', 'technologist', 'supply_manager', ...DIRECTORS] as const satisfies readonly UserRole[]
@@ -316,7 +320,11 @@ export const PERMISSION_RESOURCES = [
     defaultHref: ROUTES.PRODUCTION_FACT,
     defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
     defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
-    routes: [{ path: ROUTES.PRODUCTION_FACT, match: 'prefix', operation: 'view', priority: 100 }],
+    routes: [
+      { path: ROUTES.PRODUCTION_WORKERS, match: 'prefix', operation: 'view', priority: 125 },
+      { path: ROUTES.PRODUCTION_PEOPLE, match: 'prefix', operation: 'view', priority: 120 },
+      { path: ROUTES.PRODUCTION_FACT, match: 'prefix', operation: 'view', priority: 100 },
+    ],
     sidebar: { section: 'production', icon: 'history', order: 20 },
   },
   {
@@ -394,6 +402,26 @@ export const PERMISSION_RESOURCES = [
     sidebar: { section: 'supply', icon: 'transport', order: 8 },
   },
   {
+    key: 'inventory_detailing',
+    label: 'Деталировка',
+    description: 'Каталог деталей, остатки и брони двух заводов',
+    group: 'Склад',
+    defaultHref: ROUTES.INVENTORY_DETAILING,
+    defaultViewRoles: INVENTORY_DETAILING_ROLES,
+    defaultManageRoles: INVENTORY_DETAILING_ROLES,
+    routes: [{ path: ROUTES.INVENTORY_DETAILING, match: 'prefix', operation: 'view', priority: 130 }],
+    sidebar: { section: 'inventory', icon: 'inventory', order: 15 },
+  },
+  {
+    key: 'inventory_detailing_receiving',
+    label: 'Приём деталировки',
+    description: 'Межскладская приёмка деталировки',
+    group: 'Склад',
+    defaultViewRoles: INVENTORY_DETAILING_RECEIVING_ROLES,
+    defaultManageRoles: INVENTORY_DETAILING_RECEIVING_ROLES,
+    routes: [],
+  },
+  {
     key: 'inventory',
     label: 'Склад',
     group: 'Склад',
@@ -425,14 +453,19 @@ export const PERMISSION_RESOURCES = [
   },
   {
     key: 'suppliers',
-    label: 'Поставщики',
+    label: 'База данных',
+    description: 'Поставщики металла и расходников, транспорт и аутсорсинговые компании',
     group: 'Снабжение',
-    defaultHref: ROUTES.ADMIN_SUPPLIERS,
+    defaultHref: ROUTES.ADMIN_DATABASE,
     defaultViewRoles: DIRECTORS,
     defaultManageRoles: DIRECTORS,
     routes: [
-      { path: ROUTES.ADMIN_SUPPLIERS_NEW, match: 'exact', operation: 'manage', priority: 100 },
-      { regex: /^\/admin\/suppliers\/[^/]+$/, operation: 'manage', priority: 90 },
+      { regex: /^\/admin\/database\/[^/]+\/new$/, operation: 'manage', priority: 130 },
+      { regex: /^\/admin\/database\/[^/]+\/[^/]+$/, operation: 'manage', priority: 120 },
+      { regex: /^\/admin\/database\/[^/]+$/, operation: 'view', priority: 110 },
+      { path: ROUTES.ADMIN_DATABASE, match: 'exact', operation: 'view', priority: 100 },
+      { path: ROUTES.ADMIN_SUPPLIERS_NEW, match: 'exact', operation: 'manage', priority: 90 },
+      { regex: /^\/admin\/suppliers\/[^/]+$/, operation: 'manage', priority: 80 },
       { path: ROUTES.ADMIN_SUPPLIERS, match: 'exact', operation: 'view' },
     ],
     sidebar: { section: 'supply', icon: 'suppliers', order: 30 },

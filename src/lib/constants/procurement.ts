@@ -88,6 +88,8 @@ export const INVENTORY_TRANSACTION_LABELS: Record<InventoryTransactionType, stri
   unreserve: 'Снятие брони',
   write_off: 'Списание',
   adjustment: 'Корректировка',
+  transfer_out: 'Перемещение со склада',
+  transfer_in: 'Перемещение на склад',
 }
 
 export const WEEKDAY_LABELS: Record<number, string> = {

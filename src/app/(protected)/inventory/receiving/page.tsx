@@ -1,5 +1,9 @@
 import { MaterialReceivingPage } from '@/components/features/inventory/MaterialReceivingPage'
 import { getMaterialReceivingPageData } from '@/lib/actions/supply-orders'
+import { getDetailingReceivingItems } from '@/lib/actions/detailing'
+import { DetailingReceivingPanel } from '@/components/features/inventory/DetailingReceivingPanel'
+import { InventoryTransferReceivingPanel } from '@/components/features/inventory/InventoryTransferReceivingPanel'
+import { getInventoryTransferReceivingItems } from '@/lib/actions/inventory-transfers'
 
 export const metadata = {
   title: 'Прием материала - CRM Завода',
@@ -11,7 +15,11 @@ export default async function InventoryReceivingRoute({
   searchParams?: Promise<{ factory?: string }>
 }) {
   const resolvedSearchParams = await searchParams
-  const { data, error } = await getMaterialReceivingPageData(resolvedSearchParams?.factory || null)
+  const [{ data, error }, detailingResult, inventoryTransferResult] = await Promise.all([
+    getMaterialReceivingPageData(resolvedSearchParams?.factory || null),
+    getDetailingReceivingItems(),
+    getInventoryTransferReceivingItems(),
+  ])
 
   if (error || !data) {
     return (
@@ -24,5 +32,13 @@ export default async function InventoryReceivingRoute({
     )
   }
 
-  return <MaterialReceivingPage data={data} />
+  const detailingCards = (detailingResult.data || []).filter((card) => !data.activeFactoryId || card.destinationFactoryId === data.activeFactoryId)
+  const inventoryTransferCards = (inventoryTransferResult.data || []).filter((card) => !data.activeFactoryId || card.destinationFactoryId === data.activeFactoryId)
+  return (
+    <div className="space-y-5">
+      <InventoryTransferReceivingPanel cards={inventoryTransferCards} />
+      <DetailingReceivingPanel cards={detailingCards} />
+      <MaterialReceivingPage data={data} />
+    </div>
+  )
 }

@@ -50,6 +50,17 @@ export type TaskWithRelations = Task & {
   can_delegate?: boolean
 }
 
+function sortTasksForDeadlineQueue(tasks: TaskWithRelations[]) {
+  const today = new Date().toISOString().slice(0, 10)
+  return [...tasks].sort((left, right) => {
+    const leftGroup = left.deadline === null ? 1 : left.deadline <= today ? 0 : 2
+    const rightGroup = right.deadline === null ? 1 : right.deadline <= today ? 0 : 2
+    if (leftGroup !== rightGroup) return leftGroup - rightGroup
+    if (left.deadline && right.deadline && left.deadline !== right.deadline) return left.deadline.localeCompare(right.deadline)
+    return left.created_at.localeCompare(right.created_at)
+  })
+}
+
 export type TaskDelegationSummary = Pick<
   TaskDelegation,
   | 'id'
@@ -575,7 +586,7 @@ export async function getTasks(filters: TaskFilters = {}) {
   if (error) return { data: null, error: error.message }
 
   return {
-    data: await enrichTasksWithDelegationState((data || []) as unknown as TaskWithRelations[], userId, role, factoryId),
+    data: sortTasksForDeadlineQueue(await enrichTasksWithDelegationState((data || []) as unknown as TaskWithRelations[], userId, role, factoryId)),
     error: null,
   }
 }
@@ -601,7 +612,7 @@ export async function getMyTasks() {
   if (error) return { data: null, error: error.message }
 
   return {
-    data: await enrichTasksWithDelegationState((data || []) as unknown as TaskWithRelations[], userId, role, factoryId),
+    data: sortTasksForDeadlineQueue(await enrichTasksWithDelegationState((data || []) as unknown as TaskWithRelations[], userId, role, factoryId)),
     error: null,
   }
 }
@@ -1071,6 +1082,12 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
 
     const canUpdate = taskRow.assigned_to === userId || DIRECTOR_ROLES.includes(role)
     if (!canUpdate) throw new Error('Недостаточно прав для изменения задачи')
+    if (taskRow.task_type === 'detailing_transfer' && (status === 'completed' || status === 'cancelled')) {
+      throw new Error('Задача перемещения деталировки закрывается автоматически после полной приёмки или отмены перевозки')
+    }
+    if (taskRow.task_type === 'inventory_transfer' && (status === 'completed' || status === 'cancelled')) {
+      throw new Error('Задача перемещения материалов закрывается автоматически после полной приёмки или отмены перевозки')
+    }
     if (
       role === 'production_manager' &&
       taskRow.machine_id &&

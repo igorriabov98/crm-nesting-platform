@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from 'react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
-import { Pin } from 'lucide-react'
+import { AlertTriangle, Pin } from 'lucide-react'
 import { reserveItemFromStock } from '@/lib/actions/supply-request'
 import type { SupplyStockItem } from '@/lib/actions/supply-request'
 
@@ -28,9 +28,23 @@ export function ReserveButton({ table, itemId, materialId, machineId, needed, re
     [stockItems],
   )
   const defaultStockItem = useMemo(
-    () => selectableStockItems.find((item) => Number(item.available_quantity || 0) > 0) || selectableStockItems[0] || null,
+    () => selectableStockItems.find((item) => item.is_local_factory)
+      || selectableStockItems.find((item) => Number(item.available_quantity || 0) > 0)
+      || selectableStockItems[0]
+      || null,
     [selectableStockItems],
   )
+  const localStockItems = useMemo(
+    () => selectableStockItems.filter((item) => item.is_local_factory),
+    [selectableStockItems],
+  )
+  const remoteStockGroups = useMemo(() => {
+    const groups = new Map<string, SupplyStockItem[]>()
+    for (const item of selectableStockItems.filter((stock) => !stock.is_local_factory)) {
+      groups.set(item.factory_name, [...(groups.get(item.factory_name) || []), item])
+    }
+    return [...groups.entries()]
+  }, [selectableStockItems])
   const [selectedStockId, setSelectedStockId] = useState(() => defaultStockItem?.id || '')
   const selectedStock = useMemo(() => {
     if (!selectedStockId) return defaultStockItem
@@ -55,6 +69,12 @@ export function ReserveButton({ table, itemId, materialId, machineId, needed, re
       toast.error('Введите количество для бронирования')
       return
     }
+    if (selectedStock && !selectedStock.is_local_factory) {
+      const confirmed = window.confirm(
+        `Выбран склад «${selectedStock.factory_name}». После бронирования будет создана межзаводская перевозка. Продолжить?`,
+      )
+      if (!confirmed) return
+    }
     startTransition(async () => {
       const result = await reserveItemFromStock({
         request_item_table: table,
@@ -70,13 +90,16 @@ export function ReserveButton({ table, itemId, materialId, machineId, needed, re
         toast.error(result.error || 'Не удалось забронировать')
         return
       }
-      toast.success('Материал забронирован')
+      toast.success(selectedStock && !selectedStock.is_local_factory
+        ? 'Материал забронирован, перевозка создана'
+        : 'Материал забронирован')
       router.refresh()
     })
   }
 
   return (
-    <div className="flex min-w-[190px] items-center gap-1">
+    <div className="min-w-[230px] space-y-1.5">
+      <div className="flex items-center gap-1">
       {selectableStockItems.length > 1 && (
         <select
           value={selectedStock?.id || ''}
@@ -88,13 +111,22 @@ export function ReserveButton({ table, itemId, materialId, machineId, needed, re
             const nextSuggested = Math.max(Math.min(remaining, nextStock?.available_quantity || 0), 0)
             setQuantity(nextSuggested > 0 ? String(Number(nextSuggested.toFixed(2))) : '')
           }}
-          className="h-8 w-32 rounded-md border border-[#E8ECF0] px-2 text-xs"
-          aria-label="Длина складского куска"
+          className="h-8 w-44 rounded-md border border-[#E8ECF0] px-2 text-xs"
+          aria-label="Складской остаток и завод"
         >
-          {selectableStockItems.map((item) => (
-            <option key={item.id} value={item.id}>
-              {formatStockItemOption(item, unit)}
-            </option>
+          {localStockItems.length > 0 && (
+            <optgroup label="Склад завода машины">
+              {localStockItems.map((item) => (
+                <option key={item.id} value={item.id}>{formatStockItemOption(item, unit)}</option>
+              ))}
+            </optgroup>
+          )}
+          {remoteStockGroups.map(([factoryName, items]) => (
+            <optgroup key={factoryName} label={`Остатки других заводов · ${factoryName}`}>
+              {items.map((item) => (
+                <option key={item.id} value={item.id}>{formatStockItemOption(item, unit)}</option>
+              ))}
+            </optgroup>
           ))}
         </select>
       )}
@@ -119,6 +151,16 @@ export function ReserveButton({ table, itemId, materialId, machineId, needed, re
       >
         <Pin className="h-4 w-4" />
       </button>
+      </div>
+      {selectedStock && !selectedStock.is_local_factory && (
+        <div className="flex max-w-[330px] items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-4 text-amber-900">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Подтвердите маршрут: склад {selectedStock.factory_name} → склад завода машины.
+            После бронирования будет создана перевозка.
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -133,7 +175,7 @@ function formatStockItemOption(item: SupplyStockItem, fallbackUnit: string) {
   const prefix = item.is_business_scrap ? 'Отход ' : ''
   const piece = item.piece_length_mm !== null ? `${formatPieceLength(item.piece_length_mm)} ` : ''
   const label = item.label ? `${item.label} ` : ''
-  return `${prefix}${piece}${label}(${formatStockQuantity(item.available_quantity, item.unit || fallbackUnit, item.available_secondary_quantity, item.secondary_unit)})`
+  return `${item.factory_name}: ${prefix}${piece}${label}(${formatStockQuantity(item.available_quantity, item.unit || fallbackUnit, item.available_secondary_quantity, item.secondary_unit)})`
 }
 
 function formatStockQuantity(quantity: number, unit: string, secondaryQuantity: number | null, secondaryUnit: string | null) {

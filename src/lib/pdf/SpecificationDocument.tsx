@@ -492,7 +492,11 @@ function Footer({ data }: { data: DocumentData }) {
           <Text style={styles.signatureLine}>Директор / Director</Text>
           <Text style={styles.signatureName}>{buyerDirectorName(data)}</Text>
           <View style={styles.signatureAssets}>
-            <PdfSignatureStampOverlay signatureSrc={data.clientSignatureUrl} stampSrc={data.clientStampUrl} />
+            <PdfSignatureStampOverlay
+              signatureSrc={data.clientSignatureUrl}
+              stampSrc={data.clientStampUrl}
+              enlargeByTwentyPercent
+            />
           </View>
         </View>
         <View style={styles.signatureBlock}>

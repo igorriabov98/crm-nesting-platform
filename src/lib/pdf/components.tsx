@@ -84,16 +84,36 @@ export function PdfImage({ src, type }: { src: string | null; type: 'signature' 
 export function PdfSignatureStampOverlay({
   signatureSrc,
   stampSrc,
+  enlargeByTwentyPercent = false,
 }: {
   signatureSrc: string | null
   stampSrc: string | null
+  enlargeByTwentyPercent?: boolean
 }) {
   if (!signatureSrc && !stampSrc) return null
 
   return (
     <View style={pdfStyles.signatureStampOverlay}>
-      {stampSrc && <Image src={stampSrc} style={pdfStyles.signatureStampStampImage} />}
-      {signatureSrc && <Image src={signatureSrc} style={pdfStyles.signatureStampSignatureImage} />}
+      {stampSrc && (
+        <Image
+          src={stampSrc}
+          style={
+            enlargeByTwentyPercent
+              ? [pdfStyles.signatureStampStampImage, pdfStyles.signatureStampStampImagePlusTwentyPercent]
+              : pdfStyles.signatureStampStampImage
+          }
+        />
+      )}
+      {signatureSrc && (
+        <Image
+          src={signatureSrc}
+          style={
+            enlargeByTwentyPercent
+              ? [pdfStyles.signatureStampSignatureImage, pdfStyles.signatureStampSignatureImagePlusTwentyPercent]
+              : pdfStyles.signatureStampSignatureImage
+          }
+        />
+      )}
     </View>
   )
 }

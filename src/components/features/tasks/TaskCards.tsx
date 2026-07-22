@@ -88,6 +88,8 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   outsourcing_transport: 'Транспорт аутсорсинга',
   product_version_incomplete: 'Дозаполнить карточку товара',
   business_scrap_correction_approval: 'Корректировка делового остатка',
+  detailing_transfer: 'Перемещение деталировки',
+  inventory_transfer: 'Перемещение материалов',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {
@@ -201,6 +203,10 @@ function formatTaskDate(value: string | null | undefined) {
   return value ? format(new Date(value), 'dd.MM.yyyy', { locale: ru }) : '—'
 }
 
+function formatTaskDeadline(value: string | null | undefined) {
+  return value ? formatTaskDate(value) : 'В ближайшее время'
+}
+
 function getTaskTarget(task: TaskWithRelations) {
   if (task.machine) {
     const tabQuery = task.task_type === 'machine_layout' || task.task_type === 'material_type_selection'
@@ -254,6 +260,8 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (taskType === 'material_type_selection') return 'border-cyan-200 bg-cyan-50 text-cyan-700 shadow-sm'
   if (taskType === 'machine_layout') return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (taskType === 'outsourcing_transport') return 'border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm'
+  if (taskType === 'detailing_transfer') return 'border-blue-200 bg-blue-50 text-blue-800 shadow-sm'
+  if (taskType === 'inventory_transfer') return 'border-cyan-200 bg-cyan-50 text-cyan-800 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
@@ -751,6 +759,8 @@ export function TaskCards({
     }
 
     if (context === 'outgoing' && pendingDelegation) return null
+
+    if (['detailing_transfer', 'inventory_transfer'].includes(task.task_type) && task.status === 'in_progress') return null
 
     if (isBusinessScrapCorrectionTask(task.task_type)) {
       if (task.status === 'completed' || task.status === 'cancelled') return null
@@ -1332,12 +1342,14 @@ export function TaskCards({
             </TableHeader>
             <TableBody>
               {tasks.map((task) => {
-                const deadline = new Date(task.deadline)
-                const overdue = ['pending', 'in_progress'].includes(task.status) && isBefore(deadline, today)
+                const deadline = task.deadline ? new Date(task.deadline) : null
+                const overdue = Boolean(deadline) && ['pending', 'in_progress'].includes(task.status) && isBefore(deadline as Date, today)
                 const Icon = getStatusIcon(task.status, overdue)
                 const nextStatus = getNextStatus(task.status)
                 const actionLabel = getActionLabel(task.status)
-                const tone = getTaskTone(task.status, overdue)
+                const deliveryRisk = ['detailing_transfer', 'inventory_transfer'].includes(task.task_type)
+                  && task.description?.includes('РИСК ОПОЗДАНИЯ')
+                const tone = getTaskTone(task.status, overdue || Boolean(deliveryRisk))
                 const target = getTaskTarget(task)
                 const TargetIcon = target?.kind === 'Машина' ? Factory : FileText
                 const delegation = task.pending_delegation
@@ -1378,6 +1390,11 @@ export function TaskCards({
                               {task.description}
                             </div>
                           )}
+                          {deliveryRisk && (
+                            <Badge className="mt-2 border-red-200 bg-red-50 text-red-700">
+                              Риск опоздания доставки
+                            </Badge>
+                          )}
                         </div>
                       </div>
                     </TableCell>
@@ -1407,7 +1424,7 @@ export function TaskCards({
                         <div className={cn('flex items-center gap-2 font-medium', tone.date)}>
                           <Clock3 className="h-3.5 w-3.5 shrink-0" />
                           <span className="w-14">Дедлайн</span>
-                          <span>{formatTaskDate(task.deadline)}</span>
+                          <span>{formatTaskDeadline(task.deadline)}</span>
                         </div>
                       </div>
                     </TableCell>
@@ -1451,12 +1468,14 @@ export function TaskCards({
     <>
       <div className={cn('grid gap-3', compact ? 'grid-cols-1' : 'grid-cols-1 2xl:grid-cols-2')}>
         {tasks.map((task) => {
-          const deadline = new Date(task.deadline)
-          const overdue = ['pending', 'in_progress'].includes(task.status) && isBefore(deadline, today)
+          const deadline = task.deadline ? new Date(task.deadline) : null
+          const overdue = Boolean(deadline) && ['pending', 'in_progress'].includes(task.status) && isBefore(deadline as Date, today)
           const Icon = getStatusIcon(task.status, overdue)
           const nextStatus = getNextStatus(task.status)
           const actionLabel = getActionLabel(task.status)
-          const tone = getTaskTone(task.status, overdue)
+          const deliveryRisk = ['detailing_transfer', 'inventory_transfer'].includes(task.task_type)
+            && task.description?.includes('РИСК ОПОЗДАНИЯ')
+          const tone = getTaskTone(task.status, overdue || Boolean(deliveryRisk))
           const target = getTaskTarget(task)
           const TargetIcon = target?.kind === 'Машина' ? Factory : FileText
           const actions = renderActions(task, nextStatus, actionLabel, 'rail')
@@ -1484,7 +1503,7 @@ export function TaskCards({
                       )}
                     >
                       <CalendarDays className="h-3 w-3" />
-                      {formatTaskDate(task.deadline)}
+                      {formatTaskDeadline(task.deadline)}
                     </span>
                     {renderDelegationBadge(task)}
                   </div>
@@ -1516,6 +1535,11 @@ export function TaskCards({
                       {task.description}
                     </div>
                   )}
+                  {deliveryRisk && (
+                    <Badge className="w-fit border-red-200 bg-red-50 text-red-700">
+                      Риск опоздания доставки
+                    </Badge>
+                  )}
 
                   <div className="grid gap-2 text-xs sm:grid-cols-3">
                     <div className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2">
@@ -1539,7 +1563,7 @@ export function TaskCards({
                         <Clock3 className="h-3.5 w-3.5" />
                         Дедлайн
                       </div>
-                      <div className={cn('mt-1 font-medium', tone.date)}>{formatTaskDate(task.deadline)}</div>
+                      <div className={cn('mt-1 font-medium', tone.date)}>{formatTaskDeadline(task.deadline)}</div>
                     </div>
                   </div>
 

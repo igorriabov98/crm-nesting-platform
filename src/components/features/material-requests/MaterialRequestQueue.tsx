@@ -44,8 +44,8 @@ function formatWeight(value: number) {
   return `${value.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} т`
 }
 
-function formatDeadline(value: string) {
-  return format(new Date(`${value}T00:00:00`), 'd MMMM yyyy', { locale: ru })
+function formatDeadline(value: string | null) {
+  return value ? format(new Date(`${value}T00:00:00`), 'd MMMM yyyy', { locale: ru }) : 'В ближайшее время'
 }
 
 function readyRequestsLabel(submitted: number, total: number) {
