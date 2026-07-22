@@ -25,7 +25,8 @@ export default async function ProtectedLayout({
 
   return (
     <PermissionProvider permissions={permissions}>
-      <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#F4F6F9]">
+      {/* Keep the fixed shell non-scrollable; the sidebar nav and main own their scrolling. */}
+      <div className="fixed inset-0 flex flex-col overflow-clip bg-[#F4F6F9]">
         {impersonation && (
           <ImpersonationBanner
             auditId={impersonation.auditId}
