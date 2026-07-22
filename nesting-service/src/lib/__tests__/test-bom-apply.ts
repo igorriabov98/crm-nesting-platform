@@ -9,6 +9,39 @@ const part = createPart({
   thickness: 2,
 });
 
+const idempotent = prepareBOMApplyUpdate(
+  {
+    partId: 'same-values',
+    material: 'Сталь',
+    steelTypeId: null,
+    steelTypeName: null,
+    steelTypeRaw: null,
+    quantity: 1,
+    thickness: 2,
+    unfoldingWidth: 100,
+    unfoldingHeight: 50,
+    partType: 'SHEET',
+    hasBends: true,
+  },
+  createPart({
+    id: 'same-values',
+    name: 'Повторный auto-apply',
+    width: 100,
+    height: 50,
+    thickness: 2,
+    hasBends: true,
+  })
+);
+
+assert.equal(idempotent.status, 'updated');
+if (idempotent.status === 'updated') {
+  assert.equal(
+    idempotent.update.needsUnfoldRecalculation,
+    false,
+    'reapplying the same nesting values must not reset project status'
+  );
+}
+
 const clean = prepareBOMApplyUpdate(
   {
     partId: 'clean',

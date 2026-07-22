@@ -14,6 +14,7 @@ import { validateLayout, type LayoutValidationReport } from '../validation/layou
 import { excludedReasonCode, isSheetPartType, partTypeLabel } from '../part-type';
 import { getActivityQuantity, isPartActive, summarizePartActivity } from '../part-activity';
 import { appendAIAnalysisViolation, parseStoredAnalysis } from '../ai/analysis-state';
+import { appendProjectRecalculationViolation } from '../ai/project-recalculation';
 import { resolveCompletedProjectStatus } from '../project-status';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
@@ -397,20 +398,14 @@ async function saveResults(
   result: NestingResult,
   validationReport: LayoutValidationReport
 ): Promise<void> {
-  const realValidationViolations = validationReport.violations.filter((violation) => violation.severity !== 'info');
   const realUnplacedParts = result.unplacedParts.filter((part) =>
     part.reasonCode !== 'EXCLUDED' &&
     part.reasonCode !== 'EXCLUDED_PROFILE' &&
     part.reasonCode !== 'EXCLUDED_PURCHASED'
   );
-  const validationWarning = realValidationViolations.length > 0
-    ? `Найдены нарушения валидации раскладки: ${realValidationViolations.length}`
-    : null;
   const unplacedWarning = realUnplacedParts.length > 0
     ? `Не размещено деталей: ${realUnplacedParts.length}`
     : null;
-  const warningMessage = [validationWarning, unplacedWarning].filter(Boolean).join('; ') || null;
-  const completedStatus = resolveCompletedProjectStatus(validationReport, realUnplacedParts.length > 0);
 
   await prisma.$transaction(async (tx) => {
     await tx.nestingSheet.deleteMany({ where: { projectId } });
@@ -459,12 +454,31 @@ async function saveResults(
       });
     }
 
+    const [projectState] = await tx.$queryRaw<Array<{ aiRecalcRequired: boolean }>>`
+      SELECT "aiRecalcRequired"
+      FROM "nesting"."NestingProject"
+      WHERE "id" = ${projectId}
+      FOR UPDATE
+    `;
+    const finalValidationReport = appendProjectRecalculationViolation(
+      validationReport,
+      projectState?.aiRecalcRequired === true
+    );
+    const realValidationViolations = finalValidationReport.violations.filter(
+      (violation) => violation.severity !== 'info'
+    );
+    const validationWarning = realValidationViolations.length > 0
+      ? `Найдены нарушения валидации раскладки: ${realValidationViolations.length}`
+      : null;
+    const warningMessage = [validationWarning, unplacedWarning].filter(Boolean).join('; ') || null;
+    const completedStatus = resolveCompletedProjectStatus(finalValidationReport, realUnplacedParts.length > 0);
+
     await tx.nestingProject.update({
       where: { id: projectId },
       data: {
         status: completedStatus,
         errorMessage: warningMessage,
-        validationReport: validationReport as unknown as Prisma.InputJsonValue,
+        validationReport: finalValidationReport as unknown as Prisma.InputJsonValue,
       },
     });
   });

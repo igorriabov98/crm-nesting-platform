@@ -35,6 +35,7 @@ export type LayoutViolationType =
   | 'UNPLACED_WITHOUT_REASON'
   | 'AI_ANALYSIS_FAILED'
   | 'AI_ANALYSIS_WARNING'
+  | 'AI_RECALC_REQUIRED'
   | 'hole_outside'
   | 'part_in_hole'
 
@@ -345,6 +346,8 @@ export interface AIAnalysisResponse {
     source: 'ai' | 'deterministic-fallback' | 'none'
     warning: string | null
     failureKind: 'config_error' | 'provider_error' | 'connection_error' | 'truncated' | 'parse_error' | 'empty_bom' | null
+    alreadyInProgress?: boolean
+    message?: string | null
     createdAt?: string
     updatedAt?: string
   }
