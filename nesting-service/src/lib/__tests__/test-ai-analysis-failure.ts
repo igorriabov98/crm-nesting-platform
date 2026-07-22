@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { appendAIAnalysisViolation, findAIAnalysisFailureMessage, resolvePdfExtraction } from '../ai/analysis-state';
+import {
+  appendAIAnalysisViolation,
+  BOM_NOT_FOUND_WARNING,
+  findAIAnalysisFailureMessage,
+  resolvePdfExtraction,
+} from '../ai/analysis-state';
 import { analyzePDF, parseOpenRouterResponse } from '../ai/openrouter';
-import { DEFAULT_AI_MAX_TOKENS, MAX_AI_MAX_TOKENS, type BOMEntry } from '../ai/types';
+import { DEFAULT_AI_MAX_TOKENS, MAX_AI_MAX_TOKENS, type BOMEntry, type DetailEntry } from '../ai/types';
 
 const fallbackEntry: BOMEntry = {
   articleNumber: '',
@@ -33,6 +38,22 @@ const fallbackEntry: BOMEntry = {
   parentAssembly: 'ЛЕДА.228.02.000',
   sourcePageGroup: 'assembly:леда.228.02.000',
   source: 'deterministic-fallback',
+};
+
+const detailEntry: DetailEntry = {
+  designation: 'ЭТЛ-03.001',
+  name: 'Уголок гнутый',
+  materialFull: 'Ст3сп',
+  materialType: 'Сталь',
+  materialGrade: 'Ст3сп',
+  thicknessMm: 2,
+  unfoldingWidth: 85.97,
+  unfoldingHeight: 100,
+  massKg: 0.135,
+  isSheetMetal: true,
+  notes: 'Внутр. радиус гиба R3. Ширина детали 100.',
+  sourcePage: 1,
+  source: 'ai',
 };
 
 async function main(): Promise<void> {
@@ -129,6 +150,54 @@ async function main(): Promise<void> {
   assert.equal(parseFallbackCalls, 1, 'parse error must invoke deterministic fallback');
   assert.equal(parseResolution.audit.status, 'deterministic_fallback');
 
+  const detailsOnly = parseOpenRouterResponse({
+    choices: [{
+      finish_reason: 'stop',
+      message: {
+        content: JSON.stringify({
+          bom: [],
+          details: [{
+            designation: detailEntry.designation,
+            name: detailEntry.name,
+            material_full: detailEntry.materialFull,
+            material_type: detailEntry.materialType,
+            material_grade: detailEntry.materialGrade,
+            thickness_mm: detailEntry.thicknessMm,
+            unfolding_width: detailEntry.unfoldingWidth,
+            unfolding_height: detailEntry.unfoldingHeight,
+            mass_kg: detailEntry.massKg,
+            is_sheet_metal: detailEntry.isSheetMetal,
+            notes: detailEntry.notes,
+          }],
+        }),
+      },
+    }],
+    usage: { prompt_tokens: 5_462, completion_tokens: 194, total_tokens: 5_656 },
+  }, { model: 'anthropic/claude-sonnet-4.6', maxTokens: 32_000 });
+  assert.equal(detailsOnly.success, true);
+  assert.equal(detailsOnly.failureKind, null);
+  assert.equal(detailsOnly.bom.length, 0);
+  assert.equal(detailsOnly.details.length, 1);
+
+  const detailsOnlyResolution = await resolvePdfExtraction(
+    detailsOnly,
+    async () => ({ bom: [], details: [] })
+  );
+  assert.equal(detailsOnlyResolution.usable, true);
+  assert.equal(detailsOnlyResolution.audit.status, 'completed');
+  assert.equal(detailsOnlyResolution.audit.failureKind, null);
+  assert.equal(detailsOnlyResolution.audit.warning, BOM_NOT_FOUND_WARNING);
+
+  const detailsOnlyReport = appendAIAnalysisViolation(
+    { valid: true, violations: [], checkedAt: 'test' },
+    detailsOnlyResolution.audit
+  );
+  assert.equal(detailsOnlyReport.valid, false);
+  assert.equal(detailsOnlyReport.violations[0].type, 'AI_ANALYSIS_WARNING');
+  assert.equal(detailsOnlyReport.violations[0].severity, 'warning');
+  assert.equal(detailsOnlyReport.violations[0].message, BOM_NOT_FOUND_WARNING);
+  assert.equal(findAIAnalysisFailureMessage(detailsOnlyReport), null);
+
   const emptyBom = parseOpenRouterResponse({
     choices: [{ finish_reason: 'stop', message: { content: '{"bom":[],"details":[]}' } }],
     usage: { completion_tokens: 12, total_tokens: 60 },
@@ -139,7 +208,24 @@ async function main(): Promise<void> {
   assert.equal(emptyResolution.audit.status, 'failed');
   assert.match(emptyResolution.audit.warning || '', /не нашёл ни одной строки BOM/);
 
-  console.log('[ai-analysis-failure] truncation, provider 402/500, parse error, empty BOM, fallback and ERROR violation passed');
+  const deterministicDetailsResolution = await resolvePdfExtraction(
+    emptyBom,
+    async () => ({ bom: [], details: [detailEntry] })
+  );
+  assert.equal(deterministicDetailsResolution.usable, true);
+  assert.equal(deterministicDetailsResolution.audit.status, 'completed');
+  assert.equal(deterministicDetailsResolution.audit.failureKind, null);
+  assert.equal(deterministicDetailsResolution.audit.warning, BOM_NOT_FOUND_WARNING);
+
+  const truncatedWithDetailsResolution = await resolvePdfExtraction(
+    { ...truncated, details: [detailEntry] },
+    async () => ({ bom: [], details: [detailEntry] })
+  );
+  assert.equal(truncatedWithDetailsResolution.usable, false);
+  assert.equal(truncatedWithDetailsResolution.audit.status, 'failed');
+  assert.equal(truncatedWithDetailsResolution.audit.failureKind, 'truncated');
+
+  console.log('[ai-analysis-failure] details-only warning, empty-all failure, strict truncation/provider/parse handling and DXF audit passed');
 }
 
 main().catch((error) => {

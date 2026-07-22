@@ -86,6 +86,43 @@ async function run(): Promise<void> {
       valid: false,
       checkedAt: 'test',
       violations: [{
+        type: 'AI_ANALYSIS_WARNING',
+        severity: 'warning',
+        partIds: [],
+        message: 'Спецификация не найдена — данные взяты из штампа чертежа, проверьте состав',
+      }],
+    };
+
+    const warningSingleResponse = await app.inject('/api/projects/project-1/dxf/sheet-1');
+    assert.equal(warningSingleResponse.statusCode, 200);
+    const warningZipResponse = await app.inject('/api/projects/project-1/dxf');
+    assert.equal(warningZipResponse.statusCode, 200);
+    assert.equal(generateForSheetCalls, 2, 'warning-only sheet DXF must reach the generator');
+    assert.equal(generateZipCalls, 2, 'warning-only ZIP must reach the generator');
+
+    validationReport = {
+      valid: false,
+      checkedAt: 'test',
+      violations: [{
+        type: 'AI_ANALYSIS_FAILED',
+        severity: 'error',
+        partIds: [],
+        message: 'AI response contained empty BOM; fallback contained no BOM or details',
+      }],
+    };
+
+    const emptyAllBlockedSingleResponse = await app.inject('/api/projects/project-1/dxf/sheet-1');
+    assert.equal(emptyAllBlockedSingleResponse.statusCode, 400);
+    assert.match(emptyAllBlockedSingleResponse.body, /DXF заблокирован/);
+    const emptyAllBlockedZipResponse = await app.inject('/api/projects/project-1/dxf');
+    assert.equal(emptyAllBlockedZipResponse.statusCode, 400);
+    assert.equal(generateForSheetCalls, 2, 'empty-all failure must block the sheet DXF generator');
+    assert.equal(generateZipCalls, 2, 'empty-all failure must block the ZIP generator');
+
+    validationReport = {
+      valid: false,
+      checkedAt: 'test',
+      violations: [{
         type: 'AI_ANALYSIS_FAILED',
         severity: 'error',
         partIds: [],
@@ -102,8 +139,8 @@ async function run(): Promise<void> {
     assert.equal(blockedZipResponse.statusCode, 400);
     assert.match(blockedZipResponse.body, /DXF заблокирован/);
 
-    assert.equal(generateForSheetCalls, 1, 'blocked sheet DXF must not reach the generator');
-    assert.equal(generateZipCalls, 1, 'blocked ZIP must not reach the generator');
+    assert.equal(generateForSheetCalls, 2, 'blocked sheet DXF must not reach the generator');
+    assert.equal(generateZipCalls, 2, 'blocked ZIP must not reach the generator');
 
     validationReport = {
       valid: false,
@@ -126,8 +163,8 @@ async function run(): Promise<void> {
     assert.match(providerBlockedZipResponse.body, /DXF заблокирован/);
     assert.match(providerBlockedZipResponse.body, /HTTP 402/);
 
-    assert.equal(generateForSheetCalls, 1, 'provider failure must block the sheet DXF generator');
-    assert.equal(generateZipCalls, 1, 'provider failure must block the ZIP generator');
+    assert.equal(generateForSheetCalls, 2, 'provider failure must block the sheet DXF generator');
+    assert.equal(generateZipCalls, 2, 'provider failure must block the ZIP generator');
 
     await app.close();
     console.log('[dxf-download-warnings] all tests passed');
