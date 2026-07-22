@@ -390,7 +390,7 @@ export function parseOpenRouterResponse(
     });
   }
 
-  if (parsed.bom.length === 0) {
+  if (parsed.bom.length === 0 && parsed.details.length === 0) {
     return failedPDFAnalysis({
       rawResponse: content,
       model: context.model,

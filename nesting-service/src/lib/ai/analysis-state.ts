@@ -8,6 +8,8 @@ import type {
 } from './types';
 
 const STORED_ANALYSIS_VERSION = 1;
+export const BOM_NOT_FOUND_WARNING = 'Спецификация не найдена — данные взяты из штампа чертежа, проверьте состав';
+const DETERMINISTIC_DATA_WARNING = 'AI не вернул пригодных данных — использован текстовый парсер, проверьте состав';
 
 export type DeterministicPdfData = { bom: BOMEntry[]; details: DetailEntry[] };
 
@@ -32,11 +34,40 @@ export async function resolvePdfExtraction(
   const deterministic = await loadDeterministic();
 
   if (pdfResult.success) {
+    const bom = mergeDeterministicBOM(pdfResult.bom, deterministic.bom);
+    const details = mergeDeterministicDetails(pdfResult.details, deterministic.details);
     return {
       usable: true,
-      bom: mergeDeterministicBOM(pdfResult.bom, deterministic.bom),
-      details: mergeDeterministicDetails(pdfResult.details, deterministic.details),
-      audit: buildAudit(pdfResult, 'completed', 'ai', null),
+      bom,
+      details,
+      audit: buildAudit(
+        pdfResult,
+        'completed',
+        'ai',
+        bom.length === 0 && details.length > 0 ? BOM_NOT_FOUND_WARNING : null
+      ),
+    };
+  }
+
+  if (pdfResult.failureKind === 'empty_bom' && (deterministic.bom.length > 0 || deterministic.details.length > 0)) {
+    const recoveredResult: PDFAnalysisResult = {
+      ...pdfResult,
+      success: true,
+      failureKind: null,
+      error: null,
+    };
+    const bom = deterministic.bom.map((entry) => ({ ...entry, source: 'deterministic-fallback' as const }));
+    const details = deterministic.details.map((entry) => ({ ...entry, source: 'deterministic-fallback' as const }));
+    return {
+      usable: true,
+      bom,
+      details,
+      audit: buildAudit(
+        recoveredResult,
+        'completed',
+        'deterministic-fallback',
+        bom.length === 0 ? BOM_NOT_FOUND_WARNING : DETERMINISTIC_DATA_WARNING
+      ),
     };
   }
 
@@ -99,7 +130,22 @@ export function appendAIAnalysisViolation(
   report: LayoutValidationReport,
   audit: AIAnalysisAudit | null | undefined
 ): LayoutValidationReport {
-  if (!audit || audit.status === 'completed') return report;
+  if (!audit) return report;
+
+  if (audit.status === 'completed') {
+    if (!audit.warning) return report;
+    const warning: LayoutViolation = {
+      type: 'AI_ANALYSIS_WARNING',
+      partIds: [],
+      severity: 'warning',
+      message: audit.warning,
+    };
+    return {
+      ...report,
+      valid: false,
+      violations: [warning, ...report.violations.filter((item) => item.type !== 'AI_ANALYSIS_WARNING')],
+    };
+  }
 
   const violation: LayoutViolation = {
     type: 'AI_ANALYSIS_FAILED',
