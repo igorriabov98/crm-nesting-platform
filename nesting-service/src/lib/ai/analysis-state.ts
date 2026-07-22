@@ -1,4 +1,8 @@
-import type { LayoutValidationReport, LayoutViolation } from '../validation/layout-validator';
+import {
+  areLayoutViolationsValid,
+  type LayoutValidationReport,
+  type LayoutViolation,
+} from '../validation/layout-validator';
 import { mergeDeterministicBOM, mergeDeterministicDetails } from './pdf-bom-fallback';
 import type {
   AIAnalysisAudit,
@@ -140,10 +144,11 @@ export function appendAIAnalysisViolation(
       severity: 'warning',
       message: audit.warning,
     };
+    const violations = [warning, ...report.violations.filter((item) => item.type !== 'AI_ANALYSIS_WARNING')];
     return {
       ...report,
-      valid: false,
-      violations: [warning, ...report.violations.filter((item) => item.type !== 'AI_ANALYSIS_WARNING')],
+      valid: areLayoutViolationsValid(violations),
+      violations,
     };
   }
 
@@ -153,11 +158,12 @@ export function appendAIAnalysisViolation(
     severity: 'error',
     message: audit.warning || audit.aiError || 'AI-анализ не выполнен',
   };
+  const violations = [violation, ...report.violations.filter((item) => item.type !== 'AI_ANALYSIS_FAILED')];
 
   return {
     ...report,
-    valid: false,
-    violations: [violation, ...report.violations.filter((item) => item.type !== 'AI_ANALYSIS_FAILED')],
+    valid: areLayoutViolationsValid(violations),
+    violations,
   };
 }
 

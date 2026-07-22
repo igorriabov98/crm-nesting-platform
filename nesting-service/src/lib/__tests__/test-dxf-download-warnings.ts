@@ -83,7 +83,7 @@ async function run(): Promise<void> {
     assert.equal(generateZipCalls, 1);
 
     validationReport = {
-      valid: false,
+      valid: true,
       checkedAt: 'test',
       violations: [{
         type: 'AI_ANALYSIS_WARNING',
@@ -141,6 +141,28 @@ async function run(): Promise<void> {
 
     assert.equal(generateForSheetCalls, 2, 'blocked sheet DXF must not reach the generator');
     assert.equal(generateZipCalls, 2, 'blocked ZIP must not reach the generator');
+
+    validationReport = {
+      valid: false,
+      checkedAt: 'test',
+      violations: [{
+        type: 'AI_ANALYSIS_FAILED',
+        severity: 'error',
+        partIds: [],
+        message: 'AI response JSON parse failed: Unterminated string at position 15103',
+      }],
+    };
+
+    const parseBlockedSingleResponse = await app.inject('/api/projects/project-1/dxf/sheet-1');
+    assert.equal(parseBlockedSingleResponse.statusCode, 400);
+    assert.match(parseBlockedSingleResponse.body, /DXF заблокирован/);
+    assert.match(parseBlockedSingleResponse.body, /Unterminated string/);
+
+    const parseBlockedZipResponse = await app.inject('/api/projects/project-1/dxf');
+    assert.equal(parseBlockedZipResponse.statusCode, 400);
+    assert.match(parseBlockedZipResponse.body, /DXF заблокирован/);
+    assert.equal(generateForSheetCalls, 2, 'parse failure must block the sheet DXF generator');
+    assert.equal(generateZipCalls, 2, 'parse failure must block the ZIP generator');
 
     validationReport = {
       valid: false,
