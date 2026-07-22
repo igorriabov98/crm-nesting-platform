@@ -236,15 +236,16 @@ async function renderPdfPageText(pageData: any): Promise<string> {
 }
 
 export function mergeDeterministicBOM(aiBom: BOMEntry[], deterministicBom: BOMEntry[]): BOMEntry[] {
-  if (deterministicBom.length === 0) return aiBom;
+  const deduplicatedAiBom = deduplicateBOMEntries(aiBom);
+  if (deterministicBom.length === 0) return deduplicatedAiBom;
 
   const entries = new Map<string, BOMEntry>();
   const order: string[] = [];
 
-  for (const entry of aiBom) {
+  for (const entry of deduplicatedAiBom) {
     const key = buildBOMKey(entry);
-    if (!entries.has(key)) order.push(key);
-    entries.set(key, entries.has(key) ? mergeBOMEntry(entries.get(key)!, entry) : entry);
+    order.push(key);
+    entries.set(key, entry);
   }
 
   for (const entry of deterministicBom) {
@@ -261,6 +262,22 @@ export function mergeDeterministicBOM(aiBom: BOMEntry[], deterministicBom: BOMEn
   }
 
   return order.map((key) => entries.get(key)!).filter(Boolean);
+}
+
+export function deduplicateBOMEntries(entries: BOMEntry[]): BOMEntry[] {
+  const deduplicated = new Map<string, BOMEntry>();
+  const order: string[] = [];
+
+  for (const entry of entries) {
+    const key = buildBOMKey(entry);
+    if (!deduplicated.has(key)) order.push(key);
+    deduplicated.set(
+      key,
+      deduplicated.has(key) ? mergeBOMEntry(deduplicated.get(key)!, entry) : entry
+    );
+  }
+
+  return order.map((key) => deduplicated.get(key)!).filter(Boolean);
 }
 
 export function parseDeterministicDetailText(text: string): DetailEntry[] {
@@ -660,7 +677,12 @@ function createDetailEntry(input: {
 function mergeBOMEntry(base: BOMEntry, override: BOMEntry): BOMEntry {
   const baseIsSpec = isSpecItemSection(base.bomSection);
   const overrideIsSpec = isSpecItemSection(override.bomSection);
-  const sourcePages = mergeSourcePages(base.bomSources, override.bomSources);
+  const sourcePages = mergeSourcePages(
+    base.bomSources,
+    base.sourcePage ? [base.sourcePage] : undefined,
+    override.bomSources,
+    override.sourcePage ? [override.sourcePage] : undefined
+  );
 
   return {
     ...base,

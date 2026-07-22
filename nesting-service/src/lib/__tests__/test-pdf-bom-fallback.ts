@@ -33,6 +33,15 @@ const scopedAi = {
   sourcePageGroup: '10461020050000',
   source: 'ai' as const,
 };
+const repeatedScopedAi = {
+  ...scopedAi,
+  sourcePage: 6,
+};
+assert.equal(
+  mergeDeterministicBOM([scopedAi, repeatedScopedAi], []).length,
+  1,
+  'AI rows must stay deduplicated even when deterministic fallback finds no rows'
+);
 assert.equal(
   mergeDeterministicBOM([scopedAi], [parsed[0]]).length,
   1,

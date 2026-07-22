@@ -10,6 +10,7 @@ import {
   type PDFAnalysisResult,
   type SteelTypeCatalogItem,
 } from './types';
+import { deduplicateBOMEntries } from './pdf-bom-fallback';
 import { mergeUnfoldingWarning, resolveUnfolding } from './unfolding-extraction';
 
 type OpenRouterResponse = {
@@ -493,14 +494,16 @@ export function parsePDFAnalysisResponse(content: string): { bom: BOMEntry[]; de
     if (Array.isArray(parsed.details)) detailEntries = parsed.details;
   }
 
-  const bom = bomEntries
-    .map((entry) => normalizeBOMEntry(entry))
-    .filter((entry): entry is BOMEntry => Boolean(entry && (
-      entry.description.length > 0 ||
-      entry.name.length > 0 ||
-      entry.designation.length > 0 ||
-      entry.articleNumber.length > 0
-    )));
+  const bom = deduplicateBOMEntries(
+    bomEntries
+      .map((entry) => normalizeBOMEntry(entry))
+      .filter((entry): entry is BOMEntry => Boolean(entry && (
+        entry.description.length > 0 ||
+        entry.name.length > 0 ||
+        entry.designation.length > 0 ||
+        entry.articleNumber.length > 0
+      )))
+  );
   const details = detailEntries
     .map((entry) => normalizeDetailEntry(entry))
     .filter((entry): entry is DetailEntry => Boolean(entry && entry.designation.length > 0));
