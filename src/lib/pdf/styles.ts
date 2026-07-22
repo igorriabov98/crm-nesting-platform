@@ -146,6 +146,10 @@ export const pdfStyles = StyleSheet.create({
     height: 115.2,
     objectFit: 'contain',
   },
+  signatureStampStampImagePlusTwentyPercent: {
+    width: 138.24,
+    height: 138.24,
+  },
   signatureStampSignatureImage: {
     position: 'absolute',
     left: 82,
@@ -153,6 +157,10 @@ export const pdfStyles = StyleSheet.create({
     width: 144,
     height: 79.2,
     objectFit: 'contain',
+  },
+  signatureStampSignatureImagePlusTwentyPercent: {
+    width: 172.8,
+    height: 95.04,
   },
   smallText: {
     fontSize: 7,
