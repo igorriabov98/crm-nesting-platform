@@ -12,6 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ROUTES } from '@/lib/constants/routes'
+import { getDimensionChoice, POSSIBLE_FOLDED_VIEW_HINT } from '@/lib/nesting/dimension-choice'
 import type { AIAnalysisResponse, AIMatchResult, AIStatus, ApplyBOMBlockedRow, NestingPart, PartType } from '@/lib/nesting/api'
 
 type ApplyMatchPayload = {
@@ -396,6 +397,7 @@ export function AIAnalysisPanel({
                         const confidence = Math.round(match.matchConfidence * 100)
                         const applied = isApplied(match)
                         const proposed = isProposed(match)
+                        const dimensionChoice = getDimensionChoice(match, part)
                         const needsForce = canForce(match, part)
                         const canSelect = canManage && (proposed || applied)
 
@@ -515,24 +517,34 @@ export function AIAnalysisPanel({
                             </TableCell>
                             <TableCell>
                               {match.suggestedUnfoldingWidth && match.suggestedUnfoldingHeight ? (
-                                <span className="inline-flex items-center gap-2">
-                                  {part?.dimensionMismatch && !applied ? (
-                                    <>
-                                      <AlertTriangle className="h-4 w-4 text-amber-700" />
-                                      <ChangeText
-                                        from={formatSize(part.width, part.height)}
-                                        to={formatSize(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)}
-                                      />
-                                      <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">заблокировано</Badge>
-                                    </>
+                                <div className="flex min-w-[260px] flex-col gap-1">
+                                  {dimensionChoice.isConflict && part && !applied ? (
+                                    <div className="space-y-1 text-xs">
+                                      <div className="flex flex-wrap items-center gap-2 text-amber-800">
+                                        <AlertTriangle className="h-4 w-4" />
+                                        <span>
+                                          STEP: <span className="font-medium">{formatSize(part.width, part.height)}</span>
+                                          {' | '}
+                                          PDF: <span className="font-medium">{formatSize(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)}</span>
+                                        </span>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                                          Конфликт размеров · {formatPercent(dimensionChoice.mismatchPercent)}
+                                        </Badge>
+                                        {dimensionChoice.possibleFoldedView ? (
+                                          <span className="max-w-[360px] text-amber-700">{POSSIBLE_FOLDED_VIEW_HINT}</span>
+                                        ) : null}
+                                      </div>
+                                    </div>
                                   ) : (
-                                    <>
+                                    <span className="inline-flex items-center gap-2">
                                       {applied ? 'Применено: ' : null}
                                       {formatSize(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)}
                                       {!applied && <Badge variant="outline">PDF</Badge>}
-                                    </>
+                                    </span>
                                   )}
-                                </span>
+                                </div>
                               ) : (
                                 <span className="text-[#6B7280]">—</span>
                               )}
@@ -556,7 +568,7 @@ export function AIAnalysisPanel({
                                 {needsForce ? (
                                   <Button type="button" variant="outline" size="sm" onClick={() => forceMatch(match)} disabled={!canManage || isApplying}>
                                     <AlertTriangle className="mr-1 h-3.5 w-3.5" />
-                                    Применить принудительно
+                                    {dimensionChoice.isConflict ? 'Применить размеры из PDF' : 'Применить принудительно'}
                                   </Button>
                                 ) : null}
                                 {applied ? (
@@ -675,7 +687,7 @@ function ApplyStatusBadge({ match }: { match: AIMatchResult }) {
     return <Badge className="bg-emerald-100 text-emerald-700">Применено автоматически</Badge>
   }
 
-  if (match.applyStatus === 'needs_force' || match.thicknessMismatch) {
+  if (match.applyStatus === 'needs_force' || match.thicknessMismatch || match.dimensionMismatch) {
     return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Требует подтверждения</Badge>
   }
 
@@ -767,7 +779,7 @@ function canForce(match: AIMatchResult, part: NestingPart | undefined) {
   if (!part || !hasSuggestion(match) || isApplied(match)) return false
 
   const hasBlockedThickness = match.thicknessMismatch && typeof match.suggestedThickness === 'number'
-  const hasBlockedDimensions = part.dimensionMismatch && typeof match.suggestedUnfoldingWidth === 'number' && typeof match.suggestedUnfoldingHeight === 'number'
+  const hasBlockedDimensions = getDimensionChoice(match, part).isConflict
   return match.applyStatus === 'needs_force' || hasBlockedThickness || hasBlockedDimensions
 }
 
@@ -789,14 +801,21 @@ function countSuggestedFields(match: AIMatchResult) {
 }
 
 function buildForceConfirmText(match: AIMatchResult, part: NestingPart | undefined) {
-  const lines = ['Применить принудительно?', '']
+  const dimensionChoice = getDimensionChoice(match, part)
+  const lines = [dimensionChoice.isConflict ? 'Применить размеры из PDF?' : 'Применить принудительно?', '']
 
   if (part && typeof match.suggestedUnfoldingWidth === 'number' && typeof match.suggestedUnfoldingHeight === 'number') {
     const areaDiff = percentDelta(part.width * part.height, match.suggestedUnfoldingWidth * match.suggestedUnfoldingHeight)
     const aspectDiff = percentDelta(normalizedAspect(part.width, part.height), normalizedAspect(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight))
     lines.push(`PDF: ${formatSize(match.suggestedUnfoldingWidth, match.suggestedUnfoldingHeight)}`)
     lines.push(`STEP: ${formatSize(part.width, part.height)}`)
+    if (dimensionChoice.mismatchPercent !== null) {
+      lines.push(`Максимальное расхождение: ${formatPercent(dimensionChoice.mismatchPercent)}`)
+    }
     lines.push(`Расхождение площади: ${formatPercent(areaDiff)}, сторон: ${formatPercent(aspectDiff)}`)
+    if (dimensionChoice.possibleFoldedView) {
+      lines.push(POSSIBLE_FOLDED_VIEW_HINT)
+    }
     lines.push('')
     lines.push('Размеры детали будут заменены значениями из чертежа.')
   }

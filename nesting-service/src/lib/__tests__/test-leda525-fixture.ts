@@ -32,6 +32,10 @@ async function main(): Promise<void> {
   assert.equal(parsed.brepUnfolded, 7, 'LEDA.525 unfolded count');
   assert.equal(parsed.parts.filter((part) => part.suspectedBend).length, 0, 'LEDA.525 suspectedFallback');
   assert.equal(parsed.parts.filter((part) => part.partType === 'PROFILE').length, 7, 'LEDA.525 profile count');
+  assert.ok(
+    parsed.parts.every((part) => part.assemblyPath.some((segment) => segment.includes('ЛЕДА.525.00.000'))),
+    'LEDA.525 bodies should retain the parent product in their STEP assembly path'
+  );
   assertNoMojibake(parsed.parts);
   assertAllContoursSimple(parsed.parts);
 
@@ -271,6 +275,7 @@ function toPartForMatching(part: FixturePart): PartForMatching {
   return {
     id: part.id,
     name: part.name,
+    assemblyPath: part.assemblyPath,
     material: 'Сталь',
     steelTypeId: null,
     steelTypeName: null,

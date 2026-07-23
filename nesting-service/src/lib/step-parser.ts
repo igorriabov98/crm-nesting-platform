@@ -21,7 +21,7 @@ import {
   simplifyContour,
 } from './geometry';
 import { readBrepPartContours, type BrepContourResult, type BrepPartContour, type KFactorResolver } from './brep/brep-reader';
-import { extractStepOccurrenceNames } from './step-source-names';
+import { extractStepOccurrenceMetadata, type StepOccurrenceMetadata } from './step-source-names';
 import { normalizeCadText } from './text-encoding';
 import { inferPartTypeFromGeometry, type PartType } from './part-type';
 
@@ -53,6 +53,7 @@ interface OcctResult {
 
 export interface ParsedPart {
   name: string;
+  assemblyPath: string[];
   thickness: number | null;
   width: number;
   height: number;
@@ -81,6 +82,7 @@ export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 
 
 export type BrepTrace = {
   partName: string;
+  assemblyPath: string[];
   source: ContourSource;
   bendCount: number;
   reason: string | null;
@@ -178,8 +180,9 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
 
     const meshes = result.meshes ?? [];
     const fallbackBaseName = buildFallbackBaseName(filePath, options.sourceLabel);
-    const sourceMeshNames = extractStepOccurrenceNames(fileContent);
-    const meshNames = extractMeshNames(result.root);
+    const sourceOccurrences = extractStepOccurrenceMetadata(fileContent);
+    const sourceMeshMetadata = matchStepOccurrencesToMeshes(meshes, sourceOccurrences);
+    const meshMetadata = extractMeshMetadata(result.root);
     const brepContours = await readBrepPartContours(fileBytes, {
       timeoutMs: BREP_PART_TIMEOUT_MS,
       material: options.material,
@@ -206,13 +209,14 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
       const exactContour = brepResult?.contour ?? null;
 
       try {
-        const part = processMesh(mesh, i, meshes.length, meshNames, sourceMeshNames, fallbackBaseName, errors, exactContour, brepResult);
+        const part = processMesh(mesh, i, meshes.length, meshMetadata, sourceMeshMetadata, fallbackBaseName, errors, exactContour, brepResult);
         if (part) {
           parts.push(part);
           if (part.contourSource === 'EXACT_BREP') {
             brepFlat += 1;
             brepTrace.push({
               partName: part.name,
+              assemblyPath: part.assemblyPath,
               source: part.contourSource,
               bendCount: part.bendCount,
               reason: null,
@@ -223,6 +227,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
             brepUnfolded += 1;
             brepTrace.push({
               partName: part.name,
+              assemblyPath: part.assemblyPath,
               source: part.contourSource,
               bendCount: part.bendCount,
               reason: null,
@@ -234,6 +239,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
             brepFallback += 1;
             brepTrace.push({
               partName: part.name,
+              assemblyPath: part.assemblyPath,
               source: part.contourSource,
               bendCount: part.bendCount,
               reason: fallbackReason,
@@ -280,28 +286,136 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
   }
 }
 
-function extractMeshNames(root: OcctNode | undefined): Map<number, string> {
-  const names = new Map<number, string>();
+type MeshTreeMetadata = {
+  name: string;
+  assemblyPath: string[];
+};
 
-  function traverse(node: OcctNode, parentName: string): void {
-    const nodeName = node.name || parentName;
+function matchStepOccurrencesToMeshes(
+  meshes: OcctMesh[],
+  occurrences: Map<number, StepOccurrenceMetadata>
+): Map<number, StepOccurrenceMetadata> {
+  const occurrenceList = Array.from(occurrences.values());
+  const byDesignation = groupOccurrences(occurrenceList, (item) => extractOccurrenceDesignation(item.name));
+  const result = new Map<number, StepOccurrenceMetadata>();
+
+  meshes.forEach((mesh, meshIndex) => {
+    const designation = extractOccurrenceDesignation(mesh.name ?? '');
+    if (!designation) {
+      const indexedOccurrence = occurrences.get(meshIndex);
+      if (indexedOccurrence) {
+        result.set(meshIndex, indexedOccurrence);
+      }
+      return;
+    }
+    const candidates = byDesignation.get(designation) ?? [];
+    const indexedOccurrence = occurrences.get(meshIndex);
+    const resolved = resolveUnambiguousOccurrence(
+      candidates,
+      indexedOccurrence &&
+      extractOccurrenceDesignation(indexedOccurrence.name) === designation
+        ? indexedOccurrence
+        : null
+    );
+    if (resolved) {
+      result.set(meshIndex, resolved);
+    }
+  });
+
+  return result;
+}
+
+function groupOccurrences(
+  occurrences: StepOccurrenceMetadata[],
+  getKey: (item: StepOccurrenceMetadata) => string
+): Map<string, StepOccurrenceMetadata[]> {
+  const groups = new Map<string, StepOccurrenceMetadata[]>();
+  for (const occurrence of occurrences) {
+    const key = getKey(occurrence);
+    if (!key) continue;
+    const group = groups.get(key) ?? [];
+    group.push(occurrence);
+    groups.set(key, group);
+  }
+  return groups;
+}
+
+function resolveUnambiguousOccurrence(
+  candidates: StepOccurrenceMetadata[],
+  indexedCandidate: StepOccurrenceMetadata | null
+): StepOccurrenceMetadata | null {
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+  const parentPaths = new Set(candidates.map((candidate) =>
+    candidate.assemblyPath
+      .slice(0, -1)
+      .map(normalizeOccurrenceName)
+      .join('>')
+  ));
+  if (parentPaths.size !== 1) return null;
+  return indexedCandidate ?? candidates[0];
+}
+
+function extractOccurrenceDesignation(value: string): string {
+  const normalized = normalizeCadText(value).replace(/[‐‑‒–—−]/g, '-');
+  const matches = Array.from(normalized.matchAll(/(\d{2,4}\.\d{2}\.\d{3}(?:-\d{1,3})?)/g));
+  return matches.at(-1)?.[1] ?? '';
+}
+
+function normalizeOccurrenceName(value: string): string {
+  return normalizeCadText(value)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[_\s]+(?:\d+|-?\d{2,3})$/u, '')
+    .trim();
+}
+
+function isCompleteTreePath(
+  metadata: MeshTreeMetadata | undefined,
+  partName: string
+): metadata is MeshTreeMetadata {
+  if (!metadata || metadata.assemblyPath.length === 0) return false;
+  const leafName = metadata.assemblyPath.at(-1) ?? '';
+  const leafDesignation = extractOccurrenceDesignation(leafName);
+  const partDesignation = extractOccurrenceDesignation(partName);
+  if (leafDesignation && /\.000(?:-\d{1,3})?$/.test(leafDesignation) && leafDesignation !== partDesignation) {
+    return false;
+  }
+  return true;
+}
+
+export function extractMeshMetadata(root: OcctNode | undefined): Map<number, MeshTreeMetadata> {
+  const metadata = new Map<number, MeshTreeMetadata>();
+
+  function traverse(node: OcctNode, parentPath: string[]): void {
+    const normalizedName = normalizeCadText(node.name?.trim() ?? '');
+    const assemblyPath = normalizedName
+      ? [...parentPath, normalizedName]
+      : parentPath;
+    const nodeName = normalizedName || parentPath[parentPath.length - 1] || '';
 
     for (const meshIndex of node.meshes ?? []) {
       if (Number.isInteger(meshIndex) && nodeName) {
-        names.set(meshIndex, nodeName);
+        const existing = metadata.get(meshIndex);
+        if (!existing || assemblyPath.length > existing.assemblyPath.length) {
+          metadata.set(meshIndex, {
+            name: nodeName,
+            assemblyPath,
+          });
+        }
       }
     }
 
     for (const child of node.children ?? []) {
-      traverse(child, nodeName);
+      traverse(child, assemblyPath);
     }
   }
 
   if (root) {
-    traverse(root, '');
+    traverse(root, []);
   }
 
-  return names;
+  return metadata;
 }
 
 function buildFallbackBaseName(filePath: string, sourceLabel?: string | null): string {
@@ -344,8 +458,8 @@ function processMesh(
   mesh: OcctMesh,
   index: number,
   totalMeshes: number,
-  meshNames: Map<number, string>,
-  sourceMeshNames: Map<number, string>,
+  meshMetadata: Map<number, MeshTreeMetadata>,
+  sourceMeshMetadata: Map<number, StepOccurrenceMetadata>,
   fallbackBaseName: string,
   errors: string[],
   exactContour: BrepPartContour | null,
@@ -360,7 +474,15 @@ function processMesh(
   const positions = toFloat32Array(positionArray);
   const indices = mesh.index?.array ? toUint32Array(mesh.index.array) : new Uint32Array();
   const hasIndexedTriangles = indices.length >= 3;
-  const rawName = sourceMeshNames.get(index) || mesh.name || meshNames.get(index) || `Part_${index + 1}`;
+  const treeMetadata = meshMetadata.get(index);
+  const sourceMetadata = sourceMeshMetadata.get(index);
+  const meshName = mesh.name ?? '';
+  const sourceCarriesExecutionSuffix =
+    Boolean(extractExecutionSuffix(sourceMetadata?.name ?? '')) &&
+    !extractExecutionSuffix(meshName);
+  const rawName = isReadableCadName(meshName) && !sourceCarriesExecutionSuffix
+    ? meshName
+    : sourceMetadata?.name || meshName || treeMetadata?.name || `Part_${index + 1}`;
   const name = resolvePartName(rawName, fallbackBaseName, index, totalMeshes);
   const boundingBox = computeBoundingBox(positions);
   const meshArea = hasIndexedTriangles ? computeMeshArea(positions, indices) : 0;
@@ -454,6 +576,11 @@ function processMesh(
 
   return {
     name,
+    assemblyPath: sourceMetadata?.assemblyPath?.length
+      ? sourceMetadata.assemblyPath
+      : isCompleteTreePath(treeMetadata, name)
+        ? treeMetadata!.assemblyPath
+        : [],
     thickness: fallbackThickness.thickness,
     width,
     height,
@@ -477,6 +604,17 @@ function processMesh(
     suspectedBend,
     fallbackReason: exactContour ? null : brepFallbackReason,
   };
+}
+
+function isReadableCadName(value: string): boolean {
+  const normalized = normalizeCadText(value);
+  const designationIndex = normalized.search(/\d{2,4}\.\d{2}\.\d{3}/);
+  const prefix = designationIndex >= 0 ? normalized.slice(0, designationIndex) : normalized;
+  return /[A-Za-zА-Яа-яЁё]{2,}/u.test(prefix);
+}
+
+function extractExecutionSuffix(value: string): string {
+  return value.match(/[_-](\d{2,3})(?:\s|$)/u)?.[1] ?? '';
 }
 
 function normalizeCloneClassifications(parts: ParsedPart[]): ParsedPart[] {

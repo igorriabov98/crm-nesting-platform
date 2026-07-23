@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { matchBOMToParts, normalizePartClusterName } from '../ai/bom-matcher';
+import { isMatchEligibleForAutoApply, matchBOMToParts, normalizePartClusterName } from '../ai/bom-matcher';
+import { applyDimensionGuard } from '../ai/dimension-guard';
 import { resolveBOMSteelTypes } from '../ai/steel-types';
 import type { BOMEntry, DetailEntry, PartForMatching } from '../ai/types';
 
@@ -623,6 +624,133 @@ const profileNumberMatches = matchBOMToParts(
 );
 assert.equal(profileNumberMatches.every((match) => /qty group: BOM=2, STEP bodies=1, allocated=1/.test(match.matchDetails)), true);
 
+const crossAssemblyFalseMatch = matchBOMToParts(
+  [createBom({
+    position: '1',
+    designation: 'ЛЕДА.228.03.001',
+    name: 'Лист задний',
+    parentAssembly: 'ЛЕДА.228.03.000',
+    partType: 'sheet',
+    thicknessMm: 2,
+    widthMm: 803,
+    heightMm: 1210,
+    massKg: 15.2,
+  })],
+  [createPart({
+    id: 'sain-channel',
+    name: 'САИН.290.02.011 Швеллер_00',
+    assemblyPath: ['САИН.290.00.000 Ковш', 'САИН.290.02.000', 'САИН.290.02.011 Швеллер_00'],
+    thickness: 2,
+    width: 803,
+    height: 1210,
+    bboxSizeX: 2,
+    bboxSizeY: 803,
+    bboxSizeZ: 1210,
+    meshVolume: 1_936_305,
+    hasBends: true,
+  })],
+  [createDetail({
+    designation: 'ЛЕДА.228.03.001',
+    name: 'Лист задний',
+    thicknessMm: 2,
+    unfoldingWidth: 803,
+    unfoldingHeight: 1210,
+    massKg: 15.2,
+  })]
+);
+assert.equal(crossAssemblyFalseMatch[0].matchType, 'none', 'geometry across different assembly paths must be rejected');
+
+const reusedBodyIdentityMatch = matchBOMToParts(
+  [
+    createBom({
+      position: '1',
+      designation: 'ЛЕДА.228.02.000',
+      name: 'Лист',
+      bomSection: 'Сборочные единицы',
+      parentAssembly: 'ЛЕДА.228.02.000',
+    }),
+    createBom({
+      position: '1',
+      designation: 'ЛЕДА.228.02.001',
+      name: 'Лист передний',
+      bomSection: 'Детали',
+      parentAssembly: 'ЛЕДА.228.02.000',
+      partType: 'sheet',
+      thicknessMm: 2,
+      massKg: 14.6,
+    }),
+  ],
+  [createPart({
+    id: 'reused-front-sheet',
+    name: 'ЛЕДА.122.01.001 Лист',
+    assemblyPath: [
+      'ЛЕДА.228.00.000 Изделие',
+      'ЛЕДА.228.02.000 Крышка передняя',
+      'ЛЕДА.122.01.001 Лист',
+    ],
+    thickness: 2,
+    width: 1210,
+    height: 770.78,
+    bboxSizeX: 125,
+    bboxSizeY: 708.6,
+    bboxSizeZ: 1210,
+    meshVolume: 1_866_242,
+    hasBends: true,
+  })],
+  [createDetail({
+    designation: 'ЛЕДА.228.02.001',
+    name: 'Лист передний',
+    thicknessMm: 2,
+    unfoldingWidth: 707.6,
+    unfoldingHeight: 1210,
+    massKg: 14.6,
+  })]
+);
+assert.equal(reusedBodyIdentityMatch[0].matchType, 'geometry');
+assert.equal(reusedBodyIdentityMatch[0].bomDesignation, 'ЛЕДА.228.02.001');
+assert.equal(reusedBodyIdentityMatch[0].identityConfirmed, true);
+assert.equal(reusedBodyIdentityMatch[0].identitySource, 'assembly_path');
+assert.equal(reusedBodyIdentityMatch[0].dimensionMismatch, true);
+assert.match(String(reusedBodyIdentityMatch[0].dimensionMismatchNote), /mismatch=8\./);
+assert.equal(isMatchEligibleForAutoApply(reusedBodyIdentityMatch[0]), true);
+const reusedBodyDimensionGuard = applyDimensionGuard(
+  {},
+  { name: 'ЛЕДА.122.01.001 Лист', width: 1210, height: 770.78 },
+  reusedBodyIdentityMatch[0].suggestedUnfoldingWidth,
+  reusedBodyIdentityMatch[0].suggestedUnfoldingHeight
+);
+assert.equal(reusedBodyDimensionGuard.mismatch, true);
+assert.equal(reusedBodyDimensionGuard.dimensionsApplied, false, 'STEP unfolding must win over mismatched AI dimensions');
+assert.equal('width' in reusedBodyDimensionGuard.data, false);
+assert.equal('height' in reusedBodyDimensionGuard.data, false);
+
+const unconfirmedGeometryMatch = matchBOMToParts(
+  [createBom({
+    designation: 'ЛЕДА.228.03.001',
+    description: 'Лист задний',
+    partType: 'sheet',
+    thicknessMm: 2,
+    widthMm: 803,
+    heightMm: 1210,
+    massKg: 15.2,
+  })],
+  [createPart({
+    id: 'legacy-part-without-path',
+    name: 'САИН.290.02.011 Швеллер_00',
+    assemblyPath: [],
+    thickness: 2,
+    width: 803,
+    height: 1210,
+    bboxSizeX: 2,
+    bboxSizeY: 803,
+    bboxSizeZ: 1210,
+    meshVolume: 1_936_305,
+  })]
+);
+assert.equal(unconfirmedGeometryMatch[0].matchType, 'geometry');
+assert.equal(unconfirmedGeometryMatch[0].identityConfirmed, false);
+assert.equal(isMatchEligibleForAutoApply(unconfirmedGeometryMatch[0]), false, 'unconfirmed geometry must remain suggested');
+
 console.log('[bom-matcher] all tests passed');
 
 function createBom(input: Partial<BOMEntry>): BOMEntry {
@@ -649,6 +777,8 @@ function createBom(input: Partial<BOMEntry>): BOMEntry {
     quantity: input.quantity ?? 1,
     thickness: input.thickness ?? null,
     notes: input.notes ?? '',
+    parentAssembly: input.parentAssembly ?? '',
+    sourcePageGroup: input.sourcePageGroup ?? '',
   };
 }
 
@@ -656,6 +786,7 @@ function createPart(input: Partial<PartForMatching> & { id: string; name: string
   return {
     id: input.id,
     name: input.name,
+    assemblyPath: input.assemblyPath ?? [],
     material: input.material ?? 'Сталь',
     steelTypeId: input.steelTypeId ?? null,
     steelTypeName: input.steelTypeName ?? null,

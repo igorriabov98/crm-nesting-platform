@@ -56,7 +56,7 @@ export function parseDeterministicBOMText(
   }
 ): BOMEntry[] {
   const entries = new Map<string, BOMEntry>();
-  const lines = text.split(/\r?\n/).map(normalizeLine).filter(Boolean);
+  const lines = coalesceRussianFastenerRows(text.split(/\r?\n/).map(normalizeLine).filter(Boolean));
   let currentSection = context.initialBomSection;
 
   for (const line of lines) {
@@ -96,6 +96,45 @@ export function parseDeterministicBOMText(
   }
 
   return Array.from(entries.values());
+}
+
+function coalesceRussianFastenerRows(lines: string[]): string[] {
+  const result: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (
+      !/^\d{1,3}(?:Болт|Гайка|Винт|Шайба)(?:\s|$)/iu.test(line) ||
+      parseFastenerSpecLine(line, 'Стандартные изделия')
+    ) {
+      result.push(line);
+      continue;
+    }
+
+    let merged = line;
+    let consumedUntil = index;
+    for (let nextIndex = index + 1; nextIndex < Math.min(lines.length, index + 4); nextIndex += 1) {
+      const continuation = lines[nextIndex];
+      if (/^(?:ГОСТ|DIN)(?:\s|$)/iu.test(continuation) || /^\d{3,5}$/u.test(continuation)) {
+        merged = `${merged} ${continuation}`;
+        consumedUntil = nextIndex;
+        continue;
+      }
+      if (/^\d{1,3}$/u.test(continuation)) {
+        const withQuantity = `${merged}${continuation}`;
+        if (parseFastenerSpecLine(withQuantity, 'Стандартные изделия')) {
+          merged = withQuantity;
+          consumedUntil = nextIndex;
+        }
+      }
+      break;
+    }
+
+    result.push(merged);
+    index = consumedUntil;
+  }
+
+  return result;
 }
 
 export function parseDeterministicBOMPages(pages: string[]): BOMEntry[] {
@@ -477,6 +516,10 @@ function parseRussianSpecTableLine(line: string, bomSection: string): ParsedBOML
     .replace(/\s+/g, ' ')
     .replace(/(Заглушка)(пластмассовая)/giu, '$1 $2')
     .trim();
+  const fastenerMatch = parseFastenerSpecLine(normalized, bomSection);
+  if (fastenerMatch) return fastenerMatch;
+  if (/^\d{1,3}(?:Болт|Гайка|Винт|Шайба)(?:\s|$)/iu.test(normalized)) return null;
+
   const designationMatch = normalized.match(/^(?:[A-ZА-Я]\d)?(\d{1,3})([A-ZА-ЯЁ]+[A-ZА-ЯЁ]*\.\d+\.\d+\.\d+(?:-\d{1,3})?)(.+?)(\d{1,3})$/u);
 
   if (designationMatch) {
@@ -528,6 +571,72 @@ function parseRussianSpecTableLine(line: string, bomSection: string): ParsedBOML
     widthMm: null,
     heightMm: null,
   };
+}
+
+function parseFastenerSpecLine(line: string, bomSection: string): ParsedBOMLine | null {
+  const rowMatch = line.match(/^(\d{1,3})(.+)$/u);
+  if (!rowMatch) return null;
+
+  const position = rowMatch[1];
+  const tail = rowMatch[2].trim();
+  if (!/^(?:Болт|Гайка|Винт|Шайба)(?:\s|$)/iu.test(tail)) return null;
+
+  for (let quantityDigits = 1; quantityDigits <= 3; quantityDigits += 1) {
+    const quantitySource = tail.slice(-quantityDigits);
+    if (!/^\d{1,3}$/.test(quantitySource)) continue;
+    const description = repairSpecName(tail.slice(0, -quantityDigits));
+    const identity = parseFastenerIdentity(description);
+    const quantity = normalizePositiveNumber(quantitySource);
+    if (!identity || !quantity) continue;
+
+    return {
+      position,
+      articleNumber: '',
+      bomSection,
+      description,
+      designation: identity.designation,
+      quantity: Math.max(1, Math.round(quantity)),
+      massKg: null,
+      materialGrade: '',
+      materialType: '',
+      norm: identity.norm,
+      partType: 'other',
+      thicknessMm: null,
+      widthMm: null,
+      heightMm: null,
+    };
+  }
+
+  // A row ending in a fastener standard but without a separate quantity is
+  // incomplete PDF text. Do not reinterpret the standard suffix as quantity.
+  return null;
+}
+
+function parseFastenerIdentity(description: string): { designation: string; norm: string } | null {
+  const din = description.match(/^(.*?[MМ]\d+(?:[^\s]*)?)\s+(DIN\s*\d{3,5})$/iu);
+  if (din) {
+    return {
+      designation: din[1].trim(),
+      norm: din[2].replace(/\s+/g, ' ').trim(),
+    };
+  }
+
+  const gost = description.match(/^(.*?[MМ]\d+(?:[^\s]*)?)\s+(ГОСТ\s*\d{3,5}(?:-\d{2})?)$/iu);
+  if (gost) {
+    return {
+      designation: gost[1].trim(),
+      norm: gost[2].replace(/\s+/g, ' ').trim(),
+    };
+  }
+
+  if (/^(?:Болт|Винт)(?:\s|$).+\.\d{3}$/iu.test(description)) {
+    return {
+      designation: description,
+      norm: '',
+    };
+  }
+
+  return null;
 }
 
 function detectBomSection(line: string): string | null {

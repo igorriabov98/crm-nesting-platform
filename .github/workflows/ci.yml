@@ -40,6 +40,8 @@ jobs:
         run: npm run test:supply-reservation-scope
       - name: Supply order filters and sorting
         run: npm run test:supply-order-view
+      - name: Nesting STEP/PDF dimension choice
+        run: npm run test:nesting-dimension-choice
       - name: Typecheck nesting-service
         run: npx tsc --noEmit
         working-directory: nesting-service

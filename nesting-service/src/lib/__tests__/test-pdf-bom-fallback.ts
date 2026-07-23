@@ -26,6 +26,58 @@ const materialListText = `
 const parsed = parseDeterministicBOMText(materialListText);
 assert.equal(parsed.length, 10);
 
+const fastenerRows = parseDeterministicBOMText(`
+Стандартные изделия
+7Болт M10-6gx90.58.0992
+9Гайка М10 DIN 9856
+`);
+assert.equal(fastenerRows.length, 2);
+assert.equal(fastenerRows[0].designation, 'Болт M10-6gx90.58.099');
+assert.equal(fastenerRows[0].quantity, 2);
+assert.equal(fastenerRows[1].designation, 'Гайка М10');
+assert.equal(fastenerRows[1].norm, 'DIN 985');
+assert.equal(fastenerRows[1].quantity, 6);
+
+const splitFastenerRows = parseDeterministicBOMText(`
+Стандартные изделия
+7Болт M10-6gx90.58.099
+ГОСТ 7805-70
+2
+9 Гайка М10 DIN 9856
+11Болт M10x25.88.099 DIN
+933
+4
+`);
+assert.deepEqual(
+  splitFastenerRows.map((entry) => ({
+    designation: entry.designation,
+    norm: entry.norm,
+    quantity: entry.quantity,
+  })),
+  [
+    { designation: 'Болт M10-6gx90.58.099', norm: 'ГОСТ 7805-70', quantity: 2 },
+    { designation: 'Гайка М10', norm: 'DIN 985', quantity: 6 },
+    { designation: 'Болт M10x25.88.099', norm: 'DIN 933', quantity: 4 },
+  ]
+);
+
+const incompleteFastenerRow = parseDeterministicBOMText(`
+Стандартные изделия
+7Болт M10-6gx90.58.099
+`);
+assert.equal(incompleteFastenerRow.length, 0, 'standard suffix .099 must not be reinterpreted as quantity=99');
+
+const mergedFasteners = mergeDeterministicBOM(
+  fastenerRows.map((entry, index) => ({
+    ...entry,
+    quantity: index === 0 ? 2 : 6,
+    source: 'ai' as const,
+  })),
+  fastenerRows
+);
+assert.equal(mergedFasteners.length, 2, 'deterministic fastener rows must merge into matching AI identities');
+assert.deepEqual(mergedFasteners.map((entry) => entry.quantity), [2, 6]);
+
 const scopedAi = {
   ...parsed[0],
   sourcePage: 4,

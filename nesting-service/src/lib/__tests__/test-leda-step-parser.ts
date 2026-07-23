@@ -30,6 +30,7 @@ async function main(): Promise<void> {
   assert.equal(result.totalMeshes, 23);
   assert.equal(result.sheetMetalCount, 21);
   assert.ok(result.parts.every((part) => !part.name.includes('Ã')));
+  assert.ok(result.parts.every((part) => part.assemblyPath.length > 0), 'every parsed mesh should retain its STEP tree path');
 
   const angle = result.parts.find((part) => part.name === 'ЛЕДА.024.00.006 Уголок');
   assert.ok(angle);
@@ -123,6 +124,7 @@ function toPartForMatching(part: Awaited<ReturnType<typeof parseStepFile>>['part
   return {
     id: String(index),
     name: part.name,
+    assemblyPath: part.assemblyPath,
     material: 'Сталь',
     steelTypeId: null,
     steelTypeName: null,
