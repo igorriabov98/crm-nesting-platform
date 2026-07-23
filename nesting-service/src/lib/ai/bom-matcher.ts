@@ -2,12 +2,17 @@ import { normalizeSteelTypeName, resolveCatalogSteelType as resolveSteelTypeCata
 import type { BOMEntry, DetailEntry, MatchResult, PartForMatching, PartType, SteelTypeCatalogItem } from './types';
 import { mergeUnfoldingWarning, resolveUnfolding } from './unfolding-extraction';
 import { isProfileBomPartType, isPurchasedBomSection, isSheetPartType, normalizePartType, partTypeFromLegacySheetFlag } from '../part-type';
+import { normalizeCadText } from '../text-encoding';
 
 type MatchType = MatchResult['matchType'];
+type MatchIdentitySource = MatchResult['identitySource'];
+type AssemblyScopeState = 'confirmed' | 'unavailable' | 'mismatch';
 type GeometryScore = {
   score: number;
   details: string[];
   strongMatches: number;
+  dimensionMismatch?: boolean;
+  dimensionMismatchNote?: string | null;
 };
 type MatchCandidate = {
   bomEntry: BOMEntry | null;
@@ -15,6 +20,10 @@ type MatchCandidate = {
   matchType: MatchType;
   matchConfidence: number;
   matchDetails: string;
+  identityConfirmed?: boolean;
+  identitySource?: MatchIdentitySource;
+  dimensionMismatch?: boolean;
+  dimensionMismatchNote?: string | null;
 };
 type PartGroup = {
   key: string;
@@ -40,13 +49,17 @@ const UNFOLDING_MATCH_TOLERANCE = 0.02;
 const UNFOLDING_SUGGESTION_REJECT_TOLERANCE = 0.15;
 const DIMENSION_CLUSTER_TOLERANCE_MM = 0.1;
 
+export function isMatchEligibleForAutoApply(match: MatchResult): boolean {
+  if (match.matchConfidence < 0.8) return false;
+  return match.matchType !== 'geometry' || match.identityConfirmed;
+}
+
 export function matchBOMToParts(
   bom: BOMEntry[],
   parts: PartForMatching[],
   details: DetailEntry[] = [],
   steelTypes: SteelTypeCatalogItem[] = []
 ): MatchResult[] {
-  const detailsByDesignation = buildDesignationMap(details, (detail) => detail.designation);
   const bomSlots: BomSlot[] = bom.map((entry) => ({
     entry,
     key: buildBomKeyFromEntry(entry),
@@ -60,8 +73,7 @@ export function matchBOMToParts(
     const eligibleBom = bomSlots
       .filter((slot) => slot.remaining > 0 && availableBomCapacity(slot.entry, bomSlots) >= group.parts.length)
       .map((slot) => slot.entry);
-    const bomByDesignation = buildDesignationMap(eligibleBom, (entry) => entry.designation);
-    const rawMatch = findBestMatch(group.parts[0], eligibleBom, details, detailsByDesignation, bomByDesignation);
+    const rawMatch = findBestMatch(group.parts[0], eligibleBom, bom, details);
     const allocation = rawMatch.bomEntry
       ? planBomSlotAllocation(rawMatch.bomEntry, bomSlots, group.parts.length)
       : [];
@@ -106,6 +118,10 @@ export function matchBOMToParts(
           match.matchType,
           match.matchConfidence,
           match.matchDetails,
+          match.identityConfirmed ?? false,
+          match.identitySource ?? null,
+          match.dimensionMismatch ?? false,
+          match.dimensionMismatchNote ?? null,
           steelTypes,
           assignedGroupSize
         )
@@ -113,7 +129,20 @@ export function matchBOMToParts(
     }
   }
 
-  const orderedResults = parts.map((part) => resultsByPartId.get(part.id) ?? buildMatchResult(part, null, null, 'none', 0, '', steelTypes, 1));
+  const orderedResults = parts.map((part) => resultsByPartId.get(part.id) ?? buildMatchResult(
+    part,
+    null,
+    null,
+    'none',
+    0,
+    '',
+    false,
+    null,
+    false,
+    null,
+    steelTypes,
+    1
+  ));
   applyAllocatedSuggestedQuantities(orderedResults, parts, bom);
   return orderedResults;
 }
@@ -146,10 +175,13 @@ function clusterIdenticalParts(parts: PartForMatching[]): PartGroup[] {
 
 function buildPartClusterKey(part: PartForMatching): string {
   const product = normalizePartClusterName(part.name);
+  const normalizedPath = normalizeAssemblyPath(part.assemblyPath);
+  const assemblyPath = normalizedPath.slice(0, Math.max(0, normalizedPath.length - 1)).join('>');
   const dims = getPartBBoxDims(part).map((dim) => quantize(dim, DIMENSION_CLUSTER_TOLERANCE_MM)).join('x');
   const volume = quantizeByRelativeTolerance(part.meshVolume ?? 0, 0.001);
 
   return [
+    assemblyPath,
     product,
     dims,
     volume,
@@ -162,6 +194,55 @@ export function normalizePartClusterName(name: string): string {
     .replace(/(?:\s*\(\s*\d+\s*\)|[‐‑‒–—−_\-.\s]+\d+)$/u, '')
     .trim();
   return normalize(withoutInstanceSuffix || name);
+}
+
+function normalizeAssemblyPath(path: string[] | null | undefined): string[] {
+  if (!Array.isArray(path)) return [];
+  return path
+    .map((segment) => normalizeAssemblyIdentity(segment))
+    .filter(Boolean);
+}
+
+function normalizeAssemblyIdentity(value: string | null | undefined): string {
+  if (!value) return '';
+  return transliterateCyrillic(normalizeCadText(value))
+    .toUpperCase()
+    .replace(/[^A-Z0-9.]/g, '');
+}
+
+function getAssemblyScopeState(
+  part: PartForMatching,
+  parentAssembly: string | null | undefined
+): AssemblyScopeState {
+  const fullPath = normalizeAssemblyPath(part.assemblyPath);
+  const normalizedPath = fullPath
+    .slice(0, Math.max(0, fullPath.length - 1))
+    .filter(isRecognizableAssemblyIdentity);
+  const normalizedParent = normalizeAssemblyIdentity(parentAssembly);
+  if (normalizedPath.length === 0 || !normalizedParent) return 'unavailable';
+  return normalizedPath.some((segment) => segment.includes(normalizedParent))
+    ? 'confirmed'
+    : 'mismatch';
+}
+
+function isRecognizableAssemblyIdentity(value: string): boolean {
+  return /[A-Z]{2,}\d*(?:\.\d+){1,}\.000(?:SB)?/.test(value) || /^\d{10,}$/.test(value);
+}
+
+function getGeometryIdentity(
+  part: PartForMatching,
+  bomEntry: BOMEntry | null
+): Pick<MatchCandidate, 'identityConfirmed' | 'identitySource'> {
+  if (bomEntry && getAssemblyScopeState(part, bomEntry.parentAssembly) === 'confirmed') {
+    return {
+      identityConfirmed: true,
+      identitySource: 'assembly_path',
+    };
+  }
+  return {
+    identityConfirmed: false,
+    identitySource: null,
+  };
 }
 
 /**
@@ -226,74 +307,114 @@ function planBomSlotAllocation(entry: BOMEntry, slots: BomSlot[], groupSize: num
 function findBestMatch(
   part: PartForMatching,
   bom: BOMEntry[],
-  details: DetailEntry[],
-  detailsByDesignation: Map<string, DetailEntry>,
-  bomByDesignation: Map<string, BOMEntry>
+  allBom: BOMEntry[],
+  details: DetailEntry[]
 ): MatchCandidate {
   const rejectedDetails: string[] = [];
+  const eligibleBom = bom.filter((entry) =>
+    isPhysicalBomEntry(entry) &&
+    getAssemblyScopeState(part, entry.parentAssembly) !== 'mismatch'
+  );
+  const detailsByDesignation = buildDesignationMap(details, (detail) => detail.designation);
+  const bomByDesignation = buildDesignationMap(eligibleBom, (entry) => entry.designation);
   const designationMatch = findDesignationMatch(part, detailsByDesignation, bomByDesignation);
 
   if (designationMatch) {
-    return withThicknessMismatchDetails(part, designationMatch);
+    return withDetailDimensionState(part, withThicknessMismatchDetails(part, {
+      ...designationMatch,
+      identityConfirmed: true,
+      identitySource: 'designation',
+    }));
   }
 
-  const profileGeometryMatch = findProfileGeometryMatch(part, bom);
+  const profileGeometryMatch = findProfileGeometryMatch(part, eligibleBom);
   if (profileGeometryMatch) {
     const bomKey = extractDesignationKey(profileGeometryMatch.entry.designation);
     const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
-    return {
+    const identity = getGeometryIdentity(part, profileGeometryMatch.entry);
+    return withDetailDimensionState(part, {
       bomEntry: profileGeometryMatch.entry,
       detail,
       matchType: 'geometry',
       matchConfidence: profileGeometryMatch.confidence,
       matchDetails: profileGeometryMatch.details,
-    };
+      ...identity,
+    });
   }
 
-  const nameMatch = findNameMatch(part, bom, rejectedDetails);
+  const assemblyScopedBom = eligibleBom.filter(
+    (entry) => getAssemblyScopeState(part, entry.parentAssembly) === 'confirmed'
+  );
+  const assemblyScopedGeometryMatch = findGeometryMatch(part, assemblyScopedBom, rejectedDetails);
+  if (assemblyScopedGeometryMatch) {
+    const bomKey = extractDesignationKey(assemblyScopedGeometryMatch.entry.designation);
+    const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
+    return withDetailDimensionState(part, {
+      bomEntry: assemblyScopedGeometryMatch.entry,
+      detail,
+      matchType: 'geometry',
+      matchConfidence: assemblyScopedGeometryMatch.confidence,
+      matchDetails: assemblyScopedGeometryMatch.details,
+      ...getGeometryIdentity(part, assemblyScopedGeometryMatch.entry),
+      dimensionMismatch: assemblyScopedGeometryMatch.dimensionMismatch,
+      dimensionMismatchNote: assemblyScopedGeometryMatch.dimensionMismatchNote,
+    });
+  }
+
+  const nameMatch = findNameMatch(part, eligibleBom, rejectedDetails);
   if (nameMatch) {
     const bomKey = extractDesignationKey(nameMatch.entry.designation);
     const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
+    const assemblyIdentity = getGeometryIdentity(part, nameMatch.entry);
+    const nameIdentity = assemblyIdentity.identityConfirmed
+      ? assemblyIdentity
+      : { identityConfirmed: true, identitySource: 'name' as const };
     if (isThicknessCompatibleWithCandidate(part, nameMatch.entry, detail)) {
-      return {
+      return withDetailDimensionState(part, {
         bomEntry: nameMatch.entry,
         detail,
         matchType: nameMatch.type,
         matchConfidence: detail ? Math.max(nameMatch.confidence, 0.7) : nameMatch.confidence,
         matchDetails: nameMatch.details,
-      };
+        ...nameIdentity,
+      });
     }
     if (nameMatch.type === 'exact') {
-      return withThicknessMismatchDetails(part, {
+      return withDetailDimensionState(part, withThicknessMismatchDetails(part, {
         bomEntry: nameMatch.entry,
         detail,
         matchType: nameMatch.type,
         matchConfidence: detail ? Math.max(nameMatch.confidence, 0.7) : nameMatch.confidence,
         matchDetails: nameMatch.details,
-      });
+        ...nameIdentity,
+      }));
     }
     rejectedDetails.push(buildThicknessRejectedDetails(part, nameMatch.entry, detail));
   }
 
-  const geometryMatch = findGeometryMatch(part, bom, rejectedDetails);
+  const geometryMatch = findGeometryMatch(part, eligibleBom, rejectedDetails);
   if (geometryMatch) {
     const bomKey = extractDesignationKey(geometryMatch.entry.designation);
     const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
+    const identity = getGeometryIdentity(part, geometryMatch.entry);
     if (isThicknessCompatibleWithCandidate(part, geometryMatch.entry, detail)) {
-      return {
+      return withDetailDimensionState(part, {
         bomEntry: geometryMatch.entry,
         detail,
         matchType: 'geometry',
         matchConfidence: geometryMatch.confidence,
         matchDetails: geometryMatch.details,
-      };
+        ...identity,
+        dimensionMismatch: geometryMatch.dimensionMismatch,
+        dimensionMismatchNote: geometryMatch.dimensionMismatchNote,
+      });
     }
     rejectedDetails.push(buildThicknessRejectedDetails(part, geometryMatch.entry, detail));
   }
 
-  const detailMatch = findDetailMatch(part, details, rejectedDetails);
+  const detailMatch = findDetailMatch(part, details, eligibleBom, allBom, rejectedDetails);
   if (detailMatch) {
-    return detailMatch;
+    return withDetailDimensionState(part, detailMatch);
   }
 
   return {
@@ -302,6 +423,33 @@ function findBestMatch(
     matchType: 'none',
     matchConfidence: 0,
     matchDetails: rejectedDetails[0] ?? '',
+    identityConfirmed: false,
+    identitySource: null,
+    dimensionMismatch: false,
+    dimensionMismatchNote: null,
+  };
+}
+
+function isPhysicalBomEntry(entry: BOMEntry): boolean {
+  return !/^(?:Документация|Сборочные единицы)$/iu.test(entry.bomSection.trim());
+}
+
+function withDetailDimensionState(part: PartForMatching, match: MatchCandidate): MatchCandidate {
+  if (!match.detail || !match.identityConfirmed) return match;
+  const mismatch = buildUnfoldingMismatchReason(
+    getPartUnfoldingDims(part),
+    getDetailUnfoldingDims(match.detail),
+    'detail'
+  );
+  if (!mismatch) return match;
+  const retainedMismatch = mismatch.replace('unfolding rejected', 'unfolding mismatch retained');
+  return {
+    ...match,
+    matchDetails: match.matchDetails.includes(retainedMismatch)
+      ? match.matchDetails
+      : [match.matchDetails, retainedMismatch].filter(Boolean).join('; '),
+    dimensionMismatch: true,
+    dimensionMismatchNote: retainedMismatch,
   };
 }
 
@@ -394,8 +542,21 @@ function findGeometryMatch(
   part: PartForMatching,
   bom: BOMEntry[],
   rejectedDetails: string[] = []
-): { entry: BOMEntry; confidence: number; details: string } | null {
-  let bestMatch: { entry: BOMEntry; confidence: number; details: string; strongMatches: number } | null = null;
+): {
+  entry: BOMEntry;
+  confidence: number;
+  details: string;
+  dimensionMismatch: boolean;
+  dimensionMismatchNote: string | null;
+} | null {
+  let bestMatch: {
+    entry: BOMEntry;
+    confidence: number;
+    details: string;
+    strongMatches: number;
+    dimensionMismatch: boolean;
+    dimensionMismatchNote: string | null;
+  } | null = null;
 
   for (const entry of bom) {
     if (!isThicknessCompatibleWithCandidate(part, entry, null)) {
@@ -422,6 +583,8 @@ function findGeometryMatch(
         confidence: geometry.score,
         details: geometry.details.join('; '),
         strongMatches: geometry.strongMatches,
+        dimensionMismatch: geometry.dimensionMismatch ?? false,
+        dimensionMismatchNote: geometry.dimensionMismatchNote ?? null,
       };
     }
   }
@@ -467,17 +630,35 @@ function findProfileGeometryMatch(
 function findDetailMatch(
   part: PartForMatching,
   details: DetailEntry[],
+  eligibleBom: BOMEntry[],
+  allBom: BOMEntry[],
   rejectedDetails: string[] = []
 ): MatchCandidate | null {
   let bestMatch: MatchCandidate | null = null;
 
   for (const detail of details) {
+    const detailKey = extractDesignationKey(detail.designation);
+    const allBomForDetail = detailKey
+      ? allBom.filter((entry) => extractDesignationKey(entry.designation) === detailKey)
+      : [];
+    const eligibleBomForDetail = detailKey
+      ? eligibleBom.filter((entry) => extractDesignationKey(entry.designation) === detailKey)
+      : [];
+    if (allBomForDetail.length > 0 && eligibleBomForDetail.length === 0) {
+      rejectedDetails.push(`assembly path rejected: detail=${detail.designation}`);
+      continue;
+    }
+    const bomEntry = eligibleBomForDetail[0] ?? null;
+    const identity = getGeometryIdentity(part, bomEntry);
+
     if (!isThicknessCompatibleWithCandidate(part, null, detail)) {
       rejectedDetails.push(buildThicknessRejectedDetails(part, null, detail));
       continue;
     }
 
-    const geometry = detailGeometryMatchScore(part, detail);
+    const geometry = detailGeometryMatchScore(part, detail, {
+      identityConfirmedByAssemblyPath: identity.identitySource === 'assembly_path',
+    });
     if (geometry.score < 0.8 || geometry.strongMatches < 2) {
       const rejection = geometry.details.find((item) => item.startsWith('unfolding rejected'));
       if (rejection) {
@@ -488,11 +669,14 @@ function findDetailMatch(
 
     if (!bestMatch || geometry.score > bestMatch.matchConfidence) {
       bestMatch = {
-        bomEntry: null,
+        bomEntry,
         detail,
         matchType: 'geometry',
         matchConfidence: geometry.score,
         matchDetails: `detail_geometry: ${geometry.details.join('; ')}`,
+        ...identity,
+        dimensionMismatch: geometry.dimensionMismatch ?? false,
+        dimensionMismatchNote: geometry.dimensionMismatchNote ?? null,
       };
     }
   }
@@ -560,19 +744,31 @@ function profileGeometryMatchScore(
   };
 }
 
-function detailGeometryMatchScore(part: PartForMatching, detail: DetailEntry): GeometryScore {
+function detailGeometryMatchScore(
+  part: PartForMatching,
+  detail: DetailEntry,
+  options: { identityConfirmedByAssemblyPath?: boolean } = {}
+): GeometryScore {
   const details: string[] = [];
   let score = 0;
   let strongMatches = 0;
   const detailDims = getDetailUnfoldingDims(detail);
   const partDims = getPartUnfoldingDims(part);
   const unfoldingMismatch = buildUnfoldingMismatchReason(partDims, detailDims, 'detail');
-  if (unfoldingMismatch) {
+  if (unfoldingMismatch && !options.identityConfirmedByAssemblyPath) {
     return {
       score: 0.5,
       details: [unfoldingMismatch],
       strongMatches: 0,
+      dimensionMismatch: true,
+      dimensionMismatchNote: unfoldingMismatch,
     };
+  }
+  const retainedMismatch = unfoldingMismatch
+    ? unfoldingMismatch.replace('unfolding rejected', 'unfolding mismatch retained')
+    : null;
+  if (unfoldingMismatch) {
+    details.push(retainedMismatch!);
   }
 
   if (detail.thicknessMm > 0 && thicknessMatch(detail.thicknessMm, getStepThickness(part))) {
@@ -611,11 +807,17 @@ function detailGeometryMatchScore(part: PartForMatching, detail: DetailEntry): G
     score += 0.05;
     details.push('name token match');
   }
+  if (options.identityConfirmedByAssemblyPath) {
+    score += 0.3;
+    details.push('identity: parent assembly found in STEP path');
+  }
 
   return {
     score: Math.min(1, score),
     details,
     strongMatches,
+    dimensionMismatch: Boolean(retainedMismatch),
+    dimensionMismatchNote: retainedMismatch,
   };
 }
 
@@ -632,12 +834,21 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
   const unfoldingMismatch = bomDims.partType === 'sheet' && part.hasBends
     ? buildUnfoldingMismatchReason(getPartUnfoldingDims(part), bomUnfoldingDims, 'BOM')
     : null;
-  if (unfoldingMismatch) {
+  const identityConfirmedByAssemblyPath = getAssemblyScopeState(part, bom.parentAssembly) === 'confirmed';
+  if (unfoldingMismatch && !identityConfirmedByAssemblyPath) {
     return {
       score: 0.5,
       details: [unfoldingMismatch],
       strongMatches: 0,
+      dimensionMismatch: true,
+      dimensionMismatchNote: unfoldingMismatch,
     };
+  }
+  const retainedMismatch = unfoldingMismatch
+    ? unfoldingMismatch.replace('unfolding rejected', 'unfolding mismatch retained')
+    : null;
+  if (unfoldingMismatch) {
+    details.push(retainedMismatch!);
   }
 
   if (bomDims.thicknessMm) {
@@ -692,11 +903,17 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
       details.push(`type: ${bomDims.partType}`);
     }
   }
+  if (identityConfirmedByAssemblyPath) {
+    score += 0.2;
+    details.push('identity: parent assembly found in STEP path');
+  }
 
   return {
     score: Math.min(1, score),
     details,
     strongMatches,
+    dimensionMismatch: Boolean(retainedMismatch),
+    dimensionMismatchNote: retainedMismatch,
   };
 }
 
@@ -1016,6 +1233,10 @@ function buildMatchResult(
   matchType: MatchType,
   matchConfidence: number,
   matchDetails: string,
+  identityConfirmed: boolean,
+  identitySource: MatchIdentitySource,
+  dimensionMismatch: boolean,
+  dimensionMismatchNote: string | null,
   steelTypes: SteelTypeCatalogItem[],
   assignedGroupSize: number
 ): MatchResult {
@@ -1030,6 +1251,11 @@ function buildMatchResult(
     matchType,
     matchConfidence,
     matchDetails,
+    bomParentAssembly: bomEntry?.parentAssembly || '',
+    identityConfirmed,
+    identitySource,
+    dimensionMismatch,
+    dimensionMismatchNote,
     suggestedMaterial: null,
     suggestedMaterialGrade: null,
     suggestedSteelTypeId: null,
@@ -1062,7 +1288,7 @@ function buildMatchResult(
   const detailUnfoldingCompatible = Boolean(
     detailUnfolding?.width &&
     detailUnfolding.height &&
-    isUnfoldingSuggestionCompatible(part, detailUnfolding.width, detailUnfolding.height)
+    (identityConfirmed || isUnfoldingSuggestionCompatible(part, detailUnfolding.width, detailUnfolding.height))
   );
 
   const suggestedMaterial = detail?.materialType || bomEntry?.materialType || (bomEntry ? normalizeMaterial(bomEntry.material) : null);
@@ -1301,7 +1527,7 @@ function applyAllocatedSuggestedQuantities(
       continue;
     }
 
-    const key = buildBomKey(result.bomPosition, result.bomDesignation, result.bomName);
+    const key = buildBomKey(result.bomPosition, result.bomDesignation, result.bomName, result.bomParentAssembly);
     if (!quantityByKey.has(key)) {
       continue;
     }
@@ -1479,15 +1705,21 @@ function transliterateCyrillic(value: string): string {
 }
 
 function buildBomKeyFromEntry(entry: BOMEntry): string {
-  return buildBomKey(entry.position, entry.designation, entry.description || entry.name);
+  return buildBomKey(entry.position, entry.designation, entry.description || entry.name, entry.parentAssembly);
 }
 
-function buildBomKey(position: string, designation: string, name: string): string {
-  return `${position.trim().toLowerCase()}__${designation.trim().toLowerCase()}__${name.trim().toLowerCase()}`;
+function buildBomKey(position: string, designation: string, name: string, parentAssembly = ''): string {
+  return [
+    normalizeAssemblyIdentity(parentAssembly),
+    position.trim().toLowerCase(),
+    designation.trim().toLowerCase(),
+    name.trim().toLowerCase(),
+  ].join('__');
 }
 
 function buildBomCapacityKey(entry: BOMEntry): string {
   return [
+    normalizeAssemblyIdentity(entry.parentAssembly),
     entry.designation.trim().toLowerCase(),
     (entry.description || entry.name).trim().toLowerCase(),
     entry.partType,

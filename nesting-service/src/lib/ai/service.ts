@@ -3,7 +3,7 @@ import { prisma } from '../prisma';
 import { NotFoundError } from '../errors';
 import { analyzePDF, parsePDFAnalysisResponse } from './openrouter';
 import { estimateCost, getAISettingsView, recordAIUsage } from './settings';
-import { matchBOMToParts } from './bom-matcher';
+import { isMatchEligibleForAutoApply, matchBOMToParts } from './bom-matcher';
 import { applyDimensionGuard, applyThicknessGuard } from './dimension-guard';
 import {
   buildAIApplySnapshot,
@@ -149,6 +149,7 @@ async function runProjectPdfAnalysis(input: {
     select: {
       id: true,
       name: true,
+      assemblyPath: true,
       material: true,
       steelTypeId: true,
       steelTypeName: true,
@@ -294,7 +295,7 @@ async function autoApplyMatches(
 
   for (let index = 0; index < nextMatches.length; index += 1) {
     const match = nextMatches[index];
-    if (match.matchConfidence < 0.8) {
+    if (!isMatchEligibleForAutoApply(match)) {
       nextMatches[index] = { ...match, applyStatus: 'suggested' };
       continue;
     }
@@ -533,16 +534,27 @@ function getUnmatchedBom(bom: BOMEntry[], matches: MatchResult[]): BOMEntry[] {
   const matchedKeys = new Set(
     matches
       .filter((match) => match.matchType !== 'none')
-      .map((match) => buildBomKey(match.bomPosition, match.bomDesignation, match.bomName))
+      .map((match) => buildBomKey(
+        match.bomPosition,
+        match.bomDesignation,
+        match.bomName,
+        match.bomParentAssembly
+      ))
   );
 
-  return bom.filter((entry) => !matchedKeys.has(buildBomKey(entry.position, entry.designation, entry.description || entry.name)));
+  return bom.filter((entry) => !matchedKeys.has(buildBomKey(
+    entry.position,
+    entry.designation,
+    entry.description || entry.name,
+    entry.parentAssembly
+  )));
 }
 
-function buildBomKey(position: string, designation: string, name: string): string {
+function buildBomKey(position: string, designation: string, name: string, parentAssembly = ''): string {
+  const scopeKey = parentAssembly.trim().toLowerCase();
   const designationKey = designation.trim().toLowerCase();
-  if (designationKey) return `designation__${designationKey}`;
-  return `${position.trim().toLowerCase()}__${name.trim().toLowerCase()}`;
+  if (designationKey) return `${scopeKey}__designation__${designationKey}`;
+  return `${scopeKey}__${position.trim().toLowerCase()}__${name.trim().toLowerCase()}`;
 }
 
 function parseStoredDetails(rawResponse: string): DetailEntry[] {

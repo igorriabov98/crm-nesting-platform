@@ -15,6 +15,7 @@ export interface NestingParseReport {
   fallback: number
   perPart: Array<{
     partName: string
+    assemblyPath?: string[]
     source: ContourSource | string
     bendCount?: number
     fallbackReason?: string
@@ -103,6 +104,7 @@ export interface NestingPart {
   sourceMachineItemId?: string | null
   sourceProductId?: string | null
   name: string
+  assemblyPath: string[]
   thickness: number | null
   material: NestingMaterial | string
   steelTypeId: string | null
@@ -303,6 +305,11 @@ export interface AIMatchResult {
   matchType: 'exact' | 'contains' | 'designation' | 'geometry' | 'fuzzy' | 'none'
   matchConfidence: number
   matchDetails: string
+  bomParentAssembly: string
+  identityConfirmed: boolean
+  identitySource: 'assembly_path' | 'designation' | 'name' | null
+  dimensionMismatch: boolean
+  dimensionMismatchNote: string | null
   suggestedMaterial: string | null
   suggestedMaterialGrade: string | null
   suggestedSteelTypeId: string | null

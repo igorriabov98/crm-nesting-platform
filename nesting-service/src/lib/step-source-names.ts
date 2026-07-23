@@ -10,16 +10,22 @@ type StepEntity = {
   args: string;
 };
 
-export function extractStepOccurrenceNames(fileContent: Buffer): Map<number, string> {
+export type StepOccurrenceMetadata = {
+  name: string;
+  assemblyPath: string[];
+};
+
+export function extractStepOccurrenceMetadata(fileContent: Buffer): Map<number, StepOccurrenceMetadata> {
   const text = fileContent.toString('latin1');
   const products = new Map<number, string>();
   const formationProducts = new Map<number, number>();
   const definitionFormations = new Map<number, number>();
-  const occurrenceChildren: number[] = [];
+  const occurrences: Array<{ parentDefinitionId: number; childDefinitionId: number }> = [];
 
   for (const entity of parseStepEntities(text)) {
     if (entity.type === 'PRODUCT') {
-      const name = readFirstStepString(entity.args);
+      const productStrings = readStepStrings(entity.args);
+      const name = productStrings[0] || null;
       if (name) {
         products.set(entity.id, name);
       }
@@ -43,25 +49,60 @@ export function extractStepOccurrenceNames(fileContent: Buffer): Map<number, str
     }
 
     if (entity.type === 'NEXT_ASSEMBLY_USAGE_OCCURRENCE') {
-      const childDefinitionId = extractReferenceIds(entity.args)[1];
-      if (childDefinitionId !== undefined) {
-        occurrenceChildren.push(childDefinitionId);
+      const [parentDefinitionId, childDefinitionId] = extractReferenceIds(entity.args);
+      if (parentDefinitionId !== undefined && childDefinitionId !== undefined) {
+        occurrences.push({ parentDefinitionId, childDefinitionId });
       }
     }
   }
 
-  const names = new Map<number, string>();
+  const incomingParents = new Map<number, number[]>();
+  for (const occurrence of occurrences) {
+    const parents = incomingParents.get(occurrence.childDefinitionId) ?? [];
+    parents.push(occurrence.parentDefinitionId);
+    incomingParents.set(occurrence.childDefinitionId, parents);
+  }
 
-  occurrenceChildren.forEach((definitionId, index) => {
+  const definitionName = (definitionId: number): string => {
     const formationId = definitionFormations.get(definitionId);
     const productId = formationId === undefined ? undefined : formationProducts.get(formationId);
-    const name = productId === undefined ? undefined : products.get(productId);
+    return productId === undefined ? '' : products.get(productId) ?? '';
+  };
 
+  const pathCache = new Map<number, string[]>();
+  const buildDefinitionPath = (definitionId: number, seen = new Set<number>()): string[] => {
+    const cached = pathCache.get(definitionId);
+    if (cached) return cached;
+    if (seen.has(definitionId)) return [];
+    const nextSeen = new Set(seen).add(definitionId);
+    const parentDefinitionId = incomingParents.get(definitionId)?.[0];
+    const parentPath = parentDefinitionId === undefined
+      ? []
+      : buildDefinitionPath(parentDefinitionId, nextSeen);
+    const name = definitionName(definitionId);
+    const path = name ? [...parentPath, name] : parentPath;
+    pathCache.set(definitionId, path);
+    return path;
+  };
+
+  const metadata = new Map<number, StepOccurrenceMetadata>();
+  occurrences.forEach((occurrence, index) => {
+    const name = definitionName(occurrence.childDefinitionId);
+    const parentPath = buildDefinitionPath(occurrence.parentDefinitionId);
+    const assemblyPath = name ? [...parentPath, name] : parentPath;
     if (name) {
-      names.set(index, name);
+      metadata.set(index, { name, assemblyPath });
     }
   });
 
+  return metadata;
+}
+
+export function extractStepOccurrenceNames(fileContent: Buffer): Map<number, string> {
+  const names = new Map<number, string>();
+  for (const [index, metadata] of extractStepOccurrenceMetadata(fileContent)) {
+    names.set(index, metadata.name);
+  }
   return names;
 }
 
@@ -198,16 +239,19 @@ function splitStepArguments(args: string): string[] {
   return result;
 }
 
-function readFirstStepString(args: string): string | null {
-  const firstArg = splitStepArguments(args)[0];
-  if (!firstArg?.startsWith("'")) {
-    return null;
-  }
+function readStepStrings(args: string): string[] {
+  return splitStepArguments(args)
+    .filter((argument) => argument.startsWith("'"))
+    .map(readStepString)
+    .filter((value): value is string => value !== null);
+}
 
+function readStepString(argument: string): string | null {
+  if (!argument.startsWith("'")) return null;
   let content = '';
-  for (let index = 1; index < firstArg.length; index += 1) {
-    const char = firstArg[index];
-    if (char === "'" && firstArg[index + 1] === "'") {
+  for (let index = 1; index < argument.length; index += 1) {
+    const char = argument[index];
+    if (char === "'" && argument[index + 1] === "'") {
       content += "'";
       index += 1;
       continue;

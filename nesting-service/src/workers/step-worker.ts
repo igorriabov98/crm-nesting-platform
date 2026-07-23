@@ -38,6 +38,7 @@ type ProjectParseReport = {
   fallback: number;
   perPart: Array<{
     partName: string;
+    assemblyPath: string[];
     source: string;
     bendCount?: number;
     fallbackReason?: string;
@@ -143,6 +144,7 @@ async function processStepJob(job: StepJob) {
         perPartParseReport.push(
           ...result.brepTrace.map((trace) => ({
             partName: trace.partName,
+            assemblyPath: trace.assemblyPath,
             source: trace.source,
             ...(trace.bendCount > 0 ? { bendCount: trace.bendCount } : {}),
             ...(trace.reason ? { fallbackReason: trace.reason } : {}),
@@ -204,6 +206,7 @@ async function processStepJob(job: StepJob) {
             sourceMachineItemId: input.isBatch ? input.sourceMachineItemId ?? null : null,
             sourceProductId: input.isBatch ? input.sourceProductId ?? null : null,
             name: part.name,
+            assemblyPath: part.assemblyPath,
             thickness: part.thickness,
             material: 'Сталь',
             width: part.width,

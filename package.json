@@ -23,6 +23,7 @@
     "test:detailing": "node scripts/test-detailing-module.mjs",
     "test:inventory-transfers": "node scripts/test-inventory-transfers.mjs",
     "test:people-planning": "tsx scripts/test-people-planning.ts",
+    "test:nesting-dimension-choice": "tsx scripts/test-nesting-dimension-choice.ts",
     "smoke:prod": "tsx scripts/prod-smoke.ts",
     "smoke:user:create": "tsx scripts/create-smoke-user.ts",
     "supabase:migrate": "tsx scripts/apply-supabase-migrations.ts"

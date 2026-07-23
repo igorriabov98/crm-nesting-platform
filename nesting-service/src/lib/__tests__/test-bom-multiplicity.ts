@@ -125,6 +125,7 @@ function toPartForMatching(part: ParsedPart, index: number): PartForMatching {
   return {
     id: `${index}`,
     name: part.name,
+    assemblyPath: part.assemblyPath,
     material: 'Сталь',
     steelTypeId: null,
     steelTypeName: null,

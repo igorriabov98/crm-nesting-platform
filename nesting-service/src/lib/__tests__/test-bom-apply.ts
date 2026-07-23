@@ -138,6 +138,8 @@ if (forced.status === 'updated') {
   assert.equal(forced.update.data.dimensionMismatch, true);
   assert.equal(forced.update.data.contourStale, true);
   assert.match(String(forced.update.data.mismatchNote), /применено принудительно/);
+  assert.match(String(forced.update.data.mismatchNote), /оператор operator-1/);
+  assert.match(String(forced.update.data.mismatchNote), /2026-07-07T10:00:00.000Z/);
   assert.ok(forced.update.data.aiApplySnapshot, 'forced row should also carry rollback snapshot');
 }
 

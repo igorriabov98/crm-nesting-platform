@@ -105,6 +105,7 @@ model Part {
   sourceMachineItemId String?
   sourceProductId String?
   name         String
+  assemblyPath String[]       @default([])
   thickness    Float?
   material     String         @default("Сталь")
   steelTypeId   String?
