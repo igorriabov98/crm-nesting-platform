@@ -22,6 +22,7 @@
     "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && node scripts/test-supply-partial-receiving.mjs",
     "test:detailing": "node scripts/test-detailing-module.mjs",
     "test:inventory-transfers": "node scripts/test-inventory-transfers.mjs",
+    "test:outsourcing": "tsx scripts/test-outsourcing-workflow.ts",
     "test:people-planning": "tsx scripts/test-people-planning.ts",
     "test:nesting-dimension-choice": "tsx scripts/test-nesting-dimension-choice.ts",
     "smoke:prod": "tsx scripts/prod-smoke.ts",

@@ -25,6 +25,7 @@ type LooseQuery = PromiseLike<DbResult> & {
   delete: () => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
   neq: (column: string, value: unknown) => LooseQuery
+  ilike: (column: string, pattern: string) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   is: (column: string, value: unknown) => LooseQuery
   not: (column: string, operator: string, value: unknown) => LooseQuery
@@ -130,6 +131,8 @@ export type MachineOutsourcingOperation = {
   actual_returned_at: string | null
   service_cost_planned: number | null
   service_cost_actual: number | null
+  supply_terms_confirmed_at: string | null
+  supply_terms_confirmed_by: string | null
   incoming_production_month: string | null
   incoming_workshop: number | null
   incoming_queue_number: number | null
@@ -183,7 +186,21 @@ export type TransportWorkspaceOrder = MachineOutsourcingTransportOrder & {
   needs: TransportWorkspaceNeed[]
 }
 
+export type SupplyOutsourcingAgreement = {
+  operation_id: string
+  machine_id: string
+  machine_name: string
+  source_factory_name: string | null
+  work_type_name: string
+  supplier_name: string | null
+  planned_send_date: string | null
+  planned_return_date: string | null
+  service_cost_planned: number | null
+  supply_terms_confirmed_at: string | null
+}
+
 export type OutsourcingTransportWorkspace = {
+  agreements: SupplyOutsourcingAgreement[]
   needs: TransportWorkspaceNeed[]
   orders: TransportWorkspaceOrder[]
   carriers: OutsourcingSupplierOption[]
@@ -195,7 +212,8 @@ const dateValueSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optio
 const operationSchema = z.object({
   id: z.string().uuid().optional().nullable(),
   machineId: z.string().uuid(),
-  workTypeId: z.string().uuid(),
+  workTypeId: z.string().uuid().nullable().optional(),
+  workTypeName: z.string().trim().min(1).max(120).nullable().optional(),
   positionAfterStageType: z.enum(STAGE_ORDER as [StageType, ...StageType[]]).nullable().optional(),
   executorType: executorTypeSchema,
   supplierId: z.string().uuid().nullable().optional(),
@@ -203,8 +221,10 @@ const operationSchema = z.object({
   note: z.string().trim().max(1000).nullable().optional(),
   plannedSendDate: dateValueSchema,
   plannedReturnDate: dateValueSchema,
-  serviceCostPlanned: z.number().min(0).nullable().optional(),
   itemIds: z.array(z.string().uuid()).min(1),
+}).refine((value) => Boolean(value.workTypeId || value.workTypeName), {
+  message: 'Выберите тип работы или введите свой',
+  path: ['workTypeId'],
 })
 
 const zincDefaultSchema = z.object({
@@ -240,6 +260,12 @@ const updateOrderSchema = z.object({
   comment: z.string().trim().max(1000).nullable().optional(),
 })
 
+const supplyTermsSchema = z.object({
+  operationId: z.string().uuid(),
+  plannedReturnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  serviceCostPlanned: z.number().min(0).nullable().optional(),
+})
+
 function dbFrom(value: unknown): LooseDb {
   return value as LooseDb
 }
@@ -254,6 +280,14 @@ function todayDateOnly() {
 
 function normalizeMonthOrNull(value: string | null | undefined) {
   return normalizeProductionMonthValue(value)
+}
+
+function normalizeWorkTypeName(value: string) {
+  return value.trim().replace(/\s+/g, ' ')
+}
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[\\%_]/g, '\\$&')
 }
 
 function isMissingSupplierCapabilityColumns(error: DbResult['error']) {
@@ -427,6 +461,41 @@ async function loadWorkTypes(db: LooseDb) {
   return (data || []) as OutsourcingWorkType[]
 }
 
+async function resolveWorkTypeId(db: LooseDb, workTypeId?: string | null, workTypeName?: string | null) {
+  if (workTypeId) return workTypeId
+
+  const name = normalizeWorkTypeName(workTypeName || '')
+  if (!name) throw new Error('Введите тип работы')
+
+  const { data: existingData, error: existingError } = await db
+    .from('outsourcing_work_types')
+    .select('id, is_active')
+    .ilike('name', escapeLikePattern(name))
+    .limit(1)
+    .maybeSingle()
+  if (existingError) throw new Error(existingError.message || 'Не удалось проверить тип работы')
+
+  const existing = existingData as { id: string; is_active: boolean } | null
+  if (existing) {
+    if (!existing.is_active) {
+      const { error: activateError } = await db
+        .from('outsourcing_work_types')
+        .update({ is_active: true })
+        .eq('id', existing.id)
+      if (activateError) throw new Error(activateError.message || 'Не удалось восстановить тип работы')
+    }
+    return existing.id
+  }
+
+  const { data, error } = await db
+    .from('outsourcing_work_types')
+    .insert({ name, code: null, is_active: true })
+    .select('id')
+    .single()
+  if (error || !data) throw new Error(error?.message || 'Не удалось добавить тип работы')
+  return (data as { id: string }).id
+}
+
 async function loadSuppliers(db: LooseDb) {
   const { data, error } = await db
     .from('suppliers')
@@ -572,6 +641,8 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
       actual_returned_at: dateOnly(operation.actual_returned_at as string | null),
       service_cost_planned: operation.service_cost_planned == null ? null : Number(operation.service_cost_planned),
       service_cost_actual: operation.service_cost_actual == null ? null : Number(operation.service_cost_actual),
+      supply_terms_confirmed_at: operation.supply_terms_confirmed_at as string | null,
+      supply_terms_confirmed_by: operation.supply_terms_confirmed_by as string | null,
       incoming_production_month: dateOnly(operation.incoming_production_month as string | null),
       incoming_workshop: operation.incoming_workshop == null ? null : Number(operation.incoming_workshop),
       incoming_queue_number: operation.incoming_queue_number == null ? null : Number(operation.incoming_queue_number),
@@ -825,17 +896,33 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
       throw new Error('Дата возврата не может быть раньше даты отправки')
     }
 
-    if (parsed.id && context.role === 'production_manager' && planStatus === 'confirmed') {
+    let current: {
+      planned_send_date: string | null
+      planned_return_date: string | null
+      work_type_id: string
+      executor_type: ExecutorType
+      supplier_id: string | null
+    } | null = null
+    if (parsed.id) {
       const { data: currentData, error: currentError } = await db
         .from('machine_outsourcing_operations')
-        .select('planned_send_date, planned_return_date')
+        .select('planned_send_date, planned_return_date, work_type_id, executor_type, supplier_id')
         .eq('id', parsed.id)
         .eq('machine_id', parsed.machineId)
         .maybeSingle()
       if (currentError) throw new Error(currentError.message || 'Не удалось проверить текущие даты')
-      const current = currentData as { planned_send_date: string | null; planned_return_date: string | null } | null
+      current = currentData as {
+        planned_send_date: string | null
+        planned_return_date: string | null
+        work_type_id: string
+        executor_type: ExecutorType
+        supplier_id: string | null
+      } | null
+      if (!current) throw new Error('Операция аутсорсинга не найдена')
+    }
+
+    if (current && context.role === 'production_manager' && planStatus === 'confirmed') {
       if (
-        current &&
         (dateOnly(current.planned_send_date) !== dateOnly(parsed.plannedSendDate) ||
           dateOnly(current.planned_return_date) !== dateOnly(parsed.plannedReturnDate))
       ) {
@@ -843,10 +930,11 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
       }
     }
 
+    const workTypeId = await resolveWorkTypeId(db, parsed.workTypeId, parsed.workTypeName)
     const itemIds = await ensureSelectedItemsBelongToMachine(db, parsed.machineId, parsed.itemIds)
-    const payload = {
+    const payload: Record<string, unknown> = {
       machine_id: parsed.machineId,
-      work_type_id: parsed.workTypeId,
+      work_type_id: workTypeId,
       position_after_stage_type: parsed.positionAfterStageType || null,
       executor_type: parsed.executorType,
       supplier_id: parsed.executorType === 'supplier' ? parsed.supplierId : null,
@@ -854,10 +942,19 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
       note: parsed.note || null,
       planned_send_date: dateOnly(parsed.plannedSendDate),
       planned_return_date: dateOnly(parsed.plannedReturnDate),
-      service_cost_planned: parsed.serviceCostPlanned ?? null,
       updated_by: context.userId,
       updated_at: new Date().toISOString(),
     }
+    const supplyScopeChanged = Boolean(current && (
+      current.work_type_id !== workTypeId
+      || current.executor_type !== parsed.executorType
+      || current.supplier_id !== (parsed.executorType === 'supplier' ? parsed.supplierId || null : null)
+    ))
+    if (current && (supplyScopeChanged || dateOnly(current.planned_return_date) !== dateOnly(parsed.plannedReturnDate))) {
+      payload.supply_terms_confirmed_at = null
+      payload.supply_terms_confirmed_by = null
+    }
+    if (supplyScopeChanged) payload.service_cost_planned = null
 
     let operationId = parsed.id || null
     if (operationId) {
@@ -1231,14 +1328,78 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
   })
 }
 
+async function loadSupplyOutsourcingAgreements(db: LooseDb) {
+  const { data, error } = await db
+    .from('machine_outsourcing_operations')
+    .select('id, machine_id, work_type_id, supplier_id, planned_send_date, planned_return_date, service_cost_planned, supply_terms_confirmed_at')
+    .eq('executor_type', 'supplier')
+    .is('archived_at', null)
+    .is('actual_returned_at', null)
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(error.message || 'Не удалось загрузить условия аутсорсинга')
+
+  const operations = (data || []) as Array<{
+    id: string
+    machine_id: string
+    work_type_id: string
+    supplier_id: string | null
+    planned_send_date: string | null
+    planned_return_date: string | null
+    service_cost_planned: number | null
+    supply_terms_confirmed_at: string | null
+  }>
+  if (operations.length === 0) return [] as SupplyOutsourcingAgreement[]
+
+  const machineIds = Array.from(new Set(operations.map((operation) => operation.machine_id)))
+  const workTypeIds = Array.from(new Set(operations.map((operation) => operation.work_type_id)))
+  const supplierIds = Array.from(new Set(operations.map((operation) => operation.supplier_id).filter((id): id is string => Boolean(id))))
+  const [machinesRes, workTypesRes, suppliersRes] = await Promise.all([
+    db.from('machines').select('id, name, factory_id').in('id', machineIds),
+    db.from('outsourcing_work_types').select('id, name').in('id', workTypeIds),
+    loadSuppliersByIds(db, supplierIds),
+  ])
+  for (const result of [machinesRes, workTypesRes, suppliersRes]) {
+    if (result.error) throw new Error(result.error.message || 'Не удалось дополнить условия аутсорсинга')
+  }
+
+  const machines = (machinesRes.data || []) as Array<{ id: string; name: string; factory_id: string | null }>
+  const factoryIds = Array.from(new Set(machines.map((machine) => machine.factory_id).filter((id): id is string => Boolean(id))))
+  const factoriesRes = factoryIds.length > 0
+    ? await db.from('factories').select('id, name').in('id', factoryIds)
+    : { data: [], error: null }
+  if (factoriesRes.error) throw new Error(factoriesRes.error.message || 'Не удалось загрузить заводы')
+
+  const machineById = new Map(machines.map((machine) => [machine.id, machine]))
+  const workTypeById = new Map(((workTypesRes.data || []) as Array<{ id: string; name: string }>).map((workType) => [workType.id, workType.name]))
+  const supplierById = new Map(((suppliersRes.data || []) as Array<{ id: string; name: string }>).map((supplier) => [supplier.id, supplier.name]))
+  const factoryById = new Map(((factoriesRes.data || []) as Array<{ id: string; name: string }>).map((factory) => [factory.id, factory.name]))
+
+  return operations.map((operation) => {
+    const machine = machineById.get(operation.machine_id)
+    return {
+      operation_id: operation.id,
+      machine_id: operation.machine_id,
+      machine_name: machine?.name || 'Машина',
+      source_factory_name: machine?.factory_id ? factoryById.get(machine.factory_id) || null : null,
+      work_type_name: workTypeById.get(operation.work_type_id) || 'Аутсорсинг',
+      supplier_name: operation.supplier_id ? supplierById.get(operation.supplier_id) || null : null,
+      planned_send_date: dateOnly(operation.planned_send_date),
+      planned_return_date: dateOnly(operation.planned_return_date),
+      service_cost_planned: operation.service_cost_planned == null ? null : Number(operation.service_cost_planned),
+      supply_terms_confirmed_at: operation.supply_terms_confirmed_at,
+    } satisfies SupplyOutsourcingAgreement
+  })
+}
+
 export async function getOutsourcingTransportWorkspace(): Promise<{ data: OutsourcingTransportWorkspace; error: string | null }> {
   try {
     await requirePermission('supply_transport', 'view')
     const db = dbFrom(createAdminClient())
-    const [{ data: ordersData, error: ordersError }, carriers, allNeeds] = await Promise.all([
+    const [{ data: ordersData, error: ordersError }, carriers, allNeeds, agreements] = await Promise.all([
       db.from('machine_outsourcing_transport_orders').select('*').order('created_at', { ascending: false }),
       loadSuppliers(db),
       loadTransportNeeds(db),
+      loadSupplyOutsourcingAgreements(db),
     ])
     if (ordersError) throw new Error(ordersError.message || 'Не удалось загрузить транспортные заказы')
 
@@ -1273,6 +1434,7 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
 
     return {
       data: {
+        agreements,
         needs: openNeeds,
         orders,
         carriers: carriers.filter((supplier) => supplier.can_transport),
@@ -1280,13 +1442,64 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
       error: null,
     }
   } catch (error) {
-    return { data: { needs: [], orders: [], carriers: [] }, error: getErrorMessage(error) }
+    return { data: { agreements: [], needs: [], orders: [], carriers: [] }, error: getErrorMessage(error) }
   }
 }
 
 async function requireTransportAccess() {
   const context = await requirePermission('supply_transport', 'manage')
   return { db: dbFrom(createAdminClient()), context }
+}
+
+export async function confirmOutsourcingServiceTerms(input: z.infer<typeof supplyTermsSchema>) {
+  try {
+    const parsed = supplyTermsSchema.parse(input)
+    const { db, context } = await requireTransportAccess()
+    const { data, error } = await db
+      .from('machine_outsourcing_operations')
+      .select('id, machine_id, executor_type, planned_send_date, archived_at')
+      .eq('id', parsed.operationId)
+      .maybeSingle()
+    if (error || !data) throw new Error(error?.message || 'Операция аутсорсинга не найдена')
+
+    const operation = data as {
+      id: string
+      machine_id: string
+      executor_type: ExecutorType
+      planned_send_date: string | null
+      archived_at: string | null
+    }
+    if (operation.archived_at) throw new Error('Операция аутсорсинга архивирована')
+    if (operation.executor_type !== 'supplier') throw new Error('Снабжение подтверждает только внешний аутсорсинг')
+    const plannedSendDate = dateOnly(operation.planned_send_date)
+    if (plannedSendDate && parsed.plannedReturnDate < plannedSendDate) {
+      throw new Error('Дата возврата не может быть раньше даты отправки')
+    }
+
+    const now = new Date().toISOString()
+    const { error: updateError } = await db
+      .from('machine_outsourcing_operations')
+      .update({
+        planned_return_date: parsed.plannedReturnDate,
+        service_cost_planned: parsed.serviceCostPlanned ?? null,
+        supply_terms_confirmed_at: now,
+        supply_terms_confirmed_by: context.userId,
+        updated_by: context.userId,
+        updated_at: now,
+      })
+      .eq('id', operation.id)
+    if (updateError) throw new Error(updateError.message || 'Не удалось подтвердить условия аутсорсинга')
+
+    const machine = await getMachineOrThrow(db, operation.machine_id)
+    await syncOutsourcingTransportForMachine(db, machine)
+    revalidatePath(ROUTES.SUPPLY_TRANSPORT)
+    revalidatePath(ROUTES.PRODUCTION)
+    revalidatePath(`${ROUTES.SALES_PLAN}/${operation.machine_id}`)
+    revalidatePath(ROUTES.TASKS)
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
 }
 
 export async function createOutsourcingTransportOrder(input: z.infer<typeof createOrderSchema>) {

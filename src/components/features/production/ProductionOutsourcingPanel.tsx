@@ -94,9 +94,13 @@ export function ProductionOutsourcingPanel({ summary }: { summary: ProductionOut
                   <span className="font-semibold text-slate-900">{operation.machine_name}</span>
                   <span className="text-slate-500">исполнитель: {executorLabel(operation)}</span>
                 </div>
-                <div className="mt-2 grid gap-2 text-slate-600 sm:grid-cols-3">
+                <div className="mt-2 grid gap-2 text-slate-600 sm:grid-cols-4">
                   <span>Отправка: <b>{formatDate(operation.planned_send_date)}</b></span>
                   <span>Возврат: <b>{formatDate(operation.planned_return_date)}</b></span>
+                  <span>
+                    Снабжение:{' '}
+                    <b>{operation.executor_type !== 'supplier' ? 'не требуется' : operation.supply_terms_confirmed_at ? 'подтверждено' : 'ожидается'}</b>
+                  </span>
                   <span className="truncate">{itemsLabel(operation)}</span>
                 </div>
               </div>

@@ -8,12 +8,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   createOutsourcingTransportOrder,
+  confirmOutsourcingServiceTerms,
   updateOutsourcingTransportOrder,
   type OutsourcingTransportWorkspace,
+  type SupplyOutsourcingAgreement,
   type TransportWorkspaceNeed,
   type TransportWorkspaceOrder,
 } from '@/lib/actions/outsourcing'
@@ -32,6 +35,11 @@ const statusLabels = {
   completed: 'Выполнено',
   cancelled: 'Отменено',
 } as const
+
+type AgreementDraft = {
+  plannedReturnDate: string
+  serviceCostPlanned: string
+}
 
 function formatDate(value: string | null) {
   if (!value) return '—'
@@ -52,6 +60,12 @@ export function OutsourcingTransportPage({ workspace }: { workspace: Outsourcing
   const [scheduledDate, setScheduledDate] = useState('')
   const [price, setPrice] = useState('')
   const [comment, setComment] = useState('')
+  const [agreementDrafts, setAgreementDrafts] = useState<Record<string, AgreementDraft>>(() => Object.fromEntries(
+    workspace.agreements.map((agreement) => [agreement.operation_id, {
+      plannedReturnDate: agreement.planned_return_date || '',
+      serviceCostPlanned: agreement.service_cost_planned == null ? '' : String(agreement.service_cost_planned),
+    }]),
+  ))
   const [orderDrafts, setOrderDrafts] = useState<Record<string, { status: string; carrierSupplierId: string; scheduledDate: string; price: string; comment: string }>>(() => Object.fromEntries(
     workspace.orders.map((order) => [order.id, {
       status: order.status,
@@ -73,6 +87,32 @@ export function OutsourcingTransportPage({ workspace }: { workspace: Outsourcing
 
   const preliminaryNeeds = workspace.needs.filter((need) => need.plan_state === 'preliminary')
   const confirmedNeeds = workspace.needs.filter((need) => need.plan_state === 'confirmed')
+
+  function updateAgreementDraft(operationId: string, patch: Partial<AgreementDraft>) {
+    setAgreementDrafts((current) => ({
+      ...current,
+      [operationId]: { ...current[operationId], ...patch },
+    }))
+  }
+
+  function confirmAgreement(agreement: SupplyOutsourcingAgreement) {
+    const draft = agreementDrafts[agreement.operation_id]
+    if (!draft?.plannedReturnDate) return
+
+    startTransition(async () => {
+      const result = await confirmOutsourcingServiceTerms({
+        operationId: agreement.operation_id,
+        plannedReturnDate: draft.plannedReturnDate,
+        serviceCostPlanned: draft.serviceCostPlanned ? Number(draft.serviceCostPlanned) : null,
+      })
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось подтвердить условия аутсорсинга')
+        return
+      }
+      toast.success(agreement.supply_terms_confirmed_at ? 'Условия аутсорсинга обновлены' : 'Дата и стоимость подтверждены')
+      router.refresh()
+    })
+  }
 
   function toggleNeed(need: TransportWorkspaceNeed) {
     if (need.plan_state !== 'confirmed') return
@@ -147,6 +187,80 @@ export function OutsourcingTransportPage({ workspace }: { workspace: Outsourcing
         <Button variant="outline" onClick={() => router.push(ROUTES.SUPPLY)}>К снабжению</Button>
       </div>
 
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3">
+          <div className="font-semibold text-blue-950">Согласование услуг аутсорсинга</div>
+          <div className="text-sm text-slate-500">
+            Проверьте ожидаемую дату возврата, при необходимости скорректируйте её и укажите стоимость услуги.
+          </div>
+        </div>
+
+        {workspace.agreements.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">
+            Нет внешних операций аутсорсинга для согласования.
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {workspace.agreements.map((agreement) => {
+              const draft = agreementDrafts[agreement.operation_id]
+              const returnDateId = `outsourcing-return-${agreement.operation_id}`
+              const serviceCostId = `outsourcing-cost-${agreement.operation_id}`
+              return (
+                <div key={agreement.operation_id} className="rounded-lg border border-slate-200 p-3">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={agreement.supply_terms_confirmed_at ? 'secondary' : 'outline'}>
+                          {agreement.supply_terms_confirmed_at ? 'Подтверждено' : 'Ожидает подтверждения'}
+                        </Badge>
+                        <span className="font-semibold text-slate-900">{agreement.machine_name}</span>
+                        <span className="text-slate-600">{agreement.work_type_name}</span>
+                      </div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        {agreement.source_factory_name || 'Завод не указан'} · {agreement.supplier_name || 'Компания не указана'}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        Готовы отправить: {formatDate(agreement.planned_send_date)}
+                      </div>
+                    </div>
+
+                    <div className="grid w-full gap-2 sm:grid-cols-[minmax(180px,1fr)_minmax(160px,1fr)_auto] lg:max-w-2xl">
+                      <Label className="grid gap-1.5 text-sm text-slate-700" htmlFor={returnDateId}>
+                        Ожидаем возврат
+                        <Input
+                          id={returnDateId}
+                          type="date"
+                          value={draft?.plannedReturnDate || ''}
+                          onChange={(event) => updateAgreementDraft(agreement.operation_id, { plannedReturnDate: event.target.value })}
+                        />
+                      </Label>
+                      <Label className="grid gap-1.5 text-sm text-slate-700" htmlFor={serviceCostId}>
+                        Стоимость услуги
+                        <Input
+                          id={serviceCostId}
+                          type="number"
+                          min={0}
+                          value={draft?.serviceCostPlanned || ''}
+                          onChange={(event) => updateAgreementDraft(agreement.operation_id, { serviceCostPlanned: event.target.value })}
+                        />
+                      </Label>
+                      <Button
+                        disabled={isPending || !draft?.plannedReturnDate}
+                        onClick={() => confirmAgreement(agreement)}
+                        className="min-h-10 gap-2 sm:self-end"
+                      >
+                        {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                        {agreement.supply_terms_confirmed_at ? 'Сохранить' : 'Подтвердить'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
       {preliminaryNeeds.length > 0 && (
         <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
           <div className="mb-3 font-semibold text-amber-900">Предварительные потребности</div>
@@ -172,7 +286,7 @@ export function OutsourcingTransportPage({ workspace }: { workspace: Outsourcing
             </SelectContent>
           </Select>
           <Input type="date" value={scheduledDate} onChange={(event) => setScheduledDate(event.target.value)} className="bg-white" />
-          <Input type="number" min={0} placeholder="Цена" value={price} onChange={(event) => setPrice(event.target.value)} className="bg-white" />
+          <Input type="number" min={0} placeholder="Цена перевозки" value={price} onChange={(event) => setPrice(event.target.value)} className="bg-white" />
           <Input placeholder="Комментарий" value={comment} onChange={(event) => setComment(event.target.value)} className="bg-white" />
           <Button disabled={!canCreateOrder || isPending} onClick={createOrder} className="min-h-10 gap-2">
             {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -222,7 +336,7 @@ export function OutsourcingTransportPage({ workspace }: { workspace: Outsourcing
                         </SelectContent>
                       </Select>
                       <Input type="date" value={draft?.scheduledDate || ''} onChange={(event) => updateOrderDraft(order.id, { scheduledDate: event.target.value })} />
-                      <Input type="number" min={0} value={draft?.price || ''} onChange={(event) => updateOrderDraft(order.id, { price: event.target.value })} placeholder="Цена" />
+                      <Input type="number" min={0} value={draft?.price || ''} onChange={(event) => updateOrderDraft(order.id, { price: event.target.value })} placeholder="Цена перевозки" />
                       <Button size="sm" disabled={isPending} onClick={() => saveOrder(order)} className="h-10 gap-2">
                         {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                         Сохранить

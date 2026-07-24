@@ -28,27 +28,31 @@ import { cn } from '@/lib/utils'
 type Draft = {
   id?: string | null
   workTypeId: string
+  customWorkTypeName: string
+  useCustomWorkType: boolean
   positionAfterStageType: StageType | 'none'
   executorType: 'supplier' | 'factory'
   supplierId: string
   executorFactoryId: string
   plannedSendDate: string
   plannedReturnDate: string
-  serviceCostPlanned: string
   note: string
   itemIds: string[]
 }
 
+const CUSTOM_WORK_TYPE_VALUE = 'custom'
+
 const emptyDraft = (data: MachineOutsourcingData): Draft => ({
   id: null,
   workTypeId: data.workTypes[0]?.id || '',
+  customWorkTypeName: '',
+  useCustomWorkType: data.workTypes.length === 0,
   positionAfterStageType: 'none',
   executorType: 'supplier',
   supplierId: data.suppliers.find((supplier) => supplier.can_outsource)?.id || data.suppliers[0]?.id || '',
   executorFactoryId: data.factories.find((factory) => factory.id !== data.machine.factory_id)?.id || data.factories[0]?.id || '',
   plannedSendDate: '',
   plannedReturnDate: '',
-  serviceCostPlanned: '',
   note: '',
   itemIds: [],
 })
@@ -77,13 +81,14 @@ function operationToDraft(data: MachineOutsourcingData, operation: MachineOutsou
   return {
     id: operation.id,
     workTypeId: operation.work_type_id,
+    customWorkTypeName: '',
+    useCustomWorkType: false,
     positionAfterStageType: operation.position_after_stage_type || 'none',
     executorType: operation.executor_type,
     supplierId: operation.supplier_id || data.suppliers[0]?.id || '',
     executorFactoryId: operation.executor_factory_id || data.factories[0]?.id || '',
     plannedSendDate: operation.planned_send_date || '',
     plannedReturnDate: operation.planned_return_date || '',
-    serviceCostPlanned: operation.service_cost_planned == null ? '' : String(operation.service_cost_planned),
     note: operation.note || '',
     itemIds: operation.items.map((item) => item.id),
   }
@@ -129,14 +134,14 @@ export function OutsourcingTab({ data }: { data: MachineOutsourcingData }) {
       const result = await saveOutsourcingOperation({
         id: draft.id,
         machineId: data.machine.id,
-        workTypeId: draft.workTypeId,
+        workTypeId: draft.useCustomWorkType ? null : draft.workTypeId,
+        workTypeName: draft.useCustomWorkType ? draft.customWorkTypeName : null,
         positionAfterStageType: draft.positionAfterStageType === 'none' ? null : draft.positionAfterStageType,
         executorType: draft.executorType,
         supplierId: draft.executorType === 'supplier' ? draft.supplierId : null,
         executorFactoryId: draft.executorType === 'factory' ? draft.executorFactoryId : null,
         plannedSendDate: draft.plannedSendDate || null,
         plannedReturnDate: draft.plannedReturnDate || null,
-        serviceCostPlanned: draft.serviceCostPlanned ? Number(draft.serviceCostPlanned) : null,
         note: draft.note || null,
         itemIds: draft.itemIds,
       })
@@ -305,6 +310,11 @@ export function OutsourcingTab({ data }: { data: MachineOutsourcingData }) {
                   <span>Туда: <b>{needLabel(operation, 'outbound')}</b></span>
                   <span>Обратно: <b>{needLabel(operation, 'return')}</b></span>
                 </div>
+                {operation.executor_type === 'supplier' && (
+                  <div className="text-sm text-slate-600">
+                    Снабжение: <b>{operation.supply_terms_confirmed_at ? 'условия подтверждены' : 'ожидается подтверждение даты и стоимости'}</b>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-1.5">
                   {operation.items.map((item) => (
                     <Badge key={item.id} variant="outline" className="bg-slate-50">
@@ -341,12 +351,35 @@ export function OutsourcingTab({ data }: { data: MachineOutsourcingData }) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Тип работы">
-              <Select value={draft.workTypeId} onValueChange={(value) => value && setDraft({ ...draft, workTypeId: value })}>
-                <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
+              <Select
+                value={draft.useCustomWorkType ? CUSTOM_WORK_TYPE_VALUE : draft.workTypeId}
+                onValueChange={(value) => value && setDraft({
+                  ...draft,
+                  useCustomWorkType: value === CUSTOM_WORK_TYPE_VALUE,
+                  workTypeId: value === CUSTOM_WORK_TYPE_VALUE ? '' : value,
+                })}
+              >
+                <SelectTrigger className="h-10 w-full">
+                  <SelectValue>
+                    {draft.useCustomWorkType
+                      ? 'Другой тип работы'
+                      : data.workTypes.find((workType) => workType.id === draft.workTypeId)?.name || 'Выберите тип работы'}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {data.workTypes.map((workType) => <SelectItem key={workType.id} value={workType.id}>{workType.name}</SelectItem>)}
+                  <SelectItem value={CUSTOM_WORK_TYPE_VALUE}>Другой тип работы…</SelectItem>
                 </SelectContent>
               </Select>
+              {draft.useCustomWorkType && (
+                <Input
+                  value={draft.customWorkTypeName}
+                  onChange={(event) => setDraft({ ...draft, customWorkTypeName: event.target.value })}
+                  placeholder="Напишите тип работы"
+                  aria-label="Свой тип работы"
+                  maxLength={120}
+                />
+              )}
             </Field>
             <Field label="Место в плане">
               <Select value={draft.positionAfterStageType} onValueChange={(value) => value && setDraft({ ...draft, positionAfterStageType: value as StageType | 'none' })}>
@@ -384,13 +417,13 @@ export function OutsourcingTab({ data }: { data: MachineOutsourcingData }) {
               )}
             </Field>
             <Field label="Готовы отправить">
-              <Input type="date" value={draft.plannedSendDate} onChange={(event) => setDraft({ ...draft, plannedSendDate: event.target.value })} disabled={!data.canManageDatesDirectly} />
+              <Input type="date" value={draft.plannedSendDate} onChange={(event) => setDraft({ ...draft, plannedSendDate: event.target.value })} disabled={Boolean(draft.id) && !data.canManageDatesDirectly} />
             </Field>
             <Field label="Ожидаем возврат">
-              <Input type="date" value={draft.plannedReturnDate} onChange={(event) => setDraft({ ...draft, plannedReturnDate: event.target.value })} disabled={!data.canManageDatesDirectly} />
-            </Field>
-            <Field label="Стоимость услуги">
-              <Input type="number" min={0} value={draft.serviceCostPlanned} onChange={(event) => setDraft({ ...draft, serviceCostPlanned: event.target.value })} />
+              <Input type="date" value={draft.plannedReturnDate} onChange={(event) => setDraft({ ...draft, plannedReturnDate: event.target.value })} disabled={Boolean(draft.id) && !data.canManageDatesDirectly} />
+              <span className="text-xs font-normal text-slate-500">
+                Снабжение подтвердит эту дату или скорректирует её.
+              </span>
             </Field>
             <div className="sm:col-span-2">
               <Field label="Заметка">
@@ -416,7 +449,7 @@ export function OutsourcingTab({ data }: { data: MachineOutsourcingData }) {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={isPending}>Отмена</Button>
-            <Button onClick={submitOperation} disabled={isPending || !draft.workTypeId || draft.itemIds.length === 0 || (draft.executorType === 'supplier' ? !draft.supplierId : !draft.executorFactoryId)} className="gap-2">
+            <Button onClick={submitOperation} disabled={isPending || !(draft.useCustomWorkType ? draft.customWorkTypeName.trim() : draft.workTypeId) || draft.itemIds.length === 0 || (draft.executorType === 'supplier' ? !draft.supplierId : !draft.executorFactoryId)} className="gap-2">
               {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Сохранить
             </Button>
