@@ -1,0 +1,1143 @@
+'use client'
+
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from 'react'
+import { useRouter } from 'next/navigation'
+import {
+  ArrowRight,
+  Banknote,
+  Boxes,
+  Building2,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  CircleAlert,
+  Clock3,
+  Layers3,
+  Loader2,
+  MapPin,
+  Package,
+  Pencil,
+  Plus,
+  Route,
+  Search,
+  Truck,
+  Wrench,
+} from 'lucide-react'
+import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  confirmOutsourcingServiceTerms,
+  type SupplyOutsourcingAgreement,
+} from '@/lib/actions/outsourcing'
+import {
+  createTransportTrip,
+  updateTransportTrip,
+  type TransportNeedKind,
+  type TransportTrip,
+  type TransportTripStatus,
+  type TransportWorkspace,
+  type UnifiedTransportNeed,
+} from '@/lib/actions/transport-trips'
+import {
+  buildTransportRoute,
+  getTransportNeedConflict,
+} from '@/lib/transport/trip-rules'
+import { cn } from '@/lib/utils'
+
+const PAGE_SIZE = 40
+
+const categoryMeta: Record<TransportNeedKind, {
+  label: string
+  shortLabel: string
+  icon: typeof Package
+  chip: string
+  iconTone: string
+}> = {
+  materials: {
+    label: 'Материалы',
+    shortLabel: 'Материалы',
+    icon: Boxes,
+    chip: 'border-sky-200 bg-sky-50 text-sky-800',
+    iconTone: 'bg-sky-100 text-sky-700',
+  },
+  detailing: {
+    label: 'Деталировка',
+    shortLabel: 'Деталировка',
+    icon: Layers3,
+    chip: 'border-violet-200 bg-violet-50 text-violet-800',
+    iconTone: 'bg-violet-100 text-violet-700',
+  },
+  outsourcing: {
+    label: 'Аутсорсинг',
+    shortLabel: 'Аутсорсинг',
+    icon: Wrench,
+    chip: 'border-amber-200 bg-amber-50 text-amber-900',
+    iconTone: 'bg-amber-100 text-amber-800',
+  },
+}
+
+const statusMeta: Record<TransportTripStatus, {
+  label: string
+  badge: string
+}> = {
+  needed: { label: 'Нужен транспорт', badge: 'border-slate-200 bg-slate-50 text-slate-700' },
+  found: { label: 'Запланирован', badge: 'border-blue-200 bg-blue-50 text-blue-800' },
+  in_transit: { label: 'В пути', badge: 'border-amber-200 bg-amber-50 text-amber-900' },
+  completed: { label: 'Выполнен', badge: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+  cancelled: { label: 'Отменён', badge: 'border-rose-200 bg-rose-50 text-rose-800' },
+}
+
+type NeedFilter = 'all' | TransportNeedKind
+
+type TripDraft = {
+  status: Exclude<TransportTripStatus, 'needed'>
+  carrierSupplierId: string
+  scheduledDate: string
+  price: string
+  route: string
+  comment: string
+}
+
+type AgreementDraft = {
+  plannedReturnDate: string
+  serviceCostPlanned: string
+}
+
+function formatDate(value: string | null) {
+  if (!value) return 'Дата не указана'
+  const [year, month, day] = value.split('-')
+  return `${day}.${month}.${year}`
+}
+
+function formatMoney(value: number | null) {
+  if (value === null) return 'Цена не указана'
+  return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} ₴`
+}
+
+function matchesSearch(need: UnifiedTransportNeed, search: string) {
+  if (!search) return true
+  const haystack = [
+    need.title,
+    need.subtitle,
+    need.sourcePointLabel,
+    need.destinationPointLabel,
+    ...need.itemLabels,
+  ].join(' ').toLocaleLowerCase('ru')
+  return haystack.includes(search)
+}
+
+function tripDraft(trip: TransportTrip): TripDraft {
+  return {
+    status: trip.status === 'needed' ? 'found' : trip.status,
+    carrierSupplierId: trip.carrierSupplierId || '',
+    scheduledDate: trip.scheduledDate || '',
+    price: trip.price === null ? '' : String(trip.price),
+    route: trip.route || trip.routeStart || '',
+    comment: trip.comment || '',
+  }
+}
+
+const NeedCard = memo(function NeedCard({
+  need,
+  selected,
+  compatible,
+  onToggle,
+}: {
+  need: UnifiedTransportNeed
+  selected: boolean
+  compatible: boolean
+  onToggle: (need: UnifiedTransportNeed) => void
+}) {
+  const meta = categoryMeta[need.kind]
+  const Icon = meta.icon
+  const disabled = !need.selectable || !compatible
+  const disabledReason = !need.selectable
+    ? 'Ожидает подтверждения'
+    : !compatible
+      ? 'Другая стартовая точка'
+      : null
+
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={() => onToggle(need)}
+      className={cn(
+        'group w-full rounded-2xl border bg-white p-4 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[border-color,box-shadow,transform] motion-reduce:transition-none',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2',
+        !disabled && 'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md',
+        selected && 'border-blue-600 bg-blue-50/40 ring-1 ring-blue-600',
+        disabled && 'cursor-not-allowed border-slate-200 bg-slate-50/80 opacity-65',
+      )}
+    >
+      <span className="flex gap-3">
+        <span
+          aria-hidden
+          className={cn(
+            'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition-colors',
+            selected
+              ? 'border-blue-700 bg-blue-700 text-white'
+              : 'border-slate-300 bg-white text-transparent',
+          )}
+        >
+          <Check className="h-4 w-4" strokeWidth={3} />
+        </span>
+
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold', meta.chip)}>
+              <Icon className="h-3.5 w-3.5" />
+              {meta.shortLabel}
+            </span>
+            {need.deliveryRisk && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700">
+                <CircleAlert className="h-3.5 w-3.5" />
+                Риск срока
+              </span>
+            )}
+            {disabledReason && (
+              <span className="text-xs font-medium text-slate-500">{disabledReason}</span>
+            )}
+          </span>
+
+          <span className="mt-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+            <span className="min-w-0">
+              <span className="block truncate text-base font-semibold text-slate-950">{need.title}</span>
+              <span className="block truncate text-sm text-slate-600">{need.subtitle}</span>
+            </span>
+            <span className="shrink-0 text-sm font-semibold text-slate-700">{formatDate(need.neededDate)}</span>
+          </span>
+
+          <span className="mt-3 flex min-w-0 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+            <span className="truncate">{need.sourcePointLabel}</span>
+            <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
+            <span className="truncate">{need.destinationPointLabel}</span>
+          </span>
+
+          {(need.volumeLabel || need.itemLabels.length > 0) && (
+            <span className="mt-2 block truncate text-xs text-slate-500">
+              {[need.volumeLabel, ...need.itemLabels.slice(0, 2)].filter(Boolean).join(' · ')}
+            </span>
+          )}
+        </span>
+      </span>
+    </button>
+  )
+})
+
+export function TransportWorkspacePage({ workspace }: { workspace: TransportWorkspace }) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [needFilter, setNeedFilter] = useState<NeedFilter>('all')
+  const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search.trim().toLocaleLowerCase('ru'))
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([])
+  const [carrierSupplierId, setCarrierSupplierId] = useState('')
+  const [scheduledDate, setScheduledDate] = useState('')
+  const [price, setPrice] = useState('')
+  const [route, setRoute] = useState('')
+  const [comment, setComment] = useState('')
+  const [mobileShortcutHidden, setMobileShortcutHidden] = useState(false)
+  const [editingTripId, setEditingTripId] = useState<string | null>(null)
+  const [editingDraft, setEditingDraft] = useState<TripDraft | null>(null)
+  const [agreementDrafts, setAgreementDrafts] = useState<Record<string, AgreementDraft>>(() =>
+    Object.fromEntries(workspace.agreements.map((agreement) => [
+      agreement.operation_id,
+      {
+        plannedReturnDate: agreement.planned_return_date || '',
+        serviceCostPlanned: agreement.service_cost_planned === null
+          ? ''
+          : String(agreement.service_cost_planned),
+      },
+    ])),
+  )
+
+  const needByKey = useMemo(
+    () => new Map(workspace.needs.map((need) => [need.key, need])),
+    [workspace.needs],
+  )
+  const selectedNeeds = useMemo(
+    () => selectedKeys.map((key) => needByKey.get(key)).filter((need): need is UnifiedTransportNeed => Boolean(need)),
+    [needByKey, selectedKeys],
+  )
+  const selectedStart = selectedNeeds[0] || null
+  const routeSuggestion = useMemo(() => buildTransportRoute(selectedNeeds), [selectedNeeds])
+  const selectedCarrierLabel = workspace.carriers.find((carrier) => carrier.id === carrierSupplierId)?.name
+    || 'Выберите перевозчика'
+
+  useEffect(() => {
+    setRoute(routeSuggestion)
+  }, [routeSuggestion])
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [deferredSearch, needFilter])
+
+  const categoryCounts = useMemo(() => ({
+    all: workspace.needs.length,
+    materials: workspace.needs.filter((need) => need.kind === 'materials').length,
+    detailing: workspace.needs.filter((need) => need.kind === 'detailing').length,
+    outsourcing: workspace.needs.filter((need) => need.kind === 'outsourcing').length,
+  }), [workspace.needs])
+
+  const filteredNeeds = useMemo(
+    () => workspace.needs.filter((need) => (
+      (needFilter === 'all' || need.kind === needFilter)
+      && matchesSearch(need, deferredSearch)
+    )),
+    [deferredSearch, needFilter, workspace.needs],
+  )
+  const visibleNeeds = filteredNeeds.slice(0, visibleCount)
+  const activeTrips = workspace.trips.filter((trip) => !['completed', 'cancelled'].includes(trip.status))
+  const historyTrips = workspace.trips.filter((trip) => ['completed', 'cancelled'].includes(trip.status))
+  const editingTrip = workspace.trips.find((trip) => trip.id === editingTripId) || null
+
+  const toggleNeed = useCallback((need: UnifiedTransportNeed) => {
+    setMobileShortcutHidden(false)
+    setSelectedKeys((current) => {
+      if (current.includes(need.key)) return current.filter((key) => key !== need.key)
+      const firstSelected = current.length > 0 ? needByKey.get(current[0]) : null
+      if (firstSelected && getTransportNeedConflict(firstSelected, need) === 'source') {
+        toast.error(`Стартовая точка должна быть «${firstSelected.sourcePointLabel}»`)
+        return current
+      }
+      if (firstSelected && getTransportNeedConflict(firstSelected, need) === 'direction') {
+        toast.error('В одном рейсе нельзя смешивать направления туда и обратно')
+        return current
+      }
+      return [...current, need.key]
+    })
+  }, [needByKey])
+
+  function resetComposer() {
+    setSelectedKeys([])
+    setCarrierSupplierId('')
+    setScheduledDate('')
+    setPrice('')
+    setRoute('')
+    setComment('')
+  }
+
+  function createTrip() {
+    setPendingAction('create')
+    startTransition(async () => {
+      const result = await createTransportTrip({
+        needs: selectedNeeds.map((need) => ({ kind: need.kind, id: need.id })),
+        carrierSupplierId,
+        scheduledDate,
+        price,
+        route,
+        comment: comment || null,
+      })
+      setPendingAction(null)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось создать рейс')
+        return
+      }
+      toast.success('Рейс создан и потребности объединены')
+      resetComposer()
+      router.refresh()
+    })
+  }
+
+  function openTrip(trip: TransportTrip) {
+    setEditingTripId(trip.id)
+    setEditingDraft(tripDraft(trip))
+  }
+
+  function saveTrip() {
+    if (!editingTrip || !editingDraft) return
+    setPendingAction(`trip:${editingTrip.id}`)
+    startTransition(async () => {
+      const result = await updateTransportTrip({
+        tripId: editingTrip.id,
+        status: editingDraft.status,
+        carrierSupplierId: editingDraft.carrierSupplierId,
+        scheduledDate: editingDraft.scheduledDate,
+        price: editingDraft.price,
+        route: editingDraft.route,
+        comment: editingDraft.comment || null,
+      })
+      setPendingAction(null)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось сохранить рейс')
+        return
+      }
+      toast.success(editingDraft.status === 'completed' ? 'Рейс завершён' : 'Рейс сохранён')
+      setEditingTripId(null)
+      setEditingDraft(null)
+      router.refresh()
+    })
+  }
+
+  function updateAgreementDraft(operationId: string, patch: Partial<AgreementDraft>) {
+    setAgreementDrafts((current) => ({
+      ...current,
+      [operationId]: { ...current[operationId], ...patch },
+    }))
+  }
+
+  function confirmAgreement(agreement: SupplyOutsourcingAgreement) {
+    const draft = agreementDrafts[agreement.operation_id]
+    if (!draft?.plannedReturnDate) return
+    setPendingAction(`agreement:${agreement.operation_id}`)
+    startTransition(async () => {
+      const result = await confirmOutsourcingServiceTerms({
+        operationId: agreement.operation_id,
+        plannedReturnDate: draft.plannedReturnDate,
+        serviceCostPlanned: draft.serviceCostPlanned ? Number(draft.serviceCostPlanned) : null,
+      })
+      setPendingAction(null)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось подтвердить условия')
+        return
+      }
+      toast.success('Условия аутсорсинга сохранены')
+      router.refresh()
+    })
+  }
+
+  const canCreate = selectedNeeds.length > 0
+    && Boolean(carrierSupplierId)
+    && Boolean(scheduledDate)
+    && price !== ''
+    && Boolean(route.trim())
+    && !isPending
+
+  return (
+    <div className="min-w-0 space-y-5 pb-10">
+      <header className="overflow-hidden rounded-3xl border border-blue-100 bg-[linear-gradient(135deg,#f8fbff_0%,#eef5ff_58%,#f5f8fc_100%)] shadow-[0_14px_40px_rgba(30,64,175,0.08)]">
+        <div className="grid gap-5 p-5 sm:p-6 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+          <div>
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-blue-700">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-950 text-white shadow-sm">
+                <Truck className="h-5 w-5" />
+              </span>
+              Логистика снабжения
+            </div>
+            <h1 className="max-w-3xl text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
+              Потребности и рейсы
+            </h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">
+              Собирайте материалы, деталировку и аутсорсинг с одной стартовой точки в общий рейс.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[520px]">
+            <Metric icon={Package} label="Потребности" value={workspace.needs.length} tone="blue" />
+            <Metric icon={CheckCircle2} label="Выбрано" value={selectedNeeds.length} tone="emerald" />
+            <Metric icon={Truck} label="Активные рейсы" value={activeTrips.length} tone="violet" />
+            <Metric icon={Clock3} label="В истории" value={historyTrips.length} tone="slate" />
+          </div>
+        </div>
+      </header>
+
+      {Object.keys(workspace.errors).length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <div className="flex items-start gap-2">
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-semibold">Часть категорий загрузилась с ошибкой</div>
+              <div className="mt-1 text-amber-800">{Object.values(workspace.errors).join(' · ')}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedNeeds.length > 0 && !mobileShortcutHidden && (
+        <div className="fixed inset-x-4 bottom-4 z-40 xl:hidden">
+          <Button
+            type="button"
+            onClick={() => {
+              setMobileShortcutHidden(true)
+              document.getElementById('transport-composer')?.scrollIntoView({
+                behavior: 'smooth',
+                block: 'start',
+              })
+            }}
+            className="h-12 w-full rounded-2xl bg-emerald-700 text-base font-semibold shadow-[0_14px_36px_rgba(5,150,105,0.34)] hover:bg-emerald-800"
+          >
+            К оформлению рейса · {selectedNeeds.length}
+            <ChevronRight className="h-5 w-5" />
+          </Button>
+        </div>
+      )}
+
+      <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_390px] xl:items-start">
+        <section className="min-w-0 rounded-3xl border border-slate-200 bg-white shadow-[0_10px_32px_rgba(15,23,42,0.05)]">
+          <div className="border-b border-slate-100 p-4 sm:p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-950">Все потребности</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Выберите одну или несколько карточек с одинаковой стартовой точкой.
+                </p>
+              </div>
+              <Label className="relative block w-full lg:max-w-xs" htmlFor="transport-search">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <span className="sr-only">Поиск потребностей</span>
+                <Input
+                  id="transport-search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Машина, маршрут, позиция…"
+                  className="h-11 rounded-xl border-slate-200 bg-slate-50 pl-9"
+                />
+              </Label>
+            </div>
+
+            <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+              <FilterButton active={needFilter === 'all'} onClick={() => setNeedFilter('all')}>
+                Все <span>{categoryCounts.all}</span>
+              </FilterButton>
+              {(Object.keys(categoryMeta) as TransportNeedKind[]).map((kind) => {
+                const meta = categoryMeta[kind]
+                const Icon = meta.icon
+                return (
+                  <FilterButton key={kind} active={needFilter === kind} onClick={() => setNeedFilter(kind)}>
+                    <Icon className="h-4 w-4" /> {meta.label} <span>{categoryCounts[kind]}</span>
+                  </FilterButton>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="p-4 sm:p-5">
+            {visibleNeeds.length === 0 ? (
+              <EmptyNeeds hasSearch={Boolean(deferredSearch) || needFilter !== 'all'} />
+            ) : (
+              <div className="grid gap-3">
+                {visibleNeeds.map((need) => (
+                  <NeedCard
+                    key={need.key}
+                    need={need}
+                    selected={selectedKeys.includes(need.key)}
+                    compatible={!selectedStart || (
+                      selectedStart.sourcePointKey === need.sourcePointKey
+                      && selectedStart.direction === need.direction
+                    )}
+                    onToggle={toggleNeed}
+                  />
+                ))}
+              </div>
+            )}
+
+            {visibleCount < filteredNeeds.length && (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-4 h-11 w-full rounded-xl"
+                onClick={() => setVisibleCount((current) => current + PAGE_SIZE)}
+              >
+                Показать ещё {Math.min(PAGE_SIZE, filteredNeeds.length - visibleCount)}
+              </Button>
+            )}
+          </div>
+        </section>
+
+        <aside id="transport-composer" className="scroll-mt-4 xl:sticky xl:top-4">
+          <div className="overflow-hidden rounded-3xl border border-emerald-200 bg-white shadow-[0_16px_44px_rgba(5,150,105,0.10)]">
+            <div className="bg-[linear-gradient(135deg,#064e3b_0%,#047857_100%)] p-5 text-white">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100">Новый рейс</div>
+                  <h2 className="mt-1 text-xl font-bold">Собрать маршрут</h2>
+                </div>
+                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/15">
+                  <Route className="h-6 w-6" />
+                </span>
+              </div>
+              <div className="mt-4 flex items-center justify-between rounded-2xl bg-white/10 px-4 py-3 text-sm">
+                <span className="text-emerald-50">В рейсе</span>
+                <span className="font-bold">{selectedNeeds.length} потребн.</span>
+              </div>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div>
+                <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Стартовая точка</div>
+                <div className={cn(
+                  'flex min-h-11 items-center gap-2 rounded-xl border px-3 text-sm font-semibold',
+                  selectedStart
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                    : 'border-dashed border-slate-300 bg-slate-50 text-slate-500',
+                )}>
+                  <MapPin className="h-4 w-4 shrink-0" />
+                  {selectedStart?.sourcePointLabel || 'Сначала выберите потребность'}
+                </div>
+                <p className="mt-1.5 text-xs leading-5 text-slate-500">
+                  После первого выбора можно добавлять только потребности из этой точки.
+                </p>
+              </div>
+
+              <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                Маршрут
+                <Textarea
+                  value={route}
+                  onChange={(event) => setRoute(event.target.value)}
+                  placeholder="Берегово → Ужгород"
+                  className="min-h-20 resize-none rounded-xl"
+                  disabled={!selectedStart}
+                />
+              </Label>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                  Перевозчик
+                  <Select value={carrierSupplierId} onValueChange={(value) => setCarrierSupplierId(value || '')}>
+                    <SelectTrigger className="h-11 w-full rounded-xl bg-white">
+                      <SelectValue>{selectedCarrierLabel}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      {workspace.carriers.map((carrier) => (
+                        <SelectItem key={carrier.id} value={carrier.id}>{carrier.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Label>
+
+                <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                  Дата рейса
+                  <Input
+                    type="date"
+                    value={scheduledDate}
+                    onChange={(event) => setScheduledDate(event.target.value)}
+                    className="h-11 rounded-xl"
+                  />
+                </Label>
+              </div>
+
+              <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                Цена перевозки
+                <div className="relative">
+                  <Banknote className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={price}
+                    onChange={(event) => setPrice(event.target.value)}
+                    placeholder="0,00"
+                    className="h-11 rounded-xl pl-9"
+                  />
+                </div>
+              </Label>
+
+              <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                Комментарий
+                <Textarea
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                  placeholder="Машина, контакты, особые условия…"
+                  className="min-h-20 resize-none rounded-xl"
+                />
+              </Label>
+
+              <Button
+                type="button"
+                disabled={!canCreate}
+                onClick={createTrip}
+                className="h-12 w-full gap-2 rounded-xl bg-emerald-700 text-base font-semibold hover:bg-emerald-800"
+              >
+                {pendingAction === 'create'
+                  ? <Loader2 className="h-5 w-5 animate-spin" />
+                  : <Plus className="h-5 w-5" />}
+                Создать рейс
+              </Button>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <TripsSection
+        title="Активные рейсы"
+        description="Запланированные перевозки и рейсы в пути."
+        trips={activeTrips}
+        onOpen={openTrip}
+        emptyText="Активных рейсов пока нет."
+      />
+
+      {historyTrips.length > 0 && (
+        <TripsSection
+          title="История рейсов"
+          description="Завершённые и отменённые рейсы."
+          trips={historyTrips}
+          onOpen={openTrip}
+          emptyText=""
+          compact
+        />
+      )}
+
+      <AgreementsPanel
+        agreements={workspace.agreements}
+        drafts={agreementDrafts}
+        pendingAction={pendingAction}
+        onDraftChange={updateAgreementDraft}
+        onConfirm={confirmAgreement}
+      />
+
+      <Sheet
+        open={Boolean(editingTrip)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingTripId(null)
+            setEditingDraft(null)
+          }
+        }}
+      >
+        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+          {editingTrip && editingDraft && (
+            <>
+              <SheetHeader className="border-b border-slate-100 p-5 pr-14">
+                <SheetTitle className="text-xl font-bold text-slate-950">
+                  Рейс #{editingTrip.id.slice(0, 8).toUpperCase()}
+                </SheetTitle>
+                <SheetDescription>
+                  {editingTrip.route || editingTrip.routeStart || 'Маршрут не указан'}
+                </SheetDescription>
+              </SheetHeader>
+
+              <div className="space-y-5 px-5 pb-5">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Состав рейса</div>
+                  <div className="space-y-2">
+                    {editingTrip.needs.map((need) => (
+                      <div key={need.linkId || need.key} className="rounded-xl bg-white px-3 py-2.5 text-sm shadow-sm">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className={categoryMeta[need.kind].chip}>
+                            {categoryMeta[need.kind].label}
+                          </Badge>
+                          <span className="font-semibold text-slate-900">{need.title}</span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {need.sourcePointLabel} → {need.destinationPointLabel}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                  Статус
+                  <Select
+                    value={editingDraft.status}
+                    onValueChange={(value) => value && setEditingDraft((current) => current && ({
+                      ...current,
+                      status: value as TripDraft['status'],
+                    }))}
+                    disabled={['completed', 'cancelled'].includes(editingTrip.status)}
+                  >
+                    <SelectTrigger className="h-11 w-full rounded-xl">
+                      <SelectValue>{statusMeta[editingDraft.status].label}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      {(['found', 'in_transit', 'completed', 'cancelled'] as const).map((status) => (
+                        <SelectItem key={status} value={status}>{statusMeta[status].label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Label>
+
+                <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                  Перевозчик
+                  <Select
+                    value={editingDraft.carrierSupplierId}
+                    onValueChange={(value) => setEditingDraft((current) => current && ({
+                      ...current,
+                      carrierSupplierId: value || '',
+                    }))}
+                    disabled={['completed', 'cancelled'].includes(editingTrip.status)}
+                  >
+                    <SelectTrigger className="h-11 w-full rounded-xl">
+                      <SelectValue>
+                        {workspace.carriers.find((carrier) => carrier.id === editingDraft.carrierSupplierId)?.name
+                          || 'Выберите перевозчика'}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      {workspace.carriers.map((carrier) => (
+                        <SelectItem key={carrier.id} value={carrier.id}>{carrier.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Label>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                    Дата
+                    <Input
+                      type="date"
+                      value={editingDraft.scheduledDate}
+                      onChange={(event) => setEditingDraft((current) => current && ({
+                        ...current,
+                        scheduledDate: event.target.value,
+                      }))}
+                      disabled={['completed', 'cancelled'].includes(editingTrip.status)}
+                      className="h-11 rounded-xl"
+                    />
+                  </Label>
+                  <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                    Цена
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={editingDraft.price}
+                      onChange={(event) => setEditingDraft((current) => current && ({
+                        ...current,
+                        price: event.target.value,
+                      }))}
+                      disabled={['completed', 'cancelled'].includes(editingTrip.status)}
+                      className="h-11 rounded-xl"
+                    />
+                  </Label>
+                </div>
+
+                <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                  Маршрут
+                  <Textarea
+                    value={editingDraft.route}
+                    onChange={(event) => setEditingDraft((current) => current && ({
+                      ...current,
+                      route: event.target.value,
+                    }))}
+                    disabled={['completed', 'cancelled'].includes(editingTrip.status)}
+                    className="min-h-20 resize-none rounded-xl"
+                  />
+                  <span className="text-xs text-slate-500">Начало маршрута: {editingTrip.routeStart || '—'}</span>
+                </Label>
+
+                <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                  Комментарий
+                  <Textarea
+                    value={editingDraft.comment}
+                    onChange={(event) => setEditingDraft((current) => current && ({
+                      ...current,
+                      comment: event.target.value,
+                    }))}
+                    disabled={['completed', 'cancelled'].includes(editingTrip.status)}
+                    className="min-h-24 resize-none rounded-xl"
+                  />
+                </Label>
+              </div>
+
+              {!['completed', 'cancelled'].includes(editingTrip.status) && (
+                <SheetFooter className="sticky bottom-0 border-t border-slate-100 bg-white p-5">
+                  <Button
+                    type="button"
+                    onClick={saveTrip}
+                    disabled={
+                      isPending
+                      || !editingDraft.carrierSupplierId
+                      || !editingDraft.scheduledDate
+                      || editingDraft.price === ''
+                      || !editingDraft.route.trim()
+                    }
+                    className="h-12 rounded-xl"
+                  >
+                    {pendingAction === `trip:${editingTrip.id}`
+                      ? <Loader2 className="h-5 w-5 animate-spin" />
+                      : <CheckCircle2 className="h-5 w-5" />}
+                    Сохранить рейс
+                  </Button>
+                </SheetFooter>
+              )}
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+    </div>
+  )
+}
+
+function Metric({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: typeof Package
+  label: string
+  value: number
+  tone: 'blue' | 'emerald' | 'violet' | 'slate'
+}) {
+  const tones = {
+    blue: 'bg-blue-100 text-blue-800',
+    emerald: 'bg-emerald-100 text-emerald-800',
+    violet: 'bg-violet-100 text-violet-800',
+    slate: 'bg-slate-200 text-slate-700',
+  }
+  return (
+    <div className="rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm backdrop-blur">
+      <div className={cn('flex h-8 w-8 items-center justify-center rounded-xl', tones[tone])}>
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="mt-3 text-2xl font-bold text-slate-950">{value}</div>
+      <div className="mt-0.5 text-xs font-medium text-slate-500">{label}</div>
+    </div>
+  )
+}
+
+function FilterButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2',
+        active
+          ? 'border-blue-800 bg-blue-950 text-white'
+          : 'border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-900',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function EmptyNeeds({ hasSearch }: { hasSearch: boolean }) {
+  return (
+    <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm">
+        <Package className="h-6 w-6" />
+      </span>
+      <div className="mt-4 font-semibold text-slate-900">
+        {hasSearch ? 'По фильтру ничего не найдено' : 'Открытых потребностей нет'}
+      </div>
+      <div className="mt-1 max-w-sm text-sm leading-6 text-slate-500">
+        {hasSearch
+          ? 'Измените категорию или поисковый запрос.'
+          : 'Новые потребности появятся здесь автоматически из материалов, деталировки и аутсорсинга.'}
+      </div>
+    </div>
+  )
+}
+
+function TripsSection({
+  title,
+  description,
+  trips,
+  onOpen,
+  emptyText,
+  compact = false,
+}: {
+  title: string
+  description: string
+  trips: TransportTrip[]
+  onOpen: (trip: TransportTrip) => void
+  emptyText: string
+  compact?: boolean
+}) {
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_10px_32px_rgba(15,23,42,0.05)] sm:p-5">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-950">{title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{description}</p>
+        </div>
+        <Badge variant="outline" className="rounded-full px-3">{trips.length}</Badge>
+      </div>
+
+      {trips.length === 0 ? (
+        <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">
+          {emptyText}
+        </div>
+      ) : (
+        <div className={cn('mt-4 grid gap-3', !compact && 'lg:grid-cols-2')}>
+          {trips.map((trip) => (
+            <article key={trip.id} className="rounded-2xl border border-slate-200 bg-slate-50/40 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusMeta[trip.status].badge)}>
+                      {statusMeta[trip.status].label}
+                    </span>
+                    <span className="text-xs font-semibold text-slate-400">
+                      #{trip.id.slice(0, 8).toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-900">
+                    <Route className="h-4 w-4 shrink-0 text-blue-700" />
+                    <span className="truncate">{trip.route || trip.routeStart || 'Маршрут не указан'}</span>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Открыть рейс ${trip.id.slice(0, 8)}`}
+                  onClick={() => onOpen(trip)}
+                  className="shrink-0 rounded-xl"
+                >
+                  {['completed', 'cancelled'].includes(trip.status)
+                    ? <ChevronRight className="h-5 w-5" />
+                    : <Pencil className="h-4 w-4" />}
+                </Button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                <TripFact icon={Building2} label="Перевозчик" value={trip.carrierName || 'Не назначен'} />
+                <TripFact icon={CalendarDays} label="Дата" value={formatDate(trip.scheduledDate)} />
+                <TripFact icon={Banknote} label="Цена" value={formatMoney(trip.price)} />
+                <TripFact icon={Package} label="Потребности" value={`${trip.needs.length} шт.`} />
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {Array.from(new Set(trip.needs.map((need) => need.kind))).map((kind) => (
+                  <span key={kind} className={cn('rounded-full border px-2 py-1 text-xs font-semibold', categoryMeta[kind].chip)}>
+                    {categoryMeta[kind].label}
+                  </span>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function TripFact({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof Package
+  label: string
+  value: string
+}) {
+  return (
+    <div className="min-w-0 rounded-xl bg-white px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </div>
+      <div className="mt-1 truncate font-semibold text-slate-800">{value}</div>
+    </div>
+  )
+}
+
+function AgreementsPanel({
+  agreements,
+  drafts,
+  pendingAction,
+  onDraftChange,
+  onConfirm,
+}: {
+  agreements: SupplyOutsourcingAgreement[]
+  drafts: Record<string, AgreementDraft>
+  pendingAction: string | null
+  onDraftChange: (operationId: string, patch: Partial<AgreementDraft>) => void
+  onConfirm: (agreement: SupplyOutsourcingAgreement) => void
+}) {
+  if (agreements.length === 0) return null
+
+  return (
+    <details className="group rounded-3xl border border-slate-200 bg-white shadow-[0_10px_32px_rgba(15,23,42,0.05)]">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-700">
+        <div>
+          <h2 className="font-bold text-slate-950">Согласование аутсорсинга</h2>
+          <p className="mt-1 text-sm text-slate-500">Дата возврата и стоимость услуги внешней компании.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="rounded-full px-3">{agreements.length}</Badge>
+          <ChevronRight className="h-5 w-5 text-slate-400 transition-transform group-open:rotate-90" />
+        </div>
+      </summary>
+
+      <div className="grid gap-3 border-t border-slate-100 p-5">
+        {agreements.map((agreement) => {
+          const draft = drafts[agreement.operation_id]
+          const isSaving = pendingAction === `agreement:${agreement.operation_id}`
+          return (
+            <article key={agreement.operation_id} className="rounded-2xl border border-slate-200 p-4">
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_170px_170px_auto] xl:items-end">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={agreement.supply_terms_confirmed_at ? 'secondary' : 'outline'}>
+                      {agreement.supply_terms_confirmed_at ? 'Подтверждено' : 'Ожидает'}
+                    </Badge>
+                    <span className="font-semibold text-slate-900">{agreement.machine_name}</span>
+                    <span className="text-sm text-slate-600">{agreement.work_type_name}</span>
+                  </div>
+                  <div className="mt-2 text-sm text-slate-500">
+                    {agreement.source_factory_name || 'Завод не указан'} → {agreement.supplier_name || 'Компания не указана'}
+                  </div>
+                </div>
+                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500">
+                  Ожидаемый возврат
+                  <Input
+                    type="date"
+                    value={draft?.plannedReturnDate || ''}
+                    onChange={(event) => onDraftChange(agreement.operation_id, { plannedReturnDate: event.target.value })}
+                    className="h-10 rounded-xl"
+                  />
+                </Label>
+                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500">
+                  Стоимость услуги
+                  <Input
+                    type="number"
+                    min={0}
+                    value={draft?.serviceCostPlanned || ''}
+                    onChange={(event) => onDraftChange(agreement.operation_id, { serviceCostPlanned: event.target.value })}
+                    className="h-10 rounded-xl"
+                  />
+                </Label>
+                <Button
+                  type="button"
+                  disabled={isSaving || !draft?.plannedReturnDate}
+                  onClick={() => onConfirm(agreement)}
+                  className="h-10 rounded-xl"
+                >
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Сохранить
+                </Button>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </details>
+  )
+}
