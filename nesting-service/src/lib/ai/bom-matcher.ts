@@ -20,6 +20,7 @@ type MatchCandidate = {
   matchType: MatchType;
   matchConfidence: number;
   matchDetails: string;
+  scopeConfirmed?: boolean;
   identityConfirmed?: boolean;
   identitySource?: MatchIdentitySource;
   dimensionMismatch?: boolean;
@@ -32,8 +33,6 @@ type PartGroup = {
 };
 type BomSlot = {
   entry: BOMEntry;
-  key: string;
-  capacityKey: string;
   remaining: number;
 };
 type BomSlotAllocation = {
@@ -48,10 +47,14 @@ const THICKNESS_TOLERANCE_MM = 0.3;
 const UNFOLDING_MATCH_TOLERANCE = 0.02;
 const UNFOLDING_SUGGESTION_REJECT_TOLERANCE = 0.15;
 const DIMENSION_CLUSTER_TOLERANCE_MM = 0.1;
+const MATCH_APPLICATION_CONFIDENCE = 0.8;
+
+export function isMatchEligibleForApply(match: MatchResult): boolean {
+  return match.matchConfidence >= MATCH_APPLICATION_CONFIDENCE && match.identityConfirmed;
+}
 
 export function isMatchEligibleForAutoApply(match: MatchResult): boolean {
-  if (match.matchConfidence < 0.8) return false;
-  return match.matchType !== 'geometry' || match.identityConfirmed;
+  return isMatchEligibleForApply(match);
 }
 
 export function matchBOMToParts(
@@ -62,33 +65,53 @@ export function matchBOMToParts(
 ): MatchResult[] {
   const bomSlots: BomSlot[] = bom.map((entry) => ({
     entry,
-    key: buildBomKeyFromEntry(entry),
-    capacityKey: buildBomCapacityKey(entry),
     remaining: Math.max(1, Math.round(entry.quantity || 1)),
   }));
   const resultsByPartId = new Map<string, MatchResult>();
-  const groups = clusterIdenticalParts(parts);
+  const groups = clusterIdenticalParts(parts)
+    .map((group) => ({
+      group,
+      initialMatch: findBestMatch(group.parts[0], bom, bom, details),
+    }))
+    .sort((left, right) => {
+      const identityDelta = Number(right.initialMatch.identityConfirmed) - Number(left.initialMatch.identityConfirmed);
+      if (identityDelta !== 0) return identityDelta;
+      const scopeDelta = Number(right.initialMatch.scopeConfirmed) - Number(left.initialMatch.scopeConfirmed);
+      if (scopeDelta !== 0) return scopeDelta;
+      const confidenceDelta = right.initialMatch.matchConfidence - left.initialMatch.matchConfidence;
+      if (confidenceDelta !== 0) return confidenceDelta;
+      return left.group.firstIndex - right.group.firstIndex;
+    });
 
-  for (const group of groups) {
-    const eligibleBom = bomSlots
-      .filter((slot) => slot.remaining > 0 && availableBomCapacity(slot.entry, bomSlots) >= group.parts.length)
-      .map((slot) => slot.entry);
-    const rawMatch = findBestMatch(group.parts[0], eligibleBom, bom, details);
+  for (const preparedGroup of groups) {
+    const { group, initialMatch: rawMatch } = preparedGroup;
     const allocation = rawMatch.bomEntry
-      ? planBomSlotAllocation(rawMatch.bomEntry, bomSlots, group.parts.length)
+      ? planBomSlotAllocation(
+          rawMatch.bomEntry,
+          bomSlots,
+          group.parts.length,
+          rawMatch.identitySource ?? null,
+          rawMatch.scopeConfirmed ?? false
+        )
       : [];
+    const allocatedQuantity = allocation.reduce((sum, item) => sum + item.count, 0);
     const match = applyGroupQuantitySignal(
-      rawMatch.bomEntry && allocation.length === 0
+      rawMatch.bomEntry && allocatedQuantity === 0
         ? {
             ...rawMatch,
             bomEntry: null,
+            detail: null,
             matchType: 'none',
             matchConfidence: 0,
             matchDetails: 'qty group: no available BOM capacity',
+            identityConfirmed: false,
+            identitySource: null,
+            dimensionMismatch: false,
+            dimensionMismatchNote: null,
           }
         : rawMatch,
       group.parts.length,
-      allocation.reduce((sum, item) => sum + item.count, 0)
+      allocatedQuantity
     );
 
     for (const item of allocation) {
@@ -103,25 +126,41 @@ export function matchBOMToParts(
         allocationUsed = 0;
       }
       const allocationItem = allocation[allocationIndex] ?? null;
-      const bomEntry = allocationItem?.slot.entry ?? match.bomEntry;
-      const assignedGroupSize = allocationItem?.count ?? group.parts.length;
+      const hasAllocatedBom = match.bomEntry === null || allocationItem !== null;
+      const bomEntry = allocationItem?.slot.entry ?? null;
+      const assignedGroupSize = match.bomEntry ? allocatedQuantity : group.parts.length;
       if (allocationItem) {
         allocationUsed += 1;
       }
+      const partMatch = hasAllocatedBom
+        ? match
+        : {
+            ...match,
+            bomEntry: null,
+            detail: null,
+            matchType: 'none' as const,
+            matchConfidence: 0,
+            matchDetails: `qty capacity exhausted; ${match.matchDetails}`,
+            identityConfirmed: false,
+            identitySource: null,
+            dimensionMismatch: false,
+            dimensionMismatchNote: null,
+          };
 
       resultsByPartId.set(
         part.id,
         buildMatchResult(
           part,
           bomEntry,
-          match.detail,
-          match.matchType,
-          match.matchConfidence,
-          match.matchDetails,
-          match.identityConfirmed ?? false,
-          match.identitySource ?? null,
-          match.dimensionMismatch ?? false,
-          match.dimensionMismatchNote ?? null,
+          partMatch.detail,
+          partMatch.matchType,
+          partMatch.matchConfidence,
+          partMatch.matchDetails,
+          partMatch.scopeConfirmed ?? false,
+          partMatch.identityConfirmed ?? false,
+          partMatch.identitySource ?? null,
+          partMatch.dimensionMismatch ?? false,
+          partMatch.dimensionMismatchNote ?? null,
           steelTypes,
           assignedGroupSize
         )
@@ -136,6 +175,7 @@ export function matchBOMToParts(
     'none',
     0,
     '',
+    false,
     false,
     null,
     false,
@@ -229,17 +269,28 @@ function isRecognizableAssemblyIdentity(value: string): boolean {
   return /[A-Z]{2,}\d*(?:\.\d+){1,}\.000(?:SB)?/.test(value) || /^\d{10,}$/.test(value);
 }
 
-function getGeometryIdentity(
+function getScopeConfirmed(
   part: PartForMatching,
   bomEntry: BOMEntry | null
-): Pick<MatchCandidate, 'identityConfirmed' | 'identitySource'> {
-  if (bomEntry && getAssemblyScopeState(part, bomEntry.parentAssembly) === 'confirmed') {
+): boolean {
+  return Boolean(bomEntry && getAssemblyScopeState(part, bomEntry.parentAssembly) === 'confirmed');
+}
+
+function getGeometryEvidence(
+  part: PartForMatching,
+  bomEntry: BOMEntry | null,
+  confidence: number
+): Pick<MatchCandidate, 'scopeConfirmed' | 'identityConfirmed' | 'identitySource'> {
+  const scopeConfirmed = getScopeConfirmed(part, bomEntry);
+  if (confidence >= MATCH_APPLICATION_CONFIDENCE) {
     return {
+      scopeConfirmed,
       identityConfirmed: true,
-      identitySource: 'assembly_path',
+      identitySource: 'geometry',
     };
   }
   return {
+    scopeConfirmed,
     identityConfirmed: false,
     identitySource: null,
   };
@@ -269,6 +320,13 @@ function applyGroupQuantitySignal(match: MatchCandidate, groupSize: number, allo
     };
   }
 
+  if (match.identityConfirmed) {
+    return {
+      ...match,
+      matchDetails,
+    };
+  }
+
   const mismatchRatio = Math.abs(bomQuantity - groupSize) / Math.max(bomQuantity, groupSize);
   const penalty = Math.min(0.3, 0.1 + mismatchRatio * 0.2);
   return {
@@ -278,20 +336,17 @@ function applyGroupQuantitySignal(match: MatchCandidate, groupSize: number, allo
   };
 }
 
-function availableBomCapacity(entry: BOMEntry, slots: BomSlot[]): number {
-  const capacityKey = buildBomCapacityKey(entry);
-  return slots
-    .filter((slot) => slot.capacityKey === capacityKey)
-    .reduce((sum, slot) => sum + slot.remaining, 0);
-}
-
-function planBomSlotAllocation(entry: BOMEntry, slots: BomSlot[], groupSize: number): BomSlotAllocation[] {
-  const capacityKey = buildBomCapacityKey(entry);
-  const compatible = slots.filter((slot) => slot.capacityKey === capacityKey && slot.remaining > 0);
-  if (compatible.reduce((sum, slot) => sum + slot.remaining, 0) < groupSize) {
-    return [];
-  }
-
+function planBomSlotAllocation(
+  entry: BOMEntry,
+  slots: BomSlot[],
+  groupSize: number,
+  identitySource: MatchIdentitySource,
+  scopeConfirmed: boolean
+): BomSlotAllocation[] {
+  const allocationKey = buildBomAllocationKey(entry, identitySource, scopeConfirmed);
+  const compatible = slots.filter(
+    (slot) => buildBomAllocationKey(slot.entry, identitySource, scopeConfirmed) === allocationKey && slot.remaining > 0
+  );
   const plan: BomSlotAllocation[] = [];
   let remaining = groupSize;
   for (const slot of compatible) {
@@ -301,7 +356,7 @@ function planBomSlotAllocation(entry: BOMEntry, slots: BomSlot[], groupSize: num
     remaining -= count;
   }
 
-  return remaining === 0 ? plan : [];
+  return plan;
 }
 
 function findBestMatch(
@@ -322,6 +377,7 @@ function findBestMatch(
   if (designationMatch) {
     return withDetailDimensionState(part, withThicknessMismatchDetails(part, {
       ...designationMatch,
+      scopeConfirmed: getScopeConfirmed(part, designationMatch.bomEntry),
       identityConfirmed: true,
       identitySource: 'designation',
     }));
@@ -331,15 +387,46 @@ function findBestMatch(
   if (profileGeometryMatch) {
     const bomKey = extractDesignationKey(profileGeometryMatch.entry.designation);
     const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
-    const identity = getGeometryIdentity(part, profileGeometryMatch.entry);
+    const evidence = getGeometryEvidence(part, profileGeometryMatch.entry, profileGeometryMatch.confidence);
     return withDetailDimensionState(part, {
       bomEntry: profileGeometryMatch.entry,
       detail,
       matchType: 'geometry',
       matchConfidence: profileGeometryMatch.confidence,
       matchDetails: profileGeometryMatch.details,
-      ...identity,
+      ...evidence,
     });
+  }
+
+  const nameMatch = findNameMatch(part, eligibleBom, rejectedDetails);
+  if (nameMatch) {
+    const bomKey = extractDesignationKey(nameMatch.entry.designation);
+    const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
+    if (isThicknessCompatibleWithCandidate(part, nameMatch.entry, detail)) {
+      return withDetailDimensionState(part, {
+        bomEntry: nameMatch.entry,
+        detail,
+        matchType: nameMatch.type,
+        matchConfidence: detail ? Math.max(nameMatch.confidence, 0.7) : nameMatch.confidence,
+        matchDetails: nameMatch.details,
+        scopeConfirmed: getScopeConfirmed(part, nameMatch.entry),
+        identityConfirmed: true,
+        identitySource: 'name',
+      });
+    }
+    if (nameMatch.type === 'exact') {
+      return withDetailDimensionState(part, withThicknessMismatchDetails(part, {
+        bomEntry: nameMatch.entry,
+        detail,
+        matchType: nameMatch.type,
+        matchConfidence: detail ? Math.max(nameMatch.confidence, 0.7) : nameMatch.confidence,
+        matchDetails: nameMatch.details,
+        scopeConfirmed: getScopeConfirmed(part, nameMatch.entry),
+        identityConfirmed: true,
+        identitySource: 'name',
+      }));
+    }
+    rejectedDetails.push(buildThicknessRejectedDetails(part, nameMatch.entry, detail));
   }
 
   const assemblyScopedBom = eligibleBom.filter(
@@ -355,48 +442,17 @@ function findBestMatch(
       matchType: 'geometry',
       matchConfidence: assemblyScopedGeometryMatch.confidence,
       matchDetails: assemblyScopedGeometryMatch.details,
-      ...getGeometryIdentity(part, assemblyScopedGeometryMatch.entry),
+      ...getGeometryEvidence(part, assemblyScopedGeometryMatch.entry, assemblyScopedGeometryMatch.confidence),
       dimensionMismatch: assemblyScopedGeometryMatch.dimensionMismatch,
       dimensionMismatchNote: assemblyScopedGeometryMatch.dimensionMismatchNote,
     });
-  }
-
-  const nameMatch = findNameMatch(part, eligibleBom, rejectedDetails);
-  if (nameMatch) {
-    const bomKey = extractDesignationKey(nameMatch.entry.designation);
-    const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
-    const assemblyIdentity = getGeometryIdentity(part, nameMatch.entry);
-    const nameIdentity = assemblyIdentity.identityConfirmed
-      ? assemblyIdentity
-      : { identityConfirmed: true, identitySource: 'name' as const };
-    if (isThicknessCompatibleWithCandidate(part, nameMatch.entry, detail)) {
-      return withDetailDimensionState(part, {
-        bomEntry: nameMatch.entry,
-        detail,
-        matchType: nameMatch.type,
-        matchConfidence: detail ? Math.max(nameMatch.confidence, 0.7) : nameMatch.confidence,
-        matchDetails: nameMatch.details,
-        ...nameIdentity,
-      });
-    }
-    if (nameMatch.type === 'exact') {
-      return withDetailDimensionState(part, withThicknessMismatchDetails(part, {
-        bomEntry: nameMatch.entry,
-        detail,
-        matchType: nameMatch.type,
-        matchConfidence: detail ? Math.max(nameMatch.confidence, 0.7) : nameMatch.confidence,
-        matchDetails: nameMatch.details,
-        ...nameIdentity,
-      }));
-    }
-    rejectedDetails.push(buildThicknessRejectedDetails(part, nameMatch.entry, detail));
   }
 
   const geometryMatch = findGeometryMatch(part, eligibleBom, rejectedDetails);
   if (geometryMatch) {
     const bomKey = extractDesignationKey(geometryMatch.entry.designation);
     const detail = bomKey ? detailsByDesignation.get(bomKey) ?? null : null;
-    const identity = getGeometryIdentity(part, geometryMatch.entry);
+    const evidence = getGeometryEvidence(part, geometryMatch.entry, geometryMatch.confidence);
     if (isThicknessCompatibleWithCandidate(part, geometryMatch.entry, detail)) {
       return withDetailDimensionState(part, {
         bomEntry: geometryMatch.entry,
@@ -404,7 +460,7 @@ function findBestMatch(
         matchType: 'geometry',
         matchConfidence: geometryMatch.confidence,
         matchDetails: geometryMatch.details,
-        ...identity,
+        ...evidence,
         dimensionMismatch: geometryMatch.dimensionMismatch,
         dimensionMismatchNote: geometryMatch.dimensionMismatchNote,
       });
@@ -423,6 +479,7 @@ function findBestMatch(
     matchType: 'none',
     matchConfidence: 0,
     matchDetails: rejectedDetails[0] ?? '',
+    scopeConfirmed: false,
     identityConfirmed: false,
     identitySource: null,
     dimensionMismatch: false,
@@ -649,7 +706,7 @@ function findDetailMatch(
       continue;
     }
     const bomEntry = eligibleBomForDetail[0] ?? null;
-    const identity = getGeometryIdentity(part, bomEntry);
+    const scopeConfirmed = getScopeConfirmed(part, bomEntry);
 
     if (!isThicknessCompatibleWithCandidate(part, null, detail)) {
       rejectedDetails.push(buildThicknessRejectedDetails(part, null, detail));
@@ -657,7 +714,7 @@ function findDetailMatch(
     }
 
     const geometry = detailGeometryMatchScore(part, detail, {
-      identityConfirmedByAssemblyPath: identity.identitySource === 'assembly_path',
+      scopeConfirmed,
     });
     if (geometry.score < 0.8 || geometry.strongMatches < 2) {
       const rejection = geometry.details.find((item) => item.startsWith('unfolding rejected'));
@@ -674,7 +731,7 @@ function findDetailMatch(
         matchType: 'geometry',
         matchConfidence: geometry.score,
         matchDetails: `detail_geometry: ${geometry.details.join('; ')}`,
-        ...identity,
+        ...getGeometryEvidence(part, bomEntry, geometry.score),
         dimensionMismatch: geometry.dimensionMismatch ?? false,
         dimensionMismatchNote: geometry.dimensionMismatchNote ?? null,
       };
@@ -747,7 +804,7 @@ function profileGeometryMatchScore(
 function detailGeometryMatchScore(
   part: PartForMatching,
   detail: DetailEntry,
-  options: { identityConfirmedByAssemblyPath?: boolean } = {}
+  options: { scopeConfirmed?: boolean } = {}
 ): GeometryScore {
   const details: string[] = [];
   let score = 0;
@@ -755,7 +812,7 @@ function detailGeometryMatchScore(
   const detailDims = getDetailUnfoldingDims(detail);
   const partDims = getPartUnfoldingDims(part);
   const unfoldingMismatch = buildUnfoldingMismatchReason(partDims, detailDims, 'detail');
-  if (unfoldingMismatch && !options.identityConfirmedByAssemblyPath) {
+  if (unfoldingMismatch && !options.scopeConfirmed) {
     return {
       score: 0.5,
       details: [unfoldingMismatch],
@@ -807,9 +864,9 @@ function detailGeometryMatchScore(
     score += 0.05;
     details.push('name token match');
   }
-  if (options.identityConfirmedByAssemblyPath) {
+  if (options.scopeConfirmed) {
     score += 0.3;
-    details.push('identity: parent assembly found in STEP path');
+    details.push('scope: parent assembly found in STEP path');
   }
 
   return {
@@ -834,8 +891,8 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
   const unfoldingMismatch = bomDims.partType === 'sheet' && part.hasBends
     ? buildUnfoldingMismatchReason(getPartUnfoldingDims(part), bomUnfoldingDims, 'BOM')
     : null;
-  const identityConfirmedByAssemblyPath = getAssemblyScopeState(part, bom.parentAssembly) === 'confirmed';
-  if (unfoldingMismatch && !identityConfirmedByAssemblyPath) {
+  const scopeConfirmed = getAssemblyScopeState(part, bom.parentAssembly) === 'confirmed';
+  if (unfoldingMismatch && !scopeConfirmed) {
     return {
       score: 0.5,
       details: [unfoldingMismatch],
@@ -903,9 +960,9 @@ function geometryMatchScore(part: PartForMatching, bom: BOMEntry): GeometryScore
       details.push(`type: ${bomDims.partType}`);
     }
   }
-  if (identityConfirmedByAssemblyPath) {
+  if (scopeConfirmed) {
     score += 0.2;
-    details.push('identity: parent assembly found in STEP path');
+    details.push('scope: parent assembly found in STEP path');
   }
 
   return {
@@ -1233,6 +1290,7 @@ function buildMatchResult(
   matchType: MatchType,
   matchConfidence: number,
   matchDetails: string,
+  scopeConfirmed: boolean,
   identityConfirmed: boolean,
   identitySource: MatchIdentitySource,
   dimensionMismatch: boolean,
@@ -1252,6 +1310,7 @@ function buildMatchResult(
     matchConfidence,
     matchDetails,
     bomParentAssembly: bomEntry?.parentAssembly || '',
+    scopeConfirmed,
     identityConfirmed,
     identitySource,
     dimensionMismatch,
@@ -1722,6 +1781,25 @@ function buildBomCapacityKey(entry: BOMEntry): string {
     normalizeAssemblyIdentity(entry.parentAssembly),
     entry.designation.trim().toLowerCase(),
     (entry.description || entry.name).trim().toLowerCase(),
+    entry.partType,
+    entry.thicknessMm ?? '',
+    entry.widthMm ?? '',
+    entry.heightMm ?? '',
+  ].join('__');
+}
+
+function buildBomAllocationKey(
+  entry: BOMEntry,
+  identitySource: MatchIdentitySource,
+  scopeConfirmed: boolean
+): string {
+  if (identitySource !== 'name') {
+    return buildBomCapacityKey(entry);
+  }
+
+  return [
+    scopeConfirmed ? normalizeAssemblyIdentity(entry.parentAssembly) : '',
+    normalize(entry.description || entry.name),
     entry.partType,
     entry.thicknessMm ?? '',
     entry.widthMm ?? '',

@@ -12,6 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ROUTES } from '@/lib/constants/routes'
+import { isAIMatchApplyEligible } from '@/lib/nesting/ai-match-policy'
 import { getDimensionChoice, POSSIBLE_FOLDED_VIEW_HINT } from '@/lib/nesting/dimension-choice'
 import type { AIAnalysisResponse, AIMatchResult, AIStatus, ApplyBOMBlockedRow, NestingPart, PartType } from '@/lib/nesting/api'
 
@@ -71,12 +72,15 @@ export function AIAnalysisPanel({
   const proposedMatches = useMemo(() => {
     return activeMatches.filter((match) => isProposed(match))
   }, [activeMatches])
+  const applicableProposedMatches = useMemo(() => {
+    return proposedMatches.filter((match) => isAIMatchApplyEligible(match))
+  }, [proposedMatches])
   const appliedMatches = useMemo(() => {
     return activeMatches.filter((match) => isApplied(match))
   }, [activeMatches])
   const selectedProposedMatches = useMemo(
-    () => proposedMatches.filter((match) => selected[match.partId]),
-    [proposedMatches, selected]
+    () => applicableProposedMatches.filter((match) => selected[match.partId]),
+    [applicableProposedMatches, selected]
   )
   const selectedAppliedMatches = useMemo(
     () => appliedMatches.filter((match) => selected[match.partId]),
@@ -399,7 +403,7 @@ export function AIAnalysisPanel({
                         const proposed = isProposed(match)
                         const dimensionChoice = getDimensionChoice(match, part)
                         const needsForce = canForce(match, part)
-                        const canSelect = canManage && (proposed || applied)
+                        const canSelect = canManage && ((proposed && isAIMatchApplyEligible(match)) || applied)
 
                         return (
                           <TableRow key={match.partId}>
@@ -423,9 +427,16 @@ export function AIAnalysisPanel({
                               {match.matchType === 'none' ? (
                                 <span className="text-[#6B7280]">—</span>
                               ) : (
-                                <Badge variant={match.matchType === 'geometry' ? 'default' : 'outline'}>
-                                  {matchTypeLabel(match.matchType)}
-                                </Badge>
+                                <div className="flex flex-col items-start gap-1">
+                                  <Badge variant={match.matchType === 'geometry' ? 'default' : 'outline'}>
+                                    {matchTypeLabel(match.matchType)}
+                                  </Badge>
+                                  {match.scopeConfirmed && !match.identityConfirmed ? (
+                                    <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                                      Сборка подтверждена, деталь — нет
+                                    </Badge>
+                                  ) : null}
+                                </div>
                               )}
                             </TableCell>
                             <TableCell>
@@ -571,6 +582,11 @@ export function AIAnalysisPanel({
                                     {dimensionChoice.isConflict ? 'Применить размеры из PDF' : 'Применить принудительно'}
                                   </Button>
                                 ) : null}
+                                {proposed && !isAIMatchApplyEligible(match) ? (
+                                  <span className="max-w-[220px] text-xs text-amber-700">
+                                    Недоступно: нужна подтверждённая деталь и уверенность не ниже 80%
+                                  </span>
+                                ) : null}
                                 {applied ? (
                                   <Button type="button" variant="outline" size="sm" onClick={() => revertMatches([match.partId])} disabled={!canManage || isApplying}>
                                     <Undo2 className="mr-1 h-3.5 w-3.5" />
@@ -631,7 +647,7 @@ export function AIAnalysisPanel({
                 )}
 
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={applySelected} disabled={!canManage || isApplying || proposedMatches.length === 0}>
+                  <Button type="button" onClick={applySelected} disabled={!canManage || isApplying || applicableProposedMatches.length === 0}>
                     {isApplying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Применить выбранные
                   </Button>
@@ -707,6 +723,9 @@ function ApplyStatusBadge({ match }: { match: AIMatchResult }) {
     if (match.matchConfidence < 0.8) {
       return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Низкая уверенность</Badge>
     }
+    if (!match.identityConfirmed) {
+      return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Личность не подтверждена</Badge>
+    }
 
     return <Badge variant="outline">Предложено</Badge>
   }
@@ -776,7 +795,7 @@ function isProposed(match: AIMatchResult) {
 }
 
 function canForce(match: AIMatchResult, part: NestingPart | undefined) {
-  if (!part || !hasSuggestion(match) || isApplied(match)) return false
+  if (!part || !hasSuggestion(match) || isApplied(match) || !isAIMatchApplyEligible(match)) return false
 
   const hasBlockedThickness = match.thicknessMismatch && typeof match.suggestedThickness === 'number'
   const hasBlockedDimensions = getDimensionChoice(match, part).isConflict
@@ -784,7 +803,7 @@ function canForce(match: AIMatchResult, part: NestingPart | undefined) {
 }
 
 function isDefaultSelected(match: AIMatchResult) {
-  return match.matchConfidence >= 0.8
+  return isAIMatchApplyEligible(match)
 }
 
 function countSuggestedFields(match: AIMatchResult) {

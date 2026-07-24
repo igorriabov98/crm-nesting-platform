@@ -17,6 +17,7 @@ import {
 } from '../lib/ai/apply-control';
 import { markProjectRecalculationRequired } from '../lib/ai/project-recalculation';
 import { prepareBOMApplyUpdate, type BOMApplyBlockedRow } from '../lib/ai/bom-apply';
+import { isMatchEligibleForApply } from '../lib/ai/bom-matcher';
 import {
   aiSettingsInputSchema,
   getAISettingsView,
@@ -149,6 +150,29 @@ export async function aiProjectRoutes(app: FastifyInstance) {
   app.post('/:id/apply-bom', async (request) => {
     const { id } = idParamSchema.parse(request.params);
     const body = applyBomSchema.parse(request.body ?? {});
+    const specification = await getProjectSpecification(id);
+    const storedMatchesByPartId = new Map(
+      (specification?.matches ?? []).map((match) => [match.partId, match])
+    );
+    const ineligibleMatch = body.matches.find((match) => {
+      const storedMatch = storedMatchesByPartId.get(match.partId);
+      return !storedMatch || !isMatchEligibleForApply(storedMatch);
+    });
+    if (ineligibleMatch) {
+      const storedMatch = storedMatchesByPartId.get(ineligibleMatch.partId);
+      throw new AppError(
+        409,
+        storedMatch
+          ? 'Совпадение нельзя применить: требуется подтверждённая идентичность и уверенность не ниже 80%'
+          : 'Совпадение отсутствует в сохранённом анализе проекта',
+        {
+          partId: ineligibleMatch.partId,
+          matchConfidence: storedMatch?.matchConfidence ?? null,
+          scopeConfirmed: storedMatch?.scopeConfirmed ?? false,
+          identityConfirmed: storedMatch?.identityConfirmed ?? false,
+        }
+      );
+    }
     const parts = await prisma.part.findMany({
       where: { projectId: id, id: { in: body.matches.map((match) => match.partId) }, isActive: true },
       select: {
