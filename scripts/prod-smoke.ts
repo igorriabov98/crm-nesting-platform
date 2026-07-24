@@ -59,36 +59,27 @@ async function main() {
       method: 'POST',
       headers: crmJsonHeaders(),
     });
-    const suggestedMatch = assertDetailMatch(analysis);
-    const applyResult = await readJson('apply suggested detail match', `${crmUrl}/api/nesting/ai/apply/${projectId}`, {
-      method: 'POST',
-      headers: crmJsonHeaders(),
-      body: JSON.stringify({
-        matches: [matchToApplyPayload(suggestedMatch)],
-      }),
-    });
-    assertField(applyResult, ['updated'], 1, 'manual detail apply must update one part');
-    assertField(applyResult, ['results', '0', 'status'], 'applied', 'manual detail apply must not require force');
+    const matchedDetail = assertDetailMatch(analysis);
 
     const specification = await readJson(
-      'specification after manual apply',
+      'specification after automatic apply',
       serviceUrl(`/api/projects/${projectId}/specification`),
       { headers: serviceHeaders() }
     );
-    const appliedMatch = findMatchByPartId(specification, String(suggestedMatch.partId));
-    assert(appliedMatch, 'manually applied match must remain in the specification');
-    assert(appliedMatch.applyStatus === 'applied_manual', 'match applyStatus must be applied_manual');
+    const appliedMatch = findMatchByPartId(specification, String(matchedDetail.partId));
+    assert(appliedMatch, 'automatically applied match must remain in the specification');
+    assert(appliedMatch.applyStatus === 'applied_auto', 'high-confidence geometry match must be applied_auto');
 
-    const parts = await readJson('parts after manual apply', serviceUrl(`/api/projects/${projectId}/parts`), {
+    const parts = await readJson('parts after automatic apply', serviceUrl(`/api/projects/${projectId}/parts`), {
       headers: serviceHeaders(),
     });
     const appliedPart = (readPath<unknown[]>(parts, ['data']) || []).find((candidate) =>
-      (candidate as Json).id === suggestedMatch.partId
+      (candidate as Json).id === matchedDetail.partId
     ) as Json | undefined;
-    assert(appliedPart, 'manually applied part must be returned by parts endpoint');
+    assert(appliedPart, 'automatically applied part must be returned by parts endpoint');
     assert(
-      appliedPart.steelTypeId === suggestedMatch.suggestedSteelTypeId,
-      'manual apply must persist the resolved steelTypeId in Part'
+      appliedPart.steelTypeId === matchedDetail.suggestedSteelTypeId,
+      'automatic apply must persist the resolved steelTypeId in Part'
     );
 
     await readJson('calculate', serviceUrl(`/api/projects/${projectId}/calculate`), {
@@ -201,10 +192,12 @@ function assertDetailMatch(payload: Json): Json {
     );
   }) as Json | undefined;
   assert(match, 'expected geometry match with detail unfolding');
-  assert(match.identityConfirmed === false, 'geometry-only smoke match must remain identity-unconfirmed');
-  assert(match.applyStatus === 'suggested', 'identity-unconfirmed geometry match must be suggested');
-  assert(match.autoApplied === false, 'identity-unconfirmed geometry match must not be auto-applied');
-  assert(Number(match.matchConfidence) >= 0.7, 'detail geometry confidence must be >= 0.7');
+  assert(match.scopeConfirmed === false, 'detail-only smoke fixture has no BOM assembly scope');
+  assert(match.identityConfirmed === true, 'high-confidence geometry must confirm the detail identity');
+  assert(match.identitySource === 'geometry', 'geometry must be recorded as the identity source');
+  assert(match.applyStatus === 'applied_auto', 'high-confidence geometry match must be applied automatically');
+  assert(match.autoApplied === true, 'high-confidence geometry match must be marked auto-applied');
+  assert(Number(match.matchConfidence) >= 0.8, 'detail geometry confidence must be >= 0.8');
   assert(match.steelTypeWarning == null, 'steelTypeWarning must be null');
   assert(match.suggestedSteelTypeId != null, 'suggestedSteelTypeId must be resolved');
   assert(match.suggestedSteelTypeName === 'Ст3сп', 'steel type must be Ст3сп');
@@ -212,23 +205,6 @@ function assertDetailMatch(payload: Json): Json {
   assertClose(Number(match.suggestedUnfoldingWidth), 85.97, 0.2, 'unfolding width');
   assertClose(Number(match.suggestedUnfoldingHeight), 100, 0.2, 'unfolding height');
   return match;
-}
-
-function matchToApplyPayload(match: Json): Json {
-  return {
-    partId: match.partId,
-    material: match.suggestedMaterial || undefined,
-    steelTypeId: match.suggestedSteelTypeId || undefined,
-    steelTypeName: match.suggestedSteelTypeName || undefined,
-    steelTypeRaw: match.suggestedSteelTypeRaw || undefined,
-    quantity: match.suggestedQuantity || undefined,
-    thickness: match.suggestedThickness || undefined,
-    isSheetMetal: match.suggestedIsSheetMetal ?? undefined,
-    partType: match.suggestedPartType ?? undefined,
-    hasBends: match.suggestedHasBends ?? undefined,
-    unfoldingWidth: match.suggestedUnfoldingWidth || undefined,
-    unfoldingHeight: match.suggestedUnfoldingHeight || undefined,
-  };
 }
 
 function findMatchByPartId(payload: Json, partId: string): Json | undefined {

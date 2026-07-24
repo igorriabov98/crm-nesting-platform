@@ -306,8 +306,9 @@ export interface AIMatchResult {
   matchConfidence: number
   matchDetails: string
   bomParentAssembly: string
+  scopeConfirmed: boolean
   identityConfirmed: boolean
-  identitySource: 'assembly_path' | 'designation' | 'name' | null
+  identitySource: 'assembly_path' | 'designation' | 'name' | 'geometry' | null
   dimensionMismatch: boolean
   dimensionMismatchNote: string | null
   suggestedMaterial: string | null

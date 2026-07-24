@@ -21,7 +21,7 @@ export interface SteelTypeCatalogItem {
 
 export type BOMPartType = 'sheet' | 'channel' | 'angle' | 'round_bar' | 'tube' | 'flat_bar' | 'other';
 export type PartType = 'SHEET' | 'PROFILE' | 'PURCHASED';
-export type MatchIdentitySource = 'assembly_path' | 'designation' | 'name' | null;
+export type MatchIdentitySource = 'assembly_path' | 'designation' | 'name' | 'geometry' | null;
 export type PDFAnalysisFailureKind = 'config_error' | 'provider_error' | 'connection_error' | 'truncated' | 'parse_error' | 'empty_bom';
 export type AIAnalysisStatus = 'completed' | 'deterministic_fallback' | 'failed';
 export type AIExtractionSource = 'ai' | 'deterministic-fallback' | 'none';
@@ -134,6 +134,7 @@ export interface MatchResult {
   matchConfidence: number;
   matchDetails: string;
   bomParentAssembly: string;
+  scopeConfirmed: boolean;
   identityConfirmed: boolean;
   identitySource: MatchIdentitySource;
   dimensionMismatch: boolean;

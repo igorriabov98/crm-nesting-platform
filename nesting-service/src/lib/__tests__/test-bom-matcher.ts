@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { isMatchEligibleForAutoApply, matchBOMToParts, normalizePartClusterName } from '../ai/bom-matcher';
+import {
+  isMatchEligibleForApply,
+  isMatchEligibleForAutoApply,
+  matchBOMToParts,
+  normalizePartClusterName,
+} from '../ai/bom-matcher';
 import { applyDimensionGuard } from '../ai/dimension-guard';
 import { resolveBOMSteelTypes } from '../ai/steel-types';
 import type { BOMEntry, DetailEntry, PartForMatching } from '../ai/types';
@@ -14,6 +19,9 @@ const duplicateMatches = matchBOMToParts(duplicateBom, duplicateParts);
 assert.equal(duplicateMatches.length, 2);
 assert.equal(duplicateMatches[0].matchType, 'exact');
 assert.equal(duplicateMatches[1].matchType, 'exact');
+assert.equal(duplicateMatches[0].identityConfirmed, true);
+assert.equal(duplicateMatches[0].identitySource, 'name');
+assert.equal(isMatchEligibleForApply(duplicateMatches[0]), true);
 assert.equal(duplicateMatches[0].suggestedQuantity, null);
 assert.equal(duplicateMatches[1].suggestedQuantity, null);
 
@@ -54,7 +62,7 @@ const exhaustedParts = [
 ];
 const exhaustedMatches = matchBOMToParts(exhaustedBom, exhaustedParts);
 
-assert.equal(exhaustedMatches[0].matchType, 'none');
+assert.equal(exhaustedMatches[0].matchType, 'exact');
 assert.equal(exhaustedMatches[1].matchType, 'none');
 
 const thicknessMismatchMatches = matchBOMToParts(
@@ -100,7 +108,7 @@ const designationParts = [
 const designationMatches = matchBOMToParts(designationBom, designationParts, designationDetails);
 
 assert.equal(designationMatches[0].matchType, 'designation');
-assert.equal(designationMatches[0].matchConfidence, 0.75);
+assert.equal(designationMatches[0].matchConfidence, 0.95);
 assert.equal(designationMatches[0].bomDesignation, 'ЛЕДА.024.00.008');
 assert.equal(designationMatches[0].suggestedUnfoldingWidth, 787);
 assert.equal(designationMatches[0].suggestedUnfoldingHeight, 356);
@@ -160,7 +168,7 @@ const suffixParts = [
 const suffixMatches = matchBOMToParts(suffixBom, suffixParts, suffixDetails);
 
 assert.equal(suffixMatches[0].matchType, 'designation');
-assert.equal(suffixMatches[0].matchConfidence, 0.75);
+assert.equal(suffixMatches[0].matchConfidence, 0.95);
 assert.equal(suffixMatches[0].bomDesignation, 'ЛЕДА.024.00.006-01');
 assert.equal(suffixMatches[0].suggestedThickness, null);
 assert.equal(suffixMatches[0].suggestedUnfoldingWidth, 725);
@@ -572,6 +580,26 @@ assert.deepEqual(duplicateBomRowsMatches.map((match) => match.bomPosition).sort(
 assert.equal(duplicateBomRowsMatches.every((match) => match.suggestedQuantity === null), true);
 assert.equal(duplicateBomRowsMatches.every((match) => /qty group: BOM=1, STEP bodies=2, allocated=2/.test(match.matchDetails)), true);
 
+const capacityLimitedMatches = matchBOMToParts(
+  [createBom({
+    position: '19',
+    name: 'Заглушка квадратная внутренняя 30x30',
+    bomSection: 'Прочие изделия',
+    quantity: 4,
+  })],
+  Array.from({ length: 5 }, (_, index) => createPart({
+    id: `capacity-plug-${index + 1}`,
+    name: 'Заглушка квадратная внутренняя 30x30',
+    thickness: 5,
+  }))
+);
+assert.equal(capacityLimitedMatches.filter((match) => match.bomPosition === '19').length, 4);
+assert.equal(capacityLimitedMatches.filter((match) => match.matchType === 'none').length, 1);
+assert.match(
+  capacityLimitedMatches.find((match) => match.matchType === 'none')?.matchDetails ?? '',
+  /qty capacity exhausted/
+);
+
 const differentProductMatches = matchBOMToParts(
   [createBom({ position: '10', description: 'BL 2 x 702 x 1656', partType: 'sheet', thicknessMm: 2, widthMm: 702, heightMm: 1656, quantity: 2 })],
   [
@@ -660,6 +688,90 @@ const crossAssemblyFalseMatch = matchBOMToParts(
 );
 assert.equal(crossAssemblyFalseMatch[0].matchType, 'none', 'geometry across different assembly paths must be rejected');
 
+const scopeOnlyLowConfidenceMatch = matchBOMToParts(
+  [createBom({
+    position: '19',
+    name: 'Заглушка квадратная внутренняя 30x30',
+    bomSection: 'Прочие изделия',
+    parentAssembly: 'ЛЕДА.228.02.000',
+    partType: 'other',
+    widthMm: 30,
+    heightMm: 30,
+    quantity: 4,
+  })],
+  [createPart({
+    id: 'leda-reused-tube',
+    name: 'ЛЕДА.122.01.003 Труба',
+    assemblyPath: [
+      'ЛЕДА.228.00.000 Изделие',
+      'ЛЕДА.228.02.000 Крышка передняя',
+      'ЛЕДА.122.01.003 Труба',
+    ],
+    thickness: 2,
+    width: 85.5,
+    height: 115.2,
+    bboxSizeX: 30,
+    bboxSizeY: 85.5,
+    bboxSizeZ: 115.2,
+    isSheetMetal: false,
+  })]
+);
+assert.equal(scopeOnlyLowConfidenceMatch[0].matchType, 'geometry');
+assert.equal(scopeOnlyLowConfidenceMatch[0].bomName, 'Заглушка квадратная внутренняя 30x30');
+assert.equal(scopeOnlyLowConfidenceMatch[0].scopeConfirmed, true);
+assert.equal(scopeOnlyLowConfidenceMatch[0].identityConfirmed, false);
+assert.equal(scopeOnlyLowConfidenceMatch[0].matchConfidence < 0.8, true);
+assert.equal(isMatchEligibleForApply(scopeOnlyLowConfidenceMatch[0]), false);
+assert.equal(isMatchEligibleForAutoApply(scopeOnlyLowConfidenceMatch[0]), false);
+
+const plugCapacityProtectsScopedTubes = matchBOMToParts(
+  [createBom({
+    position: '19',
+    name: 'Заглушка квадратная внутренняя 30x30',
+    bomSection: 'Прочие изделия',
+    parentAssembly: 'ЛЕДА.228.02.000',
+    partType: 'other',
+    widthMm: 30,
+    heightMm: 30,
+    quantity: 4,
+  })],
+  [
+    ...Array.from({ length: 4 }, (_, index) => createPart({
+      id: `real-plug-${index + 1}`,
+      name: 'Заглушка квадратная внутренняя 30x30',
+      assemblyPath: ['ЛЕДА.228.02.000 Крышка передняя', `Заглушка_${index + 1}`],
+      thickness: 5,
+      bboxSizeX: 18.5,
+      bboxSizeY: 30.2,
+      bboxSizeZ: 30.2,
+      isSheetMetal: false,
+    })),
+    ...Array.from({ length: 3 }, (_, index) => createPart({
+      id: `scoped-tube-${index + 1}`,
+      name: 'ЛЕДА.122.01.003 Труба',
+      assemblyPath: ['ЛЕДА.228.02.000 Крышка передняя', `ЛЕДА.122.01.003 Труба_${index + 1}`],
+      thickness: 2,
+      width: 85.5,
+      height: 115.2,
+      bboxSizeX: 30,
+      bboxSizeY: 85.5,
+      bboxSizeZ: 115.2,
+      isSheetMetal: false,
+    })),
+  ]
+);
+assert.equal(
+  plugCapacityProtectsScopedTubes.filter((match) => match.bomName === 'Заглушка квадратная внутренняя 30x30').length,
+  4
+);
+assert.equal(
+  plugCapacityProtectsScopedTubes
+    .filter((match) => match.partName.includes('ЛЕДА.122.01.003'))
+    .every((match) => match.matchType === 'none'),
+  true,
+  'plug capacity must be consumed by real plugs before scoped low-confidence tubes'
+);
+
 const reusedBodyIdentityMatch = matchBOMToParts(
   [
     createBom({
@@ -706,12 +818,14 @@ const reusedBodyIdentityMatch = matchBOMToParts(
     massKg: 14.6,
   })]
 );
-assert.equal(reusedBodyIdentityMatch[0].matchType, 'geometry');
+assert.equal(reusedBodyIdentityMatch[0].matchType, 'contains');
 assert.equal(reusedBodyIdentityMatch[0].bomDesignation, 'ЛЕДА.228.02.001');
+assert.equal(reusedBodyIdentityMatch[0].scopeConfirmed, true);
 assert.equal(reusedBodyIdentityMatch[0].identityConfirmed, true);
-assert.equal(reusedBodyIdentityMatch[0].identitySource, 'assembly_path');
+assert.equal(reusedBodyIdentityMatch[0].identitySource, 'name');
 assert.equal(reusedBodyIdentityMatch[0].dimensionMismatch, true);
 assert.match(String(reusedBodyIdentityMatch[0].dimensionMismatchNote), /mismatch=8\./);
+assert.equal(isMatchEligibleForApply(reusedBodyIdentityMatch[0]), true);
 assert.equal(isMatchEligibleForAutoApply(reusedBodyIdentityMatch[0]), true);
 const reusedBodyDimensionGuard = applyDimensionGuard(
   {},
@@ -748,8 +862,10 @@ const unconfirmedGeometryMatch = matchBOMToParts(
   })]
 );
 assert.equal(unconfirmedGeometryMatch[0].matchType, 'geometry');
-assert.equal(unconfirmedGeometryMatch[0].identityConfirmed, false);
-assert.equal(isMatchEligibleForAutoApply(unconfirmedGeometryMatch[0]), false, 'unconfirmed geometry must remain suggested');
+assert.equal(unconfirmedGeometryMatch[0].scopeConfirmed, false);
+assert.equal(unconfirmedGeometryMatch[0].identityConfirmed, true, 'high-confidence geometry confirms the row without assembly scope');
+assert.equal(unconfirmedGeometryMatch[0].identitySource, 'geometry');
+assert.equal(isMatchEligibleForAutoApply(unconfirmedGeometryMatch[0]), true);
 
 console.log('[bom-matcher] all tests passed');
 

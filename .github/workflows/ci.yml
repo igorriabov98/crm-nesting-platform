@@ -42,6 +42,8 @@ jobs:
         run: npm run test:supply-order-view
       - name: Nesting STEP/PDF dimension choice
         run: npm run test:nesting-dimension-choice
+      - name: Nesting AI match application policy
+        run: npm run test:nesting-ai-match-policy
       - name: Typecheck nesting-service
         run: npx tsc --noEmit
         working-directory: nesting-service
