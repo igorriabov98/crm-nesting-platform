@@ -6,6 +6,7 @@ import { SupplyOrderSummaryPage } from '@/components/features/supply-orders/Supp
 import { getSupplyOrderAggregates, getSupplyOrderFactories, getSupplyOrderHistory, getSupplyOrders } from '@/lib/actions/supply-orders'
 import { getSuppliers } from '@/lib/actions/suppliers'
 import { ROUTES } from '@/lib/constants/routes'
+import { normalizeSupplyRequestId } from '@/lib/supply-request-flow'
 
 export const metadata = {
   title: 'Что нужно заказать — CRM Завода',
@@ -14,10 +15,11 @@ export const metadata = {
 export default async function SupplyOrdersRoute({
   searchParams,
 }: {
-  searchParams?: Promise<{ page?: string; view?: string; factory?: string }>
+  searchParams?: Promise<{ page?: string; view?: string; factory?: string; request?: string }>
 }) {
   const resolvedSearchParams = await searchParams
   const page = Math.max(0, Number(resolvedSearchParams?.page || 1) - 1)
+  const requestedRequestId = normalizeSupplyRequestId(resolvedSearchParams?.request)
   const activeView = resolvedSearchParams?.view === 'details'
     ? 'details'
     : resolvedSearchParams?.view === 'history'
@@ -76,7 +78,7 @@ export default async function SupplyOrdersRoute({
         ? <SummaryView requestedFactoryId={resolvedSearchParams?.factory || null} />
         : activeView === 'history'
           ? <HistoryView page={page} />
-        : <DetailsView page={page} />}
+        : <DetailsView page={page} requestId={requestedRequestId} />}
     </div>
   )
 }
@@ -143,9 +145,9 @@ async function HistoryView({ page }: { page: number }) {
   )
 }
 
-async function DetailsView({ page }: { page: number }) {
+async function DetailsView({ page, requestId }: { page: number; requestId: string | null }) {
   const [{ data: orders, error, pagination }, { data: suppliers }] = await Promise.all([
-    getSupplyOrders(page, 50),
+    getSupplyOrders(page, 50, requestId),
     getSuppliers({ active_only: true }),
   ])
 
@@ -154,12 +156,29 @@ async function DetailsView({ page }: { page: number }) {
   }
 
   return (
-    <SupplyOrdersPage
-      items={orders || []}
-      suppliers={suppliers || []}
-      page={pagination?.page || page}
-      pageSize={pagination?.pageSize || 50}
-      total={pagination?.total || 0}
-    />
+    <div className="space-y-4">
+      {requestId && (
+        <section className="flex flex-col gap-3 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Показана выбранная заявка</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">На странице оставлены только позиции текущего заказа снабжения.</p>
+          </div>
+          <Link
+            href={`${ROUTES.SUPPLY_ORDERS}?view=details`}
+            className="w-fit rounded-sm text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Показать все заявки
+          </Link>
+        </section>
+      )}
+      <SupplyOrdersPage
+        items={orders || []}
+        suppliers={suppliers || []}
+        page={pagination?.page || page}
+        pageSize={pagination?.pageSize || 50}
+        total={pagination?.total || 0}
+        emptyMessage={requestId ? 'По этой заявке нет позиций к заказу: потребность полностью закрыта складом.' : undefined}
+      />
+    </div>
   )
 }

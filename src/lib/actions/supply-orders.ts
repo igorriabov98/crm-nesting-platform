@@ -912,7 +912,7 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
   }))
 }
 
-export async function getSupplyOrders(page = 0, pageSize = 50) {
+export async function getSupplyOrders(page = 0, pageSize = 50, requestId: string | null = null) {
   try {
     const { db } = await requireAccess()
     const safePage = Math.max(0, Number.isFinite(page) ? Math.floor(page) : 0)
@@ -920,11 +920,14 @@ export async function getSupplyOrders(page = 0, pageSize = 50) {
     const from = safePage * safePageSize
     const to = from + safePageSize - 1
 
-    const { data: requestsData, error, count } = await db
+    let requestsQuery = db
       .from('technologist_requests')
       .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)', { count: 'exact' })
       .in('status', ['submitted_to_supply', 'completed'])
       .eq('machines.is_archived', false)
+    if (requestId) requestsQuery = requestsQuery.eq('id', requestId)
+
+    const { data: requestsData, error, count } = await requestsQuery
       .order('submitted_at', { ascending: false })
       .range(from, to)
     if (error) throw new Error(error.message || 'Не удалось загрузить заявки')
