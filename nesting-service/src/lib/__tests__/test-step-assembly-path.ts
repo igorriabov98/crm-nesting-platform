@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { extractMeshMetadata } from '../step-parser';
 import { extractStepOccurrenceMetadata } from '../step-source-names';
 
 const step = Buffer.from(`
@@ -36,4 +37,42 @@ assert.deepEqual(metadata.get(1), {
   ],
 });
 
-console.log('[step-assembly-path] nested NEXT_ASSEMBLY_USAGE_OCCURRENCE paths passed');
+const translatorRootStep = Buffer.from(`
+ISO-10303-21;
+DATA;
+#21=PRODUCT('Open CASCADE STEP translator 7.9 3','','',());
+#22=PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE('','',#21,.NOT_KNOWN.);
+#23=PRODUCT_DEFINITION('design','',#22,$);
+#24=PRODUCT('ЛЕДА.228.02.000 Крышка передняя','','',());
+#25=PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE('','',#24,.NOT_KNOWN.);
+#26=PRODUCT_DEFINITION('design','',#25,$);
+#27=NEXT_ASSEMBLY_USAGE_OCCURRENCE('1','','',#23,#26,$);
+ENDSEC;
+END-ISO-10303-21;
+`, 'utf8');
+const translatorMetadata = extractStepOccurrenceMetadata(translatorRootStep);
+assert.deepEqual(translatorMetadata.get(0), {
+  name: 'ЛЕДА.228.02.000 Крышка передняя',
+  assemblyPath: ['ЛЕДА.228.02.000 Крышка передняя'],
+});
+
+const treeMetadata = extractMeshMetadata({
+  name: 'Open CASCADE STEP translator 7.9 3',
+  children: [{
+    name: 'ЛЕДА.228.02.000 Крышка передняя',
+    meshes: [0],
+  }],
+});
+assert.deepEqual(treeMetadata.get(0), {
+  name: 'ЛЕДА.228.02.000 Крышка передняя',
+  assemblyPath: ['ЛЕДА.228.02.000 Крышка передняя'],
+});
+assert.deepEqual(extractMeshMetadata({
+  name: 'Open CASCADE STEP translator 7.9 3',
+  meshes: [0],
+}).get(0), {
+  name: 'Open CASCADE STEP translator 7.9 3',
+  assemblyPath: [],
+});
+
+console.log('[step-assembly-path] nested paths retain real assemblies and omit translator roots');

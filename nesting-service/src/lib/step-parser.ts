@@ -21,7 +21,11 @@ import {
   simplifyContour,
 } from './geometry';
 import { readBrepPartContours, type BrepContourResult, type BrepPartContour, type KFactorResolver } from './brep/brep-reader';
-import { extractStepOccurrenceMetadata, type StepOccurrenceMetadata } from './step-source-names';
+import {
+  appendStepAssemblyPath,
+  extractStepOccurrenceMetadata,
+  type StepOccurrenceMetadata,
+} from './step-source-names';
 import { normalizeCadText } from './text-encoding';
 import { inferPartTypeFromGeometry, type PartType } from './part-type';
 
@@ -389,9 +393,7 @@ export function extractMeshMetadata(root: OcctNode | undefined): Map<number, Mes
 
   function traverse(node: OcctNode, parentPath: string[]): void {
     const normalizedName = normalizeCadText(node.name?.trim() ?? '');
-    const assemblyPath = normalizedName
-      ? [...parentPath, normalizedName]
-      : parentPath;
+    const assemblyPath = appendStepAssemblyPath(parentPath, normalizedName);
     const nodeName = normalizedName || parentPath[parentPath.length - 1] || '';
 
     for (const meshIndex of node.meshes ?? []) {

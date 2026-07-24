@@ -254,7 +254,6 @@ async function processStepJob(job: StepJob) {
         const aiResult = await analyzeProjectPdf({
           projectId,
           pdfFilePath: retainedPdf.filePath,
-          autoApply: true,
         });
 
         if (aiResult.success && aiResult.analysisStatus === 'completed') {

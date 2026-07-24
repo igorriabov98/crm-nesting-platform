@@ -59,7 +59,37 @@ async function main() {
       method: 'POST',
       headers: crmJsonHeaders(),
     });
-    assertDetailMatch(analysis);
+    const suggestedMatch = assertDetailMatch(analysis);
+    const applyResult = await readJson('apply suggested detail match', `${crmUrl}/api/nesting/ai/apply/${projectId}`, {
+      method: 'POST',
+      headers: crmJsonHeaders(),
+      body: JSON.stringify({
+        matches: [matchToApplyPayload(suggestedMatch)],
+      }),
+    });
+    assertField(applyResult, ['updated'], 1, 'manual detail apply must update one part');
+    assertField(applyResult, ['results', '0', 'status'], 'applied', 'manual detail apply must not require force');
+
+    const specification = await readJson(
+      'specification after manual apply',
+      serviceUrl(`/api/projects/${projectId}/specification`),
+      { headers: serviceHeaders() }
+    );
+    const appliedMatch = findMatchByPartId(specification, String(suggestedMatch.partId));
+    assert(appliedMatch, 'manually applied match must remain in the specification');
+    assert(appliedMatch.applyStatus === 'applied_manual', 'match applyStatus must be applied_manual');
+
+    const parts = await readJson('parts after manual apply', serviceUrl(`/api/projects/${projectId}/parts`), {
+      headers: serviceHeaders(),
+    });
+    const appliedPart = (readPath<unknown[]>(parts, ['data']) || []).find((candidate) =>
+      (candidate as Json).id === suggestedMatch.partId
+    ) as Json | undefined;
+    assert(appliedPart, 'manually applied part must be returned by parts endpoint');
+    assert(
+      appliedPart.steelTypeId === suggestedMatch.suggestedSteelTypeId,
+      'manual apply must persist the resolved steelTypeId in Part'
+    );
 
     await readJson('calculate', serviceUrl(`/api/projects/${projectId}/calculate`), {
       method: 'POST',
@@ -160,7 +190,7 @@ async function waitForProjectStatus(projectId: string, expected: string[]) {
   throw new Error(`project ${projectId} did not reach ${expected.join('/')} after ${pollAttempts} attempts`);
 }
 
-function assertDetailMatch(payload: Json) {
+function assertDetailMatch(payload: Json): Json {
   const matches = readPath<unknown[]>(payload, ['data', 'matches']) || [];
   const match = matches.find((candidate) => {
     const item = candidate as Json;
@@ -171,13 +201,40 @@ function assertDetailMatch(payload: Json) {
     );
   }) as Json | undefined;
   assert(match, 'expected geometry match with detail unfolding');
+  assert(match.identityConfirmed === false, 'geometry-only smoke match must remain identity-unconfirmed');
+  assert(match.applyStatus === 'suggested', 'identity-unconfirmed geometry match must be suggested');
+  assert(match.autoApplied === false, 'identity-unconfirmed geometry match must not be auto-applied');
   assert(Number(match.matchConfidence) >= 0.7, 'detail geometry confidence must be >= 0.7');
   assert(match.steelTypeWarning == null, 'steelTypeWarning must be null');
-  assert(match.suggestedSteelTypeId != null, 'steelTypeId must be applied');
+  assert(match.suggestedSteelTypeId != null, 'suggestedSteelTypeId must be resolved');
   assert(match.suggestedSteelTypeName === 'Ст3сп', 'steel type must be Ст3сп');
   assert(match.thicknessMismatch === false, 'thicknessMismatch must be false');
   assertClose(Number(match.suggestedUnfoldingWidth), 85.97, 0.2, 'unfolding width');
   assertClose(Number(match.suggestedUnfoldingHeight), 100, 0.2, 'unfolding height');
+  return match;
+}
+
+function matchToApplyPayload(match: Json): Json {
+  return {
+    partId: match.partId,
+    material: match.suggestedMaterial || undefined,
+    steelTypeId: match.suggestedSteelTypeId || undefined,
+    steelTypeName: match.suggestedSteelTypeName || undefined,
+    steelTypeRaw: match.suggestedSteelTypeRaw || undefined,
+    quantity: match.suggestedQuantity || undefined,
+    thickness: match.suggestedThickness || undefined,
+    isSheetMetal: match.suggestedIsSheetMetal ?? undefined,
+    partType: match.suggestedPartType ?? undefined,
+    hasBends: match.suggestedHasBends ?? undefined,
+    unfoldingWidth: match.suggestedUnfoldingWidth || undefined,
+    unfoldingHeight: match.suggestedUnfoldingHeight || undefined,
+  };
+}
+
+function findMatchByPartId(payload: Json, partId: string): Json | undefined {
+  return (readPath<unknown[]>(payload, ['data', 'matches']) || []).find((candidate) =>
+    (candidate as Json).partId === partId
+  ) as Json | undefined;
 }
 
 function assertLayoutViolation(payload: Json, type: string, severity: string, message: string) {

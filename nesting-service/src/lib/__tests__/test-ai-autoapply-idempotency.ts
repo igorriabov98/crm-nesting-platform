@@ -7,7 +7,11 @@ import { AI_RECALC_REQUIRED_MESSAGE } from '../ai/apply-control';
 
 async function main(): Promise<void> {
   process.env.DATABASE_URL ??= 'postgresql://user:pass@localhost:5432/test?schema=nesting';
-  const { coordinateProjectAnalysis } = await import('../ai/analysis-coordinator');
+  const {
+    coordinateProjectAnalysis,
+    createProjectAnalysisRunId,
+    projectAnalysisRunMatchesContext,
+  } = await import('../ai/analysis-coordinator');
   const {
     appendProjectRecalculationViolation,
     projectRecalculationUpdateForStatus,
@@ -82,7 +86,77 @@ async function main(): Promise<void> {
   assert.equal(parallel.alreadyInProgress, true);
   assert.equal(parallel.result, first.result);
 
-  console.log('[ai-autoapply-idempotency] value-aware recalculation and concurrent analysis dedup passed');
+  const contextA = 'context-a';
+  const contextB = 'context-b';
+  const activeRunId = createProjectAnalysisRunId(contextA, 'run-a');
+  assert.equal(projectAnalysisRunMatchesContext(activeRunId, contextA), true);
+  assert.equal(
+    projectAnalysisRunMatchesContext(activeRunId, contextB),
+    false,
+    'a lease must not share a result produced with different parameters'
+  );
+
+  let contextClaim: ProjectAnalysisClaim | null = null;
+  let contextProviderCalls = 0;
+  let releaseContextLeader!: () => void;
+  let notifyLeaseChanged: (() => void) | null = null;
+  const contextLeaderGate = new Promise<void>((resolve) => {
+    releaseContextLeader = resolve;
+  });
+  const resultsByRunId = new Map<string, string>();
+  const contextDependencies = (
+    contextKey: string
+  ): ProjectAnalysisCoordinationDependencies<string> => ({
+    claim: async () => {
+      while (contextClaim && !projectAnalysisRunMatchesContext(contextClaim.runId, contextKey)) {
+        await new Promise<void>((resolve) => {
+          notifyLeaseChanged = resolve;
+        });
+      }
+      if (contextClaim) return { ...contextClaim, acquired: false };
+      contextClaim = {
+        acquired: true,
+        runId: createProjectAnalysisRunId(contextKey, `run-${contextKey}`),
+        startedAt: new Date(),
+      };
+      return contextClaim;
+    },
+    release: async (runId) => {
+      if (contextClaim?.runId === runId) {
+        contextClaim = null;
+        notifyLeaseChanged?.();
+        notifyLeaseChanged = null;
+      }
+    },
+    waitForResult: async (claim) => {
+      const result = resultsByRunId.get(claim.runId);
+      if (!result) throw new Error('missing coordinated result');
+      return result;
+    },
+  });
+  const contextAAnalysis = coordinateProjectAnalysis(async () => {
+    contextProviderCalls += 1;
+    await contextLeaderGate;
+    const result = 'analysis-for-context-a';
+    if (contextClaim) resultsByRunId.set(contextClaim.runId, result);
+    return result;
+  }, contextDependencies(contextA));
+  await Promise.resolve();
+  const contextBAnalysis = coordinateProjectAnalysis(async () => {
+    contextProviderCalls += 1;
+    const result = 'analysis-for-context-b';
+    if (contextClaim) resultsByRunId.set(contextClaim.runId, result);
+    return result;
+  }, contextDependencies(contextB));
+  releaseContextLeader();
+
+  const [contextAResult, contextBResult] = await Promise.all([contextAAnalysis, contextBAnalysis]);
+  assert.equal(contextProviderCalls, 2, 'different contexts must execute separately');
+  assert.equal(contextAResult.result, 'analysis-for-context-a');
+  assert.equal(contextBResult.result, 'analysis-for-context-b');
+  assert.equal(contextBResult.alreadyInProgress, false);
+
+  console.log('[ai-autoapply-idempotency] idempotency and context-aware concurrent analysis coordination passed');
 }
 
 main().catch((error) => {

@@ -80,7 +80,7 @@ export function extractStepOccurrenceMetadata(fileContent: Buffer): Map<number, 
       ? []
       : buildDefinitionPath(parentDefinitionId, nextSeen);
     const name = definitionName(definitionId);
-    const path = name ? [...parentPath, name] : parentPath;
+    const path = appendStepAssemblyPath(parentPath, name);
     pathCache.set(definitionId, path);
     return path;
   };
@@ -89,7 +89,7 @@ export function extractStepOccurrenceMetadata(fileContent: Buffer): Map<number, 
   occurrences.forEach((occurrence, index) => {
     const name = definitionName(occurrence.childDefinitionId);
     const parentPath = buildDefinitionPath(occurrence.parentDefinitionId);
-    const assemblyPath = name ? [...parentPath, name] : parentPath;
+    const assemblyPath = appendStepAssemblyPath(parentPath, name);
     if (name) {
       metadata.set(index, { name, assemblyPath });
     }
@@ -104,6 +104,19 @@ export function extractStepOccurrenceNames(fileContent: Buffer): Map<number, str
     names.set(index, metadata.name);
   }
   return names;
+}
+
+export function appendStepAssemblyPath(parentPath: string[], name: string): string[] {
+  const normalizedName = normalizeCadText(name.trim());
+  if (!normalizedName) return parentPath;
+  if (parentPath.length === 0 && isSyntheticStepRootLabel(normalizedName)) return parentPath;
+  return [...parentPath, normalizedName];
+}
+
+export function isSyntheticStepRootLabel(value: string): boolean {
+  const normalized = normalizeCadText(value.trim());
+  return /^open\s+cascade\s+step\s+translator\b/i.test(normalized) ||
+    /\.(?:step|stp)$/i.test(normalized);
 }
 
 function parseStepEntities(text: string): StepEntity[] {

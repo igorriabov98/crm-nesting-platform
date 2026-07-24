@@ -8,6 +8,7 @@ import { matchBOMToParts } from '../ai/bom-matcher';
 import { polygonNetArea, type Point2D } from '../geometry';
 import type { PlacedPart, SheetResult } from '../nesting/types';
 import { parseStepFile, type ParsedPart } from '../step-parser';
+import { isSyntheticStepRootLabel } from '../step-source-names';
 import { validateLayout } from '../validation/layout-validator';
 import { validateSimpleUnfoldContour } from '../brep/unfolder';
 import { assertUnfoldShape, openLoop } from './unfold-shape-assertions';
@@ -35,6 +36,10 @@ async function main(): Promise<void> {
   assert.ok(
     parsed.parts.every((part) => part.assemblyPath.some((segment) => segment.includes('ЛЕДА.525.00.000'))),
     'LEDA.525 bodies should retain the parent product in their STEP assembly path'
+  );
+  assert.ok(
+    parsed.parts.every((part) => part.assemblyPath.every((segment) => !isSyntheticStepRootLabel(segment))),
+    'LEDA.525 assembly paths must not contain translator or file roots'
   );
   assertNoMojibake(parsed.parts);
   assertAllContoursSimple(parsed.parts);

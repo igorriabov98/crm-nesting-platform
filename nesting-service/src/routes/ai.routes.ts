@@ -27,17 +27,7 @@ import {
 import { testOpenRouterConnection } from '../lib/ai/openrouter';
 import { materializeValidatedStorageObject } from '../lib/storage';
 
-const steelTypeSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  densityKgMm3: z.coerce.number().nullable().optional(),
-});
-
-const analyzePdfSchema = z.object({
-  steelTypes: z.array(steelTypeSchema).optional(),
-  autoApply: z.boolean().optional(),
-  appliedBy: z.string().min(1).nullable().optional(),
-});
+const analyzePdfSchema = z.object({});
 
 const applyBomSchema = z.object({
   force: z.boolean().optional(),
@@ -81,7 +71,7 @@ const revertBomSchema = z.object({
 export async function aiProjectRoutes(app: FastifyInstance) {
   app.post('/:id/analyze-pdf', async (request) => {
     const { id } = idParamSchema.parse(request.params);
-    const body = analyzePdfSchema.parse(request.body ?? {});
+    analyzePdfSchema.parse(request.body ?? {});
     const project = await prisma.nestingProject.findUnique({
       where: { id },
       select: {
@@ -119,9 +109,6 @@ export async function aiProjectRoutes(app: FastifyInstance) {
     const result = await analyzeProjectPdf({
       projectId: id,
       pdfFilePath: materialized.filePath,
-      autoApply: body.autoApply,
-      appliedBy: body.appliedBy ?? null,
-      steelTypes: body.steelTypes,
     }).finally(() => materialized.cleanup());
 
     if (!result.success) {
