@@ -44,54 +44,67 @@ export async function coordinateProjectAnalysis<T>(
 
 export function createPrismaProjectAnalysisCoordination<T>(
   projectId: string,
+  contextKey: string,
   loadCompletedResult: (startedAt: Date) => Promise<T | null>
 ): ProjectAnalysisCoordinationDependencies<T> {
   return {
-    claim: () => claimProjectAnalysis(projectId),
+    claim: () => claimProjectAnalysis(projectId, contextKey),
     release: (runId) => releaseProjectAnalysis(projectId, runId),
     waitForResult: (claim) => waitForProjectAnalysis(projectId, claim, loadCompletedResult),
   };
 }
 
-async function claimProjectAnalysis(projectId: string): Promise<ProjectAnalysisClaim> {
-  const runId = randomUUID();
-  const startedAt = new Date();
-  const staleBefore = new Date(startedAt.getTime() - ANALYSIS_LEASE_MS);
-  const claimed = await prisma.nestingProject.updateMany({
-    where: {
-      id: projectId,
-      OR: [
-        { aiAnalysisRunId: null },
-        { aiAnalysisStartedAt: null },
-        { aiAnalysisStartedAt: { lt: staleBefore } },
-      ],
-    },
-    data: {
-      aiAnalysisRunId: runId,
-      aiAnalysisStartedAt: startedAt,
-    },
-  });
+async function claimProjectAnalysis(
+  projectId: string,
+  contextKey: string
+): Promise<ProjectAnalysisClaim> {
+  const deadline = Date.now() + ANALYSIS_WAIT_TIMEOUT_MS;
 
-  if (claimed.count > 0) {
-    return { acquired: true, runId, startedAt };
+  while (Date.now() < deadline) {
+    const runId = createProjectAnalysisRunId(contextKey);
+    const startedAt = new Date();
+    const staleBefore = new Date(startedAt.getTime() - ANALYSIS_LEASE_MS);
+    const claimed = await prisma.nestingProject.updateMany({
+      where: {
+        id: projectId,
+        OR: [
+          { aiAnalysisRunId: null },
+          { aiAnalysisStartedAt: null },
+          { aiAnalysisStartedAt: { lt: staleBefore } },
+        ],
+      },
+      data: {
+        aiAnalysisRunId: runId,
+        aiAnalysisStartedAt: startedAt,
+      },
+    });
+
+    if (claimed.count > 0) {
+      return { acquired: true, runId, startedAt };
+    }
+
+    const active = await prisma.nestingProject.findUnique({
+      where: { id: projectId },
+      select: { aiAnalysisRunId: true, aiAnalysisStartedAt: true },
+    });
+    if (!active) {
+      throw new Error(`Проект ${projectId} не найден`);
+    }
+    if (!active.aiAnalysisRunId || !active.aiAnalysisStartedAt) {
+      continue;
+    }
+    if (projectAnalysisRunMatchesContext(active.aiAnalysisRunId, contextKey)) {
+      return {
+        acquired: false,
+        runId: active.aiAnalysisRunId,
+        startedAt: active.aiAnalysisStartedAt,
+      };
+    }
+
+    await waitForProjectAnalysisRunChange(projectId, active.aiAnalysisRunId, deadline);
   }
 
-  const active = await prisma.nestingProject.findUnique({
-    where: { id: projectId },
-    select: { aiAnalysisRunId: true, aiAnalysisStartedAt: true },
-  });
-  if (!active) {
-    throw new Error(`Проект ${projectId} не найден`);
-  }
-  if (!active.aiAnalysisRunId || !active.aiAnalysisStartedAt) {
-    return claimProjectAnalysis(projectId);
-  }
-
-  return {
-    acquired: false,
-    runId: active.aiAnalysisRunId,
-    startedAt: active.aiAnalysisStartedAt,
-  };
+  throw new Error('AI-анализ с другим контекстом не завершился в отведённое время');
 }
 
 async function releaseProjectAnalysis(projectId: string, runId: string): Promise<void> {
@@ -119,7 +132,7 @@ async function waitForProjectAnalysis<T>(
     if (!active) {
       throw new Error(`Проект ${projectId} не найден`);
     }
-    if (!active.aiAnalysisRunId) {
+    if (active.aiAnalysisRunId !== claim.runId) {
       const result = await loadCompletedResult(claim.startedAt);
       if (result) return result;
       throw new Error('Параллельный AI-анализ завершился без сохранённого результата');
@@ -129,6 +142,43 @@ async function waitForProjectAnalysis<T>(
   }
 
   throw new Error('Анализ уже выполняется и не завершился в отведённое время');
+}
+
+async function waitForProjectAnalysisRunChange(
+  projectId: string,
+  runId: string,
+  deadline: number
+): Promise<void> {
+  while (Date.now() < deadline) {
+    const active = await prisma.nestingProject.findUnique({
+      where: { id: projectId },
+      select: { aiAnalysisRunId: true, aiAnalysisStartedAt: true },
+    });
+    if (!active) {
+      throw new Error(`Проект ${projectId} не найден`);
+    }
+    if (
+      active.aiAnalysisRunId !== runId ||
+      !active.aiAnalysisStartedAt ||
+      active.aiAnalysisStartedAt.getTime() < Date.now() - ANALYSIS_LEASE_MS
+    ) {
+      return;
+    }
+
+    await delay(ANALYSIS_POLL_MS);
+  }
+}
+
+export function createProjectAnalysisRunId(
+  contextKey: string,
+  uniqueId: string = randomUUID()
+): string {
+  return `${contextKey}:${uniqueId}`;
+}
+
+export function projectAnalysisRunMatchesContext(runId: string, contextKey: string): boolean {
+  const separatorIndex = runId.indexOf(':');
+  return separatorIndex > 0 && runId.slice(0, separatorIndex) === contextKey;
 }
 
 function delay(ms: number): Promise<void> {
