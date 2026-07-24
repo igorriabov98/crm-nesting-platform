@@ -128,8 +128,13 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const financeItems = sectionItems(user, permissions, 'finance')
   const workflowItems = sectionItems(user, permissions, 'workflow')
   const technologistItems = sectionItems(user, permissions, 'technologist')
+  const productionSectionItems = sectionItems(user, permissions, 'production')
   const productionItems = [
-    ...sectionItems(user, permissions, 'production'),
+    ...productionSectionItems.filter((item) => item.href === ROUTES.PRODUCTION),
+    ...(permissions.production_fact?.canView
+      ? [{ href: ROUTES.PRODUCTION_OUTSOURCING_REQUESTS, label: 'Запросы', icon: ClipboardList }]
+      : []),
+    ...productionSectionItems.filter((item) => item.href !== ROUTES.PRODUCTION),
     ...(permissions.production_fact?.canView && ['financial_director', 'commercial_director', 'planning_director', 'production_manager'].includes(user.role)
       ? [
         { href: ROUTES.PRODUCTION_WORKERS, label: 'Работники', icon: Users },
@@ -137,7 +142,14 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
       ]
       : []),
   ]
-  const supplyItems = sectionItems(user, permissions, 'supply')
+  const supplySectionItems = sectionItems(user, permissions, 'supply')
+  const supplyItems = [
+    ...supplySectionItems.filter((item) => item.href !== ROUTES.SUPPLY_TRANSPORT),
+    ...(permissions.supply_transport?.canView
+      ? [{ href: ROUTES.SUPPLY_OUTSOURCING_REQUESTS, label: 'Запросы', icon: ClipboardList }]
+      : []),
+    ...supplySectionItems.filter((item) => item.href === ROUTES.SUPPLY_TRANSPORT),
+  ]
   const inventoryItems = sectionItems(user, permissions, 'inventory')
   const meetingItems = sectionItems(user, permissions, 'meetings')
   const toolsItems = sectionItems(user, permissions, 'tools')

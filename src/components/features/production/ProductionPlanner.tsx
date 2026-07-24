@@ -7,6 +7,7 @@ import { addDays, differenceInCalendarDays, format, subDays } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
+  Building2,
   CalendarDays,
   ChevronDown,
   Eraser,
@@ -15,6 +16,7 @@ import {
   PackageCheck,
   PanelRightClose,
   PanelRightOpen,
+  Route,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -36,6 +38,7 @@ import { COATINGS } from '@/lib/constants/coatings'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { clearProductionStageDates, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
 import { createProductionPlanDateChangeRequest, type ProductionMonthPlanSummary, type ProductionPlanDateChangeInput } from '@/lib/actions/production-plan'
+import type { ProductionOutsourcingSummaryOperation } from '@/lib/actions/outsourcing'
 import { useRole } from '@/lib/hooks/useRole'
 import { ROUTES } from '@/lib/constants/routes'
 import { barGeometry, generateDateScale, type GanttScale } from '@/lib/utils/gantt'
@@ -56,6 +59,7 @@ import type { StageType } from '@/lib/types'
 interface ProductionPlannerProps {
   data: GanttData
   productionData: ProductionRow[]
+  outsourcingOperations?: ProductionOutsourcingSummaryOperation[]
   monthPlans?: ProductionMonthPlanSummary[]
   filters?: GanttFilters
   onFiltersChange?: (filters: GanttFilters) => void
@@ -838,6 +842,11 @@ function PlannerVirtualRow({
               <span className="truncate text-sm font-semibold text-blue-900" title={machine.name}>
                 {machine.name}
               </span>
+              {machine.is_outsourcing && (
+                <span className="shrink-0 rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                  аутсорсинг
+                </span>
+              )}
               {!machine.is_confirmed && (
                 <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
                   не подтв.
@@ -1198,9 +1207,62 @@ function StageEditor({
   )
 }
 
+function OutsourcingStageCard({
+  operation,
+  incoming = false,
+}: {
+  operation: ProductionOutsourcingSummaryOperation
+  incoming?: boolean
+}) {
+  const executor = operation.executor_factory_name || operation.supplier_name || 'Исполнитель не указан'
+  const startDate = incoming ? operation.incoming_date_start : operation.planned_send_date
+  const endDate = incoming ? operation.incoming_date_end : operation.planned_return_date
+
+  return (
+    <div className="rounded-lg border border-violet-200 bg-violet-50/70 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-violet-600" />
+            <span className="font-semibold text-violet-950">{operation.work_type_name}</span>
+          </div>
+          <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-600">
+            <Building2 className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate" title={executor}>{executor}</span>
+          </div>
+        </div>
+        <span className="rounded-full border border-violet-200 bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+          Аутсорсинг
+        </span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="rounded-md border border-violet-100 bg-white px-2.5 py-2">
+          <div className="text-[10px] font-medium uppercase text-slate-500">{incoming ? 'Начало у нас' : 'Начало'}</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">{formatDateValue(startDate, true)}</div>
+        </div>
+        <div className="rounded-md border border-violet-100 bg-white px-2.5 py-2">
+          <div className="text-[10px] font-medium uppercase text-slate-500">{incoming ? 'Конец у нас' : 'Конец'}</div>
+          <div className="mt-0.5 text-sm font-semibold text-slate-900">{formatDateValue(endDate, true)}</div>
+        </div>
+      </div>
+
+      {incoming && operation.source_factory_name && (
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-600">
+          <Route className="h-3.5 w-3.5 shrink-0" />
+          {operation.source_factory_name} → {executor}
+        </div>
+      )}
+      {operation.note && <div className="mt-2 text-xs leading-5 text-slate-600">{operation.note}</div>}
+    </div>
+  )
+}
+
 function ProductionMachineInspector({
   machine,
   productionRow,
+  outsourcingOperations,
+  primaryOutsourcingOperation,
   canEdit,
   approvalLocked,
   pendingDateChanges,
@@ -1222,6 +1284,8 @@ function ProductionMachineInspector({
 }: {
   machine: GanttMachine | null
   productionRow: ProductionRow | undefined
+  outsourcingOperations: ProductionOutsourcingSummaryOperation[]
+  primaryOutsourcingOperation?: ProductionOutsourcingSummaryOperation
   canEdit: boolean
   approvalLocked: boolean
   pendingDateChanges: DateChangeDraft[]
@@ -1254,6 +1318,8 @@ function ProductionMachineInspector({
       (a, b) => STAGE_ORDER.indexOf(a.stage_type) - STAGE_ORDER.indexOf(b.stage_type)
     )
   }, [productionRow])
+  const unpositionedOutsourcing = outsourcingOperations.filter((operation) => !operation.position_after_stage_type)
+  const isIncomingOutsourcingMachine = Boolean(primaryOutsourcingOperation && machine?.is_outsourcing)
 
   if (!machine) {
     return (
@@ -1291,19 +1357,26 @@ function ProductionMachineInspector({
         </div>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-        <DateField
-          label="Желаемая отгрузка"
-          value={productionRow?.machine.desired_shipping_date || machine.desired_shipping_date}
-          editable={false}
-        />
-        <DateField
-          label="Материал план"
-          value={getMachineDateValue ? getMachineDateValue(machine, 'planned_material_date') : productionRow?.machine.planned_material_date || machine.planned_material_date}
-          editable={canEdit}
-          onSave={(value) => onMachineDateUpdate(machine.id, 'planned_material_date', value)}
-        />
-      </div>
+      {isIncomingOutsourcingMachine && primaryOutsourcingOperation ? (
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+          <DateField label="Желаемое начало" value={primaryOutsourcingOperation.planned_send_date} editable={false} />
+          <DateField label="Желаемый возврат" value={primaryOutsourcingOperation.planned_return_date} editable={false} />
+        </div>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+          <DateField
+            label="Желаемая отгрузка"
+            value={productionRow?.machine.desired_shipping_date || machine.desired_shipping_date}
+            editable={false}
+          />
+          <DateField
+            label="Материал план"
+            value={getMachineDateValue ? getMachineDateValue(machine, 'planned_material_date') : productionRow?.machine.planned_material_date || machine.planned_material_date}
+            editable={canEdit}
+            onSave={(value) => onMachineDateUpdate(machine.id, 'planned_material_date', value)}
+          />
+        </div>
+      )}
 
       {approvalLocked && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -1349,9 +1422,14 @@ function ProductionMachineInspector({
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-slate-900">Этапы</h3>
-          <span className="text-xs text-slate-500">{sortedStages.length}/{PRODUCTION_PLAN_STAGE_ORDER.length}</span>
+          <span className="text-xs text-slate-500">
+            {sortedStages.length}
+            {outsourcingOperations.length > 0 ? ` + ${outsourcingOperations.length} аутсорсинг` : ''}
+          </span>
         </div>
-        {productionRow ? (
+        {isIncomingOutsourcingMachine && primaryOutsourcingOperation ? (
+          <OutsourcingStageCard operation={primaryOutsourcingOperation} incoming />
+        ) : productionRow ? (
           <div className="space-y-2">
             {sortedStages.map((stage, index) => (
               <React.Fragment key={stage.id}>
@@ -1367,6 +1445,11 @@ function ProductionMachineInspector({
                   onStageUpdate={onStageUpdate}
                   onClearDates={onClearDates}
                 />
+                {outsourcingOperations
+                  .filter((operation) => operation.position_after_stage_type === stage.stage_type)
+                  .map((operation) => (
+                    <OutsourcingStageCard key={operation.id} operation={operation} />
+                  ))}
                 {index < sortedStages.length - 1 && (
                   <div className="relative flex items-center justify-center py-1">
                     <div className="absolute left-4 right-4 top-1/2 border-t border-dashed border-slate-300" aria-hidden="true" />
@@ -1381,6 +1464,9 @@ function ProductionMachineInspector({
                   </div>
                 )}
               </React.Fragment>
+            ))}
+            {unpositionedOutsourcing.map((operation) => (
+              <OutsourcingStageCard key={operation.id} operation={operation} />
             ))}
           </div>
         ) : (
@@ -1426,7 +1512,7 @@ function ProductionMachineInspector({
             </button>
           )}
           <Link
-            href={`${ROUTES.SALES_PLAN}/${machine.id}`}
+            href={`${ROUTES.SALES_PLAN}/${machine.source_machine_id || machine.id}`}
             className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:border-blue-700 hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             aria-label="Открыть машину"
           >
@@ -1457,6 +1543,7 @@ function ProductionMachineInspector({
 export function ProductionPlanner({
   data,
   productionData,
+  outsourcingOperations = [],
   monthPlans = [],
   filters: externalFilters,
   onFiltersChange,
@@ -1662,6 +1749,17 @@ export function ProductionPlanner({
       : null
   ), [ganttMachineById, selectedMachineId, unscheduledRows])
   const selectedProductionRow = selectedMachineId ? productionByMachineId.get(selectedMachineId) : undefined
+  const selectedPrimaryOutsourcingOperation = useMemo(
+    () => selectedMachine?.outsourcing_operation_id
+      ? outsourcingOperations.find((operation) => operation.id === selectedMachine.outsourcing_operation_id)
+      : undefined,
+    [outsourcingOperations, selectedMachine],
+  )
+  const selectedMachineOutsourcingOperations = useMemo(() => {
+    if (!selectedMachine) return []
+    if (selectedPrimaryOutsourcingOperation) return [selectedPrimaryOutsourcingOperation]
+    return outsourcingOperations.filter((operation) => operation.machine_id === selectedMachine.id)
+  }, [outsourcingOperations, selectedMachine, selectedPrimaryOutsourcingOperation])
   const selectedMachinePlanStatus = useMemo(() => {
     if (!selectedMachine?.factory_id || !selectedMachine.production_month) return 'draft'
     const month = normalizeProductionMonthValue(selectedMachine.production_month)
@@ -1672,6 +1770,7 @@ export function ProductionPlanner({
   }, [monthPlans, selectedMachine])
   const selectedMachineRequiresApproval = Boolean(
     selectedMachine &&
+    !selectedMachine.is_outsourcing &&
     isProductionManager &&
     !isDirector &&
     selectedMachinePlanStatus === 'confirmed'
@@ -2354,6 +2453,8 @@ export function ProductionPlanner({
             key={selectedMachine?.id ?? 'mobile-empty'}
             machine={selectedMachine}
             productionRow={selectedProductionRow}
+            outsourcingOperations={selectedMachineOutsourcingOperations}
+            primaryOutsourcingOperation={selectedPrimaryOutsourcingOperation}
             canEdit={canEdit}
             approvalLocked={selectedMachineRequiresApproval}
             pendingDateChanges={selectedDateChanges}
@@ -2461,6 +2562,8 @@ export function ProductionPlanner({
               key={selectedMachine?.id ?? 'desktop-empty'}
               machine={selectedMachine}
               productionRow={selectedProductionRow}
+              outsourcingOperations={selectedMachineOutsourcingOperations}
+              primaryOutsourcingOperation={selectedPrimaryOutsourcingOperation}
               canEdit={canEdit}
               approvalLocked={selectedMachineRequiresApproval}
               pendingDateChanges={selectedDateChanges}

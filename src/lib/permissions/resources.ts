@@ -321,6 +321,7 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
     defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
     routes: [
+      { path: ROUTES.PRODUCTION_OUTSOURCING_REQUESTS, match: 'prefix', operation: 'view', priority: 140 },
       { path: ROUTES.PRODUCTION_WORKERS, match: 'prefix', operation: 'view', priority: 125 },
       { path: ROUTES.PRODUCTION_PEOPLE, match: 'prefix', operation: 'view', priority: 120 },
       { path: ROUTES.PRODUCTION_FACT, match: 'prefix', operation: 'view', priority: 100 },
@@ -398,7 +399,10 @@ export const PERMISSION_RESOURCES = [
     defaultHref: ROUTES.SUPPLY_TRANSPORT,
     defaultViewRoles: TRANSPORT_SUPPLY_ROLES,
     defaultManageRoles: TRANSPORT_SUPPLY_ROLES,
-    routes: [{ path: ROUTES.SUPPLY_TRANSPORT, match: 'prefix', operation: 'view', priority: 95 }],
+    routes: [
+      { path: ROUTES.SUPPLY_OUTSOURCING_REQUESTS, match: 'prefix', operation: 'view', priority: 140 },
+      { path: ROUTES.SUPPLY_TRANSPORT, match: 'prefix', operation: 'view', priority: 95 },
+    ],
     sidebar: { section: 'supply', icon: 'transport', order: 8 },
   },
   {
