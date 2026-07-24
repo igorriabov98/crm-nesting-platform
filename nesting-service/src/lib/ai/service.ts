@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../prisma';
 import { NotFoundError } from '../errors';
 import { analyzePDF, parsePDFAnalysisResponse } from './openrouter';
-import { estimateCost, getAISettingsView, recordAIUsage } from './settings';
+import { estimateCost, recordAIUsage } from './settings';
 import { isMatchEligibleForAutoApply, matchBOMToParts } from './bom-matcher';
 import { applyDimensionGuard, applyThicknessGuard } from './dimension-guard';
 import {
@@ -15,7 +15,7 @@ import {
 import { extractDeterministicPdfDataFromPdf } from './pdf-bom-fallback';
 import { parseStoredAnalysis, resolvePdfExtraction, serializeStoredAnalysis } from './analysis-state';
 import { resolveBOMSteelTypes } from './steel-types';
-import type { AIAnalysisAudit, BOMEntry, DetailEntry, MatchResult, PartForMatching, SteelTypeCatalogItem } from './types';
+import type { AIAnalysisAudit, BOMEntry, DetailEntry, MatchResult, PartForMatching } from './types';
 import { normalizePartType, partTypeFromLegacySheetFlag } from '../part-type';
 import { markProjectRecalculationRequired } from './project-recalculation';
 import {
@@ -23,6 +23,10 @@ import {
   coordinateProjectAnalysis,
   createPrismaProjectAnalysisCoordination,
 } from './analysis-coordinator';
+import {
+  loadProjectAnalysisExecutionContext,
+  type ProjectAnalysisExecutionContext,
+} from './analysis-context';
 
 export interface ProjectPdfAnalysisResult {
   success: boolean;
@@ -53,13 +57,11 @@ type ProjectPdfAnalysisRunResult = Omit<ProjectPdfAnalysisResult, 'alreadyInProg
 export async function analyzeProjectPdf(input: {
   projectId: string;
   pdfFilePath: string;
-  autoApply?: boolean;
-  appliedBy?: string | null;
-  steelTypes?: SteelTypeCatalogItem[];
 }): Promise<ProjectPdfAnalysisResult> {
+  const context = await loadProjectAnalysisExecutionContext(input.pdfFilePath);
   const coordinated = await coordinateProjectAnalysis(
-    () => runProjectPdfAnalysis(input),
-    createPrismaProjectAnalysisCoordination(input.projectId, async (startedAt) => {
+    () => runProjectPdfAnalysis(input, context),
+    createPrismaProjectAnalysisCoordination(input.projectId, context.contextKey, async (startedAt) => {
       const stored = await getProjectSpecification(input.projectId);
       if (!stored || stored.updatedAt.getTime() < startedAt.getTime()) return null;
 
@@ -82,16 +84,25 @@ export async function analyzeProjectPdf(input: {
 async function runProjectPdfAnalysis(input: {
   projectId: string;
   pdfFilePath: string;
-  autoApply?: boolean;
-  appliedBy?: string | null;
-  steelTypes?: SteelTypeCatalogItem[];
-}): Promise<ProjectPdfAnalysisRunResult> {
-  const pdfResult = await analyzePDF(input.pdfFilePath, { steelTypes: input.steelTypes });
+}, context: ProjectAnalysisExecutionContext): Promise<ProjectPdfAnalysisRunResult> {
+  const pdfResult = await analyzePDF(input.pdfFilePath, {
+    steelTypes: context.steelTypes,
+    ...(context.openRouterConfig
+      ? {
+          maxTokens: context.openRouterConfig.maxTokens,
+          configOverride: {
+            apiKey: context.openRouterConfig.apiKey,
+            model: context.openRouterConfig.model,
+            baseUrl: context.openRouterConfig.baseUrl,
+          },
+        }
+      : {}),
+  });
   const extraction = await resolvePdfExtraction(
     pdfResult,
     () => loadDeterministicPdfData(input.pdfFilePath)
   );
-  const settings = await getAISettingsView();
+  const settings = context.settings;
   const cost = estimateCost(pdfResult.tokensUsed, pdfResult.model);
 
   if (pdfResult.tokensUsed > 0) {
@@ -142,7 +153,7 @@ async function runProjectPdfAnalysis(input: {
     };
   }
 
-  const bom = resolveBOMSteelTypes(extraction.bom, input.steelTypes ?? []);
+  const bom = resolveBOMSteelTypes(extraction.bom, context.steelTypes);
   const details = extraction.details;
   const parts = await prisma.part.findMany({
     where: { projectId: input.projectId, isActive: true },
@@ -173,11 +184,11 @@ async function runProjectPdfAnalysis(input: {
       classificationWarning: true,
     },
   });
-  const matches = matchBOMToParts(bom, parts, details, input.steelTypes ?? []);
+  const matches = matchBOMToParts(bom, parts, details, context.steelTypes);
   const partsById = new Map(parts.map((part) => [part.id, part]));
-  const shouldAutoApply = extraction.audit.status === 'completed' && (input.autoApply ?? settings.autoApplyResults);
+  const shouldAutoApply = extraction.audit.status === 'completed' && settings.autoApplyResults;
   const finalMatches = shouldAutoApply
-    ? await autoApplyMatches(input.projectId, matches, partsById, input.appliedBy ?? null)
+    ? await autoApplyMatches(input.projectId, matches, partsById, null)
     : matches.map((match) => ({ ...match, applyStatus: 'suggested' as const }));
   const unmatchedBom = getUnmatchedBom(bom, finalMatches);
   const budgetWarning = settings.budgetWarning;
