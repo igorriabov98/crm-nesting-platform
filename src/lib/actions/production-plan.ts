@@ -884,9 +884,17 @@ async function applyRequestItems(db: LooseDb, items: DateChangeItemRow[]) {
     }
 
     if (!item.outsourcing_operation_id) throw new Error('В запросе не указана операция аутсорсинга')
+    const value = dateOnly(item.new_value)
+    const patch = item.field_name === 'planned_return_date'
+      ? {
+          planned_return_date: value,
+          supply_terms_confirmed_at: null,
+          supply_terms_confirmed_by: null,
+        }
+      : { [item.field_name]: value }
     const { error } = await db
       .from('machine_outsourcing_operations')
-      .update({ [item.field_name]: dateOnly(item.new_value) })
+      .update(patch)
       .eq('id', item.outsourcing_operation_id)
     if (error) throw new Error(error.message || 'Не удалось обновить дату аутсорсинга')
   }

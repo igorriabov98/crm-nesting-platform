@@ -2220,6 +2220,8 @@ export type Database = {
           actual_returned_at: string | null
           service_cost_planned: number | null
           service_cost_actual: number | null
+          supply_terms_confirmed_at: string | null
+          supply_terms_confirmed_by: string | null
           incoming_production_month: string | null
           incoming_workshop: number | null
           incoming_queue_number: number | null
@@ -2249,6 +2251,8 @@ export type Database = {
           actual_returned_at?: string | null
           service_cost_planned?: number | null
           service_cost_actual?: number | null
+          supply_terms_confirmed_at?: string | null
+          supply_terms_confirmed_by?: string | null
           incoming_production_month?: string | null
           incoming_workshop?: number | null
           incoming_queue_number?: number | null
@@ -2278,6 +2282,8 @@ export type Database = {
           actual_returned_at?: string | null
           service_cost_planned?: number | null
           service_cost_actual?: number | null
+          supply_terms_confirmed_at?: string | null
+          supply_terms_confirmed_by?: string | null
           incoming_production_month?: string | null
           incoming_workshop?: number | null
           incoming_queue_number?: number | null

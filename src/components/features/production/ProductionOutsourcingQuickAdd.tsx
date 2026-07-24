@@ -20,13 +20,14 @@ import type { StageType } from '@/lib/types'
 
 type Draft = {
   workTypeId: string
+  customWorkTypeName: string
+  useCustomWorkType: boolean
   positionAfterStageType: StageType | 'none'
   executorType: 'supplier' | 'factory'
   supplierId: string
   executorFactoryId: string
   plannedSendDate: string
   plannedReturnDate: string
-  serviceCostPlanned: string
   note: string
   itemIds: string[]
 }
@@ -40,16 +41,19 @@ type ProductionOutsourcingQuickAddProps = {
   className?: string
 }
 
+const CUSTOM_WORK_TYPE_VALUE = 'custom'
+
 function createDraft(data: MachineOutsourcingData, positionAfterStageType?: StageType | null): Draft {
   return {
     workTypeId: data.workTypes[0]?.id || '',
+    customWorkTypeName: '',
+    useCustomWorkType: data.workTypes.length === 0,
     positionAfterStageType: positionAfterStageType || 'none',
     executorType: 'supplier',
     supplierId: data.suppliers.find((supplier) => supplier.can_outsource)?.id || data.suppliers[0]?.id || '',
     executorFactoryId: data.factories.find((factory) => factory.id !== data.machine.factory_id)?.id || data.factories[0]?.id || '',
     plannedSendDate: '',
     plannedReturnDate: '',
-    serviceCostPlanned: '',
     note: '',
     itemIds: [],
   }
@@ -94,7 +98,8 @@ export function ProductionOutsourcingQuickAdd({
     : outsourceSuppliers.find((supplier) => supplier.id === draft?.supplierId)?.name || 'Выберите компанию'
   const canSubmit = Boolean(
     data?.canManage &&
-      draft?.workTypeId &&
+      draft &&
+      (draft.useCustomWorkType ? draft.customWorkTypeName.trim() : draft.workTypeId) &&
       draft.itemIds.length > 0 &&
       (draft.executorType === 'supplier' ? draft.supplierId : draft.executorFactoryId),
   )
@@ -134,14 +139,14 @@ export function ProductionOutsourcingQuickAdd({
     startTransition(async () => {
       const result = await saveOutsourcingOperation({
         machineId: data.machine.id,
-        workTypeId: draft.workTypeId,
+        workTypeId: draft.useCustomWorkType ? null : draft.workTypeId,
+        workTypeName: draft.useCustomWorkType ? draft.customWorkTypeName : null,
         positionAfterStageType: draft.positionAfterStageType === 'none' ? null : draft.positionAfterStageType,
         executorType: draft.executorType,
         supplierId: draft.executorType === 'supplier' ? draft.supplierId : null,
         executorFactoryId: draft.executorType === 'factory' ? draft.executorFactoryId : null,
         plannedSendDate: draft.plannedSendDate || null,
         plannedReturnDate: draft.plannedReturnDate || null,
-        serviceCostPlanned: draft.serviceCostPlanned ? Number(draft.serviceCostPlanned) : null,
         note: draft.note || null,
         itemIds: draft.itemIds,
       })
@@ -198,14 +203,33 @@ export function ProductionOutsourcingQuickAdd({
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Тип работы">
-                  <Select value={draft.workTypeId} onValueChange={(value) => value && setDraft({ ...draft, workTypeId: value })}>
-                    <SelectTrigger className="h-10 w-full"><SelectValue>{selectedWorkTypeLabel}</SelectValue></SelectTrigger>
+                  <Select
+                    value={draft.useCustomWorkType ? CUSTOM_WORK_TYPE_VALUE : draft.workTypeId}
+                    onValueChange={(value) => value && setDraft({
+                      ...draft,
+                      useCustomWorkType: value === CUSTOM_WORK_TYPE_VALUE,
+                      workTypeId: value === CUSTOM_WORK_TYPE_VALUE ? '' : value,
+                    })}
+                  >
+                    <SelectTrigger className="h-10 w-full">
+                      <SelectValue>{draft.useCustomWorkType ? 'Другой тип работы' : selectedWorkTypeLabel}</SelectValue>
+                    </SelectTrigger>
                     <SelectContent>
                       {data.workTypes.map((workType) => (
                         <SelectItem key={workType.id} value={workType.id}>{workType.name}</SelectItem>
                       ))}
+                      <SelectItem value={CUSTOM_WORK_TYPE_VALUE}>Другой тип работы…</SelectItem>
                     </SelectContent>
                   </Select>
+                  {draft.useCustomWorkType && (
+                    <Input
+                      value={draft.customWorkTypeName}
+                      onChange={(event) => setDraft({ ...draft, customWorkTypeName: event.target.value })}
+                      placeholder="Напишите тип работы"
+                      aria-label="Свой тип работы"
+                      maxLength={120}
+                    />
+                  )}
                 </Field>
 
                 <Field label="Место в плане">
@@ -263,7 +287,6 @@ export function ProductionOutsourcingQuickAdd({
                     type="date"
                     value={draft.plannedSendDate}
                     onChange={(event) => setDraft({ ...draft, plannedSendDate: event.target.value })}
-                    disabled={!data.canManageDatesDirectly}
                   />
                 </Field>
 
@@ -272,17 +295,10 @@ export function ProductionOutsourcingQuickAdd({
                     type="date"
                     value={draft.plannedReturnDate}
                     onChange={(event) => setDraft({ ...draft, plannedReturnDate: event.target.value })}
-                    disabled={!data.canManageDatesDirectly}
                   />
-                </Field>
-
-                <Field label="Стоимость услуги">
-                  <Input
-                    type="number"
-                    min={0}
-                    value={draft.serviceCostPlanned}
-                    onChange={(event) => setDraft({ ...draft, serviceCostPlanned: event.target.value })}
-                  />
+                  <span className="text-xs font-normal text-slate-500">
+                    Снабжение подтвердит эту дату или скорректирует её.
+                  </span>
                 </Field>
 
                 <div className="sm:col-span-2">
