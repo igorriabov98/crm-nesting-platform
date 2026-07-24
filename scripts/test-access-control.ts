@@ -48,6 +48,16 @@ assert(hasPermission(procurementHeadPermissions, 'inventory_detailing', 'manage'
 assert(!hasPermission(procurementHeadPermissions, 'inventory_detailing_receiving', 'view'), 'Руководитель снабжения не должен принимать деталировку')
 assert(hasPermission(supplyManagerPermissions, 'supply_transport', 'manage'), 'Снабженец должен управлять транспортом')
 assert(!hasPermission(supplyManagerPermissions, 'inventory_detailing', 'manage'), 'Снабженец не должен менять склад деталировки')
+assert.equal(
+  getPermissionRequirementForPath('/production/requests')?.resourceKey,
+  'production_fact',
+  'Запросы завода должны использовать действующее право производства',
+)
+assert.equal(
+  getPermissionRequirementForPath('/supply/requests')?.resourceKey,
+  'supply_transport',
+  'Запросы внешним компаниям должны использовать действующее право транспорта снабжения',
+)
 
 for (const resource of PERMISSION_RESOURCES as readonly PermissionResource[]) {
   if (!resource.defaultHref) continue

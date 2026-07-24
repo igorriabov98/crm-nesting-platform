@@ -96,7 +96,8 @@ export const GanttBar = React.memo(function GanttBar({
   const startDate = new Date(stage.date_start)
   const endDate = new Date(stage.date_end)
   const { left, width } = barGeometry(startDate, endDate, rangeStart, scale, unitWidth)
-  const color = getGanttStageColor(stage.stage_type)
+  const color = stage.color || getGanttStageColor(stage.stage_type)
+  const stageLabel = stage.display_label || getGanttStageLabel(stage.stage_type)
   const visibleStatus = planOnly ? 'not_planned' : stage.status
   const isPlanned = visibleStatus === 'not_planned'
   const showLabel = width > 70
@@ -187,7 +188,7 @@ export const GanttBar = React.memo(function GanttBar({
             borderColor: isPlanned ? color : undefined,
             backgroundColor: isPlanned ? hexToRgba(color, 0.16) : color,
           }}
-          aria-label={`${getGanttStageLabel(stage.stage_type)}: ${formatDate(endDate)}`}
+          aria-label={`${stageLabel}: ${formatDate(endDate)}`}
         >
           <div
             className="pointer-events-none absolute inset-0"
@@ -231,7 +232,7 @@ export const GanttBar = React.memo(function GanttBar({
                 isPlanned ? "text-[#374151]" : "text-white"
               )}
             >
-              {getGanttStageLabel(stage.stage_type)}
+              {stageLabel}
             </span>
           ) : (
             <Link
@@ -242,7 +243,7 @@ export const GanttBar = React.memo(function GanttBar({
               )}
               onClick={(e) => e.stopPropagation()}
             >
-              {getGanttStageLabel(stage.stage_type)}
+              {stageLabel}
             </Link>
           ))}
         </div>
@@ -264,7 +265,7 @@ export const GanttBar = React.memo(function GanttBar({
               className={cn("h-2.5 w-2.5", isSingleDateStage ? "rounded-full" : "rounded-sm")}
               style={{ backgroundColor: color }}
             />
-            {getGanttStageLabel(stage.stage_type)}
+            {stageLabel}
           </p>
           {workshopLabel && (
             <p className="text-[#6B7280]">Цех: <span className="text-[#1B3A6B]">{workshopLabel}</span></p>

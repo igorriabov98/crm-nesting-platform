@@ -8,7 +8,6 @@ import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { ProductionPlanner } from '@/components/features/production/ProductionPlanner'
-import { ProductionOutsourcingPanel } from '@/components/features/production/ProductionOutsourcingPanel'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { markProductionMonthPlanStatus, type ProductionMonthPlanSummary } from '@/lib/actions/production-plan'
 import type { ProductionOutsourcingSummary } from '@/lib/actions/outsourcing'
@@ -158,6 +157,52 @@ export function ProductionWorkspace({
   monthPlanError,
 }: ProductionWorkspaceProps) {
   const [plannerFilters, setPlannerFilters] = useState<GanttFilters>(defaultGanttFilters)
+  const ganttDataWithIncomingOutsourcing = useMemo<GanttData>(() => {
+    const incomingMachines = outsourcingSummary.incoming
+      .filter((operation) => operation.incoming_date_start && operation.incoming_date_end)
+      .map((operation) => ({
+        id: `outsourcing:${operation.id}`,
+        name: `Аутсорсинг · ${operation.machine_name} · ${operation.work_type_name}`,
+        created_at: `${operation.incoming_date_start}T00:00:00.000Z`,
+        factory_id: operation.executor_factory_id,
+        production_month: operation.incoming_production_month,
+        production_workshop: operation.incoming_workshop,
+        production_queue_number: operation.incoming_queue_number,
+        total_weight: 0,
+        is_confirmed: true,
+        desired_shipping_date: operation.planned_return_date,
+        planned_material_date: null,
+        actual_material_date: null,
+        actual_shipping_date: null,
+        delivery_to_client_date: null,
+        coatings: [],
+        stages: [{
+          id: `outsourcing-stage:${operation.id}`,
+          stage_type: 'assembly' as const,
+          workshop: operation.incoming_workshop,
+          date_start: operation.incoming_date_start!,
+          date_end: operation.incoming_date_end!,
+          manual_overdue: false,
+          is_night_shift: false,
+          night_shift_date: null,
+          night_shift_dates: [],
+          status: 'not_planned' as const,
+          delay_days: 0,
+          display_label: operation.work_type_name,
+          color: '#7C3AED',
+        }],
+        supply_deadlines: [],
+        material_items: [],
+        is_outsourcing: true,
+        outsourcing_operation_id: operation.id,
+        source_machine_id: operation.machine_id,
+      }))
+
+    return {
+      ...ganttData,
+      machines: [...ganttData.machines, ...incomingMachines],
+    }
+  }, [ganttData, outsourcingSummary.incoming])
 
   return (
     <div className="space-y-4">
@@ -203,12 +248,11 @@ export function ProductionWorkspace({
         error={monthPlanError}
       />
 
-      <ProductionOutsourcingPanel summary={outsourcingSummary} />
-
       <ProductionPlanner
-        data={ganttData}
+        data={ganttDataWithIncomingOutsourcing}
         productionData={productionData}
         monthPlans={monthPlans}
+        outsourcingOperations={outsourcingSummary.outgoing.concat(outsourcingSummary.incoming)}
         filters={plannerFilters}
         onFiltersChange={setPlannerFilters}
       />

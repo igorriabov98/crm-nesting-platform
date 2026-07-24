@@ -20,6 +20,8 @@ export interface GanttStage {
   night_shift_dates: string[]
   status: GanttStageStatus
   delay_days: number
+  display_label?: string
+  color?: string
 }
 
 export interface GanttSupplyItem {
@@ -63,6 +65,9 @@ export interface GanttMachine {
   stages: GanttStage[]
   supply_deadlines: GanttSupplyItem[]
   material_items: GanttMaterialItem[]
+  is_outsourcing?: boolean
+  outsourcing_operation_id?: string | null
+  source_machine_id?: string | null
 }
 
 export interface GanttData {
