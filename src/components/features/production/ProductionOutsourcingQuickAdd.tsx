@@ -83,6 +83,15 @@ export function ProductionOutsourcingQuickAdd({
     () => data?.suppliers.filter((supplier) => supplier.can_outsource || supplier.can_transport) || [],
     [data?.suppliers],
   )
+  const selectedWorkTypeLabel = data?.workTypes.find((workType) => workType.id === draft?.workTypeId)?.name
+    || 'Выберите тип работы'
+  const selectedPlanPositionLabel = draft?.positionAfterStageType && draft.positionAfterStageType !== 'none'
+    ? `После: ${STAGES[draft.positionAfterStageType].label}`
+    : 'Не привязано'
+  const selectedExecutorTypeLabel = draft?.executorType === 'factory' ? 'Завод' : 'Компания'
+  const selectedExecutorLabel = draft?.executorType === 'factory'
+    ? data?.factories.find((factory) => factory.id === draft.executorFactoryId)?.name || 'Выберите завод'
+    : outsourceSuppliers.find((supplier) => supplier.id === draft?.supplierId)?.name || 'Выберите компанию'
   const canSubmit = Boolean(
     data?.canManage &&
       draft?.workTypeId &&
@@ -190,7 +199,7 @@ export function ProductionOutsourcingQuickAdd({
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Тип работы">
                   <Select value={draft.workTypeId} onValueChange={(value) => value && setDraft({ ...draft, workTypeId: value })}>
-                    <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Выберите тип работы" /></SelectTrigger>
+                    <SelectTrigger className="h-10 w-full"><SelectValue>{selectedWorkTypeLabel}</SelectValue></SelectTrigger>
                     <SelectContent>
                       {data.workTypes.map((workType) => (
                         <SelectItem key={workType.id} value={workType.id}>{workType.name}</SelectItem>
@@ -204,11 +213,11 @@ export function ProductionOutsourcingQuickAdd({
                     value={draft.positionAfterStageType}
                     onValueChange={(value) => value && setDraft({ ...draft, positionAfterStageType: value as StageType | 'none' })}
                   >
-                    <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-10 w-full"><SelectValue>{selectedPlanPositionLabel}</SelectValue></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Не привязано</SelectItem>
                       {STAGE_ORDER.map((stage) => (
-                        <SelectItem key={stage} value={stage}>После: {STAGES[stage]?.label || stage}</SelectItem>
+                        <SelectItem key={stage} value={stage}>После: {STAGES[stage].label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -219,7 +228,7 @@ export function ProductionOutsourcingQuickAdd({
                     value={draft.executorType}
                     onValueChange={(value) => value && setDraft({ ...draft, executorType: value as 'supplier' | 'factory' })}
                   >
-                    <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-10 w-full"><SelectValue>{selectedExecutorTypeLabel}</SelectValue></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="supplier">Компания</SelectItem>
                       <SelectItem value="factory">Завод</SelectItem>
@@ -230,7 +239,7 @@ export function ProductionOutsourcingQuickAdd({
                 <Field label={draft.executorType === 'supplier' ? 'Компания' : 'Завод'}>
                   {draft.executorType === 'supplier' ? (
                     <Select value={draft.supplierId} onValueChange={(value) => value && setDraft({ ...draft, supplierId: value })}>
-                      <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Выберите компанию" /></SelectTrigger>
+                      <SelectTrigger className="h-10 w-full"><SelectValue>{selectedExecutorLabel}</SelectValue></SelectTrigger>
                       <SelectContent>
                         {outsourceSuppliers.map((supplier) => (
                           <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
@@ -239,7 +248,7 @@ export function ProductionOutsourcingQuickAdd({
                     </Select>
                   ) : (
                     <Select value={draft.executorFactoryId} onValueChange={(value) => value && setDraft({ ...draft, executorFactoryId: value })}>
-                      <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Выберите завод" /></SelectTrigger>
+                      <SelectTrigger className="h-10 w-full"><SelectValue>{selectedExecutorLabel}</SelectValue></SelectTrigger>
                       <SelectContent>
                         {data.factories.map((factory) => (
                           <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>
