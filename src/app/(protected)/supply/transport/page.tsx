@@ -1,33 +1,19 @@
-import { OutsourcingTransportPage } from '@/components/features/supply/OutsourcingTransportPage'
-import { getOutsourcingTransportWorkspace } from '@/lib/actions/outsourcing'
-import { DetailingTransportPanel } from '@/components/features/supply/DetailingTransportPanel'
-import { getDetailingTransportWorkspace } from '@/lib/actions/detailing'
-import { InventoryTransferPanel } from '@/components/features/supply/InventoryTransferPanel'
-import { getInventoryTransportWorkspace } from '@/lib/actions/inventory-transfers'
+import { TransportWorkspacePage } from '@/components/features/supply/TransportWorkspacePage'
+import { getTransportWorkspace } from '@/lib/actions/transport-trips'
 
 export const metadata = { title: 'Транспорт | CRM Завода' }
 
 export default async function SupplyTransportPage() {
-  const [{ data, error }, detailingResult, inventoryTransferResult] = await Promise.all([
-    getOutsourcingTransportWorkspace(),
-    getDetailingTransportWorkspace(),
-    getInventoryTransportWorkspace(),
-  ])
+  const { data, error } = await getTransportWorkspace()
 
   if (error) {
     return (
-      <div className="space-y-4">
-        <h1 className="text-2xl font-bold text-blue-950">Транспорт аутсорсинга</h1>
-        <p className="text-red-700">{error}</p>
+      <div className="rounded-3xl border border-rose-200 bg-rose-50 p-6">
+        <h1 className="text-2xl font-bold text-slate-950">Транспорт</h1>
+        <p className="mt-2 text-sm font-medium text-rose-700">{error}</p>
       </div>
     )
   }
 
-  return (
-    <div className="space-y-5">
-      <InventoryTransferPanel cards={inventoryTransferResult.data || []} error={inventoryTransferResult.error} />
-      <DetailingTransportPanel cards={detailingResult.data || []} error={detailingResult.error} />
-      <OutsourcingTransportPage workspace={data} />
-    </div>
-  )
+  return <TransportWorkspacePage workspace={data} />
 }

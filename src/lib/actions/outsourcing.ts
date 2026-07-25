@@ -108,6 +108,9 @@ export type MachineOutsourcingTransportOrder = {
   carrier_name: string | null
   scheduled_date: string | null
   price: number | null
+  route_start_key: string | null
+  route_start: string | null
+  route: string | null
   comment: string | null
 }
 
@@ -179,6 +182,10 @@ export type TransportWorkspaceNeed = MachineOutsourcingTransportNeed & {
   source_factory_name: string | null
   work_type_name: string
   executor_label: string
+  source_point_key: string
+  source_point_label: string
+  destination_point_key: string
+  destination_point_label: string
   item_labels: string[]
 }
 
@@ -513,6 +520,20 @@ async function loadSuppliers(db: LooseDb) {
     return withLegacySupplierCapabilities((fallback.data || []) as SupplierBaseOption[])
   }
   return (data || []) as OutsourcingSupplierOption[]
+}
+
+async function loadTransportCarriers(db: LooseDb) {
+  const { data, error } = await db
+    .from('suppliers')
+    .select('id, name, can_outsource, can_transport, is_active')
+    .eq('is_active', true)
+    .eq('can_transport', true)
+    .order('name')
+  if (!error) return (data || []) as OutsourcingSupplierOption[]
+  if (!isMissingSupplierCapabilityColumns(error)) {
+    throw new Error(error.message || 'Не удалось загрузить перевозчиков')
+  }
+  return (await loadSuppliers(db)).filter((supplier) => supplier.can_transport)
 }
 
 async function loadSuppliersByIds(db: LooseDb, supplierIds: string[]): Promise<DbResult> {
@@ -1398,15 +1419,47 @@ export async function getIncomingOutsourcingPlanBlockers(factoryId: string, prod
   return missing.map((operation) => machineNameById.get(operation.machine_id) || operation.id)
 }
 
-async function loadTransportNeeds(db: LooseDb, orderIds?: string[]) {
+async function loadTransportNeeds(
+  db: LooseDb,
+  options: { orderIds?: string[]; status?: TransportNeedStatus } = {},
+) {
   let query = db
     .from('machine_outsourcing_transport_needs')
     .select('*')
     .order('needed_date', { ascending: true })
-  if (orderIds && orderIds.length > 0) query = query.in('transport_order_id', orderIds)
+  if (options.orderIds && options.orderIds.length > 0) {
+    query = query.in('transport_order_id', options.orderIds)
+  }
+  if (options.status) query = query.eq('status', options.status)
   const { data, error } = await query
   if (error) throw new Error(error.message || 'Не удалось загрузить транспортные потребности')
   return (data || []) as MachineOutsourcingTransportNeed[]
+}
+
+async function loadTransportOrders(db: LooseDb) {
+  const [activeResult, historyResult] = await Promise.all([
+    db
+      .from('machine_outsourcing_transport_orders')
+      .select('*')
+      .in('status', ['needed', 'found', 'in_transit'])
+      .order('created_at', { ascending: false }),
+    db
+      .from('machine_outsourcing_transport_orders')
+      .select('*')
+      .in('status', ['completed', 'cancelled'])
+      .order('created_at', { ascending: false })
+      .limit(80),
+  ])
+  for (const result of [activeResult, historyResult]) {
+    if (result.error) {
+      throw new Error(result.error.message || 'Не удалось загрузить транспортные рейсы')
+    }
+  }
+  const rows = [
+    ...((activeResult.data || []) as Array<Record<string, unknown> & { id: string }>),
+    ...((historyResult.data || []) as Array<Record<string, unknown> & { id: string }>),
+  ]
+  return Array.from(new Map(rows.map((row) => [row.id, row])).values())
 }
 
 async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransportNeed[]) {
@@ -1443,6 +1496,17 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
     const operation = operationById.get(need.operation_id)
     const machine = operation ? machineById.get(operation.machine_id) : null
     const factory = machine?.factory_id ? factoryById.get(machine.factory_id) : null
+    const factoryPointKey = machine?.factory_id
+      ? `factory:${machine.factory_id}`
+      : `machine:${operation?.machine_id || need.operation_id}`
+    const factoryPointLabel = factory?.name || 'Завод не указан'
+    const executorPointKey = operation?.executor_type === 'factory' && operation.executor_factory_id
+      ? `factory:${operation.executor_factory_id}`
+      : operation?.supplier_id
+        ? `supplier:${operation.supplier_id}`
+        : `outsourcing:${operation?.id || need.operation_id}`
+    const executorPointLabel = operation?.executor_factory_name || operation?.supplier_name || 'Исполнитель не указан'
+    const isOutbound = need.direction === 'outbound'
     return {
       ...need,
       machine_id: operation?.machine_id || '',
@@ -1450,7 +1514,11 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
       source_factory_id: machine?.factory_id || null,
       source_factory_name: factory?.name || null,
       work_type_name: operation ? workTypeById.get(operation.work_type_id) || operation.work_type_name : 'Аутсорсинг',
-      executor_label: operation?.executor_factory_name || operation?.supplier_name || 'Исполнитель не указан',
+      executor_label: executorPointLabel,
+      source_point_key: isOutbound ? factoryPointKey : executorPointKey,
+      source_point_label: isOutbound ? factoryPointLabel : executorPointLabel,
+      destination_point_key: isOutbound ? executorPointKey : factoryPointKey,
+      destination_point_label: isOutbound ? executorPointLabel : factoryPointLabel,
       item_labels: (operation?.items || []).map((item) => `${item.product_name} (${item.quantity} шт.)`),
     }
   })
@@ -1533,49 +1601,71 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
   try {
     await requirePermission('supply_transport', 'view')
     const db = dbFrom(createAdminClient())
-    const [{ data: ordersData, error: ordersError }, carriers, allNeeds, agreements] = await Promise.all([
-      db.from('machine_outsourcing_transport_orders').select('*').order('created_at', { ascending: false }),
-      loadSuppliers(db),
-      loadTransportNeeds(db),
+    const [ordersRaw, carriers, openNeedRows, agreements] = await Promise.all([
+      loadTransportOrders(db),
+      loadTransportCarriers(db),
+      loadTransportNeeds(db, { status: 'open' }),
       loadSupplyOutsourcingAgreements(db),
     ])
-    if (ordersError) throw new Error(ordersError.message || 'Не удалось загрузить транспортные заказы')
 
-    const ordersRaw = (ordersData || []) as Array<Record<string, unknown> & { id: string }>
     const orderIds = ordersRaw.map((order) => order.id)
+    const orderNeeds = orderIds.length > 0
+      ? await loadTransportNeeds(db, { orderIds })
+      : []
+    const allNeeds = Array.from(
+      new Map([...openNeedRows, ...orderNeeds].map((need) => [need.id, need])).values(),
+    )
     const activeNeeds = allNeeds.filter((need) => need.status !== 'cancelled')
-    const enrichedNeeds = await enrichTransportNeeds(db, activeNeeds)
+    const eligibleCarrierIds = new Set(carriers.map((supplier) => supplier.id))
+    const historicalCarrierIds = Array.from(new Set(
+      ordersRaw
+        .map((order) => order.carrier_supplier_id)
+        .filter((id): id is string => typeof id === 'string' && !eligibleCarrierIds.has(id)),
+    ))
+    const [enrichedNeeds, historicalCarriersResult] = await Promise.all([
+      enrichTransportNeeds(db, activeNeeds),
+      loadSuppliersByIds(db, historicalCarrierIds),
+    ])
+    if (historicalCarriersResult.error) {
+      throw new Error(historicalCarriersResult.error.message || 'Не удалось загрузить перевозчиков из истории')
+    }
     const needsByOrder = new Map<string, TransportWorkspaceNeed[]>()
-    const openNeeds: TransportWorkspaceNeed[] = []
+    const openTransportNeeds: TransportWorkspaceNeed[] = []
     for (const need of enrichedNeeds) {
       if (need.transport_order_id) {
-        needsByOrder.set(need.transport_order_id, [...(needsByOrder.get(need.transport_order_id) || []), need])
+        const orderNeeds = needsByOrder.get(need.transport_order_id)
+        if (orderNeeds) orderNeeds.push(need)
+        else needsByOrder.set(need.transport_order_id, [need])
       } else if (need.status === 'open') {
-        openNeeds.push(need)
+        openTransportNeeds.push(need)
       }
     }
 
-    const carriersById = new Map(carriers.map((supplier) => [supplier.id, supplier]))
-    const orders = ordersRaw
-      .filter((order) => orderIds.includes(order.id))
-      .map((order) => ({
-        id: order.id,
-        direction: order.direction as TransportDirection,
-        status: order.status as TransportOrderStatus,
-        carrier_supplier_id: order.carrier_supplier_id as string | null,
-        carrier_name: order.carrier_supplier_id ? carriersById.get(order.carrier_supplier_id as string)?.name || null : null,
-        scheduled_date: dateOnly(order.scheduled_date as string | null),
-        price: order.price == null ? null : Number(order.price),
-        comment: order.comment as string | null,
-        needs: needsByOrder.get(order.id) || [],
-      }))
+    const historicalCarriers = (historicalCarriersResult.data || []) as OutsourcingSupplierOption[]
+    const carriersById = new Map(
+      [...carriers, ...historicalCarriers].map((supplier) => [supplier.id, supplier]),
+    )
+    const orders = ordersRaw.map((order) => ({
+      id: order.id,
+      direction: order.direction as TransportDirection,
+      status: order.status as TransportOrderStatus,
+      carrier_supplier_id: order.carrier_supplier_id as string | null,
+      carrier_name: order.carrier_supplier_id ? carriersById.get(order.carrier_supplier_id as string)?.name || null : null,
+      scheduled_date: dateOnly(order.scheduled_date as string | null),
+      price: order.price == null ? null : Number(order.price),
+      route_start_key: order.route_start_key as string | null,
+      route_start: order.route_start as string | null,
+      route: order.route as string | null,
+      comment: order.comment as string | null,
+      needs: needsByOrder.get(order.id) || [],
+    }))
 
     return {
       data: {
         agreements,
-        needs: openNeeds,
+        needs: openTransportNeeds,
         orders,
-        carriers: carriers.filter((supplier) => supplier.can_transport),
+        carriers,
       },
       error: null,
     }

@@ -89,28 +89,73 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
     .order('created_at', { ascending: false })
   if (activeOnly) transfersQuery = transfersQuery.in('status', ['needs_date', 'scheduled', 'partially_received'])
 
-  const [transfersResult, itemsResult, materialsResult, machinesResult, factoriesResult, tasksResult] = await Promise.all([
-    transfersQuery,
-    db.from('inventory_transfer_items').select('id, transfer_id, material_id, material_variant_id, request_item_table, request_item_id, requested_quantity, received_quantity, requested_secondary_quantity, received_secondary_quantity, unit, secondary_unit, piece_length_mm, is_business_scrap').order('created_at', { ascending: true }),
-    db.from('materials').select('id, name, category'),
-    db.from('machines').select('id, name'),
-    db.from('factories').select('id, name'),
-    db.from('tasks').select('id, inventory_transfer_id, status, deadline').eq('task_type', 'inventory_transfer').order('created_at', { ascending: false }),
+  const transfersResult = await transfersQuery
+  if (transfersResult.error) {
+    throw new Error(transfersResult.error.message || 'Не удалось загрузить межскладские перевозки')
+  }
+  const transferRows = (transfersResult.data || []) as Array<Record<string, unknown>>
+  if (transferRows.length === 0) return []
+
+  const transferIds = transferRows.map((row) => String(row.id))
+  const machineIds = Array.from(new Set(transferRows.map((row) => String(row.machine_id))))
+  const factoryIds = Array.from(new Set(transferRows.flatMap((row) => [
+    String(row.source_factory_id),
+    String(row.destination_factory_id),
+  ])))
+
+  const [itemsResult, machinesResult, factoriesResult, tasksResult] = await Promise.all([
+    db
+      .from('inventory_transfer_items')
+      .select('id, transfer_id, material_id, material_variant_id, request_item_table, request_item_id, requested_quantity, received_quantity, requested_secondary_quantity, received_secondary_quantity, unit, secondary_unit, piece_length_mm, is_business_scrap')
+      .in('transfer_id', transferIds)
+      .order('created_at', { ascending: true }),
+    db.from('machines').select('id, name').in('id', machineIds),
+    db.from('factories').select('id, name').in('id', factoryIds),
+    db
+      .from('tasks')
+      .select('id, inventory_transfer_id, status, deadline')
+      .eq('task_type', 'inventory_transfer')
+      .in('inventory_transfer_id', transferIds)
+      .order('created_at', { ascending: false }),
   ])
 
-  for (const result of [transfersResult, itemsResult, materialsResult, machinesResult, factoriesResult, tasksResult]) {
+  for (const result of [itemsResult, machinesResult, factoriesResult, tasksResult]) {
     if (result.error) throw new Error(result.error.message || 'Не удалось загрузить межскладские перевозки')
+  }
+
+  const itemRows = (itemsResult.data || []) as Array<Record<string, unknown>>
+  const materialIds = Array.from(new Set(itemRows.map((row) => String(row.material_id))))
+  const materialsResult = materialIds.length > 0
+    ? await db.from('materials').select('id, name, category').in('id', materialIds)
+    : { data: [], error: null }
+  if (materialsResult.error) {
+    throw new Error(materialsResult.error.message || 'Не удалось загрузить материалы перевозки')
   }
 
   const materials = new Map(((materialsResult.data || []) as Array<{ id: string; name: string; category: string | null }>).map((row) => [row.id, row]))
   const machines = new Map(((machinesResult.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row.name]))
   const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row.name]))
   const tasks = (tasksResult.data || []) as Array<{ id: string; inventory_transfer_id: string; status: string; deadline: string | null }>
-  const itemRows = (itemsResult.data || []) as Array<Record<string, unknown>>
+  const itemsByTransfer = new Map<string, Array<Record<string, unknown>>>()
+  for (const item of itemRows) {
+    const transferId = String(item.transfer_id)
+    const transferItems = itemsByTransfer.get(transferId)
+    if (transferItems) transferItems.push(item)
+    else itemsByTransfer.set(transferId, [item])
+  }
+  const taskByTransfer = new Map<string, (typeof tasks)[number]>()
+  for (const task of tasks) {
+    const current = taskByTransfer.get(task.inventory_transfer_id)
+    if (!current || (
+      !['pending', 'in_progress'].includes(current.status)
+      && ['pending', 'in_progress'].includes(task.status)
+    )) {
+      taskByTransfer.set(task.inventory_transfer_id, task)
+    }
+  }
 
-  return ((transfersResult.data || []) as Array<Record<string, unknown>>).map((row) => {
-    const items = itemRows
-      .filter((item) => item.transfer_id === row.id)
+  return transferRows.map((row) => {
+    const items = (itemsByTransfer.get(String(row.id)) || [])
       .map((item): InventoryTransferItemCard => {
         const requested = numberValue(item.requested_quantity)
         const received = numberValue(item.received_quantity)
@@ -139,8 +184,7 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
         }
       })
 
-    const task = tasks.find((entry) => entry.inventory_transfer_id === row.id && ['pending', 'in_progress'].includes(entry.status))
-      || tasks.find((entry) => entry.inventory_transfer_id === row.id)
+    const task = taskByTransfer.get(String(row.id))
     const expectedArrivalDate = row.expected_arrival_date ? String(row.expected_arrival_date) : null
     const deadline = task?.deadline || null
 
