@@ -1,9 +1,9 @@
 "use client"
 
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useRef, useState, useTransition } from 'react'
 import type { ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, Plus, Save } from 'lucide-react'
+import { ArrowRight, Building2, CalendarDays, ClipboardList, Loader2, PackageCheck, Plus, Save, Settings2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { getMachineOutsourcingData, saveOutsourcingOperation, type MachineOutsourcingData } from '@/lib/actions/outsourcing'
+import {
+  getMachineOutsourcingCreateData,
+  saveOutsourcingOperation,
+  type MachineOutsourcingCreateData,
+} from '@/lib/actions/outsourcing'
 import { STAGES, STAGE_ORDER } from '@/lib/constants/stages'
 import { cn } from '@/lib/utils'
 import type { StageType } from '@/lib/types'
@@ -43,7 +47,7 @@ type ProductionOutsourcingQuickAddProps = {
 
 const CUSTOM_WORK_TYPE_VALUE = 'custom'
 
-function createDraft(data: MachineOutsourcingData, positionAfterStageType?: StageType | null): Draft {
+function createDraft(data: MachineOutsourcingCreateData, positionAfterStageType?: StageType | null): Draft {
   return {
     workTypeId: data.workTypes[0]?.id || '',
     customWorkTypeName: '',
@@ -61,11 +65,37 @@ function createDraft(data: MachineOutsourcingData, positionAfterStageType?: Stag
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <Label className="grid gap-2 text-sm font-medium text-slate-700">
+    <Label className="grid gap-2 text-sm font-medium text-slate-800">
       {label}
       {children}
     </Label>
   )
+}
+
+const createDataCache = new Map<string, {
+  data?: MachineOutsourcingCreateData
+  promise?: ReturnType<typeof getMachineOutsourcingCreateData>
+  loadedAt?: number
+}>()
+const CREATE_DATA_CACHE_MS = 60_000
+
+function loadCreateData(machineId: string) {
+  const cached = createDataCache.get(machineId)
+  if (cached?.data && cached.loadedAt && Date.now() - cached.loadedAt < CREATE_DATA_CACHE_MS) {
+    return Promise.resolve({ data: cached.data, error: null })
+  }
+  if (cached?.promise) return cached.promise
+
+  const promise = getMachineOutsourcingCreateData(machineId).then((result) => {
+    if (result.data) {
+      createDataCache.set(machineId, { data: result.data, loadedAt: Date.now() })
+    } else {
+      createDataCache.delete(machineId)
+    }
+    return result
+  })
+  createDataCache.set(machineId, { ...cached, promise })
+  return promise
 }
 
 export function ProductionOutsourcingQuickAdd({
@@ -80,8 +110,9 @@ export function ProductionOutsourcingQuickAdd({
   const [isPending, startTransition] = useTransition()
   const [open, setOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [data, setData] = useState<MachineOutsourcingData | null>(null)
+  const [data, setData] = useState<MachineOutsourcingCreateData | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
+  const openRequestRef = useRef(0)
 
   const outsourceSuppliers = useMemo(
     () => data?.suppliers.filter((supplier) => supplier.can_outsource || supplier.can_transport) || [],
@@ -104,17 +135,22 @@ export function ProductionOutsourcingQuickAdd({
       (draft.executorType === 'supplier' ? draft.supplierId : draft.executorFactoryId),
   )
 
+  function prefetchDialog() {
+    void loadCreateData(machineId)
+  }
+
   async function openDialog() {
+    const requestId = ++openRequestRef.current
     setOpen(true)
     setIsLoading(true)
-    setData(null)
-    setDraft(null)
 
-    const result = await getMachineOutsourcingData(machineId)
+    const result = await loadCreateData(machineId)
+    if (requestId !== openRequestRef.current) return
     setIsLoading(false)
 
     if (result.error || !result.data) {
       toast.error(result.error || 'Не удалось загрузить данные аутсорсинга')
+      setOpen(false)
       return
     }
 
@@ -169,39 +205,61 @@ export function ProductionOutsourcingQuickAdd({
         variant="outline"
         disabled={disabled || isLoading}
         onClick={openDialog}
+        onPointerEnter={prefetchDialog}
+        onFocus={prefetchDialog}
         className={cn('min-h-10 gap-2', className)}
       >
         {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
         {label}
       </Button>
 
-      <Dialog open={open} onOpenChange={(nextOpen) => !isPending && setOpen(nextOpen)}>
-        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Добавить аутсорсинг</DialogTitle>
+      <Dialog open={open} onOpenChange={(nextOpen) => {
+        if (!isPending) {
+          if (!nextOpen) {
+            openRequestRef.current += 1
+            setIsLoading(false)
+          }
+          setOpen(nextOpen)
+        }
+      }}>
+        <DialogContent className="flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+          <DialogHeader className="border-b border-slate-200 bg-white px-5 py-4 pr-14 sm:px-6">
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                <Settings2 className="size-5" />
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="text-lg text-slate-950">Новая работа на аутсорсинге</DialogTitle>
+                <div className="mt-1 flex items-center gap-2 text-sm text-slate-500">
+                  <span>Машина</span>
+                  <ArrowRight className="size-3.5" />
+                  <span className="truncate font-semibold text-slate-800" title={machineName}>{machineName}</span>
+                </div>
+              </div>
+            </div>
           </DialogHeader>
 
           {isLoading || !data || !draft ? (
-            <div className="flex min-h-40 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 text-sm text-slate-600">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Загрузка данных машины
+            <div className="flex min-h-72 flex-1 items-center justify-center bg-slate-50/70 px-6">
+              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-600 shadow-sm">
+                <Loader2 className="size-5 animate-spin text-blue-600" />
+                Подготавливаем форму
+              </div>
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="text-[11px] font-medium uppercase text-slate-500">Машина</div>
-                <div className="mt-1 truncate text-sm font-semibold text-blue-950" title={machineName}>
-                  {machineName}
-                </div>
-              </div>
-
+            <div className="flex-1 space-y-5 overflow-y-auto bg-slate-50/70 px-4 py-5 sm:px-6">
               {!data.canManage && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   Недостаточно прав для управления аутсорсингом этой машины.
                 </div>
               )}
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-950">
+                  <ClipboardList className="size-4 text-blue-600" />
+                  Работа и место в плане
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Тип работы">
                   <Select
                     value={draft.useCustomWorkType ? CUSTOM_WORK_TYPE_VALUE : draft.workTypeId}
@@ -246,7 +304,15 @@ export function ProductionOutsourcingQuickAdd({
                     </SelectContent>
                   </Select>
                 </Field>
+                </div>
+              </section>
 
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-950">
+                  <Building2 className="size-4 text-blue-600" />
+                  Исполнитель
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Исполнитель">
                   <Select
                     value={draft.executorType}
@@ -281,7 +347,15 @@ export function ProductionOutsourcingQuickAdd({
                     </Select>
                   )}
                 </Field>
+                </div>
+              </section>
 
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-950">
+                  <CalendarDays className="size-4 text-blue-600" />
+                  Сроки и примечание
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Готовы отправить">
                   <Input
                     type="date"
@@ -306,11 +380,20 @@ export function ProductionOutsourcingQuickAdd({
                     <Textarea value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} />
                   </Field>
                 </div>
-              </div>
+                </div>
+              </section>
 
-              <div>
-                <div className="mb-2 text-sm font-semibold text-blue-950">Товары</div>
-                <div className="grid max-h-64 gap-2 overflow-y-auto rounded-lg border border-slate-200 p-3">
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
+                    <PackageCheck className="size-4 text-blue-600" />
+                    Товары
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                    Выбрано: {draft.itemIds.length}
+                  </span>
+                </div>
+                <div className="grid max-h-64 gap-2 overflow-y-auto">
                   {data.items.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
                       У машины нет товарных строк для аутсорсинга.
@@ -321,7 +404,9 @@ export function ProductionOutsourcingQuickAdd({
                         key={item.id}
                         className={cn(
                           'flex items-start gap-3 rounded-lg border p-3 text-sm',
-                          draft.itemIds.includes(item.id) ? 'border-blue-200 bg-blue-50' : 'border-slate-200 bg-white',
+                          draft.itemIds.includes(item.id)
+                            ? 'border-blue-300 bg-blue-50 ring-1 ring-blue-100'
+                            : 'border-slate-200 bg-white hover:border-slate-300',
                         )}
                       >
                         <Checkbox checked={draft.itemIds.includes(item.id)} onCheckedChange={() => toggleItem(item.id)} />
@@ -335,17 +420,17 @@ export function ProductionOutsourcingQuickAdd({
                     ))
                   )}
                 </div>
-              </div>
+              </section>
             </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="border-t border-slate-200 bg-white px-4 py-4 sm:px-6">
             <Button type="button" variant="outline" disabled={isPending} onClick={() => setOpen(false)}>
               Отмена
             </Button>
             <Button type="button" disabled={isPending || !canSubmit} onClick={submit} className="gap-2">
               {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Сохранить
+              {isPending ? 'Сохраняем…' : 'Сохранить'}
             </Button>
           </DialogFooter>
         </DialogContent>
