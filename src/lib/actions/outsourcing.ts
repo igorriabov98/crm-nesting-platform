@@ -1018,6 +1018,41 @@ export async function getMachineOutsourcingData(machineId: string): Promise<{ da
   }
 }
 
+export type MachineOutsourcingCreateData = Pick<
+  MachineOutsourcingData,
+  'machine' | 'planStatus' | 'canManage' | 'canManageDatesDirectly' | 'workTypes' | 'suppliers' | 'factories' | 'items'
+>
+
+export async function getMachineOutsourcingCreateData(
+  machineId: string,
+): Promise<{ data: MachineOutsourcingCreateData | null; error: string | null }> {
+  try {
+    const { db, context, machine, planStatus, canManage } = await requireMachineOutsourcingAccess(machineId)
+    const [workTypes, suppliers, factories, items] = await Promise.all([
+      loadWorkTypes(db),
+      loadSuppliers(db),
+      loadFactories(db),
+      loadMachineItems(db, machine.id),
+    ])
+
+    return {
+      data: {
+        machine,
+        planStatus,
+        canManage,
+        canManageDatesDirectly: planStatus !== 'confirmed' || isDirector(context.role) || context.role === 'sales_manager',
+        workTypes,
+        suppliers: suppliers.filter((supplier) => supplier.can_outsource || supplier.can_transport),
+        factories,
+        items,
+      },
+      error: null,
+    }
+  } catch (error) {
+    return { data: null, error: getErrorMessage(error) }
+  }
+}
+
 export async function saveOutsourcingOperation(input: z.infer<typeof operationSchema>) {
   try {
     const parsed = operationSchema.parse(input)
@@ -1113,7 +1148,14 @@ export async function saveOutsourcingOperation(input: z.infer<typeof operationSc
       .insert(itemIds.map((machine_item_id) => ({ operation_id: operationId, machine_item_id })))
     if (insertItemsError) throw new Error(insertItemsError.message || 'Не удалось сохранить товары аутсорсинга')
 
-    await syncOutsourcingTransportForMachine(db, machine)
+    const productionMonth = normalizeMonthOrNull(machine.production_month)
+    if (machine.factory_id && productionMonth && planStatus !== 'draft') {
+      await syncOutsourcingTransportForProductionPlan(
+        machine.factory_id,
+        productionMonth,
+        planStatus,
+      )
+    }
     revalidatePath(`${ROUTES.SALES_PLAN}/${machine.id}`)
     revalidatePath(ROUTES.PRODUCTION)
     revalidatePath(ROUTES.PRODUCTION_OUTSOURCING_REQUESTS)
