@@ -13,6 +13,11 @@ import { RequestStatusBadge } from '@/components/features/requests/RequestStatus
 import { ROUTES } from '@/lib/constants/routes'
 import { reserveAllAvailable, type SupplyRequestPayload } from '@/lib/actions/supply-request'
 import { completeStockReservation } from '@/lib/actions/technologist-requests'
+import {
+  getSupplyOrdersForRequestHref,
+  isBusinessScrapReservationStatus,
+  isSupplyWarehouseReservationStatus,
+} from '@/lib/supply-request-flow'
 import { SupplyChainCordTable } from './SupplyChainCordTable'
 import { SupplyCircleTable } from './SupplyCircleTable'
 import { SupplyComponentsTable } from './SupplyComponentsTable'
@@ -37,7 +42,8 @@ export function SupplyRequestPage({ data, detailing }: Props) {
   const [isPending, startTransition] = useTransition()
   const [activeTab, setActiveTab] = useState<TabKey>('sheet_metal')
   const { request } = data
-  const isStockCheckMode = request.status === 'pending_stock_check' || request.status === 'stock_checked'
+  const isStockCheckMode = isBusinessScrapReservationStatus(request.status)
+  const isSupplyReservationMode = isSupplyWarehouseReservationStatus(request.status)
   const canCompleteReservation = isStockCheckMode && data.current_role !== 'supply_manager'
   const canManageOrders = request.status === 'submitted_to_supply' || request.status === 'completed'
   const canManageDetailing = isStockCheckMode && ['technologist', 'planning_director', 'financial_director', 'commercial_director'].includes(data.current_role)
@@ -114,6 +120,16 @@ export function SupplyRequestPage({ data, detailing }: Props) {
                 Бронь завершена
               </Button>
             )}
+            {isSupplyReservationMode && (
+              <Button
+                type="button"
+                onClick={() => router.push(getSupplyOrdersForRequestHref(request.id))}
+                disabled={isPending}
+                className="bg-emerald-700 text-white hover:bg-emerald-800"
+              >
+                Бронь завершена
+              </Button>
+            )}
             <Button type="button" variant="outline" onClick={() => router.push(`${ROUTES.SALES_PLAN}/${request.machine_id}`)}>
               Открыть машину
             </Button>
@@ -126,7 +142,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         )}
       </section>
 
-      {detailing && <DetailingRequestPanel workspace={detailing} canManage={canManageDetailing} />}
+      {isStockCheckMode && detailing && <DetailingRequestPanel workspace={detailing} canManage={canManageDetailing} />}
 
       <SupplyRequestSummary summary={data.summary} totalWeight={totalWeight} />
 

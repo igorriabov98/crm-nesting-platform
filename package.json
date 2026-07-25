@@ -18,6 +18,7 @@
     "test:document-ral": "tsx scripts/test-document-ral-format.ts",
     "test:notification-bell": "tsx scripts/test-notification-bell-state.ts",
     "test:supply-order-view": "tsx scripts/test-supply-order-view.ts",
+    "test:supply-request-flow": "tsx scripts/test-supply-request-flow.ts",
     "test:user-impersonation": "tsx scripts/test-user-impersonation.ts",
     "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && node scripts/test-supply-partial-receiving.mjs",
     "test:detailing": "node scripts/test-detailing-module.mjs",
