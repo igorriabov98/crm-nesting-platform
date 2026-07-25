@@ -330,7 +330,7 @@ export const PERMISSION_RESOURCES = [
   },
   {
     key: 'consumable_requests',
-    label: 'Заявки на расходники',
+    label: 'Надобности производства',
     group: 'Производство',
     defaultHref: ROUTES.PRODUCTION_CONSUMABLE_REQUESTS,
     defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,

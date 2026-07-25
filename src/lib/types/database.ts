@@ -2222,6 +2222,9 @@ export type Database = {
           service_cost_actual: number | null
           supply_terms_confirmed_at: string | null
           supply_terms_confirmed_by: string | null
+          responsible: Database['public']['Enums']['outsourcing_responsible']
+          supply_taken_at: string | null
+          supply_taken_by: string | null
           incoming_production_month: string | null
           incoming_workshop: number | null
           incoming_queue_number: number | null
@@ -2253,6 +2256,9 @@ export type Database = {
           service_cost_actual?: number | null
           supply_terms_confirmed_at?: string | null
           supply_terms_confirmed_by?: string | null
+          responsible?: Database['public']['Enums']['outsourcing_responsible']
+          supply_taken_at?: string | null
+          supply_taken_by?: string | null
           incoming_production_month?: string | null
           incoming_workshop?: number | null
           incoming_queue_number?: number | null
@@ -2284,6 +2290,9 @@ export type Database = {
           service_cost_actual?: number | null
           supply_terms_confirmed_at?: string | null
           supply_terms_confirmed_by?: string | null
+          responsible?: Database['public']['Enums']['outsourcing_responsible']
+          supply_taken_at?: string | null
+          supply_taken_by?: string | null
           incoming_production_month?: string | null
           incoming_workshop?: number | null
           incoming_queue_number?: number | null
@@ -4560,6 +4569,7 @@ export type Database = {
       production_month_plan_status: 'draft' | 'preliminary_ready' | 'confirmed'
       production_date_change_request_status: 'pending' | 'approved' | 'rejected' | 'conflicted'
       outsourcing_executor_type: 'supplier' | 'factory'
+      outsourcing_responsible: 'production' | 'supply'
       outsourcing_transport_direction: 'outbound' | 'return'
       outsourcing_transport_plan_state: 'preliminary' | 'confirmed'
       outsourcing_transport_need_status: 'open' | 'linked' | 'completed' | 'cancelled'

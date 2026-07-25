@@ -2,19 +2,24 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Building2, CheckCircle2, Clock3, Loader2 } from 'lucide-react'
+import { Building2, CheckCircle2, Clock3, Hand, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   confirmOutsourcingServiceTerms,
+  takeOutsourcingSupplyRequest,
+  type OutsourcingSupplierOption,
   type SupplyOutsourcingAgreement,
 } from '@/lib/actions/outsourcing'
 
 type AgreementDraft = {
+  supplierId: string
+  plannedSendDate: string
   plannedReturnDate: string
   serviceCostPlanned: string
 }
@@ -27,18 +32,36 @@ function formatDate(value: string | null) {
 
 export function SupplyOutsourcingRequestsPage({
   agreements,
+  suppliers,
 }: {
   agreements: SupplyOutsourcingAgreement[]
+  suppliers: OutsourcingSupplierOption[]
 }) {
   const router = useRouter()
   const [pendingOperationId, setPendingOperationId] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [drafts, setDrafts] = useState<Record<string, AgreementDraft>>(() => Object.fromEntries(
     agreements.map((agreement) => [agreement.operation_id, {
+      supplierId: agreement.supplier_id || '',
+      plannedSendDate: agreement.planned_send_date || '',
       plannedReturnDate: agreement.planned_return_date || '',
       serviceCostPlanned: agreement.service_cost_planned == null ? '' : String(agreement.service_cost_planned),
     }]),
   ))
+
+  function takeAgreement(agreement: SupplyOutsourcingAgreement) {
+    setPendingOperationId(agreement.operation_id)
+    startTransition(async () => {
+      const result = await takeOutsourcingSupplyRequest({ operationId: agreement.operation_id })
+      setPendingOperationId(null)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось взять запрос в работу')
+        return
+      }
+      toast.success('Запрос взят в работу')
+      router.refresh()
+    })
+  }
 
   function updateDraft(operationId: string, patch: Partial<AgreementDraft>) {
     setDrafts((current) => ({
@@ -49,12 +72,14 @@ export function SupplyOutsourcingRequestsPage({
 
   function confirmAgreement(agreement: SupplyOutsourcingAgreement) {
     const draft = drafts[agreement.operation_id]
-    if (!draft?.plannedReturnDate) return
+    if (!draft?.supplierId || !draft.plannedSendDate || !draft.plannedReturnDate || !draft.serviceCostPlanned) return
 
     setPendingOperationId(agreement.operation_id)
     startTransition(async () => {
       const result = await confirmOutsourcingServiceTerms({
         operationId: agreement.operation_id,
+        supplierId: draft.supplierId,
+        plannedSendDate: draft.plannedSendDate,
         plannedReturnDate: draft.plannedReturnDate,
         serviceCostPlanned: draft.serviceCostPlanned ? Number(draft.serviceCostPlanned) : null,
       })
@@ -80,7 +105,7 @@ export function SupplyOutsourcingRequestsPage({
           <div>
             <h1 className="text-xl font-bold text-blue-950 sm:text-2xl">Запросы на аутсорсинг</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Здесь собраны работы, которые должно выполнить внешнее предприятие. Снабжение подтверждает дату возврата и стоимость услуги.
+              Возьмите заявку в работу, выберите исполнителя, подтвердите обе даты и стоимость. После подтверждения она появится в транспорте.
             </p>
           </div>
         </div>
@@ -115,11 +140,48 @@ export function SupplyOutsourcingRequestsPage({
                     </div>
                     <div className="mt-2 grid gap-1 text-sm text-slate-600 sm:grid-cols-2">
                       <span>Маршрут: {agreement.source_factory_name || 'завод не указан'} → {agreement.supplier_name || 'компания не указана'}</span>
-                      <span>Производство готово отправить: <b>{formatDate(agreement.planned_send_date)}</b></span>
+                      <span>Желаемая отправка: <b>{formatDate(agreement.planned_send_date)}</b></span>
                     </div>
                   </div>
 
-                  <div className="grid w-full gap-3 sm:grid-cols-[minmax(190px,1fr)_minmax(160px,1fr)_auto] xl:max-w-2xl">
+                  {!agreement.supply_taken_at ? (
+                    <Button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => takeAgreement(agreement)}
+                      className="min-h-11 gap-2 xl:self-end"
+                    >
+                      {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Hand className="h-4 w-4" />}
+                      Взять в работу
+                    </Button>
+                  ) : (
+                  <div className="grid w-full gap-3 sm:grid-cols-2 xl:max-w-3xl xl:grid-cols-5">
+                    <Label className="grid gap-1.5 text-sm text-slate-700">
+                      Компания
+                      <Select
+                        value={draft?.supplierId || ''}
+                        onValueChange={(value) => value && updateDraft(agreement.operation_id, { supplierId: value })}
+                      >
+                        <SelectTrigger className="h-10 w-full">
+                          <SelectValue>
+                            {suppliers.find((supplier) => supplier.id === draft?.supplierId)?.name || 'Выберите компанию'}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {suppliers.map((supplier) => (
+                            <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Label>
+                    <Label className="grid gap-1.5 text-sm text-slate-700">
+                      Готовы отправить
+                      <Input
+                        type="date"
+                        value={draft?.plannedSendDate || ''}
+                        onChange={(event) => updateDraft(agreement.operation_id, { plannedSendDate: event.target.value })}
+                      />
+                    </Label>
                     <Label className="grid gap-1.5 text-sm text-slate-700" htmlFor={returnDateId}>
                       Ожидаем возврат
                       <Input
@@ -130,7 +192,7 @@ export function SupplyOutsourcingRequestsPage({
                       />
                     </Label>
                     <Label className="grid gap-1.5 text-sm text-slate-700" htmlFor={serviceCostId}>
-                      Стоимость услуги
+                      Цена аутсорсинга
                       <Input
                         id={serviceCostId}
                         type="number"
@@ -142,7 +204,7 @@ export function SupplyOutsourcingRequestsPage({
                     </Label>
                     <Button
                       type="button"
-                      disabled={isPending || !draft?.plannedReturnDate}
+                      disabled={isPending || !draft?.supplierId || !draft.plannedSendDate || !draft.plannedReturnDate || !draft.serviceCostPlanned}
                       onClick={() => confirmAgreement(agreement)}
                       className="min-h-11 gap-2 sm:self-end"
                     >
@@ -152,6 +214,7 @@ export function SupplyOutsourcingRequestsPage({
                       {agreement.supply_terms_confirmed_at ? 'Сохранить' : 'Подтвердить'}
                     </Button>
                   </div>
+                  )}
                 </div>
               </article>
             )
