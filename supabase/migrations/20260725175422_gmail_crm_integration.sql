@@ -204,8 +204,8 @@ create policy mail_threads_owner_or_project_reader
         and link.unlinked_at is null
         and exists (
           select 1 from public.role_permissions permission
-          join public.users current_user on current_user.id = (select auth.uid())
-          where permission.role = current_user.role
+          join public.users actor on actor.id = (select auth.uid())
+          where permission.role = actor.role
             and permission.resource_key = 'product_projects'
             and permission.can_view = true
         )
@@ -237,8 +237,8 @@ create policy mail_messages_owner_or_project_reader
         and link.unlinked_at is null
         and exists (
           select 1 from public.role_permissions permission
-          join public.users current_user on current_user.id = (select auth.uid())
-          where permission.role = current_user.role
+          join public.users actor on actor.id = (select auth.uid())
+          where permission.role = actor.role
             and permission.resource_key = 'product_projects'
             and permission.can_view = true
         )
@@ -259,8 +259,8 @@ create policy product_project_mail_links_reader
   using (
     exists (
       select 1 from public.role_permissions permission
-      join public.users current_user on current_user.id = (select auth.uid())
-      where permission.role = current_user.role
+      join public.users actor on actor.id = (select auth.uid())
+      where permission.role = actor.role
         and permission.resource_key = 'product_projects'
         and permission.can_view = true
     )
@@ -278,8 +278,8 @@ create policy product_project_mail_links_manager_insert
     )
     and exists (
       select 1 from public.role_permissions permission
-      join public.users current_user on current_user.id = (select auth.uid())
-      where permission.role = current_user.role
+      join public.users actor on actor.id = (select auth.uid())
+      where permission.role = actor.role
         and permission.resource_key = 'product_projects'
         and permission.can_manage = true
     )
@@ -290,8 +290,8 @@ create policy product_project_mail_links_manager_update
   using (
     exists (
       select 1 from public.role_permissions permission
-      join public.users current_user on current_user.id = (select auth.uid())
-      where permission.role = current_user.role
+      join public.users actor on actor.id = (select auth.uid())
+      where permission.role = actor.role
         and permission.resource_key = 'product_projects'
         and permission.can_manage = true
     )
@@ -299,8 +299,8 @@ create policy product_project_mail_links_manager_update
   with check (
     exists (
       select 1 from public.role_permissions permission
-      join public.users current_user on current_user.id = (select auth.uid())
-      where permission.role = current_user.role
+      join public.users actor on actor.id = (select auth.uid())
+      where permission.role = actor.role
         and permission.resource_key = 'product_projects'
         and permission.can_manage = true
     )
