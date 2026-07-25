@@ -28,6 +28,7 @@ type Draft = {
   useCustomWorkType: boolean
   positionAfterStageType: StageType | 'none'
   executorType: 'supplier' | 'factory'
+  responsible: 'production' | 'supply'
   supplierId: string
   executorFactoryId: string
   plannedSendDate: string
@@ -54,6 +55,7 @@ function createDraft(data: MachineOutsourcingCreateData, positionAfterStageType?
     useCustomWorkType: data.workTypes.length === 0,
     positionAfterStageType: positionAfterStageType || 'none',
     executorType: 'supplier',
+    responsible: 'production',
     supplierId: data.suppliers.find((supplier) => supplier.can_outsource)?.id || data.suppliers[0]?.id || '',
     executorFactoryId: data.factories.find((factory) => factory.id !== data.machine.factory_id)?.id || data.factories[0]?.id || '',
     plannedSendDate: '',
@@ -127,12 +129,15 @@ export function ProductionOutsourcingQuickAdd({
   const selectedExecutorLabel = draft?.executorType === 'factory'
     ? data?.factories.find((factory) => factory.id === draft.executorFactoryId)?.name || 'Выберите завод'
     : outsourceSuppliers.find((supplier) => supplier.id === draft?.supplierId)?.name || 'Выберите компанию'
+  const selectedResponsibleLabel = draft?.responsible === 'supply' ? 'Снабжение' : 'Производство'
   const canSubmit = Boolean(
     data?.canManage &&
       draft &&
       (draft.useCustomWorkType ? draft.customWorkTypeName.trim() : draft.workTypeId) &&
       draft.itemIds.length > 0 &&
-      (draft.executorType === 'supplier' ? draft.supplierId : draft.executorFactoryId),
+      (draft.executorType === 'supplier'
+        ? draft.responsible === 'supply' || draft.supplierId
+        : draft.executorFactoryId),
   )
 
   function prefetchDialog() {
@@ -179,7 +184,8 @@ export function ProductionOutsourcingQuickAdd({
         workTypeName: draft.useCustomWorkType ? draft.customWorkTypeName : null,
         positionAfterStageType: draft.positionAfterStageType === 'none' ? null : draft.positionAfterStageType,
         executorType: draft.executorType,
-        supplierId: draft.executorType === 'supplier' ? draft.supplierId : null,
+        responsible: draft.executorType === 'supplier' ? draft.responsible : 'production',
+        supplierId: draft.executorType === 'supplier' && draft.responsible === 'production' ? draft.supplierId : null,
         executorFactoryId: draft.executorType === 'factory' ? draft.executorFactoryId : null,
         plannedSendDate: draft.plannedSendDate || null,
         plannedReturnDate: draft.plannedReturnDate || null,
@@ -326,16 +332,43 @@ export function ProductionOutsourcingQuickAdd({
                   </Select>
                 </Field>
 
-                <Field label={draft.executorType === 'supplier' ? 'Компания' : 'Завод'}>
-                  {draft.executorType === 'supplier' ? (
-                    <Select value={draft.supplierId} onValueChange={(value) => value && setDraft({ ...draft, supplierId: value })}>
-                      <SelectTrigger className="h-10 w-full"><SelectValue>{selectedExecutorLabel}</SelectValue></SelectTrigger>
+                {draft.executorType === 'supplier' && (
+                  <Field label="Ответственный">
+                    <Select
+                      value={draft.responsible}
+                      onValueChange={(value) => value && setDraft({
+                        ...draft,
+                        responsible: value as 'production' | 'supply',
+                        supplierId: value === 'supply' ? '' : draft.supplierId,
+                      })}
+                    >
+                      <SelectTrigger className="h-10 w-full">
+                        <SelectValue>{selectedResponsibleLabel}</SelectValue>
+                      </SelectTrigger>
                       <SelectContent>
-                        {outsourceSuppliers.map((supplier) => (
-                          <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
-                        ))}
+                        <SelectItem value="production">Производство</SelectItem>
+                        <SelectItem value="supply">Снабжение</SelectItem>
                       </SelectContent>
                     </Select>
+                  </Field>
+                )}
+
+                <Field label={draft.executorType === 'supplier' ? 'Компания' : 'Завод'}>
+                  {draft.executorType === 'supplier' ? (
+                    draft.responsible === 'supply' ? (
+                      <div className="flex h-10 items-center rounded-md border border-slate-200 bg-slate-50 px-3 text-sm text-slate-500">
+                        Выберет снабжение после принятия заявки
+                      </div>
+                    ) : (
+                      <Select value={draft.supplierId} onValueChange={(value) => value && setDraft({ ...draft, supplierId: value })}>
+                        <SelectTrigger className="h-10 w-full"><SelectValue>{selectedExecutorLabel}</SelectValue></SelectTrigger>
+                        <SelectContent>
+                          {outsourceSuppliers.map((supplier) => (
+                            <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )
                   ) : (
                     <Select value={draft.executorFactoryId} onValueChange={(value) => value && setDraft({ ...draft, executorFactoryId: value })}>
                       <SelectTrigger className="h-10 w-full"><SelectValue>{selectedExecutorLabel}</SelectValue></SelectTrigger>
@@ -355,7 +388,8 @@ export function ProductionOutsourcingQuickAdd({
                   <CalendarDays className="size-4 text-blue-600" />
                   Сроки и примечание
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid items-start gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
                 <Field label="Готовы отправить">
                   <Input
                     type="date"
@@ -363,17 +397,23 @@ export function ProductionOutsourcingQuickAdd({
                     onChange={(event) => setDraft({ ...draft, plannedSendDate: event.target.value })}
                   />
                 </Field>
+                  <span aria-hidden="true" className="hidden text-xs sm:block">&nbsp;</span>
+                </div>
 
+                <div className="grid gap-2">
                 <Field label="Ожидаем возврат">
                   <Input
                     type="date"
                     value={draft.plannedReturnDate}
                     onChange={(event) => setDraft({ ...draft, plannedReturnDate: event.target.value })}
                   />
-                  <span className="text-xs font-normal text-slate-500">
-                    Снабжение подтвердит эту дату или скорректирует её.
-                  </span>
                 </Field>
+                  <span className="text-xs font-normal text-slate-500">
+                    {draft.responsible === 'supply'
+                      ? 'Снабжение подтвердит обе даты или скорректирует их.'
+                      : 'Дата сразу передаётся снабжению для организации транспорта.'}
+                  </span>
+                </div>
 
                 <div className="sm:col-span-2">
                   <Field label="Заметка">

@@ -15,5 +15,5 @@ export default async function SupplyOutsourcingRequestsRoute() {
     )
   }
 
-  return <SupplyOutsourcingRequestsPage agreements={data} />
+  return <SupplyOutsourcingRequestsPage agreements={data.agreements} suppliers={data.suppliers} />
 }
