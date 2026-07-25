@@ -9,6 +9,7 @@ export type NotificationItem = {
   is_read: boolean
   related_machine_id: string | null
   consumable_request_id: string | null
+  related_mail_thread_id?: string | null
   machine?: {
     name?: string | null
   } | null
@@ -19,6 +20,13 @@ export function isConsumableNotification(type: string) {
 }
 
 export function getNotificationDestination(notification: NotificationItem) {
+  if (notification.type === 'mail_received' && notification.related_mail_thread_id) {
+    return {
+      href: `${ROUTES.MAIL}?thread=${encodeURIComponent(notification.related_mail_thread_id)}`,
+      label: 'Открыть письмо',
+    }
+  }
+
   if (notification.related_machine_id) {
     return {
       href: `${ROUTES.SALES_PLAN}/${notification.related_machine_id}`,

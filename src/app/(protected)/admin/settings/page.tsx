@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Bot, Building2, Factory, Send, Settings, ShieldCheck, Users } from 'lucide-react'
+import { Bot, Building2, Factory, Mail, Send, Settings, ShieldCheck, Users } from 'lucide-react'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -81,6 +81,14 @@ export default async function AdminSettingsPage() {
       href: ROUTES.ADMIN_TELEGRAM_SETTINGS,
       buttonLabel: 'Открыть настройки Telegram',
       icon: Send,
+    },
+    canViewSettingsContent && canViewResource(permissions, 'mail_settings') && {
+      key: 'mail',
+      title: 'Почта',
+      description: 'Google OAuth, Gmail API и Pub/Sub для личной почты сотрудников и уведомлений CRM.',
+      href: ROUTES.ADMIN_MAIL_SETTINGS,
+      buttonLabel: 'Открыть настройки почты',
+      icon: Mail,
     },
     canViewSettingsContent && canViewResource(permissions, 'company_settings') && {
       key: 'company',

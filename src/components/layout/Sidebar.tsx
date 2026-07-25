@@ -31,6 +31,7 @@ import {
   History,
   Tags,
   Database,
+  Mail,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -42,6 +43,7 @@ import {
 import { Button } from '@/components/ui/button'
 import type { CurrentUser } from '@/lib/types'
 import { ROUTES } from '@/lib/constants/routes'
+import { MailUnreadBadge } from '@/components/features/mail/MailUnreadBadge'
 
 interface SidebarProps {
   user: CurrentUser
@@ -55,6 +57,7 @@ interface NavItem {
   label: string
   icon: React.ElementType
   exact?: boolean
+  showMailBadge?: boolean
 }
 
 const iconMap: Record<SidebarIconKey, React.ElementType> = {
@@ -83,6 +86,7 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   meetings: Calendar,
   agenda: ListChecks,
   notifications: Bell,
+  mail: Mail,
   settings: Settings,
   access: ShieldCheck,
   departments: Building2,
@@ -95,6 +99,7 @@ function toNavItem(resource: PermissionResource): NavItem | null {
     label: resource.key === 'admin_settings' ? 'Все настройки' : resource.label,
     icon: iconMap[resource.sidebar.icon],
     exact: resource.key === 'production' || resource.key === 'inventory',
+    showMailBadge: resource.key === 'mail',
   }
 }
 
@@ -202,6 +207,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
         {!collapsed && (
           <>
             <span className="flex-1 truncate">{item.label}</span>
+            {item.showMailBadge && <MailUnreadBadge />}
             {isActive && !nested && <ChevronRight className="h-4 w-4 text-white/70" />}
           </>
         )}

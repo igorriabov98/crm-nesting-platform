@@ -50,7 +50,9 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/api/documents/generate') ||
     pathname.startsWith('/api/telegram/webhook') ||
     pathname.startsWith('/api/meetings/reminders') ||
-    pathname.startsWith('/api/tasks/due')
+    pathname.startsWith('/api/tasks/due') ||
+    pathname.startsWith('/api/mail/pubsub') ||
+    pathname.startsWith('/api/mail/watch/renew')
 
   if (!user && allowsRouteLevelAuth) {
     return supabaseResponse
