@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Building2, CalendarDays, CheckCircle2, Clock3, ExternalLink, FileText, Hand, Info, Loader2, PackageOpen } from 'lucide-react'
+import { Building2, CalendarDays, CheckCircle2, Clock3, ExternalLink, FileText, Filter, Hand, Info, Loader2, PackageOpen, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -25,6 +25,8 @@ type AgreementDraft = {
   serviceCostPlanned: string
 }
 
+type RequestStatusFilter = 'all' | 'awaiting' | 'in_work' | 'confirmed'
+
 function formatDate(value: string | null) {
   if (!value) return 'не указана'
   const [year, month, day] = value.split('-')
@@ -41,6 +43,9 @@ export function SupplyOutsourcingRequestsPage({
   const router = useRouter()
   const [pendingOperationId, setPendingOperationId] = useState<string | null>(null)
   const [detailsAgreement, setDetailsAgreement] = useState<SupplyOutsourcingAgreement | null>(null)
+  const [requestDateFrom, setRequestDateFrom] = useState('')
+  const [requestDateTo, setRequestDateTo] = useState('')
+  const [statusFilter, setStatusFilter] = useState<RequestStatusFilter>('all')
   const [isPending, startTransition] = useTransition()
   const [drafts, setDrafts] = useState<Record<string, AgreementDraft>>(() => Object.fromEntries(
     agreements.map((agreement) => [agreement.operation_id, {
@@ -50,6 +55,23 @@ export function SupplyOutsourcingRequestsPage({
       serviceCostPlanned: agreement.service_cost_planned == null ? '' : String(agreement.service_cost_planned),
     }]),
   ))
+  const visibleAgreements = useMemo(() => agreements.filter((agreement) => {
+    const requestDate = agreement.created_at.slice(0, 10)
+    if (requestDateFrom && requestDate < requestDateFrom) return false
+    if (requestDateTo && requestDate > requestDateTo) return false
+    const status: Exclude<RequestStatusFilter, 'all'> = agreement.supply_terms_confirmed_at
+      ? 'confirmed'
+      : agreement.supply_taken_at
+        ? 'in_work'
+        : 'awaiting'
+    return statusFilter === 'all' || statusFilter === status
+  }), [agreements, requestDateFrom, requestDateTo, statusFilter])
+
+  function resetFilters() {
+    setRequestDateFrom('')
+    setRequestDateTo('')
+    setStatusFilter('all')
+  }
 
   function takeAgreement(agreement: SupplyOutsourcingAgreement) {
     setPendingOperationId(agreement.operation_id)
@@ -113,15 +135,81 @@ export function SupplyOutsourcingRequestsPage({
         </div>
       </header>
 
+      {agreements.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Фильтры запросов">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="grid flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Label className="grid gap-1.5 text-sm text-slate-700">
+                Дата запроса с
+                <Input
+                  type="date"
+                  value={requestDateFrom}
+                  onChange={(event) => setRequestDateFrom(event.target.value)}
+                />
+              </Label>
+              <Label className="grid gap-1.5 text-sm text-slate-700">
+                Дата запроса по
+                <Input
+                  type="date"
+                  value={requestDateTo}
+                  onChange={(event) => setRequestDateTo(event.target.value)}
+                />
+              </Label>
+              <Label className="grid gap-1.5 text-sm text-slate-700">
+                Статус аутсорсинга
+                <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as RequestStatusFilter)}>
+                  <SelectTrigger className="h-10 w-full">
+                    <Filter className="h-4 w-4 text-slate-500" />
+                    <SelectValue>
+                      {{
+                        all: 'Все статусы',
+                        awaiting: 'Ожидает снабжение',
+                        in_work: 'В работе',
+                        confirmed: 'Подтверждено',
+                      }[statusFilter]}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все статусы</SelectItem>
+                    <SelectItem value="awaiting">Ожидает снабжение</SelectItem>
+                    <SelectItem value="in_work">В работе</SelectItem>
+                    <SelectItem value="confirmed">Подтверждено</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Label>
+            </div>
+            <div className="flex items-center justify-between gap-3 lg:justify-end">
+              <span className="text-sm text-slate-500">
+                Показано {visibleAgreements.length} из {agreements.length}
+              </span>
+              <Button type="button" variant="outline" onClick={resetFilters} className="min-h-11 gap-2">
+                <RotateCcw className="h-4 w-4" />
+                Сбросить
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+
       {agreements.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
           <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-600" />
           <div className="mt-3 font-semibold text-blue-950">Новых запросов нет</div>
           <div className="mt-1 text-sm text-slate-500">Все активные запросы внешним компаниям появятся на этой странице.</div>
         </div>
+      ) : visibleAgreements.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+          <Filter className="mx-auto h-8 w-8 text-blue-700" />
+          <div className="mt-3 font-semibold text-blue-950">По выбранным фильтрам заявок нет</div>
+          <div className="mt-1 text-sm text-slate-500">Измените даты или статус, чтобы увидеть другие заявки.</div>
+          <Button type="button" variant="outline" onClick={resetFilters} className="mt-4 min-h-11 gap-2">
+            <RotateCcw className="h-4 w-4" />
+            Сбросить фильтры
+          </Button>
+        </div>
       ) : (
         <div className="grid gap-3">
-          {agreements.map((agreement) => {
+          {visibleAgreements.map((agreement) => {
             const draft = drafts[agreement.operation_id]
             const returnDateId = `request-return-${agreement.operation_id}`
             const serviceCostId = `request-cost-${agreement.operation_id}`
@@ -134,8 +222,14 @@ export function SupplyOutsourcingRequestsPage({
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className={agreement.supply_terms_confirmed_at
                         ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-100'
-                        : 'bg-amber-100 text-amber-800 hover:bg-amber-100'}>
-                        {agreement.supply_terms_confirmed_at ? 'Подтверждено' : 'Ожидает снабжение'}
+                        : agreement.supply_taken_at
+                          ? 'bg-blue-100 text-blue-800 hover:bg-blue-100'
+                          : 'bg-amber-100 text-amber-800 hover:bg-amber-100'}>
+                        {agreement.supply_terms_confirmed_at
+                          ? 'Подтверждено'
+                          : agreement.supply_taken_at
+                            ? 'В работе'
+                            : 'Ожидает снабжение'}
                       </Badge>
                       <span className="font-semibold text-blue-950">{agreement.machine_name}</span>
                       <span className="text-sm font-medium text-slate-700">{agreement.work_type_name}</span>
@@ -143,6 +237,7 @@ export function SupplyOutsourcingRequestsPage({
                     <div className="mt-2 grid gap-1 text-sm text-slate-600 sm:grid-cols-2">
                       <span>Маршрут: {agreement.source_factory_name || 'завод не указан'} → {agreement.supplier_name || 'компания не указана'}</span>
                       <span>Желаемая отправка: <b>{formatDate(agreement.planned_send_date)}</b></span>
+                      <span>Запрос создан: <b>{formatDate(agreement.created_at.slice(0, 10))}</b></span>
                     </div>
                     <Button
                       type="button"
