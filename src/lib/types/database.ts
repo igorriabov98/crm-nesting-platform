@@ -2325,6 +2325,9 @@ export type Database = {
           carrier_supplier_id: string | null
           scheduled_date: string | null
           price: number | null
+          route_start_key: string | null
+          route_start: string | null
+          route: string | null
           comment: string | null
           created_by: string | null
           updated_by: string | null
@@ -2338,6 +2341,9 @@ export type Database = {
           carrier_supplier_id?: string | null
           scheduled_date?: string | null
           price?: number | null
+          route_start_key?: string | null
+          route_start?: string | null
+          route?: string | null
           comment?: string | null
           created_by?: string | null
           updated_by?: string | null
@@ -2351,6 +2357,9 @@ export type Database = {
           carrier_supplier_id?: string | null
           scheduled_date?: string | null
           price?: number | null
+          route_start_key?: string | null
+          route_start?: string | null
+          route?: string | null
           comment?: string | null
           created_by?: string | null
           updated_by?: string | null
@@ -2394,6 +2403,56 @@ export type Database = {
           transport_order_id?: string | null
           created_at?: string
           updated_at?: string
+        }
+      }
+      transport_trip_need_links: {
+        Row: {
+          id: string
+          transport_order_id: string
+          need_kind: 'materials' | 'detailing' | 'outsourcing'
+          need_id: string
+          direction: Database['public']['Enums']['outsourcing_transport_direction']
+          source_point_key: string
+          source_point_label: string
+          destination_point_key: string
+          destination_point_label: string
+          need_title: string
+          need_subtitle: string | null
+          needed_date: string | null
+          released_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          transport_order_id: string
+          need_kind: 'materials' | 'detailing' | 'outsourcing'
+          need_id: string
+          direction: Database['public']['Enums']['outsourcing_transport_direction']
+          source_point_key: string
+          source_point_label: string
+          destination_point_key: string
+          destination_point_label: string
+          need_title: string
+          need_subtitle?: string | null
+          needed_date?: string | null
+          released_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          transport_order_id?: string
+          need_kind?: 'materials' | 'detailing' | 'outsourcing'
+          need_id?: string
+          direction?: Database['public']['Enums']['outsourcing_transport_direction']
+          source_point_key?: string
+          source_point_label?: string
+          destination_point_key?: string
+          destination_point_label?: string
+          need_title?: string
+          need_subtitle?: string | null
+          needed_date?: string | null
+          released_at?: string | null
+          created_at?: string
         }
       }
       production_plan_date_change_requests: {

@@ -521,22 +521,54 @@ export async function releaseDetailingReservation(reservationId: string) {
 async function loadTransferCards(db: DetailingDb, activeOnly: boolean): Promise<DetailingTransferCard[]> {
   let transferQuery = db.from('detailing_transfers').select('id, machine_id, source_factory_id, destination_factory_id, status, expected_arrival_date, created_at').order('created_at', { ascending: false })
   if (activeOnly) transferQuery = transferQuery.in('status', ['needs_date', 'scheduled', 'partially_received'])
-  const [transfersResult, itemsResult, partsResult, machinesResult, factoriesResult, tasksResult] = await Promise.all([
-    transferQuery,
-    db.from('detailing_transfer_items').select('id, transfer_id, reservation_id, part_id, requested_quantity, received_quantity'),
-    db.from('detailing_parts').select('id, name, drawing_number, unit_weight_kg'),
-    db.from('machines').select('id, name'),
-    db.from('factories').select('id, name'),
-    db.from('tasks').select('id, detailing_transfer_id, status, deadline').eq('task_type', 'detailing_transfer').order('created_at', { ascending: false }),
+  const transfersResult = await transferQuery
+  if (transfersResult.error) throw new Error(transfersResult.error.message || 'Не удалось загрузить перевозки деталировки')
+  const transferRows = (transfersResult.data || []) as Array<Record<string, unknown>>
+  if (transferRows.length === 0) return []
+
+  const transferIds = transferRows.map((row) => String(row.id))
+  const machineIds = Array.from(new Set(transferRows.map((row) => String(row.machine_id))))
+  const factoryIds = Array.from(new Set(transferRows.flatMap((row) => [
+    String(row.source_factory_id),
+    String(row.destination_factory_id),
+  ])))
+  const [itemsResult, machinesResult, factoriesResult, tasksResult] = await Promise.all([
+    db.from('detailing_transfer_items').select('id, transfer_id, reservation_id, part_id, requested_quantity, received_quantity').in('transfer_id', transferIds),
+    db.from('machines').select('id, name').in('id', machineIds),
+    db.from('factories').select('id, name').in('id', factoryIds),
+    db.from('tasks').select('id, detailing_transfer_id, status, deadline').eq('task_type', 'detailing_transfer').in('detailing_transfer_id', transferIds).order('created_at', { ascending: false }),
   ])
-  for (const result of [transfersResult, itemsResult, partsResult, machinesResult, factoriesResult, tasksResult]) if (result.error) throw new Error(result.error.message || 'Не удалось загрузить перевозки деталировки')
+  for (const result of [itemsResult, machinesResult, factoriesResult, tasksResult]) if (result.error) throw new Error(result.error.message || 'Не удалось загрузить перевозки деталировки')
+  const itemRows = (itemsResult.data || []) as Array<Record<string, unknown>>
+  const partIds = Array.from(new Set(itemRows.map((row) => String(row.part_id))))
+  const partsResult = partIds.length > 0
+    ? await db.from('detailing_parts').select('id, name, drawing_number, unit_weight_kg').in('id', partIds)
+    : { data: [], error: null }
+  if (partsResult.error) throw new Error(partsResult.error.message || 'Не удалось загрузить детали перевозки')
+
   const parts = new Map(((partsResult.data || []) as RawPart[]).map((part) => [part.id, part]))
   const machines = new Map(((machinesResult.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row.name]))
   const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row.name]))
   const tasks = (tasksResult.data || []) as Array<{ id: string; detailing_transfer_id: string; status: string; deadline: string | null }>
-  const itemRows = (itemsResult.data || []) as Array<Record<string, unknown>>
-  return ((transfersResult.data || []) as Array<Record<string, unknown>>).map((row) => {
-    const items = itemRows.filter((item) => item.transfer_id === row.id).map((item): DetailingTransferItem => {
+  const itemsByTransfer = new Map<string, Array<Record<string, unknown>>>()
+  for (const item of itemRows) {
+    const transferId = String(item.transfer_id)
+    const transferItems = itemsByTransfer.get(transferId)
+    if (transferItems) transferItems.push(item)
+    else itemsByTransfer.set(transferId, [item])
+  }
+  const taskByTransfer = new Map<string, (typeof tasks)[number]>()
+  for (const task of tasks) {
+    const current = taskByTransfer.get(task.detailing_transfer_id)
+    if (!current || (
+      !['pending', 'in_progress'].includes(current.status)
+      && ['pending', 'in_progress'].includes(task.status)
+    )) {
+      taskByTransfer.set(task.detailing_transfer_id, task)
+    }
+  }
+  return transferRows.map((row) => {
+    const items = (itemsByTransfer.get(String(row.id)) || []).map((item): DetailingTransferItem => {
       const part = parts.get(String(item.part_id))
       const requested = numberValue(item.requested_quantity)
       const received = numberValue(item.received_quantity)
@@ -548,8 +580,7 @@ async function loadTransferCards(db: DetailingDb, activeOnly: boolean): Promise<
         requestedWeightKg: requested * weight, receivedWeightKg: received * weight,
       }
     })
-    const task = tasks.find((entry) => entry.detailing_transfer_id === row.id && ['pending', 'in_progress'].includes(entry.status))
-      || tasks.find((entry) => entry.detailing_transfer_id === row.id)
+    const task = taskByTransfer.get(String(row.id))
     const expected = row.expected_arrival_date ? String(row.expected_arrival_date) : null
     const deadline = task?.deadline || null
     return {
