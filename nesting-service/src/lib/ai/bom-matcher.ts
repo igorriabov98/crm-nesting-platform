@@ -281,6 +281,10 @@ function getGeometryEvidence(
   bomEntry: BOMEntry | null,
   confidence: number
 ): Pick<MatchCandidate, 'scopeConfirmed' | 'identityConfirmed' | 'identitySource'> {
+  // Scope and manufactured-part identity are orthogonal evidence. Assembly scope comes
+  // only from parentAssembly in the STEP path; a precise geometry match can confirm
+  // identity without confirming scope. A single-part drawing can therefore legitimately
+  // have scopeConfirmed=false together with identityConfirmed=true.
   const scopeConfirmed = getScopeConfirmed(part, bomEntry);
   if (confidence >= MATCH_APPLICATION_CONFIDENCE) {
     return {
