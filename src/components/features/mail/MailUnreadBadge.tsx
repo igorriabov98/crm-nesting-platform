@@ -15,12 +15,15 @@ export function MailUnreadBadge() {
   }, [])
 
   useEffect(() => {
-    void refresh()
+    const initialRefresh = window.setTimeout(() => void refresh(), 0)
     const supabase = createClient()
     const channel = supabase.channel('mail_sidebar_count')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'mail_threads' }, () => void refresh())
       .subscribe()
-    return () => { void supabase.removeChannel(channel) }
+    return () => {
+      window.clearTimeout(initialRefresh)
+      void supabase.removeChannel(channel)
+    }
   }, [refresh])
 
   if (count === 0) return null
