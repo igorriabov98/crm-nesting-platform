@@ -3,9 +3,9 @@ import 'server-only'
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 
 function encryptionKey() {
-  const configured = process.env.MAIL_TOKEN_ENCRYPTION_KEY
+  const configured = process.env.MAIL_TOKEN_ENCRYPTION_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!configured || configured.length < 32) {
-    throw new Error('MAIL_TOKEN_ENCRYPTION_KEY не настроен или слишком короткий')
+    throw new Error('Серверный ключ шифрования почты не настроен или слишком короткий')
   }
   return createHash('sha256').update(configured).digest()
 }
