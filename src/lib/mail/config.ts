@@ -2,19 +2,19 @@ import 'server-only'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { decryptMailSecret } from './crypto'
+import { readMailVaultSecret } from './vault'
 
 export type MailSettingsRow = {
   google_project_id: string | null
   oauth_client_id: string | null
-  oauth_client_secret_encrypted: string | null
+  oauth_client_secret_vault_id: string | null
   pubsub_topic: string | null
 }
 
 export async function getMailSettings() {
   const { data, error } = await (createAdminClient() as any)
     .from('mail_settings')
-    .select('google_project_id, oauth_client_id, oauth_client_secret_encrypted, pubsub_topic')
+    .select('google_project_id, oauth_client_id, oauth_client_secret_vault_id, pubsub_topic')
     .eq('id', true)
     .maybeSingle()
   if (error) throw new Error(error.message)
@@ -23,13 +23,13 @@ export async function getMailSettings() {
 
 export async function requireMailSettings() {
   const settings = await getMailSettings()
-  if (!settings?.oauth_client_id || !settings.oauth_client_secret_encrypted || !settings.pubsub_topic) {
+  if (!settings?.oauth_client_id || !settings.oauth_client_secret_vault_id || !settings.pubsub_topic) {
     throw new Error('Интеграция Gmail ещё не настроена администратором')
   }
   return {
     googleProjectId: settings.google_project_id,
     clientId: settings.oauth_client_id,
-    clientSecret: decryptMailSecret(settings.oauth_client_secret_encrypted),
+    clientSecret: await readMailVaultSecret(settings.oauth_client_secret_vault_id),
     pubsubTopic: settings.pubsub_topic,
   }
 }

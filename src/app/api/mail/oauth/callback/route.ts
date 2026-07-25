@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { mailBaseUrl, requireMailSettings } from '@/lib/mail/config'
-import { encryptMailSecret } from '@/lib/mail/crypto'
+import { storeMailVaultSecret } from '@/lib/mail/vault'
 import { startGmailWatch, syncGmailLabels, syncGmailPage } from '@/lib/mail/sync'
 import type { GmailAccountRow } from '@/lib/mail/gmail-api'
 
@@ -48,19 +48,32 @@ export async function GET(request: NextRequest) {
 
     const db = createAdminClient() as any
     const { data: previous } = await db.from('mail_accounts')
-      .select('refresh_token_encrypted')
+      .select('access_token_vault_id, refresh_token_vault_id')
       .eq('user_id', context.user.id)
       .maybeSingle()
-    const refreshTokenEncrypted = tokens.refresh_token
-      ? encryptMailSecret(tokens.refresh_token)
-      : previous?.refresh_token_encrypted
-    if (!refreshTokenEncrypted) throw new Error('Google не выдал refresh token. Отзовите доступ приложения и подключите Gmail снова.')
+    const refreshTokenVaultId = tokens.refresh_token
+      ? await storeMailVaultSecret({
+        secretId: previous?.refresh_token_vault_id,
+        secret: tokens.refresh_token,
+        name: `gmail-refresh-${context.user.id}`,
+        description: `Gmail refresh token for CRM user ${context.user.id}`,
+      })
+      : previous?.refresh_token_vault_id
+    if (!refreshTokenVaultId) throw new Error('Google не выдал refresh token. Отзовите доступ приложения и подключите Gmail снова.')
+    const accessTokenVaultId = await storeMailVaultSecret({
+      secretId: previous?.access_token_vault_id,
+      secret: tokens.access_token,
+      name: `gmail-access-${context.user.id}`,
+      description: `Gmail access token for CRM user ${context.user.id}`,
+    })
 
     const { data: account, error } = await db.from('mail_accounts').upsert({
       user_id: context.user.id,
       email_address: profile.emailAddress,
-      access_token_encrypted: encryptMailSecret(tokens.access_token),
-      refresh_token_encrypted: refreshTokenEncrypted,
+      access_token_vault_id: accessTokenVaultId,
+      refresh_token_vault_id: refreshTokenVaultId,
+      access_token_encrypted: null,
+      refresh_token_encrypted: null,
       token_expires_at: new Date(Date.now() + Number(tokens.expires_in || 3600) * 1000).toISOString(),
       gmail_history_id: profile.historyId || null,
       sync_status: 'syncing',

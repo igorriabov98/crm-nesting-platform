@@ -11,6 +11,7 @@ import type { MailFolder, MailPageResult, MailThreadDetails } from '@/lib/mail/t
 import { cacheProjectThreadAttachments } from '@/lib/mail/attachments'
 import { gmailLabelChanges, type MailMutation } from '@/lib/mail/model'
 import { hasPermission } from '@/lib/permissions/resources'
+import { deleteMailVaultSecret } from '@/lib/mail/vault'
 
 const PAGE_SIZE = 50
 
@@ -215,7 +216,13 @@ export async function disconnectGmail() {
     } catch {
       // Local disconnect must still succeed if Google has already revoked access.
     }
+    await Promise.all([
+      deleteMailVaultSecret(account.access_token_vault_id),
+      deleteMailVaultSecret(account.refresh_token_vault_id),
+    ])
     await (createAdminClient() as any).from('mail_accounts').update({
+      access_token_vault_id: null,
+      refresh_token_vault_id: null,
       access_token_encrypted: null,
       refresh_token_encrypted: null,
       token_expires_at: null,
