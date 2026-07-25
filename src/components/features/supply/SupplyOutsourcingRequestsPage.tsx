@@ -2,11 +2,12 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Building2, CheckCircle2, Clock3, Hand, Loader2 } from 'lucide-react'
+import { Building2, CalendarDays, CheckCircle2, Clock3, ExternalLink, FileText, Hand, Info, Loader2, PackageOpen } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -39,6 +40,7 @@ export function SupplyOutsourcingRequestsPage({
 }) {
   const router = useRouter()
   const [pendingOperationId, setPendingOperationId] = useState<string | null>(null)
+  const [detailsAgreement, setDetailsAgreement] = useState<SupplyOutsourcingAgreement | null>(null)
   const [isPending, startTransition] = useTransition()
   const [drafts, setDrafts] = useState<Record<string, AgreementDraft>>(() => Object.fromEntries(
     agreements.map((agreement) => [agreement.operation_id, {
@@ -142,6 +144,16 @@ export function SupplyOutsourcingRequestsPage({
                       <span>Маршрут: {agreement.source_factory_name || 'завод не указан'} → {agreement.supplier_name || 'компания не указана'}</span>
                       <span>Желаемая отправка: <b>{formatDate(agreement.planned_send_date)}</b></span>
                     </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDetailsAgreement(agreement)}
+                      className="mt-3 gap-2"
+                    >
+                      <Info className="h-4 w-4" />
+                      Подробнее
+                    </Button>
                   </div>
 
                   {!agreement.supply_taken_at ? (
@@ -221,6 +233,116 @@ export function SupplyOutsourcingRequestsPage({
           })}
         </div>
       )}
+
+      <Dialog open={Boolean(detailsAgreement)} onOpenChange={(open) => {
+        if (!open) setDetailsAgreement(null)
+      }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto p-0 sm:max-w-3xl">
+          {detailsAgreement && (
+            <>
+              <DialogHeader className="border-b border-slate-200 px-5 py-4 pr-12 sm:px-6">
+                <DialogTitle className="text-xl text-blue-950">
+                  Заявка на аутсорсинг · {detailsAgreement.machine_name}
+                </DialogTitle>
+                <p className="text-sm text-slate-500">
+                  Полная информация для принятия заявки в работу
+                </p>
+              </DialogHeader>
+
+              <div className="grid gap-4 bg-slate-50/70 p-4 sm:p-6">
+                <section className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="mb-3 flex items-center gap-2 font-semibold text-blue-950">
+                    <FileText className="h-4 w-4 text-blue-600" />
+                    Тип работы
+                  </div>
+                  <div className="text-base font-medium text-slate-900">{detailsAgreement.work_type_name}</div>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="mb-3 flex items-center gap-2 font-semibold text-blue-950">
+                    <CalendarDays className="h-4 w-4 text-blue-600" />
+                    Сроки и примечание
+                  </div>
+                  <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="text-slate-500">Готовы отправить</dt>
+                      <dd className="mt-1 font-semibold text-slate-900">{formatDate(detailsAgreement.planned_send_date)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">Ожидаем возврат</dt>
+                      <dd className="mt-1 font-semibold text-slate-900">{formatDate(detailsAgreement.planned_return_date)}</dd>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <dt className="text-slate-500">Примечание</dt>
+                      <dd className="mt-1 whitespace-pre-wrap text-slate-800">
+                        {detailsAgreement.note || 'Примечание не добавлено'}
+                      </dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 font-semibold text-blue-950">
+                      <PackageOpen className="h-4 w-4 text-blue-600" />
+                      Продукция к отправке
+                    </div>
+                    <span className="text-xs font-medium text-slate-500">
+                      Позиций: {detailsAgreement.items.length}
+                    </span>
+                  </div>
+
+                  {detailsAgreement.items.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+                      Продукция в заявке не указана.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                      <table className="w-full min-w-[620px] text-left text-sm">
+                        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                          <tr>
+                            <th className="px-3 py-2.5 font-semibold">Продукция</th>
+                            <th className="px-3 py-2.5 font-semibold">Чертёж</th>
+                            <th className="px-3 py-2.5 text-right font-semibold">Количество</th>
+                            <th className="px-3 py-2.5 text-right font-semibold">Вес</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {detailsAgreement.items.map((item) => (
+                            <tr key={item.id}>
+                              <td className="px-3 py-3 font-medium text-slate-900">{item.product_name}</td>
+                              <td className="px-3 py-3">
+                                {item.drawing_url ? (
+                                  <a
+                                    href={item.drawing_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 font-medium text-blue-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                                    aria-label={`Открыть чертёж ${item.drawing_number} в новой вкладке`}
+                                  >
+                                    {item.drawing_number || 'Без номера'}
+                                    <ExternalLink className="h-3.5 w-3.5" />
+                                  </a>
+                                ) : (
+                                  <span className="text-slate-600">{item.drawing_number || 'Не указан'}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-3 text-right text-slate-700">{item.quantity} шт.</td>
+                              <td className="px-3 py-3 text-right font-medium text-slate-900">
+                                {item.weight.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} т
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

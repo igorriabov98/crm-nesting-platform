@@ -211,6 +211,15 @@ export type SupplyOutsourcingAgreement = {
   supply_terms_confirmed_at: string | null
   responsible: OutsourcingResponsible
   supply_taken_at: string | null
+  note: string | null
+  items: Array<{
+    id: string
+    product_name: string
+    drawing_number: string
+    quantity: number
+    weight: number
+    drawing_url: string | null
+  }>
 }
 
 export type OutsourcingTransportWorkspace = {
@@ -1607,7 +1616,7 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
 async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = false) {
   let query = db
     .from('machine_outsourcing_operations')
-    .select('id, machine_id, work_type_id, supplier_id, planned_send_date, planned_return_date, service_cost_planned, supply_terms_confirmed_at, responsible, supply_taken_at')
+    .select('id, machine_id, work_type_id, supplier_id, planned_send_date, planned_return_date, service_cost_planned, supply_terms_confirmed_at, responsible, supply_taken_at, note')
     .eq('executor_type', 'supplier')
     .eq('responsible', 'supply')
     .is('archived_at', null)
@@ -1628,19 +1637,71 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
     supply_terms_confirmed_at: string | null
     responsible: OutsourcingResponsible
     supply_taken_at: string | null
+    note: string | null
   }>
   if (operations.length === 0) return [] as SupplyOutsourcingAgreement[]
 
   const machineIds = Array.from(new Set(operations.map((operation) => operation.machine_id)))
   const workTypeIds = Array.from(new Set(operations.map((operation) => operation.work_type_id)))
   const supplierIds = Array.from(new Set(operations.map((operation) => operation.supplier_id).filter((id): id is string => Boolean(id))))
-  const [machinesRes, workTypesRes, suppliersRes] = await Promise.all([
+  const [machinesRes, workTypesRes, suppliersRes, itemLinksRes] = await Promise.all([
     db.from('machines').select('id, name, factory_id').in('id', machineIds),
     db.from('outsourcing_work_types').select('id, name').in('id', workTypeIds),
     loadSuppliersByIds(db, supplierIds),
+    db.from('machine_outsourcing_operation_items').select('operation_id, machine_item_id').in('operation_id', operations.map((operation) => operation.id)),
   ])
-  for (const result of [machinesRes, workTypesRes, suppliersRes]) {
+  for (const result of [machinesRes, workTypesRes, suppliersRes, itemLinksRes]) {
     if (result.error) throw new Error(result.error.message || 'Не удалось дополнить условия аутсорсинга')
+  }
+
+  const itemLinks = (itemLinksRes.data || []) as Array<{ operation_id: string; machine_item_id: string }>
+  const machineItemIds = Array.from(new Set(itemLinks.map((link) => link.machine_item_id)))
+  const machineItemsRes = machineItemIds.length > 0
+    ? await db.from('machine_items')
+      .select('id, product_id, product_project_version_id, product_name, drawing_number, quantity, weight, sort_order')
+      .in('id', machineItemIds)
+    : { data: [], error: null }
+  if (machineItemsRes.error) throw new Error(machineItemsRes.error.message || 'Не удалось загрузить продукцию заявки')
+  const machineItems = (machineItemsRes.data || []) as Array<{
+    id: string
+    product_id: string | null
+    product_project_version_id: string | null
+    product_name: string
+    drawing_number: string
+    quantity: number
+    weight: number
+    sort_order: number
+  }>
+
+  const productIds = Array.from(new Set(machineItems.map((item) => item.product_id).filter((id): id is string => Boolean(id))))
+  const versionIds = Array.from(new Set(machineItems.map((item) => item.product_project_version_id).filter((id): id is string => Boolean(id))))
+  const [productFilesRes, projectFilesRes] = await Promise.all([
+    productIds.length > 0
+      ? db.from('product_files').select('id, product_id, file_kind, file_name').in('product_id', productIds)
+      : Promise.resolve({ data: [], error: null }),
+    versionIds.length > 0
+      ? db.from('product_project_files').select('id, version_id, file_kind, file_name').in('version_id', versionIds)
+      : Promise.resolve({ data: [], error: null }),
+  ])
+  if (productFilesRes.error || projectFilesRes.error) {
+    throw new Error(productFilesRes.error?.message || projectFilesRes.error?.message || 'Не удалось загрузить чертежи продукции')
+  }
+
+  type DrawingFile = { id: string; product_id?: string | null; version_id?: string | null; file_kind: string; file_name: string }
+  const chooseDrawing = (files: DrawingFile[]) => files
+    .filter((file) => file.file_kind === 'drawing' || file.file_kind === 'pdf' || file.file_name.toLowerCase().endsWith('.pdf'))
+    .sort((left, right) => {
+      const rank = (file: DrawingFile) => file.file_kind === 'drawing' ? 0 : file.file_kind === 'pdf' ? 1 : 2
+      return rank(left) - rank(right) || left.file_name.localeCompare(right.file_name, 'ru')
+    })[0] || null
+  const productFiles = (productFilesRes.data || []) as DrawingFile[]
+  const projectFiles = (projectFilesRes.data || []) as DrawingFile[]
+  const productDrawingById = new Map(productIds.map((productId) => [productId, chooseDrawing(productFiles.filter((file) => file.product_id === productId))]))
+  const projectDrawingByVersionId = new Map(versionIds.map((versionId) => [versionId, chooseDrawing(projectFiles.filter((file) => file.version_id === versionId))]))
+  const machineItemById = new Map(machineItems.map((item) => [item.id, item]))
+  const itemIdsByOperation = new Map<string, string[]>()
+  for (const link of itemLinks) {
+    itemIdsByOperation.set(link.operation_id, [...(itemIdsByOperation.get(link.operation_id) || []), link.machine_item_id])
   }
 
   const machines = (machinesRes.data || []) as Array<{ id: string; name: string; factory_id: string | null }>
@@ -1671,6 +1732,29 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
       supply_terms_confirmed_at: operation.supply_terms_confirmed_at,
       responsible: operation.responsible,
       supply_taken_at: operation.supply_taken_at,
+      note: operation.note,
+      items: (itemIdsByOperation.get(operation.id) || [])
+        .map((id) => machineItemById.get(id))
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .sort((left, right) => left.sort_order - right.sort_order)
+        .map((item) => {
+          const projectFile = item.product_project_version_id
+            ? projectDrawingByVersionId.get(item.product_project_version_id) || null
+            : null
+          const productFile = item.product_id ? productDrawingById.get(item.product_id) || null : null
+          const file = projectFile || productFile
+          const source = projectFile ? 'project' : productFile ? 'product' : null
+          return {
+            id: item.id,
+            product_name: item.product_name,
+            drawing_number: item.drawing_number,
+            quantity: Number(item.quantity || 0),
+            weight: Number(item.weight || 0),
+            drawing_url: file && source
+              ? `/api/supply/outsourcing/${operation.id}/drawings/${source}/${file.id}`
+              : null,
+          }
+        }),
     } satisfies SupplyOutsourcingAgreement
   })
 }
