@@ -36,8 +36,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 43, 'Реестр должен содержать все 43 ресурса')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 43, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 45, 'Реестр должен содержать все 45 ресурсов')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 45, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -132,6 +132,11 @@ assert(
 
 const apiRoutesWithDedicatedAuthorization = new Set([
   'src/app/api/impersonation/stop/route.ts',
+  'src/app/api/mail/attachments/[id]/route.ts',
+  'src/app/api/mail/oauth/callback/route.ts',
+  'src/app/api/mail/oauth/start/route.ts',
+  'src/app/api/mail/pubsub/route.ts',
+  'src/app/api/mail/watch/renew/route.ts',
   'src/app/api/meetings/reminders/route.ts',
   'src/app/api/tasks/due/route.ts',
   'src/app/api/telegram/webhook/route.ts',

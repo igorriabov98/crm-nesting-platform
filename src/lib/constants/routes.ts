@@ -19,6 +19,7 @@ export const ROUTES = {
   ADMIN_DEPARTMENTS:'/admin/settings/departments',
   ADMIN_ACCESS_SETTINGS:'/admin/settings/access',
   ADMIN_TELEGRAM_SETTINGS:'/admin/settings/telegram',
+  ADMIN_MAIL_SETTINGS:'/admin/settings/mail',
   ADMIN_COMPANY_SETTINGS:'/admin/settings/company',
   ADMIN_PRODUCTION_FACT_SETTINGS:'/admin/settings/production-fact',
   SALES_PLAN:          '/sales-plan',
@@ -62,6 +63,7 @@ export const ROUTES = {
   INVENTORY_RECEIVING: '/inventory/receiving',
   INVOICES:       '/invoices',
   NOTIFICATIONS:  '/notifications',
+  MAIL:           '/mail',
 } as const
 
 export type AppRoute = (typeof ROUTES)[keyof typeof ROUTES]

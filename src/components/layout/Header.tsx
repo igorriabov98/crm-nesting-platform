@@ -53,6 +53,8 @@ const PAGE_TITLES: Record<string, string> = {
   [ROUTES.ADMIN_USERS]: 'Управление пользователями',
   [ROUTES.ADMIN_USERS_NEW]: 'Новый пользователь',
   [ROUTES.NOTIFICATIONS]: 'Уведомления',
+  [ROUTES.MAIL]: 'Почта',
+  [ROUTES.ADMIN_MAIL_SETTINGS]: 'Настройки почты',
 }
 
 interface HeaderProps {

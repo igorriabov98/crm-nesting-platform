@@ -40,10 +40,12 @@ export type ResourceKey =
   | 'meetings'
   | 'meetings_agenda_pool'
   | 'notifications'
+  | 'mail'
   | 'admin_settings'
   | 'departments'
   | 'admin_users'
   | 'telegram_settings'
+  | 'mail_settings'
   | 'company_settings'
   | 'production_fact_settings'
   | 'access_settings'
@@ -76,6 +78,7 @@ export type SidebarIconKey =
   | 'meetings'
   | 'agenda'
   | 'notifications'
+  | 'mail'
   | 'settings'
   | 'access'
   | 'departments'
@@ -541,6 +544,16 @@ export const PERMISSION_RESOURCES = [
     sidebar: { section: 'meetings', icon: 'agenda', order: 20 },
   },
   {
+    key: 'mail',
+    label: 'Почта',
+    group: 'Основное',
+    defaultHref: ROUTES.MAIL,
+    defaultViewRoles: ALL,
+    defaultManageRoles: ALL,
+    routes: [{ path: ROUTES.MAIL, match: 'prefix', operation: 'view' }],
+    sidebar: { section: 'primary', icon: 'mail', order: 15 },
+  },
+  {
     key: 'notifications',
     label: 'Уведомления',
     group: 'Основное',
@@ -591,6 +604,15 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: DIRECTORS,
     defaultManageRoles: DIRECTORS,
     routes: [{ path: ROUTES.ADMIN_TELEGRAM_SETTINGS, match: 'prefix', operation: 'view', priority: 90 }],
+  },
+  {
+    key: 'mail_settings',
+    label: 'Настройки почты',
+    group: 'Настройки',
+    defaultHref: ROUTES.ADMIN_MAIL_SETTINGS,
+    defaultViewRoles: DIRECTORS,
+    defaultManageRoles: DIRECTORS,
+    routes: [{ path: ROUTES.ADMIN_MAIL_SETTINGS, match: 'prefix', operation: 'view', priority: 90 }],
   },
   {
     key: 'company_settings',

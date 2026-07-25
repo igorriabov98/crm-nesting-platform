@@ -13,6 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import type { Client, ProductProject, UserSummary } from '@/lib/types'
 import type { ProductProjectInput } from '@/lib/types/schemas'
+import { MailThreadPicker } from '@/components/features/mail/MailThreadPicker'
+import { linkMailThreadToProductProject } from '@/lib/actions/mail'
 
 type ProjectState = {
   title: string
@@ -63,6 +65,7 @@ export function ProductProjectForm({
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [values, setValues] = useState<ProjectState>(() => initialState(project))
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [mailThreadIds, setMailThreadIds] = useState<string[]>([])
   const isEdit = Boolean(project?.id)
   const selectedClientLabel = values.client_id === 'none'
     ? 'Без клиента'
@@ -93,6 +96,11 @@ export function ProductProjectForm({
       toast.success(isEdit ? 'Проект обновлен' : 'Проект создан')
       const createdProject = 'project' in result ? result.project as { id?: string } | null : null
       if (!isEdit && createdProject?.id) {
+        const linkResults = await Promise.all(mailThreadIds.map((threadId) =>
+          linkMailThreadToProductProject(threadId, createdProject.id!)
+        ))
+        const failedLink = linkResults.find((linkResult) => !linkResult.success)
+        if (failedLink) toast.error(`Проект создан, но письмо не добавлено: ${failedLink.error}`)
         router.push(`${ROUTES.PRODUCT_PROJECTS}/${createdProject.id}`)
       } else {
         router.refresh()
@@ -167,15 +175,15 @@ export function ProductProjectForm({
         </div>
       </div>
       {!isEdit && (
-        <div className="space-y-2">
-          <Label htmlFor="project_photo">Фото изделия</Label>
-          <Input
-            id="project_photo"
-            ref={photoInputRef}
-            type="file"
-            accept="image/*"
-            disabled={isSubmitting}
-          />
+        <div className="grid gap-5 lg:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="project_photo">Фото изделия</Label>
+            <Input id="project_photo" ref={photoInputRef} type="file" accept="image/*" disabled={isSubmitting} />
+          </div>
+          <div className="space-y-2">
+            <Label>Почтовая переписка</Label>
+            <MailThreadPicker selected={mailThreadIds} onChange={setMailThreadIds} compact />
+          </div>
         </div>
       )}
       <div className="grid gap-4 md:grid-cols-3">
