@@ -790,22 +790,35 @@ async function createNeedAndTask(
     return
   }
 
-  const { data: taskData, error: taskError } = await db
+  const { data: activeTaskData, error: activeTaskError } = await db
     .from('tasks')
-    .insert({
-      machine_id: operation.machine_id,
-      assigned_to: assigneeId,
-      task_type: 'outsourcing_transport',
-      title,
-      description,
-      status: 'pending',
-      start_date: neededDate,
-      deadline: neededDate,
-    })
     .select('id')
-    .single()
-  if (taskError || !taskData) throw new Error(taskError?.message || 'Не удалось создать задачу снабжения')
-  const taskId = (taskData as { id: string }).id
+    .eq('machine_id', operation.machine_id)
+    .eq('assigned_to', assigneeId)
+    .eq('task_type', 'outsourcing_transport')
+    .in('status', ['pending', 'in_progress'])
+    .maybeSingle()
+  if (activeTaskError) throw new Error(activeTaskError.message || 'Не удалось проверить задачу снабжения')
+
+  let taskId = (activeTaskData as { id: string } | null)?.id || null
+  if (!taskId) {
+    const { data: taskData, error: taskError } = await db
+      .from('tasks')
+      .insert({
+        machine_id: operation.machine_id,
+        assigned_to: assigneeId,
+        task_type: 'outsourcing_transport',
+        title,
+        description,
+        status: 'pending',
+        start_date: neededDate,
+        deadline: neededDate,
+      })
+      .select('id')
+      .single()
+    if (taskError || !taskData) throw new Error(taskError?.message || 'Не удалось создать задачу снабжения')
+    taskId = (taskData as { id: string }).id
+  }
 
   const { error: needError } = await db
     .from('machine_outsourcing_transport_needs')
