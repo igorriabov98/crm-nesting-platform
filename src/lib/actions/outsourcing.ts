@@ -199,6 +199,7 @@ export type TransportWorkspaceOrder = MachineOutsourcingTransportOrder & {
 
 export type SupplyOutsourcingAgreement = {
   operation_id: string
+  created_at: string
   machine_id: string
   machine_name: string
   source_factory_name: string | null
@@ -958,6 +959,102 @@ async function syncConfirmedTransportForIncomingPlan(db: LooseDb, operationId: s
   await dispatchPendingTelegramDeliveries({ userId: supplyHeadId })
 }
 
+async function syncConfirmedTransportForSupplierOperation(db: LooseDb, operationId: string) {
+  const { data: rawOperationData, error: operationError } = await db
+    .from('machine_outsourcing_operations')
+    .select('*')
+    .eq('id', operationId)
+    .maybeSingle()
+  if (operationError || !rawOperationData) {
+    throw new Error(operationError?.message || 'Не удалось загрузить аутсорсинг для транспорта')
+  }
+
+  const [operation] = await hydrateOperations(
+    db,
+    [rawOperationData as Record<string, unknown> & { id: string; machine_id: string }],
+  )
+  if (
+    !operation
+    || operation.executor_type !== 'supplier'
+    || operation.responsible !== 'supply'
+    || !operation.supply_terms_confirmed_at
+  ) return
+
+  const machine = await getMachineOrThrow(db, operation.machine_id)
+  let sourceFactoryName: string | null = null
+  if (machine.factory_id) {
+    const { data: factoryData, error: factoryError } = await db
+      .from('factories')
+      .select('id, name')
+      .eq('id', machine.factory_id)
+      .maybeSingle()
+    if (factoryError) throw new Error(factoryError.message || 'Не удалось загрузить исходный завод')
+    sourceFactoryName = (factoryData as { name?: string } | null)?.name || null
+  }
+
+  const enrichedOperation = {
+    ...operation,
+    machine_name: machine.name,
+    source_factory_name: sourceFactoryName,
+  }
+  const supplyHeadId = await findSupplyDepartmentHead(db)
+
+  if (operation.planned_send_date) {
+    await createNeedAndTask(db, enrichedOperation, 'outbound', 'confirmed', supplyHeadId)
+  } else {
+    await cancelActiveTransportNeed(db, operation.id, 'outbound', 'confirmed')
+  }
+  if (operation.planned_return_date) {
+    await createNeedAndTask(db, enrichedOperation, 'return', 'confirmed', supplyHeadId)
+  } else {
+    await cancelActiveTransportNeed(db, operation.id, 'return', 'confirmed')
+  }
+
+  await dispatchPendingTelegramDeliveries({ userId: supplyHeadId })
+}
+
+async function reconcileConfirmedSupplierTransportNeeds(db: LooseDb) {
+  const [{ data: operationData, error: operationError }, { data: needData, error: needError }] = await Promise.all([
+    db
+      .from('machine_outsourcing_operations')
+      .select('id, planned_send_date, planned_return_date')
+      .eq('executor_type', 'supplier')
+      .eq('responsible', 'supply')
+      .not('supply_terms_confirmed_at', 'is', null)
+      .is('archived_at', null)
+      .is('actual_returned_at', null),
+    db
+      .from('machine_outsourcing_transport_needs')
+      .select('operation_id, direction')
+      .eq('plan_state', 'confirmed')
+      .in('status', ['open', 'linked']),
+  ])
+  if (operationError || needError) {
+    throw new Error(operationError?.message || needError?.message || 'Не удалось проверить транспорт подтверждённого аутсорсинга')
+  }
+
+  const directionsByOperation = new Map<string, Set<TransportDirection>>()
+  for (const need of (needData || []) as Array<{ operation_id: string; direction: TransportDirection }>) {
+    const directions = directionsByOperation.get(need.operation_id) || new Set<TransportDirection>()
+    directions.add(need.direction)
+    directionsByOperation.set(need.operation_id, directions)
+  }
+
+  const operations = (operationData || []) as Array<{
+    id: string
+    planned_send_date: string | null
+    planned_return_date: string | null
+  }>
+  for (const operation of operations) {
+    const directions = directionsByOperation.get(operation.id)
+    const outboundMissing = Boolean(operation.planned_send_date) && !directions?.has('outbound')
+    const returnMissing = Boolean(operation.planned_return_date) && !directions?.has('return')
+    if (outboundMissing || returnMissing) {
+      await syncConfirmedTransportForSupplierOperation(db, operation.id)
+    }
+  }
+}
+
 export async function syncOutsourcingTransportForProductionPlan(
   factoryId: string,
   productionMonth: string,
@@ -1616,7 +1713,7 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
 async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = false) {
   let query = db
     .from('machine_outsourcing_operations')
-    .select('id, machine_id, work_type_id, supplier_id, planned_send_date, planned_return_date, service_cost_planned, supply_terms_confirmed_at, responsible, supply_taken_at, note')
+    .select('id, created_at, machine_id, work_type_id, supplier_id, planned_send_date, planned_return_date, service_cost_planned, supply_terms_confirmed_at, responsible, supply_taken_at, note')
     .eq('executor_type', 'supplier')
     .eq('responsible', 'supply')
     .is('archived_at', null)
@@ -1628,6 +1725,7 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
 
   const operations = (data || []) as Array<{
     id: string
+    created_at: string
     machine_id: string
     work_type_id: string
     supplier_id: string | null
@@ -1720,6 +1818,7 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
     const machine = machineById.get(operation.machine_id)
     return {
       operation_id: operation.id,
+      created_at: operation.created_at,
       machine_id: operation.machine_id,
       machine_name: machine?.name || 'Машина',
       source_factory_name: machine?.factory_id ? factoryById.get(machine.factory_id) || null : null,
@@ -1804,6 +1903,7 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
   try {
     await requirePermission('supply_transport', 'view')
     const db = dbFrom(createAdminClient())
+    await reconcileConfirmedSupplierTransportNeeds(db)
     const [ordersRaw, carriers, openNeedRows, agreements] = await Promise.all([
       loadTransportOrders(db),
       loadTransportCarriers(db),
@@ -1931,8 +2031,12 @@ export async function confirmOutsourcingServiceTerms(input: z.infer<typeof suppl
       .eq('id', operation.id)
     if (updateError) throw new Error(updateError.message || 'Не удалось подтвердить условия аутсорсинга')
 
-    const machine = await getMachineOrThrow(db, operation.machine_id)
-    await syncOutsourcingTransportForMachine(db, machine)
+    if (operation.responsible === 'supply') {
+      await syncConfirmedTransportForSupplierOperation(db, operation.id)
+    } else {
+      const machine = await getMachineOrThrow(db, operation.machine_id)
+      await syncOutsourcingTransportForMachine(db, machine)
+    }
     revalidatePath(ROUTES.SUPPLY_TRANSPORT)
     revalidatePath(ROUTES.SUPPLY_OUTSOURCING_REQUESTS)
     revalidatePath(ROUTES.PRODUCTION)
