@@ -4,8 +4,9 @@
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
-import { encryptMailSecret, maskSecret } from '@/lib/mail/crypto'
+import { maskSecret } from '@/lib/mail/crypto'
 import { getMailSettings } from '@/lib/mail/config'
+import { storeMailVaultSecret } from '@/lib/mail/vault'
 import { ROUTES } from '@/lib/constants/routes'
 
 export async function getMailSettingsView() {
@@ -14,9 +15,9 @@ export async function getMailSettingsView() {
   return {
     googleProjectId: settings?.google_project_id || '',
     clientId: settings?.oauth_client_id || '',
-    clientSecretPreview: settings?.oauth_client_secret_encrypted ? '••••••••сохранён' : null,
+    clientSecretPreview: settings?.oauth_client_secret_vault_id ? '••••••••сохранён в Vault' : null,
     pubsubTopic: settings?.pubsub_topic || '',
-    configured: Boolean(settings?.oauth_client_id && settings.oauth_client_secret_encrypted && settings.pubsub_topic),
+    configured: Boolean(settings?.oauth_client_id && settings.oauth_client_secret_vault_id && settings.pubsub_topic),
   }
 }
 
@@ -39,7 +40,7 @@ export async function saveMailSettings(input: {
 
     const existing = await getMailSettings()
     const clientSecret = input.clientSecret?.trim()
-    if (!existing?.oauth_client_secret_encrypted && !clientSecret) throw new Error('Введите OAuth Client Secret')
+    if (!existing?.oauth_client_secret_vault_id && !clientSecret) throw new Error('Введите OAuth Client Secret')
     const payload: Record<string, unknown> = {
       id: true,
       google_project_id: googleProjectId,
@@ -48,7 +49,15 @@ export async function saveMailSettings(input: {
       configured_by: userId,
       updated_at: new Date().toISOString(),
     }
-    if (clientSecret) payload.oauth_client_secret_encrypted = encryptMailSecret(clientSecret)
+    if (clientSecret) {
+      payload.oauth_client_secret_vault_id = await storeMailVaultSecret({
+        secretId: existing?.oauth_client_secret_vault_id,
+        secret: clientSecret,
+        name: 'gmail-oauth-client-secret',
+        description: 'Google OAuth client secret for the CRM Gmail integration',
+      })
+      payload.oauth_client_secret_encrypted = null
+    }
     const { error } = await (createAdminClient() as any)
       .from('mail_settings')
       .upsert(payload, { onConflict: 'id' })
@@ -68,7 +77,7 @@ export async function testMailSettings(input: {
   try {
     await requirePermission('mail_settings', 'manage')
     const existing = await getMailSettings()
-    const secretAvailable = Boolean(input.clientSecret?.trim() || existing?.oauth_client_secret_encrypted)
+    const secretAvailable = Boolean(input.clientSecret?.trim() || existing?.oauth_client_secret_vault_id)
     if (!input.clientId.endsWith('.apps.googleusercontent.com')) throw new Error('Проверьте OAuth Client ID')
     if (!secretAvailable) throw new Error('OAuth Client Secret отсутствует')
     if (!/^projects\/[^/]+\/topics\/[^/]+$/.test(input.pubsubTopic.trim())) throw new Error('Проверьте имя Pub/Sub topic')

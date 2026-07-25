@@ -4,8 +4,8 @@ import 'server-only'
 import { Buffer } from 'node:buffer'
 import sanitizeHtml from 'sanitize-html'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { decryptMailSecret, encryptMailSecret } from './crypto'
 import { requireMailSettings } from './config'
+import { readMailVaultSecret, storeMailVaultSecret } from './vault'
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
@@ -13,22 +13,22 @@ type MailAccount = {
   id: string
   user_id: string
   email_address: string
-  access_token_encrypted: string | null
-  refresh_token_encrypted: string | null
+  access_token_vault_id: string | null
+  refresh_token_vault_id: string | null
   token_expires_at: string | null
   gmail_history_id: string | null
 }
 
 async function refreshAccessToken(account: MailAccount) {
   const settings = await requireMailSettings()
-  if (!account.refresh_token_encrypted) throw new Error('Gmail отключён. Подключите аккаунт снова.')
+  if (!account.refresh_token_vault_id) throw new Error('Gmail отключён. Подключите аккаунт снова.')
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id: settings.clientId,
       client_secret: settings.clientSecret,
-      refresh_token: decryptMailSecret(account.refresh_token_encrypted),
+      refresh_token: await readMailVaultSecret(account.refresh_token_vault_id),
       grant_type: 'refresh_token',
     }),
     cache: 'no-store',
@@ -36,8 +36,14 @@ async function refreshAccessToken(account: MailAccount) {
   const payload = await response.json()
   if (!response.ok || !payload.access_token) throw new Error(payload.error_description || 'Google отклонил обновление доступа')
   const expiresAt = new Date(Date.now() + Number(payload.expires_in || 3600) * 1000).toISOString()
+  const accessTokenVaultId = await storeMailVaultSecret({
+    secretId: account.access_token_vault_id,
+    secret: payload.access_token,
+    name: `gmail-access-${account.user_id}`,
+    description: `Gmail access token for CRM user ${account.user_id}`,
+  })
   await (createAdminClient() as any).from('mail_accounts').update({
-    access_token_encrypted: encryptMailSecret(payload.access_token),
+    access_token_vault_id: accessTokenVaultId,
     token_expires_at: expiresAt,
     sync_error: null,
     updated_at: new Date().toISOString(),
@@ -47,11 +53,11 @@ async function refreshAccessToken(account: MailAccount) {
 
 export async function getAccessToken(account: MailAccount) {
   if (
-    account.access_token_encrypted
+    account.access_token_vault_id
     && account.token_expires_at
     && new Date(account.token_expires_at).getTime() > Date.now() + 60_000
   ) {
-    return decryptMailSecret(account.access_token_encrypted)
+    return readMailVaultSecret(account.access_token_vault_id)
   }
   return refreshAccessToken(account)
 }
