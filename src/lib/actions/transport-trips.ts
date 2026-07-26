@@ -16,6 +16,10 @@ import {
   getInventoryTransportWorkspace,
   type InventoryTransferCard,
 } from '@/lib/actions/inventory-transfers'
+import {
+  getSupplyTransportNeeds,
+  type SupplyTransportNeed,
+} from '@/lib/actions/supply-orders'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -219,6 +223,29 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
   }
 }
 
+function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
+  return {
+    key: needKey('materials', need.id),
+    id: need.id,
+    kind: 'materials',
+    direction: 'outbound',
+    planState: 'confirmed',
+    status: 'planned',
+    title: need.machineName,
+    subtitle: need.supplierName,
+    sourcePointKey: `supplier:${need.supplierId}`,
+    sourcePointLabel: need.supplierLocation,
+    destinationPointKey: `factory:${need.factoryId}`,
+    destinationPointLabel: need.factoryName,
+    neededDate: need.deliveryDate,
+    deadline: need.deliveryDate,
+    itemLabels: [need.itemName],
+    volumeLabel: `${numberLabel(need.quantity)} ${need.unit}`,
+    deliveryRisk: false,
+    selectable: true,
+  }
+}
+
 function mapLink(link: TripLinkRow): TransportTripNeed {
   return {
     linkId: link.id,
@@ -292,10 +319,11 @@ async function loadTripLinks(db: TransportDb, tripIds: string[]) {
 async function loadTransportWorkspace(): Promise<TransportWorkspace> {
   await requirePermission('supply_transport', 'view')
   const db = transportDb(createAdminClient())
-  const [outsourcingResult, detailingResult, materialsResult] = await Promise.all([
+  const [outsourcingResult, detailingResult, materialsResult, supplyResult] = await Promise.all([
     getOutsourcingTransportWorkspace(),
     getDetailingTransportWorkspace(),
     getInventoryTransportWorkspace(),
+    getSupplyTransportNeeds(),
   ])
   const links = await loadTripLinks(
     db,
@@ -315,6 +343,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
     ...(materialsResult.data || [])
       .filter((card) => isActiveTransfer(card.status))
       .map(mapMaterialNeed),
+    ...supplyResult.data.map(mapSupplyNeed),
   ]
     .filter((need) => !activeLinkedNeeds.has(need.key))
     .sort((left, right) => {
@@ -362,7 +391,9 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
   const errors: TransportWorkspace['errors'] = {}
   if (outsourcingResult.error) errors.outsourcing = outsourcingResult.error
   if (detailingResult.error) errors.detailing = detailingResult.error
-  if (materialsResult.error) errors.materials = materialsResult.error
+  if (materialsResult.error || supplyResult.error) {
+    errors.materials = [materialsResult.error, supplyResult.error].filter(Boolean).join(' · ')
+  }
 
   return {
     needs,

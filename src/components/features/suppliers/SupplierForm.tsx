@@ -91,6 +91,8 @@ function getInitialSupplierInput(
   if (supplier) {
     return {
       name: supplier.name,
+      city: supplier.city || '',
+      address: supplier.address || '',
       contact_person: supplier.contact_person || '',
       phone: supplier.phone || '',
       email: supplier.email || '',
@@ -113,6 +115,8 @@ function getInitialSupplierInput(
 
   return {
     name: '',
+    city: '',
+    address: '',
     contact_person: '',
     phone: '',
     email: '',
@@ -305,6 +309,28 @@ export function SupplierForm({ supplier, directorySection = 'all' }: SupplierFor
                 placeholder="Например, Металл Сервис"
                 className="h-11 bg-background"
                 onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              />
+            </FormField>
+
+            <FormField id="supplier-city" label="Город">
+              <Input
+                id="supplier-city"
+                value={form.city || ''}
+                autoComplete="address-level2"
+                placeholder="Например, Ужгород"
+                className="h-11 bg-background"
+                onChange={(event) => setForm((current) => ({ ...current, city: event.target.value }))}
+              />
+            </FormField>
+
+            <FormField id="supplier-address" label="Адрес">
+              <Input
+                id="supplier-address"
+                value={form.address || ''}
+                autoComplete="street-address"
+                placeholder="Улица, дом"
+                className="h-11 bg-background"
+                onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
               />
             </FormField>
 

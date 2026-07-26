@@ -12,6 +12,7 @@ import { STAGE_ORDER } from '@/lib/constants/stages'
 import { isDirector } from '@/lib/utils/permissions'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { formatCompanyLocation } from '@/lib/transport/company-location'
 import { createSystemMachineChatMessage } from '@/lib/actions/machine-activity'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import type { CoatingType, ProductionMonthPlanStatus, StageType, UserRole } from '@/lib/types'
@@ -54,6 +55,8 @@ type MachineRow = {
 type SupplierBaseOption = {
   id: string
   name: string
+  city?: string | null
+  address?: string | null
   is_active: boolean
 }
 
@@ -80,6 +83,8 @@ export type OutsourcingMachineItem = {
 export type OutsourcingSupplierOption = {
   id: string
   name: string
+  city: string | null
+  address: string | null
   can_outsource: boolean
   can_transport: boolean
   is_active: boolean
@@ -126,6 +131,8 @@ export type MachineOutsourcingOperation = {
   executor_type: ExecutorType
   supplier_id: string | null
   supplier_name: string | null
+  supplier_city: string | null
+  supplier_address: string | null
   executor_factory_id: string | null
   executor_factory_name: string | null
   note: string | null
@@ -331,6 +338,8 @@ function isMissingSupplierCapabilityColumns(error: DbResult['error']) {
 function withLegacySupplierCapabilities(suppliers: SupplierBaseOption[]) {
   return suppliers.map((supplier) => ({
     ...supplier,
+    city: supplier.city || null,
+    address: supplier.address || null,
     can_outsource: true,
     can_transport: true,
   }))
@@ -530,14 +539,14 @@ async function resolveWorkTypeId(db: LooseDb, workTypeId?: string | null, workTy
 async function loadSuppliers(db: LooseDb) {
   const { data, error } = await db
     .from('suppliers')
-    .select('id, name, can_outsource, can_transport, is_active')
+    .select('id, name, city, address, can_outsource, can_transport, is_active')
     .eq('is_active', true)
     .order('name')
   if (error && !isMissingSupplierCapabilityColumns(error)) throw new Error(error.message || 'Не удалось загрузить поставщиков')
   if (error) {
     const fallback = await db
       .from('suppliers')
-      .select('id, name, is_active')
+      .select('id, name, city, address, is_active')
       .eq('is_active', true)
       .order('name')
     if (fallback.error) throw new Error(fallback.error.message || 'Не удалось загрузить поставщиков')
@@ -549,7 +558,7 @@ async function loadSuppliers(db: LooseDb) {
 async function loadTransportCarriers(db: LooseDb) {
   const { data, error } = await db
     .from('suppliers')
-    .select('id, name, can_outsource, can_transport, is_active')
+    .select('id, name, city, address, can_outsource, can_transport, is_active')
     .eq('is_active', true)
     .eq('can_transport', true)
     .order('name')
@@ -564,13 +573,13 @@ async function loadSuppliersByIds(db: LooseDb, supplierIds: string[]): Promise<D
   if (supplierIds.length === 0) return { data: [], error: null }
   const result = await db
     .from('suppliers')
-    .select('id, name, can_outsource, can_transport, is_active')
+    .select('id, name, city, address, can_outsource, can_transport, is_active')
     .in('id', supplierIds)
   if (!result.error || !isMissingSupplierCapabilityColumns(result.error)) return result
 
   const fallback = await db
     .from('suppliers')
-    .select('id, name, is_active')
+    .select('id, name, city, address, is_active')
     .in('id', supplierIds)
   if (fallback.error) return fallback
   return {
@@ -646,7 +655,7 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
   }
 
   const workTypeById = new Map(((workTypesRes.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row]))
-  const supplierById = new Map(((suppliersRes.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row]))
+  const supplierById = new Map(((suppliersRes.data || []) as OutsourcingSupplierOption[]).map((row) => [row.id, row]))
   const factoryById = new Map(((factoriesRes.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row]))
   const itemById = new Map(((itemsRes.data || []) as Array<OutsourcingMachineItem & { machine_id: string }>).map((row) => {
     const { machine_id: _machineId, ...item } = row
@@ -677,6 +686,8 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
       executor_type: operation.executor_type as ExecutorType,
       supplier_id: supplierId,
       supplier_name: supplierId ? supplierById.get(supplierId)?.name || null : null,
+      supplier_city: supplierId ? supplierById.get(supplierId)?.city || null : null,
+      supplier_address: supplierId ? supplierById.get(supplierId)?.address || null : null,
       executor_factory_id: executorFactoryId,
       executor_factory_name: executorFactoryId ? factoryById.get(executorFactoryId)?.name || null : null,
       note: operation.note as string | null,
@@ -1704,7 +1715,15 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
       : operation?.supplier_id
         ? `supplier:${operation.supplier_id}`
         : `outsourcing:${operation?.id || need.operation_id}`
-    const executorPointLabel = operation?.executor_factory_name || operation?.supplier_name || 'Исполнитель не указан'
+    const executorPointLabel = operation?.executor_factory_name || (
+      operation?.supplier_name
+        ? formatCompanyLocation({
+            name: operation.supplier_name,
+            city: operation.supplier_city,
+            address: operation.supplier_address,
+          })
+        : 'Исполнитель не указан'
+    )
     const isOutbound = need.direction === 'outbound'
     return {
       ...need,

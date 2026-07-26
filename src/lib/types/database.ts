@@ -3031,6 +3031,8 @@ export type Database = {
         Row: {
           id: string
           name: string
+          city: string | null
+          address: string | null
           contact_person: string | null
           phone: string | null
           email: string | null
@@ -3045,6 +3047,8 @@ export type Database = {
         Insert: {
           id?: string
           name: string
+          city?: string | null
+          address?: string | null
           contact_person?: string | null
           phone?: string | null
           email?: string | null
@@ -3059,6 +3063,8 @@ export type Database = {
         Update: {
           id?: string
           name?: string
+          city?: string | null
+          address?: string | null
           contact_person?: string | null
           phone?: string | null
           email?: string | null

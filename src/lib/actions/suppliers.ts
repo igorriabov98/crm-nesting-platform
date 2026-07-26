@@ -31,6 +31,8 @@ export type SupplierWithRelations = Supplier & {
 
 export type SupplierInput = {
   name: string
+  city?: string | null
+  address?: string | null
   contact_person?: string | null
   phone?: string | null
   email?: string | null
@@ -154,6 +156,8 @@ export async function createSupplier(input: SupplierInput) {
 
     const { data, error } = await db.from('suppliers').insert({
       name: input.name.trim(),
+      city: input.city?.trim() || null,
+      address: input.address?.trim() || null,
       contact_person: input.contact_person || null,
       phone: input.phone || null,
       email: input.email || null,
@@ -198,6 +202,8 @@ export async function updateSupplier(id: string, input: SupplierInput) {
 
     const { error } = await db.from('suppliers').update({
       name: input.name.trim(),
+      city: input.city?.trim() || null,
+      address: input.address?.trim() || null,
       contact_person: input.contact_person || null,
       phone: input.phone || null,
       email: input.email || null,
