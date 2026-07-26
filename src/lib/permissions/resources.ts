@@ -387,7 +387,7 @@ export const PERMISSION_RESOURCES = [
   },
   {
     key: 'supply_consumable_requests',
-    label: 'Заявки производства',
+    label: 'Надобности производства',
     group: 'Снабжение',
     defaultHref: ROUTES.SUPPLY_CONSUMABLE_REQUESTS,
     defaultViewRoles: SUPPLY_CONSUMABLE_ROLES,

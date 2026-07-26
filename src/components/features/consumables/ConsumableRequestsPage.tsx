@@ -377,7 +377,7 @@ export function ConsumableRequestsPage({ mode, factories, selectedFactoryId, req
           <div>
             <div className={industrial.eyebrow}>{mode === 'supply' ? 'Supply operations' : 'Production needs'}</div>
             <h1 className={industrial.title}>
-              {mode === 'supply' ? 'Заявки производства' : 'Заявки на расходники'}
+              {mode === 'supply' ? 'Надобности производства' : 'Заявки на расходники'}
             </h1>
             <p className={industrial.description}>
               {mode === 'supply'

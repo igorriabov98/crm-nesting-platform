@@ -13,7 +13,7 @@ const routeMap: Record<string, string> = {
   "consumables": "Расходники",
   "consumable-requests": "Заявки на расходники",
   "supply": "Снабжение",
-  "production-requests": "Заявки производства",
+  "production-requests": "Надобности производства",
   "transport": "Транспорт",
   "inventory": "Склад",
   "receiving": "Прием материала",

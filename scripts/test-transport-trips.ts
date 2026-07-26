@@ -8,6 +8,7 @@ import {
   routeStartsAt,
   type TransportRouteNeed,
 } from '../src/lib/transport/trip-rules'
+import { formatCompanyLocation } from '../src/lib/transport/company-location'
 
 const baseNeed: TransportRouteNeed = {
   sourcePointKey: 'factory:berehove',
@@ -44,6 +45,11 @@ assert.throws(
   () => assertRouteStartsAt('Ужгород → Берегово', 'Берегово'),
   /Маршрут должен начинаться/,
 )
+assert.equal(
+  formatCompanyLocation({ name: 'Varian', city: 'Ужгород', address: 'вул. Собранецька, 10' }),
+  'Ужгород, вул. Собранецька, 10',
+)
+assert.equal(formatCompanyLocation({ name: 'Varian', city: '', address: '' }), 'Varian')
 
 const migration = readFileSync(
   resolve('supabase/migrations/20260724193812_transport_trip_workspace.sql'),
@@ -56,5 +62,10 @@ assert.match(migration, /v_route_start_key IS DISTINCT FROM NEW\.source_point_ke
 assert.match(migration, /fn_create_transport_trip/)
 assert.match(migration, /fn_update_transport_trip/)
 assert.match(migration, /v_trip\.status IN \('completed', 'cancelled'\)/)
+
+const transportActions = readFileSync(resolve('src/lib/actions/transport-trips.ts'), 'utf8')
+assert.match(transportActions, /getSupplyTransportNeeds/)
+assert.match(transportActions, /supplyResult\.data\.map\(mapSupplyNeed\)/)
+assert.match(transportActions, /sourcePointKey: `supplier:\$\{need\.supplierId\}`/)
 
 console.log('Transport trip rules: OK')

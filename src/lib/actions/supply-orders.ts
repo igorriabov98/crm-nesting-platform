@@ -12,6 +12,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { MaterialCategory, OrderItemStatus } from '@/lib/types'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
+import { formatCompanyLocation } from '@/lib/transport/company-location'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -108,6 +109,21 @@ export type SupplyOrderDeliverySchedule = {
   received_by: string | null
   created_at: string
   updated_at: string
+}
+
+export type SupplyTransportNeed = {
+  id: string
+  machineId: string
+  machineName: string
+  supplierId: string
+  supplierName: string
+  supplierLocation: string
+  factoryId: string
+  factoryName: string
+  deliveryDate: string
+  itemName: string
+  quantity: number
+  unit: string
 }
 
 export type SupplyOrderItem = {
@@ -910,6 +926,114 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
     ...item,
     supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
   }))
+}
+
+export async function getSupplyTransportNeeds(): Promise<{
+  data: SupplyTransportNeed[]
+  error: string | null
+}> {
+  try {
+    await requirePermission('supply_transport', 'view')
+    const db = createAdminClient() as unknown as RpcDb
+    const { data: schedulesData, error: schedulesError } = await db
+      .from('supply_order_delivery_schedules')
+      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status')
+      .eq('status', 'planned')
+      .order('delivery_date', { ascending: true })
+    if (schedulesError) throw new Error(schedulesError.message || 'Не удалось загрузить подтверждённые поставки')
+
+    const schedules = (schedulesData || []) as Array<{
+      id: string
+      request_item_table: string
+      request_item_id: string
+      delivery_date: string
+      quantity: number
+      unit: string
+      supplier_id: string | null
+    }>
+    const eligibleSchedules = schedules.filter((schedule) => (
+      Boolean(schedule.supplier_id) && ORDER_TABLES.includes(schedule.request_item_table)
+    ))
+    if (eligibleSchedules.length === 0) return { data: [], error: null }
+
+    const groupedItems = groupItemsByTable(eligibleSchedules.map((schedule) => ({
+      table: schedule.request_item_table,
+      id: schedule.request_item_id,
+    })))
+    const items = await loadSelectedOrderItems(db, groupedItems)
+    const itemByKey = new Map(items.map((item) => [`${item.table}:${item.id}`, item]))
+    const requestIds = Array.from(new Set(items.map((item) => item.request_id)))
+    const supplierIds = Array.from(new Set(
+      eligibleSchedules.map((schedule) => schedule.supplier_id).filter((id): id is string => Boolean(id)),
+    ))
+
+    const [requestsResult, suppliersResult] = await Promise.all([
+      db
+        .from('technologist_requests')
+        .select('id, machine_id, machines!inner(id, name, factory_id, is_archived)')
+        .in('id', requestIds),
+      db
+        .from('suppliers')
+        .select('id, name, city, address')
+        .in('id', supplierIds),
+    ])
+    if (requestsResult.error) throw new Error(requestsResult.error.message || 'Не удалось загрузить машины поставок')
+    if (suppliersResult.error) throw new Error(suppliersResult.error.message || 'Не удалось загрузить адреса поставщиков')
+
+    const requests = (requestsResult.data || []) as Array<{
+      id: string
+      machine_id: string
+      machines: { id: string; name: string; factory_id: string | null; is_archived: boolean | null } | null
+    }>
+    const requestById = new Map(requests.map((request) => [request.id, request]))
+    const factoryIds = Array.from(new Set(
+      requests.map((request) => request.machines?.factory_id).filter((id): id is string => Boolean(id)),
+    ))
+    const factoriesResult = factoryIds.length > 0
+      ? await db.from('factories').select('id, name').in('id', factoryIds)
+      : { data: [], error: null }
+    if (factoriesResult.error) throw new Error(factoriesResult.error.message || 'Не удалось загрузить заводы поставок')
+
+    const suppliers = new Map(((suppliersResult.data || []) as Array<{
+      id: string
+      name: string
+      city: string | null
+      address: string | null
+    }>).map((supplier) => [supplier.id, supplier]))
+    const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string }>)
+      .map((factory) => [factory.id, factory.name]))
+
+    return {
+      data: eligibleSchedules.flatMap((schedule): SupplyTransportNeed[] => {
+        const item = itemByKey.get(`${schedule.request_item_table}:${schedule.request_item_id}`)
+        const request = item ? requestById.get(item.request_id) : null
+        const machine = request?.machines
+        const supplier = schedule.supplier_id ? suppliers.get(schedule.supplier_id) : null
+        const factoryId = machine?.factory_id || null
+        if (!item || !request || !machine || machine.is_archived || !supplier || !factoryId) return []
+        return [{
+          id: schedule.id,
+          machineId: request.machine_id,
+          machineName: machine.name,
+          supplierId: supplier.id,
+          supplierName: supplier.name,
+          supplierLocation: formatCompanyLocation(supplier),
+          factoryId,
+          factoryName: factories.get(factoryId) || 'Завод не указан',
+          deliveryDate: schedule.delivery_date,
+          itemName: item.item_name,
+          quantity: Number(schedule.quantity),
+          unit: schedule.unit,
+        }]
+      }),
+      error: null,
+    }
+  } catch (error) {
+    return {
+      data: [],
+      error: error instanceof Error ? error.message : 'Не удалось загрузить транспорт поставок',
+    }
+  }
 }
 
 export async function getSupplyOrders(page = 0, pageSize = 50, requestId: string | null = null) {
@@ -2239,6 +2363,7 @@ export async function updateAggregateSupplyDeliveryDate(
 function revalidateSupplyOrderPaths(machineIds: string[] = []) {
   revalidatePath(ROUTES.SUPPLY)
   revalidatePath(ROUTES.SUPPLY_ORDERS)
+  revalidatePath(ROUTES.SUPPLY_TRANSPORT)
   revalidatePath(ROUTES.INVENTORY)
   revalidatePath(ROUTES.INVENTORY_RECEIVING)
   revalidatePath(ROUTES.PRODUCTION)
