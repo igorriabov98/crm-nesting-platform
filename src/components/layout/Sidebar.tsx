@@ -132,12 +132,21 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const salesItems = sectionItems(user, permissions, 'sales')
   const financeItems = sectionItems(user, permissions, 'finance')
   const workflowItems = sectionItems(user, permissions, 'workflow')
-  const technologistItems = sectionItems(user, permissions, 'technologist')
+  const departmentRequestsVisible = permissions.department_requests?.canView
+  const technologistItems = [
+    ...(departmentRequestsVisible
+      ? [{ href: ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS, label: 'Запросы', icon: ClipboardList }]
+      : []),
+    ...sectionItems(user, permissions, 'technologist'),
+  ]
   const productionSectionItems = sectionItems(user, permissions, 'production')
   const productionItems = [
     ...productionSectionItems.filter((item) => item.href === ROUTES.PRODUCTION),
+    ...(departmentRequestsVisible
+      ? [{ href: ROUTES.PRODUCTION_DEPARTMENT_REQUESTS, label: 'Запросы', icon: ClipboardList }]
+      : []),
     ...(permissions.production_fact?.canView
-      ? [{ href: ROUTES.PRODUCTION_OUTSOURCING_REQUESTS, label: 'Запросы', icon: ClipboardList }]
+      ? [{ href: ROUTES.PRODUCTION_OUTSOURCING_REQUESTS, label: 'Аутсорсинг', icon: ClipboardList }]
       : []),
     ...productionSectionItems.filter((item) => item.href !== ROUTES.PRODUCTION),
     ...(permissions.production_fact?.canView && ['financial_director', 'commercial_director', 'planning_director', 'production_manager'].includes(user.role)
@@ -149,9 +158,12 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   ]
   const supplySectionItems = sectionItems(user, permissions, 'supply')
   const supplyItems = [
+    ...(departmentRequestsVisible
+      ? [{ href: ROUTES.SUPPLY_DEPARTMENT_REQUESTS, label: 'Запросы', icon: ClipboardList }]
+      : []),
     ...supplySectionItems.filter((item) => item.href !== ROUTES.SUPPLY_TRANSPORT),
     ...(permissions.supply_transport?.canView
-      ? [{ href: ROUTES.SUPPLY_OUTSOURCING_REQUESTS, label: 'Запросы', icon: ClipboardList }]
+      ? [{ href: ROUTES.SUPPLY_OUTSOURCING_REQUESTS, label: 'Аутсорсинг', icon: ClipboardList }]
       : []),
     ...supplySectionItems.filter((item) => item.href === ROUTES.SUPPLY_TRANSPORT),
   ]

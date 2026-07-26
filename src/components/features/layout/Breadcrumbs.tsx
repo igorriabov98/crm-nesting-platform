@@ -9,6 +9,8 @@ const routeMap: Record<string, string> = {
   "sales-plan": "План продаж",
   "new": "Создание",
   "production": "Производство",
+  "requests": "Запросы",
+  "technologist": "Технолог",
   "gantt": "Гант-график",
   "consumables": "Расходники",
   "consumable-requests": "Заявки на расходники",

@@ -2702,6 +2702,7 @@ export type Database = {
           message: string
           related_machine_id: string | null
           consumable_request_id: string | null
+          related_department_request_id: string | null
           is_read: boolean
           telegram_notified_at: string | null
           telegram_error: string | null
@@ -2715,6 +2716,7 @@ export type Database = {
           message: string
           related_machine_id?: string | null
           consumable_request_id?: string | null
+          related_department_request_id?: string | null
           is_read?: boolean
           telegram_notified_at?: string | null
           telegram_error?: string | null
@@ -2728,10 +2730,61 @@ export type Database = {
           message?: string
           related_machine_id?: string | null
           consumable_request_id?: string | null
+          related_department_request_id?: string | null
           is_read?: boolean
           telegram_notified_at?: string | null
           telegram_error?: string | null
           created_at?: string
+        }
+      }
+      department_requests: {
+        Row: {
+          id: string
+          target_department: string
+          title: string
+          description: string
+          priority: string
+          status: string
+          created_by: string
+          assigned_to: string | null
+          factory_id: string | null
+          due_date: string | null
+          response: string | null
+          completed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          target_department: string
+          title: string
+          description: string
+          priority?: string
+          status?: string
+          created_by: string
+          assigned_to?: string | null
+          factory_id?: string | null
+          due_date?: string | null
+          response?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          target_department?: string
+          title?: string
+          description?: string
+          priority?: string
+          status?: string
+          created_by?: string
+          assigned_to?: string | null
+          factory_id?: string | null
+          due_date?: string | null
+          response?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
         }
       }
       consumable_categories: {

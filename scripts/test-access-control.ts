@@ -36,8 +36,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 45, 'Реестр должен содержать все 45 ресурсов')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 45, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 46, 'Реестр должен содержать все 46 ресурсов')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 46, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -48,6 +48,13 @@ assert(hasPermission(procurementHeadPermissions, 'inventory_detailing', 'manage'
 assert(!hasPermission(procurementHeadPermissions, 'inventory_detailing_receiving', 'view'), 'Руководитель снабжения не должен принимать деталировку')
 assert(hasPermission(supplyManagerPermissions, 'supply_transport', 'manage'), 'Снабженец должен управлять транспортом')
 assert(!hasPermission(supplyManagerPermissions, 'inventory_detailing', 'manage'), 'Снабженец не должен менять склад деталировки')
+assert(hasPermission(supplyManagerPermissions, 'department_requests', 'manage'), 'Снабженец должен создавать и обрабатывать запросы')
+assert(hasPermission(technologistPermissions, 'department_requests', 'manage'), 'Технолог должен создавать и обрабатывать запросы')
+assert.equal(
+  getPermissionRequirementForPath('/requests/supply')?.resourceKey,
+  'department_requests',
+  'Межотдельные запросы должны использовать отдельное право',
+)
 assert.equal(
   getPermissionRequirementForPath('/production/requests')?.resourceKey,
   'production_fact',
