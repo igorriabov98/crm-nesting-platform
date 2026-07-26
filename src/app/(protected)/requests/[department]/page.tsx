@@ -1,7 +1,13 @@
 import { notFound } from 'next/navigation'
 import { DepartmentRequestsPage } from '@/components/features/department-requests/DepartmentRequestsPage'
-import { getDepartmentRequestWorkspace } from '@/lib/actions/department-requests'
-import { DEPARTMENT_REQUEST_TARGETS, isDepartmentRequestTarget } from '@/lib/department-requests'
+import {
+  getDepartmentRequestWorkspace,
+} from '@/lib/actions/department-requests'
+import {
+  DEPARTMENT_REQUEST_TARGETS,
+  isDepartmentRequestTarget,
+  normalizeDepartmentRequestFilters,
+} from '@/lib/department-requests'
 
 export async function generateMetadata({
   params,
@@ -18,22 +24,33 @@ export default async function DepartmentRequestsRoute({
   searchParams,
 }: {
   params: Promise<{ department: string }>
-  searchParams: Promise<{ view?: string; q?: string; page?: string; factory?: string }>
+  searchParams: Promise<{
+    q?: string
+    status?: string
+    deadline?: string
+    order?: string
+    assignee?: string
+    page?: string
+    factory?: string
+  }>
 }) {
   const [{ department }, query] = await Promise.all([params, searchParams])
   if (!isDepartmentRequestTarget(department)) notFound()
 
-  const workspace = await getDepartmentRequestWorkspace({
-    target: department,
-    view: query.view,
-    query: query.q,
-    page: Number(query.page || 0),
-  })
+  let workspace
+  try {
+    workspace = await getDepartmentRequestWorkspace({
+      target: department,
+      filters: normalizeDepartmentRequestFilters(query),
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Недостаточно прав')) notFound()
+    throw error
+  }
 
   return (
     <DepartmentRequestsPage
       workspace={workspace}
-      search={query.q || ''}
       factoryId={query.factory}
     />
   )

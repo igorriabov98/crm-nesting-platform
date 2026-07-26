@@ -1,310 +1,384 @@
+import Form from 'next/form'
 import Link from 'next/link'
 import {
-  AlertTriangle,
+  ArrowLeft,
   ArrowRight,
+  ArrowUpRight,
+  CalendarClock,
   CheckCircle2,
   CircleDot,
-  Clock3,
+  FileText,
+  Filter,
   Inbox,
+  Package,
+  Paperclip,
   Search,
   Send,
   UserRound,
 } from 'lucide-react'
-import { CreateDepartmentRequestForm } from '@/components/features/department-requests/CreateDepartmentRequestForm'
-import { RequestActionSubmit } from '@/components/features/department-requests/RequestActionSubmit'
-import { Button, buttonVariants } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { updateDepartmentRequest, type DepartmentRequestWorkspace } from '@/lib/actions/department-requests'
 import {
-  DEPARTMENT_REQUEST_PRIORITY_LABELS,
+  type DepartmentRequestRow,
+  type DepartmentRequestWorkspace,
+} from '@/lib/actions/department-requests'
+import {
   DEPARTMENT_REQUEST_STATUS_LABELS,
   DEPARTMENT_REQUEST_TARGETS,
-  type DepartmentRequestPriority,
   type DepartmentRequestStatus,
 } from '@/lib/department-requests'
+import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
-
-const priorityStyles: Record<DepartmentRequestPriority, string> = {
-  low: 'border-slate-200 bg-slate-50 text-slate-600',
-  normal: 'border-blue-200 bg-blue-50 text-blue-700',
-  high: 'border-amber-200 bg-amber-50 text-amber-800',
-  urgent: 'border-red-200 bg-red-50 text-red-700',
-}
+import { Button, buttonVariants } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { CreateDepartmentRequestForm } from '@/components/features/department-requests/CreateDepartmentRequestForm'
+import { RequestActions } from '@/components/features/department-requests/RequestActions'
 
 const statusStyles: Record<DepartmentRequestStatus, string> = {
-  new: 'border-blue-200 bg-blue-50 text-blue-700',
-  in_progress: 'border-violet-200 bg-violet-50 text-violet-700',
-  done: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  rejected: 'border-red-200 bg-red-50 text-red-700',
-  cancelled: 'border-slate-200 bg-slate-100 text-slate-600',
+  new: 'border-blue-200 bg-blue-50 text-blue-800',
+  in_progress: 'border-violet-200 bg-violet-50 text-violet-800',
+  done: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  rejected: 'border-red-200 bg-red-50 text-red-800',
+  cancelled: 'border-slate-200 bg-slate-100 text-slate-700',
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value))
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(value))
 }
 
-function queryHref(route: string, params: Record<string, string | number | undefined>) {
-  const query = new URLSearchParams()
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== '') query.set(key, String(value))
-  }
-  const suffix = query.toString()
+function queryHref(route: string, workspace: DepartmentRequestWorkspace, page: number, factoryId?: string) {
+  const params = new URLSearchParams()
+  const { filters } = workspace
+  if (filters.query) params.set('q', filters.query)
+  if (filters.status !== 'all') params.set('status', filters.status)
+  if (workspace.mode === 'mine' && filters.target !== 'all') params.set('target', filters.target)
+  if (filters.deadline !== 'all') params.set('deadline', filters.deadline)
+  if (filters.order !== 'all') params.set('order', filters.order)
+  if (workspace.mode === 'inbox' && filters.assignee !== 'all') params.set('assignee', filters.assignee)
+  if (page > 0) params.set('page', String(page))
+  if (factoryId) params.set('factory', factoryId)
+  const suffix = params.toString()
   return suffix ? `${route}?${suffix}` : route
+}
+
+function requestDetailHref(requestId: string, factoryId?: string) {
+  const route = `/requests/detail/${requestId}`
+  return factoryId ? `${route}?factory=${encodeURIComponent(factoryId)}` : route
+}
+
+function RequestCard({
+  request,
+  mode,
+  factoryId,
+}: {
+  request: DepartmentRequestRow
+  mode: 'mine' | 'inbox'
+  factoryId?: string
+}) {
+  const target = DEPARTMENT_REQUEST_TARGETS[request.target_department]
+  const sourceFiles = (request.attachments || []).filter((attachment) => attachment.phase === 'source').length
+  const resolutionFiles = (request.attachments || []).filter((attachment) => attachment.phase === 'resolution').length
+  const overdue = Boolean(
+    request.due_date
+      && !['done', 'rejected', 'cancelled'].includes(request.status)
+      && request.due_date < new Date().toISOString().slice(0, 10),
+  )
+  const detailHref = requestDetailHref(request.id, factoryId)
+
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusStyles[request.status])}>
+            {DEPARTMENT_REQUEST_STATUS_LABELS[request.status]}
+          </span>
+          {mode === 'mine' && (
+            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+              {target.label}
+            </span>
+          )}
+          {request.due_date && (
+            <span className={cn(
+              'inline-flex items-center gap-1.5 text-xs font-medium',
+              overdue ? 'text-red-700' : 'text-slate-500',
+            )}>
+              <CalendarClock className="size-3.5" aria-hidden="true" />
+              {overdue ? 'Просрочен · ' : 'до '}{formatDate(request.due_date)}
+            </span>
+          )}
+        </div>
+
+        <div>
+          <Link href={detailHref} className="group inline-flex items-start gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+            <h2 className="text-lg font-semibold leading-6 text-slate-950 group-hover:text-[#1B3A6B]">
+              {request.title}
+            </h2>
+            <ArrowUpRight className="mt-1 size-4 shrink-0 text-slate-400 group-hover:text-[#1B3A6B]" aria-hidden="true" />
+          </Link>
+          <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">
+            {request.description}
+          </p>
+        </div>
+
+        {request.machine && (
+          <Link
+            href={`${ROUTES.SALES_PLAN}/${request.machine.id}`}
+            className="inline-flex min-h-10 w-fit max-w-full items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 text-sm font-medium text-blue-900 hover:bg-blue-100"
+          >
+            <Package className="size-4 shrink-0" aria-hidden="true" />
+            <span className="truncate">
+              {request.machine.name}
+              {request.machine.specification_number ? ` · ${request.machine.specification_number}` : ''}
+            </span>
+          </Link>
+        )}
+
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500">
+          <span className="inline-flex items-center gap-1.5">
+            <UserRound className="size-3.5" aria-hidden="true" />
+            {mode === 'inbox' ? request.creator?.full_name || 'Сотрудник' : `Создан ${formatDate(request.created_at)}`}
+          </span>
+          {mode === 'inbox' && <span>{formatDate(request.created_at)}</span>}
+          {request.assignee?.full_name && (
+            <span className="inline-flex items-center gap-1.5 font-medium text-violet-700">
+              <CircleDot className="size-3.5" aria-hidden="true" />
+              Взял: {request.assignee.full_name}
+            </span>
+          )}
+          {(sourceFiles > 0 || resolutionFiles > 0) && (
+            <span className="inline-flex items-center gap-1.5">
+              <Paperclip className="size-3.5" aria-hidden="true" />
+              Файлов: {sourceFiles + resolutionFiles}
+            </span>
+          )}
+        </div>
+
+        {request.response && ['done', 'rejected'].includes(request.status) && (
+          <div className={cn(
+            'rounded-xl border px-4 py-3',
+            request.status === 'done'
+              ? 'border-emerald-200 bg-emerald-50'
+              : 'border-red-200 bg-red-50',
+          )}>
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {request.status === 'done'
+                ? <CheckCircle2 className="size-4 text-emerald-700" aria-hidden="true" />
+                : <FileText className="size-4 text-red-700" aria-hidden="true" />}
+              {request.status === 'done' ? 'Решение' : 'Причина отклонения'}
+            </div>
+            <p className="mt-1.5 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{request.response}</p>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <RequestActions requestId={request.id} status={request.status} mode={mode} />
+          <Link href={detailHref} className={cn(buttonVariants({ variant: 'ghost' }), 'min-h-11 gap-2 text-[#1B3A6B]')}>
+            {['done', 'rejected'].includes(request.status) ? 'Открыть результат' : 'Открыть запрос'}
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </Link>
+        </div>
+      </div>
+    </article>
+  )
 }
 
 export function DepartmentRequestsPage({
   workspace,
-  search,
   factoryId,
 }: {
   workspace: DepartmentRequestWorkspace
-  search: string
   factoryId?: string
 }) {
-  const config = DEPARTMENT_REQUEST_TARGETS[workspace.target]
-  const activeCount = workspace.requests.filter((request) => ['new', 'in_progress'].includes(request.status)).length
-  const urgentCount = workspace.requests.filter((request) => request.priority === 'urgent' && !['done', 'rejected', 'cancelled'].includes(request.status)).length
-  const doneCount = workspace.requests.filter((request) => request.status === 'done').length
+  const config = workspace.target ? DEPARTMENT_REQUEST_TARGETS[workspace.target] : null
+  const route = workspace.mode === 'mine' ? ROUTES.REQUESTS : config!.route
+  const resetHref = factoryId ? `${route}?factory=${encodeURIComponent(factoryId)}` : route
+  const hasFilters = Boolean(
+    workspace.filters.query
+    || workspace.filters.status !== 'all'
+    || workspace.filters.target !== 'all'
+    || workspace.filters.deadline !== 'all'
+    || workspace.filters.order !== 'all'
+    || workspace.filters.assignee !== 'all',
+  )
 
   return (
-    <div className="mx-auto w-full max-w-[1480px] space-y-6 pb-10">
-      <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-[#F7F9FC]">
-        <div className="grid gap-6 px-5 py-6 sm:px-7 lg:grid-cols-[1fr_auto] lg:items-end lg:px-9 lg:py-8">
+    <div className="mx-auto w-full max-w-[1380px] space-y-5 pb-10">
+      <section className="rounded-[24px] border border-slate-200 bg-[#F7F9FC] px-5 py-6 sm:px-7 lg:px-8">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#1B3A6B]">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#1B3A6B] text-white">
-                <Inbox className="h-4 w-4" />
+              <span className="flex size-8 items-center justify-center rounded-xl bg-[#1B3A6B] text-white">
+                {workspace.mode === 'mine'
+                  ? <Send className="size-4" aria-hidden="true" />
+                  : <Inbox className="size-4" aria-hidden="true" />}
               </span>
-              Рабочие запросы
+              {workspace.mode === 'mine' ? 'Мои рабочие запросы' : 'Входящие отдела'}
             </div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
-              Запросы · {config.label}
+              {workspace.mode === 'mine' ? 'Запросы' : `Запросы · ${config!.label}`}
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-              {config.description}. Ваши исходящие запросы доступны только вам и сотрудникам адресного отдела.
+              {workspace.mode === 'mine'
+                ? 'Создавайте нестандартные задачи для технологов, снабжения и производства и следите за результатом.'
+                : `Здесь собраны только запросы, адресованные отделу «${config!.label}».`}
             </p>
-            <Link
-              href="#new-request"
-              className={cn(buttonVariants({ variant: 'default' }), 'mt-5 min-h-11 bg-[#1B3A6B] px-4 text-white hover:bg-[#152f59]')}
-            >
-              <Send className="h-4 w-4" />
-              Создать запрос
-            </Link>
           </div>
-
-          <div className="grid grid-cols-3 gap-2 sm:gap-3">
-            {[
-              { label: 'Активные', value: activeCount, icon: Clock3, tone: 'text-blue-700 bg-blue-100' },
-              { label: 'Срочные', value: urgentCount, icon: AlertTriangle, tone: 'text-red-700 bg-red-100' },
-              { label: 'Готово', value: doneCount, icon: CheckCircle2, tone: 'text-emerald-700 bg-emerald-100' },
-            ].map((stat) => (
-              <div key={stat.label} className="min-w-24 rounded-2xl border border-slate-200 bg-white px-3 py-3.5 sm:min-w-32 sm:px-4">
-                <stat.icon className={cn('mb-3 h-7 w-7 rounded-lg p-1.5', stat.tone)} />
-                <div className="text-2xl font-bold tabular-nums text-slate-950">{stat.value}</div>
-                <div className="text-xs text-slate-500">{stat.label}</div>
-              </div>
-            ))}
-          </div>
+          {workspace.mode === 'mine' && <CreateDepartmentRequestForm />}
         </div>
       </section>
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <section className="min-w-0 overflow-hidden rounded-[24px] border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 px-4 py-4 sm:px-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
-                <Link
-                  href={queryHref(config.route, { view: 'mine', factory: factoryId })}
-                  className={cn(
-                    'flex min-h-11 items-center gap-2 rounded-lg px-3.5 text-sm font-semibold transition-colors',
-                    workspace.view === 'mine' ? 'bg-white text-[#1B3A6B]' : 'text-slate-600 hover:text-slate-950',
-                  )}
-                >
-                  <Send className="h-4 w-4" />
-                  Мои запросы
-                </Link>
-                {workspace.canManageInbox && (
-                  <Link
-                    href={queryHref(config.route, { view: 'inbox', factory: factoryId })}
-                    className={cn(
-                      'flex min-h-11 items-center gap-2 rounded-lg px-3.5 text-sm font-semibold transition-colors',
-                      workspace.view === 'inbox' ? 'bg-white text-[#1B3A6B]' : 'text-slate-600 hover:text-slate-950',
-                    )}
-                  >
-                    <Inbox className="h-4 w-4" />
-                    Входящие
+      <section className="overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+        <div className="border-b border-slate-200 p-4 sm:p-5">
+          <Form action={route} className="space-y-3">
+            {factoryId && <input type="hidden" name="factory" value={factoryId} />}
+            <div className="flex flex-col gap-3 lg:flex-row">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-3 top-3.5 size-4 text-slate-400" aria-hidden="true" />
+                <Input
+                  name="q"
+                  defaultValue={workspace.filters.query}
+                  placeholder="Поиск по названию, описанию или решению"
+                  aria-label="Поиск запросов"
+                  className="h-11 pl-9"
+                />
+              </div>
+              <Button type="submit" className="min-h-11 gap-2 bg-[#1B3A6B] text-white hover:bg-[#152f59]">
+                <Search className="size-4" aria-hidden="true" />
+                Найти
+              </Button>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              {workspace.mode === 'mine' && (
+                <label className="space-y-1 text-xs font-medium text-slate-600">
+                  <span>Отдел</span>
+                  <select name="target" defaultValue={workspace.filters.target} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800">
+                    <option value="all">Все отделы</option>
+                    {(Object.entries(DEPARTMENT_REQUEST_TARGETS)).map(([value, target]) => (
+                      <option key={value} value={value}>{target.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label className="space-y-1 text-xs font-medium text-slate-600">
+                <span>Статус</span>
+                <select name="status" defaultValue={workspace.filters.status} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800">
+                  <option value="all">Все статусы</option>
+                  {(Object.entries(DEPARTMENT_REQUEST_STATUS_LABELS)).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
+
+              {workspace.mode === 'inbox' && (
+                <label className="space-y-1 text-xs font-medium text-slate-600">
+                  <span>Исполнитель</span>
+                  <select name="assignee" defaultValue={workspace.filters.assignee} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800">
+                    <option value="all">Все исполнители</option>
+                    <option value="unassigned">Не назначен</option>
+                    <option value="mine">Взятые мной</option>
+                    {workspace.assigneeOptions.map((option) => (
+                      <option key={option.id} value={option.id}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label className="space-y-1 text-xs font-medium text-slate-600">
+                <span>Срок</span>
+                <select name="deadline" defaultValue={workspace.filters.deadline} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800">
+                  <option value="all">Любой срок</option>
+                  <option value="overdue">Просроченные</option>
+                  <option value="with_date">С указанным сроком</option>
+                  <option value="without_date">Без срока</option>
+                </select>
+              </label>
+
+              <label className="space-y-1 text-xs font-medium text-slate-600">
+                <span>Заказ</span>
+                <select name="order" defaultValue={workspace.filters.order} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800">
+                  <option value="all">Все запросы</option>
+                  <option value="with_order">С заказом</option>
+                  <option value="without_order">Без заказа</option>
+                  {workspace.orderOptions.map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="flex items-end gap-2">
+                <Button type="submit" variant="outline" className="min-h-11 flex-1 gap-2">
+                  <Filter className="size-4" aria-hidden="true" />
+                  Применить
+                </Button>
+                {hasFilters && (
+                  <Link href={resetHref} className={cn(buttonVariants({ variant: 'ghost' }), 'min-h-11')}>
+                    Сбросить
                   </Link>
                 )}
               </div>
-
-              <form method="get" className="flex w-full gap-2 lg:max-w-sm">
-                <input type="hidden" name="view" value={workspace.view} />
-                {factoryId && <input type="hidden" name="factory" value={factoryId} />}
-                <div className="relative flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                  <Input
-                    name="q"
-                    defaultValue={search}
-                    aria-label="Поиск запросов"
-                    placeholder="Поиск по запросам"
-                    className="h-11 pl-9"
-                  />
-                </div>
-                <Button type="submit" variant="outline" className="h-11 px-4">Найти</Button>
-              </form>
             </div>
+          </Form>
+        </div>
 
-            <div className="mt-4 flex items-center justify-between text-sm text-slate-500">
-              <span>{workspace.view === 'mine' ? 'Отправленные вами' : 'Адресованные вашему отделу'}</span>
-              <span className="tabular-nums">Найдено: {workspace.total}</span>
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 text-sm text-slate-500 sm:px-5">
+          <span>{workspace.mode === 'mine' ? 'Отправленные вами' : 'Адресованные вашему отделу'}</span>
+          <span className="tabular-nums">Найдено: {workspace.total}</span>
+        </div>
+
+        <div className="space-y-3 bg-slate-50/60 p-3 sm:p-4">
+          {workspace.requests.length === 0 ? (
+            <div className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-16 text-center">
+              <span className="mb-5 flex size-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+                {hasFilters ? <Search className="size-7" aria-hidden="true" /> : <Inbox className="size-7" aria-hidden="true" />}
+              </span>
+              <h2 className="text-lg font-semibold text-slate-900">
+                {hasFilters ? 'Подходящих запросов нет' : 'Запросов пока нет'}
+              </h2>
+              <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+                {hasFilters
+                  ? 'Измените ключевые слова или сбросьте часть фильтров.'
+                  : workspace.mode === 'mine'
+                    ? 'Создайте первый запрос — его сразу увидит выбранный отдел.'
+                    : 'Новые запросы вашему отделу появятся здесь автоматически.'}
+              </p>
             </div>
+          ) : workspace.requests.map((request) => (
+            <RequestCard key={request.id} request={request} mode={workspace.mode} factoryId={factoryId} />
+          ))}
+        </div>
+
+        {workspace.total > workspace.pageSize && (
+          <div className="flex items-center justify-between border-t border-slate-200 px-4 py-4 sm:px-5">
+            {workspace.page === 0 ? (
+              <span className={cn(buttonVariants({ variant: 'outline' }), 'min-h-11 pointer-events-none opacity-50')}>
+                <ArrowLeft className="size-4" aria-hidden="true" />
+                Назад
+              </span>
+            ) : (
+              <Link className={cn(buttonVariants({ variant: 'outline' }), 'min-h-11')} href={queryHref(route, workspace, workspace.page - 1, factoryId)}>
+                <ArrowLeft className="size-4" aria-hidden="true" />
+                Назад
+              </Link>
+            )}
+            <span className="text-sm text-slate-500">Страница {workspace.page + 1}</span>
+            {(workspace.page + 1) * workspace.pageSize >= workspace.total ? (
+              <span className={cn(buttonVariants({ variant: 'outline' }), 'min-h-11 pointer-events-none opacity-50')}>
+                Далее
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </span>
+            ) : (
+              <Link className={cn(buttonVariants({ variant: 'outline' }), 'min-h-11')} href={queryHref(route, workspace, workspace.page + 1, factoryId)}>
+                Далее
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </Link>
+            )}
           </div>
-
-          <div className="divide-y divide-slate-100">
-            {workspace.requests.length === 0 ? (
-              <div className="flex min-h-80 flex-col items-center justify-center px-6 py-16 text-center">
-                <span className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
-                  <Inbox className="h-7 w-7" />
-                </span>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  {search ? 'По вашему поиску ничего нет' : 'Запросов пока нет'}
-                </h2>
-                <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-                  {workspace.view === 'mine'
-                    ? `Создайте первый нестандартный запрос ${config.recipientLabel} в форме справа.`
-                    : 'Новые запросы сотрудников появятся здесь автоматически.'}
-                </p>
-              </div>
-            ) : workspace.requests.map((request) => (
-              <article key={request.id} id={`request-${request.id}`} className="px-4 py-5 sm:px-6">
-                <div className="flex flex-col gap-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusStyles[request.status])}>
-                      {DEPARTMENT_REQUEST_STATUS_LABELS[request.status]}
-                    </span>
-                    <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', priorityStyles[request.priority])}>
-                      {DEPARTMENT_REQUEST_PRIORITY_LABELS[request.priority]}
-                    </span>
-                    {request.due_date && (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
-                        <Clock3 className="h-3.5 w-3.5" />
-                        до {formatDate(request.due_date)}
-                      </span>
-                    )}
-                  </div>
-
-                  <div>
-                    <h2 className="text-lg font-semibold leading-6 text-slate-950">{request.title}</h2>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{request.description}</p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500">
-                    <span className="inline-flex items-center gap-1.5">
-                      <UserRound className="h-3.5 w-3.5" />
-                      {workspace.view === 'inbox' ? request.creator?.full_name || 'Сотрудник' : `Создан ${formatDate(request.created_at)}`}
-                    </span>
-                    {workspace.view === 'inbox' && <span>{formatDate(request.created_at)}</span>}
-                    {request.assignee?.full_name && (
-                      <span className="inline-flex items-center gap-1.5 text-violet-700">
-                        <CircleDot className="h-3.5 w-3.5" />
-                        Исполнитель: {request.assignee.full_name}
-                      </span>
-                    )}
-                  </div>
-
-                  {request.response && (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ответ отдела</div>
-                      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-slate-700">{request.response}</p>
-                    </div>
-                  )}
-
-                  {workspace.view === 'inbox' && ['new', 'in_progress'].includes(request.status) && (
-                    <form action={updateDepartmentRequest} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                      <input type="hidden" name="requestId" value={request.id} />
-                      <label htmlFor={`response-${request.id}`} className="text-xs font-semibold text-slate-700">
-                        Комментарий автору
-                      </label>
-                      <textarea
-                        id={`response-${request.id}`}
-                        name="response"
-                        maxLength={2000}
-                        rows={2}
-                        placeholder="Необязательно"
-                        className="mt-2 min-h-20 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                      />
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {request.status === 'new' && (
-                          <RequestActionSubmit value="in_progress">Взять в работу</RequestActionSubmit>
-                        )}
-                        <RequestActionSubmit value="done" variant="default">Выполнено</RequestActionSubmit>
-                        <RequestActionSubmit value="rejected" variant="destructive">Отклонить</RequestActionSubmit>
-                      </div>
-                    </form>
-                  )}
-
-                  {workspace.view === 'mine' && ['new', 'in_progress'].includes(request.status) && (
-                    <form action={updateDepartmentRequest}>
-                      <input type="hidden" name="requestId" value={request.id} />
-                      <RequestActionSubmit value="cancelled" variant="outline">Отменить запрос</RequestActionSubmit>
-                    </form>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-
-          {workspace.total > workspace.pageSize && (
-            <div className="flex items-center justify-between border-t border-slate-200 px-4 py-4 sm:px-6">
-              {workspace.page === 0 ? (
-                <span className={cn(buttonVariants({ variant: 'outline' }), 'min-h-11 pointer-events-none opacity-50')}>Назад</span>
-              ) : (
-                <Link
-                  className={cn(buttonVariants({ variant: 'outline' }), 'min-h-11')}
-                  href={queryHref(config.route, {
-                    view: workspace.view,
-                    q: search,
-                    page: Math.max(0, workspace.page - 1),
-                    factory: factoryId,
-                  })}
-                >
-                  Назад
-                </Link>
-              )}
-              <span className="text-sm text-slate-500">Страница {workspace.page + 1}</span>
-              {(workspace.page + 1) * workspace.pageSize >= workspace.total ? (
-                <span className={cn(buttonVariants({ variant: 'outline' }), 'min-h-11 pointer-events-none opacity-50')}>
-                  Далее
-                  <ArrowRight className="h-4 w-4" />
-                </span>
-              ) : (
-                <Link href={queryHref(config.route, {
-                  view: workspace.view,
-                  q: search,
-                  page: workspace.page + 1,
-                  factory: factoryId,
-                })} className={cn(buttonVariants({ variant: 'outline' }), 'min-h-11')}>
-                  Далее
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              )}
-            </div>
-          )}
-        </section>
-
-        <aside id="new-request" className="scroll-mt-5 rounded-[24px] border border-[#CBD7E8] bg-[#EEF4FB] p-5 xl:sticky xl:top-5">
-          <div className="mb-5">
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#1B3A6B] text-white">
-              <Send className="h-4 w-4" />
-            </span>
-            <h2 className="mt-4 text-xl font-bold text-slate-950">Новый запрос</h2>
-            <p className="mt-1.5 text-sm leading-6 text-slate-600">
-              Запрос сразу появится у сотрудников отдела «{config.label}».
-            </p>
-          </div>
-          <CreateDepartmentRequestForm target={workspace.target} />
-        </aside>
-      </div>
+        )}
+      </section>
     </div>
   )
 }

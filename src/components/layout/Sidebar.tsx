@@ -44,6 +44,7 @@ import { Button } from '@/components/ui/button'
 import type { CurrentUser } from '@/lib/types'
 import { ROUTES } from '@/lib/constants/routes'
 import { MailUnreadBadge } from '@/components/features/mail/MailUnreadBadge'
+import { canManageDepartmentRequestTarget } from '@/lib/department-requests'
 
 interface SidebarProps {
   user: CurrentUser
@@ -132,9 +133,26 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const salesItems = sectionItems(user, permissions, 'sales')
   const financeItems = sectionItems(user, permissions, 'finance')
   const workflowItems = sectionItems(user, permissions, 'workflow')
-  const departmentRequestsVisible = permissions.department_requests?.canView
+  const requestMemberships = (user.department_memberships || []).map((membership) => ({
+    departmentName: membership.department?.name || null,
+  }))
+  const canManageTechnologistRequests = permissions.department_requests?.canView && canManageDepartmentRequestTarget({
+    target: 'technologist',
+    role: user.role,
+    memberships: requestMemberships,
+  })
+  const canManageProductionRequests = permissions.department_requests?.canView && canManageDepartmentRequestTarget({
+    target: 'production',
+    role: user.role,
+    memberships: requestMemberships,
+  })
+  const canManageSupplyRequests = permissions.department_requests?.canView && canManageDepartmentRequestTarget({
+    target: 'supply',
+    role: user.role,
+    memberships: requestMemberships,
+  })
   const technologistItems = [
-    ...(departmentRequestsVisible
+    ...(canManageTechnologistRequests
       ? [{ href: ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS, label: 'Запросы', icon: ClipboardList }]
       : []),
     ...sectionItems(user, permissions, 'technologist'),
@@ -142,7 +160,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const productionSectionItems = sectionItems(user, permissions, 'production')
   const productionItems = [
     ...productionSectionItems.filter((item) => item.href === ROUTES.PRODUCTION),
-    ...(departmentRequestsVisible
+    ...(canManageProductionRequests
       ? [{ href: ROUTES.PRODUCTION_DEPARTMENT_REQUESTS, label: 'Запросы', icon: ClipboardList }]
       : []),
     ...(permissions.production_fact?.canView
@@ -158,7 +176,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   ]
   const supplySectionItems = sectionItems(user, permissions, 'supply')
   const supplyItems = [
-    ...(departmentRequestsVisible
+    ...(canManageSupplyRequests
       ? [{ href: ROUTES.SUPPLY_DEPARTMENT_REQUESTS, label: 'Запросы', icon: ClipboardList }]
       : []),
     ...supplySectionItems.filter((item) => item.href !== ROUTES.SUPPLY_TRANSPORT),
@@ -177,6 +195,9 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   }
 
   function isActiveItem(item: NavItem) {
+    if (item.href === ROUTES.REQUESTS) {
+      return pathname === ROUTES.REQUESTS || pathname.startsWith(`${ROUTES.REQUESTS}/detail/`)
+    }
     return pathname === item.href || (!item.exact && pathname.startsWith(item.href + '/'))
   }
 
