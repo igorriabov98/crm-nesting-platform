@@ -16,6 +16,7 @@ import {
   findDominantPlanePair,
   generateThumbnailSvg,
   normalizeContour,
+  polygonArea,
   projectTo2D,
   roundToStandardThickness,
   simplifyContour,
@@ -83,6 +84,8 @@ export interface ParsedPart {
 }
 
 export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE';
+
+export const DEGENERATE_CONTOUR_WARNING = 'вырожденный контур — тело исключено из листового раскроя';
 
 export type BrepTrace = {
   partName: string;
@@ -512,8 +515,10 @@ function processMesh(
     try {
       if (indices.length >= 3) {
         contour = extractBoundaryContour(positions, indices, classification.projectionAxis);
-        if (contour.length >= 3) {
+        if (isValidStepContourShape(contour)) {
           contourSource = 'EXACT_BOUNDARY';
+        } else {
+          errors.push(`${name}: вырожденный контур EXACT_BOUNDARY, используется convex hull fallback`);
         }
       }
     } catch (error) {
@@ -522,9 +527,12 @@ function processMesh(
     }
   }
 
-  if (contour.length < 3) {
-    const projected = projectTo2D(positions, classification.projectionAxis);
-    contour = convexHull(projected);
+  const contourResolution = resolveStepContourShape(
+    contour,
+    projectTo2D(positions, classification.projectionAxis)
+  );
+  if (contourResolution.usedFallback) {
+    contour = contourResolution.contour;
     contourSource = 'CONVEX_HULL';
   }
 
@@ -534,6 +542,7 @@ function processMesh(
     contour = ensureClockwise(contour);
   }
 
+  const degenerateContour = !isValidStepContourShape(contour);
   const fallbackThickness = exactContour
     ? { thickness: exactContour.thickness, warning: null }
     : estimateFallbackThickness({
@@ -551,18 +560,26 @@ function processMesh(
     fallbackThickness.thickness !== null &&
     maxBBoxDim >= 50;
   const isSheetMetal = hasBends || classification.isSheetMetal || hasLargeExactSheetContour;
-  const partType = inferPartTypeFromGeometry({
+  const inferredPartType = inferPartTypeFromGeometry({
     isSheetMetal,
     hasBends,
     bboxSizeX: boundingBox.sizeX,
     bboxSizeY: boundingBox.sizeY,
     bboxSizeZ: boundingBox.sizeZ,
   });
+  const partType = resolvePartTypeForContour(inferredPartType, contour);
 
   if (fallbackThickness.warning && partType === 'SHEET') {
     warnings.push(fallbackThickness.warning);
   }
-  const classificationWarning = partType === 'SHEET' && warnings.length > 0 ? warnings.join('; ') : null;
+  if (degenerateContour) {
+    warnings.push(DEGENERATE_CONTOUR_WARNING);
+  }
+  const classificationWarning = degenerateContour
+    ? warnings.join('; ')
+    : partType === 'SHEET' && warnings.length > 0
+      ? warnings.join('; ')
+      : null;
   if (!exactContour && classificationWarning) {
     errors.push(`${name}: ${classificationWarning}`);
   }
@@ -571,7 +588,11 @@ function processMesh(
     warnings.push(warning);
     errors.push(warning);
   }
-  const finalClassificationWarning = partType === 'SHEET' && warnings.length > 0 ? warnings.join('; ') : null;
+  const finalClassificationWarning = degenerateContour
+    ? warnings.join('; ')
+    : partType === 'SHEET' && warnings.length > 0
+      ? warnings.join('; ')
+      : null;
 
   const { width, height } = exactContour ?? getContourSize(contour);
   const thumbnailSvg = generateThumbnailSvg(contour, holes);
@@ -594,7 +615,9 @@ function processMesh(
     hasBends: partType === 'SHEET' && hasBends,
     confidence: exactContour ? 0.98 : classification.confidence,
     classificationMethod: classification.method,
-    classificationWarning: exactContour ? (brepResult?.warnings.join('; ') || null) : finalClassificationWarning,
+    classificationWarning: exactContour && !degenerateContour
+      ? (brepResult?.warnings.join('; ') || null)
+      : finalClassificationWarning,
     thumbnailSvg,
     boundingBox,
     meshVolume,
@@ -669,6 +692,48 @@ function resolveClonePartType(group: ParsedPart[]): PartType {
   if (group.some((part) => part.partType === 'SHEET')) return 'SHEET';
   if (group.some((part) => part.partType === 'PURCHASED')) return 'PURCHASED';
   return 'PROFILE';
+}
+
+export function isValidStepContourShape(contour: Point2D[], epsilon = 1e-6): boolean {
+  if (contour.length < 3 || polygonArea(contour) <= epsilon) {
+    return false;
+  }
+
+  const origin = contour[0];
+  for (let left = 1; left < contour.length - 1; left += 1) {
+    for (let right = left + 1; right < contour.length; right += 1) {
+      const cross =
+        (contour[left].x - origin.x) * (contour[right].y - origin.y) -
+        (contour[left].y - origin.y) * (contour[right].x - origin.x);
+      if (Math.abs(cross) > epsilon) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+export function resolveStepContourShape(
+  contour: Point2D[],
+  projectedMesh: Point2D[]
+): { contour: Point2D[]; usedFallback: boolean; valid: boolean } {
+  if (isValidStepContourShape(contour)) {
+    return { contour, usedFallback: false, valid: true };
+  }
+
+  const fallback = convexHull(projectedMesh);
+  return {
+    contour: fallback,
+    usedFallback: true,
+    valid: isValidStepContourShape(fallback),
+  };
+}
+
+export function resolvePartTypeForContour(inferredPartType: PartType, contour: Point2D[]): PartType {
+  // Temporary exclusion until fix-clone-review-flag adds an orthogonal needsReview flag.
+  // A degenerate body is not necessarily a profile; PROFILE only keeps it out of sheet nesting.
+  return isValidStepContourShape(contour) ? inferredPartType : 'PROFILE';
 }
 
 function resolveCloneThickness(group: ParsedPart[]): number | null {

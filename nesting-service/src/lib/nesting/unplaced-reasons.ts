@@ -68,10 +68,43 @@ export function buildMissingThicknessReason(input: { material: string; steelType
   return `толщина не определена: материал ${materialLabel}`;
 }
 
-export function buildNestingFailedReason(input: { material: string; steelTypeName?: string | null; thickness?: number | null }): string {
+export function buildNestingFailedReason(input: {
+  material: string;
+  steelTypeName?: string | null;
+  thickness?: number | null;
+  requiredWidth?: number | null;
+  requiredHeight?: number | null;
+  availableSheets?: Array<{ width: number; height: number }>;
+}): string {
   const materialLabel = [input.material, input.steelTypeName].filter(Boolean).join('/');
   const thickness = input.thickness ? `, t=${formatMm(input.thickness)}` : '';
-  return `не удалось разместить на доступных листах: материал ${materialLabel}${thickness}`;
+  const requiredWidth = input.requiredWidth ?? null;
+  const requiredHeight = input.requiredHeight ?? null;
+  const sheets = input.availableSheets ?? [];
+
+  if (
+    typeof requiredWidth === 'number' &&
+    typeof requiredHeight === 'number' &&
+    sheets.length > 0 &&
+    !sheets.some((sheet) => fitsInEitherOrientation(requiredWidth, requiredHeight, sheet.width, sheet.height))
+  ) {
+    const largestSheet = [...sheets].sort((left, right) => right.width * right.height - left.width * left.height)[0];
+    return `деталь ${formatMm(requiredWidth)}x${formatMm(requiredHeight)} не помещается на лист ` +
+      `${formatMm(largestSheet.width)}x${formatMm(largestSheet.height)} ни в одной ориентации: ` +
+      `материал ${materialLabel}${thickness}`;
+  }
+
+  return `алгоритм не нашёл свободную позицию на доступных листах: материал ${materialLabel}${thickness}`;
+}
+
+function fitsInEitherOrientation(
+  partWidth: number,
+  partHeight: number,
+  sheetWidth: number,
+  sheetHeight: number
+): boolean {
+  return (partWidth <= sheetWidth && partHeight <= sheetHeight) ||
+    (partHeight <= sheetWidth && partWidth <= sheetHeight);
 }
 
 export function buildUnplacedReasonQueues(validationReport: unknown): Map<string, UnplacedPart[]> {
