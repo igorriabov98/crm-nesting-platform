@@ -62,6 +62,12 @@ export function distributePartsToSheets(
       const reason = buildNestingFailedReason({
         material: sheet?.material ?? 'не указан',
         thickness: sheet?.thickness ?? null,
+        requiredWidth: part.width,
+        requiredHeight: part.height,
+        availableSheets: sortedSheets.map((availableSheet) => ({
+          width: availableSheet.width,
+          height: availableSheet.height,
+        })),
       });
 
       return {
