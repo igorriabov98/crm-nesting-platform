@@ -22,14 +22,8 @@ export function isConsumableNotification(type: string) {
 
 export function getNotificationDestination(notification: NotificationItem) {
   if (notification.related_department_request_id && notification.type.startsWith('department_request_')) {
-    const target = notification.type.endsWith('_technologist')
-      ? 'technologist'
-      : notification.type.endsWith('_production')
-        ? 'production'
-        : 'supply'
-    const view = notification.type.startsWith('department_request_new_') ? 'inbox' : 'mine'
     return {
-      href: `${ROUTES.REQUESTS}/${target}?view=${view}#request-${notification.related_department_request_id}`,
+      href: `${ROUTES.REQUESTS}/detail/${notification.related_department_request_id}`,
       label: 'Открыть запрос',
     }
   }

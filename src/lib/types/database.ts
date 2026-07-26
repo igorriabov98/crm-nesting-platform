@@ -2747,10 +2747,13 @@ export type Database = {
           status: string
           created_by: string
           assigned_to: string | null
+          completed_by: string | null
           factory_id: string | null
+          machine_id: string | null
           due_date: string | null
           response: string | null
           completed_at: string | null
+          search_document: unknown
           created_at: string
           updated_at: string
         }
@@ -2763,10 +2766,13 @@ export type Database = {
           status?: string
           created_by: string
           assigned_to?: string | null
+          completed_by?: string | null
           factory_id?: string | null
+          machine_id?: string | null
           due_date?: string | null
           response?: string | null
           completed_at?: string | null
+          search_document?: unknown
           created_at?: string
           updated_at?: string
         }
@@ -2779,12 +2785,73 @@ export type Database = {
           status?: string
           created_by?: string
           assigned_to?: string | null
+          completed_by?: string | null
           factory_id?: string | null
+          machine_id?: string | null
           due_date?: string | null
           response?: string | null
           completed_at?: string | null
+          search_document?: unknown
           created_at?: string
           updated_at?: string
+        }
+      }
+      department_request_attachments: {
+        Row: {
+          id: string
+          request_id: string
+          phase: string
+          uploaded_by: string
+          file_name: string
+          mime_type: string | null
+          file_size: number
+          storage_path: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          request_id: string
+          phase: string
+          uploaded_by: string
+          file_name: string
+          mime_type?: string | null
+          file_size: number
+          storage_path: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          request_id?: string
+          phase?: string
+          uploaded_by?: string
+          file_name?: string
+          mime_type?: string | null
+          file_size?: number
+          storage_path?: string
+          created_at?: string
+        }
+      }
+      department_request_events: {
+        Row: {
+          id: string
+          request_id: string
+          event_type: string
+          actor_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          request_id: string
+          event_type: string
+          actor_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          request_id?: string
+          event_type?: string
+          actor_id?: string | null
+          created_at?: string
         }
       }
       consumable_categories: {

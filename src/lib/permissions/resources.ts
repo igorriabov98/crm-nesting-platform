@@ -306,13 +306,14 @@ export const PERMISSION_RESOURCES = [
   },
   {
     key: 'department_requests',
-    label: 'Запросы отделам',
+    label: 'Запросы',
     description: 'Личные исходящие запросы и входящие запросы своего отдела',
     group: 'Работа',
-    defaultHref: ROUTES.SUPPLY_DEPARTMENT_REQUESTS,
+    defaultHref: ROUTES.REQUESTS,
     defaultViewRoles: ALL,
     defaultManageRoles: ALL,
     routes: [{ path: ROUTES.REQUESTS, match: 'prefix', operation: 'view', priority: 150 }],
+    sidebar: { section: 'workflow', icon: 'materialRequests', order: 20 },
   },
   {
     key: 'production',
