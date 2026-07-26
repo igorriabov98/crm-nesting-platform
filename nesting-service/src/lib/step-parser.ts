@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   type BBox3D,
   type ClassificationMethod,
@@ -29,6 +30,7 @@ import {
 } from './step-source-names';
 import { normalizeCadText } from './text-encoding';
 import { inferPartTypeFromGeometry, type PartType } from './part-type';
+import { buildCanonicalMeshFrame } from './canonical-frame';
 
 interface OcctNode {
   name?: string;
@@ -58,6 +60,7 @@ interface OcctResult {
 
 export interface ParsedPart {
   name: string;
+  geometryFingerprint?: string | null;
   assemblyPath: string[];
   thickness: number | null;
   width: number;
@@ -83,6 +86,12 @@ export interface ParsedPart {
   kFactorDefaulted: boolean;
   suspectedBend: boolean;
   fallbackReason: string | null;
+  canonicalContourCandidate?: {
+    contour: Point2D[];
+    source: ContourSource;
+    width: number;
+    height: number;
+  } | null;
 }
 
 export type ContourSource = 'EXACT_BREP' | 'UNFOLDED_BREP' | 'EXACT_BOUNDARY' | 'CONVEX_HULL' | 'RECT_ESTIMATE';
@@ -109,9 +118,19 @@ export interface StepParseResult {
   brepUnfolded: number;
   brepFallback: number;
   brepTrace: BrepTrace[];
+  shapeViolations: ContourConsistencyViolation[];
   errors: string[];
   parseTimeMs: number;
 }
+
+export type ContourConsistencyViolation = {
+  type: 'CONTOUR_INCONSISTENCY' | 'CONTOUR_SOURCE_DIVERGENCE' | 'CONTOUR_PHYSICS_SKIPPED';
+  severity: 'warning' | 'info';
+  fingerprint: string;
+  contourSource?: ContourSource;
+  partNames: string[];
+  message: string;
+};
 
 export type StepParseOptions = {
   material?: string;
@@ -166,6 +185,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
         brepUnfolded: 0,
         brepFallback: 0,
         brepTrace: [],
+        shapeViolations: [],
         errors: ['STEP file contains no geometry bodies.'],
         parseTimeMs: Date.now() - startTime,
       };
@@ -182,6 +202,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
         brepUnfolded: 0,
         brepFallback: 0,
         brepTrace: [],
+        shapeViolations: [],
         errors: [extractOcctError(result)],
         parseTimeMs: Date.now() - startTime,
       };
@@ -263,9 +284,11 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
       }
     }
 
+    const contourProcessing = canonicalizeInconsistentContourGroups(parts);
+    const normalizedParts = normalizeCloneClassifications(contourProcessing.parts);
     return {
       success: true,
-      parts: normalizeCloneClassifications(parts),
+      parts: normalizedParts,
       totalMeshes: meshes.length,
       sheetMetalCount: parts.filter((part) => part.partType === 'SHEET').length,
       brepOk: brepFlat,
@@ -273,6 +296,10 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
       brepUnfolded,
       brepFallback,
       brepTrace,
+      shapeViolations: [
+        ...findContourConsistencyViolations(normalizedParts),
+        ...contourProcessing.observations,
+      ],
       errors,
       parseTimeMs: Date.now() - startTime,
     };
@@ -289,6 +316,7 @@ export async function parseStepFile(filePath: string, options: StepParseOptions 
       brepUnfolded: 0,
       brepFallback: 0,
       brepTrace: [],
+      shapeViolations: [],
       errors: [`Failed to parse STEP file: ${message}`],
       parseTimeMs: Date.now() - startTime,
     };
@@ -598,9 +626,13 @@ function processMesh(
 
   const { width, height } = exactContour ?? getContourSize(contour);
   const thumbnailSvg = generateThumbnailSvg(contour, holes);
+  const canonicalContourCandidate = !exactContour && hasIndexedTriangles && !degenerateContour
+    ? buildCanonicalContourCandidate(positionArray, indices, classification)
+    : null;
 
   return {
     name,
+    geometryFingerprint: hasIndexedTriangles ? buildGeometryFingerprint(positionArray, indices) : null,
     assemblyPath: sourceMetadata?.assemblyPath?.length
       ? sourceMetadata.assemblyPath
       : isCompleteTreePath(treeMetadata, name)
@@ -632,7 +664,314 @@ function processMesh(
     kFactorDefaulted: exactContour?.source === 'UNFOLDED_BREP' ? exactContour.kFactorDefaulted : false,
     suspectedBend,
     fallbackReason: exactContour ? null : brepFallbackReason,
+    canonicalContourCandidate,
   };
+}
+
+function buildCanonicalContourCandidate(
+  positions: ArrayLike<number>,
+  indices: Uint32Array,
+  classification: ReturnType<typeof classifySheetMetalV2>
+): ParsedPart['canonicalContourCandidate'] {
+  const frame = buildCanonicalMeshFrame(positions, indices);
+  if (!frame) return null;
+  let contour: Point2D[] = [];
+  let source: ContourSource = 'CONVEX_HULL';
+  if (classification.developedBlank) {
+    return null;
+  } else if (classification.isSheetMetal) {
+    try {
+      contour = extractBoundaryContour(frame.positions, indices, 'z');
+      if (isValidStepContourShape(contour)) source = 'EXACT_BOUNDARY';
+    } catch {
+      contour = [];
+    }
+  }
+  const resolved = resolveStepContourShape(
+    contour,
+    projectTo2D(frame.positions, 'z')
+  );
+  if (resolved.usedFallback) source = 'CONVEX_HULL';
+  const simplified = ensureClockwise(normalizeContour(simplifyContour(
+    resolved.contour,
+    classification.isSheetMetal ? 0.5 : 1
+  )));
+  if (!isValidStepContourShape(simplified)) return null;
+  const size = getContourSize(simplified);
+  return {
+    contour: simplified,
+    source,
+    width: size.width,
+    height: size.height,
+  };
+}
+
+function canonicalizeInconsistentContourGroups(
+  parts: ParsedPart[]
+): { parts: ParsedPart[]; observations: ContourConsistencyViolation[] } {
+  const inconsistentGroups = new Set(
+    findContourConsistencyViolations(parts)
+      .filter((violation) =>
+        violation.type === 'CONTOUR_INCONSISTENCY' &&
+        (violation.contourSource === 'CONVEX_HULL' || violation.contourSource === 'EXACT_BOUNDARY')
+      )
+      .map((violation) => `${violation.fingerprint}|${violation.contourSource}`)
+  );
+  if (inconsistentGroups.size === 0) return { parts, observations: [] };
+
+  const groups = new Map<string, ParsedPart[]>();
+  const observations: ContourConsistencyViolation[] = [];
+  for (const part of parts) {
+    if (!part.geometryFingerprint) continue;
+    const key = `${part.geometryFingerprint}|${part.contourSource}`;
+    if (!inconsistentGroups.has(key)) continue;
+    const group = groups.get(key) ?? [];
+    group.push(part);
+    groups.set(key, group);
+  }
+
+  for (const group of groups.values()) {
+    const sheetParts = group.filter((part) => part.partType === 'SHEET');
+    const nonSheetParts = group.filter((part) => part.partType !== 'SHEET');
+    if (nonSheetParts.length > 0) {
+      observations.push({
+        type: 'CONTOUR_PHYSICS_SKIPPED',
+        severity: 'info',
+        fingerprint: nonSheetParts[0].geometryFingerprint!,
+        contourSource: nonSheetParts[0].contourSource,
+        partNames: nonSheetParts.map((part) => part.name),
+        message: `Физическая проверка листового контура не применена: ${nonSheetParts.map((part) => `${part.name} partType=${part.partType}`).join('; ')}`,
+      });
+    }
+    if (sheetParts.length === 0) continue;
+
+    const candidates = sheetParts.map((part) => part.canonicalContourCandidate);
+    if (candidates.some((candidate) => !candidate)) {
+      markContourReview(sheetParts, 'контур не подтверждён физически: канонический базис не построен');
+      continue;
+    }
+    const resolvedCandidates = candidates.filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+    if (!canonicalCandidatesAreCongruent(resolvedCandidates)) {
+      markContourReview(sheetParts, 'контур не подтверждён физически: канонические проекции экземпляров расходятся');
+      continue;
+    }
+    const physicalChecks = sheetParts.map((part, index) => checkCanonicalContourPhysics(part, resolvedCandidates[index]));
+    if (physicalChecks.some((check) => !check.valid)) {
+      for (let index = 0; index < sheetParts.length; index += 1) {
+        const check = physicalChecks[index];
+        const reason = check.failureReason
+          ? `контур не подтверждён физически: ${check.failureReason}`
+          : check.expectedArea === null
+            ? 'контур не подтверждён физически: неизвестна толщина или объём'
+          : `контур не подтверждён физически: площадь ${check.actualArea.toFixed(0)} против V/t ${check.expectedArea.toFixed(0)}`;
+        markContourReview([sheetParts[index]], reason);
+      }
+      continue;
+    }
+    const representative = [...resolvedCandidates].sort(
+      (left, right) =>
+        Math.abs(polygonArea(left.contour)) - Math.abs(polygonArea(right.contour)) ||
+        left.width - right.width ||
+        left.height - right.height ||
+        left.source.localeCompare(right.source)
+    )[0];
+
+    for (let index = 0; index < sheetParts.length; index += 1) {
+      sheetParts[index].contour = representative.contour.map((point) => ({ ...point }));
+      sheetParts[index].contourSource = representative.source;
+      sheetParts[index].width = representative.width;
+      sheetParts[index].height = representative.height;
+      sheetParts[index].thumbnailSvg = generateThumbnailSvg(representative.contour, sheetParts[index].holes);
+    }
+  }
+
+  return { parts, observations };
+}
+
+function checkCanonicalContourPhysics(
+  part: ParsedPart,
+  candidate: NonNullable<ParsedPart['canonicalContourCandidate']>
+): {
+  valid: boolean;
+  actualArea: number;
+  expectedArea: number | null;
+  failureReason?: string;
+} {
+  const actualArea = Math.abs(polygonArea(candidate.contour));
+  if (
+    !part.thickness ||
+    part.thickness <= 0 ||
+    !Number.isFinite(part.meshVolume) ||
+    part.meshVolume <= 0
+  ) {
+    return { valid: false, actualArea, expectedArea: null };
+  }
+  const physics = validateContourAreaPhysics(actualArea, part.meshVolume, part.thickness);
+  if (!physics.valid) return physics;
+  return part.partType === 'SHEET'
+    ? physics
+    : {
+        ...physics,
+        valid: false,
+        failureReason: 'тело не классифицировано как листовое',
+      };
+}
+
+export function validateContourAreaPhysics(
+  actualArea: number,
+  meshVolume: number,
+  thickness: number,
+  tolerance = 0.02
+): { valid: boolean; actualArea: number; expectedArea: number | null } {
+  if (
+    !Number.isFinite(actualArea) ||
+    !Number.isFinite(meshVolume) ||
+    !Number.isFinite(thickness) ||
+    actualArea <= 0 ||
+    meshVolume <= 0 ||
+    thickness <= 0
+  ) {
+    return { valid: false, actualArea, expectedArea: null };
+  }
+  const expectedArea = meshVolume / thickness;
+  const relativeDelta = Math.abs(actualArea - expectedArea) / Math.max(expectedArea, 1);
+  return { valid: relativeDelta <= tolerance, actualArea, expectedArea };
+}
+
+function markContourReview(parts: ParsedPart[], reason: string): void {
+  for (const part of parts) {
+    part.needsReview = true;
+    part.needsReviewReason = part.needsReviewReason
+      ? `${part.needsReviewReason}; ${reason}`
+      : reason;
+  }
+}
+
+function canonicalCandidatesAreCongruent(
+  candidates: Array<NonNullable<ParsedPart['canonicalContourCandidate']>>
+): boolean {
+  if (candidates.length === 0) return false;
+  const reference = candidates[0];
+  const referenceArea = Math.abs(polygonArea(reference.contour));
+  return candidates.every((candidate) => {
+    if (candidate.source !== reference.source) return false;
+    const candidateSizes = [candidate.width, candidate.height].sort((a, b) => a - b);
+    const referenceSizes = [reference.width, reference.height].sort((a, b) => a - b);
+    if (Math.abs(candidateSizes[0] - referenceSizes[0]) > CONTOUR_SIZE_EPSILON_MM) return false;
+    if (Math.abs(candidateSizes[1] - referenceSizes[1]) > CONTOUR_SIZE_EPSILON_MM) return false;
+    const candidateArea = Math.abs(polygonArea(candidate.contour));
+    return Math.abs(candidateArea - referenceArea) / Math.max(candidateArea, referenceArea, 1) <= 0.005;
+  });
+}
+
+export function buildGeometryFingerprint(
+  positions: ArrayLike<number>,
+  indices: Uint32Array
+): string {
+  const edgeLengths: string[] = [];
+  for (let index = 0; index + 2 < indices.length; index += 3) {
+    const triangle = [indices[index], indices[index + 1], indices[index + 2]];
+    for (const [left, right] of [[0, 1], [1, 2], [2, 0]] as const) {
+      const leftOffset = triangle[left] * 3;
+      const rightOffset = triangle[right] * 3;
+      const dx = positions[leftOffset] - positions[rightOffset];
+      const dy = positions[leftOffset + 1] - positions[rightOffset + 1];
+      const dz = positions[leftOffset + 2] - positions[rightOffset + 2];
+      edgeLengths.push(Math.hypot(dx, dy, dz).toFixed(4));
+    }
+  }
+
+  edgeLengths.sort();
+  return createHash('sha256')
+    .update(`${positions.length / 3}|${indices.length / 3}|${edgeLengths.join(',')}`)
+    .digest('hex');
+}
+
+type ContourConsistencyPart = Pick<
+  ParsedPart,
+  'name' | 'geometryFingerprint' | 'contourSource' | 'width' | 'height' | 'contour'
+>;
+
+const CONTOUR_SIZE_EPSILON_MM = 0.1;
+const CONTOUR_AREA_RELATIVE_EPSILON = 0.001;
+
+export function findContourConsistencyViolations(
+  parts: ContourConsistencyPart[]
+): ContourConsistencyViolation[] {
+  const groups = new Map<string, ContourConsistencyPart[]>();
+  for (const part of parts) {
+    if (!part.geometryFingerprint) continue;
+    const group = groups.get(part.geometryFingerprint) ?? [];
+    group.push(part);
+    groups.set(part.geometryFingerprint, group);
+  }
+
+  const violations: ContourConsistencyViolation[] = [];
+  for (const [fingerprint, group] of groups) {
+    if (group.length < 2) continue;
+    const bySource = new Map<ContourSource, ContourConsistencyPart[]>();
+    for (const part of group) {
+      const sourceGroup = bySource.get(part.contourSource) ?? [];
+      sourceGroup.push(part);
+      bySource.set(part.contourSource, sourceGroup);
+    }
+    if (bySource.size > 1) {
+      violations.push({
+        type: 'CONTOUR_SOURCE_DIVERGENCE',
+        severity: 'info',
+        fingerprint,
+        partNames: group.map((part) => part.name),
+        message: `Одинаковая STEP-геометрия обработана разными классами источника: ${group.map(describeContourPart).join('; ')}`,
+      });
+    }
+
+    for (const [contourSource, sourceGroup] of bySource) {
+      if (sourceGroup.length < 2) continue;
+      const reference = contourSignature(sourceGroup[0]);
+      const inconsistent = sourceGroup.filter((part) => !sameContourSignature(reference, contourSignature(part)));
+      if (inconsistent.length === 0) continue;
+      const affected = [sourceGroup[0], ...inconsistent];
+      violations.push({
+        type: 'CONTOUR_INCONSISTENCY',
+        severity: 'warning',
+        fingerprint,
+        contourSource,
+        partNames: affected.map((part) => part.name),
+        message: `Одинаковая STEP-геометрия дала разные ${contourSource} контуры: ${affected.map(describeContourPart).join('; ')}`,
+      });
+    }
+  }
+
+  return violations;
+}
+
+function contourSignature(part: ContourConsistencyPart): {
+  source: ContourSource;
+  minSize: number;
+  maxSize: number;
+  area: number;
+} {
+  return {
+    source: part.contourSource,
+    minSize: Math.min(part.width, part.height),
+    maxSize: Math.max(part.width, part.height),
+    area: Math.abs(polygonArea(part.contour)),
+  };
+}
+
+function sameContourSignature(
+  left: ReturnType<typeof contourSignature>,
+  right: ReturnType<typeof contourSignature>
+): boolean {
+  if (left.source !== right.source) return false;
+  if (Math.abs(left.minSize - right.minSize) > CONTOUR_SIZE_EPSILON_MM) return false;
+  if (Math.abs(left.maxSize - right.maxSize) > CONTOUR_SIZE_EPSILON_MM) return false;
+  const areaScale = Math.max(left.area, right.area, 1);
+  return Math.abs(left.area - right.area) / areaScale <= CONTOUR_AREA_RELATIVE_EPSILON;
+}
+
+function describeContourPart(part: ContourConsistencyPart): string {
+  return `${part.name} ${part.contourSource} ${part.width.toFixed(2)}x${part.height.toFixed(2)} area=${Math.abs(polygonArea(part.contour)).toFixed(2)}`;
 }
 
 function isReadableCadName(value: string): boolean {

@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { getBoss, QUEUE_STEP_PARSING, stopBoss } from '../lib/queue';
 import type { StepParsingJobData } from '../lib/queue';
 import { parseStepFile } from '../lib/step-parser';
-import type { ParsedPart } from '../lib/step-parser';
+import type { ContourConsistencyViolation, ParsedPart } from '../lib/step-parser';
 import { prisma } from '../lib/prisma';
 import { analyzeProjectPdf } from '../lib/ai/service';
 import {
@@ -36,6 +36,7 @@ type ProjectParseReport = {
   brepFlat: number;
   brepUnfolded: number;
   fallback: number;
+  shapeViolations: ContourConsistencyViolation[];
   perPart: Array<{
     partName: string;
     assemblyPath: string[];
@@ -110,6 +111,7 @@ async function processStepJob(job: StepJob) {
     let brepFlat = 0;
     let brepUnfolded = 0;
     let brepFallback = 0;
+    const shapeViolations: ProjectParseReport['shapeViolations'] = [];
     const perPartParseReport: ProjectParseReport['perPart'] = [];
 
     for (const input of inputs) {
@@ -141,6 +143,7 @@ async function processStepJob(job: StepJob) {
         brepFlat += result.brepFlat;
         brepUnfolded += result.brepUnfolded;
         brepFallback += result.brepFallback;
+        shapeViolations.push(...result.shapeViolations);
         perPartParseReport.push(
           ...result.brepTrace.map((trace) => ({
             partName: trace.partName,
@@ -186,6 +189,7 @@ async function processStepJob(job: StepJob) {
       brepFlat,
       brepUnfolded,
       fallback: brepFallback,
+      shapeViolations,
       perPart: perPartParseReport,
     };
     const parseWarnings = resultWarnings(parsedParts.map(({ part }) => part), perPartParseReport);
