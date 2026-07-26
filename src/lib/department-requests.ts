@@ -34,6 +34,7 @@ export type DepartmentRequestAttachmentPhase = 'source' | 'resolution'
 export type DepartmentRequestDeadlineFilter = 'all' | 'overdue' | 'with_date' | 'without_date'
 export type DepartmentRequestOrderFilter = 'all' | 'with_order' | 'without_order' | string
 export type DepartmentRequestAssigneeFilter = 'all' | 'unassigned' | 'mine' | string
+export type DepartmentRequestTab = 'active' | 'completed'
 export type DepartmentRequestFilters = {
   query: string
   status: DepartmentRequestStatus | 'all'
@@ -41,6 +42,7 @@ export type DepartmentRequestFilters = {
   deadline: DepartmentRequestDeadlineFilter
   order: string
   assignee: string
+  tab: DepartmentRequestTab
   page: number
 }
 
@@ -65,6 +67,7 @@ export function normalizeDepartmentRequestFilters(input: {
   deadline?: string
   order?: string
   assignee?: string
+  tab?: string
   page?: string | number
 }): DepartmentRequestFilters {
   const parsedPage = Number(input.page)
@@ -85,6 +88,7 @@ export function normalizeDepartmentRequestFilters(input: {
     deadline,
     order: (input.order || 'all').slice(0, 80),
     assignee: (input.assignee || 'all').slice(0, 80),
+    tab: input.tab === 'completed' ? 'completed' : 'active',
     page: Number.isFinite(parsedPage) ? Math.max(0, Math.floor(parsedPage)) : 0,
   }
 }

@@ -17,6 +17,7 @@ export default async function MyDepartmentRequestsPage({
     target?: string
     deadline?: string
     order?: string
+    tab?: string
     page?: string
     factory?: string
   }>

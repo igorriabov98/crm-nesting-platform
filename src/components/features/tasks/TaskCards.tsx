@@ -90,6 +90,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   business_scrap_correction_approval: 'Корректировка делового остатка',
   detailing_transfer: 'Перемещение деталировки',
   inventory_transfer: 'Перемещение материалов',
+  department_request: 'Рабочий запрос',
 }
 
 const DELEGATION_STATUS_LABELS: Record<TaskDelegationStatus, string> = {
@@ -759,6 +760,19 @@ export function TaskCards({
     }
 
     if (context === 'outgoing' && pendingDelegation) return null
+
+    if (task.task_type === 'department_request' && task.department_request_id) {
+      return (
+        <div className={groupClass}>
+          <Link
+            href={`/requests/detail/${task.department_request_id}`}
+            className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-[#1B3A6B] px-4 text-sm font-medium text-white hover:bg-[#152f59]')}
+          >
+            Открыть запрос
+          </Link>
+        </div>
+      )
+    }
 
     if (['detailing_transfer', 'inventory_transfer'].includes(task.task_type) && task.status === 'in_progress') return null
 

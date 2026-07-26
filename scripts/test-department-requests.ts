@@ -6,6 +6,7 @@ import {
   DEPARTMENT_REQUEST_STATUS_LABELS,
   canManageDepartmentRequestTarget,
   isDepartmentRequestTarget,
+  normalizeDepartmentRequestFilters,
 } from '../src/lib/department-requests'
 import { getNotificationDestination } from '../src/components/features/notifications/notification-model'
 import {
@@ -22,6 +23,9 @@ assert.equal(DEPARTMENT_REQUEST_TARGETS.technologist.route, '/requests/technolog
 assert.equal(DEPARTMENT_REQUEST_TARGETS.supply.route, '/requests/supply')
 assert.equal(DEPARTMENT_REQUEST_TARGETS.production.route, '/requests/production')
 assert.equal(DEPARTMENT_REQUEST_STATUS_LABELS.done, 'Решён')
+assert.equal(normalizeDepartmentRequestFilters({}).tab, 'active')
+assert.equal(normalizeDepartmentRequestFilters({ tab: 'completed' }).tab, 'completed')
+assert.equal(normalizeDepartmentRequestFilters({ tab: 'unknown' }).tab, 'active')
 
 assert.equal(canManageDepartmentRequestTarget({
   target: 'supply',
@@ -108,7 +112,33 @@ const workspacePage = readFileSync(
   'utf8',
 )
 assert.match(workspacePage, /workspace\.mode === 'mine' && <CreateDepartmentRequestForm/)
+assert.match(workspacePage, /Выполненные/)
+assert.match(workspacePage, /divide-y divide-slate-200/)
+assert.match(workspacePage, /RequestListItem/)
+assert.doesNotMatch(workspacePage, /RequestCard/)
 assert.doesNotMatch(workspacePage, /Приоритет/)
+
+const requestActions = readFileSync(resolve('src/lib/actions/department-requests.ts'), 'utf8')
+assert.match(requestActions, /\.is\('actual_shipping_date', null\)/)
+assert.match(requestActions, /\.neq\('status', 'shipped'\)/)
+assert.match(requestActions, /filters\.tab === 'completed'/)
+
+const taskEnumMigration = readFileSync(
+  resolve('supabase/migrations/20260726152401_sync_department_request_tasks.sql'),
+  'utf8',
+)
+assert.match(taskEnumMigration, /task_type add value if not exists 'department_request'/)
+
+const taskSyncMigration = readFileSync(
+  resolve('supabase/migrations/20260726152620_sync_department_request_task_operations.sql'),
+  'utf8',
+)
+assert.match(taskSyncMigration, /department_request_id uuid/)
+assert.match(taskSyncMigration, /tasks_department_request_unique_idx/)
+assert.match(taskSyncMigration, /insert into public\.tasks/)
+assert.match(taskSyncMigration, /task_type,[\s\S]*'department_request'/)
+assert.match(taskSyncMigration, /status = 'completed'/)
+assert.match(taskSyncMigration, /status = 'cancelled'/)
 
 assert.deepEqual(
   validateDepartmentRequestFile({ fileName: 'result.step', fileSize: 1024 }),

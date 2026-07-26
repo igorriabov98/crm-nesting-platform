@@ -30,6 +30,7 @@ export default async function DepartmentRequestsRoute({
     deadline?: string
     order?: string
     assignee?: string
+    tab?: string
     page?: string
     factory?: string
   }>
