@@ -10,6 +10,7 @@ export type NotificationItem = {
   related_machine_id: string | null
   consumable_request_id: string | null
   related_mail_thread_id?: string | null
+  related_department_request_id?: string | null
   machine?: {
     name?: string | null
   } | null
@@ -20,6 +21,19 @@ export function isConsumableNotification(type: string) {
 }
 
 export function getNotificationDestination(notification: NotificationItem) {
+  if (notification.related_department_request_id && notification.type.startsWith('department_request_')) {
+    const target = notification.type.endsWith('_technologist')
+      ? 'technologist'
+      : notification.type.endsWith('_production')
+        ? 'production'
+        : 'supply'
+    const view = notification.type.startsWith('department_request_new_') ? 'inbox' : 'mine'
+    return {
+      href: `${ROUTES.REQUESTS}/${target}?view=${view}#request-${notification.related_department_request_id}`,
+      label: 'Открыть запрос',
+    }
+  }
+
   if (notification.type === 'mail_received' && notification.related_mail_thread_id) {
     return {
       href: `${ROUTES.MAIL}?thread=${encodeURIComponent(notification.related_mail_thread_id)}`,

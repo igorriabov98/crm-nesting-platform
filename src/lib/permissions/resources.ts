@@ -18,6 +18,7 @@ export type ResourceKey =
   | 'finance_calendar'
   | 'supply_finance'
   | 'tasks'
+  | 'department_requests'
   | 'production'
   | 'production_fact'
   | 'consumable_requests'
@@ -302,6 +303,16 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: ALL,
     routes: [{ path: ROUTES.TASKS, match: 'prefix', operation: 'view' }],
     sidebar: { section: 'workflow', icon: 'tasks', order: 10 },
+  },
+  {
+    key: 'department_requests',
+    label: 'Запросы отделам',
+    description: 'Личные исходящие запросы и входящие запросы своего отдела',
+    group: 'Работа',
+    defaultHref: ROUTES.SUPPLY_DEPARTMENT_REQUESTS,
+    defaultViewRoles: ALL,
+    defaultManageRoles: ALL,
+    routes: [{ path: ROUTES.REQUESTS, match: 'prefix', operation: 'view', priority: 150 }],
   },
   {
     key: 'production',
