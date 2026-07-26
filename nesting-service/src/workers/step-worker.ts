@@ -232,6 +232,8 @@ async function processStepJob(job: StepJob) {
             thumbnailSvg: part.thumbnailSvg,
             classificationMethod: part.classificationMethod,
             classificationWarning: part.classificationWarning,
+            needsReview: part.needsReview ?? false,
+            needsReviewReason: part.needsReviewReason ?? null,
           },
         });
       }

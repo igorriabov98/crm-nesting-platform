@@ -160,9 +160,11 @@ export async function resultRoutes(app: FastifyInstance) {
       const baseName = normalizeCadText(part.name);
       const material = normalizeCadText(part.material);
 
-      if (!isSheetPartType(part.partType, part.isSheetMetal)) {
-        const reason = buildExcludedFromNestingReason(part);
-        const reasonCode = excludedReasonCode(part.partType);
+      if (part.needsReview || !isSheetPartType(part.partType, part.isSheetMetal)) {
+        const reason = part.needsReview
+          ? (part.needsReviewReason || 'деталь требует проверки технологом')
+          : buildExcludedFromNestingReason(part);
+        const reasonCode = part.needsReview ? 'NEEDS_REVIEW' as const : excludedReasonCode(part.partType);
         for (let index = 1; index <= required; index += 1) {
           unplacedParts.push(createUnplacedPart({
             partId: part.id,
@@ -221,6 +223,7 @@ export async function resultRoutes(app: FastifyInstance) {
         placedParts,
         profileParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PROFILE').length,
         purchasedParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PURCHASED').length,
+        reviewParts: unplacedParts.filter((part) => part.reasonCode === 'NEEDS_REVIEW').length,
         noSheetParts: unplacedParts.filter((part) => part.reasonCode === 'NO_SHEET_AVAILABLE').length,
         totalSheets: sheets.length,
         avgUtilization,

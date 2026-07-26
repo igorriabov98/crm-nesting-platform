@@ -180,6 +180,7 @@ export function PartsTable({
     isSheetMetal: boolean
     partType: PartType
     thickness: number
+    needsReview: false
   }>) {
     setSavingPartId(part.id)
     try {
@@ -285,6 +286,25 @@ export function PartsTable({
                   </TableCell>
                   <TableCell className="max-w-[220px]">
                     <div className="truncate font-medium text-[#1B3A6B]">{part.name}</div>
+                    {part.needsReview ? (
+                      <div className="mt-1 flex flex-col items-start gap-1">
+                        <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
+                          требует проверки
+                        </Badge>
+                        <span className="text-xs text-amber-800">{part.needsReviewReason || 'Причина не указана'}</span>
+                        {canManage ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={disabled || inactive}
+                            onClick={() => savePart(part, { needsReview: false })}
+                          >
+                            Подтвердить тип
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {part.sourceMachineName || part.sourceLabel ? (
                       <div className="mt-1 truncate text-xs text-[#6B7280]">
                         {part.sourceMachineName || part.sourceLabel}

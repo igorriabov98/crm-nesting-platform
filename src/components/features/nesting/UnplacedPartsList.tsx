@@ -76,12 +76,13 @@ function reasonLabel(reasonCode: UnplacedPart['reasonCode']) {
   if (reasonCode === 'EXCLUDED') return 'EXCLUDED'
   if (reasonCode === 'EXCLUDED_PROFILE') return 'Профиль'
   if (reasonCode === 'EXCLUDED_PURCHASED') return 'Покупная'
+  if (reasonCode === 'NEEDS_REVIEW') return 'Требует проверки'
   if (reasonCode === 'NO_SHEET_AVAILABLE') return 'NO_SHEET'
   return 'прочее'
 }
 
 function isExcludedPart(part: UnplacedPart) {
-  return part.reasonCode === 'EXCLUDED' || part.reasonCode === 'EXCLUDED_PROFILE' || part.reasonCode === 'EXCLUDED_PURCHASED'
+  return part.reasonCode === 'EXCLUDED' || part.reasonCode === 'EXCLUDED_PROFILE' || part.reasonCode === 'EXCLUDED_PURCHASED' || part.reasonCode === 'NEEDS_REVIEW'
 }
 
 function inferReasonFromName(name: string) {

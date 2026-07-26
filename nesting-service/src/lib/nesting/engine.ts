@@ -16,6 +16,7 @@ import { getActivityQuantity, isPartActive, summarizePartActivity } from '../par
 import { appendAIAnalysisViolation, parseStoredAnalysis } from '../ai/analysis-state';
 import { appendProjectRecalculationViolation } from '../ai/project-recalculation';
 import { resolveCompletedProjectStatus } from '../project-status';
+import { isNestingCandidate } from './review';
 
 const STRATEGIES: NestingParams['strategy'][] = ['minWaste', 'remnant', 'minSheets'];
 
@@ -47,15 +48,17 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     : 'minWaste';
   const activeProjectParts = project.parts.filter(isPartActive);
   const activitySummary = summarizePartActivity(project.parts, project.quantity);
-  const sheetMetalParts = activeProjectParts.filter((part) => isSheetPartType(part.partType, part.isSheetMetal));
+  const sheetMetalParts = activeProjectParts.filter(isNestingCandidate);
   const excludedParts = activeProjectParts
-    .filter((part) => !isSheetPartType(part.partType, part.isSheetMetal))
+    .filter((part) => part.needsReview || !isSheetPartType(part.partType, part.isSheetMetal))
     .map((part) => ({
       partId: part.id,
       name: normalizeCadText(part.name),
       quantity: getActivityQuantity(part, project.quantity),
-      reasonCode: excludedReasonCode(part.partType),
-      reason: buildExcludedFromNestingReason(part),
+      reasonCode: part.needsReview ? 'NEEDS_REVIEW' as const : excludedReasonCode(part.partType),
+      reason: part.needsReview
+        ? (part.needsReviewReason || 'деталь требует проверки технологом')
+        : buildExcludedFromNestingReason(part),
     }));
   type PartWithKnownThickness = (typeof sheetMetalParts)[number] & { thickness: number };
   const partsWithKnownThickness = sheetMetalParts.filter(
@@ -117,6 +120,9 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     .reduce((sum, part) => sum + part.quantity, 0);
   const purchasedParts = excludedParts
     .filter((part) => part.reasonCode === 'EXCLUDED_PURCHASED')
+    .reduce((sum, part) => sum + part.quantity, 0);
+  const reviewParts = excludedParts
+    .filter((part) => part.reasonCode === 'NEEDS_REVIEW')
     .reduce((sum, part) => sum + part.quantity, 0);
 
   for (const part of partsWithoutThickness) {
@@ -245,6 +251,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     placedParts,
     profileParts,
     purchasedParts,
+    reviewParts,
     noSheetParts: allUnplaced.filter((part) => part.reasonCode === 'NO_SHEET_AVAILABLE').length,
     totalSheets: allSheetResults.length,
     avgUtilization,
@@ -257,7 +264,7 @@ export async function runNesting(projectId: string): Promise<NestingResult> {
     expectedParts,
     {
       unplacedParts: result.unplacedParts,
-      excludedParts,
+      excludedParts: excludedParts.filter((part) => part.reasonCode !== 'NEEDS_REVIEW'),
       stepSolidCount,
       accountedBodies: activitySummary.totalBodies,
     }

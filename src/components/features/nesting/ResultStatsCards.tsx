@@ -67,6 +67,12 @@ export function ResultStatsCards({ result }: { result: NestingResult }) {
       className: 'text-[#1B3A6B]',
     },
     {
+      label: 'Ожидают проверки',
+      value: result.reviewParts ?? 0,
+      icon: AlertTriangle,
+      className: (result.reviewParts ?? 0) > 0 ? 'text-amber-600' : 'text-green-600',
+    },
+    {
       label: 'Без листа',
       value: result.noSheetParts,
       icon: AlertTriangle,
@@ -87,7 +93,7 @@ export function ResultStatsCards({ result }: { result: NestingResult }) {
   ]
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-10">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-11">
       {cards.map((card) => {
         const Icon = card.icon
 

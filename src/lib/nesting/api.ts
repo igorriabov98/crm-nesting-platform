@@ -30,6 +30,7 @@ export type LayoutViolationType =
   | 'EXCLUDED_FROM_NESTING'
   | 'EXCLUDED_PROFILE'
   | 'EXCLUDED_PURCHASED'
+  | 'NEEDS_REVIEW'
   | 'NO_SHEET_AVAILABLE'
   | 'MISSING_THICKNESS'
   | 'NESTING_FAILED'
@@ -44,6 +45,7 @@ export type UnplacedReasonCode =
   | 'EXCLUDED'
   | 'EXCLUDED_PROFILE'
   | 'EXCLUDED_PURCHASED'
+  | 'NEEDS_REVIEW'
   | 'NO_SHEET_AVAILABLE'
   | 'MISSING_THICKNESS'
   | 'NESTING_FAILED'
@@ -140,6 +142,8 @@ export interface NestingPart {
   thumbnailSvg: string | null
   classificationMethod: ClassificationMethod | string | null
   classificationWarning: string | null
+  needsReview: boolean
+  needsReviewReason: string | null
 }
 
 export interface NestingPartDetail extends NestingPart {
@@ -243,6 +247,7 @@ export interface NestingResult {
   placedParts: number
   profileParts: number
   purchasedParts: number
+  reviewParts: number
   noSheetParts: number
   totalSheets: number
   avgUtilization: number
@@ -531,6 +536,7 @@ export async function updatePart(
     partType: PartType
     thickness: number
     hasBends: boolean
+    needsReview: false
   }>
 ): Promise<{ data: NestingPart }> {
   const res = await request(buildUrl(`/api/projects/${projectId}/parts/${partId}`), {

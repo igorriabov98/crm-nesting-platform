@@ -89,6 +89,7 @@ export function distributePartsToSheets(
     placedParts,
     profileParts: 0,
     purchasedParts: 0,
+    reviewParts: 0,
     noSheetParts: remaining.length,
     totalSheets: results.length,
     avgUtilization,

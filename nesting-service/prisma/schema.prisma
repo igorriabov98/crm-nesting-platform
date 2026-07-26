@@ -143,6 +143,8 @@ model Part {
   thumbnailSvg String?
   classificationMethod  String?
   classificationWarning String?
+  needsReview           Boolean @default(false)
+  needsReviewReason     String?
 
   @@index([projectId])
   @@index([sourceInputId])

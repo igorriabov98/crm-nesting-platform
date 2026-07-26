@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   DEGENERATE_CONTOUR_WARNING,
   isValidStepContourShape,
+  resolveContourReviewReason,
   resolvePartTypeForContour,
   resolveStepContourShape,
 } from '../step-parser';
@@ -37,8 +38,8 @@ function testFullyDegenerateContourIsExcludedFromSheetNesting(): void {
 
   assert.equal(resolved.usedFallback, true);
   assert.equal(resolved.valid, false);
-  assert.equal(resolvePartTypeForContour('SHEET', resolved.contour), 'PROFILE');
-  assert.match(DEGENERATE_CONTOUR_WARNING, /вырожденный контур/);
+  assert.equal(resolvePartTypeForContour('SHEET', resolved.contour), 'SHEET');
+  assert.match(resolveContourReviewReason(resolved.contour) ?? '', /вырожденный контур/);
 }
 
 function testOversizedPartReasonNamesPartAndSheetDimensions(): void {

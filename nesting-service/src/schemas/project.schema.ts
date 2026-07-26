@@ -73,6 +73,7 @@ export const updatePartSchema = z.object({
   partType: z.enum(['SHEET', 'PROFILE', 'PURCHASED']).optional(),
   thickness: z.coerce.number().positive().max(50).optional(),
   hasBends: z.boolean().optional(),
+  needsReview: z.literal(false).optional(),
 }).strict();
 
 export const calculateSchema = z.object({

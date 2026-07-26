@@ -54,6 +54,8 @@ const partListSelect = {
   thumbnailSvg: true,
   classificationMethod: true,
   classificationWarning: true,
+  needsReview: true,
+  needsReviewReason: true,
 } as const;
 
 function normalizePartText<T extends { name: string; material: string }>(part: T): T {
@@ -135,6 +137,8 @@ export async function partsRoutes(app: FastifyInstance) {
       updateData.isSheetMetal = nextPartType === 'SHEET';
       updateData.classificationMethod = 'manual';
       updateData.classificationWarning = null;
+      updateData.needsReview = false;
+      updateData.needsReviewReason = null;
       if (nextPartType !== 'SHEET') {
         updateData.hasBends = false;
         updateData.grainLock = false;
@@ -170,6 +174,7 @@ export async function partsRoutes(app: FastifyInstance) {
       data.steelTypeName !== undefined ||
       data.steelTypeRaw !== undefined ||
       data.isActive !== undefined;
+    const clearsReview = data.needsReview === false;
     const recalculationMessage = data.isActive !== undefined
       ? 'требуется пересчёт после изменения активности детали'
       : 'требуется пересчёт развёртки после изменения материала/толщины';
@@ -180,7 +185,7 @@ export async function partsRoutes(app: FastifyInstance) {
         select: partListSelect,
       });
 
-      if (needsUnfoldRecalculation) {
+      if (needsUnfoldRecalculation || clearsReview) {
         await tx.nestingProject.update({
           where: { id },
           data: {
