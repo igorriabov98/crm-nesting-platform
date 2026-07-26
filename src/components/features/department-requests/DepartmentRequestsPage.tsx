@@ -5,9 +5,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   CalendarClock,
-  CheckCircle2,
   CircleDot,
-  FileText,
   Filter,
   Inbox,
   Package,
@@ -57,6 +55,7 @@ function queryHref(route: string, workspace: DepartmentRequestWorkspace, page: n
   if (filters.deadline !== 'all') params.set('deadline', filters.deadline)
   if (filters.order !== 'all') params.set('order', filters.order)
   if (workspace.mode === 'inbox' && filters.assignee !== 'all') params.set('assignee', filters.assignee)
+  if (filters.tab === 'completed') params.set('tab', 'completed')
   if (page > 0) params.set('page', String(page))
   if (factoryId) params.set('factory', factoryId)
   const suffix = params.toString()
@@ -68,7 +67,26 @@ function requestDetailHref(requestId: string, factoryId?: string) {
   return factoryId ? `${route}?factory=${encodeURIComponent(factoryId)}` : route
 }
 
-function RequestCard({
+function tabHref(
+  route: string,
+  workspace: DepartmentRequestWorkspace,
+  tab: 'active' | 'completed',
+  factoryId?: string,
+) {
+  const params = new URLSearchParams()
+  const { filters } = workspace
+  if (filters.query) params.set('q', filters.query)
+  if (workspace.mode === 'mine' && filters.target !== 'all') params.set('target', filters.target)
+  if (filters.deadline !== 'all') params.set('deadline', filters.deadline)
+  if (filters.order !== 'all') params.set('order', filters.order)
+  if (workspace.mode === 'inbox' && filters.assignee !== 'all') params.set('assignee', filters.assignee)
+  if (tab === 'completed') params.set('tab', 'completed')
+  if (factoryId) params.set('factory', factoryId)
+  const suffix = params.toString()
+  return suffix ? `${route}?${suffix}` : route
+}
+
+function RequestListItem({
   request,
   mode,
   factoryId,
@@ -88,94 +106,91 @@ function RequestCard({
   const detailHref = requestDetailHref(request.id, factoryId)
 
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-900/[0.02] sm:p-5">
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusStyles[request.status])}>
-            {DEPARTMENT_REQUEST_STATUS_LABELS[request.status]}
+    <article className="bg-white px-4 py-4 transition-colors hover:bg-slate-50/70 sm:px-5">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(260px,2fr)_minmax(150px,1fr)_minmax(180px,1fr)_minmax(150px,0.8fr)_auto] xl:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusStyles[request.status])}>
+              {DEPARTMENT_REQUEST_STATUS_LABELS[request.status]}
+            </span>
+            {mode === 'mine' && (
+              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                {target.label}
+              </span>
+            )}
+          </div>
+          <Link
+            href={detailHref}
+            className="group mt-2 inline-flex max-w-full items-start gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
+            <h2 className="truncate text-base font-semibold leading-6 text-slate-950 group-hover:text-[#1B3A6B]">
+              {request.title}
+            </h2>
+            <ArrowUpRight className="mt-1 size-4 shrink-0 text-slate-400 group-hover:text-[#1B3A6B]" aria-hidden="true" />
+          </Link>
+          <p className="mt-1 line-clamp-1 whitespace-pre-wrap text-sm text-slate-600">{request.description}</p>
+        </div>
+
+        <div className="min-w-0 text-sm text-slate-600">
+          {request.machine ? (
+            <Link
+              href={`${ROUTES.SALES_PLAN}/${request.machine.id}`}
+              className="inline-flex min-h-10 max-w-full items-center gap-2 font-medium text-blue-900 hover:text-blue-700"
+            >
+              <Package className="size-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">
+                {request.machine.name}
+                {request.machine.specification_number ? ` · ${request.machine.specification_number}` : ''}
+              </span>
+            </Link>
+          ) : (
+            <span className="text-slate-400">Без заказа</span>
+          )}
+        </div>
+
+        <div className="min-w-0 space-y-1 text-xs text-slate-500">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <UserRound className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">
+              {mode === 'inbox' ? request.creator?.full_name || 'Сотрудник' : `Создан ${formatDate(request.created_at)}`}
+            </span>
           </span>
-          {mode === 'mine' && (
-            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-              {target.label}
+          {request.assignee?.full_name && (
+            <span className="flex min-w-0 items-center gap-1.5 font-medium text-violet-700">
+              <CircleDot className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="truncate">Взял: {request.assignee.full_name}</span>
             </span>
           )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 xl:block xl:space-y-1">
+          <span className="block text-slate-500">
+            {mode === 'inbox' ? `Создан ${formatDate(request.created_at)}` : target.label}
+          </span>
           {request.due_date && (
             <span className={cn(
-              'inline-flex items-center gap-1.5 text-xs font-medium',
+              'inline-flex items-center gap-1.5 font-medium xl:flex',
               overdue ? 'text-red-700' : 'text-slate-500',
             )}>
               <CalendarClock className="size-3.5" aria-hidden="true" />
               {overdue ? 'Просрочен · ' : 'до '}{formatDate(request.due_date)}
             </span>
           )}
-        </div>
-
-        <div>
-          <Link href={detailHref} className="group inline-flex items-start gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-            <h2 className="text-lg font-semibold leading-6 text-slate-950 group-hover:text-[#1B3A6B]">
-              {request.title}
-            </h2>
-            <ArrowUpRight className="mt-1 size-4 shrink-0 text-slate-400 group-hover:text-[#1B3A6B]" aria-hidden="true" />
-          </Link>
-          <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">
-            {request.description}
-          </p>
-        </div>
-
-        {request.machine && (
-          <Link
-            href={`${ROUTES.SALES_PLAN}/${request.machine.id}`}
-            className="inline-flex min-h-10 w-fit max-w-full items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 text-sm font-medium text-blue-900 hover:bg-blue-100"
-          >
-            <Package className="size-4 shrink-0" aria-hidden="true" />
-            <span className="truncate">
-              {request.machine.name}
-              {request.machine.specification_number ? ` · ${request.machine.specification_number}` : ''}
-            </span>
-          </Link>
-        )}
-
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500">
-          <span className="inline-flex items-center gap-1.5">
-            <UserRound className="size-3.5" aria-hidden="true" />
-            {mode === 'inbox' ? request.creator?.full_name || 'Сотрудник' : `Создан ${formatDate(request.created_at)}`}
-          </span>
-          {mode === 'inbox' && <span>{formatDate(request.created_at)}</span>}
-          {request.assignee?.full_name && (
-            <span className="inline-flex items-center gap-1.5 font-medium text-violet-700">
-              <CircleDot className="size-3.5" aria-hidden="true" />
-              Взял: {request.assignee.full_name}
-            </span>
-          )}
           {(sourceFiles > 0 || resolutionFiles > 0) && (
-            <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 xl:flex">
               <Paperclip className="size-3.5" aria-hidden="true" />
               Файлов: {sourceFiles + resolutionFiles}
             </span>
           )}
         </div>
 
-        {request.response && ['done', 'rejected'].includes(request.status) && (
-          <div className={cn(
-            'rounded-xl border px-4 py-3',
-            request.status === 'done'
-              ? 'border-emerald-200 bg-emerald-50'
-              : 'border-red-200 bg-red-50',
-          )}>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
-              {request.status === 'done'
-                ? <CheckCircle2 className="size-4 text-emerald-700" aria-hidden="true" />
-                : <FileText className="size-4 text-red-700" aria-hidden="true" />}
-              {request.status === 'done' ? 'Решение' : 'Причина отклонения'}
-            </div>
-            <p className="mt-1.5 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{request.response}</p>
-          </div>
-        )}
-
-        <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-max flex-wrap items-center gap-1 xl:justify-end">
           <RequestActions requestId={request.id} status={request.status} mode={mode} />
-          <Link href={detailHref} className={cn(buttonVariants({ variant: 'ghost' }), 'min-h-11 gap-2 text-[#1B3A6B]')}>
-            {['done', 'rejected'].includes(request.status) ? 'Открыть результат' : 'Открыть запрос'}
+          <Link
+            href={detailHref}
+            aria-label={['done', 'rejected'].includes(request.status) ? 'Открыть результат' : 'Открыть запрос'}
+            className={cn(buttonVariants({ variant: 'ghost', size: 'icon' }), 'min-h-11 min-w-11 text-[#1B3A6B]')}
+          >
             <ArrowRight className="size-4" aria-hidden="true" />
           </Link>
         </div>
@@ -193,7 +208,13 @@ export function DepartmentRequestsPage({
 }) {
   const config = workspace.target ? DEPARTMENT_REQUEST_TARGETS[workspace.target] : null
   const route = workspace.mode === 'mine' ? ROUTES.REQUESTS : config!.route
-  const resetHref = factoryId ? `${route}?factory=${encodeURIComponent(factoryId)}` : route
+  const resetParams = new URLSearchParams()
+  if (workspace.filters.tab === 'completed') resetParams.set('tab', 'completed')
+  if (factoryId) resetParams.set('factory', factoryId)
+  const resetHref = resetParams.size > 0 ? `${route}?${resetParams.toString()}` : route
+  const visibleStatuses: DepartmentRequestStatus[] = workspace.filters.tab === 'completed'
+    ? ['done', 'rejected', 'cancelled']
+    : ['new', 'in_progress']
   const hasFilters = Boolean(
     workspace.filters.query
     || workspace.filters.status !== 'all'
@@ -230,9 +251,34 @@ export function DepartmentRequestsPage({
       </section>
 
       <section className="overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+        <nav className="flex border-b border-slate-200 px-4 pt-3 sm:px-5" aria-label="Состояние запросов">
+          <Link
+            href={tabHref(route, workspace, 'active', factoryId)}
+            className={cn(
+              'flex min-h-11 items-center border-b-2 px-4 text-sm font-semibold',
+              workspace.filters.tab === 'active'
+                ? 'border-[#1B3A6B] text-[#1B3A6B]'
+                : 'border-transparent text-slate-500 hover:text-slate-800',
+            )}
+          >
+            Активные
+          </Link>
+          <Link
+            href={tabHref(route, workspace, 'completed', factoryId)}
+            className={cn(
+              'flex min-h-11 items-center border-b-2 px-4 text-sm font-semibold',
+              workspace.filters.tab === 'completed'
+                ? 'border-[#1B3A6B] text-[#1B3A6B]'
+                : 'border-transparent text-slate-500 hover:text-slate-800',
+            )}
+          >
+            Выполненные
+          </Link>
+        </nav>
         <div className="border-b border-slate-200 p-4 sm:p-5">
           <Form action={route} className="space-y-3">
             {factoryId && <input type="hidden" name="factory" value={factoryId} />}
+            {workspace.filters.tab === 'completed' && <input type="hidden" name="tab" value="completed" />}
             <div className="flex flex-col gap-3 lg:flex-row">
               <div className="relative min-w-0 flex-1">
                 <Search className="pointer-events-none absolute left-3 top-3.5 size-4 text-slate-400" aria-hidden="true" />
@@ -267,8 +313,8 @@ export function DepartmentRequestsPage({
                 <span>Статус</span>
                 <select name="status" defaultValue={workspace.filters.status} className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800">
                   <option value="all">Все статусы</option>
-                  {(Object.entries(DEPARTMENT_REQUEST_STATUS_LABELS)).map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
+                  {visibleStatuses.map((value) => (
+                    <option key={value} value={value}>{DEPARTMENT_REQUEST_STATUS_LABELS[value]}</option>
                   ))}
                 </select>
               </label>
@@ -329,9 +375,9 @@ export function DepartmentRequestsPage({
           <span className="tabular-nums">Найдено: {workspace.total}</span>
         </div>
 
-        <div className="space-y-3 bg-slate-50/60 p-3 sm:p-4">
+        <div className="divide-y divide-slate-200">
           {workspace.requests.length === 0 ? (
-            <div className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-16 text-center">
+            <div className="flex min-h-80 flex-col items-center justify-center bg-white px-6 py-16 text-center">
               <span className="mb-5 flex size-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
                 {hasFilters ? <Search className="size-7" aria-hidden="true" /> : <Inbox className="size-7" aria-hidden="true" />}
               </span>
@@ -347,7 +393,7 @@ export function DepartmentRequestsPage({
               </p>
             </div>
           ) : workspace.requests.map((request) => (
-            <RequestCard key={request.id} request={request} mode={workspace.mode} factoryId={factoryId} />
+            <RequestListItem key={request.id} request={request} mode={workspace.mode} factoryId={factoryId} />
           ))}
         </div>
 

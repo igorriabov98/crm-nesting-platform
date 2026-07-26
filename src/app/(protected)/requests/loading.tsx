@@ -9,8 +9,8 @@ export default function RequestsLoading() {
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {Array.from({ length: 5 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}
         </div>
-        <div className="mt-6 space-y-3">
-          {Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-48 w-full rounded-2xl" />)}
+        <div className="mt-6 divide-y divide-slate-200">
+          {Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-24 w-full rounded-none" />)}
         </div>
       </div>
     </div>

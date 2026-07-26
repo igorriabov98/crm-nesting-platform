@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
+import { ROUTES } from '@/lib/constants/routes'
 import {
   DEPARTMENT_REQUEST_TARGETS,
   canManageDepartmentRequestTarget,
@@ -224,6 +225,12 @@ function applyFilters(query: RequestFilterQuery, filters: DepartmentRequestFilte
   if (filters.query) {
     result = result.textSearch('search_document', filters.query, { config: 'simple', type: 'websearch' })
   }
+  result = result.in(
+    'status',
+    filters.tab === 'completed'
+      ? ['done', 'rejected', 'cancelled']
+      : ['new', 'in_progress'],
+  )
   if (filters.status !== 'all') result = result.eq('status', filters.status)
   if (includeTarget && filters.target !== 'all') result = result.eq('target_department', filters.target)
 
@@ -417,6 +424,7 @@ function revalidateRequest(requestId: string, target?: DepartmentRequestTarget) 
     Object.values(DEPARTMENT_REQUEST_TARGETS).forEach((config) => revalidatePath(config.route))
   }
   revalidatePath('/notifications')
+  revalidatePath(ROUTES.TASKS)
 }
 
 export async function createDepartmentRequest(
@@ -525,6 +533,8 @@ export async function searchDepartmentRequestMachines(query: string): Promise<De
     .from('machines')
     .select('id, name, specification_number, factory_id, client:clients(name)')
     .eq('is_archived', false)
+    .is('actual_shipping_date', null)
+    .neq('status', 'shipped')
     .order('created_at', { ascending: false })
     .limit(20)
   if (context.factoryId) machineQuery = machineQuery.eq('factory_id', context.factoryId)

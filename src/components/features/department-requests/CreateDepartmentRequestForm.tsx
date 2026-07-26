@@ -217,7 +217,7 @@ export function CreateDepartmentRequestForm() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Заказ <span className="font-normal text-slate-500">· необязательно</span></Label>
+                  <Label>Машина / заказ <span className="font-normal text-slate-500">· необязательно</span></Label>
                   {selectedMachine ? (
                     <div className="flex min-h-11 items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3">
                       <Check className="size-4 shrink-0 text-blue-700" aria-hidden="true" />
@@ -244,15 +244,15 @@ export function CreateDepartmentRequestForm() {
                         value={machineSearch}
                         onChange={(event) => setMachineSearch(event.target.value)}
                         className="h-11 pl-9"
-                        placeholder="Название или спецификация"
-                        aria-label="Поиск заказа"
+                        placeholder="Машина или номер заказа"
+                        aria-label="Поиск по машине или номеру заказа"
                       />
                       {(machineSearch || machineOptions.length > 0) && (
                         <div className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
                           {machinesLoading ? (
-                            <div className="px-3 py-3 text-sm text-slate-500">Ищем заказы…</div>
+                            <div className="px-3 py-3 text-sm text-slate-500">Ищем машины…</div>
                           ) : machineOptions.length === 0 ? (
-                            <div className="px-3 py-3 text-sm text-slate-500">Заказы не найдены</div>
+                            <div className="px-3 py-3 text-sm text-slate-500">Неотгруженные машины не найдены</div>
                           ) : machineOptions.map((machine) => (
                             <button
                               key={machine.id}
