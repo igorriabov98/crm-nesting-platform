@@ -11,6 +11,7 @@ export type LayoutViolationType =
   | 'EXCLUDED_FROM_NESTING'
   | 'EXCLUDED_PROFILE'
   | 'EXCLUDED_PURCHASED'
+  | 'NEEDS_REVIEW'
   | 'NO_SHEET_AVAILABLE'
   | 'MISSING_THICKNESS'
   | 'NESTING_FAILED'
@@ -297,6 +298,7 @@ function validateUnplacedParts(
 
     const type = reasonCodeToViolationType(part.reasonCode);
     const reason = part.reason?.trim() || 'причина не указана';
+    const displayName = stripReasonSuffix(part.name || part.partId, reason);
     violations.push({
       type,
       partIds: [part.partId],
@@ -307,7 +309,8 @@ function validateUnplacedParts(
       thickness: part.thickness ?? null,
       requiredWidth: part.requiredWidth ?? null,
       requiredHeight: part.requiredHeight ?? null,
-      message: `${part.name || part.partId}: ${reason}`,
+      severity: part.reasonCode === 'NEEDS_REVIEW' ? 'warning' : undefined,
+      message: `${displayName}: ${reason}`,
     });
   }
 }
@@ -336,6 +339,8 @@ function reasonCodeToViolationType(reasonCode: UnplacedReasonCode): LayoutViolat
       return 'NO_SHEET_AVAILABLE';
     case 'MISSING_THICKNESS':
       return 'MISSING_THICKNESS';
+    case 'NEEDS_REVIEW':
+      return 'NEEDS_REVIEW';
     case 'NESTING_FAILED':
       return 'NESTING_FAILED';
     case 'EXCLUDED':
@@ -347,6 +352,11 @@ function reasonCodeToViolationType(reasonCode: UnplacedReasonCode): LayoutViolat
     case 'UNPLACED_WITHOUT_REASON':
       return 'UNPLACED_WITHOUT_REASON';
   }
+}
+
+function stripReasonSuffix(name: string, reason: string): string {
+  const suffix = ` - ${reason}`;
+  return name.endsWith(suffix) ? name.slice(0, -suffix.length) : name;
 }
 
 function excludedReasonCodeToViolationType(reasonCode: UnplacedReasonCode | undefined): LayoutViolationType {

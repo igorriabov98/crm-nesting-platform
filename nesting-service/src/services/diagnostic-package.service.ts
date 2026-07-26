@@ -45,6 +45,8 @@ type ReconciliationRow = {
   kFactorDefaulted: boolean;
   dimensionMismatch: boolean;
   mismatchNote: string | null;
+  needsReview: boolean;
+  needsReviewReason: string | null;
 };
 
 const DIMENSION_MATCH_TOLERANCE_PERCENT = 1;
@@ -179,9 +181,11 @@ function buildResultJson(project: Prisma.NestingProjectGetPayload<{
     const baseName = normalizeCadText(part.name);
     const material = normalizeCadText(part.material);
 
-    if (!isSheetPartType(part.partType, part.isSheetMetal)) {
-      const reason = buildExcludedFromNestingReason(part);
-      const reasonCode = excludedReasonCode(part.partType);
+    if (part.needsReview || !isSheetPartType(part.partType, part.isSheetMetal)) {
+      const reason = part.needsReview
+        ? (part.needsReviewReason || 'деталь требует проверки технологом')
+        : buildExcludedFromNestingReason(part);
+      const reasonCode = part.needsReview ? 'NEEDS_REVIEW' as const : excludedReasonCode(part.partType);
       return Array.from({ length: required }, (_, index) => createUnplacedPart({
         partId: part.id,
         baseName,
@@ -242,6 +246,7 @@ function buildResultJson(project: Prisma.NestingProjectGetPayload<{
     placedParts,
     profileParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PROFILE').length,
     purchasedParts: unplacedParts.filter((part) => part.reasonCode === 'EXCLUDED_PURCHASED').length,
+    reviewParts: unplacedParts.filter((part) => part.reasonCode === 'NEEDS_REVIEW').length,
     noSheetParts: unplacedParts.filter((part) => part.reasonCode === 'NO_SHEET_AVAILABLE').length,
     totalSheets: sheets.length,
     avgUtilization: sheets.length > 0 ? roundPercent(sheets.reduce((sum, sheet) => sum + sheet.utilization, 0) / sheets.length) : 0,
@@ -287,6 +292,8 @@ function buildParseReportJson(project: Prisma.NestingProjectGetPayload<{
       mismatchNote: part.mismatchNote,
       classificationMethod: part.classificationMethod,
       warnings: [part.classificationWarning].filter(Boolean),
+      needsReview: part.needsReview,
+      needsReviewReason: part.needsReviewReason,
     })),
   };
 }
@@ -349,6 +356,8 @@ function buildReconciliation(project: Prisma.NestingProjectGetPayload<{
         kFactorDefaulted: part.kFactorDefaulted,
         dimensionMismatch: part.dimensionMismatch,
         mismatchNote: part.mismatchNote,
+        needsReview: part.needsReview,
+        needsReviewReason: part.needsReviewReason,
       };
     }),
   };
@@ -405,7 +414,7 @@ function buildSummaryMarkdown(
     `- Project: ${project.id}`,
     `- Status: ${project.status}`,
     `- Sheets: ${resultJson.totalSheets}`,
-    `- Parts: total bodies ${resultJson.totalBodies}, active ${resultJson.activeParts}, inactive ${resultJson.inactiveParts}, placed ${resultJson.placedParts}, profile ${resultJson.profileParts}, purchased ${resultJson.purchasedParts}, no sheet ${resultJson.noSheetParts}`,
+    `- Parts: total bodies ${resultJson.totalBodies}, active ${resultJson.activeParts}, inactive ${resultJson.inactiveParts}, placed ${resultJson.placedParts}, profile ${resultJson.profileParts}, purchased ${resultJson.purchasedParts}, review ${resultJson.reviewParts}, no sheet ${resultJson.noSheetParts}`,
     `- Average utilization: ${resultJson.avgUtilization}%`,
     `- Waste: ${resultJson.totalWaste}%`,
     `- Validation violations: ${violations}`,

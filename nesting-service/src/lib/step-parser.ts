@@ -71,6 +71,8 @@ export interface ParsedPart {
   confidence: number;
   classificationMethod: ClassificationMethod;
   classificationWarning: string | null;
+  needsReview?: boolean;
+  needsReviewReason?: string | null;
   thumbnailSvg: string;
   boundingBox: BBox3D;
   meshVolume: number;
@@ -618,6 +620,8 @@ function processMesh(
     classificationWarning: exactContour && !degenerateContour
       ? (brepResult?.warnings.join('; ') || null)
       : finalClassificationWarning,
+    needsReview: degenerateContour,
+    needsReviewReason: degenerateContour ? DEGENERATE_CONTOUR_WARNING : null,
     thumbnailSvg,
     boundingBox,
     meshVolume,
@@ -642,7 +646,7 @@ function extractExecutionSuffix(value: string): string {
   return value.match(/[_-](\d{2,3})(?:\s|$)/u)?.[1] ?? '';
 }
 
-function normalizeCloneClassifications(parts: ParsedPart[]): ParsedPart[] {
+export function normalizeCloneClassifications(parts: ParsedPart[]): ParsedPart[] {
   const groups = new Map<string, ParsedPart[]>();
 
   for (const part of parts) {
@@ -655,17 +659,23 @@ function normalizeCloneClassifications(parts: ParsedPart[]): ParsedPart[] {
   for (const group of groups.values()) {
     if (group.length < 2) continue;
 
-    const partType = resolveClonePartType(group);
     const thickness = resolveCloneThickness(group);
+    const partType = resolveClonePartType(group);
+    const cloneReviewReason = partType === 'SHEET'
+      ? resolveCloneReviewReason(group, thickness)
+      : null;
 
     for (let index = 0; index < group.length; index += 1) {
       const part = group[index];
+      const needsReviewReason = part.needsReviewReason ?? cloneReviewReason;
       Object.assign(part, {
         partType,
         isSheetMetal: partType === 'SHEET',
         hasBends: partType === 'SHEET' && part.hasBends,
         thickness,
         classificationWarning: partType === 'SHEET' ? part.classificationWarning : null,
+        needsReview: needsReviewReason !== null,
+        needsReviewReason,
       });
     }
   }
@@ -730,10 +740,12 @@ export function resolveStepContourShape(
   };
 }
 
-export function resolvePartTypeForContour(inferredPartType: PartType, contour: Point2D[]): PartType {
-  // Temporary exclusion until fix-clone-review-flag adds an orthogonal needsReview flag.
-  // A degenerate body is not necessarily a profile; PROFILE only keeps it out of sheet nesting.
-  return isValidStepContourShape(contour) ? inferredPartType : 'PROFILE';
+export function resolvePartTypeForContour(inferredPartType: PartType, _contour: Point2D[]): PartType {
+  return inferredPartType;
+}
+
+export function resolveContourReviewReason(contour: Point2D[]): string | null {
+  return isValidStepContourShape(contour) ? null : DEGENERATE_CONTOUR_WARNING;
 }
 
 function resolveCloneThickness(group: ParsedPart[]): number | null {
@@ -747,6 +759,16 @@ function resolveCloneThickness(group: ParsedPart[]): number | null {
 
   const sorted = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0] - right[0]);
   return sorted[0]?.[0] ?? null;
+}
+
+function resolveCloneReviewReason(group: ParsedPart[], thickness: number | null): string | null {
+  const thresholdWarning = group
+    .map((part) => part.classificationWarning)
+    .find((warning) => warning?.includes('выше листового порога'));
+
+  if (thresholdWarning) return thresholdWarning;
+  if (thickness === null) return 'толщина листовой детали не определена после нормализации клонов';
+  return null;
 }
 
 function quantize(value: number, tolerance: number): number {

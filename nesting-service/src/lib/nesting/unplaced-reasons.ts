@@ -179,6 +179,7 @@ function typeToReasonCode(type: string): UnplacedReasonCode {
   if (type === 'NESTING_FAILED') return 'NESTING_FAILED';
   if (type === 'EXCLUDED_PROFILE') return 'EXCLUDED_PROFILE';
   if (type === 'EXCLUDED_PURCHASED') return 'EXCLUDED_PURCHASED';
+  if (type === 'NEEDS_REVIEW') return 'NEEDS_REVIEW';
   return 'UNPLACED_WITHOUT_REASON';
 }
 
@@ -194,6 +195,8 @@ function defaultReason(reasonCode: UnplacedReasonCode): string {
     case 'EXCLUDED_PROFILE':
     case 'EXCLUDED_PURCHASED':
       return 'исключено из листового раскроя';
+    case 'NEEDS_REVIEW':
+      return 'деталь требует проверки технологом';
     case 'UNPLACED_WITHOUT_REASON':
       return 'причина не указана';
   }
