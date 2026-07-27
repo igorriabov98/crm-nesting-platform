@@ -309,10 +309,7 @@ export async function assertMachineCanUseTechnologistRequest(db: LooseDb, machin
     .from('machines')
     .select(`
       id,
-      is_confirmed,
-      actual_shipping_date,
-      machine_items(id, is_sample),
-      production_stages(stage_type, date_start, date_end, is_skipped)
+      is_confirmed
     `)
     .eq('id', machineId)
     .single()

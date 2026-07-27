@@ -27,6 +27,7 @@
     "test:outsourcing": "tsx scripts/test-outsourcing-workflow.ts",
     "test:transport-trips": "tsx scripts/test-transport-trips.ts",
     "test:department-requests": "tsx scripts/test-department-requests.ts",
+    "test:technologist-request-readiness": "tsx scripts/test-technologist-request-readiness.ts",
     "test:people-planning": "tsx scripts/test-people-planning.ts",
     "test:nesting-dimension-choice": "tsx scripts/test-nesting-dimension-choice.ts",
     "test:nesting-ai-match-policy": "tsx scripts/test-nesting-ai-match-policy.ts",
