@@ -28,6 +28,7 @@
     "test:transport-trips": "tsx scripts/test-transport-trips.ts",
     "test:department-requests": "tsx scripts/test-department-requests.ts",
     "test:people-planning": "tsx scripts/test-people-planning.ts",
+    "test:planning-dashboard": "tsx scripts/test-planning-director-dashboard.ts",
     "test:nesting-dimension-choice": "tsx scripts/test-nesting-dimension-choice.ts",
     "test:nesting-ai-match-policy": "tsx scripts/test-nesting-ai-match-policy.ts",
     "smoke:prod": "tsx scripts/prod-smoke.ts",

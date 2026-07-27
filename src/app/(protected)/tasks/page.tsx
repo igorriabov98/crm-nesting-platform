@@ -8,7 +8,12 @@ export const metadata = {
   title: 'Мои задачи | CRM Завода',
 }
 
-export default async function TasksPage() {
+export default async function TasksPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ task?: string }>
+}) {
+  const focusedTaskId = (await searchParams)?.task
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -53,6 +58,7 @@ export default async function TasksPage() {
             incomingDelegations={delegationOverviewResult.data?.incoming || []}
             outgoingDelegations={delegationOverviewResult.data?.outgoing || []}
             resultLimit={TASKS_LIST_LIMIT}
+            focusedTaskId={focusedTaskId}
           />
         </div>
       )}

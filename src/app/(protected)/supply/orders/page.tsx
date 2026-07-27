@@ -15,7 +15,7 @@ export const metadata = {
 export default async function SupplyOrdersRoute({
   searchParams,
 }: {
-  searchParams?: Promise<{ page?: string; view?: string; factory?: string; request?: string }>
+  searchParams?: Promise<{ page?: string; view?: string; factory?: string; request?: string; focus?: string }>
 }) {
   const resolvedSearchParams = await searchParams
   const page = Math.max(0, Number(resolvedSearchParams?.page || 1) - 1)
@@ -78,7 +78,12 @@ export default async function SupplyOrdersRoute({
         ? <SummaryView requestedFactoryId={resolvedSearchParams?.factory || null} />
         : activeView === 'history'
           ? <HistoryView page={page} />
-        : <DetailsView page={page} requestId={requestedRequestId} />}
+        : <DetailsView
+            page={page}
+            requestId={requestedRequestId}
+            factoryId={resolvedSearchParams?.factory || null}
+            focusedId={resolvedSearchParams?.focus || null}
+          />}
     </div>
   )
 }
@@ -145,9 +150,19 @@ async function HistoryView({ page }: { page: number }) {
   )
 }
 
-async function DetailsView({ page, requestId }: { page: number; requestId: string | null }) {
+async function DetailsView({
+  page,
+  requestId,
+  factoryId,
+  focusedId,
+}: {
+  page: number
+  requestId: string | null
+  factoryId: string | null
+  focusedId: string | null
+}) {
   const [{ data: orders, error, pagination }, { data: suppliers }] = await Promise.all([
-    getSupplyOrders(page, 50, requestId),
+    getSupplyOrders(page, 50, requestId, factoryId),
     getSuppliers({ active_only: true }),
   ])
 
@@ -177,6 +192,7 @@ async function DetailsView({ page, requestId }: { page: number; requestId: strin
         page={pagination?.page || page}
         pageSize={pagination?.pageSize || 50}
         total={pagination?.total || 0}
+        initialStatus={focusedId ? 'all' : undefined}
         emptyMessage={requestId ? 'По этой заявке нет позиций к заказу: потребность полностью закрыта складом.' : undefined}
       />
     </div>

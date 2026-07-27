@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { headers } from 'next/headers'
 import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 import { Sidebar } from '@/components/layout/Sidebar'
@@ -7,6 +8,7 @@ import { AccessDenied } from '@/components/ui/AccessDenied'
 import { PermissionProvider } from '@/components/providers/PermissionProvider'
 import { canCurrentUserAccessPath, getCurrentUserPermissions } from '@/lib/permissions/server'
 import { getImpersonationContext } from '@/lib/auth/impersonation'
+import { FocusTargetScroller } from '@/components/ui/FocusTargetScroller'
 
 export default async function ProtectedLayout({
   children,
@@ -25,6 +27,7 @@ export default async function ProtectedLayout({
 
   return (
     <PermissionProvider permissions={permissions}>
+      <Suspense fallback={null}><FocusTargetScroller /></Suspense>
       {/* Keep the fixed shell non-scrollable; the sidebar nav and main own their scrolling. */}
       <div className="fixed inset-0 flex flex-col overflow-clip bg-[#F4F6F9]">
         {impersonation && (

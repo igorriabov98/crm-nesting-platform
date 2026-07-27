@@ -183,7 +183,11 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
  }
 
  return (
-  <article className="relative grid grid-cols-1 items-start gap-3 border-t border-border/60 p-4 text-sm transition-colors duration-200 hover:bg-muted/20 motion-reduce:transition-none sm:grid-cols-2 xl:grid-cols-[44px_minmax(210px,1.2fr)_96px_170px_170px_190px_200px_132px] xl:items-center">
+  <article
+   data-focus-id={item.id}
+   tabIndex={-1}
+   className="relative grid grid-cols-1 items-start gap-3 border-t border-border/60 p-4 text-sm transition-colors duration-200 hover:bg-muted/20 focus:outline-none data-[focus-active=true]:bg-blue-50 data-[focus-active=true]:ring-2 data-[focus-active=true]:ring-inset data-[focus-active=true]:ring-blue-600 motion-reduce:transition-none sm:grid-cols-2 xl:grid-cols-[44px_minmax(210px,1.2fr)_96px_170px_170px_190px_200px_132px] xl:items-center"
+  >
    <label className="flex h-11 w-11 items-center justify-center rounded-xl hover:bg-muted max-xl:absolute max-xl:ml-1 max-xl:mt-1">
     <input
      type="checkbox"
@@ -301,7 +305,7 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
       }
       const dateChanged = draft.delivery_date !== schedule.delivery_date
       return (
-       <div key={schedule.id} className="grid gap-2 rounded-xl border border-border/70 bg-background p-3 text-xs sm:grid-cols-2 xl:grid-cols-[100px_150px_130px_190px_minmax(180px,1fr)_260px] xl:items-end">
+       <div key={schedule.id} data-focus-id={schedule.id} tabIndex={-1} className="grid gap-2 rounded-xl border border-border/70 bg-background p-3 text-xs focus:outline-none data-[focus-active=true]:ring-2 data-[focus-active=true]:ring-blue-600 sm:grid-cols-2 xl:grid-cols-[100px_150px_130px_190px_minmax(180px,1fr)_260px] xl:items-end">
         <Badge variant={schedule.status === 'delivered' ? 'outline' : 'secondary'}>{schedule.status === 'delivered' ? 'Принято' : 'План'}</Badge>
         <input aria-label="Дата в графике" type="date" value={draft.delivery_date} disabled={isPending || readOnly || schedule.status === 'delivered'} onChange={(event) => setScheduleDrafts((prev) => ({ ...prev, [schedule.id]: { ...draft, delivery_date: event.target.value } }))} className="h-11 rounded-lg border border-border bg-background px-2" />
         <input aria-label={`Количество в графике, ${item.unit}`} type="number" min="0" step="0.01" value={draft.quantity} disabled={isPending || readOnly || schedule.status === 'delivered'} onChange={(event) => setScheduleDrafts((prev) => ({ ...prev, [schedule.id]: { ...draft, quantity: event.target.value } }))} className="h-11 rounded-lg border border-border bg-background px-2" />

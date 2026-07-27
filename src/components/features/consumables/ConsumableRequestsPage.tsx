@@ -456,7 +456,7 @@ export function ConsumableRequestsPage({ mode, factories, selectedFactoryId, req
                         const remaining = Number(request.requested_quantity) - Number(request.received_quantity)
                         const progress = Math.round((Number(request.received_quantity) / Number(request.requested_quantity)) * 100)
                         return (
-                          <div key={request.id} className="p-4 transition-colors hover:bg-slate-50/80">
+                          <div key={request.id} data-focus-id={request.id} tabIndex={-1} className="p-4 transition-colors hover:bg-slate-50/80 focus:outline-none data-[focus-active=true]:bg-blue-50 data-[focus-active=true]:ring-2 data-[focus-active=true]:ring-inset data-[focus-active=true]:ring-blue-600">
                             <div className="grid gap-4 lg:grid-cols-[minmax(220px,1.3fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(180px,auto)] lg:items-start">
                               <div className="min-w-0">
                                 <button type="button" onClick={() => openDetails(request.id)} className="text-left text-base font-semibold text-slate-950 transition hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/30">

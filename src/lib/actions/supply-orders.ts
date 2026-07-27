@@ -131,6 +131,7 @@ export type SupplyOrderItem = {
   id: string
   machine_name: string
   machine_id: string
+  factory_id?: string | null
   category: MaterialCategory
   item_name: string
   to_order: number
@@ -1036,7 +1037,12 @@ export async function getSupplyTransportNeeds(): Promise<{
   }
 }
 
-export async function getSupplyOrders(page = 0, pageSize = 50, requestId: string | null = null) {
+export async function getSupplyOrders(
+  page = 0,
+  pageSize = 50,
+  requestId: string | null = null,
+  factoryId: string | null = null,
+) {
   try {
     const { db } = await requireAccess()
     const safePage = Math.max(0, Number.isFinite(page) ? Math.floor(page) : 0)
@@ -1050,6 +1056,7 @@ export async function getSupplyOrders(page = 0, pageSize = 50, requestId: string
       .in('status', ['submitted_to_supply', 'completed'])
       .eq('machines.is_archived', false)
     if (requestId) requestsQuery = requestsQuery.eq('id', requestId)
+    if (factoryId) requestsQuery = requestsQuery.eq('machines.factory_id', factoryId)
 
     const { data: requestsData, error, count } = await requestsQuery
       .order('submitted_at', { ascending: false })
@@ -1189,6 +1196,7 @@ export async function getSupplyOrders(page = 0, pageSize = 50, requestId: string
         id: item.id,
         machine_name: machine?.name || 'Машина',
         machine_id: machine?.id || request?.machine_id || '',
+        factory_id: machine?.factory_id || null,
         category: item.category,
         item_name: item.item_name,
         to_order: item.to_order,
