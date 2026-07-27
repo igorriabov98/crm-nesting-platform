@@ -1,5 +1,4 @@
--- Prepared for the planning director dashboard.
--- This migration is intentionally not applied automatically.
+-- Partial indexes for the planning director dashboard queues.
 
 CREATE INDEX IF NOT EXISTS idx_machines_overdue_shipping_dashboard
   ON machines(factory_id, desired_shipping_date)
