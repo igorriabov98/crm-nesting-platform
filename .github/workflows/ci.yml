@@ -109,6 +109,8 @@ jobs:
       - name: Generate fixtures
         run: npm run fixtures
         working-directory: nesting-service
+      - name: Task partial-index ON CONFLICT regression
+        run: npm run test:task-on-conflict
       - name: Inventory stock lifecycle
         run: node scripts/test-inventory-stock-lifecycle.mjs
       - name: Inventory factory transfers

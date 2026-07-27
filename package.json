@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test": "npm run test:task-on-conflict",
     "predev": "node scripts/ensure-nesting-service.mjs",
     "dev": "node node_modules/next/dist/bin/next dev --webpack",
     "build": "node node_modules/next/dist/bin/next build --webpack",
@@ -32,6 +33,7 @@
     "test:planning-dashboard": "tsx scripts/test-planning-director-dashboard.ts",
     "test:nesting-dimension-choice": "tsx scripts/test-nesting-dimension-choice.ts",
     "test:nesting-ai-match-policy": "tsx scripts/test-nesting-ai-match-policy.ts",
+    "test:task-on-conflict": "node scripts/test-task-on-conflict.mjs",
     "smoke:prod": "tsx scripts/prod-smoke.ts",
     "smoke:user:create": "tsx scripts/create-smoke-user.ts",
     "supabase:migrate": "tsx scripts/apply-supabase-migrations.ts"
