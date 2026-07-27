@@ -39,9 +39,9 @@ export async function getMailAccountStatus() {
 }
 
 export async function getMailLabels() {
-  const { supabase, account } = await requireMailAccount()
+  const { account } = await requireMailAccount()
   if (!account) return []
-  const { data, error } = await (supabase as any).from('mail_labels')
+  const { data, error } = await (createAdminClient() as any).from('mail_labels')
     .select('gmail_label_id,name,label_type,messages_unread')
     .eq('account_id', account.id)
     .order('label_type')
@@ -59,10 +59,10 @@ export async function getMailThreads(input?: {
   query?: string
   before?: string | null
 }): Promise<MailPageResult> {
-  const { supabase, account } = await requireMailAccount()
+  const { account } = await requireMailAccount()
   if (!account) return { items: [], nextCursor: null, hasMore: false }
   const folder = input?.folder || 'INBOX'
-  let query = (supabase as any).from('mail_threads')
+  let query = (createAdminClient() as any).from('mail_threads')
     .select('id,gmail_thread_id,subject,snippet,participants,label_ids,last_message_at,message_count,is_unread,is_starred,has_attachments')
     .eq('account_id', account.id)
     .order('last_message_at', { ascending: false })
