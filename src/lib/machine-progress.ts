@@ -129,9 +129,8 @@ export function getMachineReadiness(machine: MachineProgressMachineInput): Machi
 }
 
 export function assertMachineReadyForTechnologistRequest(machine: MachineProgressMachineInput) {
-  const readiness = getMachineReadiness(machine)
-  if (readiness.decoded && readiness.planned) return
-  throw new Error(`Нельзя оформить заявку технолога: ${readiness.blockers.join('; ')}`)
+  if (machine.is_confirmed === true) return
+  throw new Error('Нельзя оформить заявку технолога: заказ не подтверждён и может меняться')
 }
 
 function shiftRank(shift: ProductionFactShift) {
