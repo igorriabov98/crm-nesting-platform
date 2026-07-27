@@ -36,6 +36,10 @@ const createSchema = z.object({
   machineId: z.string().uuid().nullable(),
   dueDate: z.string().refine((value) => value === '' || /^\d{4}-\d{2}-\d{2}$/.test(value), 'Некорректная дата'),
   attachments: z.array(attachmentSchema).max(10, 'Можно прикрепить не больше 10 файлов'),
+  mailLink: z.object({
+    kind: z.enum(['thread', 'message']),
+    id: z.string().uuid(),
+  }).nullable().optional(),
 })
 const completionSchema = z.object({
   requestId: z.string().uuid(),
@@ -439,7 +443,8 @@ export async function createDepartmentRequest(
       'source',
       parsed.attachments as DepartmentRequestDirectUpload[],
     )
-    const { error } = await (context.supabase as unknown as RpcClient).rpc('create_department_request', {
+    const rpcName = parsed.mailLink ? 'create_department_request_with_mail' : 'create_department_request'
+    const rpcArgs: Record<string, unknown> = {
       p_request_id: parsed.requestId,
       p_target_department: parsed.target,
       p_title: parsed.title,
@@ -447,7 +452,9 @@ export async function createDepartmentRequest(
       p_machine_id: parsed.machineId,
       p_due_date: parsed.dueDate || null,
       p_attachments: attachments,
-    })
+    }
+    if (parsed.mailLink) rpcArgs.p_mail_link = parsed.mailLink
+    const { error } = await (context.supabase as unknown as RpcClient).rpc(rpcName, rpcArgs)
     if (error) throw new Error(error.message)
     revalidateRequest(parsed.requestId, parsed.target)
     return {

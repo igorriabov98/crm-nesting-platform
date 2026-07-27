@@ -9,6 +9,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     const { supabase } = await requireAnyPermission([
       { resourceKey: 'mail', operation: 'view' },
       { resourceKey: 'product_projects', operation: 'view' },
+      { resourceKey: 'department_requests', operation: 'view' },
     ])
     const { data } = await (supabase as any).from('mail_attachments')
       .select('id')

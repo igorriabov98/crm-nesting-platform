@@ -8,6 +8,7 @@ import {
   Download,
   FileText,
   History,
+  Mail,
   Package,
   Paperclip,
   Send,
@@ -23,6 +24,8 @@ import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { RequestActions } from '@/components/features/department-requests/RequestActions'
+import { getDepartmentRequestMailLinks } from '@/lib/actions/mail'
+import { LinkedMailSection } from '@/components/features/mail/LinkedMailSection'
 
 const statusStyles: Record<DepartmentRequestStatus, string> = {
   new: 'border-blue-200 bg-blue-50 text-blue-800',
@@ -61,6 +64,7 @@ export default async function DepartmentRequestDetailPage({
   const [{ id }, query] = await Promise.all([params, searchParams])
   const detail = await getDepartmentRequestDetail(id)
   if (!detail) notFound()
+  const mailLinks = await getDepartmentRequestMailLinks(id)
 
   const { request, userId, canManage } = detail
   const target = DEPARTMENT_REQUEST_TARGETS[request.target_department]
@@ -149,6 +153,24 @@ export default async function DepartmentRequestDetailPage({
               </Link>
             )}
           </div>
+
+          {mailLinks.length > 0 && (
+            <section>
+              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+                <Mail className="size-4" aria-hidden="true" />
+                Почтовая переписка
+              </h2>
+              <p className="mt-2 text-sm text-slate-500">Связанную почту видят все пользователи с доступом к запросу.</p>
+              <div className="mt-3">
+                <LinkedMailSection
+                  target="department_request"
+                  targetId={request.id}
+                  links={mailLinks}
+                  canUnlink={request.created_by === userId || canManage}
+                />
+              </div>
+            </section>
+          )}
 
           {sourceFiles.length > 0 && (
             <section>

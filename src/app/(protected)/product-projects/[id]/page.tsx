@@ -6,8 +6,10 @@ import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 import { ROUTES } from '@/lib/constants/routes'
 import { buttonVariants } from '@/components/ui/button'
 import type { Client } from '@/lib/types'
-import { getProductProjectMailThreads } from '@/lib/actions/mail'
+import { getProductProjectMailLinks } from '@/lib/actions/mail'
 import { ProductProjectMail } from '@/components/features/products/ProductProjectMail'
+import { getCurrentUserPermissions } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 
 export const metadata = {
   title: 'Проект изделия — CRM Завода',
@@ -15,12 +17,13 @@ export const metadata = {
 
 export default async function ProductProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const { supabase } = await getCurrentUserContextOrRedirect()
-  const [{ data: project, error }, { data: clients }, { data: engineers, error: engineersError }, mailThreads] = await Promise.all([
+  const { supabase, userId } = await getCurrentUserContextOrRedirect()
+  const [{ data: project, error }, { data: clients }, { data: engineers, error: engineersError }, mailThreads, permissionDetails] = await Promise.all([
     getProductProject(id),
     supabase.from('clients').select('id, name').order('name'),
     getEngineerOptions(),
-    getProductProjectMailThreads(id),
+    getProductProjectMailLinks(id),
+    getCurrentUserPermissions(userId),
   ])
 
   if (error || !project) {
@@ -38,7 +41,7 @@ export default async function ProductProjectDetailPage({ params }: { params: Pro
         <ProductProjectForm project={project} clients={(clients || []) as Pick<Client, 'id' | 'name'>[]} engineers={engineers || []} />
       )}
       <ProductProjectDetailClient project={project} />
-      <ProductProjectMail projectId={project.id} initialLinks={mailThreads as never[]} />
+      <ProductProjectMail projectId={project.id} initialLinks={mailThreads} canManage={hasPermission(permissionDetails.permissions, 'product_projects', 'manage')} />
     </div>
   )
 }

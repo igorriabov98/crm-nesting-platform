@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Check,
   FilePlus2,
+  Mail,
   PackageSearch,
   Paperclip,
   Plus,
@@ -40,14 +41,25 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import type { MailLinkInput, MailLinkPreview } from '@/lib/mail/types'
 
-export function CreateDepartmentRequestForm() {
+export function CreateDepartmentRequestForm({
+  open: controlledOpen,
+  onOpenChange,
+  initialMailLink,
+  initialTitle = '',
+}: {
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  initialMailLink?: MailLinkPreview | null
+  initialTitle?: string
+} = {}) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
   const [pending, startTransition] = useTransition()
   const [target, setTarget] = useState<DepartmentRequestTarget>('supply')
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(initialTitle)
   const [description, setDescription] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [files, setFiles] = useState<File[]>([])
@@ -55,6 +67,19 @@ export function CreateDepartmentRequestForm() {
   const [machineOptions, setMachineOptions] = useState<DepartmentRequestMachineOption[]>([])
   const [selectedMachine, setSelectedMachine] = useState<DepartmentRequestMachineOption | null>(null)
   const [machinesLoading, setMachinesLoading] = useState(false)
+  const [mailLink, setMailLink] = useState<MailLinkPreview | null>(initialMailLink || null)
+  const open = controlledOpen ?? internalOpen
+
+  function setOpen(value: boolean) {
+    if (controlledOpen === undefined) setInternalOpen(value)
+    onOpenChange?.(value)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    setMailLink(initialMailLink || null)
+    if (initialTitle) setTitle(initialTitle)
+  }, [initialMailLink, initialTitle, open])
 
   useEffect(() => {
     if (!open || selectedMachine) return
@@ -73,13 +98,14 @@ export function CreateDepartmentRequestForm() {
 
   function resetForm() {
     setTarget('supply')
-    setTitle('')
+    setTitle(initialTitle)
     setDescription('')
     setDueDate('')
     setFiles([])
     setMachineSearch('')
     setMachineOptions([])
     setSelectedMachine(null)
+    setMailLink(initialMailLink || null)
   }
 
   function addFiles(incoming: File[]) {
@@ -114,6 +140,7 @@ export function CreateDepartmentRequestForm() {
           machineId: selectedMachine?.id || null,
           dueDate,
           attachments: uploads,
+          mailLink: mailLink ? ({ kind: mailLink.kind, id: mailLink.id } satisfies MailLinkInput) : null,
         })
         if (!result.ok) throw new Error(result.message)
 
@@ -132,14 +159,16 @@ export function CreateDepartmentRequestForm() {
 
   return (
     <>
-      <Button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="min-h-11 gap-2 bg-[#1B3A6B] px-4 text-white hover:bg-[#152f59]"
-      >
-        <Plus className="size-4" aria-hidden="true" />
-        Создать запрос
-      </Button>
+      {controlledOpen === undefined && (
+        <Button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="min-h-11 gap-2 bg-[#1B3A6B] px-4 text-white hover:bg-[#152f59]"
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          Создать запрос
+        </Button>
+      )}
 
       <Dialog open={open} onOpenChange={(value) => {
         if (!pending) setOpen(value)
@@ -157,6 +186,23 @@ export function CreateDepartmentRequestForm() {
             </DialogHeader>
 
             <div className="space-y-5 px-5 py-5 sm:px-6">
+              {mailLink && (
+                <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white text-blue-700">
+                    <Mail className="size-5" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+                      {mailLink.kind === 'thread' ? 'Вся цепочка' : 'Одно письмо'}
+                    </p>
+                    <p className="mt-1 truncate font-medium text-blue-950">{mailLink.subject}</p>
+                    <p className="mt-1 truncate text-xs text-blue-800/75">{mailLink.sender}</p>
+                  </div>
+                  <Button type="button" variant="ghost" size="icon" className="min-h-11 min-w-11" aria-label="Убрать письмо" onClick={() => setMailLink(null)}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="department-request-target">Кому адресован запрос</Label>
                 <select

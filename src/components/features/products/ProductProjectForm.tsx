@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Mail, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { createProductProjectWithPhoto, updateProductProject } from '@/lib/actions/products'
 import { ROUTES } from '@/lib/constants/routes'
@@ -14,7 +15,8 @@ import { Textarea } from '@/components/ui/textarea'
 import type { Client, ProductProject, UserSummary } from '@/lib/types'
 import type { ProductProjectInput } from '@/lib/types/schemas'
 import { MailThreadPicker } from '@/components/features/mail/MailThreadPicker'
-import { linkMailThreadToProductProject } from '@/lib/actions/mail'
+import { linkMailToProductProject } from '@/lib/actions/mail'
+import type { MailLinkInput, MailLinkPreview } from '@/lib/mail/types'
 
 type ProjectState = {
   title: string
@@ -26,9 +28,9 @@ type ProjectState = {
   status: ProductProjectInput['status']
 }
 
-function initialState(project?: ProductProject | null): ProjectState {
+function initialState(project?: ProductProject | null, initialTitle = ''): ProjectState {
   return {
-    title: project?.title || '',
+    title: project?.title || initialTitle,
     client_id: project?.client_id || 'none',
     description: project?.description || '',
     characteristics: project?.characteristics || '',
@@ -56,16 +58,19 @@ export function ProductProjectForm({
   project,
   clients,
   engineers,
+  initialMailLink,
 }: {
   project?: ProductProject | null
   clients: Pick<Client, 'id' | 'name'>[]
   engineers: UserSummary[]
+  initialMailLink?: MailLinkPreview | null
 }) {
   const router = useRouter()
   const photoInputRef = useRef<HTMLInputElement>(null)
-  const [values, setValues] = useState<ProjectState>(() => initialState(project))
+  const [values, setValues] = useState<ProjectState>(() => initialState(project, initialMailLink?.subject))
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [mailThreadIds, setMailThreadIds] = useState<string[]>([])
+  const [attachedMailLink, setAttachedMailLink] = useState<MailLinkPreview | null>(initialMailLink || null)
   const isEdit = Boolean(project?.id)
   const selectedClientLabel = values.client_id === 'none'
     ? 'Без клиента'
@@ -96,11 +101,27 @@ export function ProductProjectForm({
       toast.success(isEdit ? 'Проект обновлен' : 'Проект создан')
       const createdProject = 'project' in result ? result.project as { id?: string } | null : null
       if (!isEdit && createdProject?.id) {
-        const linkResults = await Promise.all(mailThreadIds.map((threadId) =>
-          linkMailThreadToProductProject(threadId, createdProject.id!)
+        const mailLinks: MailLinkInput[] = [
+          ...(attachedMailLink ? [{ kind: attachedMailLink.kind, id: attachedMailLink.id } satisfies MailLinkInput] : []),
+          ...mailThreadIds
+            .filter((threadId) => !(attachedMailLink?.kind === 'thread' && attachedMailLink.id === threadId))
+            .map((threadId) => ({ kind: 'thread' as const, id: threadId })),
+        ]
+        const linkResults = await Promise.all(mailLinks.map((mailLink) =>
+          linkMailToProductProject(mailLink, createdProject.id!)
         ))
-        const failedLink = linkResults.find((linkResult) => !linkResult.success)
-        if (failedLink) toast.error(`Проект создан, но письмо не добавлено: ${failedLink.error}`)
+        const failedIndex = linkResults.findIndex((linkResult) => !linkResult.success)
+        if (failedIndex >= 0) {
+          const failedLink = linkResults[failedIndex]
+          const retryLink = mailLinks[failedIndex]
+          toast.error(`Проект создан, но письмо не добавлено: ${failedLink.error}`, {
+            duration: 10000,
+            action: {
+              label: 'Повторить',
+              onClick: () => void linkMailToProductProject(retryLink, createdProject.id!),
+            },
+          })
+        }
         router.push(`${ROUTES.PRODUCT_PROJECTS}/${createdProject.id}`)
       } else {
         router.refresh()
@@ -182,6 +203,21 @@ export function ProductProjectForm({
           </div>
           <div className="space-y-2">
             <Label>Почтовая переписка</Label>
+            {attachedMailLink && (
+              <div className="mb-3 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                <Mail className="mt-1 size-5 shrink-0 text-blue-700" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+                    {attachedMailLink.kind === 'thread' ? 'Вся цепочка' : 'Одно письмо'}
+                  </p>
+                  <p className="mt-1 truncate font-medium text-blue-950">{attachedMailLink.subject}</p>
+                  <p className="mt-1 truncate text-xs text-blue-800/75">{attachedMailLink.sender}</p>
+                </div>
+                <Button type="button" variant="ghost" size="icon" className="min-h-11 min-w-11" aria-label="Убрать письмо" onClick={() => setAttachedMailLink(null)}>
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            )}
             <MailThreadPicker selected={mailThreadIds} onChange={setMailThreadIds} compact />
           </div>
         </div>

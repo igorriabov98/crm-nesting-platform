@@ -53,3 +53,25 @@ export type MailPageResult = {
   nextCursor: string | null
   hasMore: boolean
 }
+
+export type MailLinkInput = {
+  kind: 'thread' | 'message'
+  id: string
+}
+
+export type MailLinkPreview = MailLinkInput & {
+  thread_id: string
+  subject: string
+  snippet: string
+  sender: string
+  received_at: string
+  message_count: number
+  has_attachments: boolean
+}
+
+export type CrmMailLink = {
+  link_id: string
+  kind: 'thread' | 'message'
+  linked_at: string
+  preview: MailLinkPreview
+}
