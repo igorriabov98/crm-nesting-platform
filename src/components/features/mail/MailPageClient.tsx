@@ -46,6 +46,7 @@ import type {
 } from '@/lib/mail/types'
 import { cn } from '@/lib/utils'
 import { mergeMailThreadPages } from '@/lib/mail/model'
+import { MailCrmActions } from '@/components/features/mail/MailCrmActions'
 
 const folders: Array<{ value: MailFolder; label: string; icon: React.ElementType }> = [
   { value: 'INBOX', label: 'Входящие', icon: Inbox },
@@ -312,12 +313,13 @@ function ThreadView({ thread, onBack, onMutate, onReply }: {
 }) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex min-h-16 items-center gap-1 border-b bg-card px-3">
+      <div className="flex min-h-16 items-center gap-1 overflow-x-auto border-b bg-card px-3">
         <Button variant="ghost" size="icon" onClick={onBack} aria-label="Назад"><ChevronLeft className="size-5" /></Button>
         <Button variant="ghost" size="icon" onClick={() => void onMutate('archive')} aria-label="Архивировать"><Archive className="size-4" /></Button>
         <Button variant="ghost" size="icon" onClick={() => void onMutate(thread.is_starred ? 'unstar' : 'star')} aria-label="Отметить"><Star className={cn('size-4', thread.is_starred && 'fill-amber-400 text-amber-500')} /></Button>
         <Button variant="ghost" size="icon" onClick={() => void onMutate('spam')} aria-label="В спам"><TriangleAlert className="size-4" /></Button>
         <Button variant="ghost" size="icon" onClick={() => void onMutate('trash')} aria-label="Удалить"><Trash2 className="size-4" /></Button>
+        <MailCrmActions key={thread.id} thread={thread} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <h1 className="text-xl font-semibold text-foreground sm:text-2xl">{thread.subject}</h1>

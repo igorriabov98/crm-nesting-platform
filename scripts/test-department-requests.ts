@@ -122,6 +122,22 @@ const requestActions = readFileSync(resolve('src/lib/actions/department-requests
 assert.match(requestActions, /\.is\('actual_shipping_date', null\)/)
 assert.match(requestActions, /\.neq\('status', 'shipped'\)/)
 assert.match(requestActions, /filters\.tab === 'completed'/)
+assert.match(requestActions, /create_department_request_with_mail/)
+assert.match(requestActions, /p_mail_link/)
+
+const createRequestForm = readFileSync(
+  resolve('src/components/features/department-requests/CreateDepartmentRequestForm.tsx'),
+  'utf8',
+)
+assert.match(createRequestForm, /initialMailLink/)
+assert.match(createRequestForm, /mailLink:/)
+
+const requestDetail = readFileSync(
+  resolve('src/app/(protected)/requests/detail/[id]/page.tsx'),
+  'utf8',
+)
+assert.match(requestDetail, /getDepartmentRequestMailLinks/)
+assert.match(requestDetail, /LinkedMailSection/)
 
 const taskEnumMigration = readFileSync(
   resolve('supabase/migrations/20260726152401_sync_department_request_tasks.sql'),

@@ -3,6 +3,8 @@ import { performance } from 'node:perf_hooks'
 import { gmailLabelChanges, mergeMailThreadPages } from '../src/lib/mail/model'
 import { getNotificationDestination } from '../src/components/features/notifications/notification-model'
 import type { MailThreadListItem } from '../src/lib/mail/types'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 function thread(index: number): MailThreadListItem {
   return {
@@ -47,5 +49,33 @@ const destination = getNotificationDestination({
   related_mail_thread_id: 'thread-42',
 })
 assert.equal(destination?.href, '/mail?thread=thread-42')
+
+const crmLinksMigration = readFileSync(
+  resolve('supabase/migrations/20260727225500_mail_crm_entity_links.sql'),
+  'utf8',
+)
+for (const table of [
+  'department_request_mail_threads',
+  'department_request_mail_messages',
+  'product_project_mail_messages',
+]) {
+  assert.match(crmLinksMigration, new RegExp(`create table public\\.${table}`))
+  assert.match(crmLinksMigration, new RegExp(`alter table public\\.${table} enable row level security`))
+}
+assert.match(crmLinksMigration, /create_department_request_with_mail/)
+assert.match(crmLinksMigration, /account\.user_id = current_user_id/)
+assert.match(crmLinksMigration, /unlinked_at is null/)
+
+const mailActions = readFileSync(resolve('src/lib/actions/mail.ts'), 'utf8')
+assert.match(mailActions, /getOwnedMailLinkPreview/)
+assert.match(mailActions, /linkMailToProductProject/)
+assert.match(mailActions, /getDepartmentRequestMailLinks/)
+assert.match(mailActions, /parsedMessageId/)
+
+const mailCrmUi = readFileSync(resolve('src/components/features/mail/MailCrmActions.tsx'), 'utf8')
+assert.match(mailCrmUi, /Использовать в CRM/)
+assert.match(mailCrmUi, /Всю цепочку/)
+assert.match(mailCrmUi, /Только письмо/)
+assert.match(mailCrmUi, /min-h-11/)
 
 console.log(`mail integration checks passed; 9,500 unique threads merged in ${elapsed.toFixed(1)} ms`)
