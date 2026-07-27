@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { requirePermission } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
@@ -9,6 +10,13 @@ import { ClipboardList, Factory as FactoryIcon, Package, Receipt, Bell, Calendar
 import { NOTIFICATION_TYPES, DEFAULT_NOTIFICATION_ICON, NotificationType } from '@/lib/constants/notifications'
 import { formatDistanceToNow } from 'date-fns'
 import { ru } from 'date-fns/locale'
+import { PlanningDirectorDashboard } from '@/components/features/dashboard/planning-director/PlanningDirectorDashboard'
+import {
+  createPlanningDashboardPromises,
+  getPlanningFactories,
+  normalizeDashboardMonth,
+  todayInUzhgorod,
+} from '@/lib/dashboard/planning-director/data'
 
 export const metadata = {
   title: 'Дашборд — CRM Завода',
@@ -382,9 +390,46 @@ export default async function DashboardPage({
 }: {
   searchParams?: Promise<{ factory?: string; month?: string }>
 }) {
-  const { user: currentUser, permissions } = await requirePermission('dashboard', 'view')
+  const { user: currentUser, permissions, factoryId: userFactoryId } = await requirePermission('dashboard', 'view')
   const showInvoices = hasPermission(permissions, 'invoices', 'view')
   const resolvedSearchParams = await searchParams
+  if (currentUser.role === 'planning_director') {
+    const today = todayInUzhgorod()
+    const month = normalizeDashboardMonth(resolvedSearchParams?.month, today)
+    const { factories, selectedFactory } = await getPlanningFactories(
+      resolvedSearchParams?.factory,
+      userFactoryId,
+    )
+    const invalidFactory = Boolean(
+      resolvedSearchParams?.factory && resolvedSearchParams.factory !== selectedFactory.id,
+    )
+    const invalidMonth = Boolean(
+      resolvedSearchParams?.month && resolvedSearchParams.month !== month,
+    )
+    if (invalidFactory || invalidMonth) {
+      const canonicalParams = new URLSearchParams({
+        factory: selectedFactory.id,
+        month,
+      })
+      redirect(`${ROUTES.DASHBOARD}?${canonicalParams.toString()}`)
+    }
+    const promises = createPlanningDashboardPromises({
+      context: { userId: currentUser.id, userFactoryId },
+      factoryId: selectedFactory.id,
+      month,
+      today,
+    })
+    return (
+      <PlanningDirectorDashboard
+        fullName={currentUser.full_name}
+        factories={factories}
+        selectedFactoryId={selectedFactory.id}
+        month={month}
+        today={today}
+        promises={promises}
+      />
+    )
+  }
   const factoryFilter = resolvedSearchParams?.factory || 'all'
   const monthFilter = normalizeMonthValue(resolvedSearchParams?.month)
   const isDirector = DIRECTOR_ROLES.includes(currentUser.role)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useState, useTransition } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format, isBefore, startOfToday } from 'date-fns'
@@ -310,6 +310,7 @@ interface TaskCardsProps {
   context?: TaskCardContext
   emptyMessage?: string
   onTaskStatusChange?: (taskId: string, status: TaskStatus, completedAt: string | null) => void
+  focusedTaskId?: string
 }
 
 export function TaskCards({
@@ -319,6 +320,7 @@ export function TaskCards({
   context = 'standard',
   emptyMessage,
   onTaskStatusChange,
+  focusedTaskId,
 }: TaskCardsProps) {
   const router = useRouter()
   const [, startRefreshTransition] = useTransition()
@@ -345,6 +347,14 @@ export function TaskCards({
   const drawingInputRef = useRef<HTMLInputElement>(null)
   const photoInputRef = useRef<HTMLInputElement>(null)
   const today = useMemo(() => startOfToday(), [])
+
+  useEffect(() => {
+    if (!focusedTaskId) return
+    const element = document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(focusedTaskId)}"]`)
+    if (!element) return
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    element.focus({ preventScroll: true })
+  }, [focusedTaskId, tasks])
 
   const selectedCandidate = delegationCandidates.find((candidate) => candidateKey(candidate) === selectedCandidateKey) || null
 
@@ -1373,10 +1383,13 @@ export function TaskCards({
                 return (
                   <TableRow
                     key={task.id}
+                    data-task-id={task.id}
+                    tabIndex={task.id === focusedTaskId ? -1 : undefined}
                     className={cn(
                       'border-l-4 border-slate-200 bg-white hover:bg-slate-50',
                       tone.rowStrip,
-                      task.status === 'cancelled' && 'opacity-75'
+                      task.status === 'cancelled' && 'opacity-75',
+                      task.id === focusedTaskId && 'ring-2 ring-inset ring-blue-600'
                     )}
                   >
                     <TableCell className="whitespace-normal px-4 py-3 align-top">
@@ -1497,10 +1510,13 @@ export function TaskCards({
           return (
             <article
               key={task.id}
+              data-task-id={task.id}
+              tabIndex={task.id === focusedTaskId ? -1 : undefined}
               className={cn(
                 'relative overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-colors before:absolute before:inset-y-0 before:left-0 before:w-1 hover:border-slate-300 hover:shadow-md',
                 tone.strip,
-                task.status === 'cancelled' && 'opacity-80'
+                task.status === 'cancelled' && 'opacity-80',
+                task.id === focusedTaskId && 'ring-2 ring-blue-600'
               )}
             >
               <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_180px]">

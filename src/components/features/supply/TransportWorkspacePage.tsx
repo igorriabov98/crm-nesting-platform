@@ -9,7 +9,7 @@ import {
   useState,
   useTransition,
 } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowRight,
   Banknote,
@@ -188,6 +188,7 @@ const NeedCard = memo(function NeedCard({
   return (
     <button
       type="button"
+      data-focus-id={need.key}
       aria-pressed={selected}
       disabled={disabled}
       onClick={() => onToggle(need)}
@@ -256,6 +257,8 @@ const NeedCard = memo(function NeedCard({
 
 export function TransportWorkspacePage({ workspace }: { workspace: TransportWorkspace }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const focusedNeedKey = searchParams.get('focus')
   const [isPending, startTransition] = useTransition()
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [needFilter, setNeedFilter] = useState<NeedFilter>('all')
@@ -303,6 +306,16 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   useEffect(() => {
     setVisibleCount(PAGE_SIZE)
   }, [deferredSearch, needFilter])
+
+  useEffect(() => {
+    if (!focusedNeedKey) return
+    const focusedIndex = workspace.needs.findIndex((need) => need.key === focusedNeedKey)
+    if (focusedIndex >= 0) {
+      setNeedFilter('all')
+      setSearch('')
+      setVisibleCount(Math.max(PAGE_SIZE, focusedIndex + 1))
+    }
+  }, [focusedNeedKey, workspace.needs])
 
   const categoryCounts = useMemo(() => ({
     all: workspace.needs.length,

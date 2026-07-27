@@ -15,6 +15,7 @@ interface MyTasksViewProps {
   incomingDelegations?: TaskDelegationWithTask[]
   outgoingDelegations?: TaskDelegationWithTask[]
   resultLimit?: number
+  focusedTaskId?: string
 }
 
 function tasksFromDelegations(delegations: TaskDelegationWithTask[]) {
@@ -31,6 +32,7 @@ export function MyTasksView({
   incomingDelegations = [],
   outgoingDelegations = [],
   resultLimit,
+  focusedTaskId,
 }: MyTasksViewProps) {
   const today = useMemo(() => startOfToday(), [])
   const [localTasks, setLocalTasks] = useState(tasks)
@@ -42,6 +44,13 @@ export function MyTasksView({
   useEffect(() => {
     setLocalTasks(tasks)
   }, [tasks])
+
+  useEffect(() => {
+    if (!focusedTaskId) return
+    const focusedTask = tasks.find((task) => task.id === focusedTaskId)
+    if (focusedTask?.status === 'completed') setTab('completed')
+    else if (focusedTask) setTab('active')
+  }, [focusedTaskId, tasks])
 
   function handleTaskStatusChange(taskId: string, status: TaskWithRelations['status'], completedAt: string | null) {
     setLocalTasks((current) => current.map((task) => (
@@ -227,6 +236,7 @@ export function MyTasksView({
         context={taskContext}
         emptyMessage={tab === 'acceptance' ? 'Нет задач, ожидающих принятия.' : undefined}
         onTaskStatusChange={handleTaskStatusChange}
+        focusedTaskId={focusedTaskId}
       />
 
       {tab === 'active' && outgoingTasks.length > 0 && (

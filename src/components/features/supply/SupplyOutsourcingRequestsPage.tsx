@@ -216,7 +216,7 @@ export function SupplyOutsourcingRequestsPage({
             const saving = isPending && pendingOperationId === agreement.operation_id
 
             return (
-              <article key={agreement.operation_id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <article key={agreement.operation_id} data-focus-id={agreement.operation_id} tabIndex={-1} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm focus:outline-none data-[focus-active=true]:ring-2 data-[focus-active=true]:ring-blue-600">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
