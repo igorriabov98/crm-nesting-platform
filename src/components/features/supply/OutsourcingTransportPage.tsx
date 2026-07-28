@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils'
 const directionLabels = {
   outbound: 'Туда',
   return: 'Обратно',
+  mixed: 'Смешанный',
 } as const
 
 const statusLabels = {

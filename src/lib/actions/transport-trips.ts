@@ -23,20 +23,21 @@ import {
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import {
-  assertRouteStartsAt,
-  getTransportNeedConflict,
-} from '@/lib/transport/trip-rules'
+import { getTransportStopOrderError } from '@/lib/transport/trip-rules'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 
 export type TransportNeedKind = 'materials' | 'detailing' | 'outsourcing'
+export type TransportNeedSource = 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'
 export type TransportTripStatus = 'needed' | 'found' | 'in_transit' | 'completed' | 'cancelled'
+export type TransportTripDirection = 'outbound' | 'return' | 'mixed'
+export type TransportTripStopStatus = 'planned' | 'arrived' | 'completed'
 export type TransportNeedPlanState = 'preliminary' | 'confirmed'
 
 export type UnifiedTransportNeed = {
   key: string
   id: string
   kind: TransportNeedKind
+  source: TransportNeedSource
   direction: 'outbound' | 'return'
   planState: TransportNeedPlanState
   status: string
@@ -44,27 +45,50 @@ export type UnifiedTransportNeed = {
   subtitle: string
   sourcePointKey: string
   sourcePointLabel: string
+  sourcePointCity: string | null
+  sourcePointAddress: string | null
   destinationPointKey: string
   destinationPointLabel: string
+  destinationPointCity: string | null
+  destinationPointAddress: string | null
   neededDate: string | null
   deadline: string | null
   itemLabels: string[]
   volumeLabel: string | null
   deliveryRisk: boolean
   selectable: boolean
+  unavailableReason: string | null
 }
 
 export type TransportTripNeed = Omit<
   UnifiedTransportNeed,
-  'planState' | 'status' | 'deadline' | 'itemLabels' | 'volumeLabel' | 'deliveryRisk' | 'selectable'
+  'planState' | 'status' | 'deadline' | 'itemLabels' | 'volumeLabel' | 'deliveryRisk' | 'selectable' | 'unavailableReason'
 > & {
   linkId: string | null
+  pickupStopId: string | null
+  deliveryStopId: string | null
   released: boolean
+}
+
+export type TransportTripStop = {
+  id: string
+  clientKey: string
+  sequence: number
+  kind: 'start' | 'service' | 'finish'
+  pointKey: string
+  pointLabel: string
+  city: string | null
+  address: string | null
+  plannedArrivalAt: string | null
+  serviceDurationMinutes: number
+  status: TransportTripStopStatus
+  arrivedAt: string | null
+  completedAt: string | null
 }
 
 export type TransportTrip = {
   id: string
-  direction: 'outbound' | 'return'
+  direction: TransportTripDirection
   status: TransportTripStatus
   carrierSupplierId: string | null
   carrierName: string | null
@@ -75,6 +99,7 @@ export type TransportTrip = {
   route: string | null
   comment: string | null
   needs: TransportTripNeed[]
+  stops: TransportTripStop[]
 }
 
 export type TransportWorkspace = {
@@ -91,6 +116,7 @@ type TransportQuery = PromiseLike<DbResult> & {
   select: (columns?: string) => TransportQuery
   in: (column: string, values: unknown[]) => TransportQuery
   is: (column: string, value: unknown) => TransportQuery
+  eq: (column: string, value: unknown) => TransportQuery
   order: (column: string, options?: { ascending?: boolean }) => TransportQuery
 }
 type TransportDb = {
@@ -102,6 +128,7 @@ type TripLinkRow = {
   id: string
   transport_order_id: string
   need_kind: TransportNeedKind
+  need_source: TransportNeedSource
   need_id: string
   direction: 'outbound' | 'return'
   source_point_key: string
@@ -111,11 +138,30 @@ type TripLinkRow = {
   need_title: string
   need_subtitle: string | null
   needed_date: string | null
+  pickup_stop_id: string | null
+  delivery_stop_id: string | null
   released_at: string | null
 }
 
+type TripStopRow = {
+  id: string
+  transport_order_id: string
+  client_key: string
+  sequence_no: number
+  stop_kind: 'start' | 'service' | 'finish'
+  point_key: string
+  point_label: string
+  city: string | null
+  address: string | null
+  planned_arrival_at: string | null
+  service_duration_minutes: number
+  status: TransportTripStopStatus
+  arrived_at: string | null
+  completed_at: string | null
+}
+
 const needReferenceSchema = z.object({
-  kind: z.enum(['materials', 'detailing', 'outsourcing']),
+  source: z.enum(['inventory_transfer', 'supply_schedule', 'detailing_transfer', 'outsourcing']),
   id: z.string().uuid(),
 })
 
@@ -124,7 +170,21 @@ const createTripSchema = z.object({
   carrierSupplierId: z.string().uuid(),
   scheduledDate: z.string().date(),
   price: z.coerce.number().nonnegative(),
-  route: z.string().trim().min(1).max(500),
+  stops: z.array(z.object({
+    clientId: z.string().trim().min(1).max(120),
+    pointKey: z.string().trim().min(1).max(240),
+    pointLabel: z.string().trim().min(1).max(240),
+    city: z.string().trim().max(160).nullable().optional(),
+    address: z.string().trim().max(300).nullable().optional(),
+    kind: z.enum(['start', 'service', 'finish']),
+    plannedArrivalAt: z.string().datetime(),
+    serviceDurationMinutes: z.coerce.number().int().min(0).max(1440),
+  })).min(2).max(120),
+  assignments: z.array(z.object({
+    needKey: z.string().trim().min(1),
+    pickupStopClientId: z.string().trim().min(1),
+    deliveryStopClientId: z.string().trim().min(1),
+  })).min(1).max(50),
   comment: z.string().trim().max(1000).nullable().optional(),
 })
 
@@ -134,16 +194,27 @@ const updateTripSchema = z.object({
   carrierSupplierId: z.string().uuid(),
   scheduledDate: z.string().date(),
   price: z.coerce.number().nonnegative(),
-  route: z.string().trim().min(1).max(500),
+  route: z.string().trim().min(1).max(4000),
   comment: z.string().trim().max(1000).nullable().optional(),
+  stops: z.array(z.object({
+    id: z.string().uuid(),
+    sequence: z.number().int().nonnegative(),
+    plannedArrivalAt: z.string().datetime().nullable(),
+    serviceDurationMinutes: z.coerce.number().int().min(0).max(1440),
+  })).min(1).max(120).nullable().optional(),
+})
+
+const updateStopStatusSchema = z.object({
+  stopId: z.string().uuid(),
+  status: z.enum(['arrived', 'completed']),
 })
 
 function transportDb(value: unknown): TransportDb {
   return value as TransportDb
 }
 
-function needKey(kind: TransportNeedKind, id: string) {
-  return `${kind}:${id}`
+function needKey(source: TransportNeedSource, id: string) {
+  return `${source}:${id}`
 }
 
 function numberLabel(value: number, maximumFractionDigits = 3) {
@@ -154,11 +225,16 @@ function isActiveTransfer(status: string) {
   return !['completed', 'cancelled'].includes(status)
 }
 
+function supplierPointMissingCity(pointKey: string, city: string | null) {
+  return pointKey.startsWith('supplier:') && !city?.trim()
+}
+
 function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed {
   return {
     key: needKey('outsourcing', need.id),
     id: need.id,
     kind: 'outsourcing',
+    source: 'outsourcing',
     direction: need.direction,
     planState: need.plan_state,
     status: need.status,
@@ -166,22 +242,35 @@ function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed 
     subtitle: need.work_type_name,
     sourcePointKey: need.source_point_key,
     sourcePointLabel: need.source_point_label,
+    sourcePointCity: need.source_point_city,
+    sourcePointAddress: need.source_point_address,
     destinationPointKey: need.destination_point_key,
     destinationPointLabel: need.destination_point_label,
+    destinationPointCity: need.destination_point_city,
+    destinationPointAddress: need.destination_point_address,
     neededDate: need.needed_date,
     deadline: need.needed_date,
     itemLabels: need.item_labels,
     volumeLabel: need.item_labels.length > 0 ? `${need.item_labels.length} поз.` : null,
     deliveryRisk: false,
-    selectable: need.plan_state === 'confirmed',
+    selectable: need.plan_state === 'confirmed'
+      && !supplierPointMissingCity(need.source_point_key, need.source_point_city)
+      && !supplierPointMissingCity(need.destination_point_key, need.destination_point_city),
+    unavailableReason: need.plan_state !== 'confirmed'
+      ? 'Ожидает подтверждения'
+      : supplierPointMissingCity(need.source_point_key, need.source_point_city)
+        || supplierPointMissingCity(need.destination_point_key, need.destination_point_city)
+        ? 'У компании не указан город'
+        : null,
   }
 }
 
 function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
   return {
-    key: needKey('detailing', card.id),
+    key: needKey('detailing_transfer', card.id),
     id: card.id,
     kind: 'detailing',
+    source: 'detailing_transfer',
     direction: 'outbound',
     planState: 'confirmed',
     status: card.status,
@@ -189,22 +278,28 @@ function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
     subtitle: 'Деталировка',
     sourcePointKey: `factory:${card.sourceFactoryId}`,
     sourcePointLabel: card.sourceFactoryName,
+    sourcePointCity: null,
+    sourcePointAddress: null,
     destinationPointKey: `factory:${card.destinationFactoryId}`,
     destinationPointLabel: card.destinationFactoryName,
+    destinationPointCity: null,
+    destinationPointAddress: null,
     neededDate: card.expectedArrivalDate || card.deadline,
     deadline: card.deadline,
     itemLabels: card.items.map((item) => `${item.partName} · ${item.drawingNumber}`),
     volumeLabel: `${numberLabel(card.totalQuantity, 0)} шт. · ${numberLabel(card.totalWeightKg)} кг`,
     deliveryRisk: card.deliveryRisk,
     selectable: true,
+    unavailableReason: null,
   }
 }
 
 function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
   return {
-    key: needKey('materials', card.id),
+    key: needKey('inventory_transfer', card.id),
     id: card.id,
     kind: 'materials',
+    source: 'inventory_transfer',
     direction: 'outbound',
     planState: 'confirmed',
     status: card.status,
@@ -212,22 +307,28 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
     subtitle: 'Материалы',
     sourcePointKey: `factory:${card.sourceFactoryId}`,
     sourcePointLabel: card.sourceFactoryName,
+    sourcePointCity: null,
+    sourcePointAddress: null,
     destinationPointKey: `factory:${card.destinationFactoryId}`,
     destinationPointLabel: card.destinationFactoryName,
+    destinationPointCity: null,
+    destinationPointAddress: null,
     neededDate: card.expectedArrivalDate || card.deadline,
     deadline: card.deadline,
     itemLabels: card.items.map((item) => item.materialName),
     volumeLabel: `${card.items.length} поз.`,
     deliveryRisk: card.deliveryRisk,
     selectable: true,
+    unavailableReason: null,
   }
 }
 
 function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
   return {
-    key: needKey('materials', need.id),
+    key: needKey('supply_schedule', need.id),
     id: need.id,
     kind: 'materials',
+    source: 'supply_schedule',
     direction: 'outbound',
     planState: 'confirmed',
     status: 'planned',
@@ -235,31 +336,43 @@ function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
     subtitle: need.supplierName,
     sourcePointKey: `supplier:${need.supplierId}`,
     sourcePointLabel: need.supplierLocation,
+    sourcePointCity: need.supplierCity,
+    sourcePointAddress: need.supplierAddress,
     destinationPointKey: `factory:${need.factoryId}`,
     destinationPointLabel: need.factoryName,
+    destinationPointCity: null,
+    destinationPointAddress: null,
     neededDate: need.deliveryDate,
     deadline: need.deliveryDate,
     itemLabels: [need.itemName],
     volumeLabel: `${numberLabel(need.quantity)} ${need.unit}`,
     deliveryRisk: false,
-    selectable: true,
+    selectable: Boolean(need.supplierCity?.trim()),
+    unavailableReason: need.supplierCity?.trim() ? null : 'У компании не указан город',
   }
 }
 
 function mapLink(link: TripLinkRow): TransportTripNeed {
   return {
     linkId: link.id,
-    key: needKey(link.need_kind, link.need_id),
+    key: needKey(link.need_source, link.need_id),
     id: link.need_id,
     kind: link.need_kind,
+    source: link.need_source,
     direction: link.direction,
     title: link.need_title,
     subtitle: link.need_subtitle || '',
     sourcePointKey: link.source_point_key,
     sourcePointLabel: link.source_point_label,
+    sourcePointCity: null,
+    sourcePointAddress: null,
     destinationPointKey: link.destination_point_key,
     destinationPointLabel: link.destination_point_label,
+    destinationPointCity: null,
+    destinationPointAddress: null,
     neededDate: link.needed_date,
+    pickupStopId: link.pickup_stop_id,
+    deliveryStopId: link.delivery_stop_id,
     released: Boolean(link.released_at),
   }
 }
@@ -270,14 +383,21 @@ function mapLegacyOutsourcingNeed(need: TransportWorkspaceNeed): TransportTripNe
     key: needKey('outsourcing', need.id),
     id: need.id,
     kind: 'outsourcing',
+    source: 'outsourcing',
     direction: need.direction,
     title: need.machine_name,
     subtitle: need.work_type_name,
     sourcePointKey: need.source_point_key,
     sourcePointLabel: need.source_point_label,
+    sourcePointCity: need.source_point_city,
+    sourcePointAddress: need.source_point_address,
     destinationPointKey: need.destination_point_key,
     destinationPointLabel: need.destination_point_label,
+    destinationPointCity: need.destination_point_city,
+    destinationPointAddress: need.destination_point_address,
     neededDate: need.needed_date,
+    pickupStopId: null,
+    deliveryStopId: null,
     released: false,
   }
 }
@@ -316,6 +436,44 @@ async function loadTripLinks(db: TransportDb, tripIds: string[]) {
   return Array.from(links.values())
 }
 
+function isMissingStopsTable(error: DbError | null) {
+  const message = error?.message || ''
+  return error?.code === '42P01'
+    || /transport_trip_stops/i.test(message) && /does not exist|schema cache/i.test(message)
+}
+
+async function loadTripStops(db: TransportDb, tripIds: string[]) {
+  if (tripIds.length === 0) return [] as TripStopRow[]
+  const { data, error } = await db
+    .from('transport_trip_stops')
+    .select('*')
+    .in('transport_order_id', tripIds)
+    .order('sequence_no', { ascending: true })
+  if (error) {
+    if (isMissingStopsTable(error)) return []
+    throw new Error(error.message || 'Не удалось загрузить остановки рейсов')
+  }
+  return (data || []) as TripStopRow[]
+}
+
+function mapStop(stop: TripStopRow): TransportTripStop {
+  return {
+    id: stop.id,
+    clientKey: stop.client_key,
+    sequence: stop.sequence_no,
+    kind: stop.stop_kind,
+    pointKey: stop.point_key,
+    pointLabel: stop.point_label,
+    city: stop.city,
+    address: stop.address,
+    plannedArrivalAt: stop.planned_arrival_at,
+    serviceDurationMinutes: stop.service_duration_minutes,
+    status: stop.status,
+    arrivedAt: stop.arrived_at,
+    completedAt: stop.completed_at,
+  }
+}
+
 async function loadTransportWorkspace(): Promise<TransportWorkspace> {
   await requirePermission('supply_transport', 'view')
   const db = transportDb(createAdminClient())
@@ -325,15 +483,16 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
     getInventoryTransportWorkspace(),
     getSupplyTransportNeeds(),
   ])
-  const links = await loadTripLinks(
-    db,
-    outsourcingResult.data.orders.map((order) => order.id),
-  )
+  const tripIds = outsourcingResult.data.orders.map((order) => order.id)
+  const [links, stops] = await Promise.all([
+    loadTripLinks(db, tripIds),
+    loadTripStops(db, tripIds),
+  ])
 
   const activeLinkedNeeds = new Set(
     links
       .filter((link) => !link.released_at)
-      .map((link) => needKey(link.need_kind, link.need_id)),
+      .map((link) => needKey(link.need_source, link.need_id)),
   )
   const needs = [
     ...outsourcingResult.data.needs.map(mapOutsourcingNeed),
@@ -357,6 +516,13 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
     linksByTrip.set(link.transport_order_id, [
       ...(linksByTrip.get(link.transport_order_id) || []),
       link,
+    ])
+  }
+  const stopsByTrip = new Map<string, TripStopRow[]>()
+  for (const stop of stops) {
+    stopsByTrip.set(stop.transport_order_id, [
+      ...(stopsByTrip.get(stop.transport_order_id) || []),
+      stop,
     ])
   }
 
@@ -385,6 +551,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       ),
       comment: order.comment,
       needs: tripNeeds,
+      stops: (stopsByTrip.get(order.id) || []).map(mapStop),
     }
   })
 
@@ -439,34 +606,70 @@ export async function createTransportTrip(input: z.input<typeof createTripSchema
     const workspace = await loadTransportWorkspace()
     const availableByKey = new Map(workspace.needs.map((need) => [need.key, need]))
     const selectedNeeds = parsed.needs.map((reference) => {
-      const need = availableByKey.get(needKey(reference.kind, reference.id))
+      const need = availableByKey.get(needKey(reference.source, reference.id))
       if (!need || !need.selectable) {
         throw new Error('Одна или несколько потребностей уже заняты или недоступны')
       }
       return need
     })
 
-    const firstNeed = selectedNeeds[0]
-    if (!firstNeed) throw new Error('Выберите хотя бы одну потребность')
-    if (selectedNeeds.some((need) => getTransportNeedConflict(firstNeed, need) === 'source')) {
-      throw new Error('В один рейс можно объединить только потребности с одной стартовой точкой')
+    if (selectedNeeds.length === 0) throw new Error('Выберите хотя бы одну потребность')
+    const assignmentByNeed = new Map(parsed.assignments.map((assignment) => [assignment.needKey, assignment]))
+    if (new Set(parsed.stops.map((stop) => stop.clientId)).size !== parsed.stops.length) {
+      throw new Error('Идентификаторы остановок должны быть уникальными')
     }
-    if (selectedNeeds.some((need) => getTransportNeedConflict(firstNeed, need) === 'direction')) {
-      throw new Error('В один рейс нельзя смешивать направления туда и обратно')
+    const canonicalPointByKey = new Map<string, {
+      pointLabel: string
+      city: string | null
+      address: string | null
+    }>()
+    for (const need of selectedNeeds) {
+      canonicalPointByKey.set(need.sourcePointKey, {
+        pointLabel: need.sourcePointLabel,
+        city: need.sourcePointCity,
+        address: need.sourcePointAddress,
+      })
+      canonicalPointByKey.set(need.destinationPointKey, {
+        pointLabel: need.destinationPointLabel,
+        city: need.destinationPointCity,
+        address: need.destinationPointAddress,
+      })
     }
-    assertRouteStartsAt(parsed.route, firstNeed.sourcePointLabel)
+    const sanitizedStops = parsed.stops.map((stop) => {
+      if (stop.kind !== 'service') return stop
+      const canonical = canonicalPointByKey.get(stop.pointKey)
+      if (!canonical) throw new Error('Маршрут содержит точку, которой нет в выбранных потребностях')
+      return { ...stop, ...canonical }
+    })
+    const stopByClientId = new Map(sanitizedStops.map((stop) => [stop.clientId, stop]))
+    if (assignmentByNeed.size !== selectedNeeds.length) {
+      throw new Error('Для каждой потребности должны быть указаны точки забора и доставки')
+    }
+    if (sanitizedStops[0]?.kind !== 'start') throw new Error('Первая точка маршрута должна быть точкой выезда')
+    if (sanitizedStops.slice(1, -1).some((stop) => stop.kind !== 'service')) {
+      throw new Error('Служебные точки допускаются только в начале и конце маршрута')
+    }
+    if (sanitizedStops.some((stop, index) => stop.kind === 'finish' && index !== sanitizedStops.length - 1)) {
+      throw new Error('Точка завершения должна быть последней')
+    }
+    const orderError = getTransportStopOrderError(
+      sanitizedStops.map((stop) => ({ clientId: stop.clientId, plannedTime: stop.plannedArrivalAt })),
+      parsed.assignments,
+    )
+    if (orderError) throw new Error(orderError)
 
-    const { data, error } = await transportDb(createAdminClient()).rpc('fn_create_transport_trip', {
-      p_direction: firstNeed.direction,
-      p_carrier_supplier_id: parsed.carrierSupplierId,
-      p_scheduled_date: parsed.scheduledDate,
-      p_price: parsed.price,
-      p_route_start_key: firstNeed.sourcePointKey,
-      p_route_start: firstNeed.sourcePointLabel,
-      p_route: parsed.route,
-      p_comment: parsed.comment || null,
-      p_links: selectedNeeds.map((need) => ({
+    const links = selectedNeeds.map((need) => {
+      const assignment = assignmentByNeed.get(need.key)
+      if (!assignment) throw new Error(`Не найден маршрут для потребности «${need.title}»`)
+      const pickupStop = stopByClientId.get(assignment.pickupStopClientId)
+      const deliveryStop = stopByClientId.get(assignment.deliveryStopClientId)
+      if (!pickupStop || !deliveryStop) throw new Error('Точка маршрута не найдена')
+      if (pickupStop.pointKey !== need.sourcePointKey || deliveryStop.pointKey !== need.destinationPointKey) {
+        throw new Error('Маршрут потребности не соответствует её точкам забора и доставки')
+      }
+      return {
         needKind: need.kind,
+        needSource: need.source,
         needId: need.id,
         direction: need.direction,
         sourcePointKey: need.sourcePointKey,
@@ -476,7 +679,18 @@ export async function createTransportTrip(input: z.input<typeof createTripSchema
         title: need.title,
         subtitle: need.subtitle,
         neededDate: need.neededDate,
-      })),
+        pickupStopClientId: assignment.pickupStopClientId,
+        deliveryStopClientId: assignment.deliveryStopClientId,
+      }
+    })
+
+    const { data, error } = await transportDb(createAdminClient()).rpc('fn_create_transport_trip_v2', {
+      p_carrier_supplier_id: parsed.carrierSupplierId,
+      p_scheduled_date: parsed.scheduledDate,
+      p_price: parsed.price,
+      p_comment: parsed.comment || null,
+      p_stops: sanitizedStops,
+      p_links: links,
       p_actor: userId,
     })
     if (error) throw new Error(error.message || 'Не удалось создать рейс')
@@ -487,11 +701,28 @@ export async function createTransportTrip(input: z.input<typeof createTripSchema
   }
 }
 
+export async function updateTransportTripStopStatus(input: z.input<typeof updateStopStatusSchema>) {
+  try {
+    const parsed = updateStopStatusSchema.parse(input)
+    const { userId } = await requirePermission('supply_transport', 'manage')
+    const { error } = await transportDb(createAdminClient()).rpc('fn_update_transport_trip_stop_status', {
+      p_stop_id: parsed.stopId,
+      p_status: parsed.status,
+      p_actor: userId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось обновить остановку')
+    revalidateTransportWorkspace()
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
 export async function updateTransportTrip(input: z.input<typeof updateTripSchema>) {
   try {
     const parsed = updateTripSchema.parse(input)
     const { userId } = await requirePermission('supply_transport', 'manage')
-    const { error } = await transportDb(createAdminClient()).rpc('fn_update_transport_trip', {
+    const { error } = await transportDb(createAdminClient()).rpc('fn_update_transport_trip_v2', {
       p_trip_id: parsed.tripId,
       p_status: parsed.status,
       p_carrier_supplier_id: parsed.carrierSupplierId,
@@ -499,6 +730,7 @@ export async function updateTransportTrip(input: z.input<typeof updateTripSchema
       p_price: parsed.price,
       p_route: parsed.route,
       p_comment: parsed.comment || null,
+      p_stops: parsed.stops || null,
       p_actor: userId,
     })
     if (error) throw new Error(error.message || 'Не удалось сохранить рейс')

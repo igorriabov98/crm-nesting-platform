@@ -108,7 +108,7 @@ export type MachineOutsourcingTransportNeed = {
 
 export type MachineOutsourcingTransportOrder = {
   id: string
-  direction: TransportDirection
+  direction: TransportDirection | 'mixed'
   status: TransportOrderStatus
   carrier_supplier_id: string | null
   carrier_name: string | null
@@ -195,8 +195,12 @@ export type TransportWorkspaceNeed = MachineOutsourcingTransportNeed & {
   executor_label: string
   source_point_key: string
   source_point_label: string
+  source_point_city: string | null
+  source_point_address: string | null
   destination_point_key: string
   destination_point_label: string
+  destination_point_city: string | null
+  destination_point_address: string | null
   item_labels: string[]
 }
 
@@ -1735,8 +1739,12 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
       executor_label: executorPointLabel,
       source_point_key: isOutbound ? factoryPointKey : executorPointKey,
       source_point_label: isOutbound ? factoryPointLabel : executorPointLabel,
+      source_point_city: isOutbound ? null : operation?.supplier_city || null,
+      source_point_address: isOutbound ? null : operation?.supplier_address || null,
       destination_point_key: isOutbound ? executorPointKey : factoryPointKey,
       destination_point_label: isOutbound ? executorPointLabel : factoryPointLabel,
+      destination_point_city: isOutbound ? operation?.supplier_city || null : null,
+      destination_point_address: isOutbound ? operation?.supplier_address || null : null,
       item_labels: (operation?.items || []).map((item) => `${item.product_name} (${item.quantity} шт.)`),
     }
   })
@@ -1982,7 +1990,7 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
     )
     const orders = ordersRaw.map((order) => ({
       id: order.id,
-      direction: order.direction as TransportDirection,
+      direction: order.direction as TransportDirection | 'mixed',
       status: order.status as TransportOrderStatus,
       carrier_supplier_id: order.carrier_supplier_id as string | null,
       carrier_name: order.carrier_supplier_id ? carriersById.get(order.carrier_supplier_id as string)?.name || null : null,
