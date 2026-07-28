@@ -3,5 +3,6 @@ export function formatCompanyLocation(company: {
   city?: string | null
   address?: string | null
 }) {
-  return [company.city?.trim(), company.address?.trim()].filter(Boolean).join(', ') || company.name
+  const location = [company.city?.trim(), company.address?.trim()].filter(Boolean).join(', ')
+  return location ? `${company.name} — ${location}` : company.name
 }

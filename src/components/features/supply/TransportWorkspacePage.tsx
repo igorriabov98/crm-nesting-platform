@@ -12,6 +12,8 @@ import {
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowRight,
+  ArrowDown,
+  ArrowUp,
   Banknote,
   Boxes,
   Building2,
@@ -21,6 +23,7 @@ import {
   ChevronRight,
   CircleAlert,
   Clock3,
+  GripVertical,
   Layers3,
   Loader2,
   MapPin,
@@ -60,6 +63,7 @@ import {
 import {
   createTransportTrip,
   updateTransportTrip,
+  updateTransportTripStopStatus,
   type TransportNeedKind,
   type TransportTrip,
   type TransportTripStatus,
@@ -67,8 +71,10 @@ import {
   type UnifiedTransportNeed,
 } from '@/lib/actions/transport-trips'
 import {
-  buildTransportRoute,
-  getTransportNeedConflict,
+  buildTransportStopPlan,
+  getTransportStopOrderError,
+  type TransportDraftAssignment,
+  type TransportDraftStop,
 } from '@/lib/transport/trip-rules'
 import { cn } from '@/lib/utils'
 
@@ -142,6 +148,23 @@ function formatMoney(value: number | null) {
   return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} ₴`
 }
 
+function formatTime(value: string | null) {
+  if (!value) return 'Время не указано'
+  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+}
+
+function plannedArrivalIso(date: string, time: string) {
+  if (!date || !time) return ''
+  const [year, month, day] = date.split('-').map(Number)
+  const [hours, minutes] = time.split(':').map(Number)
+  return new Date(year, month - 1, day, hours, minutes, 0, 0).toISOString()
+}
+
+function addHour(time: string) {
+  const [hours = 0, minutes = 0] = time.split(':').map(Number)
+  return `${String((hours + 1) % 24).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
 function matchesSearch(need: UnifiedTransportNeed, search: string) {
   if (!search) return true
   const haystack = [
@@ -180,7 +203,7 @@ const NeedCard = memo(function NeedCard({
   const Icon = meta.icon
   const disabled = !need.selectable || !compatible
   const disabledReason = !need.selectable
-    ? 'Ожидает подтверждения'
+    ? need.unavailableReason || 'Недоступно'
     : !compatible
       ? 'Другая стартовая точка'
       : null
@@ -269,11 +292,14 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   const [carrierSupplierId, setCarrierSupplierId] = useState('')
   const [scheduledDate, setScheduledDate] = useState('')
   const [price, setPrice] = useState('')
-  const [route, setRoute] = useState('')
+  const [routeStops, setRouteStops] = useState<TransportDraftStop[]>([])
+  const [routeAssignments, setRouteAssignments] = useState<TransportDraftAssignment[]>([])
+  const [draggedStopId, setDraggedStopId] = useState<string | null>(null)
   const [comment, setComment] = useState('')
   const [mobileShortcutHidden, setMobileShortcutHidden] = useState(false)
   const [editingTripId, setEditingTripId] = useState<string | null>(null)
   const [editingDraft, setEditingDraft] = useState<TripDraft | null>(null)
+  const [editingStops, setEditingStops] = useState<TransportTrip['stops']>([])
   const [agreementDrafts, setAgreementDrafts] = useState<Record<string, AgreementDraft>>(() =>
     Object.fromEntries(workspace.agreements.map((agreement) => [
       agreement.operation_id,
@@ -294,16 +320,49 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     () => selectedKeys.map((key) => needByKey.get(key)).filter((need): need is UnifiedTransportNeed => Boolean(need)),
     [needByKey, selectedKeys],
   )
-  const selectedStart = selectedNeeds[0] || null
-  const routeSuggestion = useMemo(() => buildTransportRoute(selectedNeeds), [selectedNeeds])
   const selectedCarrierLabel = workspace.carriers.find((carrier) => carrier.id === carrierSupplierId)?.name
     || 'Выберите перевозчика'
 
-  useEffect(() => {
-    setRoute(routeSuggestion)
-  }, [routeSuggestion])
+  const rebuildRoutePlan = useCallback((needs: UnifiedTransportNeed[]) => {
+    if (needs.length === 0) {
+      setRouteStops([])
+      setRouteAssignments([])
+      return
+    }
+    const plan = buildTransportStopPlan(needs)
+    const points = needs.flatMap((need) => ([
+      {
+        key: need.sourcePointKey,
+        label: need.sourcePointLabel,
+        city: need.sourcePointCity,
+        address: need.sourcePointAddress,
+      },
+      {
+        key: need.destinationPointKey,
+        label: need.destinationPointLabel,
+        city: need.destinationPointCity,
+        address: need.destinationPointAddress,
+      },
+    ]))
+    const base = points.find((point) => point.key.startsWith('factory:')) || points[0]
+    setRouteStops([
+      {
+        clientId: 'trip-start',
+        pointKey: `custom:start:${base.key}`,
+        pointLabel: base.label,
+        city: base.city,
+        address: base.address,
+        kind: 'start',
+        plannedTime: '08:00',
+        serviceDurationMinutes: 0,
+      },
+      ...plan.stops,
+    ])
+    setRouteAssignments(plan.assignments)
+  }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination after filter changes
     setVisibleCount(PAGE_SIZE)
   }, [deferredSearch, needFilter])
 
@@ -311,6 +370,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     if (!focusedNeedKey) return
     const focusedIndex = workspace.needs.findIndex((need) => need.key === focusedNeedKey)
     if (focusedIndex >= 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- URL focus initializes the visible list
       setNeedFilter('all')
       setSearch('')
       setVisibleCount(Math.max(PAGE_SIZE, focusedIndex + 1))
@@ -338,39 +398,81 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
 
   const toggleNeed = useCallback((need: UnifiedTransportNeed) => {
     setMobileShortcutHidden(false)
-    setSelectedKeys((current) => {
-      if (current.includes(need.key)) return current.filter((key) => key !== need.key)
-      const firstSelected = current.length > 0 ? needByKey.get(current[0]) : null
-      if (firstSelected && getTransportNeedConflict(firstSelected, need) === 'source') {
-        toast.error(`Стартовая точка должна быть «${firstSelected.sourcePointLabel}»`)
-        return current
-      }
-      if (firstSelected && getTransportNeedConflict(firstSelected, need) === 'direction') {
-        toast.error('В одном рейсе нельзя смешивать направления туда и обратно')
-        return current
-      }
-      return [...current, need.key]
-    })
-  }, [needByKey])
+    const nextKeys = selectedKeys.includes(need.key)
+      ? selectedKeys.filter((key) => key !== need.key)
+      : [...selectedKeys, need.key]
+    setSelectedKeys(nextKeys)
+    rebuildRoutePlan(nextKeys
+      .map((key) => needByKey.get(key))
+      .filter((candidate): candidate is UnifiedTransportNeed => Boolean(candidate)))
+  }, [needByKey, rebuildRoutePlan, selectedKeys])
 
   function resetComposer() {
     setSelectedKeys([])
     setCarrierSupplierId('')
     setScheduledDate('')
     setPrice('')
-    setRoute('')
+    setRouteStops([])
+    setRouteAssignments([])
     setComment('')
+  }
+
+  function updateRouteStop(clientId: string, patch: Partial<TransportDraftStop>) {
+    setRouteStops((current) => current.map((stop) => stop.clientId === clientId ? { ...stop, ...patch } : stop))
+  }
+
+  function moveRouteStop(clientId: string, direction: -1 | 1, targetClientId?: string) {
+    setRouteStops((current) => {
+      const from = current.findIndex((stop) => stop.clientId === clientId)
+      const target = targetClientId
+        ? current.findIndex((stop) => stop.clientId === targetClientId)
+        : from + direction
+      if (from < 0 || target < 0 || target >= current.length) return current
+      if (current[from].kind !== 'service' || current[target].kind !== 'service') return current
+      const next = [...current]
+      const [moved] = next.splice(from, 1)
+      next.splice(target, 0, moved)
+      const orderedTimes = current.map((stop) => stop.plannedTime)
+      const withOrderedTimes = next.map((stop, index) => ({ ...stop, plannedTime: orderedTimes[index] }))
+      const error = getTransportStopOrderError(withOrderedTimes, routeAssignments)
+      if (error) {
+        toast.error(error)
+        return current
+      }
+      return withOrderedTimes
+    })
+  }
+
+  function addFinishStop() {
+    setRouteStops((current) => {
+      if (current.some((stop) => stop.kind === 'finish')) return current
+      const last = current[current.length - 1]
+      return [...current, {
+        clientId: 'trip-finish',
+        pointKey: 'custom:finish',
+        pointLabel: last?.pointLabel || 'Точка завершения',
+        city: null,
+        address: null,
+        kind: 'finish',
+        plannedTime: last ? addHour(last.plannedTime) : '18:00',
+        serviceDurationMinutes: 0,
+      }]
+    })
   }
 
   function createTrip() {
     setPendingAction('create')
     startTransition(async () => {
       const result = await createTransportTrip({
-        needs: selectedNeeds.map((need) => ({ kind: need.kind, id: need.id })),
+        needs: selectedNeeds.map((need) => ({ source: need.source, id: need.id })),
         carrierSupplierId,
         scheduledDate,
         price,
-        route,
+        stops: routeStops.map((stop) => ({
+          ...stop,
+          plannedArrivalAt: plannedArrivalIso(scheduledDate, stop.plannedTime),
+        })),
+        assignments: routeAssignments,
         comment: comment || null,
       })
       setPendingAction(null)
@@ -387,6 +489,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   function openTrip(trip: TransportTrip) {
     setEditingTripId(trip.id)
     setEditingDraft(tripDraft(trip))
+    setEditingStops(trip.stops)
   }
 
   function saveTrip() {
@@ -399,8 +502,18 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
         carrierSupplierId: editingDraft.carrierSupplierId,
         scheduledDate: editingDraft.scheduledDate,
         price: editingDraft.price,
-        route: editingDraft.route,
+        route: editingStops.length > 0
+          ? editingStops.map((stop) => stop.pointLabel).join(' → ')
+          : editingDraft.route,
         comment: editingDraft.comment || null,
+        stops: editingTrip.status === 'found' && editingStops.length > 0
+          ? editingStops.map((stop, sequence) => ({
+            id: stop.id,
+            sequence,
+            plannedArrivalAt: stop.plannedArrivalAt,
+            serviceDurationMinutes: stop.serviceDurationMinutes,
+          }))
+          : null,
       })
       setPendingAction(null)
       if (!result.success) {
@@ -410,6 +523,45 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
       toast.success(editingDraft.status === 'completed' ? 'Рейс завершён' : 'Рейс сохранён')
       setEditingTripId(null)
       setEditingDraft(null)
+      router.refresh()
+    })
+  }
+
+  function moveEditingStop(stopId: string, direction: -1 | 1) {
+    setEditingStops((current) => {
+      const from = current.findIndex((stop) => stop.id === stopId)
+      const target = from + direction
+      if (from < 0 || target < 0 || target >= current.length) return current
+      if (current[from].kind !== 'service' || current[target].kind !== 'service') return current
+      const next = [...current]
+      const [moved] = next.splice(from, 1)
+      next.splice(target, 0, moved)
+      const positions = new Map(next.map((stop, index) => [stop.id, index]))
+      if (editingTrip?.needs.some((need) => (
+        need.pickupStopId && need.deliveryStopId
+        && (positions.get(need.pickupStopId) ?? -1) >= (positions.get(need.deliveryStopId) ?? -1)
+      ))) {
+        toast.error('Доставка не может быть раньше забора')
+        return current
+      }
+      const orderedEta = current.map((stop) => stop.plannedArrivalAt)
+      return next.map((stop, index) => ({ ...stop, plannedArrivalAt: orderedEta[index] }))
+    })
+  }
+
+  function changeStopStatus(stopId: string, status: 'arrived' | 'completed') {
+    setPendingAction(`stop:${stopId}:${status}`)
+    startTransition(async () => {
+      const result = await updateTransportTripStopStatus({ stopId, status })
+      setPendingAction(null)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось обновить остановку')
+        return
+      }
+      toast.success(status === 'arrived' ? 'Прибытие отмечено' : 'Остановка выполнена')
+      setEditingTripId(null)
+      setEditingDraft(null)
+      setEditingStops([])
       router.refresh()
     })
   }
@@ -445,7 +597,9 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     && Boolean(carrierSupplierId)
     && Boolean(scheduledDate)
     && price !== ''
-    && Boolean(route.trim())
+    && routeStops.length > 1
+    && routeStops.every((stop) => Boolean(stop.pointLabel.trim()) && Boolean(stop.plannedTime))
+    && !getTransportStopOrderError(routeStops, routeAssignments)
     && !isPending
 
   return (
@@ -463,7 +617,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
               Потребности и рейсы
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">
-              Собирайте материалы, деталировку и аутсорсинг с одной стартовой точки в общий рейс.
+              Собирайте материалы, деталировку и аутсорсинг в один многоадресный маршрут.
             </p>
           </div>
 
@@ -507,14 +661,14 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
         </div>
       )}
 
-      <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_390px] xl:items-start">
+      <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_470px] xl:items-start">
         <section className="min-w-0 rounded-3xl border border-slate-200 bg-white shadow-[0_10px_32px_rgba(15,23,42,0.05)]">
           <div className="border-b border-slate-100 p-4 sm:p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-950">Все потребности</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Выберите одну или несколько карточек с одинаковой стартовой точкой.
+                  Выберите потребности из разных компаний и городов — порядок задаётся справа.
                 </p>
               </div>
               <Label className="relative block w-full lg:max-w-xs" htmlFor="transport-search">
@@ -556,10 +710,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                     key={need.key}
                     need={need}
                     selected={selectedKeys.includes(need.key)}
-                    compatible={!selectedStart || (
-                      selectedStart.sourcePointKey === need.sourcePointKey
-                      && selectedStart.direction === need.direction
-                    )}
+                    compatible
                     onToggle={toggleNeed}
                   />
                 ))}
@@ -598,32 +749,17 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
             </div>
 
             <div className="space-y-4 p-5">
-              <div>
-                <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Стартовая точка</div>
-                <div className={cn(
-                  'flex min-h-11 items-center gap-2 rounded-xl border px-3 text-sm font-semibold',
-                  selectedStart
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-                    : 'border-dashed border-slate-300 bg-slate-50 text-slate-500',
-                )}>
-                  <MapPin className="h-4 w-4 shrink-0" />
-                  {selectedStart?.sourcePointLabel || 'Сначала выберите потребность'}
-                </div>
-                <p className="mt-1.5 text-xs leading-5 text-slate-500">
-                  После первого выбора можно добавлять только потребности из этой точки.
-                </p>
-              </div>
-
-              <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
-                Маршрут
-                <Textarea
-                  value={route}
-                  onChange={(event) => setRoute(event.target.value)}
-                  placeholder="Берегово → Ужгород"
-                  className="min-h-20 resize-none rounded-xl"
-                  disabled={!selectedStart}
-                />
-              </Label>
+              <RoutePlanner
+                stops={routeStops}
+                selectedNeeds={selectedNeeds}
+                assignments={routeAssignments}
+                draggedStopId={draggedStopId}
+                onDraggedStopChange={setDraggedStopId}
+                onStopChange={updateRouteStop}
+                onMove={moveRouteStop}
+                onAddFinish={addFinishStop}
+                onRemoveFinish={() => setRouteStops((current) => current.filter((stop) => stop.kind !== 'finish'))}
+              />
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
                 <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
@@ -726,6 +862,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
           if (!open) {
             setEditingTripId(null)
             setEditingDraft(null)
+            setEditingStops([])
           }
         }}
       >
@@ -775,7 +912,12 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                       <SelectValue>{statusMeta[editingDraft.status].label}</SelectValue>
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false}>
-                      {(['found', 'in_transit', 'completed', 'cancelled'] as const).map((status) => (
+                      {(editingTrip.status === 'found'
+                        ? ['found', 'cancelled'] as const
+                        : editingTrip.status === 'in_transit'
+                          ? ['in_transit', 'cancelled'] as const
+                          : [editingTrip.status] as const
+                      ).map((status) => (
                         <SelectItem key={status} value={status}>{statusMeta[status].label}</SelectItem>
                       ))}
                     </SelectContent>
@@ -837,19 +979,129 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                   </Label>
                 </div>
 
-                <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
-                  Маршрут
-                  <Textarea
-                    value={editingDraft.route}
-                    onChange={(event) => setEditingDraft((current) => current && ({
-                      ...current,
-                      route: event.target.value,
-                    }))}
-                    disabled={['completed', 'cancelled'].includes(editingTrip.status)}
-                    className="min-h-20 resize-none rounded-xl"
-                  />
-                  <span className="text-xs text-slate-500">Начало маршрута: {editingTrip.routeStart || '—'}</span>
-                </Label>
+                {editingStops.length > 0 && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Остановки</div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          {editingStops.filter((stop) => stop.kind !== 'start' && stop.status === 'completed').length}
+                          {' из '}
+                          {editingStops.filter((stop) => stop.kind !== 'start').length} выполнено
+                        </div>
+                      </div>
+                    </div>
+                    <ol className="space-y-2">
+                      {editingStops.map((stop, index) => {
+                        const previousServiceStops = editingStops
+                          .slice(0, index)
+                          .filter((candidate) => candidate.kind !== 'start')
+                        const canArrive = stop.kind !== 'start'
+                          && stop.status === 'planned'
+                          && previousServiceStops.every((candidate) => candidate.status === 'completed')
+                        return (
+                          <li key={stop.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                            <div className="flex items-start gap-2">
+                              <span className={cn(
+                                'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold',
+                                stop.status === 'completed'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : stop.status === 'arrived'
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-slate-100 text-slate-600',
+                              )}>
+                                {stop.status === 'completed' ? <Check className="h-4 w-4" /> : index + 1}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-semibold text-slate-900">{stop.pointLabel}</span>
+                                  <span className="text-sm font-bold text-slate-700">{formatTime(stop.plannedArrivalAt)}</span>
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {stop.kind === 'start'
+                                    ? 'Выезд'
+                                    : stop.kind === 'finish'
+                                      ? 'Завершение маршрута'
+                                      : `${stop.serviceDurationMinutes} мин. на площадке`}
+                                </div>
+
+                                {editingTrip.status === 'found' && (
+                                  <div className={cn(
+                                    'mt-2 grid gap-1.5',
+                                    stop.kind === 'service' ? 'grid-cols-[1fr_auto_auto]' : 'grid-cols-1',
+                                  )}>
+                                    <Input
+                                      type="time"
+                                      value={stop.plannedArrivalAt ? new Date(stop.plannedArrivalAt).toTimeString().slice(0, 5) : ''}
+                                      onChange={(event) => setEditingStops((current) => current.map((candidate) => (
+                                        candidate.id === stop.id
+                                          ? { ...candidate, plannedArrivalAt: plannedArrivalIso(editingDraft.scheduledDate, event.target.value) }
+                                          : candidate
+                                      )))}
+                                      className="h-9 rounded-lg"
+                                    />
+                                    {stop.kind === 'service' && (
+                                      <>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="icon"
+                                          aria-label={`Поднять остановку ${stop.pointLabel}`}
+                                          disabled={editingStops[index - 1]?.kind !== 'service'}
+                                          onClick={() => moveEditingStop(stop.id, -1)}
+                                          className="h-9 w-9 rounded-lg"
+                                        >
+                                          <ArrowUp className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="icon"
+                                          aria-label={`Опустить остановку ${stop.pointLabel}`}
+                                          disabled={editingStops[index + 1]?.kind !== 'service'}
+                                          onClick={() => moveEditingStop(stop.id, 1)}
+                                          className="h-9 w-9 rounded-lg"
+                                        >
+                                          <ArrowDown className="h-4 w-4" />
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+
+                                {editingTrip.status === 'in_transit' && stop.kind !== 'start' && stop.status !== 'completed' && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={stop.status === 'arrived' ? 'default' : 'outline'}
+                                    disabled={isPending || (!canArrive && stop.status === 'planned')}
+                                    onClick={() => changeStopStatus(stop.id, stop.status === 'arrived' ? 'completed' : 'arrived')}
+                                    className="mt-2 rounded-lg"
+                                  >
+                                    {pendingAction?.startsWith(`stop:${stop.id}`) && <Loader2 className="h-4 w-4 animate-spin" />}
+                                    {stop.status === 'arrived' ? 'Остановка выполнена' : 'Машина прибыла'}
+                                  </Button>
+                                )}
+                                {editingTrip.status === 'found' && canArrive && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isPending}
+                                    onClick={() => changeStopStatus(stop.id, 'arrived')}
+                                    className="mt-2 rounded-lg"
+                                  >
+                                    Начать рейс: машина прибыла
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ol>
+                  </div>
+                )}
 
                 <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
                   Комментарий
@@ -890,6 +1142,202 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
           )}
         </SheetContent>
       </Sheet>
+    </div>
+  )
+}
+
+function RoutePlanner({
+  stops,
+  selectedNeeds,
+  assignments,
+  draggedStopId,
+  onDraggedStopChange,
+  onStopChange,
+  onMove,
+  onAddFinish,
+  onRemoveFinish,
+}: {
+  stops: TransportDraftStop[]
+  selectedNeeds: UnifiedTransportNeed[]
+  assignments: TransportDraftAssignment[]
+  draggedStopId: string | null
+  onDraggedStopChange: (id: string | null) => void
+  onStopChange: (id: string, patch: Partial<TransportDraftStop>) => void
+  onMove: (id: string, direction: -1 | 1, targetId?: string) => void
+  onAddFinish: () => void
+  onRemoveFinish: () => void
+}) {
+  if (stops.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-500">
+        Выберите потребности — точки забора и доставки появятся здесь автоматически.
+      </div>
+    )
+  }
+
+  const needByKey = new Map(selectedNeeds.map((need) => [need.key, need]))
+  const assignmentActions = assignments.flatMap((assignment) => {
+    const need = needByKey.get(assignment.needKey)
+    if (!need) return []
+    return [
+      { stopId: assignment.pickupStopClientId, label: `Забрать · ${need.title}`, tone: 'pickup' as const },
+      { stopId: assignment.deliveryStopClientId, label: `Доставить · ${need.title}`, tone: 'delivery' as const },
+    ]
+  })
+  const hasFinish = stops.some((stop) => stop.kind === 'finish')
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Очередь остановок</div>
+          <p className="mt-1 text-xs text-slate-500">Перетащите точки или используйте стрелки.</p>
+        </div>
+        {!hasFinish && (
+          <Button type="button" variant="outline" size="sm" onClick={onAddFinish} className="rounded-xl">
+            <Plus className="h-4 w-4" /> Возврат
+          </Button>
+        )}
+      </div>
+
+      <ol className="space-y-2" aria-label="Маршрут рейса">
+        {stops.map((stop, index) => {
+          const actions = assignmentActions.filter((action) => action.stopId === stop.clientId)
+          const canMoveUp = stop.kind === 'service' && stops[index - 1]?.kind === 'service'
+          const canMoveDown = stop.kind === 'service' && stops[index + 1]?.kind === 'service'
+          return (
+            <li
+              key={stop.clientId}
+              draggable={stop.kind === 'service'}
+              onDragStart={() => onDraggedStopChange(stop.clientId)}
+              onDragEnd={() => onDraggedStopChange(null)}
+              onDragOver={(event) => {
+                if (stop.kind === 'service') event.preventDefault()
+              }}
+              onDrop={() => {
+                if (draggedStopId && draggedStopId !== stop.clientId) onMove(draggedStopId, 1, stop.clientId)
+                onDraggedStopChange(null)
+              }}
+              className={cn(
+                'relative rounded-2xl border bg-white p-3 shadow-sm transition-colors',
+                draggedStopId === stop.clientId ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200',
+              )}
+            >
+              <div className="flex items-start gap-2">
+                <div className="flex min-w-7 flex-col items-center gap-1">
+                  {stop.kind === 'service'
+                    ? <GripVertical className="mt-2 h-4 w-4 cursor-grab text-slate-400" aria-hidden="true" />
+                    : <MapPin className="mt-2 h-4 w-4 text-emerald-700" aria-hidden="true" />}
+                  <span className="text-[11px] font-bold text-slate-400">{index + 1}</span>
+                </div>
+                <div className="min-w-0 flex-1 space-y-2">
+                  {stop.kind === 'service' ? (
+                    <div>
+                      <div className="truncate text-sm font-semibold text-slate-950">{stop.pointLabel}</div>
+                      {(stop.city || stop.address) && (
+                        <div className="mt-0.5 truncate text-xs text-slate-500">
+                          {[stop.city, stop.address].filter(Boolean).join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <Label className="grid gap-1 text-xs font-medium text-slate-600">
+                      {stop.kind === 'start' ? 'Точка выезда' : 'Точка завершения'}
+                      <Input
+                        value={stop.pointLabel}
+                        onChange={(event) => onStopChange(stop.clientId, {
+                          pointLabel: event.target.value,
+                          pointKey: `custom:${stop.kind}`,
+                        })}
+                        className="h-9 rounded-lg bg-slate-50"
+                      />
+                    </Label>
+                  )}
+
+                  <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-2">
+                    <Label className="grid gap-1 text-xs font-medium text-slate-600">
+                      Время
+                      <Input
+                        type="time"
+                        value={stop.plannedTime}
+                        onChange={(event) => onStopChange(stop.clientId, { plannedTime: event.target.value })}
+                        className="h-9 rounded-lg"
+                      />
+                    </Label>
+                    {stop.kind === 'service' && (
+                      <Label className="grid gap-1 text-xs font-medium text-slate-600">
+                        На площадке, мин.
+                        <Input
+                          type="number"
+                          min={0}
+                          max={1440}
+                          value={stop.serviceDurationMinutes}
+                          onChange={(event) => onStopChange(stop.clientId, {
+                            serviceDurationMinutes: Number(event.target.value),
+                          })}
+                          className="h-9 rounded-lg"
+                        />
+                      </Label>
+                    )}
+                  </div>
+
+                  {actions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {actions.map((action) => (
+                        <span
+                          key={`${stop.clientId}:${action.label}`}
+                          className={cn(
+                            'rounded-full px-2 py-1 text-[11px] font-semibold',
+                            action.tone === 'pickup'
+                              ? 'bg-amber-50 text-amber-800'
+                              : 'bg-emerald-50 text-emerald-800',
+                          )}
+                        >
+                          {action.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex shrink-0 flex-col gap-1">
+                  {stop.kind === 'service' && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Поднять остановку ${stop.pointLabel}`}
+                        disabled={!canMoveUp}
+                        onClick={() => onMove(stop.clientId, -1)}
+                        className="h-8 w-8 rounded-lg"
+                      >
+                        <ArrowUp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Опустить остановку ${stop.pointLabel}`}
+                        disabled={!canMoveDown}
+                        onClick={() => onMove(stop.clientId, 1)}
+                        className="h-8 w-8 rounded-lg"
+                      >
+                        <ArrowDown className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
+                  {stop.kind === 'finish' && (
+                    <Button type="button" variant="ghost" size="sm" onClick={onRemoveFinish} className="text-rose-700">
+                      Убрать
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
     </div>
   )
 }
@@ -1033,8 +1481,28 @@ function TripsSection({
                 <TripFact icon={Building2} label="Перевозчик" value={trip.carrierName || 'Не назначен'} />
                 <TripFact icon={CalendarDays} label="Дата" value={formatDate(trip.scheduledDate)} />
                 <TripFact icon={Banknote} label="Цена" value={formatMoney(trip.price)} />
-                <TripFact icon={Package} label="Потребности" value={`${trip.needs.length} шт.`} />
+                <TripFact
+                  icon={MapPin}
+                  label="Остановки"
+                  value={trip.stops.length > 0
+                    ? `${trip.stops.filter((stop) => stop.kind !== 'start' && stop.status === 'completed').length} из ${trip.stops.filter((stop) => stop.kind !== 'start').length}`
+                    : `${trip.needs.length} потребн.`}
+                />
               </div>
+
+              {trip.stops.find((stop) => stop.kind !== 'start' && stop.status !== 'completed') && (
+                <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">Следующая точка</div>
+                  <div className="mt-1 flex items-center justify-between gap-3 text-sm">
+                    <span className="truncate font-semibold text-blue-950">
+                      {trip.stops.find((stop) => stop.kind !== 'start' && stop.status !== 'completed')?.pointLabel}
+                    </span>
+                    <span className="shrink-0 font-bold text-blue-800">
+                      {formatTime(trip.stops.find((stop) => stop.kind !== 'start' && stop.status !== 'completed')?.plannedArrivalAt || null)}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {Array.from(new Set(trip.needs.map((need) => need.kind))).map((kind) => (

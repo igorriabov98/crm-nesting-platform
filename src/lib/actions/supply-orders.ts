@@ -118,6 +118,8 @@ export type SupplyTransportNeed = {
   supplierId: string
   supplierName: string
   supplierLocation: string
+  supplierCity: string | null
+  supplierAddress: string | null
   factoryId: string
   factoryName: string
   deliveryDate: string
@@ -1019,6 +1021,8 @@ export async function getSupplyTransportNeeds(): Promise<{
           supplierId: supplier.id,
           supplierName: supplier.name,
           supplierLocation: formatCompanyLocation(supplier),
+          supplierCity: supplier.city,
+          supplierAddress: supplier.address,
           factoryId,
           factoryName: factories.get(factoryId) || 'Завод не указан',
           deliveryDate: schedule.delivery_date,

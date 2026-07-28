@@ -2422,6 +2422,7 @@ export type Database = {
           id: string
           transport_order_id: string
           need_kind: 'materials' | 'detailing' | 'outsourcing'
+          need_source: 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'
           need_id: string
           direction: Database['public']['Enums']['outsourcing_transport_direction']
           source_point_key: string
@@ -2431,6 +2432,8 @@ export type Database = {
           need_title: string
           need_subtitle: string | null
           needed_date: string | null
+          pickup_stop_id: string | null
+          delivery_stop_id: string | null
           released_at: string | null
           created_at: string
         }
@@ -2438,6 +2441,7 @@ export type Database = {
           id?: string
           transport_order_id: string
           need_kind: 'materials' | 'detailing' | 'outsourcing'
+          need_source: 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'
           need_id: string
           direction: Database['public']['Enums']['outsourcing_transport_direction']
           source_point_key: string
@@ -2447,6 +2451,8 @@ export type Database = {
           need_title: string
           need_subtitle?: string | null
           needed_date?: string | null
+          pickup_stop_id?: string | null
+          delivery_stop_id?: string | null
           released_at?: string | null
           created_at?: string
         }
@@ -2454,6 +2460,7 @@ export type Database = {
           id?: string
           transport_order_id?: string
           need_kind?: 'materials' | 'detailing' | 'outsourcing'
+          need_source?: 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'
           need_id?: string
           direction?: Database['public']['Enums']['outsourcing_transport_direction']
           source_point_key?: string
@@ -2463,8 +2470,66 @@ export type Database = {
           need_title?: string
           need_subtitle?: string | null
           needed_date?: string | null
+          pickup_stop_id?: string | null
+          delivery_stop_id?: string | null
           released_at?: string | null
           created_at?: string
+        }
+      }
+      transport_trip_stops: {
+        Row: {
+          id: string
+          transport_order_id: string
+          client_key: string
+          sequence_no: number
+          stop_kind: 'start' | 'service' | 'finish'
+          point_key: string
+          point_label: string
+          city: string | null
+          address: string | null
+          planned_arrival_at: string | null
+          service_duration_minutes: number
+          status: 'planned' | 'arrived' | 'completed'
+          arrived_at: string | null
+          completed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          transport_order_id: string
+          client_key: string
+          sequence_no: number
+          stop_kind: 'start' | 'service' | 'finish'
+          point_key: string
+          point_label: string
+          city?: string | null
+          address?: string | null
+          planned_arrival_at?: string | null
+          service_duration_minutes?: number
+          status?: 'planned' | 'arrived' | 'completed'
+          arrived_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          transport_order_id?: string
+          client_key?: string
+          sequence_no?: number
+          stop_kind?: 'start' | 'service' | 'finish'
+          point_key?: string
+          point_label?: string
+          city?: string | null
+          address?: string | null
+          planned_arrival_at?: string | null
+          service_duration_minutes?: number
+          status?: 'planned' | 'arrived' | 'completed'
+          arrived_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
         }
       }
       production_plan_date_change_requests: {
@@ -4702,7 +4767,7 @@ export type Database = {
       production_date_change_request_status: 'pending' | 'approved' | 'rejected' | 'conflicted'
       outsourcing_executor_type: 'supplier' | 'factory'
       outsourcing_responsible: 'production' | 'supply'
-      outsourcing_transport_direction: 'outbound' | 'return'
+      outsourcing_transport_direction: 'outbound' | 'return' | 'mixed'
       outsourcing_transport_plan_state: 'preliminary' | 'confirmed'
       outsourcing_transport_need_status: 'open' | 'linked' | 'completed' | 'cancelled'
       outsourcing_transport_order_status: 'needed' | 'found' | 'in_transit' | 'completed' | 'cancelled'
