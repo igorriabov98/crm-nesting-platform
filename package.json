@@ -34,6 +34,7 @@
     "test:material-request-queue": "tsx scripts/test-material-request-queue.ts",
     "test:people-planning": "tsx scripts/test-people-planning.ts",
     "test:planning-dashboard": "tsx scripts/test-planning-director-dashboard.ts",
+    "test:sidebar-work-queue-badges": "tsx scripts/test-sidebar-work-queue-badges.ts",
     "test:nesting-dimension-choice": "tsx scripts/test-nesting-dimension-choice.ts",
     "test:nesting-ai-match-policy": "tsx scripts/test-nesting-ai-match-policy.ts",
     "test:task-on-conflict": "node scripts/test-task-on-conflict.mjs",

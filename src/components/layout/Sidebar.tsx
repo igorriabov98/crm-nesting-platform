@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import {
@@ -45,6 +45,13 @@ import type { CurrentUser } from '@/lib/types'
 import { ROUTES } from '@/lib/constants/routes'
 import { MailUnreadBadge } from '@/components/features/mail/MailUnreadBadge'
 import { canManageDepartmentRequestTarget } from '@/lib/department-requests'
+import {
+  getSidebarWorkQueueCounts,
+} from '@/lib/actions/sidebar-work-queues'
+import {
+  getSidebarWorkQueueCount,
+  type SidebarWorkQueueCounts,
+} from '@/lib/sidebar-work-queues'
 
 interface SidebarProps {
   user: CurrentUser
@@ -59,6 +66,50 @@ interface NavItem {
   icon: React.ElementType
   exact?: boolean
   showMailBadge?: boolean
+}
+
+const EMPTY_QUEUE_COUNTS: SidebarWorkQueueCounts = {
+  departmentRequests: { technologist: 0, supply: 0, production: 0, total: 0 },
+  transport: 0,
+  materialRequests: 0,
+}
+
+let queueCountsRequest: Promise<SidebarWorkQueueCounts> | null = null
+let lastQueueCounts: SidebarWorkQueueCounts = EMPTY_QUEUE_COUNTS
+let lastQueueCountsAt = 0
+
+function loadSharedQueueCounts() {
+  if (Date.now() - lastQueueCountsAt < 10_000) return Promise.resolve(lastQueueCounts)
+  if (!queueCountsRequest) {
+    queueCountsRequest = getSidebarWorkQueueCounts()
+      .then((counts) => {
+        lastQueueCounts = counts
+        lastQueueCountsAt = Date.now()
+        return counts
+      })
+      .finally(() => {
+        queueCountsRequest = null
+      })
+  }
+  return queueCountsRequest
+}
+
+function WorkQueueBadge({ count, collapsed = false }: { count: number; collapsed?: boolean }) {
+  if (count <= 0) return null
+  const label = count > 99 ? '99+' : String(count)
+
+  return (
+    <span
+      aria-label={`${count} новых элементов, которые нужно взять в работу`}
+      aria-live="polite"
+      className={cn(
+        'inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-5 text-white shadow-sm ring-2 ring-white',
+        collapsed && 'absolute right-1 top-1 h-4 min-w-4 px-1 text-[9px] leading-4',
+      )}
+    >
+      {label}
+    </span>
+  )
 }
 
 const iconMap: Record<SidebarIconKey, React.ElementType> = {
@@ -123,6 +174,29 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const [isInventoryMenuOpen, setIsInventoryMenuOpen] = useState(false)
   const [isMeetingsMenuOpen, setIsMeetingsMenuOpen] = useState(false)
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false)
+  const [queueCounts, setQueueCounts] = useState<SidebarWorkQueueCounts>(EMPTY_QUEUE_COUNTS)
+
+  useEffect(() => {
+    let active = true
+    const refresh = async () => {
+      const counts = await loadSharedQueueCounts()
+      if (active) setQueueCounts(counts)
+    }
+    const initialRefresh = window.setTimeout(() => void refresh(), 0)
+    const interval = window.setInterval(() => void refresh(), 60_000)
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      active = false
+      window.clearTimeout(initialRefresh)
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
+  }, [pathname])
 
   const collapsed = isMobile ? false : isCollapsed
   const profileLabel = (user.department_memberships || [])
@@ -201,6 +275,10 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
     return pathname === item.href || (!item.exact && pathname.startsWith(item.href + '/'))
   }
 
+  function badgeCount(item: NavItem) {
+    return getSidebarWorkQueueCount(item.href, queueCounts)
+  }
+
   const isSalesActive = salesItems.some(isActiveItem)
   const isSalesExpanded = !collapsed && (isSalesMenuOpen || isSalesActive)
   const isFinanceActive = financeItems.some(isActiveItem)
@@ -221,15 +299,16 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   function renderNavItem(item: NavItem, nested = false) {
     const Icon = item.icon
     const isActive = isActiveItem(item)
+    const count = badgeCount(item)
 
     return (
       <Link
         key={item.href}
         href={navHref(item)}
         onClick={onNavigate}
-        title={collapsed ? item.label : undefined}
+        title={collapsed ? `${item.label}${count > 0 ? `: ${count} новых` : ''}` : undefined}
         className={cn(
-          'group flex items-center rounded-lg transition-all',
+          'group relative flex items-center rounded-lg transition-all',
           collapsed ? 'justify-center px-0 py-2.5' : nested ? 'gap-2 px-3 py-2 pl-5 text-sm' : 'gap-3 px-3 py-2.5',
           isActive
             ? 'bg-[#1B3A6B] text-white font-medium'
@@ -237,10 +316,12 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
         )}
       >
         <Icon className={cn(nested ? 'h-4 w-4 shrink-0' : 'h-5 w-5 shrink-0', isActive ? 'text-white' : 'text-[#9CA3AF] group-hover:text-[#1B3A6B]')} />
+        {collapsed && <WorkQueueBadge count={count} collapsed />}
         {!collapsed && (
           <>
             <span className="flex-1 truncate">{item.label}</span>
             {item.showMailBadge && <MailUnreadBadge />}
+            <WorkQueueBadge count={count} />
             {isActive && !nested && <ChevronRight className="h-4 w-4 text-white/70" />}
           </>
         )}
@@ -266,16 +347,17 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
     icon: React.ElementType
   }) {
     if (items.length === 0) return null
+    const collapsedCount = items.reduce((total, item) => total + badgeCount(item), 0)
 
     return (
       <div className="space-y-1">
         <button
           type="button"
           onClick={toggle}
-          title={collapsed ? collapsedTitle : undefined}
+          title={collapsed ? `${collapsedTitle}${collapsedCount > 0 ? `: ${collapsedCount} новых` : ''}` : undefined}
           aria-expanded={isExpanded}
           className={cn(
-            'group flex w-full items-center rounded-lg transition-all',
+            'group relative flex w-full items-center rounded-lg transition-all',
             collapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5',
             isActive
               ? 'bg-[#F4F6F9] text-[#1B3A6B] font-semibold'
@@ -283,6 +365,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
           )}
         >
           <Icon className={cn('h-5 w-5 shrink-0', isActive ? 'text-[#1B3A6B]' : 'text-[#9CA3AF] group-hover:text-[#1B3A6B]')} />
+          {collapsed && <WorkQueueBadge count={collapsedCount} collapsed />}
           {!collapsed && (
             <>
               <span className="flex-1 truncate text-left">{label}</span>
