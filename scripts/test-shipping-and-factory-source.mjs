@@ -67,7 +67,7 @@ const schemaSql = String.raw`
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TYPE public.task_status AS ENUM ('pending','in_progress','completed','cancelled');
 CREATE TYPE public.task_type AS ENUM ('technologist_request','material_type_selection','engineer_confirm','transport_cost');
-CREATE TABLE public.users(id uuid PRIMARY KEY, email text, full_name text, is_active boolean, is_service_account boolean NOT NULL DEFAULT false, updated_at timestamptz DEFAULT now());
+CREATE TABLE public.users(id uuid PRIMARY KEY, email text, full_name text, is_active boolean);
 CREATE TABLE public.company_settings(id uuid PRIMARY KEY, auto_task_technologist_user_id uuid, auto_task_engineer_user_id uuid);
 CREATE TABLE public.machines(id uuid PRIMARY KEY, name text, created_by uuid, desired_shipping_date date, is_archived boolean DEFAULT false);
 CREATE TABLE public.production_stages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), machine_id uuid, stage_type text, planned_date_end date, date_end date, created_at timestamptz DEFAULT now());
