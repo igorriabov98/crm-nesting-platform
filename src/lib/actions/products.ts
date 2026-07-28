@@ -1028,7 +1028,6 @@ export async function updateProductProject(id: string, input: ProductProjectInpu
       characteristics: parsed.characteristics?.trim() || '',
       client_wishes: parsed.client_wishes?.trim() || '',
       assigned_engineer_id: parsed.assigned_engineer_id,
-      status: parsed.status,
       updated_by: user.id,
       updated_at: new Date().toISOString(),
     }
@@ -1118,10 +1117,15 @@ export async function saveProductProjectEngineeringDeliverables(formData: FormDa
     const projectId = String(formData.get('project_id') || '')
     const drawing = formData.get('drawing')
     const photo = formData.get('photo')
+    const engineerDescription = String(formData.get('engineer_description') || '').trim()
     const unitWeightKg = Number(formData.get('unit_weight_kg') || 0)
 
     if (!projectId) throw new Error('Проект не найден')
-    if (!(drawing instanceof File) || drawing.size <= 0) throw new Error('Загрузите чертеж')
+    if (engineerDescription.length < 3) throw new Error('Добавьте описание инженера')
+    if (!(drawing instanceof File) || drawing.size <= 0) throw new Error('Загрузите PDF-чертёж')
+    if (drawing.type !== 'application/pdf' && !drawing.name.toLowerCase().endsWith('.pdf')) {
+      throw new Error('Чертёж должен быть в формате PDF')
+    }
     if (!(photo instanceof File) || photo.size <= 0) throw new Error('Загрузите фото изделия')
     if (!isImageFile(photo)) throw new Error('Фото должно быть изображением')
     if (!Number.isFinite(unitWeightKg) || unitWeightKg <= 0) throw new Error('Укажите вес изделия')
@@ -1169,6 +1173,7 @@ export async function saveProductProjectEngineeringDeliverables(formData: FormDa
     const { error: versionError } = await db
       .from('product_project_versions')
       .update({
+        description: engineerDescription,
         drawing_number: drawingNumberFromFileName(drawing.name),
         unit_weight_kg: unitWeightKg,
       } satisfies ProductProjectVersionUpdate)

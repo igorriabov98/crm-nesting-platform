@@ -450,6 +450,7 @@ async function validateProjectEngineeringDeliverables(db: LooseSupabaseClient, p
 
   if (!drawingFile) missing.push('чертеж')
   if (!photoFile) missing.push('фото изделия')
+  if (!version.description?.trim()) missing.push('описание инженера')
   if (!Number(version.unit_weight_kg || 0)) missing.push('вес изделия')
 
   if (missing.length > 0) {

@@ -1,8 +1,18 @@
 "use client"
 
+import dynamic from 'next/dynamic'
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Mail, Trash2 } from 'lucide-react'
+import {
+  Camera,
+  CheckCircle2,
+  ChevronDown,
+  ClipboardPenLine,
+  Mail,
+  Paperclip,
+  Trash2,
+  UserRoundCheck,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { createProductProjectWithPhoto, updateProductProject } from '@/lib/actions/products'
 import { ROUTES } from '@/lib/constants/routes'
@@ -12,11 +22,18 @@ import { Label } from '@/components/ui/label'
 import { LoadingButton } from '@/components/ui/loading-button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
 import type { Client, ProductProject, UserSummary } from '@/lib/types'
 import type { ProductProjectInput } from '@/lib/types/schemas'
-import { MailThreadPicker } from '@/components/features/mail/MailThreadPicker'
 import { linkMailToProductProject } from '@/lib/actions/mail'
 import type { MailLinkInput, MailLinkPreview } from '@/lib/mail/types'
+import { ProductProjectLifecycle, productProjectStatusLabels } from './ProductProjectLifecycle'
+
+const MailThreadPicker = dynamic(
+  () => import('@/components/features/mail/MailThreadPicker').then((module) => module.MailThreadPicker),
+  { loading: () => <Skeleton className="h-40 w-full rounded-xl" /> },
+)
 
 type ProjectState = {
   title: string
@@ -25,7 +42,6 @@ type ProjectState = {
   characteristics: string
   client_wishes: string
   assigned_engineer_id: string
-  status: ProductProjectInput['status']
 }
 
 function initialState(project?: ProductProject | null, initialTitle = ''): ProjectState {
@@ -36,7 +52,6 @@ function initialState(project?: ProductProject | null, initialTitle = ''): Proje
     characteristics: project?.characteristics || '',
     client_wishes: project?.client_wishes || '',
     assigned_engineer_id: project?.assigned_engineer_id || '',
-    status: project?.status || 'new_project',
   }
 }
 
@@ -44,14 +59,18 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
 }
 
-const statusLabels: Record<ProductProjectInput['status'], string> = {
-  new_project: 'Новый проект',
-  draft: 'Черновик',
-  engineering: 'В работе у инженера',
-  client_review: 'На согласовании',
-  approved: 'Подтвержден',
-  added_to_products: 'Добавлен в продукцию',
-  cancelled: 'Отменен',
+function SectionHeading({ number, title, description }: { number: number; title: string; description: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
+        {number}
+      </span>
+      <div>
+        <h2 className="font-semibold text-foreground">{title}</h2>
+        <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  )
 }
 
 export function ProductProjectForm({
@@ -71,11 +90,14 @@ export function ProductProjectForm({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [mailThreadIds, setMailThreadIds] = useState<string[]>([])
   const [attachedMailLink, setAttachedMailLink] = useState<MailLinkPreview | null>(initialMailLink || null)
+  const [mailExpanded, setMailExpanded] = useState(false)
   const isEdit = Boolean(project?.id)
+  const status = project?.status || 'new_project'
   const selectedClientLabel = values.client_id === 'none'
     ? 'Без клиента'
     : clients.find((client) => client.id === values.client_id)?.name || 'Выберите клиента'
   const selectedEngineerLabel = engineers.find((engineer) => engineer.id === values.assigned_engineer_id)?.full_name || 'Выберите инженера'
+  const attachedMailCount = (attachedMailLink ? 1 : 0) + mailThreadIds.length
 
   function setField<K extends keyof ProjectState>(field: K, value: ProjectState[K]) {
     setValues((current) => ({ ...current, [field]: value }))
@@ -92,13 +114,13 @@ export function ProductProjectForm({
         characteristics: values.characteristics,
         client_wishes: values.client_wishes,
         assigned_engineer_id: values.assigned_engineer_id,
-        status: values.status,
+        status,
       }
       const result = isEdit && project
         ? await updateProductProject(project.id, payload)
         : await createProjectWithPhoto(payload, photoInputRef.current?.files?.[0] || null)
       if (!result.success) throw new Error(result.error || 'Не удалось сохранить проект')
-      toast.success(isEdit ? 'Проект обновлен' : 'Проект создан')
+      toast.success(isEdit ? 'Проект обновлён' : 'Проект создан. Инженеру назначена задача.')
       const createdProject = 'project' in result ? result.project as { id?: string } | null : null
       if (!isEdit && createdProject?.id) {
         const mailLinks: MailLinkInput[] = [
@@ -141,107 +163,230 @@ export function ProductProjectForm({
     formData.append('characteristics', payload.characteristics || '')
     formData.append('client_wishes', payload.client_wishes || '')
     formData.append('assigned_engineer_id', payload.assigned_engineer_id)
-    formData.append('status', payload.status)
+    formData.append('status', status)
     if (photo) formData.append('photo', photo)
 
     return createProductProjectWithPhoto(formData)
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-5 rounded-xl border border-[#E8ECF0] bg-white p-5">
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2 md:col-span-2">
-          <Label htmlFor="title">Название проекта *</Label>
-          <Input id="title" value={values.title} onChange={(event) => setField('title', event.target.value)} required />
-        </div>
-        <div className="space-y-2">
-          <Label>Клиент</Label>
-          <Select value={values.client_id} onValueChange={(value) => setField('client_id', value || 'none')}>
-            <SelectTrigger className="w-full">
-              <SelectValue>{selectedClientLabel}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">Без клиента</SelectItem>
-              {clients.map((client) => (
-                <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Инженер *</Label>
-          <Select value={values.assigned_engineer_id} onValueChange={(value) => setField('assigned_engineer_id', value || '')}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Выберите инженера">{selectedEngineerLabel}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {engineers.map((engineer) => (
-                <SelectItem key={engineer.id} value={engineer.id}>{engineer.full_name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Статус</Label>
-          <Select value={values.status} onValueChange={(value) => setField('status', (value || 'draft') as ProductProjectInput['status'])}>
-            <SelectTrigger className="w-full">
-              <SelectValue>{statusLabels[values.status]}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(statusLabels).map(([value, label]) => (
-                <SelectItem key={value} value={value}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-      {!isEdit && (
-        <div className="grid gap-5 lg:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="project_photo">Фото изделия</Label>
-            <Input id="project_photo" ref={photoInputRef} type="file" accept="image/*" disabled={isSubmitting} />
+    <form onSubmit={onSubmit} className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <div className="border-b border-border bg-muted/25 px-4 py-4 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <ClipboardPenLine className="size-5" aria-hidden="true" />
+            </span>
+            <div>
+              <p className="font-semibold text-foreground">{isEdit ? 'Карточка проекта' : 'Данные нового изделия'}</p>
+              <p className="text-sm text-muted-foreground">Статусы меняются автоматически по действиям команды.</p>
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label>Почтовая переписка</Label>
-            {attachedMailLink && (
-              <div className="mb-3 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
-                <Mail className="mt-1 size-5 shrink-0 text-blue-700" aria-hidden="true" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
-                    {attachedMailLink.kind === 'thread' ? 'Вся цепочка' : 'Одно письмо'}
-                  </p>
-                  <p className="mt-1 truncate font-medium text-blue-950">{attachedMailLink.subject}</p>
-                  <p className="mt-1 truncate text-xs text-blue-800/75">{attachedMailLink.sender}</p>
-                </div>
-                <Button type="button" variant="ghost" size="icon" className="min-h-11 min-w-11" aria-label="Убрать письмо" onClick={() => setAttachedMailLink(null)}>
-                  <Trash2 className="size-4" />
-                </Button>
+          <div className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-sm font-medium text-primary">
+            {productProjectStatusLabels[status]}
+          </div>
+        </div>
+        {!isEdit && (
+          <div className="mt-4">
+            <ProductProjectLifecycle status={status} compact />
+          </div>
+        )}
+      </div>
+
+      <div className={cn('grid', !isEdit && 'xl:grid-cols-[minmax(0,1fr)_380px]')}>
+        <div className="space-y-7 p-4 sm:p-6">
+          <section className="space-y-5">
+            <SectionHeading
+              number={1}
+              title="Основная информация"
+              description="Название, клиент и ответственный инженер — всё необходимое для запуска проекта."
+            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="title">Название проекта *</Label>
+                <Input
+                  id="title"
+                  className="min-h-11 text-base"
+                  value={values.title}
+                  onChange={(event) => setField('title', event.target.value)}
+                  placeholder="Например, корпус блока управления"
+                  autoFocus={!initialMailLink}
+                  required
+                />
               </div>
-            )}
-            <MailThreadPicker selected={mailThreadIds} onChange={setMailThreadIds} compact />
-          </div>
+              <div className="space-y-2">
+                <Label htmlFor="project_client">Клиент</Label>
+                <Select value={values.client_id} onValueChange={(value) => setField('client_id', value || 'none')}>
+                  <SelectTrigger id="project_client" className="min-h-11 w-full">
+                    <SelectValue>{selectedClientLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Без клиента</SelectItem>
+                    {clients.map((client) => (
+                      <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="project_engineer">Инженер *</Label>
+                <Select value={values.assigned_engineer_id} onValueChange={(value) => setField('assigned_engineer_id', value || '')}>
+                  <SelectTrigger id="project_engineer" className="min-h-11 w-full">
+                    <SelectValue placeholder="Выберите инженера">{selectedEngineerLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {engineers.map((engineer) => (
+                      <SelectItem key={engineer.id} value={engineer.id}>{engineer.full_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="flex items-start gap-1.5 text-xs leading-5 text-muted-foreground">
+                  <UserRoundCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  После создания инженер сразу получит задачу в CRM.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-5 border-t border-border pt-6">
+            <SectionHeading
+              number={2}
+              title="Требования к изделию"
+              description="Сначала главное. Дополнительные детали можно дополнять уже в карточке проекта."
+            />
+            <div className="space-y-2">
+              <Label htmlFor="description">Описание продукта</Label>
+              <Textarea
+                id="description"
+                rows={5}
+                className="min-h-32 resize-y"
+                value={values.description}
+                onChange={(event) => setField('description', event.target.value)}
+                placeholder="Что нужно изготовить, назначение и ожидаемый результат"
+              />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="characteristics">Характеристики</Label>
+                <Textarea
+                  id="characteristics"
+                  rows={4}
+                  className="resize-y"
+                  value={values.characteristics}
+                  onChange={(event) => setField('characteristics', event.target.value)}
+                  placeholder="Размеры, материал, покрытие, особенности"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="client_wishes">Пожелания клиента</Label>
+                <Textarea
+                  id="client_wishes"
+                  rows={4}
+                  className="resize-y"
+                  value={values.client_wishes}
+                  onChange={(event) => setField('client_wishes', event.target.value)}
+                  placeholder="Сроки, внешний вид и другие пожелания"
+                />
+              </div>
+            </div>
+          </section>
         </div>
-      )}
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="space-y-2">
-          <Label htmlFor="description">Описание продукта</Label>
-          <Textarea id="description" rows={5} value={values.description} onChange={(event) => setField('description', event.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="characteristics">Характеристики</Label>
-          <Textarea id="characteristics" rows={5} value={values.characteristics} onChange={(event) => setField('characteristics', event.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="client_wishes">Пожелания клиента</Label>
-          <Textarea id="client_wishes" rows={5} value={values.client_wishes} onChange={(event) => setField('client_wishes', event.target.value)} />
-        </div>
+
+        {!isEdit && (
+          <aside className="space-y-4 border-t border-border bg-muted/15 p-4 sm:p-6 xl:border-l xl:border-t-0">
+            <section className="rounded-xl border border-border bg-background p-4">
+              <div className="flex items-center gap-3">
+                <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <Camera className="size-4" aria-hidden="true" />
+                </span>
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">Фото изделия</h2>
+                  <p className="text-xs text-muted-foreground">Необязательно, можно добавить позже</p>
+                </div>
+              </div>
+              <Input
+                id="project_photo"
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                className="mt-4 min-h-11 cursor-pointer"
+                aria-label="Фото изделия"
+                disabled={isSubmitting}
+              />
+            </section>
+
+            <section className="overflow-hidden rounded-xl border border-border bg-background">
+              <button
+                type="button"
+                className="flex min-h-14 w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                aria-expanded={mailExpanded}
+                aria-controls="project-mail-picker"
+                onClick={() => setMailExpanded((current) => !current)}
+              >
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
+                  <Mail className="size-4" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-foreground">Почтовая переписка</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {attachedMailCount > 0 ? `Прикреплено: ${attachedMailCount}` : 'Не прикреплена'}
+                  </span>
+                </span>
+                <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform duration-200', mailExpanded && 'rotate-180')} aria-hidden="true" />
+              </button>
+
+              {attachedMailLink && (
+                <div className="mx-4 mb-3 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                  <Paperclip className="mt-0.5 size-4 shrink-0 text-blue-700" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">
+                      {attachedMailLink.kind === 'thread' ? 'Вся цепочка' : 'Одно письмо'}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-sm font-medium text-blue-950">{attachedMailLink.subject}</p>
+                    <p className="mt-1 truncate text-xs text-blue-800/75">{attachedMailLink.sender}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="min-h-11 min-w-11 text-blue-800 hover:bg-blue-100"
+                    aria-label="Убрать письмо"
+                    onClick={() => setAttachedMailLink(null)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              )}
+
+              {mailExpanded && (
+                <div id="project-mail-picker" className="border-t border-border p-4">
+                  <p className="mb-3 text-xs leading-5 text-muted-foreground">
+                    Поиск загружается только после раскрытия, поэтому форма открывается быстрее.
+                  </p>
+                  <MailThreadPicker selected={mailThreadIds} onChange={setMailThreadIds} compact />
+                </div>
+              )}
+            </section>
+
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+              <div className="flex gap-2 font-semibold">
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                После создания
+              </div>
+              <p className="mt-2 text-xs leading-5 text-emerald-800">
+                Проект получит статус «Ожидает инженера», а выбранному специалисту автоматически создастся задача.
+              </p>
+            </div>
+          </aside>
+        )}
       </div>
-      <div className="flex justify-end gap-3">
-        <Button type="button" variant="outline" onClick={() => router.push(ROUTES.PRODUCT_PROJECTS)} disabled={isSubmitting}>
+
+      <div className="sticky bottom-0 z-10 flex flex-col-reverse gap-3 border-t border-border bg-background/95 px-4 py-4 backdrop-blur sm:flex-row sm:items-center sm:justify-end sm:px-6">
+        <Button type="button" variant="outline" className="min-h-11 sm:min-w-28" onClick={() => router.push(ROUTES.PRODUCT_PROJECTS)} disabled={isSubmitting}>
           Отмена
         </Button>
-        <LoadingButton type="submit" loading={isSubmitting} className="bg-[#1B3A6B] text-white hover:bg-[#152D54]">
-          {isEdit ? 'Сохранить' : 'Создать проект'}
+        <LoadingButton type="submit" loading={isSubmitting} className="min-h-11 bg-primary px-6 text-primary-foreground hover:bg-primary/90 sm:min-w-44">
+          {isEdit ? 'Сохранить изменения' : 'Создать проект'}
         </LoadingButton>
       </div>
     </form>
