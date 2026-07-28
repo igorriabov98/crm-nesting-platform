@@ -51,8 +51,12 @@ export type InventoryTransferCard = {
   machineName: string
   sourceFactoryId: string
   sourceFactoryName: string
+  sourceFactoryCity: string | null
+  sourceFactoryAddress: string | null
   destinationFactoryId: string
   destinationFactoryName: string
+  destinationFactoryCity: string | null
+  destinationFactoryAddress: string | null
   status: InventoryTransferStatus
   expectedArrivalDate: string | null
   deadline: string | null
@@ -110,7 +114,7 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
       .in('transfer_id', transferIds)
       .order('created_at', { ascending: true }),
     db.from('machines').select('id, name').in('id', machineIds),
-    db.from('factories').select('id, name').in('id', factoryIds),
+    db.from('factories').select('id, name, city, address').in('id', factoryIds),
     db
       .from('tasks')
       .select('id, inventory_transfer_id, status, deadline')
@@ -134,7 +138,7 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
 
   const materials = new Map(((materialsResult.data || []) as Array<{ id: string; name: string; category: string | null }>).map((row) => [row.id, row]))
   const machines = new Map(((machinesResult.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row.name]))
-  const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row.name]))
+  const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>).map((row) => [row.id, row]))
   const tasks = (tasksResult.data || []) as Array<{ id: string; inventory_transfer_id: string; status: string; deadline: string | null }>
   const itemsByTransfer = new Map<string, Array<Record<string, unknown>>>()
   for (const item of itemRows) {
@@ -193,9 +197,13 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
       machineId: String(row.machine_id),
       machineName: machines.get(String(row.machine_id)) || 'Заказ',
       sourceFactoryId: String(row.source_factory_id),
-      sourceFactoryName: factories.get(String(row.source_factory_id)) || 'Неизвестный завод',
+      sourceFactoryName: factories.get(String(row.source_factory_id))?.name || 'Неизвестный завод',
+      sourceFactoryCity: factories.get(String(row.source_factory_id))?.city || null,
+      sourceFactoryAddress: factories.get(String(row.source_factory_id))?.address || null,
       destinationFactoryId: String(row.destination_factory_id),
-      destinationFactoryName: factories.get(String(row.destination_factory_id)) || 'Неизвестный завод',
+      destinationFactoryName: factories.get(String(row.destination_factory_id))?.name || 'Неизвестный завод',
+      destinationFactoryCity: factories.get(String(row.destination_factory_id))?.city || null,
+      destinationFactoryAddress: factories.get(String(row.destination_factory_id))?.address || null,
       status: String(row.status) as InventoryTransferStatus,
       expectedArrivalDate,
       deadline,

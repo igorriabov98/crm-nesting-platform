@@ -633,7 +633,10 @@ export const PERMISSION_RESOURCES = [
     defaultHref: ROUTES.ADMIN_COMPANY_SETTINGS,
     defaultViewRoles: DIRECTORS,
     defaultManageRoles: DIRECTORS,
-    routes: [{ path: ROUTES.ADMIN_COMPANY_SETTINGS, match: 'prefix', operation: 'view', priority: 90 }],
+    routes: [
+      { path: ROUTES.ADMIN_COMPANY_SETTINGS, match: 'prefix', operation: 'view', priority: 90 },
+      { path: ROUTES.ADMIN_FACTORY_SETTINGS, match: 'prefix', operation: 'view', priority: 90 },
+    ],
   },
   {
     key: 'production_fact_settings',

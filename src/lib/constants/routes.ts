@@ -22,6 +22,7 @@ export const ROUTES = {
   ADMIN_MAIL_SETTINGS:'/admin/settings/mail',
   ADMIN_COMPANY_SETTINGS:'/admin/settings/company',
   ADMIN_PRODUCTION_FACT_SETTINGS:'/admin/settings/production-fact',
+  ADMIN_FACTORY_SETTINGS:'/admin/settings/factories',
   SALES_PLAN:          '/sales-plan',
   SALES_PLAN_NEW:      '/sales-plan/new',
   SALES_PLAN_PRICES:   '/sales-plan/prices',

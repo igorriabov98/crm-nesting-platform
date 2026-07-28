@@ -62,6 +62,7 @@ import {
 } from '@/lib/actions/outsourcing'
 import {
   createTransportTrip,
+  decideTransportTripDateChange,
   updateTransportTrip,
   updateTransportTripStopStatus,
   type TransportNeedKind,
@@ -73,6 +74,7 @@ import {
 import {
   buildTransportStopPlan,
   getTransportStopOrderError,
+  reconcileTransportStopPlan,
   type TransportDraftAssignment,
   type TransportDraftStop,
 } from '@/lib/transport/trip-rules'
@@ -148,6 +150,10 @@ function formatMoney(value: number | null) {
   return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} ₴`
 }
 
+function formatDateTime(value: string | null) {
+  return value ? new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—'
+}
+
 function formatTime(value: string | null) {
   if (!value) return 'Время не указано'
   return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
@@ -186,6 +192,14 @@ function tripDraft(trip: TransportTrip): TripDraft {
     route: trip.route || trip.routeStart || '',
     comment: trip.comment || '',
   }
+}
+
+function tripNeedCurrentDate(trip: TransportTrip, need: TransportTrip['needs'][number]) {
+  for (const request of trip.dateChangeRequests) {
+    const approved = request.items.find((item) => item.status === 'approved' && item.needSource === need.source && item.needId === need.id)
+    if (approved) return approved.newDate
+  }
+  return need.neededDate
 }
 
 const NeedCard = memo(function NeedCard({
@@ -258,7 +272,10 @@ const NeedCard = memo(function NeedCard({
               <span className="block truncate text-base font-semibold text-slate-950">{need.title}</span>
               <span className="block truncate text-sm text-slate-600">{need.subtitle}</span>
             </span>
-            <span className="shrink-0 text-sm font-semibold text-slate-700">{formatDate(need.neededDate)}</span>
+            <span className="shrink-0 text-right text-xs text-slate-500">
+              Требуется перевезти
+              <span className="mt-0.5 block text-sm font-semibold text-slate-700">{formatDate(need.neededDate)}</span>
+            </span>
           </span>
 
           <span className="mt-3 flex min-w-0 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
@@ -296,10 +313,12 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   const [routeAssignments, setRouteAssignments] = useState<TransportDraftAssignment[]>([])
   const [draggedStopId, setDraggedStopId] = useState<string | null>(null)
   const [comment, setComment] = useState('')
+  const [dateChangeReason, setDateChangeReason] = useState('')
   const [mobileShortcutHidden, setMobileShortcutHidden] = useState(false)
   const [editingTripId, setEditingTripId] = useState<string | null>(null)
   const [editingDraft, setEditingDraft] = useState<TripDraft | null>(null)
   const [editingStops, setEditingStops] = useState<TransportTrip['stops']>([])
+  const [editingDateChangeReason, setEditingDateChangeReason] = useState('')
   const [agreementDrafts, setAgreementDrafts] = useState<Record<string, AgreementDraft>>(() =>
     Object.fromEntries(workspace.agreements.map((agreement) => [
       agreement.operation_id,
@@ -323,13 +342,15 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   const selectedCarrierLabel = workspace.carriers.find((carrier) => carrier.id === carrierSupplierId)?.name
     || 'Выберите перевозчика'
 
-  const rebuildRoutePlan = useCallback((needs: UnifiedTransportNeed[]) => {
+  const rebuildRoutePlan = useCallback((needs: UnifiedTransportNeed[], preserve = false) => {
     if (needs.length === 0) {
       setRouteStops([])
       setRouteAssignments([])
       return
     }
-    const plan = buildTransportStopPlan(needs)
+    const plan = preserve
+      ? reconcileTransportStopPlan(routeStops, routeAssignments, needs)
+      : buildTransportStopPlan(needs)
     const points = needs.flatMap((need) => ([
       {
         key: need.sourcePointKey,
@@ -345,7 +366,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
       },
     ]))
     const base = points.find((point) => point.key.startsWith('factory:')) || points[0]
-    setRouteStops([
+    setRouteStops(plan.stops.some((stop) => stop.kind === 'start') ? plan.stops : [
       {
         clientId: 'trip-start',
         pointKey: `custom:start:${base.key}`,
@@ -359,7 +380,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
       ...plan.stops,
     ])
     setRouteAssignments(plan.assignments)
-  }, [])
+  }, [routeAssignments, routeStops])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination after filter changes
@@ -402,10 +423,17 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
       ? selectedKeys.filter((key) => key !== need.key)
       : [...selectedKeys, need.key]
     setSelectedKeys(nextKeys)
-    rebuildRoutePlan(nextKeys
+    const nextNeeds = nextKeys
       .map((key) => needByKey.get(key))
-      .filter((candidate): candidate is UnifiedTransportNeed => Boolean(candidate)))
-  }, [needByKey, rebuildRoutePlan, selectedKeys])
+      .filter((candidate): candidate is UnifiedTransportNeed => Boolean(candidate))
+    if (nextNeeds.length === 0) {
+      setScheduledDate('')
+      setDateChangeReason('')
+    } else if (selectedKeys.length === 0) {
+      setScheduledDate(need.neededDate || '')
+    }
+    rebuildRoutePlan(nextNeeds, routeStops.length > 0)
+  }, [needByKey, rebuildRoutePlan, routeStops.length, selectedKeys])
 
   function resetComposer() {
     setSelectedKeys([])
@@ -415,6 +443,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     setRouteStops([])
     setRouteAssignments([])
     setComment('')
+    setDateChangeReason('')
   }
 
   function updateRouteStop(clientId: string, patch: Partial<TransportDraftStop>) {
@@ -461,6 +490,9 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   }
 
   function createTrip() {
+    if (dateMismatches.length > 0 && !window.confirm(
+      `Будет создан один запрос на согласование ${dateMismatches.length} переносов дат. Продолжить?`,
+    )) return
     setPendingAction('create')
     startTransition(async () => {
       const result = await createTransportTrip({
@@ -474,6 +506,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
         })),
         assignments: routeAssignments,
         comment: comment || null,
+        dateChangeReason: dateChangeReason || null,
       })
       setPendingAction(null)
       if (!result.success) {
@@ -490,6 +523,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     setEditingTripId(trip.id)
     setEditingDraft(tripDraft(trip))
     setEditingStops(trip.stops)
+    setEditingDateChangeReason('')
   }
 
   function saveTrip() {
@@ -506,6 +540,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
           ? editingStops.map((stop) => stop.pointLabel).join(' → ')
           : editingDraft.route,
         comment: editingDraft.comment || null,
+        dateChangeReason: editingDateChangeReason || null,
         stops: editingTrip.status === 'found' && editingStops.length > 0
           ? editingStops.map((stop, sequence) => ({
             id: stop.id,
@@ -566,6 +601,22 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     })
   }
 
+  function decideDateChange(requestId: string, decision: 'approved' | 'rejected') {
+    const comment = window.prompt(decision === 'approved' ? 'Комментарий к одобрению (необязательно)' : 'Причина отклонения')
+    if (comment === null) return
+    setPendingAction(`date:${requestId}:${decision}`)
+    startTransition(async () => {
+      const result = await decideTransportTripDateChange({ requestId, decision, comment })
+      setPendingAction(null)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось обработать согласование')
+        return
+      }
+      toast.success(result.outcome === 'conflicted' ? 'Обнаружен конфликт исходных дат' : decision === 'approved' ? 'Перенос дат одобрен' : 'Перенос дат отклонён')
+      router.refresh()
+    })
+  }
+
   function updateAgreementDraft(operationId: string, patch: Partial<AgreementDraft>) {
     setAgreementDrafts((current) => ({
       ...current,
@@ -593,6 +644,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     })
   }
 
+  const dateMismatches = selectedNeeds.filter((need) => need.neededDate && scheduledDate && need.neededDate !== scheduledDate)
   const canCreate = selectedNeeds.length > 0
     && Boolean(carrierSupplierId)
     && Boolean(scheduledDate)
@@ -600,6 +652,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     && routeStops.length > 1
     && routeStops.every((stop) => Boolean(stop.pointLabel.trim()) && Boolean(stop.plannedTime))
     && !getTransportStopOrderError(routeStops, routeAssignments)
+    && (dateMismatches.length === 0 || Boolean(dateChangeReason.trim()))
     && !isPending
 
   return (
@@ -617,7 +670,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
               Потребности и рейсы
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">
-              Собирайте материалы, деталировку и аутсорсинг в один многоадресный маршрут.
+              Рейс создаётся только по выбранным потребностям — повторяющегося ежедневного расписания нет.
             </p>
           </div>
 
@@ -668,7 +721,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
               <div>
                 <h2 className="text-lg font-bold text-slate-950">Все потребности</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Выберите потребности из разных компаний и городов — порядок задаётся справа.
+                  Дата карточки означает «требуется перевезти». Выберите компании и настройте очередь справа.
                 </p>
               </div>
               <Label className="relative block w-full lg:max-w-xs" htmlFor="transport-search">
@@ -787,6 +840,27 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                 </Label>
               </div>
 
+              {dateMismatches.length > 0 && (
+                <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
+                  <div className="flex items-start gap-2">
+                    <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold">Требуется согласование переноса дат</div>
+                      <ul className="mt-2 space-y-1 text-xs">
+                        {dateMismatches.map((need) => (
+                          <li key={need.key}>{need.title}: {formatDate(need.neededDate)} → {formatDate(scheduledDate)}</li>
+                        ))}
+                      </ul>
+                      <Label className="mt-3 grid gap-1.5 text-sm font-medium">
+                        Обязательная причина
+                        <Textarea value={dateChangeReason} onChange={(event) => setDateChangeReason(event.target.value)}
+                          placeholder="Почему потребности нужно перевезти одним рейсом" className="min-h-20 bg-white" />
+                      </Label>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
                 Цена перевозки
                 <div className="relative">
@@ -893,10 +967,41 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                         <div className="mt-1 text-xs text-slate-500">
                           {need.sourcePointLabel} → {need.destinationPointLabel}
                         </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          Текущая дата: {formatDate(tripNeedCurrentDate(editingTrip, need))}
+                          {tripNeedCurrentDate(editingTrip, need) !== need.neededDate && ` · первоначальная: ${formatDate(need.neededDate)}`}
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
+
+                {editingTrip.dateChangeState !== 'not_required' && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                    <div className="font-semibold text-amber-950">
+                      Перенос дат: {{ pending: 'ожидает согласования', approved: 'одобрен', rejected: 'отклонён', conflicted: 'конфликт исходных данных' }[editingTrip.dateChangeState]}
+                    </div>
+                    {editingTrip.dateChangeRequests.map((request) => (
+                      <div key={request.id} className="mt-3 rounded-xl border border-amber-200 bg-white p-3 text-sm">
+                        <div className="font-medium text-slate-900">Причина: {request.reason}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {request.requestedByName || 'Пользователь'} · {formatDateTime(request.createdAt)}
+                          {request.decidedAt && ` · решение ${request.decidedByName || 'планировщика'} ${formatDateTime(request.decidedAt)}`}
+                        </div>
+                        <ul className="mt-2 space-y-1 text-xs text-slate-600">
+                          {request.items.map((item) => <li key={item.id}>{formatDate(item.oldDate)} → {formatDate(item.newDate)}</li>)}
+                        </ul>
+                        {request.decisionComment && <div className="mt-2 text-xs text-slate-600">Решение: {request.decisionComment}</div>}
+                        {request.status === 'pending' && (
+                          <div className="mt-3 flex gap-2">
+                            <Button size="sm" onClick={() => decideDateChange(request.id, 'approved')} disabled={isPending}>Одобрить</Button>
+                            <Button size="sm" variant="outline" onClick={() => decideDateChange(request.id, 'rejected')} disabled={isPending}>Отклонить</Button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
                   Статус
@@ -978,6 +1083,14 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                     />
                   </Label>
                 </div>
+
+                {editingDraft.scheduledDate && editingTrip.needs.some((need) => need.neededDate && need.neededDate !== editingDraft.scheduledDate) && (
+                  <Label className="grid gap-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-950">
+                    Причина переноса даты рейса
+                    <Textarea value={editingDateChangeReason} onChange={(event) => setEditingDateChangeReason(event.target.value)}
+                      placeholder="Обязательно для повторной отправки на согласование" className="min-h-20 bg-white" />
+                  </Label>
+                )}
 
                 {editingStops.length > 0 && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -1087,7 +1200,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                                     type="button"
                                     size="sm"
                                     variant="outline"
-                                    disabled={isPending}
+                                    disabled={isPending || !['not_required', 'approved'].includes(editingTrip.dateChangeState)}
                                     onClick={() => changeStopStatus(stop.id, 'arrived')}
                                     className="mt-2 rounded-lg"
                                   >
@@ -1128,6 +1241,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                       || !editingDraft.scheduledDate
                       || editingDraft.price === ''
                       || !editingDraft.route.trim()
+                      || (editingDraft.scheduledDate !== editingTrip.scheduledDate && !editingDateChangeReason.trim())
                     }
                     className="h-12 rounded-xl"
                   >

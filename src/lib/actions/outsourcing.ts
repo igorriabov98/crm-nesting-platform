@@ -118,6 +118,7 @@ export type MachineOutsourcingTransportOrder = {
   route_start: string | null
   route: string | null
   comment: string | null
+  date_change_state?: 'not_required' | 'pending' | 'approved' | 'rejected' | 'conflicted'
 }
 
 export type MachineOutsourcingOperation = {
@@ -135,6 +136,8 @@ export type MachineOutsourcingOperation = {
   supplier_address: string | null
   executor_factory_id: string | null
   executor_factory_name: string | null
+  executor_factory_city: string | null
+  executor_factory_address: string | null
   note: string | null
   planned_send_date: string | null
   planned_return_date: string | null
@@ -644,7 +647,7 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
   const [workTypesRes, suppliersRes, factoriesRes, itemLinksRes, needsRes, itemsRes] = await Promise.all([
     workTypeIds.length > 0 ? db.from('outsourcing_work_types').select('id, name, code, is_zinc, is_active').in('id', workTypeIds) : Promise.resolve({ data: [], error: null }),
     loadSuppliersByIds(db, supplierIds),
-    factoryIds.length > 0 ? db.from('factories').select('id, name').in('id', factoryIds) : Promise.resolve({ data: [], error: null }),
+    factoryIds.length > 0 ? db.from('factories').select('id, name, city, address').in('id', factoryIds) : Promise.resolve({ data: [], error: null }),
     db.from('machine_outsourcing_operation_items').select('operation_id, machine_item_id').in('operation_id', operationIds),
     db.from('machine_outsourcing_transport_needs').select('*').in('operation_id', operationIds),
     db
@@ -660,7 +663,7 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
 
   const workTypeById = new Map(((workTypesRes.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row]))
   const supplierById = new Map(((suppliersRes.data || []) as OutsourcingSupplierOption[]).map((row) => [row.id, row]))
-  const factoryById = new Map(((factoriesRes.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row]))
+  const factoryById = new Map(((factoriesRes.data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>).map((row) => [row.id, row]))
   const itemById = new Map(((itemsRes.data || []) as Array<OutsourcingMachineItem & { machine_id: string }>).map((row) => {
     const { machine_id: _machineId, ...item } = row
     void _machineId
@@ -694,6 +697,8 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
       supplier_address: supplierId ? supplierById.get(supplierId)?.address || null : null,
       executor_factory_id: executorFactoryId,
       executor_factory_name: executorFactoryId ? factoryById.get(executorFactoryId)?.name || null : null,
+      executor_factory_city: executorFactoryId ? factoryById.get(executorFactoryId)?.city || null : null,
+      executor_factory_address: executorFactoryId ? factoryById.get(executorFactoryId)?.address || null : null,
       note: operation.note as string | null,
       planned_send_date: dateOnly(operation.planned_send_date as string | null),
       planned_return_date: dateOnly(operation.planned_return_date as string | null),
@@ -1695,11 +1700,11 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
 
   const machines = (machinesRes.data || []) as Array<{ id: string; name: string; factory_id: string | null }>
   const factoryIds = Array.from(new Set(machines.map((machine) => machine.factory_id).filter((id): id is string => Boolean(id))))
-  let factories: Array<{ id: string; name: string }> = []
+  let factories: Array<{ id: string; name: string; city: string | null; address: string | null }> = []
   if (factoryIds.length > 0) {
-    const { data, error } = await db.from('factories').select('id, name').in('id', factoryIds)
+    const { data, error } = await db.from('factories').select('id, name, city, address').in('id', factoryIds)
     if (error) throw new Error(error.message || 'Не удалось загрузить заводы')
-    factories = (data || []) as Array<{ id: string; name: string }>
+    factories = (data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>
   }
   const machineById = new Map(machines.map((machine) => [machine.id, machine]))
   const factoryById = new Map(factories.map((factory) => [factory.id, factory]))
@@ -1729,6 +1734,12 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
         : 'Исполнитель не указан'
     )
     const isOutbound = need.direction === 'outbound'
+    const executorCity = operation?.executor_type === 'factory'
+      ? operation.executor_factory_city
+      : operation?.supplier_city
+    const executorAddress = operation?.executor_type === 'factory'
+      ? operation.executor_factory_address
+      : operation?.supplier_address
     return {
       ...need,
       machine_id: operation?.machine_id || '',
@@ -1739,12 +1750,12 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
       executor_label: executorPointLabel,
       source_point_key: isOutbound ? factoryPointKey : executorPointKey,
       source_point_label: isOutbound ? factoryPointLabel : executorPointLabel,
-      source_point_city: isOutbound ? null : operation?.supplier_city || null,
-      source_point_address: isOutbound ? null : operation?.supplier_address || null,
+      source_point_city: isOutbound ? factory?.city || null : executorCity || null,
+      source_point_address: isOutbound ? factory?.address || null : executorAddress || null,
       destination_point_key: isOutbound ? executorPointKey : factoryPointKey,
       destination_point_label: isOutbound ? executorPointLabel : factoryPointLabel,
-      destination_point_city: isOutbound ? operation?.supplier_city || null : null,
-      destination_point_address: isOutbound ? operation?.supplier_address || null : null,
+      destination_point_city: isOutbound ? executorCity || null : factory?.city || null,
+      destination_point_address: isOutbound ? executorAddress || null : factory?.address || null,
       item_labels: (operation?.items || []).map((item) => `${item.product_name} (${item.quantity} шт.)`),
     }
   })

@@ -85,6 +85,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   supply_material_receipt_shortage: 'Недовес материала',
   production_cutting_rollback_review: 'Откат заготовки',
   production_plan_date_change_approval: 'Согласование дат',
+  transport_trip_date_approval: 'Согласование дат рейса',
   production_plan_preparation: 'Подготовка плана',
   outsourcing_transport: 'Транспорт аутсорсинга',
   product_version_incomplete: 'Дозаполнить карточку товара',
@@ -210,6 +211,9 @@ function formatTaskDeadline(value: string | null | undefined) {
 }
 
 function getTaskTarget(task: TaskWithRelations) {
+  if (task.task_type === 'transport_trip_date_approval') {
+    return { href: ROUTES.SUPPLY_TRANSPORT, label: 'Транспорт снабжения', kind: 'Рейс' }
+  }
   if (task.machine) {
     const tabQuery = task.task_type === 'machine_layout' || task.task_type === 'material_type_selection'
       ? '?tab=technologist'
@@ -248,6 +252,10 @@ function isProductionPlanDateChangeTask(taskType: TaskType) {
   return taskType === 'production_plan_date_change_approval'
 }
 
+function isTransportTripDateChangeTask(taskType: TaskType) {
+  return taskType === 'transport_trip_date_approval'
+}
+
 function isBusinessScrapCorrectionTask(taskType: TaskType) {
   return taskType === 'business_scrap_correction_approval'
 }
@@ -257,6 +265,7 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (isSupplyReceiptTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (isCuttingRollbackTask(taskType)) return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (isProductionPlanDateChangeTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
+  if (isTransportTripDateChangeTask(taskType)) return 'border-orange-200 bg-orange-50 text-orange-800 shadow-sm'
   if (isBusinessScrapCorrectionTask(taskType)) return 'border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm'
   if (taskType === 'production_plan_preparation') return 'border-violet-200 bg-violet-50 text-violet-800 shadow-sm'
   if (taskType === 'material_type_selection') return 'border-cyan-200 bg-cyan-50 text-cyan-700 shadow-sm'
@@ -789,6 +798,11 @@ export function TaskCards({
     }
 
     if (['detailing_transfer', 'inventory_transfer'].includes(task.task_type) && task.status === 'in_progress') return null
+
+    if (isTransportTripDateChangeTask(task.task_type)) {
+      if (task.status === 'completed' || task.status === 'cancelled') return null
+      return <div className={groupClass}><Link href={ROUTES.SUPPLY_TRANSPORT} className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground')}>Рассмотреть рейс</Link></div>
+    }
 
     if (isBusinessScrapCorrectionTask(task.task_type)) {
       if (task.status === 'completed' || task.status === 'cancelled') return null
