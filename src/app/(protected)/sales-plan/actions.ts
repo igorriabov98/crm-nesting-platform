@@ -1616,10 +1616,6 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
         .eq('id', id)
       
       if (error) throw error
-      if (data.actual_shipping_date) {
-        const promotion = await promoteShippedProjectSamplesToProducts(id)
-        if (!promotion.success) throw new Error(promotion.error || 'Не удалось добавить изготовленный образец в базу продукции')
-      }
 
       const nextFactoryId = data.factory_id === 'none' ? null : data.factory_id
       if (data.factory_id !== undefined && nextFactoryId && previousFactoryId !== nextFactoryId) {
@@ -1818,6 +1814,23 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
             assignedTo: user.id,
           })
         }
+      }
+    }
+
+    if (
+      data.actual_shipping_date !== undefined ||
+      data.items !== undefined ||
+      (data.deletedItemIds && data.deletedItemIds.length > 0)
+    ) {
+      const { data: shippingMachine, error: shippingMachineError } = await db
+        .from('machines')
+        .select('actual_shipping_date')
+        .eq('id', id)
+        .single()
+      if (shippingMachineError) throw shippingMachineError
+      if ((shippingMachine as { actual_shipping_date: string | null }).actual_shipping_date) {
+        const promotion = await promoteShippedProjectSamplesToProducts(id)
+        if (!promotion.success) throw new Error(promotion.error || 'Не удалось закрыть проект и перенести изделие в продукцию')
       }
     }
 

@@ -21,22 +21,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ProductProjectFile, ProductProjectVersion } from '@/lib/types'
+import { ProductProjectLifecycle, productProjectStatusLabels } from './ProductProjectLifecycle'
 
 const versionStatusLabels: Record<ProductProjectVersion['status'], string> = {
   draft: 'Черновик',
-  client_review: 'Согласование',
-  approved: 'Подтверждена',
+  client_review: 'Предварительно готова',
+  approved: 'Готова к заказу',
   superseded: 'Заменена',
-}
-
-const projectStatusLabels: Record<ProductProjectDetails['status'], string> = {
-  new_project: 'Новый проект',
-  draft: 'Черновик',
-  engineering: 'В работе у инженера',
-  client_review: 'На согласовании',
-  approved: 'Подтвержден',
-  added_to_products: 'Добавлен в продукцию',
-  cancelled: 'Отменен',
 }
 
 const fileKindLabels: Record<ProductProjectFile['file_kind'], string> = {
@@ -79,7 +70,7 @@ export function ProductProjectDetailClient({ project }: { project: ProductProjec
     try {
       const result = await approveProductProjectForClient(project.id, approvalDraft)
       if (!result.success) throw new Error(result.error || 'Не удалось утвердить проект')
-      toast.success('Проект утвержден')
+      toast.success('Проект готов к добавлению в заказ')
       router.refresh()
     } catch (error) {
       toast.error(errorMessage(error))
@@ -151,7 +142,10 @@ export function ProductProjectDetailClient({ project }: { project: ProductProjec
               Клиент: {project.client?.name || '—'} · Инженер: {project.assigned_engineer?.full_name || '—'}
             </p>
           </div>
-          <Badge variant={project.status === 'added_to_products' ? 'default' : 'secondary'}>{projectStatusLabels[project.status]}</Badge>
+          <Badge variant={project.status === 'added_to_products' ? 'default' : 'secondary'}>{productProjectStatusLabels[project.status]}</Badge>
+        </div>
+        <div className="mt-5">
+          <ProductProjectLifecycle status={project.status} />
         </div>
         <div className="mt-5 grid gap-4 md:grid-cols-3">
           <InfoBlock title="Описание продукта" value={project.description} />
@@ -256,7 +250,7 @@ export function ProductProjectDetailClient({ project }: { project: ProductProjec
           </section>
 
           <form onSubmit={approveForClient} className="space-y-4 rounded-xl border border-[#E8ECF0] bg-white p-5">
-            <h2 className="text-lg font-semibold text-[#1B3A6B]">Согласование с клиентом</h2>
+            <h2 className="text-lg font-semibold text-[#1B3A6B]">Подготовка к заказу</h2>
             <div className="grid gap-3 text-sm md:grid-cols-2">
               <InfoBlock title="Номер чертежа" value={currentVersion?.drawing_number} compact />
               <InfoBlock title="Вес, кг" value={currentVersion?.unit_weight_kg ? String(currentVersion.unit_weight_kg) : null} compact />
@@ -278,7 +272,7 @@ export function ProductProjectDetailClient({ project }: { project: ProductProjec
               <Input type="number" min="0" step="0.01" value={approvalDraft.base_price_eur || ''} onChange={(event) => setApprovalDraft((current) => ({ ...current, base_price_eur: Number(event.target.value) }))} required />
             </div>
             <LoadingButton type="submit" disabled={!currentVersion || project.status === 'added_to_products'} loading={isApproving} className="w-full bg-[#1B3A6B] text-white hover:bg-[#152D54]">
-              Утвердить модель
+              Подтвердить готовность к заказу
             </LoadingButton>
           </form>
         </div>

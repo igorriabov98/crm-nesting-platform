@@ -343,6 +343,7 @@ export function TaskCards({
   const [delegationLoading, setDelegationLoading] = useState(false)
   const [reason, setReason] = useState('')
   const [declineReason, setDeclineReason] = useState('')
+  const [deliverablesDescription, setDeliverablesDescription] = useState('')
   const [deliverablesWeight, setDeliverablesWeight] = useState('')
   const drawingInputRef = useRef<HTMLInputElement>(null)
   const photoInputRef = useRef<HTMLInputElement>(null)
@@ -559,8 +560,8 @@ export function TaskCards({
     if (!deliverablesTask?.product_project_id) return
     const drawing = drawingInputRef.current?.files?.[0]
     const photo = photoInputRef.current?.files?.[0]
-    if (!drawing || !photo || !deliverablesWeight) {
-      toast.error('Загрузите чертеж, фото и укажите вес')
+    if (deliverablesDescription.trim().length < 3 || !drawing || !photo || !deliverablesWeight) {
+      toast.error('Добавьте описание, PDF-чертёж, фото и вес')
       return
     }
 
@@ -568,6 +569,7 @@ export function TaskCards({
     try {
       const formData = new FormData()
       formData.append('project_id', deliverablesTask.product_project_id)
+      formData.append('engineer_description', deliverablesDescription.trim())
       formData.append('drawing', drawing)
       formData.append('photo', photo)
       formData.append('unit_weight_kg', deliverablesWeight)
@@ -577,6 +579,7 @@ export function TaskCards({
       if (!closeResult.success) throw new Error(closeResult.error || 'Не удалось завершить задачу')
       toast.success('Данные проекта сохранены, задача завершена')
       setDeliverablesTask(null)
+      setDeliverablesDescription('')
       setDeliverablesWeight('')
       if (drawingInputRef.current) drawingInputRef.current.value = ''
       if (photoInputRef.current) photoInputRef.current.value = ''
@@ -1046,6 +1049,7 @@ export function TaskCards({
     <Dialog open={!!deliverablesTask} onOpenChange={(open) => {
       if (!open) {
         setDeliverablesTask(null)
+        setDeliverablesDescription('')
         setDeliverablesWeight('')
         if (drawingInputRef.current) drawingInputRef.current.value = ''
         if (photoInputRef.current) photoInputRef.current.value = ''
@@ -1055,13 +1059,24 @@ export function TaskCards({
         <DialogHeader>
           <DialogTitle>Данные проекта изделия</DialogTitle>
           <DialogDescription>
-            Загрузите чертеж, фото изделия и укажите вес. Номер чертежа будет взят из имени файла без расширения.
+            Добавьте описание, PDF-чертёж, фото изделия и вес. После сохранения проект получит статус «Предварительно готов».
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleDeliverablesSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="project_drawing">Чертеж *</Label>
-            <Input id="project_drawing" ref={drawingInputRef} type="file" required />
+            <Label htmlFor="project_engineer_description">Описание инженера *</Label>
+            <Textarea
+              id="project_engineer_description"
+              value={deliverablesDescription}
+              onChange={(event) => setDeliverablesDescription(event.target.value)}
+              rows={4}
+              placeholder="Опишите конструкцию и ключевые инженерные решения"
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="project_drawing">PDF-чертёж *</Label>
+            <Input id="project_drawing" ref={drawingInputRef} type="file" accept="application/pdf,.pdf" required />
           </div>
           <div className="space-y-2">
             <Label htmlFor="project_photo">Фото изделия *</Label>

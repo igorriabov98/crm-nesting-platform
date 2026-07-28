@@ -7,6 +7,9 @@ import { ChevronRight, Home } from "lucide-react"
 const routeMap: Record<string, string> = {
   "dashboard": "Дашборд",
   "sales-plan": "План продаж",
+  "product-projects": "Проекты продукции",
+  "products": "Продукция",
+  "mail": "Почта",
   "new": "Создание",
   "production": "Производство",
   "requests": "Запросы",
