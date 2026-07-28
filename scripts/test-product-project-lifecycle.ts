@@ -7,8 +7,15 @@ function source(path: string) {
 }
 
 const form = source('src/components/features/products/ProductProjectForm.tsx')
-assert.match(form, /dynamic\([\s\S]*MailThreadPicker/, 'mail picker must be split into a lazy client chunk')
-assert.match(form, /mailExpanded && \(/, 'mail search must mount only after the section is expanded')
+assert.match(form, /dynamic\([\s\S]*AttachedMailConversation/, 'attached mail conversation must be split into a lazy client chunk')
+assert.match(form, /mailExpanded && \(/, 'attached mail content must mount only after the card is expanded')
+assert.doesNotMatch(form, /MailThreadPicker/, 'project creation must not expose unrelated mailbox search')
+assert.doesNotMatch(form, /mailThreadIds/, 'project creation must only use the explicitly attached mail link')
+assert.match(form, /Открыть.*прикреплённую переписку/, 'attached mail card must have an accessible open action')
+
+const attachedConversation = source('src/components/features/products/AttachedMailConversation.tsx')
+assert.match(attachedConversation, /getMailThread\(link\.thread_id, link\.kind === 'message' \? link\.id : null\)/)
+assert.match(attachedConversation, /thread\.messages\.map/, 'attached thread messages must be rendered')
 assert.doesNotMatch(form, /<Label>Статус<\/Label>/, 'project status must not be editable in the form')
 assert.match(form, /После создания инженер сразу получит задачу/, 'form must explain automatic engineer task creation')
 

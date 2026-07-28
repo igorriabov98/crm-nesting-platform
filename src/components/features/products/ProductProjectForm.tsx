@@ -22,7 +22,6 @@ import { Label } from '@/components/ui/label'
 import { LoadingButton } from '@/components/ui/loading-button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import type { Client, ProductProject, UserSummary } from '@/lib/types'
 import type { ProductProjectInput } from '@/lib/types/schemas'
@@ -30,9 +29,9 @@ import { linkMailToProductProject } from '@/lib/actions/mail'
 import type { MailLinkInput, MailLinkPreview } from '@/lib/mail/types'
 import { ProductProjectLifecycle, productProjectStatusLabels } from './ProductProjectLifecycle'
 
-const MailThreadPicker = dynamic(
-  () => import('@/components/features/mail/MailThreadPicker').then((module) => module.MailThreadPicker),
-  { loading: () => <Skeleton className="h-40 w-full rounded-xl" /> },
+const AttachedMailConversation = dynamic(
+  () => import('./AttachedMailConversation').then((module) => module.AttachedMailConversation),
+  { loading: () => <div className="h-40 animate-pulse rounded-xl bg-muted" aria-label="Загрузка прикреплённой переписки" /> },
 )
 
 type ProjectState = {
@@ -88,7 +87,6 @@ export function ProductProjectForm({
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [values, setValues] = useState<ProjectState>(() => initialState(project, initialMailLink?.subject))
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [mailThreadIds, setMailThreadIds] = useState<string[]>([])
   const [attachedMailLink, setAttachedMailLink] = useState<MailLinkPreview | null>(initialMailLink || null)
   const [mailExpanded, setMailExpanded] = useState(false)
   const isEdit = Boolean(project?.id)
@@ -97,7 +95,6 @@ export function ProductProjectForm({
     ? 'Без клиента'
     : clients.find((client) => client.id === values.client_id)?.name || 'Выберите клиента'
   const selectedEngineerLabel = engineers.find((engineer) => engineer.id === values.assigned_engineer_id)?.full_name || 'Выберите инженера'
-  const attachedMailCount = (attachedMailLink ? 1 : 0) + mailThreadIds.length
 
   function setField<K extends keyof ProjectState>(field: K, value: ProjectState[K]) {
     setValues((current) => ({ ...current, [field]: value }))
@@ -123,12 +120,9 @@ export function ProductProjectForm({
       toast.success(isEdit ? 'Проект обновлён' : 'Проект создан. Инженеру назначена задача.')
       const createdProject = 'project' in result ? result.project as { id?: string } | null : null
       if (!isEdit && createdProject?.id) {
-        const mailLinks: MailLinkInput[] = [
-          ...(attachedMailLink ? [{ kind: attachedMailLink.kind, id: attachedMailLink.id } satisfies MailLinkInput] : []),
-          ...mailThreadIds
-            .filter((threadId) => !(attachedMailLink?.kind === 'thread' && attachedMailLink.id === threadId))
-            .map((threadId) => ({ kind: 'thread' as const, id: threadId })),
-        ]
+        const mailLinks: MailLinkInput[] = attachedMailLink
+          ? [{ kind: attachedMailLink.kind, id: attachedMailLink.id }]
+          : []
         const linkResults = await Promise.all(mailLinks.map((mailLink) =>
           linkMailToProductProject(mailLink, createdProject.id!)
         ))
@@ -316,54 +310,64 @@ export function ProductProjectForm({
             </section>
 
             <section className="overflow-hidden rounded-xl border border-border bg-background">
-              <button
-                type="button"
-                className="flex min-h-14 w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                aria-expanded={mailExpanded}
-                aria-controls="project-mail-picker"
-                onClick={() => setMailExpanded((current) => !current)}
-              >
+              <div className="flex min-h-14 items-center gap-3 px-4 py-3">
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
                   <Mail className="size-4" aria-hidden="true" />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-foreground">Почтовая переписка</span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {attachedMailCount > 0 ? `Прикреплено: ${attachedMailCount}` : 'Не прикреплена'}
+                    {attachedMailLink ? 'Прикреплено: 1' : 'Не прикреплена'}
                   </span>
                 </span>
-                <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform duration-200', mailExpanded && 'rotate-180')} aria-hidden="true" />
-              </button>
+              </div>
 
-              {attachedMailLink && (
-                <div className="mx-4 mb-3 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
-                  <Paperclip className="mt-0.5 size-4 shrink-0 text-blue-700" aria-hidden="true" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">
-                      {attachedMailLink.kind === 'thread' ? 'Вся цепочка' : 'Одно письмо'}
-                    </p>
-                    <p className="mt-1 line-clamp-2 text-sm font-medium text-blue-950">{attachedMailLink.subject}</p>
-                    <p className="mt-1 truncate text-xs text-blue-800/75">{attachedMailLink.sender}</p>
+              {attachedMailLink ? (
+                <>
+                  <div className="mx-4 mb-3 flex items-stretch overflow-hidden rounded-xl border border-blue-200 bg-blue-50">
+                    <button
+                      type="button"
+                      className="flex min-h-20 min-w-0 flex-1 cursor-pointer items-start gap-3 p-3 text-left transition-colors hover:bg-blue-100/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-inset"
+                      aria-expanded={mailExpanded}
+                      aria-controls="attached-mail-conversation"
+                      aria-label={`${mailExpanded ? 'Свернуть' : 'Открыть'} прикреплённую переписку: ${attachedMailLink.subject}`}
+                      onClick={() => setMailExpanded((current) => !current)}
+                    >
+                      <Paperclip className="mt-0.5 size-4 shrink-0 text-blue-700" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[11px] font-semibold uppercase tracking-wide text-blue-700">
+                          {attachedMailLink.kind === 'thread' ? 'Вся цепочка' : 'Одно письмо'}
+                        </span>
+                        <span className="mt-1 line-clamp-2 block text-sm font-medium text-blue-950">{attachedMailLink.subject}</span>
+                        <span className="mt-1 block truncate text-xs text-blue-800/75">{attachedMailLink.sender}</span>
+                      </span>
+                      <ChevronDown className={cn('mt-1 size-4 shrink-0 text-blue-700 transition-transform duration-200', mailExpanded && 'rotate-180')} aria-hidden="true" />
+                    </button>
+                    <div className="flex items-start border-l border-blue-200 p-1.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="min-h-11 min-w-11 text-blue-800 hover:bg-blue-100"
+                        aria-label="Убрать письмо"
+                        onClick={() => {
+                          setAttachedMailLink(null)
+                          setMailExpanded(false)
+                        }}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="min-h-11 min-w-11 text-blue-800 hover:bg-blue-100"
-                    aria-label="Убрать письмо"
-                    onClick={() => setAttachedMailLink(null)}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
-              )}
-
-              {mailExpanded && (
-                <div id="project-mail-picker" className="border-t border-border p-4">
-                  <p className="mb-3 text-xs leading-5 text-muted-foreground">
-                    Поиск загружается только после раскрытия, поэтому форма открывается быстрее.
-                  </p>
-                  <MailThreadPicker selected={mailThreadIds} onChange={setMailThreadIds} compact />
+                  {mailExpanded && (
+                    <div id="attached-mail-conversation" className="max-h-[32rem] overflow-y-auto border-t border-border bg-muted/20 p-4">
+                      <AttachedMailConversation link={attachedMailLink} />
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="border-t border-border px-4 py-5 text-center text-xs leading-5 text-muted-foreground">
+                  Чтобы прикрепить письмо, откройте его в разделе «Почта» и выберите создание проекта изделия.
                 </div>
               )}
             </section>
