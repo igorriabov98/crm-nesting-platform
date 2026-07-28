@@ -6,6 +6,8 @@ import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import {
   ArrowRight,
+  ArrowUpDown,
+  CalendarRange,
   CheckCircle2,
   ClipboardList,
   Clock3,
@@ -17,12 +19,19 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ROUTES } from '@/lib/constants/routes'
+import {
+  getMaterialRequestQueueMonthOptions,
+  sortMaterialRequestQueueItems,
+} from '@/lib/material-request-queue'
 import type {
   MaterialRequestQueueItem,
+  MaterialRequestQueueSort,
   MaterialRequestQueueState,
 } from '@/lib/types/material-request-queue'
+import { normalizeProductionMonthValue } from '@/lib/utils/production-months'
 
 type QueueFilter = 'all' | MaterialRequestQueueState
+type MonthFilter = 'all' | 'unassigned' | string
 
 type Props = {
   items: MaterialRequestQueueItem[]
@@ -36,6 +45,11 @@ const filterLabels: Record<QueueFilter, string> = {
   submitted: 'Передана в снабжение',
 }
 
+const sortLabels: Record<MaterialRequestQueueSort, string> = {
+  deadline_asc: 'Дедлайн: старые → новые',
+  ready_first: 'Готовые → без заявки',
+}
+
 function machineRequestsHref(machineId: string) {
   return `${ROUTES.SALES_PLAN}/${machineId}/request`
 }
@@ -45,7 +59,13 @@ function formatWeight(value: number) {
 }
 
 function formatDeadline(value: string | null) {
-  return value ? format(new Date(`${value}T00:00:00`), 'd MMMM yyyy', { locale: ru }) : 'В ближайшее время'
+  return value ? format(new Date(`${value}T00:00:00`), 'd MMMM yyyy', { locale: ru }) : 'Не назначен'
+}
+
+function taskStatusLabel(status: MaterialRequestQueueItem['taskStatus']) {
+  if (!status) return 'Задача технолога не создана'
+  if (status === 'completed') return 'Задача выполнена'
+  return 'Задача активна'
 }
 
 function readyRequestsLabel(submitted: number, total: number) {
@@ -90,16 +110,27 @@ function RequestStateBadge({ state }: { state: MaterialRequestQueueState }) {
 export function MaterialRequestQueue({ items, canViewAll }: Props) {
   const [search, setSearch] = useState('')
   const [stateFilter, setStateFilter] = useState<QueueFilter>('all')
+  const [monthFilter, setMonthFilter] = useState<MonthFilter>('all')
+  const [sort, setSort] = useState<MaterialRequestQueueSort>('deadline_asc')
+
+  const monthOptions = useMemo(() => getMaterialRequestQueueMonthOptions(items), [items])
+  const monthFilterLabel = monthFilter === 'all'
+    ? 'Все месяцы'
+    : monthOptions.find((option) => option.value === monthFilter)?.label || 'Все месяцы'
 
   const filteredItems = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase('ru')
-    return items.filter((item) => {
+    const filtered = items.filter((item) => {
       const matchesSearch = !normalizedSearch
         || item.machineName.toLocaleLowerCase('ru').includes(normalizedSearch)
       const matchesState = stateFilter === 'all' || item.state === stateFilter
-      return matchesSearch && matchesState
+      const normalizedMonth = normalizeProductionMonthValue(item.productionMonth)
+      const matchesMonth = monthFilter === 'all'
+        || (monthFilter === 'unassigned' ? !normalizedMonth : normalizedMonth === monthFilter)
+      return matchesSearch && matchesState && matchesMonth
     })
-  }, [items, search, stateFilter])
+    return sortMaterialRequestQueueItems(filtered, sort)
+  }, [items, monthFilter, search, sort, stateFilter])
 
   const metrics = useMemo(() => ({
     total: items.length,
@@ -121,7 +152,7 @@ export function MaterialRequestQueue({ items, canViewAll }: Props) {
             <p className="mt-3 max-w-2xl text-sm leading-6 text-blue-100 md:text-base">
               {canViewAll
                 ? 'Общая очередь машин: дедлайны технологов, готовность и история переданных заявок.'
-                : 'Ваши назначенные машины: дедлайны, готовность и история переданных заявок.'}
+                : 'Все машины плана продаж: месяц, дедлайн и готовность заявок на материалы.'}
             </p>
           </div>
           <div className="rounded-xl border border-white/20 bg-white/10 px-5 py-4 backdrop-blur-sm">
@@ -163,7 +194,7 @@ export function MaterialRequestQueue({ items, canViewAll }: Props) {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="grid flex-1 gap-3 sm:grid-cols-[minmax(0,1fr)_260px]">
+          <div className="grid flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_220px_220px_260px]">
             <div className="relative">
               <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <label htmlFor="material-request-search" className="sr-only">Поиск по названию машины</label>
@@ -185,6 +216,29 @@ export function MaterialRequestQueue({ items, canViewAll }: Props) {
                 ))}
               </SelectContent>
             </Select>
+            <Select value={monthFilter} onValueChange={(value) => value && setMonthFilter(value)}>
+              <SelectTrigger className="h-11 w-full border-slate-200 bg-white" aria-label="Фильтр по месяцу плана продаж">
+                <CalendarRange aria-hidden="true" className="h-4 w-4 text-slate-400" />
+                <SelectValue>{monthFilterLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все месяцы</SelectItem>
+                {monthOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={sort} onValueChange={(value) => setSort(value as MaterialRequestQueueSort)}>
+              <SelectTrigger className="h-11 w-full border-slate-200 bg-white" aria-label="Сортировка машин">
+                <ArrowUpDown aria-hidden="true" className="h-4 w-4 text-slate-400" />
+                <SelectValue>{sortLabels[sort]}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.entries(sortLabels) as Array<[MaterialRequestQueueSort, string]>).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div aria-live="polite" className="text-sm text-slate-500">
             Показано {filteredItems.length} из {items.length}
@@ -198,8 +252,8 @@ export function MaterialRequestQueue({ items, canViewAll }: Props) {
           <h2 className="mt-4 text-lg font-semibold text-slate-800">Машины не найдены</h2>
           <p className="mt-1 text-sm text-slate-500">
             {items.length === 0
-              ? 'Назначенные задачи на подготовку заявок пока отсутствуют.'
-              : 'Измените поисковый запрос или выбранное состояние.'}
+              ? 'В плане продаж пока нет машин.'
+              : 'Измените поиск, месяц или состояние заявки.'}
           </p>
         </section>
       ) : (
@@ -210,6 +264,7 @@ export function MaterialRequestQueue({ items, canViewAll }: Props) {
                 <tr>
                   <th scope="col" className="px-5 py-4">Машина</th>
                   <th scope="col" className="px-5 py-4">Тоннаж</th>
+                  <th scope="col" className="px-5 py-4">Месяц плана</th>
                   <th scope="col" className="px-5 py-4">Дедлайн</th>
                   <th scope="col" className="px-5 py-4">Готовность</th>
                   <th scope="col" className="px-5 py-4">Заявки</th>
@@ -227,11 +282,14 @@ export function MaterialRequestQueue({ items, canViewAll }: Props) {
                         {item.machineName}
                       </Link>
                       <div className="mt-1 text-xs text-slate-500">
-                        {item.taskStatus === 'completed' ? 'Задача выполнена' : 'Задача активна'}
+                        {taskStatusLabel(item.taskStatus)}
                       </div>
                     </td>
                     <td className="px-5 py-4 font-medium tabular-nums text-slate-700">
                       <span className="inline-flex items-center gap-2"><Weight className="h-4 w-4 text-slate-400" />{formatWeight(item.totalWeight)}</span>
+                    </td>
+                    <td className="px-5 py-4 text-sm font-medium text-slate-700">
+                      {monthOptions.find((option) => option.value === normalizeProductionMonthValue(item.productionMonth))?.label || 'Без месяца'}
                     </td>
                     <td className="px-5 py-4 text-sm font-medium text-slate-700">{formatDeadline(item.deadline)}</td>
                     <td className="px-5 py-4"><RequestStateBadge state={item.state} /></td>
@@ -265,7 +323,7 @@ export function MaterialRequestQueue({ items, canViewAll }: Props) {
                       {item.machineName}
                     </Link>
                     <div className="mt-1 text-xs text-slate-500">
-                      {item.taskStatus === 'completed' ? 'Задача выполнена' : 'Задача активна'}
+                      {taskStatusLabel(item.taskStatus)}
                     </div>
                   </div>
                   <RequestStateBadge state={item.state} />
@@ -274,6 +332,12 @@ export function MaterialRequestQueue({ items, canViewAll }: Props) {
                   <div>
                     <dt className="text-slate-500">Тоннаж</dt>
                     <dd className="mt-1 font-semibold tabular-nums text-slate-800">{formatWeight(item.totalWeight)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500">Месяц плана</dt>
+                    <dd className="mt-1 font-semibold text-slate-800">
+                      {monthOptions.find((option) => option.value === normalizeProductionMonthValue(item.productionMonth))?.label || 'Без месяца'}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-slate-500">Дедлайн</dt>

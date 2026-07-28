@@ -30,6 +30,7 @@
     "test:transport-trips": "tsx scripts/test-transport-trips.ts",
     "test:department-requests": "tsx scripts/test-department-requests.ts",
     "test:technologist-request-readiness": "tsx scripts/test-technologist-request-readiness.ts",
+    "test:material-request-queue": "tsx scripts/test-material-request-queue.ts",
     "test:people-planning": "tsx scripts/test-people-planning.ts",
     "test:planning-dashboard": "tsx scripts/test-planning-director-dashboard.ts",
     "test:nesting-dimension-choice": "tsx scripts/test-nesting-dimension-choice.ts",
