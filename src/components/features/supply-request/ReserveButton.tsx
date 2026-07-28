@@ -80,6 +80,7 @@ export function ReserveButton({ table, itemId, materialId, machineId, needed, re
         request_item_table: table,
         request_item_id: itemId,
         inventory_id: selectedStock?.id || '',
+        factory_id: selectedStock?.factory_id || '',
         material_id: materialId,
         material_variant_id: selectedStock?.material_variant_id ?? null,
         machine_id: machineId,

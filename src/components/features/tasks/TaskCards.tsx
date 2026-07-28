@@ -77,6 +77,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   machine_review: 'Ознакомление с машиной',
   technologist_request_exception: 'Причина без заявки',
   transport_cost: 'Транспорт',
+  shipping_documents: 'Документы к отгрузке',
   product_project_engineering: 'Проект изделия',
   product_project_sales_review: 'Согласование изделия',
   consumable_request_review: 'Заявка на расходники',

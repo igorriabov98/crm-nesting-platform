@@ -198,7 +198,9 @@ export function CompanySettingsPage({ settings, imageUrls, departments, autoTask
                     <Select value={field.value || ''} onValueChange={(value) => field.onChange(value || null)}>
                       <FormControl>
                         <SelectTrigger className="max-w-xl">
-                          <SelectValue placeholder="Выберите существующий отдел" />
+                          <SelectValue placeholder="Выберите существующий отдел">
+                            {departments.find((department) => department.id === field.value)?.name}
+                          </SelectValue>
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -343,7 +345,14 @@ function AutoTaskUserSelect({
           >
             <FormControl>
               <SelectTrigger className="min-h-11 w-full">
-                <SelectValue placeholder={placeholder} />
+                <SelectValue placeholder={placeholder}>
+                  {field.value
+                    ? (() => {
+                        const selected = users.find((user) => user.id === field.value)
+                        return selected ? `${selected.full_name} · ${userMeta(selected)}` : 'Не выбран'
+                      })()
+                    : 'Не выбран'}
+                </SelectValue>
               </SelectTrigger>
             </FormControl>
             <SelectContent>

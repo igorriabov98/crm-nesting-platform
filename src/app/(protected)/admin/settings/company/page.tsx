@@ -93,8 +93,9 @@ export default async function CompanySettingsRoute() {
       .order('name'),
     supabase
       .from('users')
-      .select('id, full_name, role')
+      .select('id, full_name, role, is_service_account')
       .eq('is_active', true)
+      .eq('is_service_account', false)
       .order('full_name'),
     supabase
       .from('department_members')
