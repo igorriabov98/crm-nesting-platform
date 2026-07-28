@@ -2,8 +2,6 @@ import type { Database } from '@/lib/types/database'
 import { isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 
 type TaskStatus = Database['public']['Enums']['task_status']
-type UserRole = Database['public']['Enums']['user_role']
-
 type DbError = { message?: string; code?: string } | null
 type DbResult = { data: unknown; error: DbError }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -14,297 +12,150 @@ type LooseQuery = PromiseLike<DbResult> & {
   lte: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   or: (filters: string) => LooseQuery
+  order: (column: string, options?: { ascending?: boolean }) => LooseQuery
+  limit: (count: number) => LooseQuery
   single: () => Promise<DbResult>
 }
-type LooseDb = {
-  from: (table: string) => LooseQuery
+type LooseDb = { from: (table: string) => LooseQuery }
+
+type MachineRow = { id: string; name: string | null; created_by: string | null; desired_shipping_date: string | null; is_archived: boolean | null }
+type TaskRow = { id: string; machine_id?: string | null; assigned_to: string; task_type?: ShippingTaskType; status: TaskStatus }
+type ShippingTaskType = 'transport_cost' | 'shipping_documents'
+
+const TASKS: Record<ShippingTaskType, { offset: number; title: string; description: string }> = {
+  transport_cost: { offset: -7, title: 'Внести стоимость транспорта', description: 'Укажите транспортный расход' },
+  shipping_documents: { offset: -5, title: 'Подготовить документы для отгрузки', description: 'Подготовьте документы для отгрузки' },
 }
 
-type MachineForTransportTask = {
-  id: string
-  name: string | null
-  created_by: string | null
-  desired_shipping_date: string | null
-  is_archived: boolean | null
-}
-
-type ShippingStageDate = {
-  date_end: string | null
-  planned_date_end: string | null
-}
-
-type TransportExpenseRow = {
-  category: string | null
-  amount: number | string | null
-}
-
-type TransportTaskRow = {
-  id: string
-  machine_id?: string | null
-  assigned_to: string
-  status: TaskStatus
-}
-
-const TRANSPORT_TASK_TYPE = 'transport_cost' as const
-
-function dbFrom(client: unknown): LooseDb {
-  return client as LooseDb
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error || '')
-}
-
-function isMissingTransportTaskTypeError(error: unknown) {
-  const message = getErrorMessage(error)
-  return message.includes('invalid input value for enum task_type') && message.includes(TRANSPORT_TASK_TYPE)
-}
-
-function dateOnly(value: string | null | undefined) {
-  if (!value) return null
-  return value.slice(0, 10)
-}
-
+const dbFrom = (client: unknown) => client as LooseDb
+const message = (error: unknown) => error instanceof Error ? error.message : String(error || '')
+const dateOnly = (value?: string | null) => value ? value.slice(0, 10) : null
+const today = () => new Date().toISOString().slice(0, 10)
 function addDays(value: string, days: number) {
   const [year, month, day] = value.split('-').map(Number)
   const date = new Date(Date.UTC(year, month - 1, day))
   date.setUTCDate(date.getUTCDate() + days)
   return date.toISOString().slice(0, 10)
 }
-
-function todayDateOnly() {
-  return new Date().toISOString().slice(0, 10)
-}
-
 function formatDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
   return match ? `${match[3]}.${match[2]}.${match[1]}` : value
 }
 
-async function cancelOpenTransportTasks(db: LooseDb, machineId: string) {
-  const { error } = await db
-    .from('tasks')
-    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-    .eq('machine_id', machineId)
-    .eq('task_type', TRANSPORT_TASK_TYPE)
-    .in('status', ['pending', 'in_progress'])
-
-  if (error) throw new Error(error.message || 'Не удалось отменить задачу по транспорту')
+async function cancelOpenTasks(db: LooseDb, machineId: string, taskType?: ShippingTaskType) {
+  let query = db.from('tasks').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('machine_id', machineId)
+  query = taskType ? query.eq('task_type', taskType) : query.in('task_type', Object.keys(TASKS))
+  const { error } = await query.in('status', ['pending', 'in_progress'])
+  if (error) throw new Error(error.message || 'Не удалось отменить задачу по отгрузке')
 }
 
 async function hasTransportCost(db: LooseDb, machineId: string) {
-  const { data, error } = await db
-    .from('machine_expenses')
-    .select('category, amount')
-    .eq('machine_id', machineId)
-
+  const { data, error } = await db.from('machine_expenses').select('category, amount').eq('machine_id', machineId)
   if (error) throw new Error(error.message || 'Не удалось проверить стоимость транспорта')
-
-  return ((data || []) as TransportExpenseRow[]).some((expense) => (
-    isTransportExpenseCategory(expense.category) &&
-    Number(expense.amount || 0) > 0
-  ))
+  return ((data || []) as Array<{ category: string | null; amount: number | string | null }>).some(
+    (row) => isTransportExpenseCategory(row.category) && Number(row.amount || 0) > 0,
+  )
 }
 
-async function resolveTransportTaskDate(db: LooseDb, machineId: string, fallbackDate: string | null) {
-  const { data, error } = await db
-    .from('production_stages')
-    .select('date_end, planned_date_end')
-    .eq('machine_id', machineId)
-    .eq('stage_type', 'shipping')
-
-  if (error) throw new Error(error.message || 'Не удалось проверить плановую отгрузку')
-
-  const shippingStage = ((data || []) as ShippingStageDate[])[0] || null
-  return dateOnly(shippingStage?.planned_date_end) || dateOnly(shippingStage?.date_end) || dateOnly(fallbackDate)
+async function resolveShippingDate(db: LooseDb, machineId: string, fallback: string | null) {
+  const { data, error } = await db.from('production_stages').select('date_end, planned_date_end').eq('machine_id', machineId).eq('stage_type', 'shipping').order('created_at', { ascending: false }).limit(1)
+  if (error) throw new Error(error.message || 'Не удалось проверить дату отгрузки')
+  const stage = ((data || []) as Array<{ date_end: string | null; planned_date_end: string | null }>)[0]
+  return dateOnly(stage?.planned_date_end) || dateOnly(stage?.date_end) || dateOnly(fallback)
 }
 
-async function resolveTransportAssignee(db: LooseDb, creatorId: string | null) {
-  if (creatorId) {
-    const { data: creatorData } = await db
-      .from('users')
-      .select('id, is_active')
-      .eq('id', creatorId)
-      .single()
-
-    const creator = creatorData as { id: string; is_active: boolean | null } | null
-    if (creator && creator.is_active !== false) return creator.id
-  }
-
-  const { data, error } = await db
-    .from('users')
-    .select('id')
-    .eq('role', 'commercial_director' satisfies UserRole)
-    .eq('is_active', true)
-
-  if (error) throw new Error(error.message || 'Не удалось найти коммерческого директора')
-
-  const director = ((data || []) as { id: string }[])[0]
-  if (!director) throw new Error('Не найден исполнитель для задачи по транспорту')
-  return director.id
+async function resolveAssignee(db: LooseDb, creatorId: string | null) {
+  if (!creatorId) return { id: null, reason: 'У машины не указан автор' }
+  const { data, error } = await db.from('users').select('id, is_active, is_service_account').eq('id', creatorId).single()
+  if (error || !data) return { id: null, reason: 'Автор машины не найден' }
+  const user = data as { id: string; is_active: boolean | null; is_service_account: boolean | null }
+  if (user.is_active === false) return { id: null, reason: 'Автор машины неактивен' }
+  if (user.is_service_account) return { id: null, reason: 'Автор машины является служебным пользователем' }
+  return { id: user.id, reason: null }
 }
 
-async function syncTransportCostTaskInternal(client: unknown, machineId: string) {
-  const db = dbFrom(client)
-
-  const { data: machineData, error: machineError } = await db
-    .from('machines')
-    .select('id, name, created_by, desired_shipping_date, is_archived')
-    .eq('id', machineId)
-    .single()
-
-  if (machineError || !machineData) throw new Error(machineError?.message || 'Машина не найдена')
-
-  const machine = machineData as MachineForTransportTask
-  if (machine.is_archived) {
-    await cancelOpenTransportTasks(db, machineId)
+async function upsertTask(db: LooseDb, machine: MachineRow, assignedTo: string, shippingDate: string, taskType: ShippingTaskType) {
+  const definition = TASKS[taskType]
+  const deadline = addDays(shippingDate, definition.offset)
+  if (today() < deadline || (taskType === 'transport_cost' && await hasTransportCost(db, machine.id))) {
+    await cancelOpenTasks(db, machine.id, taskType)
     return
   }
-
-  if (await hasTransportCost(db, machineId)) {
-    await cancelOpenTransportTasks(db, machineId)
-    return
-  }
-
-  const shippingDate = await resolveTransportTaskDate(db, machineId, machine.desired_shipping_date)
-  if (!shippingDate) {
-    await cancelOpenTransportTasks(db, machineId)
-    return
-  }
-
-  const assignedTo = await resolveTransportAssignee(db, machine.created_by)
-  const deadline = addDays(shippingDate, -7)
-  if (todayDateOnly() < deadline) {
-    await cancelOpenTransportTasks(db, machineId)
-    return
-  }
-
-  const machineName = machine.name || 'Машина'
   const now = new Date().toISOString()
-  const taskPayload = {
-    machine_id: machineId,
+  const machineName = machine.name || 'Машина'
+  const payload = {
+    machine_id: machine.id,
     assigned_to: assignedTo,
-    task_type: TRANSPORT_TASK_TYPE,
-    title: `Внести стоимость транспорта: ${machineName}`,
-    description: `Укажите транспортный расход для машины ${machineName}. Плановая отгрузка: ${formatDate(shippingDate)}.`,
-    status: 'pending' satisfies TaskStatus,
+    task_type: taskType,
+    title: `${definition.title}: ${machineName}`,
+    description: `${definition.description} для машины ${machineName}. Плановая отгрузка: ${formatDate(shippingDate)}.`,
     start_date: deadline,
     deadline,
     updated_at: now,
   }
-
-  const { data: tasksData, error: tasksError } = await db
-    .from('tasks')
-    .select('id, assigned_to, status')
-    .eq('machine_id', machineId)
-    .eq('task_type', TRANSPORT_TASK_TYPE)
-
-  if (tasksError) throw new Error(tasksError.message || 'Не удалось проверить задачу по транспорту')
-
-  const tasks = (tasksData || []) as TransportTaskRow[]
-  const completedForAssignee = tasks.find((task) => task.assigned_to === assignedTo && task.status === 'completed')
-  const reusableTask = tasks.find((task) => (
-    task.assigned_to === assignedTo &&
-    task.status !== 'completed'
-  ))
-
-  for (const task of tasks) {
-    if (task.assigned_to === assignedTo || task.status === 'completed' || task.status === 'cancelled') continue
-
-    const { error } = await db
-      .from('tasks')
-      .update({ status: 'cancelled', updated_at: now })
-      .eq('id', task.id)
-
-    if (error) throw new Error(error.message || 'Не удалось обновить старую задачу по транспорту')
-  }
-
-  if (reusableTask) {
-    const { error } = await db
-      .from('tasks')
-      .update({
-        ...taskPayload,
-        status: reusableTask.status === 'cancelled' ? 'pending' : reusableTask.status,
-      })
-      .eq('id', reusableTask.id)
-
-    if (error) throw new Error(error.message || 'Не удалось обновить задачу по транспорту')
+  const { data, error } = await db.from('tasks').select('id, assigned_to, status').eq('machine_id', machine.id).eq('task_type', taskType)
+  if (error) throw new Error(error.message || 'Не удалось проверить задачи по отгрузке')
+  const tasks = (data || []) as TaskRow[]
+  const active = tasks.find((task) => ['pending', 'in_progress'].includes(task.status))
+  if (active) {
+    for (const duplicate of tasks.filter((task) => task.id !== active.id && ['pending', 'in_progress'].includes(task.status))) {
+      const { error: cancelError } = await db.from('tasks').update({ status: 'cancelled', updated_at: now }).eq('id', duplicate.id)
+      if (cancelError) throw new Error(cancelError.message || 'Не удалось отменить дубликат задачи по отгрузке')
+    }
+    const { error: updateError } = await db.from('tasks').update({ ...payload, assigned_to: assignedTo }).eq('id', active.id)
+    if (updateError) throw new Error(updateError.message || 'Не удалось обновить задачу по отгрузке')
     return
   }
+  if (tasks.some((task) => task.status === 'completed')) return
+  const { error: insertError } = await db.from('tasks').insert({ ...payload, status: 'pending' satisfies TaskStatus })
+  if (insertError && !String(insertError.message || '').includes('duplicate key')) throw new Error(insertError.message || 'Не удалось создать задачу по отгрузке')
+}
 
-  if (completedForAssignee) return
-
-  const { error: insertError } = await db
-    .from('tasks')
-    .insert(taskPayload)
-
-  if (insertError && !String(insertError.message || '').includes('duplicate key')) {
-    throw new Error(insertError.message || 'Не удалось создать задачу по транспорту')
+async function syncShippingTasksInternal(client: unknown, machineId: string) {
+  const db = dbFrom(client)
+  const { data, error } = await db.from('machines').select('id, name, created_by, desired_shipping_date, is_archived').eq('id', machineId).single()
+  if (error || !data) throw new Error(error?.message || 'Машина не найдена')
+  const machine = data as MachineRow
+  const shippingDate = await resolveShippingDate(db, machineId, machine.desired_shipping_date)
+  const assignee = await resolveAssignee(db, machine.created_by)
+  if (machine.is_archived || !shippingDate || !assignee.id) {
+    await cancelOpenTasks(db, machineId)
+    return { skippedReason: machine.is_archived ? 'Машина в архиве' : !shippingDate ? 'Не указана дата отгрузки' : assignee.reason }
   }
+  await Promise.all((Object.keys(TASKS) as ShippingTaskType[]).map((taskType) => upsertTask(db, machine, assignee.id!, shippingDate, taskType)))
+  return { skippedReason: null }
 }
 
 export async function syncTransportCostTask(client: unknown, machineId: string) {
-  try {
-    await syncTransportCostTaskInternal(client, machineId)
-  } catch (error) {
-    if (isMissingTransportTaskTypeError(error)) return
+  try { return await syncShippingTasksInternal(client, machineId) }
+  catch (error) {
+    if (message(error).includes('invalid input value for enum task_type') && message(error).includes('shipping_documents')) return { skippedReason: 'Миграция типов задач ещё не применена' }
     throw error
   }
 }
 
 export async function syncDueTransportCostTasks(client: unknown) {
   const db = dbFrom(client)
-  const dueLimit = addDays(todayDateOnly(), 7)
-
-  const [machinesByShippingDate, shippingStages, openTasks] = await Promise.all([
-    db
-      .from('machines')
-      .select('id')
-      .eq('is_archived', false)
-      .lte('desired_shipping_date', dueLimit),
-    db
-      .from('production_stages')
-      .select('machine_id')
-      .eq('stage_type', 'shipping')
-      .or(`planned_date_end.lte.${dueLimit},date_end.lte.${dueLimit}`),
-    db
-      .from('tasks')
-      .select('machine_id')
-      .eq('task_type', TRANSPORT_TASK_TYPE)
-      .in('status', ['pending', 'in_progress']),
+  const dueLimit = addDays(today(), 7)
+  const [machines, stages, tasks] = await Promise.all([
+    db.from('machines').select('id').eq('is_archived', false).lte('desired_shipping_date', dueLimit),
+    db.from('production_stages').select('machine_id').eq('stage_type', 'shipping').or(`planned_date_end.lte.${dueLimit},date_end.lte.${dueLimit}`),
+    db.from('tasks').select('machine_id').in('task_type', Object.keys(TASKS)).in('status', ['pending', 'in_progress']),
   ])
-
-  if (machinesByShippingDate.error) throw new Error(machinesByShippingDate.error.message || 'Не удалось найти машины к отгрузке')
-  if (shippingStages.error) throw new Error(shippingStages.error.message || 'Не удалось найти этапы отгрузки')
-  if (openTasks.error) throw new Error(openTasks.error.message || 'Не удалось проверить открытые транспортные задачи')
-
+  if (machines.error || stages.error || tasks.error) throw new Error(machines.error?.message || stages.error?.message || tasks.error?.message || 'Не удалось найти задачи по отгрузке')
   const machineIds = new Set<string>()
-  for (const row of (machinesByShippingDate.data || []) as Array<{ id?: string | null }>) {
-    if (row.id) machineIds.add(row.id)
-  }
-  for (const row of (shippingStages.data || []) as Array<{ machine_id?: string | null }>) {
-    if (row.machine_id) machineIds.add(row.machine_id)
-  }
-  for (const row of (openTasks.data || []) as TransportTaskRow[]) {
-    if (row.machine_id) machineIds.add(row.machine_id)
-  }
-
+  for (const row of (machines.data || []) as Array<{ id?: string }>) if (row.id) machineIds.add(row.id)
+  for (const row of (stages.data || []) as Array<{ machine_id?: string }>) if (row.machine_id) machineIds.add(row.machine_id)
+  for (const row of (tasks.data || []) as Array<{ machine_id?: string }>) if (row.machine_id) machineIds.add(row.machine_id)
   const errors: Array<{ machineId: string; error: string }> = []
+  const diagnostics: Array<{ machineId: string; reason: string }> = []
   let synced = 0
-
   for (const machineId of machineIds) {
     try {
-      await syncTransportCostTask(client, machineId)
-      synced += 1
-    } catch (error) {
-      errors.push({ machineId, error: getErrorMessage(error) })
-    }
+      const result = await syncTransportCostTask(client, machineId)
+      if (result?.skippedReason) diagnostics.push({ machineId, reason: result.skippedReason })
+      else synced += 1
+    } catch (error) { errors.push({ machineId, error: message(error) }) }
   }
-
-  return {
-    checked: machineIds.size,
-    synced,
-    machineIds: Array.from(machineIds),
-    errors,
-  }
+  return { checked: machineIds.size, synced, machineIds: [...machineIds], diagnostics, errors }
 }

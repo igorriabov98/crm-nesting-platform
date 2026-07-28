@@ -1,11 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { ArrowLeft, Pin } from 'lucide-react'
+import { ArrowLeft, Factory, Pin } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -42,6 +42,21 @@ export function SupplyRequestPage({ data, detailing }: Props) {
   const [isPending, startTransition] = useTransition()
   const [activeTab, setActiveTab] = useState<TabKey>('sheet_metal')
   const { request } = data
+  const defaultFactoryId = data.factories.find((factory) => factory.is_destination)?.id || data.factories[0]?.id || ''
+  const [selectedFactoryId, setSelectedFactoryId] = useState(defaultFactoryId)
+  const selectedFactory = data.factories.find((factory) => factory.id === selectedFactoryId)
+  const filteredSections = useMemo(() => {
+    const filterRows = <T extends { stock_items: SupplyRequestPayload['sections']['sheetMetal'][number]['stock_items']; available_stock: number | null }>(rows: T[]) => rows.map((row) => {
+      const stockItems = row.stock_items.filter((item) => item.factory_id === selectedFactoryId)
+      return { ...row, stock_items: stockItems, available_stock: stockItems.reduce((sum, item) => sum + Number(item.available_quantity || 0), 0) }
+    })
+    return {
+      sheetMetal: filterRows(data.sections.sheetMetal), circles: filterRows(data.sections.circles),
+      pipes: filterRows(data.sections.pipes), knives: filterRows(data.sections.knives),
+      paint: filterRows(data.sections.paint), components: filterRows(data.sections.components),
+      meshItems: filterRows(data.sections.meshItems), chainCords: filterRows(data.sections.chainCords),
+    }
+  }, [data.sections, selectedFactoryId])
   const isStockCheckMode = isBusinessScrapReservationStatus(request.status)
   const isSupplyReservationMode = isSupplyWarehouseReservationStatus(request.status)
   const canCompleteReservation = isStockCheckMode && data.current_role !== 'supply_manager'
@@ -68,7 +83,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
 
   const reserveAll = () => {
     startTransition(async () => {
-      const result = await reserveAllAvailable(request.id)
+      const result = await reserveAllAvailable(request.id, selectedFactoryId)
       if (!result.success) {
         toast.error(result.error || 'Не удалось забронировать остатки')
         return
@@ -144,6 +159,39 @@ export function SupplyRequestPage({ data, detailing }: Props) {
 
       {isStockCheckMode && detailing && <DetailingRequestPanel workspace={detailing} canManage={canManageDetailing} />}
 
+      <section className="rounded-xl border border-[#E8ECF0] bg-white p-4" aria-labelledby="factory-switch-title">
+        <div className="mb-3 flex items-center gap-2">
+          <Factory className="h-5 w-5 text-[#1B3A6B]" />
+          <div>
+            <h2 id="factory-switch-title" className="font-semibold text-[#1B3A6B]">Склад завода</h2>
+            <p className="text-xs text-[#6B7280]">Остатки загружены. Переключение не выполняет новый запрос.</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Выберите завод бронирования">
+          {data.factories.map((factory) => (
+            <button
+              key={factory.id}
+              type="button"
+              role="radio"
+              aria-checked={factory.id === selectedFactoryId}
+              onClick={() => setSelectedFactoryId(factory.id)}
+              className={`min-h-11 rounded-lg border px-4 py-2 text-left text-sm transition ${factory.id === selectedFactoryId ? 'border-[#1B3A6B] bg-[#1B3A6B] text-white shadow-sm' : 'border-[#DDE3EA] bg-white text-[#374151] hover:border-[#8CA2C4] hover:bg-[#F8FAFC]'}`}
+            >
+              <span className="font-medium">{factory.name}</span>
+              {factory.is_destination && <span className="ml-2 text-xs opacity-75">завод машины</span>}
+              <span className={`ml-3 rounded-full px-2 py-0.5 text-xs ${factory.id === selectedFactoryId ? 'bg-white/20' : 'bg-[#EEF2F7] text-[#526075]'}`}>
+                {factory.available_position_count}
+              </span>
+            </button>
+          ))}
+        </div>
+        {selectedFactory && !selectedFactory.is_destination && (
+          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Бронь со склада «{selectedFactory.name}» автоматически создаст межзаводское перемещение на завод машины.
+          </p>
+        )}
+      </section>
+
       <SupplyRequestSummary summary={data.summary} totalWeight={totalWeight} />
 
       <div className="rounded-xl border border-[#E8ECF0] bg-white p-2">
@@ -168,14 +216,14 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         </div>
       </div>
 
-      {activeTab === 'sheet_metal' && <SupplySheetMetalTable rows={data.sections.sheetMetal} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'circle' && <SupplyCircleTable rows={data.sections.circles} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'pipe' && <SupplyPipeTable rows={data.sections.pipes} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'knives' && <SupplyKnivesTable rows={data.sections.knives} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'paint' && <SupplyPaintTable rows={data.sections.paint} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'components' && <SupplyComponentsTable rows={data.sections.components} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'mesh' && <SupplyMeshTable rows={data.sections.meshItems} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'chain_cord' && <SupplyChainCordTable rows={data.sections.chainCords} machineId={request.machine_id} canManageOrders={canManageOrders} />}
+      {activeTab === 'sheet_metal' && <SupplySheetMetalTable key={selectedFactoryId} rows={filteredSections.sheetMetal} machineId={request.machine_id} canManageOrders={canManageOrders} />}
+      {activeTab === 'circle' && <SupplyCircleTable key={selectedFactoryId} rows={filteredSections.circles} machineId={request.machine_id} canManageOrders={canManageOrders} />}
+      {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes} machineId={request.machine_id} canManageOrders={canManageOrders} />}
+      {activeTab === 'knives' && <SupplyKnivesTable key={selectedFactoryId} rows={filteredSections.knives} machineId={request.machine_id} canManageOrders={canManageOrders} />}
+      {activeTab === 'paint' && <SupplyPaintTable key={selectedFactoryId} rows={filteredSections.paint} machineId={request.machine_id} canManageOrders={canManageOrders} />}
+      {activeTab === 'components' && <SupplyComponentsTable key={selectedFactoryId} rows={filteredSections.components} machineId={request.machine_id} canManageOrders={canManageOrders} />}
+      {activeTab === 'mesh' && <SupplyMeshTable key={selectedFactoryId} rows={filteredSections.meshItems} machineId={request.machine_id} canManageOrders={canManageOrders} />}
+      {activeTab === 'chain_cord' && <SupplyChainCordTable key={selectedFactoryId} rows={filteredSections.chainCords} machineId={request.machine_id} canManageOrders={canManageOrders} />}
     </div>
   )
 }

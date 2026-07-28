@@ -25,6 +25,7 @@ async function main() {
       role: 'technologist',
       factory_id: null,
       is_active: true,
+      is_service_account: true,
     }, { onConflict: 'id' });
 
   if (profileError) throw new Error(`public.users upsert failed: ${profileError.message}`);
@@ -34,6 +35,7 @@ async function main() {
     userId: user.id,
     role: 'technologist',
     isActive: true,
+    isServiceAccount: true,
   }, null, 2));
 }
 

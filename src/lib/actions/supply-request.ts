@@ -97,6 +97,12 @@ export type SupplyRequestSectionSummary = {
 export type SupplyRequestPayload = {
   current_role: UserRole
   request: RequestWithRelations
+  factories: Array<{
+    id: string
+    name: string
+    is_destination: boolean
+    available_position_count: number
+  }>
   sections: {
     sheetMetal: SupplyRequestRow<RequestSheetMetal>[]
     roundTube: SupplyRequestRow<RequestRoundTube>[]
@@ -779,10 +785,21 @@ async function loadRequestForStockSource(
       chainCords: withStock('request_chain_cord', chainCords, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
     }
 
+    const sectionRows = Object.values(sections).flat() as Array<SupplyRequestRow<Record<string, unknown>>>
+    const factories = ((factoriesRes.data || []) as { id: string; name: string }[]).map((factory) => ({
+      id: factory.id,
+      name: factory.name,
+      is_destination: factory.id === request.machine.factory_id,
+      available_position_count: sectionRows.filter((row) => row.stock_items.some(
+        (item) => item.factory_id === factory.id && Number(item.available_quantity || 0) > 0,
+      )).length,
+    }))
+
     return {
       data: {
         current_role: role,
         request,
+        factories,
         sections,
         summary: {
           sheetMetal: summarize(sections.sheetMetal, 'request_sheet_metal', 'шт'),
@@ -840,6 +857,7 @@ export async function reserveItemFromStock(data: {
   request_item_table: RequestItemTable
   request_item_id: string
   inventory_id: string
+  factory_id: string
   material_id: string
   material_variant_id?: string | null
   piece_length_mm?: number | null
@@ -864,6 +882,7 @@ export async function reserveItemFromStock(data: {
     if (selectedInventoryError) throw new Error(selectedInventoryError.message || 'Не удалось проверить выбранный складской остаток')
     const selectedInventory = selectedInventoryData as InventoryRow | null
     if (!selectedInventory?.id || selectedInventory.deleted_at) throw new Error('Выбранный складской остаток не найден')
+    if (selectedInventory.factory_id !== data.factory_id) throw new Error('Завод складского остатка не совпадает с выбранным заводом')
     if (!request.machine.factory_id) throw new Error('Для машины не определён завод назначения')
     const requiresInventoryTransfer = selectedInventory.factory_id !== request.machine.factory_id
     if ((selectedInventory.business_scrap_state || 'available') === 'future') throw new Error('Будущий деловой отход нельзя бронировать в этой заявке')
@@ -955,11 +974,12 @@ export async function unreserveItem(data: { request_item_table: RequestItemTable
   }
 }
 
-export async function reserveAllAvailable(requestId: string) {
+export async function reserveAllAvailable(requestId: string, factoryId: string) {
   try {
     await requireAccess('manage')
     const { data, error } = await getRequestForSupply(requestId)
     if (error || !data) throw new Error(error || 'Ð—Ð°ÑÐ²ÐºÐ° Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
+    if (!data.factories.some((factory) => factory.id === factoryId)) throw new Error('Выбранный завод не найден')
 
     let reservedCount = 0
     let skippedCount = 0
@@ -975,7 +995,7 @@ export async function reserveAllAvailable(requestId: string) {
       const needed = getNeededForRow(table, row)
       const remaining = Math.max(needed - row.covered_quantity, 0)
       const reservableStockItems = row.stock_items.filter((item) =>
-        item.factory_id === data.request.machine.factory_id
+        item.factory_id === factoryId
         && Number(item.available_quantity || 0) > 0,
       )
       if (reservableStockItems.length !== 1) {
@@ -992,6 +1012,7 @@ export async function reserveAllAvailable(requestId: string) {
         request_item_table: table,
         request_item_id: row.id,
         inventory_id: reservableStockItems[0].id,
+        factory_id: factoryId,
         material_id: row.material_id,
         material_variant_id: reservableStockItems.length === 1
           ? reservableStockItems[0].material_variant_id

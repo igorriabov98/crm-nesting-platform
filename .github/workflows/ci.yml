@@ -111,6 +111,8 @@ jobs:
         working-directory: nesting-service
       - name: Task partial-index ON CONFLICT regression
         run: npm run test:task-on-conflict
+      - name: Shipping task schedule and factory reservation source
+        run: npm run test:shipping-factory
       - name: Inventory stock lifecycle
         run: node scripts/test-inventory-stock-lifecycle.mjs
       - name: Inventory factory transfers
