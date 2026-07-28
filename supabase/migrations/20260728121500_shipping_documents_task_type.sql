@@ -7,7 +7,6 @@ COMMENT ON COLUMN public.users.is_service_account IS
   'Служебные аккаунты не могут быть исполнителями автоматически создаваемых бизнес-задач.';
 
 UPDATE public.users
-SET is_service_account = true,
-    updated_at = now()
+SET is_service_account = true
 WHERE lower(btrim(COALESCE(full_name, ''))) = 'ci smoke user'
    OR lower(COALESCE(email, '')) LIKE '%smoke%';
