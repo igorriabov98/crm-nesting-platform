@@ -122,6 +122,8 @@ export type SupplyTransportNeed = {
   supplierAddress: string | null
   factoryId: string
   factoryName: string
+  factoryCity: string | null
+  factoryAddress: string | null
   deliveryDate: string
   itemName: string
   quantity: number
@@ -993,7 +995,7 @@ export async function getSupplyTransportNeeds(): Promise<{
       requests.map((request) => request.machines?.factory_id).filter((id): id is string => Boolean(id)),
     ))
     const factoriesResult = factoryIds.length > 0
-      ? await db.from('factories').select('id, name').in('id', factoryIds)
+      ? await db.from('factories').select('id, name, city, address').in('id', factoryIds)
       : { data: [], error: null }
     if (factoriesResult.error) throw new Error(factoriesResult.error.message || 'Не удалось загрузить заводы поставок')
 
@@ -1003,8 +1005,8 @@ export async function getSupplyTransportNeeds(): Promise<{
       city: string | null
       address: string | null
     }>).map((supplier) => [supplier.id, supplier]))
-    const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string }>)
-      .map((factory) => [factory.id, factory.name]))
+    const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>)
+      .map((factory) => [factory.id, factory]))
 
     return {
       data: eligibleSchedules.flatMap((schedule): SupplyTransportNeed[] => {
@@ -1024,7 +1026,9 @@ export async function getSupplyTransportNeeds(): Promise<{
           supplierCity: supplier.city,
           supplierAddress: supplier.address,
           factoryId,
-          factoryName: factories.get(factoryId) || 'Завод не указан',
+          factoryName: factories.get(factoryId)?.name || 'Завод не указан',
+          factoryCity: factories.get(factoryId)?.city || null,
+          factoryAddress: factories.get(factoryId)?.address || null,
           deliveryDate: schedule.delivery_date,
           itemName: item.item_name,
           quantity: Number(schedule.quantity),

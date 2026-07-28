@@ -611,16 +611,22 @@ export type Database = {
         Row: {
           id: string
           name: string
+          city: string
+          address: string | null
           created_at: string
         }
         Insert: {
           id?: string
           name: string
+          city: string
+          address?: string | null
           created_at?: string
         }
         Update: {
           id?: string
           name?: string
+          city?: string
+          address?: string | null
           created_at?: string
         }
       }
@@ -1202,6 +1208,7 @@ export type Database = {
           category: string
           amount: number
           comment: string | null
+          date_change_state: Database['public']['Enums']['transport_trip_date_change_state']
           created_at: string
         }
         Insert: {
@@ -1210,6 +1217,7 @@ export type Database = {
           category: string
           amount: number
           comment?: string | null
+          date_change_state?: Database['public']['Enums']['transport_trip_date_change_state']
           created_at?: string
         }
         Update: {
@@ -1218,6 +1226,7 @@ export type Database = {
           category?: string
           amount?: number
           comment?: string | null
+          date_change_state?: Database['public']['Enums']['transport_trip_date_change_state']
           created_at?: string
         }
       }
@@ -2531,6 +2540,16 @@ export type Database = {
           created_at?: string
           updated_at?: string
         }
+      }
+      transport_trip_date_change_requests: {
+        Row: { id: string; transport_order_id: string; task_id: string | null; status: Database['public']['Enums']['transport_trip_date_change_state']; reason: string; requested_by: string; decided_by: string | null; decision_comment: string | null; created_at: string; updated_at: string; decided_at: string | null }
+        Insert: { id?: string; transport_order_id: string; task_id?: string | null; status?: Database['public']['Enums']['transport_trip_date_change_state']; reason: string; requested_by: string; decided_by?: string | null; decision_comment?: string | null; created_at?: string; updated_at?: string; decided_at?: string | null }
+        Update: { id?: string; transport_order_id?: string; task_id?: string | null; status?: Database['public']['Enums']['transport_trip_date_change_state']; reason?: string; requested_by?: string; decided_by?: string | null; decision_comment?: string | null; created_at?: string; updated_at?: string; decided_at?: string | null }
+      }
+      transport_trip_date_change_items: {
+        Row: { id: string; request_id: string; transport_need_link_id: string; need_source: 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'; need_id: string; old_date: string; new_date: string; status: Database['public']['Enums']['transport_trip_date_change_state']; sort_order: number; created_at: string; decided_at: string | null }
+        Insert: { id?: string; request_id: string; transport_need_link_id: string; need_source: 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'; need_id: string; old_date: string; new_date: string; status?: Database['public']['Enums']['transport_trip_date_change_state']; sort_order?: number; created_at?: string; decided_at?: string | null }
+        Update: { id?: string; request_id?: string; transport_need_link_id?: string; need_source?: 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'; need_id?: string; old_date?: string; new_date?: string; status?: Database['public']['Enums']['transport_trip_date_change_state']; sort_order?: number; created_at?: string; decided_at?: string | null }
       }
       production_plan_date_change_requests: {
         Row: {
@@ -4765,6 +4784,7 @@ export type Database = {
       task_delegation_status: 'pending' | 'accepted' | 'declined' | 'cancelled'
       production_month_plan_status: 'draft' | 'preliminary_ready' | 'confirmed'
       production_date_change_request_status: 'pending' | 'approved' | 'rejected' | 'conflicted'
+      transport_trip_date_change_state: 'not_required' | 'pending' | 'approved' | 'rejected' | 'conflicted'
       outsourcing_executor_type: 'supplier' | 'factory'
       outsourcing_responsible: 'production' | 'supply'
       outsourcing_transport_direction: 'outbound' | 'return' | 'mixed'
@@ -4779,7 +4799,7 @@ export type Database = {
       inventory_transfer_status: InventoryTransferStatus
       detailing_movement_type: DetailingMovementType
       employee_assignment_status: EmployeeAssignmentStatus
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'

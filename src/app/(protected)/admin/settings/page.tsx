@@ -98,6 +98,14 @@ export default async function AdminSettingsPage() {
       buttonLabel: 'Открыть настройки компании',
       icon: Building2,
     },
+    canViewSettingsContent && canViewResource(permissions, 'company_settings') && {
+      key: 'factories',
+      title: 'Площадки и заводы',
+      description: 'Город и адрес каждой заводской или складской площадки для построения транспортных рейсов.',
+      href: ROUTES.ADMIN_FACTORY_SETTINGS,
+      buttonLabel: 'Настроить площадки',
+      icon: Factory,
+    },
     canViewSettingsContent && canViewResource(permissions, 'production_fact_settings') && {
       key: 'production-fact',
       title: 'Настройки факта производства',

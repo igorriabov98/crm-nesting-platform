@@ -33,6 +33,10 @@ function normalizeRoutePoint(value: string) {
   return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru')
 }
 
+export function normalizeTransportCity(value: string | null | undefined) {
+  return normalizeRoutePoint(value || '')
+}
+
 export function routeStartsAt(route: string, startPoint: string) {
   const firstPoint = route.split('→', 1)[0] || ''
   return normalizeRoutePoint(firstPoint) === normalizeRoutePoint(startPoint)
@@ -66,6 +70,10 @@ export type TransportStopPlan = {
   assignments: TransportDraftAssignment[]
 }
 
+function pointKeyForDestination(need: TransportRouteNeed) {
+  return need.destinationPointKey || `destination:${need.destinationPointLabel}`
+}
+
 function stopId(index: number, pointKey: string) {
   return `stop-${index}-${pointKey.replace(/[^a-zA-Z0-9_-]/g, '-')}`
 }
@@ -76,110 +84,102 @@ function addMinutes(time: string, minutes: number) {
   return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
 }
 
+function timeForInsertion(stops: TransportDraftStop[], index: number) {
+  const minutes = (value: string) => {
+    const [hours = 0, mins = 0] = value.split(':').map(Number)
+    return hours * 60 + mins
+  }
+  const previous = stops[index - 1]?.plannedTime
+  const next = stops[index]?.plannedTime
+  if (previous && next) {
+    const left = minutes(previous)
+    const right = minutes(next)
+    if (right - left > 1) return addMinutes(previous, Math.floor((right - left) / 2))
+  }
+  if (next) return addMinutes(next, -30)
+  if (previous) return addMinutes(previous, 60)
+  return '09:00'
+}
+
 /**
  * Builds a stable topological route for ordinary multi-pickup trips. If the
  * selected needs contain a cycle (for example A -> B and B -> A), the route
  * falls back to a sequential chain and revisits a point when necessary.
  */
 export function buildTransportStopPlan(needs: TransportRouteNeed[]): TransportStopPlan {
-  const pointMeta = new Map<string, {
-    label: string
-    city: string | null
-    address: string | null
-    firstSeen: number
-  }>()
-  const edges = new Map<string, Set<string>>()
-  const indegree = new Map<string, number>()
+  return reconcileTransportStopPlan([], [], needs)
+}
 
-  const registerPoint = (
-    key: string,
-    label: string,
-    city: string | null | undefined,
-    address: string | null | undefined,
-    firstSeen: number,
-  ) => {
-    if (!pointMeta.has(key)) pointMeta.set(key, { label, city: city || null, address: address || null, firstSeen })
-    if (!edges.has(key)) edges.set(key, new Set())
-    if (!indegree.has(key)) indegree.set(key, 0)
-  }
+/** Adds and removes needs without disturbing manually ordered existing stops. */
+export function reconcileTransportStopPlan(
+  currentStops: TransportDraftStop[],
+  currentAssignments: TransportDraftAssignment[],
+  needs: TransportRouteNeed[],
+): TransportStopPlan {
+  const needKeys = new Set(needs.map((need, index) => need.key || `need-${index}`))
+  const assignments = currentAssignments.filter((item) => needKeys.has(item.needKey))
+  const referencedIds = new Set(assignments.flatMap((item) => [item.pickupStopClientId, item.deliveryStopClientId]))
+  const preservedShell = currentStops.filter((stop) => stop.kind !== 'service')
+  const stops = currentStops.filter((stop) => stop.kind === 'service' && referencedIds.has(stop.clientId))
+  const destinationIds = new Set(assignments.map((item) => item.deliveryStopClientId))
 
-  needs.forEach((need, index) => {
-    const destinationKey = need.destinationPointKey || `destination:${need.destinationPointLabel}`
-    registerPoint(need.sourcePointKey, need.sourcePointLabel, need.sourcePointCity, need.sourcePointAddress, index * 2)
-    registerPoint(destinationKey, need.destinationPointLabel, need.destinationPointCity, need.destinationPointAddress, index * 2 + 1)
-    if (!edges.get(need.sourcePointKey)!.has(destinationKey)) {
-      edges.get(need.sourcePointKey)!.add(destinationKey)
-      indegree.set(destinationKey, (indegree.get(destinationKey) || 0) + 1)
-    }
-  })
-
-  const ready = Array.from(pointMeta.keys())
-    .filter((key) => indegree.get(key) === 0)
-    .sort((left, right) => pointMeta.get(left)!.firstSeen - pointMeta.get(right)!.firstSeen)
-  const orderedKeys: string[] = []
-  while (ready.length > 0) {
-    const key = ready.shift()!
-    orderedKeys.push(key)
-    for (const target of edges.get(key) || []) {
-      const nextDegree = (indegree.get(target) || 0) - 1
-      indegree.set(target, nextDegree)
-      if (nextDegree === 0) {
-        ready.push(target)
-        ready.sort((left, right) => pointMeta.get(left)!.firstSeen - pointMeta.get(right)!.firstSeen)
-      }
-    }
-  }
-
-  const makeStop = (key: string, index: number): TransportDraftStop => {
-    const meta = pointMeta.get(key)!
+  const makeStop = (need: TransportRouteNeed, role: 'pickup' | 'delivery'): TransportDraftStop => {
+    const key = role === 'pickup' ? need.sourcePointKey : pointKeyForDestination(need)
+    const label = role === 'pickup' ? need.sourcePointLabel : need.destinationPointLabel
+    const city = role === 'pickup' ? need.sourcePointCity : need.destinationPointCity
+    const address = role === 'pickup' ? need.sourcePointAddress : need.destinationPointAddress
     return {
-      clientId: stopId(index, key),
+      clientId: stopId(stops.length + assignments.length, `${need.key || 'need'}-${role}-${key}`),
       pointKey: key,
-      pointLabel: meta.label,
-      city: meta.city,
-      address: meta.address,
+      pointLabel: label,
+      city: city || null,
+      address: address || null,
       kind: 'service',
-      plannedTime: addMinutes('08:00', (index + 1) * 60),
+      plannedTime: addMinutes('08:00', (stops.length + 1) * 60),
       serviceDurationMinutes: 30,
     }
   }
 
-  if (orderedKeys.length === pointMeta.size) {
-    const stops = orderedKeys.map(makeStop)
-    const stopByPoint = new Map(stops.map((stop) => [stop.pointKey, stop.clientId]))
-    return {
-      stops,
-      assignments: needs.map((need, index) => ({
-        needKey: need.key || `need-${index}`,
-        pickupStopClientId: stopByPoint.get(need.sourcePointKey)!,
-        deliveryStopClientId: stopByPoint.get(need.destinationPointKey || `destination:${need.destinationPointLabel}`)!,
-      })),
-    }
-  }
-
-  const stops: TransportDraftStop[] = []
-  const assignments: TransportDraftAssignment[] = []
-  let cursor = -1
   needs.forEach((need, needIndex) => {
-    const destinationKey = need.destinationPointKey || `destination:${need.destinationPointLabel}`
-    let pickupIndex = stops.findIndex((stop, index) => index >= cursor && stop.pointKey === need.sourcePointKey)
-    if (pickupIndex < 0) {
-      pickupIndex = stops.length
-      stops.push(makeStop(need.sourcePointKey, pickupIndex))
+    const key = need.key || `need-${needIndex}`
+    if (assignments.some((item) => item.needKey === key)) return
+    const destinationCity = normalizeTransportCity(need.destinationPointCity)
+    const destinationKey = pointKeyForDestination(need)
+    const deliveryBlockIndexes = stops
+      .map((stop, index) => destinationIds.has(stop.clientId)
+        && normalizeTransportCity(stop.city) === destinationCity ? index : -1)
+      .filter((index) => index >= 0)
+    let insertionIndex = deliveryBlockIndexes.length > 0 ? Math.min(...deliveryBlockIndexes) : stops.length
+    let pickup = stops.find((stop, index) => stop.pointKey === need.sourcePointKey && index <= insertionIndex)
+    if (!pickup) {
+      pickup = makeStop(need, 'pickup')
+      pickup.plannedTime = timeForInsertion(stops, insertionIndex)
+      stops.splice(insertionIndex, 0, pickup)
+      insertionIndex += 1
+    } else {
+      insertionIndex = Math.max(insertionIndex, stops.indexOf(pickup) + 1)
     }
-    let deliveryIndex = stops.findIndex((stop, index) => index > pickupIndex && stop.pointKey === destinationKey)
-    if (deliveryIndex < 0) {
-      deliveryIndex = stops.length
-      stops.push(makeStop(destinationKey, deliveryIndex))
+    let delivery = stops.find((stop, index) => stop.pointKey === destinationKey && index >= insertionIndex)
+    if (!delivery) {
+      delivery = makeStop(need, 'delivery')
+      const lastCityDelivery = stops.reduce((last, stop, index) => (
+        destinationIds.has(stop.clientId) && normalizeTransportCity(stop.city) === destinationCity ? index : last
+      ), -1)
+      const deliveryIndex = lastCityDelivery >= insertionIndex ? lastCityDelivery + 1 : insertionIndex
+      delivery.plannedTime = timeForInsertion(stops, deliveryIndex)
+      stops.splice(deliveryIndex, 0, delivery)
     }
-    cursor = pickupIndex
-    assignments.push({
-      needKey: need.key || `need-${needIndex}`,
-      pickupStopClientId: stops[pickupIndex].clientId,
-      deliveryStopClientId: stops[deliveryIndex].clientId,
-    })
+    assignments.push({ needKey: key, pickupStopClientId: pickup.clientId, deliveryStopClientId: delivery.clientId })
+    destinationIds.add(delivery.clientId)
   })
-  return { stops, assignments }
+
+  const start = preservedShell.find((stop) => stop.kind === 'start')
+  const finish = preservedShell.find((stop) => stop.kind === 'finish')
+  const resultStops = [...(start ? [start] : []), ...stops, ...(finish ? [finish] : [])]
+  if (currentStops.length === 0) {
+    resultStops.forEach((stop, index) => { stop.plannedTime = addMinutes('08:00', (index + 1) * 60) })
+  }
+  return { stops: resultStops, assignments }
 }
 
 export function getTransportStopOrderError(

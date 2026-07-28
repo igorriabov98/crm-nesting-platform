@@ -7,6 +7,7 @@ import {
   buildTransportRoute,
   getTransportStopOrderError,
   getTransportNeedConflict,
+  reconcileTransportStopPlan,
   routeStartsAt,
   type TransportRouteNeed,
 } from '../src/lib/transport/trip-rules'
@@ -88,6 +89,24 @@ assert.deepEqual(
 )
 assert.equal(getTransportStopOrderError(multiPickupPlan.stops, multiPickupPlan.assignments), null)
 
+const cityBlockNeeds: TransportRouteNeed[] = [
+  { key: 'need:agro', sourcePointKey: 'supplier:agro', sourcePointLabel: 'Агрострой', sourcePointCity: 'Берегово', destinationPointKey: 'supplier:varian', destinationPointLabel: 'Varian', destinationPointCity: ' УЖГОРОД ', direction: 'outbound' },
+  { key: 'need:metal', sourcePointKey: 'supplier:metal', sourcePointLabel: 'АВ Метал', sourcePointCity: 'Мукачево', destinationPointKey: 'factory:2', destinationPointLabel: 'Завод 2', destinationPointCity: 'ужгород', direction: 'outbound' },
+]
+const cityBlockPlan = buildTransportStopPlan(cityBlockNeeds)
+assert.deepEqual(cityBlockPlan.stops.map((stop) => stop.pointLabel), ['Агрострой', 'АВ Метал', 'Varian', 'Завод 2'])
+assert.notEqual(cityBlockPlan.stops[2].clientId, cityBlockPlan.stops[3].clientId)
+assert.equal(getTransportStopOrderError(cityBlockPlan.stops, cityBlockPlan.assignments), null)
+
+const manuallyReordered = [cityBlockPlan.stops[1], cityBlockPlan.stops[0], cityBlockPlan.stops[2], cityBlockPlan.stops[3]]
+const extendedPlan = reconcileTransportStopPlan(manuallyReordered, cityBlockPlan.assignments, [
+  ...cityBlockNeeds,
+  { key: 'need:lviv', sourcePointKey: 'supplier:lviv-pickup', sourcePointLabel: 'Львов склад', sourcePointCity: 'Львов', destinationPointKey: 'factory:lviv', destinationPointLabel: 'Львов завод', destinationPointCity: 'Львов', direction: 'outbound' },
+])
+assert.deepEqual(extendedPlan.stops.slice(0, 4).map((stop) => stop.pointLabel), ['АВ Метал', 'Агрострой', 'Varian', 'Завод 2'])
+assert.deepEqual(extendedPlan.stops.slice(-2).map((stop) => stop.pointLabel), ['Львов склад', 'Львов завод'])
+assert.equal(extendedPlan.stops[0].plannedTime, manuallyReordered[0].plannedTime)
+
 const mixedPlan = buildTransportStopPlan([
   {
     key: 'outsourcing:out',
@@ -156,5 +175,12 @@ assert.match(multiStopMigration, /fn_update_transport_trip_stop_status/)
 assert.match(multiStopMigration, /Delivery stop must be after pickup stop/)
 assert.match(multiStopMigration, /COALESCE\(auth\.role\(\), ''\) <> 'service_role'/)
 assert.match(multiStopMigration, /v_need_source = 'supply_schedule'/)
+
+const dateApprovalMigration = readFileSync(resolve('supabase/migrations/20260728130100_transport_trip_date_approval.sql'), 'utf8')
+assert.match(dateApprovalMigration, /transport_trip_date_change_requests/)
+assert.match(dateApprovalMigration, /fn_create_transport_trip_v3/)
+assert.match(dateApprovalMigration, /fn_decide_transport_trip_date_change/)
+assert.match(dateApprovalMigration, /date_change_state NOT IN \('not_required', 'approved'\)/)
+assert.match(dateApprovalMigration, /UPDATE public\.factories SET city = name/)
 
 console.log('Transport trip rules: OK')

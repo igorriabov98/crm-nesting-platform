@@ -25,12 +25,14 @@ import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getTransportStopOrderError } from '@/lib/transport/trip-rules'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { isDirector } from '@/lib/utils/permissions'
 
 export type TransportNeedKind = 'materials' | 'detailing' | 'outsourcing'
 export type TransportNeedSource = 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'
 export type TransportTripStatus = 'needed' | 'found' | 'in_transit' | 'completed' | 'cancelled'
 export type TransportTripDirection = 'outbound' | 'return' | 'mixed'
 export type TransportTripStopStatus = 'planned' | 'arrived' | 'completed'
+export type TransportTripDateChangeState = 'not_required' | 'pending' | 'approved' | 'rejected' | 'conflicted'
 export type TransportNeedPlanState = 'preliminary' | 'confirmed'
 
 export type UnifiedTransportNeed = {
@@ -98,8 +100,29 @@ export type TransportTrip = {
   routeStart: string | null
   route: string | null
   comment: string | null
+  dateChangeState: TransportTripDateChangeState
+  dateChangeRequests: TransportTripDateChangeRequest[]
   needs: TransportTripNeed[]
   stops: TransportTripStop[]
+}
+
+export type TransportTripDateChangeRequest = {
+  id: string
+  status: Exclude<TransportTripDateChangeState, 'not_required'>
+  reason: string
+  decisionComment: string | null
+  requestedByName: string | null
+  decidedByName: string | null
+  createdAt: string
+  decidedAt: string | null
+  items: Array<{
+    id: string
+    needSource: TransportNeedSource
+    needId: string
+    oldDate: string
+    newDate: string
+    status: Exclude<TransportTripDateChangeState, 'not_required'>
+  }>
 }
 
 export type TransportWorkspace = {
@@ -160,6 +183,28 @@ type TripStopRow = {
   completed_at: string | null
 }
 
+type TripDateRequestRow = {
+  id: string
+  transport_order_id: string
+  status: Exclude<TransportTripDateChangeState, 'not_required'>
+  reason: string
+  decision_comment: string | null
+  created_at: string
+  decided_at: string | null
+  requested_by_user?: { full_name: string } | { full_name: string }[] | null
+  decided_by_user?: { full_name: string } | { full_name: string }[] | null
+}
+
+type TripDateItemRow = {
+  id: string
+  request_id: string
+  need_source: TransportNeedSource
+  need_id: string
+  old_date: string
+  new_date: string
+  status: Exclude<TransportTripDateChangeState, 'not_required'>
+}
+
 const needReferenceSchema = z.object({
   source: z.enum(['inventory_transfer', 'supply_schedule', 'detailing_transfer', 'outsourcing']),
   id: z.string().uuid(),
@@ -186,6 +231,7 @@ const createTripSchema = z.object({
     deliveryStopClientId: z.string().trim().min(1),
   })).min(1).max(50),
   comment: z.string().trim().max(1000).nullable().optional(),
+  dateChangeReason: z.string().trim().max(1000).nullable().optional(),
 })
 
 const updateTripSchema = z.object({
@@ -196,6 +242,7 @@ const updateTripSchema = z.object({
   price: z.coerce.number().nonnegative(),
   route: z.string().trim().min(1).max(4000),
   comment: z.string().trim().max(1000).nullable().optional(),
+  dateChangeReason: z.string().trim().max(1000).nullable().optional(),
   stops: z.array(z.object({
     id: z.string().uuid(),
     sequence: z.number().int().nonnegative(),
@@ -226,7 +273,7 @@ function isActiveTransfer(status: string) {
 }
 
 function supplierPointMissingCity(pointKey: string, city: string | null) {
-  return pointKey.startsWith('supplier:') && !city?.trim()
+  return (pointKey.startsWith('supplier:') || pointKey.startsWith('factory:')) && !city?.trim()
 }
 
 function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed {
@@ -278,19 +325,19 @@ function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
     subtitle: 'Деталировка',
     sourcePointKey: `factory:${card.sourceFactoryId}`,
     sourcePointLabel: card.sourceFactoryName,
-    sourcePointCity: null,
-    sourcePointAddress: null,
+    sourcePointCity: card.sourceFactoryCity,
+    sourcePointAddress: card.sourceFactoryAddress,
     destinationPointKey: `factory:${card.destinationFactoryId}`,
     destinationPointLabel: card.destinationFactoryName,
-    destinationPointCity: null,
-    destinationPointAddress: null,
+    destinationPointCity: card.destinationFactoryCity,
+    destinationPointAddress: card.destinationFactoryAddress,
     neededDate: card.expectedArrivalDate || card.deadline,
     deadline: card.deadline,
     itemLabels: card.items.map((item) => `${item.partName} · ${item.drawingNumber}`),
     volumeLabel: `${numberLabel(card.totalQuantity, 0)} шт. · ${numberLabel(card.totalWeightKg)} кг`,
     deliveryRisk: card.deliveryRisk,
-    selectable: true,
-    unavailableReason: null,
+    selectable: Boolean(card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim()),
+    unavailableReason: card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim() ? null : 'У площадки не указан город',
   }
 }
 
@@ -307,19 +354,19 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
     subtitle: 'Материалы',
     sourcePointKey: `factory:${card.sourceFactoryId}`,
     sourcePointLabel: card.sourceFactoryName,
-    sourcePointCity: null,
-    sourcePointAddress: null,
+    sourcePointCity: card.sourceFactoryCity,
+    sourcePointAddress: card.sourceFactoryAddress,
     destinationPointKey: `factory:${card.destinationFactoryId}`,
     destinationPointLabel: card.destinationFactoryName,
-    destinationPointCity: null,
-    destinationPointAddress: null,
+    destinationPointCity: card.destinationFactoryCity,
+    destinationPointAddress: card.destinationFactoryAddress,
     neededDate: card.expectedArrivalDate || card.deadline,
     deadline: card.deadline,
     itemLabels: card.items.map((item) => item.materialName),
     volumeLabel: `${card.items.length} поз.`,
     deliveryRisk: card.deliveryRisk,
-    selectable: true,
-    unavailableReason: null,
+    selectable: Boolean(card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim()),
+    unavailableReason: card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim() ? null : 'У площадки не указан город',
   }
 }
 
@@ -340,15 +387,15 @@ function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
     sourcePointAddress: need.supplierAddress,
     destinationPointKey: `factory:${need.factoryId}`,
     destinationPointLabel: need.factoryName,
-    destinationPointCity: null,
-    destinationPointAddress: null,
+    destinationPointCity: need.factoryCity,
+    destinationPointAddress: need.factoryAddress,
     neededDate: need.deliveryDate,
     deadline: need.deliveryDate,
     itemLabels: [need.itemName],
     volumeLabel: `${numberLabel(need.quantity)} ${need.unit}`,
     deliveryRisk: false,
-    selectable: Boolean(need.supplierCity?.trim()),
-    unavailableReason: need.supplierCity?.trim() ? null : 'У компании не указан город',
+    selectable: Boolean(need.supplierCity?.trim() && need.factoryCity?.trim()),
+    unavailableReason: need.supplierCity?.trim() && need.factoryCity?.trim() ? null : 'У площадки не указан город',
   }
 }
 
@@ -456,6 +503,35 @@ async function loadTripStops(db: TransportDb, tripIds: string[]) {
   return (data || []) as TripStopRow[]
 }
 
+function relationName(value: TripDateRequestRow['requested_by_user']) {
+  const row = Array.isArray(value) ? value[0] : value
+  return row?.full_name || null
+}
+
+async function loadTripDateChanges(db: TransportDb, tripIds: string[]) {
+  if (tripIds.length === 0) return { requests: [] as TripDateRequestRow[], items: [] as TripDateItemRow[] }
+  const { data: requestData, error: requestError } = await db
+    .from('transport_trip_date_change_requests')
+    .select('*, requested_by_user:users!transport_trip_date_change_requests_requested_by_fkey(full_name), decided_by_user:users!transport_trip_date_change_requests_decided_by_fkey(full_name)')
+    .in('transport_order_id', tripIds)
+    .order('created_at', { ascending: false })
+  if (requestError) {
+    if (requestError.code === '42P01' || /schema cache|does not exist/i.test(requestError.message || '')) {
+      return { requests: [] as TripDateRequestRow[], items: [] as TripDateItemRow[] }
+    }
+    throw new Error(requestError.message || 'Не удалось загрузить согласования дат')
+  }
+  const requests = (requestData || []) as TripDateRequestRow[]
+  if (requests.length === 0) return { requests, items: [] as TripDateItemRow[] }
+  const { data: itemData, error: itemError } = await db
+    .from('transport_trip_date_change_items')
+    .select('*')
+    .in('request_id', requests.map((request) => request.id))
+    .order('sort_order', { ascending: true })
+  if (itemError) throw new Error(itemError.message || 'Не удалось загрузить историю переносов')
+  return { requests, items: (itemData || []) as TripDateItemRow[] }
+}
+
 function mapStop(stop: TripStopRow): TransportTripStop {
   return {
     id: stop.id,
@@ -484,9 +560,10 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
     getSupplyTransportNeeds(),
   ])
   const tripIds = outsourcingResult.data.orders.map((order) => order.id)
-  const [links, stops] = await Promise.all([
+  const [links, stops, dateChanges] = await Promise.all([
     loadTripLinks(db, tripIds),
     loadTripStops(db, tripIds),
+    loadTripDateChanges(db, tripIds),
   ])
 
   const activeLinkedNeeds = new Set(
@@ -525,6 +602,26 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       stop,
     ])
   }
+  const dateItemsByRequest = new Map<string, TripDateItemRow[]>()
+  for (const item of dateChanges.items) dateItemsByRequest.set(item.request_id, [...(dateItemsByRequest.get(item.request_id) || []), item])
+  const dateRequestsByTrip = new Map<string, TransportTripDateChangeRequest[]>()
+  for (const request of dateChanges.requests) {
+    const mapped: TransportTripDateChangeRequest = {
+      id: request.id,
+      status: request.status,
+      reason: request.reason,
+      decisionComment: request.decision_comment,
+      requestedByName: relationName(request.requested_by_user),
+      decidedByName: relationName(request.decided_by_user),
+      createdAt: request.created_at,
+      decidedAt: request.decided_at,
+      items: (dateItemsByRequest.get(request.id) || []).map((item) => ({
+        id: item.id, needSource: item.need_source, needId: item.need_id,
+        oldDate: item.old_date, newDate: item.new_date, status: item.status,
+      })),
+    }
+    dateRequestsByTrip.set(request.transport_order_id, [...(dateRequestsByTrip.get(request.transport_order_id) || []), mapped])
+  }
 
   const trips = outsourcingResult.data.orders.map((order): TransportTrip => {
     const linkedNeeds = linksByTrip.get(order.id)
@@ -550,6 +647,8 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
           : routeStart
       ),
       comment: order.comment,
+      dateChangeState: ((order as typeof order & { date_change_state?: TransportTripDateChangeState }).date_change_state || 'not_required'),
+      dateChangeRequests: dateRequestsByTrip.get(order.id) || [],
       needs: tripNeeds,
       stops: (stopsByTrip.get(order.id) || []).map(mapStop),
     }
@@ -684,13 +783,14 @@ export async function createTransportTrip(input: z.input<typeof createTripSchema
       }
     })
 
-    const { data, error } = await transportDb(createAdminClient()).rpc('fn_create_transport_trip_v2', {
+    const { data, error } = await transportDb(createAdminClient()).rpc('fn_create_transport_trip_v3', {
       p_carrier_supplier_id: parsed.carrierSupplierId,
       p_scheduled_date: parsed.scheduledDate,
       p_price: parsed.price,
       p_comment: parsed.comment || null,
       p_stops: sanitizedStops,
       p_links: links,
+      p_date_change_reason: parsed.dateChangeReason || null,
       p_actor: userId,
     })
     if (error) throw new Error(error.message || 'Не удалось создать рейс')
@@ -698,6 +798,41 @@ export async function createTransportTrip(input: z.input<typeof createTripSchema
     return { success: true, id: String(data), error: null }
   } catch (error) {
     return { success: false, id: null, error: getErrorMessage(error) }
+  }
+}
+
+export async function decideTransportTripDateChange(input: {
+  requestId: string
+  decision: 'approved' | 'rejected'
+  comment?: string | null
+}) {
+  try {
+    const parsed = z.object({
+      requestId: z.string().uuid(), decision: z.enum(['approved', 'rejected']),
+      comment: z.string().trim().max(1000).nullable().optional(),
+    }).parse(input)
+    const context = await requirePermission('tasks', 'manage')
+    const admin = createAdminClient()
+    const { data: requestData, error: requestError } = await admin
+      .from('transport_trip_date_change_requests')
+      .select('id, status, task:tasks(assigned_to)')
+      .eq('id', parsed.requestId)
+      .maybeSingle()
+    if (requestError || !requestData) throw new Error(requestError?.message || 'Запрос согласования не найден')
+    const request = requestData as { status: string; task: { assigned_to: string } | { assigned_to: string }[] | null }
+    const task = Array.isArray(request.task) ? request.task[0] : request.task
+    if (task?.assigned_to !== context.userId && !isDirector(context.role)) throw new Error('Недостаточно прав')
+    const { data, error } = await transportDb(admin).rpc('fn_decide_transport_trip_date_change', {
+      p_request_id: parsed.requestId,
+      p_decision: parsed.decision,
+      p_comment: parsed.comment || null,
+      p_actor: context.userId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось обработать согласование')
+    revalidateTransportWorkspace()
+    return { success: true, outcome: String(data) as TransportTripDateChangeState, error: null }
+  } catch (error) {
+    return { success: false, outcome: null, error: getErrorMessage(error) }
   }
 }
 
@@ -722,7 +857,7 @@ export async function updateTransportTrip(input: z.input<typeof updateTripSchema
   try {
     const parsed = updateTripSchema.parse(input)
     const { userId } = await requirePermission('supply_transport', 'manage')
-    const { error } = await transportDb(createAdminClient()).rpc('fn_update_transport_trip_v2', {
+    const { error } = await transportDb(createAdminClient()).rpc('fn_update_transport_trip_v3', {
       p_trip_id: parsed.tripId,
       p_status: parsed.status,
       p_carrier_supplier_id: parsed.carrierSupplierId,
@@ -731,6 +866,7 @@ export async function updateTransportTrip(input: z.input<typeof updateTripSchema
       p_route: parsed.route,
       p_comment: parsed.comment || null,
       p_stops: parsed.stops || null,
+      p_date_change_reason: parsed.dateChangeReason || null,
       p_actor: userId,
     })
     if (error) throw new Error(error.message || 'Не удалось сохранить рейс')
