@@ -15,7 +15,7 @@ export async function getFutureDetailingPage(factoryId?: string, page = 0) {
   try {
     const { userId } = await requirePermission('future_detailing', 'view')
     const permissions = await getCurrentUserPermissions(userId)
-    const canManage = hasResourcePermission(permissions.permissions, 'future_detailing', 'manage')
+    const canManage = hasResourcePermission(null, permissions.permissions, 'future_detailing', 'manage')
     const client = db()
     const factories = await client.from('factories').select('id,name').order('name')
     const selectedFactory = factoryId || factories.data?.[0]?.id
@@ -53,8 +53,8 @@ export async function getMetalScrapPage(factoryId?: string, status = 'available'
   try {
     const { userId } = await requirePermission('metal_scrap', 'view')
     const permissions = await getCurrentUserPermissions(userId)
-    const canManageScrap = hasResourcePermission(permissions.permissions, 'metal_scrap', 'manage')
-    const canManageSales = hasResourcePermission(permissions.permissions, 'metal_scrap_sales', 'manage')
+    const canManageScrap = hasResourcePermission(null, permissions.permissions, 'metal_scrap', 'manage')
+    const canManageSales = hasResourcePermission(null, permissions.permissions, 'metal_scrap_sales', 'manage')
     const client = db(); const factories = await client.from('factories').select('id,name').order('name'); const selectedFactory = factoryId || factories.data?.[0]?.id
     const safeStatus = z.enum(['future','available','review_required']).catch('available').parse(status)
     const [lots, sales] = await Promise.all([
