@@ -662,34 +662,9 @@ export async function completeStockReservation(requestId: string): Promise<Actio
 
     await validateRequestReadyForSupply(db, requestId, userId)
 
-    const timestamp = new Date().toISOString()
-    const { error } = await db
-      .from('technologist_requests')
-      .update({
-        status: 'submitted_to_supply',
-        submitted_at: timestamp,
-        updated_at: timestamp,
-      })
-      .eq('id', requestId)
-
-    if (error) throw new Error(error.message || 'Не удалось завершить бронь')
-
-    const { error: machineError } = await db
-      .from('machines')
-      .update({ status: 'request_ready', updated_at: timestamp })
-      .eq('id', request.machine_id)
-      .eq('status', 'planned')
-    if (machineError) throw new Error(machineError.message || 'Не удалось обновить статус машины')
-
-    await notifyRole(db, 'supply_manager', 'Заявка готова для снабжения', 'Проверка склада завершена. Заявка передана в снабжение.', request.machine_id)
-    revalidateRequest(request.machine_id, requestId)
-    revalidatePath(`${ROUTES.SUPPLY_REQUEST}/${requestId}`)
-    revalidatePath(ROUTES.SUPPLY)
-    revalidatePath(ROUTES.SUPPLY_MATERIAL_REQUESTS)
-    revalidatePath(ROUTES.SUPPLY_ORDERS)
-    revalidatePath(ROUTES.TASKS)
-    revalidatePath(ROUTES.MATERIAL_REQUESTS)
-    return { success: true }
+    // The reservation check only opens the completion wizard. The request is
+    // submitted to supply by fn_finalize_technologist_request in one transaction.
+    return { success: true, data: { href: `/technologist/requests/${requestId}/complete` } }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось завершить бронь' }
   }
@@ -716,14 +691,11 @@ export async function markStockChecked(requestId: string): Promise<ActionResult>
 
 export async function submitToSupply(requestId: string): Promise<ActionResult> {
   try {
-    const { db, userId } = await requireRequestPermission('manage')
+    const { db } = await requireRequestPermission('manage')
     const request = await getRequestMachine(db, requestId)
     await assertMachineNotArchived(db, request.machine_id)
     await assertMachineCanUseTechnologistRequest(db, request.machine_id)
-    if (request.status !== 'submitted_to_supply' && request.status !== 'stock_checked') throw new Error('Заявка ещё не отправлена в снабжение')
-    if (request.status !== 'submitted_to_supply') {
-      await validateRequestReadyForSupply(db, requestId, userId)
-    }
+    if (request.status !== 'submitted_to_supply') throw new Error('Сначала завершите мастер технолога')
 
     const { error } = await db
       .from('technologist_requests')
