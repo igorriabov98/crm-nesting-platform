@@ -100,8 +100,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         toast.error(result.error || 'Не удалось завершить бронь')
         return
       }
-      toast.success('Бронь завершена. Заявка передана в снабжение.')
-      router.replace(ROUTES.MATERIAL_REQUESTS)
+      router.push(`/technologist/requests/${request.id}/complete`)
     })
   }
 
@@ -132,7 +131,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
             </Button>
             {canCompleteReservation && (
               <Button type="button" onClick={completeReservation} disabled={isPending} className="bg-emerald-700 text-white hover:bg-emerald-800">
-                Бронь завершена
+                Продолжить завершение
               </Button>
             )}
             {isSupplyReservationMode && (

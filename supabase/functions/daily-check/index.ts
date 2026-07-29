@@ -201,6 +201,15 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   try {
+    // Materialize due tasks before notification scanning so the task appears
+    // and can be notified on the exact due weekday, never earlier.
+    const { data: futureDetailingTasks, error: futureDetailingError } = await supabase.rpc('fn_materialize_due_future_detailing_tasks', { p_today: todayISO() })
+    if (futureDetailingError) {
+      console.error('Error materializing future detailing tasks:', futureDetailingError)
+    } else {
+      console.log(`Future detailing tasks created: ${futureDetailingTasks ?? 0}`)
+    }
+
     // 1. Check and generate daily notifications (e.g. deadlines, stage overdues)
     const { error: notifError } = await supabase.rpc('check_daily_notifications')
     if (notifError) {

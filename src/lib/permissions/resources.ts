@@ -31,6 +31,9 @@ export type ResourceKey =
   | 'inventory'
   | 'inventory_detailing'
   | 'inventory_detailing_receiving'
+  | 'future_detailing'
+  | 'metal_scrap'
+  | 'metal_scrap_sales'
   | 'inventory_history'
   | 'inventory_receiving'
   | 'suppliers'
@@ -194,7 +197,10 @@ export const PERMISSION_RESOURCES = [
     group: 'Sales',
     defaultViewRoles: REQUEST_VIEW_ROLES,
     defaultManageRoles: REQUEST_MANAGE_ROLES,
-    routes: [{ regex: /^\/sales-plan\/[^/]+\/request(?:\/.*)?$/, operation: 'view', priority: 90 }],
+    routes: [
+      { regex: /^\/technologist\/requests\/[^/]+\/(?:complete|correction)$/, operation: 'manage', priority: 160 },
+      { regex: /^\/sales-plan\/[^/]+\/request(?:\/.*)?$/, operation: 'view', priority: 90 },
+    ],
   },
   {
     key: 'material_request_queue',
@@ -439,6 +445,38 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: INVENTORY_DETAILING_RECEIVING_ROLES,
     defaultManageRoles: INVENTORY_DETAILING_RECEIVING_ROLES,
     routes: [],
+  },
+  {
+    key: 'future_detailing',
+    label: 'Будущая деталировка',
+    description: 'Плановый выпуск и подтверждение деталировки после заготовки',
+    group: 'Склад',
+    defaultHref: ROUTES.INVENTORY_FUTURE_DETAILING,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.INVENTORY_FUTURE_DETAILING, match: 'prefix', operation: 'view', priority: 145 }],
+    sidebar: { section: 'inventory', icon: 'inventory', order: 16 },
+  },
+  {
+    key: 'metal_scrap',
+    label: 'Металлолом',
+    description: 'Будущие, доступные и требующие перепроверки остатки металлолома',
+    group: 'Склад',
+    defaultHref: ROUTES.INVENTORY_METAL_SCRAP,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.INVENTORY_METAL_SCRAP, match: 'prefix', operation: 'view', priority: 140 }],
+    sidebar: { section: 'inventory', icon: 'materials', order: 17 },
+  },
+  {
+    key: 'metal_scrap_sales',
+    label: 'Сдача металлолома',
+    description: 'Списание металлолома, финансовый приход и отмена сдачи',
+    group: 'Склад',
+    defaultHref: ROUTES.INVENTORY_METAL_SCRAP_SALES,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.INVENTORY_METAL_SCRAP_SALES, match: 'prefix', operation: 'view', priority: 150 }],
   },
   {
     key: 'inventory',

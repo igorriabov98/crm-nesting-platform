@@ -375,7 +375,7 @@ export async function getFinanceCalendarData(
   const currentMonthEnd = endOfMonth(currentMonthStart)
   const invoiceLookbackStart = format(addDays(parseISO(range.start), -120), 'yyyy-MM-dd')
   const nbuEurRatePromise = getNbuEurRate()
-  const [invoicesResult, expensesResult, usersResult, factoriesResult, budgetsResult, settingsResult, nbuEurRate] = await Promise.all([
+  const [invoicesResult, expensesResult, scrapIncomeResult, usersResult, factoriesResult, budgetsResult, settingsResult, nbuEurRate] = await Promise.all([
     db
       .from('invoices')
       .select(`
@@ -438,6 +438,12 @@ export async function getFinanceCalendarData(
       .lte('planned_date', range.end)
       .order('planned_date', { ascending: true }),
     db
+      .from('metal_scrap_finance_incomes')
+      .select('id,sale_id,amount_uah,payment_date,status,metal_scrap_sales(factory_id,buyer,document_number)')
+      .gte('payment_date', range.start)
+      .lte('payment_date', range.end)
+      .order('payment_date', { ascending: true }),
+    db
       .from('users')
       .select('id, full_name, role, telegram_chat_id')
       .eq('is_active', true)
@@ -459,6 +465,7 @@ export async function getFinanceCalendarData(
 
   if (invoicesResult.error) throw new Error(invoicesResult.error.message)
   if (expensesResult.error) throw new Error(expensesResult.error.message)
+  if (scrapIncomeResult.error) throw new Error(scrapIncomeResult.error.message)
   if (usersResult.error) throw new Error(usersResult.error.message)
   if (factoriesResult.error) throw new Error(factoriesResult.error.message)
   if (budgetsResult.error) throw new Error(budgetsResult.error.message)
@@ -510,7 +517,22 @@ export async function getFinanceCalendarData(
     }
   })
 
-  const events = [...invoices, ...expenses].sort((a, b) => {
+  const scrapIncomes = ((scrapIncomeResult.data || []) as any[])
+    .filter((income) => income.status === 'paid')
+    .map((income): FinanceEvent => ({
+      id: `scrap-${income.id}`, seriesId: null, type: 'income', title: 'Сдача металлолома',
+      amount: Number(income.amount_uah), amountUah: Number(income.amount_uah), paidAmount: Number(income.amount_uah), paidAmountUah: Number(income.amount_uah),
+      remainingAmount: 0, remainingAmountUah: 0, status: 'paid', category: 'Металлолом', counterparty: income.metal_scrap_sales?.buyer || 'Покупатель металлолома',
+      currency: 'UAH', exchangeRate: null, factoryId: income.metal_scrap_sales?.factory_id || null,
+      factoryName: income.metal_scrap_sales?.factory_id ? factoryNameById.get(income.metal_scrap_sales.factory_id) || null : null,
+      isSupplyPlan: false, responsibleUserId: null, responsibleName: null, plannedDate: income.payment_date,
+      originalPlannedDate: null, rescheduledDate: null, actualPaidDate: income.payment_date, paymentObligationDate: income.payment_date,
+      bankProcessingStartDate: null, bankProcessingEndDate: null, cashArrivalDate: income.payment_date, paymentPart: 'full',
+      comment: income.metal_scrap_sales?.document_number ? `Документ: ${income.metal_scrap_sales.document_number}` : null,
+      sourceHref: ROUTES.INVENTORY_METAL_SCRAP,
+    }))
+
+  const events = [...invoices, ...scrapIncomes, ...expenses].sort((a, b) => {
     const aDate = a.type === 'income' ? a.cashArrivalDate : a.plannedDate
     const bDate = b.type === 'income' ? b.cashArrivalDate : b.plannedDate
     return aDate.localeCompare(bDate)
