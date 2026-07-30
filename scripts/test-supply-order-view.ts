@@ -63,6 +63,13 @@ assert.deepEqual(
 )
 
 const aggregate = makeAggregate()
+const closedAggregate = { ...aggregate, id: 'closed', ordered_count: 0, delivered_count: 1 }
+assert.deepEqual(filterAndSortAggregates([aggregate, closedAggregate], {
+  query: '', supplier: 'all', category: 'all', status: 'open', sort: 'date_asc',
+}).map((row) => row.id), ['aggregate'], 'the default open view must hide fully accepted deliveries')
+assert.deepEqual(filterAndSortAggregates([aggregate, closedAggregate], {
+  query: '', supplier: 'all', category: 'all', status: 'all', sort: 'date_asc',
+}).map((row) => row.id), ['aggregate', 'closed'], 'the all view must preserve open and closed deliveries')
 assert.equal(filterAndSortAggregates([aggregate], {
   query: 'машина а', supplier: 'all', category: 'all', status: 'all', sort: 'date_asc',
 }).length, 1, 'aggregate search must include nested machine names')
@@ -72,7 +79,7 @@ assert.equal(filterAndSortAggregates([aggregate], {
 assert.equal(filterAndSortAggregates([{ ...aggregate, unscheduled_quantity: 3 }], {
   query: '', supplier: 'all', category: 'all', status: 'unscheduled', sort: 'date_asc',
 }).length, 0, 'an ordinary unscheduled request must not appear under redelivery')
-assert.equal(filterAndSortAggregates([{ ...aggregate, ordered_count: 0, delivered_count: 1 }], {
+assert.equal(filterAndSortAggregates([closedAggregate], {
   query: '', supplier: 'all', category: 'all', status: 'closed', sort: 'date_asc',
 }).length, 1, 'fully accepted material must appear under closed deliveries')
 
