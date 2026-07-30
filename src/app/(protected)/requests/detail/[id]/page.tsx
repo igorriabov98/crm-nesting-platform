@@ -70,7 +70,11 @@ export default async function DepartmentRequestDetailPage({
   const target = DEPARTMENT_REQUEST_TARGETS[request.target_department]
   const mode = request.created_by === userId ? 'mine' : 'inbox'
   const backRoute = mode === 'mine' ? ROUTES.REQUESTS : target.route
-  const backHref = query.factory ? `${backRoute}?factory=${encodeURIComponent(query.factory)}` : backRoute
+  const backParams = new URLSearchParams()
+  if (request.status === 'rejected') backParams.set('tab', 'rejected')
+  else if (['done', 'cancelled'].includes(request.status)) backParams.set('tab', 'completed')
+  if (query.factory) backParams.set('factory', query.factory)
+  const backHref = backParams.size > 0 ? `${backRoute}?${backParams.toString()}` : backRoute
   const sourceFiles = (request.attachments || []).filter((attachment) => attachment.phase === 'source')
   const resolutionFiles = (request.attachments || []).filter((attachment) => attachment.phase === 'resolution')
   const events = [...(request.events || [])].sort((a, b) => a.created_at.localeCompare(b.created_at))

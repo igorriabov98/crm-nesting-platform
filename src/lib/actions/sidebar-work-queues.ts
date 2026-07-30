@@ -19,6 +19,7 @@ const EMPTY_COUNTS: SidebarWorkQueueCounts = {
     supply: 0,
     production: 0,
     total: 0,
+    unreadResults: 0,
   },
   transport: 0,
   materialRequests: 0,
@@ -39,22 +40,33 @@ async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof re
 
   const counts = { ...EMPTY_COUNTS.departmentRequests }
   const admin = createAdminClient()
-  await Promise.all(manageableTargets.map(async (target) => {
-    let query = admin
-      .from('department_requests')
-      .select('id', { count: 'exact', head: true })
-      .eq('target_department', target)
-      .eq('status', 'new')
-      .is('assigned_to', null)
+  const unreadResultQuery = admin
+    .from('department_requests')
+    .select('id', { count: 'exact', head: true })
+    .eq('created_by', context.userId)
+    .in('status', ['done', 'rejected'])
+    .is('result_viewed_at', null)
 
-    if (target === 'production' && !DIRECTORS.includes(context.role) && context.factoryId) {
-      query = query.eq('factory_id', context.factoryId)
-    }
+  const [, unreadResult] = await Promise.all([
+    Promise.all(manageableTargets.map(async (target) => {
+      let query = admin
+        .from('department_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('target_department', target)
+        .eq('status', 'new')
+        .is('assigned_to', null)
 
-    const { count, error } = await query
-    if (!error) counts[target] = count || 0
-  }))
+      if (target === 'production' && !DIRECTORS.includes(context.role) && context.factoryId) {
+        query = query.eq('factory_id', context.factoryId)
+      }
+
+      const { count, error } = await query
+      if (!error) counts[target] = count || 0
+    })),
+    unreadResultQuery,
+  ])
   counts.total = TARGETS.reduce((total, target) => total + counts[target], 0)
+  if (!unreadResult.error) counts.unreadResults = unreadResult.count || 0
   return counts
 }
 

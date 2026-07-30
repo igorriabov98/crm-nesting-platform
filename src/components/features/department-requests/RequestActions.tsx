@@ -20,6 +20,7 @@ import {
   validateDepartmentRequestFile,
 } from '@/lib/department-request-files'
 import { Button } from '@/components/ui/button'
+import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
 import {
   Dialog,
   DialogContent,
@@ -52,6 +53,7 @@ export function RequestActions({
   function refreshWith(result: { ok: boolean; message: string }) {
     if (!result.ok) throw new Error(result.message)
     toast.success(result.message)
+    notifySidebarWorkQueuesChanged()
     router.refresh()
   }
 
