@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { ROUTES } from '../src/lib/constants/routes'
 import {
   countPendingMaterialRequests,
@@ -37,5 +39,10 @@ assert.equal(countPendingMaterialRequests([
   { taskStatus: 'in_progress', state: 'none' },
   { taskStatus: 'pending', state: 'submitted' },
 ]), 2)
+
+const sidebarSource = readFileSync(resolve('src/components/layout/Sidebar.tsx'), 'utf8')
+assert.match(sidebarSource, /SIDEBAR_QUEUE_POLL_INTERVAL_MS = 15_000/)
+assert.match(sidebarSource, /setInterval\(\(\) => void refresh\(true\), SIDEBAR_QUEUE_POLL_INTERVAL_MS\)/)
+assert.match(sidebarSource, /table: 'department_requests'/)
 
 console.log('sidebar work queue badges: ok')

@@ -83,6 +83,8 @@ const multiPickupPlan = buildTransportStopPlan([
     direction: 'outbound',
   },
 ])
+assert.equal(multiPickupPlan.stops[0].kind, 'service')
+assert.equal(multiPickupPlan.stops.some((stop) => stop.kind === 'start'), false)
 assert.deepEqual(
   multiPickupPlan.stops.map((stop) => stop.pointKey),
   ['supplier:uzhhorod-a', 'supplier:uzhhorod-b', 'supplier:berehove-c', 'factory:berehove'],
@@ -106,6 +108,16 @@ const extendedPlan = reconcileTransportStopPlan(manuallyReordered, cityBlockPlan
 assert.deepEqual(extendedPlan.stops.slice(0, 4).map((stop) => stop.pointLabel), ['АВ Метал', 'Агрострой', 'Varian', 'Завод 2'])
 assert.deepEqual(extendedPlan.stops.slice(-2).map((stop) => stop.pointLabel), ['Львов склад', 'Львов завод'])
 assert.equal(extendedPlan.stops[0].plannedTime, manuallyReordered[0].plannedTime)
+
+const planWithoutLegacyStart = reconcileTransportStopPlan([
+  {
+    ...cityBlockPlan.stops[0],
+    clientId: 'legacy-start',
+    kind: 'start',
+  },
+  ...cityBlockPlan.stops,
+], cityBlockPlan.assignments, cityBlockNeeds)
+assert.equal(planWithoutLegacyStart.stops.some((stop) => stop.kind === 'start'), false)
 
 const mixedPlan = buildTransportStopPlan([
   {
@@ -182,5 +194,17 @@ assert.match(dateApprovalMigration, /fn_create_transport_trip_v3/)
 assert.match(dateApprovalMigration, /fn_decide_transport_trip_date_change/)
 assert.match(dateApprovalMigration, /date_change_state NOT IN \('not_required', 'approved'\)/)
 assert.match(dateApprovalMigration, /UPDATE public\.factories SET city = name/)
+
+const pickupStartMigration = readFileSync(
+  resolve('supabase/migrations/20260730130000_transport_trip_starts_at_pickup.sql'),
+  'utf8',
+)
+assert.match(pickupStartMigration, /v_first_stop->>'kind' IS DISTINCT FROM 'service'/)
+assert.match(pickupStartMigration, /Отдельная точка выезда больше не используется/)
+assert.match(pickupStartMigration, /'planned', NULL/)
+
+const transportWorkspace = readFileSync(resolve('src/components/features/supply/TransportWorkspacePage.tsx'), 'utf8')
+assert.doesNotMatch(transportWorkspace, />Точка выезда</)
+assert.match(transportWorkspace, /aria-label=\{title\}/)
 
 console.log('Transport trip rules: OK')

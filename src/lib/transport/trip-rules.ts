@@ -119,7 +119,7 @@ export function reconcileTransportStopPlan(
   const needKeys = new Set(needs.map((need, index) => need.key || `need-${index}`))
   const assignments = currentAssignments.filter((item) => needKeys.has(item.needKey))
   const referencedIds = new Set(assignments.flatMap((item) => [item.pickupStopClientId, item.deliveryStopClientId]))
-  const preservedShell = currentStops.filter((stop) => stop.kind !== 'service')
+  const preservedFinish = currentStops.find((stop) => stop.kind === 'finish')
   const stops = currentStops.filter((stop) => stop.kind === 'service' && referencedIds.has(stop.clientId))
   const destinationIds = new Set(assignments.map((item) => item.deliveryStopClientId))
 
@@ -173,9 +173,7 @@ export function reconcileTransportStopPlan(
     destinationIds.add(delivery.clientId)
   })
 
-  const start = preservedShell.find((stop) => stop.kind === 'start')
-  const finish = preservedShell.find((stop) => stop.kind === 'finish')
-  const resultStops = [...(start ? [start] : []), ...stops, ...(finish ? [finish] : [])]
+  const resultStops = [...stops, ...(preservedFinish ? [preservedFinish] : [])]
   if (currentStops.length === 0) {
     resultStops.forEach((stop, index) => { stop.plannedTime = addMinutes('08:00', (index + 1) * 60) })
   }
