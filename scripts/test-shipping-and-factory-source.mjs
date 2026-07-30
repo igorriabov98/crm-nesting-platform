@@ -6,10 +6,13 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
-const [enumMigration, migration, taskActions, supplyActions, supplyPage, reserveButton, settingsPage, smokeUser, types] = await Promise.all([
+const [enumMigration, migration, readinessMigration, taskActions, materialTypeActions, productionTab, supplyActions, supplyPage, reserveButton, settingsPage, smokeUser, types] = await Promise.all([
   read('supabase/migrations/20260728121500_shipping_documents_task_type.sql'),
   read('supabase/migrations/20260728121600_shipping_tasks_and_service_assignees.sql'),
+  read('supabase/migrations/20260730120000_shipping_readiness_deadlines_and_technologist_assignee.sql'),
   read('src/lib/actions/transport-cost-tasks.ts'),
+  read('src/lib/actions/material-type-tasks.ts'),
+  read('src/components/features/machines/tabs/ProductionTab.tsx'),
   read('src/lib/actions/supply-request.ts'),
   read('src/components/features/supply-request/SupplyRequestPage.tsx'),
   read('src/components/features/supply-request/ReserveButton.tsx'),
@@ -28,7 +31,17 @@ assert.match(migration, /COALESCE\(u\.is_service_account, false\) = false/)
 assert.match(migration, /WHERE machine_id IS NOT NULL AND status IN \('pending', 'in_progress'\)/)
 assert.match(taskActions, /transport_cost: \{ offset: -7/)
 assert.match(taskActions, /shipping_documents: \{ offset: -5/)
+assert.match(taskActions, /return dateOnly\(stage\?\.date_end\) \|\| dateOnly\(stage\?\.planned_date_end\)/)
+assert.doesNotMatch(taskActions, /resolveShippingReadinessDate\(db, machineId, machine\.desired_shipping_date\)/)
 assert.doesNotMatch(taskActions, /commercial_director/)
+assert.match(materialTypeActions, /\.eq\('is_service_account', false\)/)
+assert.match(readinessMigration, /COALESCE\(ps\.date_end, ps\.planned_date_end\)/)
+assert.doesNotMatch(readinessMigration, /COALESCE\(ps\.date_end, ps\.planned_date_end, v_machine\.desired_shipping_date\)/)
+assert.match(readinessMigration, /SELECT public\.fn_resync_auto_task_assignees\(\)/)
+assert.doesNotMatch(
+  productionTab,
+  /name="planned_material_date"[\s\S]{0,260}className=\{readOnlyDateClassName\}/,
+)
 assert.match(supplyActions, /reserveAllAvailable\(requestId: string, factoryId: string\)/)
 assert.match(supplyActions, /selectedInventory\.factory_id !== data\.factory_id/)
 assert.match(supplyPage, /Переключение не выполняет новый запрос/)
@@ -48,6 +61,7 @@ function runDatabaseChecks() {
     psql(databaseUrl.toString(), schemaSql)
     command('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260728121500_shipping_documents_task_type.sql')])
     command('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260728121600_shipping_tasks_and_service_assignees.sql')])
+    command('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260730120000_shipping_readiness_deadlines_and_technologist_assignee.sql')])
     psql(databaseUrl.toString(), fixtureSql)
   } finally {
     command('dropdb', ['--if-exists', '--force', '--maintenance-db', adminUrl, databaseName], true)
@@ -97,24 +111,34 @@ BEGIN
 
   UPDATE public.machines SET desired_shipping_date = CURRENT_DATE + 7 WHERE id = v_machine_id;
   PERFORM public.fn_sync_due_transport_cost_tasks();
-  IF (SELECT count(*) FROM public.tasks WHERE machine_id = v_machine_id AND task_type = 'transport_cost' AND status = 'pending') <> 1 THEN RAISE EXCEPTION 'transport -7 threshold failed'; END IF;
+  IF EXISTS (SELECT 1 FROM public.tasks WHERE machine_id = v_machine_id) THEN RAISE EXCEPTION 'desired shipping date still creates tasks'; END IF;
+
+  INSERT INTO public.production_stages(machine_id,stage_type,date_end) VALUES (v_machine_id,'shipping',CURRENT_DATE + 7);
+  PERFORM public.fn_sync_due_transport_cost_tasks();
+  IF (SELECT count(*) FROM public.tasks WHERE machine_id = v_machine_id AND task_type = 'transport_cost' AND status = 'pending') <> 1 THEN RAISE EXCEPTION 'readiness transport -7 threshold failed'; END IF;
   IF EXISTS (SELECT 1 FROM public.tasks WHERE machine_id = v_machine_id AND task_type = 'shipping_documents' AND status IN ('pending','in_progress')) THEN RAISE EXCEPTION 'documents created before -5'; END IF;
 
-  UPDATE public.machines SET desired_shipping_date = CURRENT_DATE + 5 WHERE id = v_machine_id;
+  UPDATE public.production_stages SET date_end = CURRENT_DATE + 5 WHERE machine_id = v_machine_id AND stage_type = 'shipping';
   PERFORM public.fn_sync_due_transport_cost_tasks();
   IF (SELECT count(*) FROM public.tasks WHERE machine_id = v_machine_id AND task_type = 'shipping_documents' AND status = 'pending') <> 1 THEN RAISE EXCEPTION 'documents -5 threshold failed'; END IF;
 
-  UPDATE public.machines SET desired_shipping_date = CURRENT_DATE + 12 WHERE id = v_machine_id;
+  UPDATE public.production_stages SET date_end = CURRENT_DATE + 12 WHERE machine_id = v_machine_id AND stage_type = 'shipping';
   PERFORM public.fn_sync_due_transport_cost_tasks();
   IF EXISTS (SELECT 1 FROM public.tasks WHERE machine_id = v_machine_id AND status IN ('pending','in_progress')) THEN RAISE EXCEPTION 'forward date move did not cancel premature tasks'; END IF;
-  UPDATE public.machines SET desired_shipping_date = CURRENT_DATE + 5 WHERE id = v_machine_id;
+  UPDATE public.production_stages SET date_end = CURRENT_DATE + 5 WHERE machine_id = v_machine_id AND stage_type = 'shipping';
   PERFORM public.fn_sync_due_transport_cost_tasks();
   IF (SELECT count(*) FROM public.tasks WHERE machine_id = v_machine_id AND status IN ('pending','in_progress')) <> 2 THEN RAISE EXCEPTION 'backward date move did not recreate due tasks'; END IF;
 
-  INSERT INTO public.machine_expenses(machine_id,category,amount) VALUES (v_machine_id,'Транспорт',1);
+  INSERT INTO public.machine_expenses(machine_id,category,amount) VALUES (v_machine_id,'transport',1);
   PERFORM public.fn_sync_due_transport_cost_tasks();
   PERFORM public.fn_sync_due_transport_cost_tasks();
-  IF EXISTS (SELECT 1 FROM public.tasks WHERE machine_id = v_machine_id AND task_type = 'transport_cost' AND status IN ('pending','in_progress')) THEN RAISE EXCEPTION 'covered transport task remains active'; END IF;
+  IF EXISTS (SELECT 1 FROM public.tasks WHERE machine_id = v_machine_id AND task_type = 'transport_cost' AND status IN ('pending','in_progress')) THEN
+    RAISE EXCEPTION 'covered transport task remains active: %', (
+      SELECT json_agg(json_build_object('id', id, 'status', status, 'deadline', deadline))
+      FROM public.tasks
+      WHERE machine_id = v_machine_id AND task_type = 'transport_cost'
+    );
+  END IF;
   IF (SELECT count(*) FROM public.tasks WHERE machine_id = v_machine_id AND task_type = 'shipping_documents' AND status IN ('pending','in_progress')) <> 1 THEN RAISE EXCEPTION 'document task duplicated'; END IF;
 
   INSERT INTO public.tasks(machine_id,assigned_to,task_type,title,status) VALUES

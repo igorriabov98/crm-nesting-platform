@@ -96,12 +96,16 @@ async function resolveMaterialTypeAssignee(db: LooseDb, creatorId: string | null
   if (configuredUserId) {
     const { data: configuredData } = await db
       .from('users')
-      .select('id, is_active')
+      .select('id, is_active, is_service_account')
       .eq('id', configuredUserId)
       .single()
 
-    const configured = configuredData as { id: string; is_active: boolean | null } | null
-    if (configured && configured.is_active !== false) return configured.id
+    const configured = configuredData as {
+      id: string
+      is_active: boolean | null
+      is_service_account: boolean | null
+    } | null
+    if (configured && configured.is_active !== false && !configured.is_service_account) return configured.id
   }
 
   const { data, error } = await db
@@ -109,6 +113,7 @@ async function resolveMaterialTypeAssignee(db: LooseDb, creatorId: string | null
     .select('id')
     .eq('role', 'technologist' satisfies UserRole)
     .eq('is_active', true)
+    .eq('is_service_account', false)
 
   if (error) throw new Error(error.message || 'Не удалось найти технолога')
 

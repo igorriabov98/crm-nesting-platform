@@ -18,7 +18,7 @@ type LooseQuery = PromiseLike<DbResult> & {
 }
 type LooseDb = { from: (table: string) => LooseQuery }
 
-type MachineRow = { id: string; name: string | null; created_by: string | null; desired_shipping_date: string | null; is_archived: boolean | null }
+type MachineRow = { id: string; name: string | null; created_by: string | null; is_archived: boolean | null }
 type TaskRow = { id: string; machine_id?: string | null; assigned_to: string; task_type?: ShippingTaskType; status: TaskStatus }
 type ShippingTaskType = 'transport_cost' | 'shipping_documents'
 
@@ -57,11 +57,11 @@ async function hasTransportCost(db: LooseDb, machineId: string) {
   )
 }
 
-async function resolveShippingDate(db: LooseDb, machineId: string, fallback: string | null) {
+async function resolveShippingReadinessDate(db: LooseDb, machineId: string) {
   const { data, error } = await db.from('production_stages').select('date_end, planned_date_end').eq('machine_id', machineId).eq('stage_type', 'shipping').order('created_at', { ascending: false }).limit(1)
-  if (error) throw new Error(error.message || 'Не удалось проверить дату отгрузки')
+  if (error) throw new Error(error.message || 'Не удалось проверить плановую готовность к погрузке')
   const stage = ((data || []) as Array<{ date_end: string | null; planned_date_end: string | null }>)[0]
-  return dateOnly(stage?.planned_date_end) || dateOnly(stage?.date_end) || dateOnly(fallback)
+  return dateOnly(stage?.date_end) || dateOnly(stage?.planned_date_end)
 }
 
 async function resolveAssignee(db: LooseDb, creatorId: string | null) {
@@ -88,7 +88,7 @@ async function upsertTask(db: LooseDb, machine: MachineRow, assignedTo: string, 
     assigned_to: assignedTo,
     task_type: taskType,
     title: `${definition.title}: ${machineName}`,
-    description: `${definition.description} для машины ${machineName}. Плановая отгрузка: ${formatDate(shippingDate)}.`,
+    description: `${definition.description} для машины ${machineName}. Плановая готовность к погрузке: ${formatDate(shippingDate)}.`,
     start_date: deadline,
     deadline,
     updated_at: now,
@@ -113,14 +113,14 @@ async function upsertTask(db: LooseDb, machine: MachineRow, assignedTo: string, 
 
 async function syncShippingTasksInternal(client: unknown, machineId: string) {
   const db = dbFrom(client)
-  const { data, error } = await db.from('machines').select('id, name, created_by, desired_shipping_date, is_archived').eq('id', machineId).single()
+  const { data, error } = await db.from('machines').select('id, name, created_by, is_archived').eq('id', machineId).single()
   if (error || !data) throw new Error(error?.message || 'Машина не найдена')
   const machine = data as MachineRow
-  const shippingDate = await resolveShippingDate(db, machineId, machine.desired_shipping_date)
+  const shippingDate = await resolveShippingReadinessDate(db, machineId)
   const assignee = await resolveAssignee(db, machine.created_by)
   if (machine.is_archived || !shippingDate || !assignee.id) {
     await cancelOpenTasks(db, machineId)
-    return { skippedReason: machine.is_archived ? 'Машина в архиве' : !shippingDate ? 'Не указана дата отгрузки' : assignee.reason }
+    return { skippedReason: machine.is_archived ? 'Машина в архиве' : !shippingDate ? 'Не указана плановая готовность к погрузке' : assignee.reason }
   }
   await Promise.all((Object.keys(TASKS) as ShippingTaskType[]).map((taskType) => upsertTask(db, machine, assignee.id!, shippingDate, taskType)))
   return { skippedReason: null }
@@ -137,14 +137,12 @@ export async function syncTransportCostTask(client: unknown, machineId: string) 
 export async function syncDueTransportCostTasks(client: unknown) {
   const db = dbFrom(client)
   const dueLimit = addDays(today(), 7)
-  const [machines, stages, tasks] = await Promise.all([
-    db.from('machines').select('id').eq('is_archived', false).lte('desired_shipping_date', dueLimit),
+  const [stages, tasks] = await Promise.all([
     db.from('production_stages').select('machine_id').eq('stage_type', 'shipping').or(`planned_date_end.lte.${dueLimit},date_end.lte.${dueLimit}`),
     db.from('tasks').select('machine_id').in('task_type', Object.keys(TASKS)).in('status', ['pending', 'in_progress']),
   ])
-  if (machines.error || stages.error || tasks.error) throw new Error(machines.error?.message || stages.error?.message || tasks.error?.message || 'Не удалось найти задачи по отгрузке')
+  if (stages.error || tasks.error) throw new Error(stages.error?.message || tasks.error?.message || 'Не удалось найти задачи по отгрузке')
   const machineIds = new Set<string>()
-  for (const row of (machines.data || []) as Array<{ id?: string }>) if (row.id) machineIds.add(row.id)
   for (const row of (stages.data || []) as Array<{ machine_id?: string }>) if (row.machine_id) machineIds.add(row.machine_id)
   for (const row of (tasks.data || []) as Array<{ machine_id?: string }>) if (row.machine_id) machineIds.add(row.machine_id)
   const errors: Array<{ machineId: string; error: string }> = []
