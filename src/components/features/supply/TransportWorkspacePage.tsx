@@ -202,6 +202,17 @@ function tripNeedCurrentDate(trip: TransportTrip, need: TransportTrip['needs'][n
   return need.neededDate
 }
 
+function operationalStops(trip: TransportTrip) {
+  return trip.stops.filter((stop) => stop.kind !== 'start')
+}
+
+function tripRouteLabel(trip: TransportTrip) {
+  const stops = operationalStops(trip)
+  return stops.length > 0
+    ? stops.map((stop) => stop.pointLabel).join(' → ')
+    : trip.route || trip.routeStart || 'Маршрут не указан'
+}
+
 const NeedCard = memo(function NeedCard({
   need,
   selected,
@@ -351,34 +362,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     const plan = preserve
       ? reconcileTransportStopPlan(routeStops, routeAssignments, needs)
       : buildTransportStopPlan(needs)
-    const points = needs.flatMap((need) => ([
-      {
-        key: need.sourcePointKey,
-        label: need.sourcePointLabel,
-        city: need.sourcePointCity,
-        address: need.sourcePointAddress,
-      },
-      {
-        key: need.destinationPointKey,
-        label: need.destinationPointLabel,
-        city: need.destinationPointCity,
-        address: need.destinationPointAddress,
-      },
-    ]))
-    const base = points.find((point) => point.key.startsWith('factory:')) || points[0]
-    setRouteStops(plan.stops.some((stop) => stop.kind === 'start') ? plan.stops : [
-      {
-        clientId: 'trip-start',
-        pointKey: `custom:start:${base.key}`,
-        pointLabel: base.label,
-        city: base.city,
-        address: base.address,
-        kind: 'start',
-        plannedTime: '08:00',
-        serviceDurationMinutes: 0,
-      },
-      ...plan.stops,
-    ])
+    setRouteStops(plan.stops)
     setRouteAssignments(plan.assignments)
   }, [routeAssignments, routeStops])
 
@@ -416,6 +400,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   const activeTrips = workspace.trips.filter((trip) => !['completed', 'cancelled'].includes(trip.status))
   const historyTrips = workspace.trips.filter((trip) => ['completed', 'cancelled'].includes(trip.status))
   const editingTrip = workspace.trips.find((trip) => trip.id === editingTripId) || null
+  const visibleEditingStops = editingStops.filter((stop) => stop.kind !== 'start')
 
   const toggleNeed = useCallback((need: UnifiedTransportNeed) => {
     setMobileShortcutHidden(false)
@@ -918,7 +903,6 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
           trips={historyTrips}
           onOpen={openTrip}
           emptyText=""
-          compact
         />
       )}
 
@@ -948,7 +932,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                   Рейс #{editingTrip.id.slice(0, 8).toUpperCase()}
                 </SheetTitle>
                 <SheetDescription>
-                  {editingTrip.route || editingTrip.routeStart || 'Маршрут не указан'}
+                  {tripRouteLabel(editingTrip)}
                 </SheetDescription>
               </SheetHeader>
 
@@ -1098,19 +1082,17 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Остановки</div>
                         <div className="mt-1 text-sm text-slate-600">
-                          {editingStops.filter((stop) => stop.kind !== 'start' && stop.status === 'completed').length}
+                          {visibleEditingStops.filter((stop) => stop.status === 'completed').length}
                           {' из '}
-                          {editingStops.filter((stop) => stop.kind !== 'start').length} выполнено
+                          {visibleEditingStops.length} выполнено
                         </div>
                       </div>
                     </div>
                     <ol className="space-y-2">
-                      {editingStops.map((stop, index) => {
-                        const previousServiceStops = editingStops
+                      {visibleEditingStops.map((stop, index) => {
+                        const previousServiceStops = visibleEditingStops
                           .slice(0, index)
-                          .filter((candidate) => candidate.kind !== 'start')
-                        const canArrive = stop.kind !== 'start'
-                          && stop.status === 'planned'
+                        const canArrive = stop.status === 'planned'
                           && previousServiceStops.every((candidate) => candidate.status === 'completed')
                         return (
                           <li key={stop.id} className="rounded-xl border border-slate-200 bg-white p-3">
@@ -1131,9 +1113,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                                   <span className="text-sm font-bold text-slate-700">{formatTime(stop.plannedArrivalAt)}</span>
                                 </div>
                                 <div className="mt-1 text-xs text-slate-500">
-                                  {stop.kind === 'start'
-                                    ? 'Выезд'
-                                    : stop.kind === 'finish'
+                                  {stop.kind === 'finish'
                                       ? 'Завершение маршрута'
                                       : `${stop.serviceDurationMinutes} мин. на площадке`}
                                 </div>
@@ -1160,7 +1140,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                                           variant="outline"
                                           size="icon"
                                           aria-label={`Поднять остановку ${stop.pointLabel}`}
-                                          disabled={editingStops[index - 1]?.kind !== 'service'}
+                                          disabled={visibleEditingStops[index - 1]?.kind !== 'service'}
                                           onClick={() => moveEditingStop(stop.id, -1)}
                                           className="h-9 w-9 rounded-lg"
                                         >
@@ -1171,7 +1151,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                                           variant="outline"
                                           size="icon"
                                           aria-label={`Опустить остановку ${stop.pointLabel}`}
-                                          disabled={editingStops[index + 1]?.kind !== 'service'}
+                                          disabled={visibleEditingStops[index + 1]?.kind !== 'service'}
                                           onClick={() => moveEditingStop(stop.id, 1)}
                                           className="h-9 w-9 rounded-lg"
                                         >
@@ -1182,7 +1162,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                                   </div>
                                 )}
 
-                                {editingTrip.status === 'in_transit' && stop.kind !== 'start' && stop.status !== 'completed' && (
+                                {editingTrip.status === 'in_transit' && stop.status !== 'completed' && (
                                   <Button
                                     type="button"
                                     size="sm"
@@ -1356,7 +1336,7 @@ function RoutePlanner({
                     </div>
                   ) : (
                     <Label className="grid gap-1 text-xs font-medium text-slate-600">
-                      {stop.kind === 'start' ? 'Точка выезда' : 'Точка завершения'}
+                      Точка завершения
                       <Input
                         value={stop.pointLabel}
                         onChange={(event) => onStopChange(stop.clientId, {
@@ -1535,14 +1515,12 @@ function TripsSection({
   trips,
   onOpen,
   emptyText,
-  compact = false,
 }: {
   title: string
   description: string
   trips: TransportTrip[]
   onOpen: (trip: TransportTrip) => void
   emptyText: string
-  compact?: boolean
 }) {
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_10px_32px_rgba(15,23,42,0.05)] sm:p-5">
@@ -1559,97 +1537,78 @@ function TripsSection({
           {emptyText}
         </div>
       ) : (
-        <div className={cn('mt-4 grid gap-3', !compact && 'lg:grid-cols-2')}>
-          {trips.map((trip) => (
-            <article key={trip.id} className="rounded-2xl border border-slate-200 bg-slate-50/40 p-4">
-              <div className="flex items-start justify-between gap-3">
+        <ul className="mt-4 divide-y divide-slate-200 overflow-hidden rounded-2xl border border-slate-200" aria-label={title}>
+          {trips.map((trip) => {
+            const stops = operationalStops(trip)
+            const nextStop = stops.find((stop) => stop.status !== 'completed')
+            const completedStopCount = stops.filter((stop) => stop.status === 'completed').length
+            return (
+              <li
+                key={trip.id}
+                className="grid min-w-0 gap-3 bg-white px-4 py-3 transition-colors hover:bg-slate-50 sm:grid-cols-[minmax(0,1.5fr)_minmax(190px,0.8fr)_auto] sm:items-center"
+              >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusMeta[trip.status].badge)}>
                       {statusMeta[trip.status].label}
                     </span>
-                    <span className="text-xs font-semibold text-slate-400">
-                      #{trip.id.slice(0, 8).toUpperCase()}
-                    </span>
+                    <span className="text-xs font-semibold text-slate-400">#{trip.id.slice(0, 8).toUpperCase()}</span>
+                    {Array.from(new Set(trip.needs.map((need) => need.kind))).map((kind) => (
+                      <span key={kind} className={cn('rounded-full border px-2 py-1 text-[11px] font-semibold', categoryMeta[kind].chip)}>
+                        {categoryMeta[kind].label}
+                      </span>
+                    ))}
                   </div>
-                  <div className="mt-3 flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-900">
+                  <div className="mt-2 flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-900">
                     <Route className="h-4 w-4 shrink-0 text-blue-700" />
-                    <span className="truncate">{trip.route || trip.routeStart || 'Маршрут не указан'}</span>
+                    <span className="truncate">{tripRouteLabel(trip)}</span>
                   </div>
+                  {nextStop && (
+                    <div className="mt-1.5 flex min-w-0 items-center gap-2 text-xs text-blue-800">
+                      <MapPin className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate"><span className="font-semibold">Следующая:</span> {nextStop.pointLabel}</span>
+                      <span className="shrink-0 font-semibold">{formatTime(nextStop.plannedArrivalAt)}</span>
+                    </div>
+                  )}
                 </div>
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-slate-600 sm:grid-cols-1">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <span className="truncate font-medium">{trip.carrierName || 'Не назначен'}</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <CalendarDays className="h-3.5 w-3.5 text-slate-400" />
+                    {formatDate(trip.scheduledDate)}
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Banknote className="h-3.5 w-3.5 text-slate-400" />
+                    {formatMoney(trip.price)}
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                    {stops.length > 0 ? `${completedStopCount} из ${stops.length}` : `${trip.needs.length} потребн.`}
+                  </span>
+                </div>
+
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   aria-label={`Открыть рейс ${trip.id.slice(0, 8)}`}
                   onClick={() => onOpen(trip)}
-                  className="shrink-0 rounded-xl"
+                  className="h-11 w-11 justify-self-end rounded-xl"
                 >
                   {['completed', 'cancelled'].includes(trip.status)
                     ? <ChevronRight className="h-5 w-5" />
                     : <Pencil className="h-4 w-4" />}
                 </Button>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                <TripFact icon={Building2} label="Перевозчик" value={trip.carrierName || 'Не назначен'} />
-                <TripFact icon={CalendarDays} label="Дата" value={formatDate(trip.scheduledDate)} />
-                <TripFact icon={Banknote} label="Цена" value={formatMoney(trip.price)} />
-                <TripFact
-                  icon={MapPin}
-                  label="Остановки"
-                  value={trip.stops.length > 0
-                    ? `${trip.stops.filter((stop) => stop.kind !== 'start' && stop.status === 'completed').length} из ${trip.stops.filter((stop) => stop.kind !== 'start').length}`
-                    : `${trip.needs.length} потребн.`}
-                />
-              </div>
-
-              {trip.stops.find((stop) => stop.kind !== 'start' && stop.status !== 'completed') && (
-                <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">Следующая точка</div>
-                  <div className="mt-1 flex items-center justify-between gap-3 text-sm">
-                    <span className="truncate font-semibold text-blue-950">
-                      {trip.stops.find((stop) => stop.kind !== 'start' && stop.status !== 'completed')?.pointLabel}
-                    </span>
-                    <span className="shrink-0 font-bold text-blue-800">
-                      {formatTime(trip.stops.find((stop) => stop.kind !== 'start' && stop.status !== 'completed')?.plannedArrivalAt || null)}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {Array.from(new Set(trip.needs.map((need) => need.kind))).map((kind) => (
-                  <span key={kind} className={cn('rounded-full border px-2 py-1 text-xs font-semibold', categoryMeta[kind].chip)}>
-                    {categoryMeta[kind].label}
-                  </span>
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
+              </li>
+            )
+          })}
+        </ul>
       )}
     </section>
-  )
-}
-
-function TripFact({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Package
-  label: string
-  value: string
-}) {
-  return (
-    <div className="min-w-0 rounded-xl bg-white px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
-        <Icon className="h-3.5 w-3.5" />
-        {label}
-      </div>
-      <div className="mt-1 truncate font-semibold text-slate-800">{value}</div>
-    </div>
   )
 }
 

@@ -82,6 +82,8 @@ const EMPTY_QUEUE_COUNTS: SidebarWorkQueueCounts = {
   materialRequests: 0,
 }
 
+const SIDEBAR_QUEUE_POLL_INTERVAL_MS = 15_000
+
 let queueCountsRequest: Promise<SidebarWorkQueueCounts> | null = null
 let lastQueueCounts: SidebarWorkQueueCounts = EMPTY_QUEUE_COUNTS
 let lastQueueCountsAt = 0
@@ -191,7 +193,10 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
       if (active) setQueueCounts(counts)
     }
     const initialRefresh = window.setTimeout(() => void refresh(true), 0)
-    const interval = window.setInterval(() => void refresh(), 60_000)
+    // Keep every queue badge moving even when its source table is not part of
+    // Supabase Realtime. The shared in-flight request prevents the desktop and
+    // mobile sidebars from duplicating the server work.
+    const interval = window.setInterval(() => void refresh(true), SIDEBAR_QUEUE_POLL_INTERVAL_MS)
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') void refresh(true)
     }

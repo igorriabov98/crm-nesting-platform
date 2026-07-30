@@ -744,9 +744,11 @@ export async function createTransportTrip(input: z.input<typeof createTripSchema
     if (assignmentByNeed.size !== selectedNeeds.length) {
       throw new Error('Для каждой потребности должны быть указаны точки забора и доставки')
     }
-    if (sanitizedStops[0]?.kind !== 'start') throw new Error('Первая точка маршрута должна быть точкой выезда')
-    if (sanitizedStops.slice(1, -1).some((stop) => stop.kind !== 'service')) {
-      throw new Error('Служебные точки допускаются только в начале и конце маршрута')
+    if (sanitizedStops[0]?.kind !== 'service') {
+      throw new Error('Маршрут должен начинаться с точки забора')
+    }
+    if (sanitizedStops.some((stop) => stop.kind === 'start')) {
+      throw new Error('Отдельная точка выезда больше не используется')
     }
     if (sanitizedStops.some((stop, index) => stop.kind === 'finish' && index !== sanitizedStops.length - 1)) {
       throw new Error('Точка завершения должна быть последней')
