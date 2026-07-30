@@ -52,6 +52,8 @@ import {
   getSidebarWorkQueueCount,
   type SidebarWorkQueueCounts,
 } from '@/lib/sidebar-work-queues'
+import { SIDEBAR_WORK_QUEUE_REFRESH_EVENT } from '@/lib/sidebar-work-queue-events'
+import { createClient } from '@/lib/supabase/client'
 
 interface SidebarProps {
   user: CurrentUser
@@ -69,7 +71,13 @@ interface NavItem {
 }
 
 const EMPTY_QUEUE_COUNTS: SidebarWorkQueueCounts = {
-  departmentRequests: { technologist: 0, supply: 0, production: 0, total: 0 },
+  departmentRequests: {
+    technologist: 0,
+    supply: 0,
+    production: 0,
+    total: 0,
+    unreadResults: 0,
+  },
   transport: 0,
   materialRequests: 0,
 }
@@ -78,8 +86,8 @@ let queueCountsRequest: Promise<SidebarWorkQueueCounts> | null = null
 let lastQueueCounts: SidebarWorkQueueCounts = EMPTY_QUEUE_COUNTS
 let lastQueueCountsAt = 0
 
-function loadSharedQueueCounts() {
-  if (Date.now() - lastQueueCountsAt < 10_000) return Promise.resolve(lastQueueCounts)
+function loadSharedQueueCounts(force = false) {
+  if (!force && Date.now() - lastQueueCountsAt < 10_000) return Promise.resolve(lastQueueCounts)
   if (!queueCountsRequest) {
     queueCountsRequest = getSidebarWorkQueueCounts()
       .then((counts) => {
@@ -100,7 +108,7 @@ function WorkQueueBadge({ count, collapsed = false }: { count: number; collapsed
 
   return (
     <span
-      aria-label={`${count} новых элементов, которые нужно взять в работу`}
+      aria-label={`${count} новых элементов, требующих внимания`}
       aria-live="polite"
       className={cn(
         'inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-5 text-white shadow-sm ring-2 ring-white',
@@ -178,25 +186,38 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
 
   useEffect(() => {
     let active = true
-    const refresh = async () => {
-      const counts = await loadSharedQueueCounts()
+    const refresh = async (force = false) => {
+      const counts = await loadSharedQueueCounts(force)
       if (active) setQueueCounts(counts)
     }
-    const initialRefresh = window.setTimeout(() => void refresh(), 0)
+    const initialRefresh = window.setTimeout(() => void refresh(true), 0)
     const interval = window.setInterval(() => void refresh(), 60_000)
     const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') void refresh()
+      if (document.visibilityState === 'visible') void refresh(true)
     }
+    const refreshAfterMutation = () => void refresh(true)
+    const supabase = createClient()
+    const channel = supabase
+      .channel(`sidebar_department_requests_${user.id}_${isMobile ? 'mobile' : 'desktop'}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'department_requests' },
+        refreshAfterMutation,
+      )
+      .subscribe()
     window.addEventListener('focus', refreshWhenVisible)
+    window.addEventListener(SIDEBAR_WORK_QUEUE_REFRESH_EVENT, refreshAfterMutation)
     document.addEventListener('visibilitychange', refreshWhenVisible)
     return () => {
       active = false
       window.clearTimeout(initialRefresh)
       window.clearInterval(interval)
       window.removeEventListener('focus', refreshWhenVisible)
+      window.removeEventListener(SIDEBAR_WORK_QUEUE_REFRESH_EVENT, refreshAfterMutation)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
+      void supabase.removeChannel(channel)
     }
-  }, [pathname])
+  }, [isMobile, pathname, user.id])
 
   const collapsed = isMobile ? false : isCollapsed
   const profileLabel = (user.department_memberships || [])

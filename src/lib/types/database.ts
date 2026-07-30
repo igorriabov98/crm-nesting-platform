@@ -2840,6 +2840,7 @@ export type Database = {
           due_date: string | null
           response: string | null
           completed_at: string | null
+          result_viewed_at: string | null
           search_document: unknown
           created_at: string
           updated_at: string
@@ -2859,6 +2860,7 @@ export type Database = {
           due_date?: string | null
           response?: string | null
           completed_at?: string | null
+          result_viewed_at?: string | null
           search_document?: unknown
           created_at?: string
           updated_at?: string
@@ -2878,6 +2880,7 @@ export type Database = {
           due_date?: string | null
           response?: string | null
           completed_at?: string | null
+          result_viewed_at?: string | null
           search_document?: unknown
           created_at?: string
           updated_at?: string

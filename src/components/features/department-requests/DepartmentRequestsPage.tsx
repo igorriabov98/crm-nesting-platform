@@ -21,7 +21,9 @@ import {
 import {
   DEPARTMENT_REQUEST_STATUS_LABELS,
   DEPARTMENT_REQUEST_TARGETS,
+  getDepartmentRequestTabStatuses,
   type DepartmentRequestStatus,
+  type DepartmentRequestTab,
 } from '@/lib/department-requests'
 import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
@@ -55,7 +57,7 @@ function queryHref(route: string, workspace: DepartmentRequestWorkspace, page: n
   if (filters.deadline !== 'all') params.set('deadline', filters.deadline)
   if (filters.order !== 'all') params.set('order', filters.order)
   if (workspace.mode === 'inbox' && filters.assignee !== 'all') params.set('assignee', filters.assignee)
-  if (filters.tab === 'completed') params.set('tab', 'completed')
+  if (filters.tab !== 'active') params.set('tab', filters.tab)
   if (page > 0) params.set('page', String(page))
   if (factoryId) params.set('factory', factoryId)
   const suffix = params.toString()
@@ -70,7 +72,7 @@ function requestDetailHref(requestId: string, factoryId?: string) {
 function tabHref(
   route: string,
   workspace: DepartmentRequestWorkspace,
-  tab: 'active' | 'completed',
+  tab: DepartmentRequestTab,
   factoryId?: string,
 ) {
   const params = new URLSearchParams()
@@ -80,7 +82,7 @@ function tabHref(
   if (filters.deadline !== 'all') params.set('deadline', filters.deadline)
   if (filters.order !== 'all') params.set('order', filters.order)
   if (workspace.mode === 'inbox' && filters.assignee !== 'all') params.set('assignee', filters.assignee)
-  if (tab === 'completed') params.set('tab', 'completed')
+  if (tab !== 'active') params.set('tab', tab)
   if (factoryId) params.set('factory', factoryId)
   const suffix = params.toString()
   return suffix ? `${route}?${suffix}` : route
@@ -104,6 +106,9 @@ function RequestListItem({
       && request.due_date < new Date().toISOString().slice(0, 10),
   )
   const detailHref = requestDetailHref(request.id, factoryId)
+  const hasUnreadResult = mode === 'mine'
+    && ['done', 'rejected'].includes(request.status)
+    && request.result_viewed_at === null
 
   return (
     <article className="bg-white px-4 py-4 transition-colors hover:bg-slate-50/70 sm:px-5">
@@ -113,6 +118,14 @@ function RequestListItem({
             <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusStyles[request.status])}>
               {DEPARTMENT_REQUEST_STATUS_LABELS[request.status]}
             </span>
+            {hasUnreadResult && (
+              <span
+                aria-label="Новый результат запроса. Откройте запрос, чтобы ознакомиться"
+                className="inline-flex size-5 items-center justify-center rounded-full bg-red-500 text-[11px] font-bold leading-none text-white shadow-sm ring-2 ring-white"
+              >
+                1
+              </span>
+            )}
             {mode === 'mine' && (
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
                 {target.label}
@@ -209,12 +222,10 @@ export function DepartmentRequestsPage({
   const config = workspace.target ? DEPARTMENT_REQUEST_TARGETS[workspace.target] : null
   const route = workspace.mode === 'mine' ? ROUTES.REQUESTS : config!.route
   const resetParams = new URLSearchParams()
-  if (workspace.filters.tab === 'completed') resetParams.set('tab', 'completed')
+  if (workspace.filters.tab !== 'active') resetParams.set('tab', workspace.filters.tab)
   if (factoryId) resetParams.set('factory', factoryId)
   const resetHref = resetParams.size > 0 ? `${route}?${resetParams.toString()}` : route
-  const visibleStatuses: DepartmentRequestStatus[] = workspace.filters.tab === 'completed'
-    ? ['done', 'rejected', 'cancelled']
-    : ['new', 'in_progress']
+  const visibleStatuses: DepartmentRequestStatus[] = getDepartmentRequestTabStatuses(workspace.filters.tab)
   const hasFilters = Boolean(
     workspace.filters.query
     || workspace.filters.status !== 'all'
@@ -251,9 +262,10 @@ export function DepartmentRequestsPage({
       </section>
 
       <section className="overflow-hidden rounded-[24px] border border-slate-200 bg-white">
-        <nav className="flex border-b border-slate-200 px-4 pt-3 sm:px-5" aria-label="Состояние запросов">
+        <nav className="flex overflow-x-auto border-b border-slate-200 px-4 pt-3 sm:px-5" aria-label="Состояние запросов">
           <Link
             href={tabHref(route, workspace, 'active', factoryId)}
+            aria-current={workspace.filters.tab === 'active' ? 'page' : undefined}
             className={cn(
               'flex min-h-11 items-center border-b-2 px-4 text-sm font-semibold',
               workspace.filters.tab === 'active'
@@ -265,6 +277,7 @@ export function DepartmentRequestsPage({
           </Link>
           <Link
             href={tabHref(route, workspace, 'completed', factoryId)}
+            aria-current={workspace.filters.tab === 'completed' ? 'page' : undefined}
             className={cn(
               'flex min-h-11 items-center border-b-2 px-4 text-sm font-semibold',
               workspace.filters.tab === 'completed'
@@ -274,11 +287,23 @@ export function DepartmentRequestsPage({
           >
             Выполненные
           </Link>
+          <Link
+            href={tabHref(route, workspace, 'rejected', factoryId)}
+            aria-current={workspace.filters.tab === 'rejected' ? 'page' : undefined}
+            className={cn(
+              'flex min-h-11 items-center border-b-2 px-4 text-sm font-semibold',
+              workspace.filters.tab === 'rejected'
+                ? 'border-[#1B3A6B] text-[#1B3A6B]'
+                : 'border-transparent text-slate-500 hover:text-slate-800',
+            )}
+          >
+            Отклонённые
+          </Link>
         </nav>
         <div className="border-b border-slate-200 p-4 sm:p-5">
           <Form action={route} className="space-y-3">
             {factoryId && <input type="hidden" name="factory" value={factoryId} />}
-            {workspace.filters.tab === 'completed' && <input type="hidden" name="tab" value="completed" />}
+            {workspace.filters.tab !== 'active' && <input type="hidden" name="tab" value={workspace.filters.tab} />}
             <div className="flex flex-col gap-3 lg:flex-row">
               <div className="relative min-w-0 flex-1">
                 <Search className="pointer-events-none absolute left-3 top-3.5 size-4 text-slate-400" aria-hidden="true" />

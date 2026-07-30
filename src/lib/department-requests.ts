@@ -34,7 +34,7 @@ export type DepartmentRequestAttachmentPhase = 'source' | 'resolution'
 export type DepartmentRequestDeadlineFilter = 'all' | 'overdue' | 'with_date' | 'without_date'
 export type DepartmentRequestOrderFilter = 'all' | 'with_order' | 'without_order' | string
 export type DepartmentRequestAssigneeFilter = 'all' | 'unassigned' | 'mine' | string
-export type DepartmentRequestTab = 'active' | 'completed'
+export type DepartmentRequestTab = 'active' | 'completed' | 'rejected'
 export type DepartmentRequestFilters = {
   query: string
   status: DepartmentRequestStatus | 'all'
@@ -88,7 +88,7 @@ export function normalizeDepartmentRequestFilters(input: {
     deadline,
     order: (input.order || 'all').slice(0, 80),
     assignee: (input.assignee || 'all').slice(0, 80),
-    tab: input.tab === 'completed' ? 'completed' : 'active',
+    tab: input.tab === 'completed' || input.tab === 'rejected' ? input.tab : 'active',
     page: Number.isFinite(parsedPage) ? Math.max(0, Math.floor(parsedPage)) : 0,
   }
 }
@@ -114,4 +114,10 @@ export const DEPARTMENT_REQUEST_STATUS_LABELS: Record<DepartmentRequestStatus, s
   done: 'Решён',
   rejected: 'Отклонён',
   cancelled: 'Отменён',
+}
+
+export function getDepartmentRequestTabStatuses(tab: DepartmentRequestTab): DepartmentRequestStatus[] {
+  if (tab === 'completed') return ['done', 'cancelled']
+  if (tab === 'rejected') return ['rejected']
+  return ['new', 'in_progress']
 }

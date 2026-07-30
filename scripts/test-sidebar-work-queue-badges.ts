@@ -8,12 +8,18 @@ import {
 } from '../src/lib/sidebar-work-queues'
 
 const counts: SidebarWorkQueueCounts = {
-  departmentRequests: { technologist: 2, supply: 3, production: 4, total: 9 },
+  departmentRequests: {
+    technologist: 2,
+    supply: 3,
+    production: 4,
+    total: 9,
+    unreadResults: 2,
+  },
   transport: 5,
   materialRequests: 6,
 }
 
-assert.equal(getSidebarWorkQueueCount(ROUTES.REQUESTS, counts), 9)
+assert.equal(getSidebarWorkQueueCount(ROUTES.REQUESTS, counts), 11)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_DEPARTMENT_REQUESTS, counts), 3)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_TRANSPORT, counts), 5)
 assert.equal(getSidebarWorkQueueCount(ROUTES.MATERIAL_REQUESTS, counts), 6)

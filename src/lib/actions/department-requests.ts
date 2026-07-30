@@ -8,6 +8,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import {
   DEPARTMENT_REQUEST_TARGETS,
   canManageDepartmentRequestTarget,
+  getDepartmentRequestTabStatuses,
   isDepartmentRequestTarget,
   type DepartmentRequestFilters,
   type DepartmentRequestStatus,
@@ -81,6 +82,7 @@ export type DepartmentRequestRow = {
   due_date: string | null
   response: string | null
   completed_at: string | null
+  result_viewed_at: string | null
   created_at: string
   updated_at: string
   creator: { id: string; full_name: string; role: string } | null
@@ -151,6 +153,17 @@ type RpcClient = {
   }>
 }
 
+type ResultReadQuery = PromiseLike<{ error: { message?: string } | null }> & {
+  eq: (column: string, value: unknown) => ResultReadQuery
+  is: (column: string, value: unknown) => ResultReadQuery
+}
+
+type ResultReadClient = {
+  from: (table: 'department_requests') => {
+    update: (values: { result_viewed_at: string }) => ResultReadQuery
+  }
+}
+
 type FilterOptionRow = {
   machine_id: string | null
   assigned_to: string | null
@@ -179,6 +192,7 @@ const requestListSelect = `
   due_date,
   response,
   completed_at,
+  result_viewed_at,
   created_at,
   updated_at,
   creator:users!department_requests_created_by_fkey(id, full_name, role),
@@ -229,12 +243,7 @@ function applyFilters(query: RequestFilterQuery, filters: DepartmentRequestFilte
   if (filters.query) {
     result = result.textSearch('search_document', filters.query, { config: 'simple', type: 'websearch' })
   }
-  result = result.in(
-    'status',
-    filters.tab === 'completed'
-      ? ['done', 'rejected', 'cancelled']
-      : ['new', 'in_progress'],
-  )
+  result = result.in('status', getDepartmentRequestTabStatuses(filters.tab))
   if (filters.status !== 'all') result = result.eq('status', filters.status)
   if (includeTarget && filters.target !== 'all') result = result.eq('target_department', filters.target)
 
@@ -385,7 +394,8 @@ export async function getDepartmentRequestWorkspace(input: {
 export async function getDepartmentRequestDetail(requestId: string) {
   const id = z.string().uuid().parse(requestId)
   const context = await requirePermission('department_requests', 'view')
-  const { data, error } = await createAdminClient()
+  const admin = createAdminClient()
+  const { data, error } = await admin
     .from('department_requests')
     .select(requestDetailSelect)
     .eq('id', id)
@@ -404,6 +414,21 @@ export async function getDepartmentRequestDetail(requestId: string) {
     || request.factory_id === context.factoryId
   const canManage = departmentAllowed && factoryAllowed
   if (request.created_by !== context.userId && !canManage) return null
+
+  if (
+    request.created_by === context.userId
+    && ['done', 'rejected'].includes(request.status)
+    && request.result_viewed_at === null
+  ) {
+    const viewedAt = new Date().toISOString()
+    const { error: readError } = await (admin as unknown as ResultReadClient)
+      .from('department_requests')
+      .update({ result_viewed_at: viewedAt })
+      .eq('id', id)
+      .eq('created_by', context.userId)
+      .is('result_viewed_at', null)
+    if (!readError) request.result_viewed_at = viewedAt
+  }
 
   return {
     request,

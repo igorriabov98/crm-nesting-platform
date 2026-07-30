@@ -5,6 +5,7 @@ import {
   DEPARTMENT_REQUEST_TARGETS,
   DEPARTMENT_REQUEST_STATUS_LABELS,
   canManageDepartmentRequestTarget,
+  getDepartmentRequestTabStatuses,
   isDepartmentRequestTarget,
   normalizeDepartmentRequestFilters,
 } from '../src/lib/department-requests'
@@ -25,7 +26,11 @@ assert.equal(DEPARTMENT_REQUEST_TARGETS.production.route, '/requests/production'
 assert.equal(DEPARTMENT_REQUEST_STATUS_LABELS.done, 'Решён')
 assert.equal(normalizeDepartmentRequestFilters({}).tab, 'active')
 assert.equal(normalizeDepartmentRequestFilters({ tab: 'completed' }).tab, 'completed')
+assert.equal(normalizeDepartmentRequestFilters({ tab: 'rejected' }).tab, 'rejected')
 assert.equal(normalizeDepartmentRequestFilters({ tab: 'unknown' }).tab, 'active')
+assert.deepEqual(getDepartmentRequestTabStatuses('active'), ['new', 'in_progress'])
+assert.deepEqual(getDepartmentRequestTabStatuses('completed'), ['done', 'cancelled'])
+assert.deepEqual(getDepartmentRequestTabStatuses('rejected'), ['rejected'])
 
 assert.equal(canManageDepartmentRequestTarget({
   target: 'supply',
@@ -113,6 +118,8 @@ const workspacePage = readFileSync(
 )
 assert.match(workspacePage, /workspace\.mode === 'mine' && <CreateDepartmentRequestForm/)
 assert.match(workspacePage, /Выполненные/)
+assert.match(workspacePage, /Отклонённые/)
+assert.match(workspacePage, /Новый результат запроса/)
 assert.match(workspacePage, /divide-y divide-slate-200/)
 assert.match(workspacePage, /RequestListItem/)
 assert.doesNotMatch(workspacePage, /RequestCard/)
@@ -121,7 +128,7 @@ assert.doesNotMatch(workspacePage, /Приоритет/)
 const requestActions = readFileSync(resolve('src/lib/actions/department-requests.ts'), 'utf8')
 assert.match(requestActions, /\.is\('actual_shipping_date', null\)/)
 assert.match(requestActions, /\.neq\('status', 'shipped'\)/)
-assert.match(requestActions, /filters\.tab === 'completed'/)
+assert.match(requestActions, /getDepartmentRequestTabStatuses\(filters\.tab\)/)
 assert.match(requestActions, /create_department_request_with_mail/)
 assert.match(requestActions, /p_mail_link/)
 
@@ -155,6 +162,14 @@ assert.match(taskSyncMigration, /insert into public\.tasks/)
 assert.match(taskSyncMigration, /task_type,[\s\S]*'department_request'/)
 assert.match(taskSyncMigration, /status = 'completed'/)
 assert.match(taskSyncMigration, /status = 'cancelled'/)
+
+const resultReadMigration = readFileSync(
+  resolve('supabase/migrations/20260730123000_department_request_result_reads.sql'),
+  'utf8',
+)
+assert.match(resultReadMigration, /result_viewed_at timestamptz/)
+assert.match(resultReadMigration, /status in \('done', 'rejected'\)/)
+assert.match(resultReadMigration, /reset_department_request_result_read_before_status/)
 
 assert.deepEqual(
   validateDepartmentRequestFile({ fileName: 'result.step', fileSize: 1024 }),

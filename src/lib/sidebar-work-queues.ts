@@ -2,7 +2,10 @@ import { ROUTES } from '@/lib/constants/routes'
 import type { DepartmentRequestTarget } from '@/lib/department-requests'
 
 export type SidebarWorkQueueCounts = {
-  departmentRequests: Record<DepartmentRequestTarget, number> & { total: number }
+  departmentRequests: Record<DepartmentRequestTarget, number> & {
+    total: number
+    unreadResults: number
+  }
   transport: number
   materialRequests: number
 }
@@ -18,7 +21,9 @@ export function countSelectableTransportNeeds(items: Array<{ selectable: boolean
 }
 
 export function getSidebarWorkQueueCount(href: string, counts: SidebarWorkQueueCounts) {
-  if (href === ROUTES.REQUESTS) return counts.departmentRequests.total
+  if (href === ROUTES.REQUESTS) {
+    return counts.departmentRequests.total + counts.departmentRequests.unreadResults
+  }
   if (href === ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS) return counts.departmentRequests.technologist
   if (href === ROUTES.SUPPLY_DEPARTMENT_REQUESTS) return counts.departmentRequests.supply
   if (href === ROUTES.PRODUCTION_DEPARTMENT_REQUESTS) return counts.departmentRequests.production
