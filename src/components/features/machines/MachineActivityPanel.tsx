@@ -357,7 +357,7 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:h-[620px]">
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
@@ -370,9 +370,9 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
           </div>
         </div>
 
-        <div className="space-y-4 p-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
           {activity.canManageUpdates && (
-            <form onSubmit={handleCreateUpdate} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <form onSubmit={handleCreateUpdate} className="shrink-0 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
               <Textarea
                 value={updateDraft}
                 onChange={(event) => setUpdateDraft(event.target.value)}
@@ -400,7 +400,7 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
               Пока нет обновлений по этой машине.
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               {updates.map((update) => {
                 const isEditing = editingUpdateId === update.id
                 const isSystem = update.message_kind === 'system'
@@ -492,7 +492,7 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:h-[620px]">
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
@@ -505,8 +505,8 @@ export function MachineActivityPanel({ machineId, activity }: MachineActivityPan
           </div>
         </div>
 
-        <div className="flex min-h-[520px] flex-col">
-          <div className="flex-1 space-y-3 overflow-y-auto p-5">
+        <div className="flex min-h-[520px] flex-1 flex-col xl:min-h-0">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
             {messages.length === 0 ? (
               <div className="flex min-h-56 items-center justify-center rounded-xl border border-dashed border-slate-200 px-4 text-center text-sm text-slate-500">
                 В чате пока нет сообщений.
