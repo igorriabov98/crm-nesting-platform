@@ -28,7 +28,7 @@ export function committedScheduleQuantity(schedule) {
  * schedule is not touched, so an already committed future shipment is not
  * silently duplicated.
  *
- * For knives the allocator works in whole bars. The logical demand may be
+ * For knives and circle the allocator works in whole bars. The logical demand may be
  * smaller than the physical quantity reserved: a 12 000 mm bar closes a
  * 6 000 mm demand, but all 12 000 mm remain assigned to that machine until
  * cutting turns the pre-created future scrap into available stock.
@@ -42,6 +42,8 @@ export function committedScheduleQuantity(schedule) {
  *     table: string,
  *     id: string,
  *     priorityDate?: string | null,
+ *     cuttingDate?: string | null,
+ *     materialDate?: string | null,
  *     outstandingQuantity: number,
  *     hasOtherPlannedSchedule?: boolean,
  *     isSource?: boolean,
@@ -55,7 +57,7 @@ export function allocateReceiptByPriority(input) {
   const candidates = [...input.candidates]
     .filter((candidate) => positiveNumber(candidate.outstandingQuantity) > 0)
     .filter((candidate) => candidate.isSource || !candidate.hasOtherPlannedSchedule)
-    .sort((left, right) => comparePriority(left, right))
+    .sort((left, right) => comparePriority(left, right, pieceMode(input)))
 
   const pieceLengthMm = positiveNumber(input.pieceLengthMm)
   const pieceCount = positiveInteger(input.pieceCount)
@@ -114,10 +116,25 @@ export function allocateReceiptByPriority(input) {
   return { allocations, excessQuantity: Math.max(available, 0) }
 }
 
-function comparePriority(left, right) {
+function comparePriority(left, right, useBarPriority = false) {
+  if (useBarPriority) {
+    const leftCuttingDate = left.cuttingDate || '9999-12-31'
+    const rightCuttingDate = right.cuttingDate || '9999-12-31'
+    const byCutting = leftCuttingDate.localeCompare(rightCuttingDate)
+    if (byCutting !== 0) return byCutting
+
+    const leftMaterialDate = left.materialDate || left.priorityDate || '9999-12-31'
+    const rightMaterialDate = right.materialDate || right.priorityDate || '9999-12-31'
+    const byMaterial = leftMaterialDate.localeCompare(rightMaterialDate)
+    if (byMaterial !== 0) return byMaterial
+  }
   const leftDate = left.priorityDate || '9999-12-31'
   const rightDate = right.priorityDate || '9999-12-31'
   return leftDate.localeCompare(rightDate) || left.key.localeCompare(right.key)
+}
+
+function pieceMode(input) {
+  return positiveNumber(input.pieceLengthMm) > 0 || positiveInteger(input.pieceCount) > 0
 }
 
 function positiveNumber(value) {

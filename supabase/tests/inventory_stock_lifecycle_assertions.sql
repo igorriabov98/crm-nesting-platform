@@ -693,4 +693,152 @@ BEGIN
 END;
 $$;
 
+DO $$
+DECLARE
+  v_user uuid := '60000000-0000-0000-0000-000000000001';
+  v_factory uuid := '60000000-0000-0000-0000-000000000002';
+  v_material uuid := '60000000-0000-0000-0000-000000000003';
+  v_variant uuid := '60000000-0000-0000-0000-000000000004';
+  v_machine uuid := '60000000-0000-0000-0000-000000000005';
+  v_request uuid := '60000000-0000-0000-0000-000000000006';
+  v_item uuid := '60000000-0000-0000-0000-000000000007';
+  v_inventory uuid := '60000000-0000-0000-0000-000000000008';
+  v_section uuid := '60000000-0000-0000-0000-000000000009';
+  v_fact uuid := '60000000-0000-0000-0000-00000000000a';
+  v_schedule uuid := '60000000-0000-0000-0000-00000000000b';
+  v_reservation uuid := '60000000-0000-0000-0000-00000000000c';
+  v_scrap uuid;
+  v_value numeric;
+BEGIN
+  INSERT INTO public.factories (id, name) VALUES (v_factory, 'Circle bar receipt factory');
+  INSERT INTO public.users (id) VALUES (v_user);
+  INSERT INTO public.materials (id, category) VALUES (v_material, 'circle');
+  INSERT INTO public.material_variants (id) VALUES (v_variant);
+  INSERT INTO public.machines (id, factory_id) VALUES (v_machine, v_factory);
+  INSERT INTO public.technologist_requests (id, machine_id) VALUES (v_request, v_machine);
+  INSERT INTO public.request_circle (
+    id, request_id, material_id, material_variant_id
+  ) VALUES (
+    v_item, v_request, v_material, v_variant
+  );
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit, total_secondary_quantity,
+    reserved_secondary_quantity, secondary_unit, last_updated_by
+  ) VALUES (
+    v_inventory, v_factory, v_material, v_variant, 6000,
+    6000, 0, 'мм', 1, 0, 'шт', v_user
+  );
+  INSERT INTO public.supply_order_delivery_schedules (
+    id, request_item_table, request_item_id, quantity, received_quantity,
+    allocated_quantity, allocated_physical_quantity, unit, status,
+    delivered_at, received_by
+  ) VALUES (
+    v_schedule, 'request_circle', v_item, 2000, 6000,
+    2000, 6000, 'мм', 'delivered', now(), v_user
+  );
+  INSERT INTO public.production_stages (
+    machine_id, stage_type, date_start, updated_by
+  ) VALUES (
+    v_machine, 'cutting', '2026-07-20', v_user
+  );
+
+  INSERT INTO public.inventory_reservations (
+    id, inventory_id, material_id, material_variant_id, machine_id,
+    request_item_table, request_item_id, reserved_quantity,
+    reserved_secondary_quantity, reserved_by, source_inventory_id,
+    original_piece_length_mm, is_cut_reservation, reservation_source,
+    supply_order_schedule_id
+  ) VALUES (
+    v_reservation, v_inventory, v_material, v_variant, v_machine,
+    'request_circle', v_item, 6000, 1, v_user, v_inventory,
+    6000, false, 'supply_receipt', v_schedule
+  );
+  UPDATE public.inventory
+  SET reserved_quantity = 6000,
+      reserved_secondary_quantity = 1
+  WHERE id = v_inventory;
+
+  SELECT business_scrap_inventory_id, business_scrap_quantity
+  INTO v_scrap, v_value
+  FROM public.inventory_reservations
+  WHERE id = v_reservation;
+  IF v_scrap IS NULL THEN
+    RAISE EXCEPTION 'future business scrap was not linked to received circle reservation';
+  END IF;
+  PERFORM public.test_assert_numeric(v_value, 4000, 'received 6000 mm circle bar creates 4000 mm future business scrap');
+
+  BEGIN
+    INSERT INTO public.inventory_reservations (
+      inventory_id, material_id, material_variant_id, machine_id,
+      request_item_table, request_item_id, reserved_quantity, reserved_by
+    ) VALUES (
+      v_scrap, v_material, v_variant, v_machine,
+      'request_circle', v_item, 1000, v_user
+    );
+    RAISE EXCEPTION 'supply-bar future scrap reservation was unexpectedly allowed';
+  EXCEPTION
+    WHEN raise_exception THEN
+      IF SQLERRM = 'supply-bar future scrap reservation was unexpectedly allowed' THEN
+        RAISE;
+      END IF;
+      IF position('станет доступен только после факта Заготовки' IN SQLERRM) = 0 THEN
+        RAISE;
+      END IF;
+  END;
+
+  INSERT INTO public.production_fact_sections (id, production_stage_type)
+  VALUES (v_section, 'cutting');
+  INSERT INTO public.production_machine_facts (
+    id, machine_id, section_id, fact_date
+  ) VALUES (
+    v_fact, v_machine, v_section, '2026-07-20'
+  );
+
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory
+    WHERE id = v_scrap
+      AND business_scrap_state = 'available'
+      AND total_quantity = 4000
+      AND total_secondary_quantity = 1
+  ) THEN
+    RAISE EXCEPTION 'future 4000 mm circle scrap was not promoted on cutting fact';
+  END IF;
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine
+    AND transaction_type = 'write_off'
+    AND quantity = -2000;
+  PERFORM public.test_assert_numeric(v_value, 1, 'circle cutting fact writes off only logical 2000 mm need');
+
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine
+    AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, 1, 'repeated circle cutting fact is idempotent');
+
+  PERFORM public.fn_apply_production_cutting_rollback(
+    v_machine,
+    NULL,
+    v_user,
+    'Circle integration test rollback'
+  );
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 6000, 'circle rollback restores the full physical bar');
+  SELECT reserved_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 6000, 'circle rollback restores the full physical reservation');
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory
+    WHERE id = v_scrap
+      AND business_scrap_state = 'future'
+      AND total_quantity = 4000
+  ) THEN
+    RAISE EXCEPTION 'circle rollback did not return scrap to future state';
+  END IF;
+END;
+$$;
+
 SELECT 'inventory_stock_lifecycle_ok' AS result;

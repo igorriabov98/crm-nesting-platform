@@ -638,6 +638,7 @@ function FactoryDeliveryEditor({
     financeGroups.length === 0 ||
     financePayments.some((payment) => !payment.plannedDate || !Number.isFinite(payment.amount) || payment.amount <= 0)
   )
+  const isBarMaterial = aggregate.category === 'knives' || aggregate.category === 'circle'
 
   useEffect(() => {
     setScheduleDrafts(makeInitialScheduleDrafts(factory))
@@ -676,8 +677,8 @@ function FactoryDeliveryEditor({
       delivery_date: draft.delivery_date,
       quantity: parseQuantity(draft.quantity),
       supplier_id: draft.supplier_id || null,
-      piece_length_mm: aggregate.category === 'knives' ? parseQuantity(draft.piece_length_mm) : null,
-      piece_count: aggregate.category === 'knives' ? parseQuantity(draft.piece_count) : null,
+      piece_length_mm: isBarMaterial ? parseQuantity(draft.piece_length_mm) : null,
+      piece_count: isBarMaterial ? parseQuantity(draft.piece_count) : null,
     }))
 
     startTransition(async () => {
@@ -694,7 +695,7 @@ function FactoryDeliveryEditor({
   const updateDraft = (index: number, patch: Partial<ScheduleDraft>) => {
     setScheduleDrafts((current) => current.map((draft, draftIndex) => (
       draftIndex === index
-        ? recalculateKnifeDraft({ ...draft, ...patch }, aggregate.category === 'knives')
+        ? recalculateBarDraft({ ...draft, ...patch }, isBarMaterial)
         : draft
     )))
   }
@@ -735,7 +736,7 @@ function FactoryDeliveryEditor({
   const scheduleInvalid = scheduleDrafts.length === 0 ||
     scheduleDrafts.some((draft) => !draft.delivery_date || parseQuantity(draft.quantity) <= 0) ||
     scheduleDrafts.some((draft) => !draft.supplier_id) ||
-    (aggregate.category === 'knives' && scheduleDrafts.some((draft) => (
+    (isBarMaterial && scheduleDrafts.some((draft) => (
       parseQuantity(draft.piece_length_mm) <= 0 ||
       !Number.isInteger(parseQuantity(draft.piece_count)) ||
       parseQuantity(draft.piece_count) <= 0
@@ -914,7 +915,7 @@ function FactoryDeliveryEditor({
             {scheduleDrafts.map((draft, index) => {
               const quantity = parseQuantity(draft.quantity)
               return (
-                <div key={draft.id} className={`grid min-w-0 gap-3 rounded-xl border border-[#E8ECF0] bg-[#F8F9FA] p-3 ${aggregate.category === 'knives' ? 'md:grid-cols-[minmax(180px,1.3fr)_150px_120px_150px_160px_auto]' : 'md:grid-cols-[minmax(200px,1fr)_160px_160px_auto]'} md:items-end`}>
+                <div key={draft.id} className={`grid min-w-0 gap-3 rounded-xl border border-[#E8ECF0] bg-[#F8F9FA] p-3 ${isBarMaterial ? 'md:grid-cols-[minmax(180px,1.3fr)_150px_120px_150px_160px_auto]' : 'md:grid-cols-[minmax(200px,1fr)_160px_160px_auto]'} md:items-end`}>
                   <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
                     Поставщик
                     <select
@@ -929,7 +930,7 @@ function FactoryDeliveryEditor({
                       ))}
                     </select>
                   </label>
-                  {aggregate.category === 'knives' ? (
+                  {isBarMaterial ? (
                     <>
                       <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
                         Длина бруска, мм
@@ -972,7 +973,9 @@ function FactoryDeliveryEditor({
 
           {plannedTotal > remainingQuantity + 0.000001 && (
             <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-              Сверх потребности: {formatAmount(plannedTotal - remainingQuantity)} {aggregate.unit}. После приемки CRM сначала закроет ближайшие потребности по Мат.план, а свободный излишек оставит на складе.
+              {isBarMaterial
+                ? <>Физический приход больше логической потребности на {formatAmount(plannedTotal - remainingQuantity)} {aggregate.unit}. При приёмке CRM покажет, какие целые бруски будут зарезервированы под машины, какой будущий деловой отход появится после Заготовки и сколько нетронутых брусков останется свободным складом.</>
+                : <>Сверх потребности: {formatAmount(plannedTotal - remainingQuantity)} {aggregate.unit}. После приёмки CRM распределит объём по открытым потребностям, а свободный излишек оставит на складе.</>}
             </div>
           )}
           {scheduleDrafts.some((draft) => !draft.supplier_id) && (
@@ -1298,8 +1301,8 @@ function parseQuantity(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
-function recalculateKnifeDraft(draft: ScheduleDraft, isKnife: boolean) {
-  if (!isKnife) return draft
+function recalculateBarDraft(draft: ScheduleDraft, isBarMaterial: boolean) {
+  if (!isBarMaterial) return draft
   const total = parseQuantity(draft.piece_length_mm) * parseQuantity(draft.piece_count)
   return { ...draft, quantity: total > 0 ? String(roundDisplay(total)) : '' }
 }

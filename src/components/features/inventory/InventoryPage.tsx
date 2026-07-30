@@ -625,7 +625,9 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                     )}
                     {row.is_business_scrap && row.business_scrap_state === 'future' && (
                       <div className="mt-1 text-xs font-normal text-blue-700">
-                        Будущий остаток · доступен с {row.available_from_date ? formatInventoryDate(row.available_from_date) : 'даты заготовки'}
+                        Станет доступен после сохранения факта производства на этапе Заготовка
+                        {row.source_machine_name ? ` машины ${row.source_machine_name}` : ''}
+                        {row.available_from_date ? ` · план ${formatInventoryDate(row.available_from_date)}` : ''}
                       </div>
                     )}
                     {row.active_cut_reservations.map((reservation) => (
