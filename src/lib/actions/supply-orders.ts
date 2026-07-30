@@ -328,6 +328,52 @@ export type MaterialReceivingPageData = {
   groups: MaterialReceivingDateGroup[]
 }
 
+export type MaterialDeliveryBarAllocationInput = {
+  table: string
+  id: string
+  piece_count: number
+}
+
+export type MaterialDeliveryBarAllocationPreviewRow = {
+  table: string
+  id: string
+  machine_id: string
+  machine_name: string
+  cutting_date: string | null
+  material_date: string | null
+  outstanding_quantity: number
+  needed_piece_count: number
+  piece_count: number
+  physical_quantity: number
+  logical_quantity: number
+  future_scrap_quantity: number
+  is_source: boolean
+}
+
+export type MaterialDeliveryBarAllocationPreview = {
+  category: 'knives' | 'circle'
+  piece_length_mm: number
+  piece_count: number
+  received_quantity: number
+  allocations: MaterialDeliveryBarAllocationPreviewRow[]
+  free_piece_count: number
+  free_quantity: number
+  has_shortage: boolean
+  has_priority_tie: boolean
+}
+
+type MaterialDeliveryInput = {
+  schedule_id?: string | null
+  table?: string
+  id?: string
+  delivery_date?: string
+  planned_quantity?: number
+  received_quantity: number
+  piece_length_mm?: number | null
+  piece_count?: number | null
+  confirmed_bar_allocations?: MaterialDeliveryBarAllocationInput[]
+}
+
 type SupplyOrderAggregateInputItem = RawOrderItem & {
   raw: RequestItemRow
   machine_id: string
@@ -1985,6 +2031,212 @@ function itemKey(item: Pick<RawOrderItem, 'table' | 'id'>) {
   return `${item.table}:${item.id}`
 }
 
+function isBarCategory(category: MaterialCategory): category is 'knives' | 'circle' {
+  return category === 'knives' || category === 'circle'
+}
+
+function parseBarReceipt(input: MaterialDeliveryInput, category: MaterialCategory) {
+  const pieceLengthMm = input.piece_length_mm === null || input.piece_length_mm === undefined
+    ? null
+    : Number(input.piece_length_mm)
+  const pieceCount = input.piece_count === null || input.piece_count === undefined
+    ? null
+    : Number(input.piece_count)
+  const receivedQuantity = Number(input.received_quantity)
+
+  if (isBarCategory(category)) {
+    if (
+      !pieceLengthMm || pieceLengthMm <= 0 ||
+      !pieceCount || !Number.isInteger(pieceCount) || pieceCount <= 0 ||
+      Math.abs(receivedQuantity - pieceLengthMm * pieceCount) > 0.000001
+    ) {
+      throw new Error('Для ножей и круга укажите длину бруска и целое количество брусков')
+    }
+  } else if (pieceLengthMm !== null || pieceCount !== null) {
+    throw new Error('Параметры бруска допустимы только для ножей и круга')
+  }
+
+  return { pieceLengthMm, pieceCount, receivedQuantity }
+}
+
+async function loadCuttingDateMap(db: LooseDb, machineIds: string[]) {
+  const uniqueIds = Array.from(new Set(machineIds.filter(Boolean)))
+  if (uniqueIds.length === 0) return new Map<string, string | null>()
+
+  const { data, error } = await db
+    .from('production_stages')
+    .select('machine_id, date_start, is_skipped, created_at')
+    .in('machine_id', uniqueIds)
+    .eq('stage_type', 'cutting')
+    .order('created_at', { ascending: true })
+
+  if (error) throw new Error(error.message || 'Не удалось загрузить даты Заготовки')
+
+  const result = new Map<string, string | null>()
+  for (const row of (data || []) as Array<{
+    machine_id: string
+    date_start: string | null
+    is_skipped: boolean | null
+  }>) {
+    if (row.is_skipped || result.has(row.machine_id)) continue
+    result.set(row.machine_id, row.date_start)
+  }
+  return result
+}
+
+async function loadActiveReservationKeys(db: LooseDb, items: SupplyOrderAggregateInputItem[]) {
+  const itemIds = Array.from(new Set(items.map((item) => item.id)))
+  if (itemIds.length === 0) return new Set<string>()
+  const { data, error } = await db
+    .from('inventory_reservations')
+    .select('request_item_table, request_item_id, consumed_at')
+    .in('request_item_id', itemIds)
+  if (error) throw new Error(error.message || 'Не удалось проверить действующие складские брони')
+  const validKeys = new Set(items.map((item) => `${item.table}:${item.id}`))
+  return new Set(((data || []) as Array<{
+    request_item_table: string
+    request_item_id: string
+    consumed_at: string | null
+  }>).filter((row) => !row.consumed_at)
+    .map((row) => `${row.request_item_table}:${row.request_item_id}`)
+    .filter((key) => validKeys.has(key)))
+}
+
+async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput) {
+  let sourceTable = input.table || ''
+  let sourceId = input.id || ''
+  const scheduleId = input.schedule_id || null
+
+  if (scheduleId) {
+    const { data, error } = await db
+      .from('supply_order_delivery_schedules')
+      .select('request_item_table, request_item_id, status')
+      .eq('id', scheduleId)
+      .maybeSingle()
+    if (error) throw new Error(error.message || 'Не удалось загрузить поставку')
+    const schedule = data as {
+      request_item_table?: string
+      request_item_id?: string
+      status?: string
+    } | null
+    if (!schedule?.request_item_table || !schedule.request_item_id) throw new Error('Поставка не найдена')
+    if (schedule.status === 'delivered') throw new Error('Поставка уже принята')
+    if (schedule.status === 'cancelled') throw new Error('Поставка отменена')
+    sourceTable = schedule.request_item_table
+    sourceId = schedule.request_item_id
+  }
+
+  assertOrderTable(sourceTable)
+  const allOpenItems = await loadAggregateInputItems(db)
+  const sourceItem = allOpenItems.find((item) => item.table === sourceTable && item.id === sourceId)
+  if (!sourceItem) throw new Error('Не удалось определить исходную позицию поставки')
+  return { scheduleId, sourceItem, allOpenItems }
+}
+
+async function buildBarAllocationPreview(
+  db: LooseDb,
+  input: MaterialDeliveryInput,
+  scheduleId: string | null,
+  sourceItem: SupplyOrderAggregateInputItem,
+  allOpenItems: SupplyOrderAggregateInputItem[],
+): Promise<MaterialDeliveryBarAllocationPreview> {
+  if (!isBarCategory(sourceItem.category)) throw new Error('Preview брусков доступен только для ножей и круга')
+  const { pieceLengthMm, pieceCount, receivedQuantity } = parseBarReceipt(input, sourceItem.category)
+  if (!pieceLengthMm || !pieceCount) throw new Error('Не указаны параметры бруска')
+
+  const sourceIdentity = getAggregateIdentityKey(sourceItem.table, sourceItem.raw, sourceItem)
+  const matchingItems = allOpenItems.filter((item) => (
+    item.factory_id === sourceItem.factory_id
+    && item.table === sourceItem.table
+    && item.material_id === sourceItem.material_id
+    && item.material_variant_id === sourceItem.material_variant_id
+    && getAggregateIdentityKey(item.table, item.raw, item) === sourceIdentity
+    && (item.order_status === 'pending' || item.order_status === 'ordered')
+  ))
+  const matchingSchedules = await loadReceivingSchedules(db, matchingItems)
+  const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
+  for (const schedule of matchingSchedules) {
+    const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+    schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+  }
+  const cuttingDates = await loadCuttingDateMap(db, matchingItems.map((item) => item.machine_id))
+  const activeReservationKeys = await loadActiveReservationKeys(db, matchingItems)
+  const sourceKey = `${sourceItem.table}:${sourceItem.id}`
+  const candidates = matchingItems.map((item) => {
+    const key = `${item.table}:${item.id}`
+    const itemSchedules = schedulesByItem.get(key) || []
+    const delivered = itemSchedules
+      .filter((schedule) => schedule.status === 'delivered')
+      .reduce((sum, schedule) => sum + scheduleDeliveredQuantity(schedule), 0)
+    return {
+      key,
+      table: item.table,
+      id: item.id,
+      machineId: item.machine_id,
+      machineName: item.machine_name,
+      cuttingDate: cuttingDates.get(item.machine_id) || null,
+      materialDate: item.planned_material_date,
+      priorityDate: item.planned_material_date,
+      outstandingQuantity: Math.max(item.to_order - delivered, 0),
+      hasOtherPlannedSchedule: itemSchedules.some((schedule) => (
+        schedule.status === 'planned' && schedule.id !== scheduleId
+      )),
+      hasActiveReservation: activeReservationKeys.has(key),
+      isSource: key === sourceKey,
+    }
+  }).filter((candidate) => candidate.outstandingQuantity > 0)
+    .filter((candidate) => candidate.isSource || !candidate.hasOtherPlannedSchedule)
+    .filter((candidate) => !candidate.hasActiveReservation)
+
+  const suggested = allocateReceiptByPriority({
+    receivedQuantity,
+    pieceLengthMm,
+    pieceCount,
+    candidates,
+  })
+  const suggestedPieces = new Map(suggested.allocations.map((row) => [row.key, Number(row.piece_count || 0)]))
+  const rows = candidates.map((candidate) => {
+    const allocatedPieces = suggestedPieces.get(candidate.key) || 0
+    const physicalQuantity = allocatedPieces * pieceLengthMm
+    const logicalQuantity = Math.min(candidate.outstandingQuantity, physicalQuantity)
+    return {
+      table: candidate.table,
+      id: candidate.id,
+      machine_id: candidate.machineId,
+      machine_name: candidate.machineName,
+      cutting_date: candidate.cuttingDate,
+      material_date: candidate.materialDate,
+      outstanding_quantity: candidate.outstandingQuantity,
+      needed_piece_count: Math.ceil(candidate.outstandingQuantity / pieceLengthMm),
+      piece_count: allocatedPieces,
+      physical_quantity: physicalQuantity,
+      logical_quantity: logicalQuantity,
+      future_scrap_quantity: Math.max(physicalQuantity - logicalQuantity, 0),
+      is_source: candidate.isSource,
+    }
+  }).sort((left, right) => {
+    const leftIndex = suggested.allocations.findIndex((row) => row.key === `${left.table}:${left.id}`)
+    const rightIndex = suggested.allocations.findIndex((row) => row.key === `${right.table}:${right.id}`)
+    if (leftIndex >= 0 || rightIndex >= 0) return (leftIndex < 0 ? 9999 : leftIndex) - (rightIndex < 0 ? 9999 : rightIndex)
+    return left.machine_name.localeCompare(right.machine_name, 'ru')
+  })
+  const allocatedPieces = rows.reduce((sum, row) => sum + row.piece_count, 0)
+  const totalNeededPieces = rows.reduce((sum, row) => sum + row.needed_piece_count, 0)
+  const priorityKeys = rows.map((row) => `${row.cutting_date || '9999-12-31'}|${row.material_date || '9999-12-31'}`)
+
+  return {
+    category: sourceItem.category,
+    piece_length_mm: pieceLengthMm,
+    piece_count: pieceCount,
+    received_quantity: receivedQuantity,
+    allocations: rows,
+    free_piece_count: Math.max(pieceCount - allocatedPieces, 0),
+    free_quantity: Math.max(pieceCount - allocatedPieces, 0) * pieceLengthMm,
+    has_shortage: pieceCount < totalNeededPieces,
+    has_priority_tie: new Set(priorityKeys).size < priorityKeys.length,
+  }
+}
+
 async function loadSupplierNameMap(db: LooseDb, supplierIds: string[]) {
   const uniqueIds = Array.from(new Set(supplierIds.filter(Boolean)))
   if (uniqueIds.length === 0) return new Map<string, string>()
@@ -2156,16 +2408,70 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
   }
 }
 
-export async function receiveMaterialDelivery(input: {
-  schedule_id?: string | null
-  table?: string
-  id?: string
-  delivery_date?: string
-  planned_quantity?: number
-  received_quantity: number
-  piece_length_mm?: number | null
-  piece_count?: number | null
-}) {
+function confirmedBarAllocations(
+  preview: MaterialDeliveryBarAllocationPreview,
+  confirmed: MaterialDeliveryBarAllocationInput[] | undefined,
+) {
+  const selected = confirmed || preview.allocations.map((row) => ({
+    table: row.table,
+    id: row.id,
+    piece_count: row.piece_count,
+  }))
+  const eligible = new Map(preview.allocations.map((row) => [`${row.table}:${row.id}`, row]))
+  const seen = new Set<string>()
+  let totalPieces = 0
+  const allocations = selected.flatMap((selection) => {
+    const key = `${selection.table}:${selection.id}`
+    const row = eligible.get(key)
+    const pieces = Number(selection.piece_count)
+    if (!row) throw new Error('Выбранная потребность больше недоступна для этой поставки')
+    if (seen.has(key)) throw new Error('Одна потребность указана в распределении несколько раз')
+    seen.add(key)
+    if (!Number.isInteger(pieces) || pieces < 0 || pieces > row.needed_piece_count) {
+      throw new Error(`Некорректное количество брусков для машины «${row.machine_name}»`)
+    }
+    if (pieces === 0) return []
+    totalPieces += pieces
+    const physicalQuantity = pieces * preview.piece_length_mm
+    return [{
+      table: row.table,
+      id: row.id,
+      key,
+      quantity: Math.min(row.outstanding_quantity, physicalQuantity),
+      physical_quantity: physicalQuantity,
+      piece_count: pieces,
+    }]
+  })
+  if (totalPieces > preview.piece_count) throw new Error('Распределено больше брусков, чем принято')
+  if (allocations.length === 0) throw new Error('Распределите хотя бы один брусок на открытую потребность')
+  return allocations
+}
+
+export async function previewMaterialDeliveryAllocation(input: MaterialDeliveryInput): Promise<{
+  success: boolean
+  data?: MaterialDeliveryBarAllocationPreview
+  error?: string
+}> {
+  try {
+    const { db } = await requireReceivingAccess('manage')
+    const receivedQuantity = Number(input.received_quantity)
+    if (!Number.isFinite(receivedQuantity) || receivedQuantity <= 0) {
+      throw new Error('Введите фактическое количество прихода')
+    }
+    const { scheduleId, sourceItem, allOpenItems } = await resolveReceivingSource(db, input)
+    if (!sourceItem.material_id) throw new Error(`Позиция «${sourceItem.item_name}» не привязана к материалу`)
+    if (!sourceItem.factory_id) throw new Error('Для приёмки не определён завод машины')
+    const data = await buildBarAllocationPreview(db, input, scheduleId, sourceItem, allOpenItems)
+    if (!data.allocations.some((row) => row.outstanding_quantity > 0)) {
+      throw new Error('Не найдено открытых потребностей для распределения поставки')
+    }
+    return { success: true, data }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось рассчитать распределение поставки' }
+  }
+}
+
+export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
   try {
     const { db, userId } = await requireReceivingAccess('manage')
     const receivedQuantity = Number(input.received_quantity)
@@ -2236,67 +2542,68 @@ export async function receiveMaterialDelivery(input: {
       && affectedItems.get(item.table)?.includes(item.id))
     if (!sourceItem) throw new Error('Не удалось определить исходную позицию поставки')
 
-    const isKnife = sourceItem.category === 'knives'
-    const pieceLengthMm = input.piece_length_mm === null || input.piece_length_mm === undefined
-      ? null
-      : Number(input.piece_length_mm)
-    const pieceCount = input.piece_count === null || input.piece_count === undefined
-      ? null
-      : Number(input.piece_count)
-    if (isKnife && (
-      !pieceLengthMm || pieceLengthMm <= 0 || !pieceCount || !Number.isInteger(pieceCount) ||
-      Math.abs(receivedQuantity - pieceLengthMm * pieceCount) > 0.000001
-    )) {
-      throw new Error('Для ножей укажите длину бруска и целое количество брусков')
-    }
-    if (!isKnife && (pieceLengthMm !== null || pieceCount !== null)) {
-      throw new Error('Параметры бруска допустимы только для ножей')
-    }
+    const { pieceLengthMm, pieceCount } = parseBarReceipt(input, sourceItem.category)
 
-    const sourceIdentity = getAggregateIdentityKey(sourceItem.table, sourceItem.raw, sourceItem)
-    const matchingItems = allOpenItems.filter((item) => (
-      item.factory_id === sourceItem.factory_id
-      && item.table === sourceItem.table
-      && item.material_id === sourceItem.material_id
-      && item.material_variant_id === sourceItem.material_variant_id
-      && getAggregateIdentityKey(item.table, item.raw, item) === sourceIdentity
-      && (item.order_status === 'pending' || item.order_status === 'ordered')
-    ))
-    const matchingSchedules = await loadReceivingSchedules(db, matchingItems)
-    const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
-    for (const schedule of matchingSchedules) {
-      const key = `${schedule.request_item_table}:${schedule.request_item_id}`
-      schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+    let allocations: Array<{
+      table: string
+      id: string
+      key: string
+      quantity: number
+      physical_quantity: number
+      piece_count: number | null
+    }>
+    if (isBarCategory(sourceItem.category)) {
+      if (!Array.isArray(input.confirmed_bar_allocations)) {
+        throw new Error('Сначала проверьте и подтвердите распределение целых брусков')
+      }
+      const preview = await buildBarAllocationPreview(db, input, scheduleId, sourceItem, allOpenItems)
+      allocations = confirmedBarAllocations(preview, input.confirmed_bar_allocations)
+    } else {
+      const sourceIdentity = getAggregateIdentityKey(sourceItem.table, sourceItem.raw, sourceItem)
+      const matchingItems = allOpenItems.filter((item) => (
+        item.factory_id === sourceItem.factory_id
+        && item.table === sourceItem.table
+        && item.material_id === sourceItem.material_id
+        && item.material_variant_id === sourceItem.material_variant_id
+        && getAggregateIdentityKey(item.table, item.raw, item) === sourceIdentity
+        && (item.order_status === 'pending' || item.order_status === 'ordered')
+      ))
+      const matchingSchedules = await loadReceivingSchedules(db, matchingItems)
+      const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
+      for (const schedule of matchingSchedules) {
+        const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+        schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+      }
+      const sourceKey = `${sourceItem.table}:${sourceItem.id}`
+      allocations = allocateReceiptByPriority({
+        receivedQuantity,
+        pieceLengthMm: null,
+        pieceCount: null,
+        candidates: matchingItems.map((item) => {
+          const key = `${item.table}:${item.id}`
+          const itemSchedules = schedulesByItem.get(key) || []
+          const delivered = itemSchedules
+            .filter((schedule) => schedule.status === 'delivered')
+            .reduce((sum, schedule) => sum + scheduleDeliveredQuantity(schedule), 0)
+          return {
+            key,
+            table: item.table,
+            id: item.id,
+            priorityDate: item.planned_material_date,
+            outstandingQuantity: Math.max(item.to_order - delivered, 0),
+            hasOtherPlannedSchedule: itemSchedules.some((schedule) => (
+              schedule.status === 'planned' && schedule.id !== scheduleId
+            )),
+            isSource: key === sourceKey,
+          }
+        }),
+      }).allocations
     }
-    const sourceKey = `${sourceItem.table}:${sourceItem.id}`
-    const allocation = allocateReceiptByPriority({
-      receivedQuantity,
-      pieceLengthMm: isKnife ? pieceLengthMm : null,
-      pieceCount: isKnife ? pieceCount : null,
-      candidates: matchingItems.map((item) => {
-        const key = `${item.table}:${item.id}`
-        const itemSchedules = schedulesByItem.get(key) || []
-        const delivered = itemSchedules
-          .filter((schedule) => schedule.status === 'delivered')
-          .reduce((sum, schedule) => sum + scheduleDeliveredQuantity(schedule), 0)
-        return {
-          key,
-          table: item.table,
-          id: item.id,
-          priorityDate: item.planned_material_date,
-          outstandingQuantity: Math.max(item.to_order - delivered, 0),
-          hasOtherPlannedSchedule: itemSchedules.some((schedule) => (
-            schedule.status === 'planned' && schedule.id !== scheduleId
-          )),
-          isSource: key === sourceKey,
-        }
-      }),
-    })
-    if (allocation.allocations.length === 0) {
+    if (allocations.length === 0) {
       throw new Error('Не найдено открытых потребностей для распределения поставки')
     }
 
-    affectedItems = groupItemsByTable(allocation.allocations.map((row) => ({ table: row.table, id: row.id })))
+    affectedItems = groupItemsByTable(allocations.map((row) => ({ table: row.table, id: row.id })))
     const affectedOrderItems = await loadSelectedOrderItems(db, affectedItems)
     const machineIds = await getAffectedMachineIds(db, affectedItems)
     const receivingRpcDb = createAdminClient() as unknown as RpcDb
@@ -2304,7 +2611,7 @@ export async function receiveMaterialDelivery(input: {
       p_schedule_id: scheduleId,
       p_performed_by: userId,
       p_received_quantity: receivedQuantity,
-      p_allocations: allocation.allocations,
+      p_allocations: allocations,
       p_received_piece_length_mm: pieceLengthMm,
       p_received_piece_count: pieceCount,
     })
@@ -2440,14 +2747,14 @@ function normalizeScheduleInputs(schedules: SupplyOrderAggregateScheduleInput[])
     if (!deliveryDate) throw new Error('Укажите дату поставки')
     if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Количество поставки должно быть больше 0')
     if ((pieceLengthMm === null) !== (pieceCount === null)) {
-      throw new Error('Для ножей укажите длину и количество брусков')
+      throw new Error('Укажите длину и количество брусков')
     }
     if (pieceLengthMm !== null && (
       !Number.isFinite(pieceLengthMm) || pieceLengthMm <= 0 ||
       !Number.isInteger(pieceCount) || Number(pieceCount) <= 0 ||
       Math.abs(quantity - pieceLengthMm * Number(pieceCount)) > 0.000001
     )) {
-      throw new Error('Общая длина ножей должна равняться длине бруска, умноженной на количество')
+      throw new Error('Общая длина должна равняться длине бруска, умноженной на количество')
     }
     return {
       delivery_date: deliveryDate,
@@ -2507,12 +2814,12 @@ export async function saveAggregateDeliverySchedule(
       if (!item.material_id) throw new Error(`Позиция "${item.item_name}" не привязана к материалу`)
       if (item.to_order <= 0) throw new Error(`Позиция "${item.item_name}" полностью закрыта складом и не требует закупки`)
     }
-    const isKnifeSchedule = openItems.every((item) => item.category === 'knives')
-    if (isKnifeSchedule && normalizedSchedules.some((schedule) => !schedule.piece_length_mm || !schedule.piece_count)) {
-      throw new Error('Для ножей укажите длину бруска и количество брусков')
+    const isBarSchedule = openItems.every((item) => isBarCategory(item.category))
+    if (isBarSchedule && normalizedSchedules.some((schedule) => !schedule.piece_length_mm || !schedule.piece_count)) {
+      throw new Error('Для ножей и круга укажите длину бруска и количество брусков')
     }
-    if (!isKnifeSchedule && normalizedSchedules.some((schedule) => schedule.piece_length_mm || schedule.piece_count)) {
-      throw new Error('Длина и количество брусков применяются только для ножей')
+    if (!isBarSchedule && normalizedSchedules.some((schedule) => schedule.piece_length_mm || schedule.piece_count)) {
+      throw new Error('Длина и количество брусков применяются только для ножей и круга')
     }
 
     const existingSchedules = await loadReceivingSchedules(db, selectedItems)

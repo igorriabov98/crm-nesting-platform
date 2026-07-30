@@ -13,6 +13,10 @@ const receivingMigration = await readFile(
   new URL('../supabase/migrations/20260714101554_supply_receipt_priority_allocation.sql', import.meta.url),
   'utf8',
 )
+const barLifecycleMigration = await readFile(
+  new URL('../supabase/migrations/20260730133000_bar_receiving_lifecycle.sql', import.meta.url),
+  'utf8',
+)
 
 assert.match(
   supplyOrderActions,
@@ -33,6 +37,31 @@ assert.match(
   receivingMigration,
   /GRANT EXECUTE ON FUNCTION public\.fn_receive_supply_order_schedule_v2\([^)]+\) TO service_role;/,
   'the receiving RPC must remain restricted to the server service role',
+)
+assert.match(
+  supplyOrderActions,
+  /previewMaterialDeliveryAllocation[\s\S]*requireReceivingAccess\('manage'\)[\s\S]*buildBarAllocationPreview/,
+  'whole-bar preview must be authorized and calculated on the server',
+)
+assert.match(
+  supplyOrderActions,
+  /confirmedBarAllocations\(preview, input\.confirmed_bar_allocations\)/,
+  'receipt confirmation must revalidate the operator allocation against a fresh preview',
+)
+assert.match(
+  barLifecycleMigration,
+  /request_item_table IN \('request_knives', 'request_circle'\)/,
+  'the database lifecycle must cover both knife and circle requests',
+)
+assert.match(
+  barLifecycleMigration,
+  /fn_prepare_supply_knife_future_scrap[\s\S]*fn_prepare_supply_bar_future_scrap/,
+  'the legacy knife function must remain as a wrapper around the generic lifecycle',
+)
+assert.match(
+  barLifecycleMigration,
+  /fn_block_supply_bar_future_scrap_reservation[\s\S]*станет доступен только после факта Заготовки/,
+  'future supply-bar scrap must be blocked from preliminary reservations',
 )
 
 assert.equal(outstandingReceivingQuantity(10, []), 10)

@@ -105,6 +105,62 @@ test('extra knife bars satisfy later demands before becoming free stock', () => 
   assert.equal(result.excessQuantity, 12_000)
 })
 
+test('bar priority uses cutting date before material-plan date', () => {
+  const result = allocateReceiptByPriority({
+    receivedQuantity: 6_000,
+    pieceLengthMm: 6_000,
+    pieceCount: 1,
+    candidates: [
+      candidate('early-material', '2026-07-20', 2_000, {
+        cuttingDate: '2026-08-10',
+        materialDate: '2026-07-20',
+      }),
+      candidate('early-cutting', '2026-07-25', 2_000, {
+        cuttingDate: '2026-08-01',
+        materialDate: '2026-07-25',
+      }),
+    ],
+  })
+
+  assert.deepEqual(result.allocations.map((row) => row.key), ['early-cutting'])
+})
+
+test('two 6000 mm bars reserve one for a 2000 mm need and leave one untouched', () => {
+  const result = allocateReceiptByPriority({
+    receivedQuantity: 12_000,
+    pieceLengthMm: 6_000,
+    pieceCount: 2,
+    candidates: [candidate('circle', '2026-08-01', 2_000, {
+      table: 'request_circle',
+      isSource: true,
+    })],
+  })
+
+  assert.deepEqual(result.allocations, [{
+    table: 'request_circle',
+    id: 'circle',
+    key: 'circle',
+    quantity: 2_000,
+    physical_quantity: 6_000,
+    piece_count: 1,
+  }])
+  assert.equal(result.excessQuantity, 6_000)
+})
+
+test('an 8000 mm need uses two whole 6000 mm bars', () => {
+  const result = allocateReceiptByPriority({
+    receivedQuantity: 12_000,
+    pieceLengthMm: 6_000,
+    pieceCount: 2,
+    candidates: [candidate('knife', '2026-08-01', 8_000, { isSource: true })],
+  })
+
+  assert.equal(result.allocations[0].quantity, 8_000)
+  assert.equal(result.allocations[0].physical_quantity, 12_000)
+  assert.equal(result.allocations[0].piece_count, 2)
+  assert.equal(result.excessQuantity, 0)
+})
+
 function candidate(key, priorityDate, outstandingQuantity, overrides = {}) {
   return {
     key,

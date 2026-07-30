@@ -23,7 +23,7 @@ EXCEPTION WHEN duplicate_object THEN
 END;
 $$;
 
-CREATE TYPE public.material_category AS ENUM ('sheet_metal', 'chain_cord', 'knives', 'pipe', 'components', 'other');
+CREATE TYPE public.material_category AS ENUM ('sheet_metal', 'chain_cord', 'knives', 'circle', 'pipe', 'components', 'other');
 CREATE TYPE public.inventory_transaction_type AS ENUM ('receipt', 'reserve', 'unreserve', 'write_off', 'adjustment');
 CREATE TYPE public.stage_type AS ENUM ('cutting', 'welding', 'painting', 'assembly', 'shipping');
 
