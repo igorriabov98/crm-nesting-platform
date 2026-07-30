@@ -43,6 +43,7 @@ import {
   filterAndSortAggregates,
   groupSupplyOrderAggregates,
   hasSupplyOrderRedelivery,
+  isSupplyOrderAggregateClosed,
   partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderMachineRoutes,
   summarizeSupplyOrderRedeliveryMachineRoutes,
@@ -91,7 +92,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
     query: '',
     supplier: 'all',
     category: 'all',
-    status: 'all',
+    status: 'open',
     sort: 'date_asc',
   }), [])
   const [filters, setFilters] = useState<AggregateFiltersState>(defaultFilters)
@@ -137,10 +138,11 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
         value={filters.status}
         onChange={(status) => setFilters((current) => ({ ...current, status }))}
         counts={{
+          open: aggregates.filter((row) => !isSupplyOrderAggregateClosed(row)).length,
           all: aggregates.length,
           scheduled: aggregates.filter((row) => row.planned_schedule_quantity > 0).length,
           unscheduled: aggregates.filter(hasSupplyOrderRedelivery).length,
-          closed: aggregates.filter((row) => row.delivered_count === row.item_count && row.unscheduled_quantity <= 0).length,
+          closed: aggregates.filter(isSupplyOrderAggregateClosed).length,
         }}
       />
 
@@ -434,6 +436,7 @@ function MaterialOrderCard({
 }
 
 const aggregateStatusLabels: Record<SupplyOrderAggregateStatusFilter, string> = {
+  open: 'Незакрытые поставки',
   all: 'Все статусы',
   scheduled: 'С датой поступления',
   unscheduled: 'Нужно довезти',
@@ -445,9 +448,10 @@ const aggregateStatusLabels: Record<SupplyOrderAggregateStatusFilter, string> = 
 function DeliveryStateTabs({ value, onChange, counts }: {
   value: SupplyOrderAggregateStatusFilter
   onChange: (value: SupplyOrderAggregateStatusFilter) => void
-  counts: { all: number; scheduled: number; unscheduled: number; closed: number }
+  counts: { open: number; all: number; scheduled: number; unscheduled: number; closed: number }
 }) {
   const tabs: Array<[SupplyOrderAggregateStatusFilter, string, number]> = [
+    ['open', 'Незакрытые', counts.open],
     ['all', 'Все', counts.all],
     ['scheduled', 'С датой поступления', counts.scheduled],
     ['unscheduled', 'Нужно довезти', counts.unscheduled],
@@ -480,7 +484,7 @@ function AggregateFilters({ value, suppliers, resultCount, totalCount, onChange,
   onChange: (value: AggregateFiltersState) => void
   onReset: () => void
 }) {
-  const activeCount = [value.query, value.supplier !== 'all', value.category !== 'all', value.status !== 'all', value.sort !== 'date_asc']
+  const activeCount = [value.query, value.supplier !== 'all', value.category !== 'all', value.status !== 'open', value.sort !== 'date_asc']
     .filter(Boolean).length
 
   return (

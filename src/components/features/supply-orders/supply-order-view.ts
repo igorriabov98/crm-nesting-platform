@@ -27,7 +27,7 @@ export type OrderFiltersState = {
   sort: SupplyOrderSort
 }
 
-export type SupplyOrderAggregateStatusFilter = 'all' | 'scheduled' | 'unscheduled' | 'closed' | 'pending' | 'ordered'
+export type SupplyOrderAggregateStatusFilter = 'open' | 'all' | 'scheduled' | 'unscheduled' | 'closed' | 'pending' | 'ordered'
 export type SupplyOrderAggregateSort =
   | 'date_asc'
   | 'date_desc'
@@ -161,13 +161,12 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
   const normalizedQuery = normalize(filters.query)
   const filtered = aggregates.filter((aggregate) => {
     if (filters.category !== 'all' && aggregate.category !== filters.category) return false
+    if (filters.status === 'open' && isSupplyOrderAggregateClosed(aggregate)) return false
     if (filters.status === 'pending' && aggregate.pending_count <= 0) return false
     if (filters.status === 'ordered' && aggregate.ordered_count <= 0) return false
     if (filters.status === 'scheduled' && aggregate.planned_schedule_quantity <= 0) return false
     if (filters.status === 'unscheduled' && !hasSupplyOrderRedelivery(aggregate)) return false
-    if (filters.status === 'closed' && !(
-      aggregate.delivered_count === aggregate.item_count && aggregate.unscheduled_quantity <= 0
-    )) return false
+    if (filters.status === 'closed' && !isSupplyOrderAggregateClosed(aggregate)) return false
     if (filters.supplier !== 'all' && !aggregate.factories.some((factory) => (
       factory.items.some((item) => item.supplier_id === filters.supplier) ||
       factory.items.some((item) => item.delivery_schedules.some((schedule) => schedule.supplier_id === filters.supplier))
@@ -197,6 +196,10 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
       filters.sort === 'date_desc' ? 'desc' : 'asc'
     ) || compareText(left.item_name, right.item_name)
   })
+}
+
+export function isSupplyOrderAggregateClosed(aggregate: SupplyOrderAggregate) {
+  return aggregate.delivered_count === aggregate.item_count && aggregate.unscheduled_quantity <= 0
 }
 
 export function groupSupplyOrderAggregates(aggregates: SupplyOrderAggregate[], sort: SupplyOrderAggregateSort) {
