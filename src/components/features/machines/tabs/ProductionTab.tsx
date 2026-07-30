@@ -174,7 +174,6 @@ export function ProductionTab({ machine }: ProductionTabProps) {
               dateDisplayFormat="dd.MM.yyyy"
               fallbackText="—"
               placeholder="Дата..."
-              className={readOnlyDateClassName}
             />
           </div>
 
