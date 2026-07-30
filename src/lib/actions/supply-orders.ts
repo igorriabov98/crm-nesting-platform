@@ -2299,7 +2299,8 @@ export async function receiveMaterialDelivery(input: {
     affectedItems = groupItemsByTable(allocation.allocations.map((row) => ({ table: row.table, id: row.id })))
     const affectedOrderItems = await loadSelectedOrderItems(db, affectedItems)
     const machineIds = await getAffectedMachineIds(db, affectedItems)
-    const { error } = await db.rpc('fn_receive_supply_order_schedule_v2', {
+    const receivingRpcDb = createAdminClient() as unknown as RpcDb
+    const { error } = await receivingRpcDb.rpc('fn_receive_supply_order_schedule_v2', {
       p_schedule_id: scheduleId,
       p_performed_by: userId,
       p_received_quantity: receivedQuantity,
