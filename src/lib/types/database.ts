@@ -2350,6 +2350,10 @@ export type Database = {
           route_start: string | null
           route: string | null
           comment: string | null
+          date_change_state: Database['public']['Enums']['transport_trip_date_change_state']
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
           created_by: string | null
           updated_by: string | null
           created_at: string
@@ -2366,6 +2370,10 @@ export type Database = {
           route_start?: string | null
           route?: string | null
           comment?: string | null
+          date_change_state?: Database['public']['Enums']['transport_trip_date_change_state']
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_by?: string | null
           updated_by?: string | null
           created_at?: string
@@ -2382,6 +2390,10 @@ export type Database = {
           route_start?: string | null
           route?: string | null
           comment?: string | null
+          date_change_state?: Database['public']['Enums']['transport_trip_date_change_state']
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_by?: string | null
           updated_by?: string | null
           created_at?: string
@@ -2444,6 +2456,8 @@ export type Database = {
           pickup_stop_id: string | null
           delivery_stop_id: string | null
           released_at: string | null
+          released_reason: string | null
+          released_by: string | null
           created_at: string
         }
         Insert: {
@@ -2463,6 +2477,8 @@ export type Database = {
           pickup_stop_id?: string | null
           delivery_stop_id?: string | null
           released_at?: string | null
+          released_reason?: string | null
+          released_by?: string | null
           created_at?: string
         }
         Update: {
@@ -2482,6 +2498,8 @@ export type Database = {
           pickup_stop_id?: string | null
           delivery_stop_id?: string | null
           released_at?: string | null
+          released_reason?: string | null
+          released_by?: string | null
           created_at?: string
         }
       }
@@ -4813,6 +4831,25 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {
+      fn_cancel_transport_trip_v1: {
+        Args: { p_trip_id: string; p_reason: string; p_actor: string }
+        Returns: Database['public']['Enums']['outsourcing_transport_order_status']
+      }
+      fn_update_transport_trip_v4: {
+        Args: {
+          p_trip_id: string
+          p_carrier_supplier_id: string
+          p_scheduled_date: string
+          p_price: number
+          p_comment: string | null
+          p_stops: Json
+          p_links: Json
+          p_remove_reason: string | null
+          p_date_change_reason: string | null
+          p_actor: string
+        }
+        Returns: Database['public']['Enums']['outsourcing_transport_order_status']
+      }
       fn_people_schedule_assignment: {
         Args: {
           p_employee_id: string

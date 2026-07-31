@@ -70,6 +70,9 @@ export type TransportTripNeed = Omit<
   pickupStopId: string | null
   deliveryStopId: string | null
   released: boolean
+  releasedAt: string | null
+  releasedReason: string | null
+  releasedByName: string | null
 }
 
 export type TransportTripStop = {
@@ -100,6 +103,9 @@ export type TransportTrip = {
   routeStart: string | null
   route: string | null
   comment: string | null
+  cancellationReason: string | null
+  cancelledAt: string | null
+  cancelledByName: string | null
   dateChangeState: TransportTripDateChangeState
   dateChangeRequests: TransportTripDateChangeRequest[]
   needs: TransportTripNeed[]
@@ -164,6 +170,9 @@ type TripLinkRow = {
   pickup_stop_id: string | null
   delivery_stop_id: string | null
   released_at: string | null
+  released_reason: string | null
+  released_by: string | null
+  released_by_user?: { full_name: string } | { full_name: string }[] | null
 }
 
 type TripStopRow = {
@@ -210,45 +219,51 @@ const needReferenceSchema = z.object({
   id: z.string().uuid(),
 })
 
+const tripStopDraftSchema = z.object({
+  id: z.string().uuid().nullable().optional(),
+  clientId: z.string().trim().min(1).max(120),
+  pointKey: z.string().trim().min(1).max(240),
+  pointLabel: z.string().trim().min(1).max(240),
+  city: z.string().trim().max(160).nullable().optional(),
+  address: z.string().trim().max(300).nullable().optional(),
+  kind: z.enum(['start', 'service', 'finish']),
+  plannedArrivalAt: z.string().datetime(),
+  serviceDurationMinutes: z.coerce.number().int().min(0).max(1440),
+})
+
+const tripAssignmentSchema = z.object({
+  needKey: z.string().trim().min(1),
+  pickupStopClientId: z.string().trim().min(1),
+  deliveryStopClientId: z.string().trim().min(1),
+})
+
 const createTripSchema = z.object({
   needs: z.array(needReferenceSchema).min(1).max(50),
   carrierSupplierId: z.string().uuid(),
   scheduledDate: z.string().date(),
   price: z.coerce.number().nonnegative(),
-  stops: z.array(z.object({
-    clientId: z.string().trim().min(1).max(120),
-    pointKey: z.string().trim().min(1).max(240),
-    pointLabel: z.string().trim().min(1).max(240),
-    city: z.string().trim().max(160).nullable().optional(),
-    address: z.string().trim().max(300).nullable().optional(),
-    kind: z.enum(['start', 'service', 'finish']),
-    plannedArrivalAt: z.string().datetime(),
-    serviceDurationMinutes: z.coerce.number().int().min(0).max(1440),
-  })).min(2).max(120),
-  assignments: z.array(z.object({
-    needKey: z.string().trim().min(1),
-    pickupStopClientId: z.string().trim().min(1),
-    deliveryStopClientId: z.string().trim().min(1),
-  })).min(1).max(50),
+  stops: z.array(tripStopDraftSchema.omit({ id: true })).min(2).max(120),
+  assignments: z.array(tripAssignmentSchema).min(1).max(50),
   comment: z.string().trim().max(1000).nullable().optional(),
   dateChangeReason: z.string().trim().max(1000).nullable().optional(),
 })
 
 const updateTripSchema = z.object({
   tripId: z.string().uuid(),
-  status: z.enum(['found', 'in_transit', 'completed', 'cancelled']),
+  needs: z.array(needReferenceSchema).min(1).max(50),
   carrierSupplierId: z.string().uuid(),
   scheduledDate: z.string().date(),
   price: z.coerce.number().nonnegative(),
-  route: z.string().trim().min(1).max(4000),
   comment: z.string().trim().max(1000).nullable().optional(),
   dateChangeReason: z.string().trim().max(1000).nullable().optional(),
-  stops: z.array(z.object({
-    id: z.string().uuid(),
-    sequence: z.number().int().nonnegative(),
-    plannedArrivalAt: z.string().datetime().nullable(),
-    serviceDurationMinutes: z.coerce.number().int().min(0).max(1440),
-  })).min(1).max(120).nullable().optional(),
+  removalReason: z.string().trim().max(1000).nullable().optional(),
+  stops: z.array(tripStopDraftSchema).min(2).max(120),
+  assignments: z.array(tripAssignmentSchema).min(1).max(50),
+})
+
+const cancelTripSchema = z.object({
+  tripId: z.string().uuid(),
+  reason: z.string().trim().min(1, 'Укажите причину отмены рейса').max(1000),
 })
 
 const updateStopStatusSchema = z.object({
@@ -421,6 +436,9 @@ function mapLink(link: TripLinkRow): TransportTripNeed {
     pickupStopId: link.pickup_stop_id,
     deliveryStopId: link.delivery_stop_id,
     released: Boolean(link.released_at),
+    releasedAt: link.released_at,
+    releasedReason: link.released_reason,
+    releasedByName: relationName(link.released_by_user),
   }
 }
 
@@ -446,6 +464,40 @@ function mapLegacyOutsourcingNeed(need: TransportWorkspaceNeed): TransportTripNe
     pickupStopId: null,
     deliveryStopId: null,
     released: false,
+    releasedAt: null,
+    releasedReason: null,
+    releasedByName: null,
+  }
+}
+
+function tripNeedForEditing(trip: TransportTrip, need: TransportTripNeed): UnifiedTransportNeed {
+  const pickup = trip.stops.find((stop) => stop.id === need.pickupStopId)
+  const delivery = trip.stops.find((stop) => stop.id === need.deliveryStopId)
+  return {
+    key: need.key,
+    id: need.id,
+    kind: need.kind,
+    source: need.source,
+    direction: need.direction,
+    planState: 'confirmed',
+    status: 'linked',
+    title: need.title,
+    subtitle: need.subtitle,
+    sourcePointKey: need.sourcePointKey,
+    sourcePointLabel: need.sourcePointLabel,
+    sourcePointCity: pickup?.city || null,
+    sourcePointAddress: pickup?.address || null,
+    destinationPointKey: need.destinationPointKey,
+    destinationPointLabel: need.destinationPointLabel,
+    destinationPointCity: delivery?.city || null,
+    destinationPointAddress: delivery?.address || null,
+    neededDate: need.neededDate,
+    deadline: need.neededDate,
+    itemLabels: [],
+    volumeLabel: null,
+    deliveryRisk: false,
+    selectable: true,
+    unavailableReason: null,
   }
 }
 
@@ -458,7 +510,7 @@ function isMissingLinksTable(error: DbError | null) {
 async function loadTripLinks(db: TransportDb, tripIds: string[]) {
   const activeLinksQuery = db
     .from('transport_trip_need_links')
-    .select('*')
+    .select('*, released_by_user:users!transport_trip_need_links_released_by_fkey(full_name)')
     .is('released_at', null)
     .order('created_at', { ascending: true })
   const results = await Promise.all([
@@ -467,7 +519,7 @@ async function loadTripLinks(db: TransportDb, tripIds: string[]) {
       ? [
           db
             .from('transport_trip_need_links')
-            .select('*')
+            .select('*, released_by_user:users!transport_trip_need_links_released_by_fkey(full_name)')
             .in('transport_order_id', tripIds)
             .order('created_at', { ascending: true }),
         ]
@@ -506,6 +558,14 @@ async function loadTripStops(db: TransportDb, tripIds: string[]) {
 function relationName(value: TripDateRequestRow['requested_by_user']) {
   const row = Array.isArray(value) ? value[0] : value
   return row?.full_name || null
+}
+
+async function loadActorNames(db: TransportDb, actorIds: string[]) {
+  const ids = Array.from(new Set(actorIds.filter(Boolean)))
+  if (ids.length === 0) return new Map<string, string>()
+  const { data, error } = await db.from('users').select('id, full_name').in('id', ids)
+  if (error) throw new Error(error.message || 'Не удалось загрузить авторов изменений рейсов')
+  return new Map(((data || []) as Array<{ id: string; full_name: string }>).map((user) => [user.id, user.full_name]))
 }
 
 async function loadTripDateChanges(db: TransportDb, tripIds: string[]) {
@@ -565,6 +625,12 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
     loadTripStops(db, tripIds),
     loadTripDateChanges(db, tripIds),
   ])
+  const actorNames = await loadActorNames(
+    db,
+    outsourcingResult.data.orders
+      .map((order) => order.cancelled_by || '')
+      .filter(Boolean),
+  )
 
   const activeLinkedNeeds = new Set(
     links
@@ -624,7 +690,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
   }
 
   const trips = outsourcingResult.data.orders.map((order): TransportTrip => {
-    const linkedNeeds = linksByTrip.get(order.id)
+    const linkedNeeds = linksByTrip.get(order.id) || []
     const tripNeeds = linkedNeeds?.length
       ? linkedNeeds.map(mapLink)
       : order.needs.map(mapLegacyOutsourcingNeed)
@@ -647,6 +713,9 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
           : routeStart
       ),
       comment: order.comment,
+      cancellationReason: order.cancellation_reason || null,
+      cancelledAt: order.cancelled_at || null,
+      cancelledByName: order.cancelled_by ? actorNames.get(order.cancelled_by) || null : null,
       dateChangeState: ((order as typeof order & { date_change_state?: TransportTripDateChangeState }).date_change_state || 'not_required'),
       dateChangeRequests: dateRequestsByTrip.get(order.id) || [],
       needs: tripNeeds,
@@ -859,19 +928,135 @@ export async function updateTransportTrip(input: z.input<typeof updateTripSchema
   try {
     const parsed = updateTripSchema.parse(input)
     const { userId } = await requirePermission('supply_transport', 'manage')
-    const { error } = await transportDb(createAdminClient()).rpc('fn_update_transport_trip_v3', {
+    const workspace = await loadTransportWorkspace()
+    const trip = workspace.trips.find((candidate) => candidate.id === parsed.tripId)
+    if (!trip) throw new Error('Рейс не найден')
+    if (['completed', 'cancelled'].includes(trip.status)) {
+      throw new Error('Завершённый или отменённый рейс нельзя изменить')
+    }
+
+    const currentByKey = new Map(
+      trip.needs
+        .filter((need) => !need.released)
+        .map((need) => [need.key, tripNeedForEditing(trip, need)]),
+    )
+    const availableByKey = new Map(workspace.needs.map((need) => [need.key, need]))
+    const selectedNeeds = parsed.needs.map((reference) => {
+      const key = needKey(reference.source, reference.id)
+      const need = currentByKey.get(key) || availableByKey.get(key)
+      if (!need || (!currentByKey.has(key) && !need.selectable)) {
+        throw new Error('Одна или несколько потребностей уже заняты или недоступны')
+      }
+      return need
+    })
+    if (new Set(selectedNeeds.map((need) => need.key)).size !== selectedNeeds.length) {
+      throw new Error('Одна потребность указана в составе рейса несколько раз')
+    }
+
+    const selectedKeys = new Set(selectedNeeds.map((need) => need.key))
+    const removedNeeds = trip.needs.filter((need) => !need.released && !selectedKeys.has(need.key))
+    if (removedNeeds.length > 0 && !parsed.removalReason?.trim()) {
+      throw new Error('Укажите причину исключения потребности')
+    }
+    if (trip.status === 'in_transit') {
+      const stopById = new Map(trip.stops.map((stop) => [stop.id, stop]))
+      if (removedNeeds.some((need) => need.pickupStopId && stopById.get(need.pickupStopId)?.status !== 'planned')) {
+        throw new Error('Нельзя исключить потребность после начала её точки забора')
+      }
+    }
+
+    if (new Set(parsed.stops.map((stop) => stop.clientId)).size !== parsed.stops.length) {
+      throw new Error('Идентификаторы остановок должны быть уникальными')
+    }
+    const assignmentByNeed = new Map(parsed.assignments.map((assignment) => [assignment.needKey, assignment]))
+    if (assignmentByNeed.size !== selectedNeeds.length || selectedNeeds.some((need) => !assignmentByNeed.has(need.key))) {
+      throw new Error('Для каждой потребности должны быть указаны точки забора и доставки')
+    }
+
+    const canonicalPointByKey = new Map<string, { pointLabel: string; city: string | null; address: string | null }>()
+    for (const need of selectedNeeds) {
+      canonicalPointByKey.set(need.sourcePointKey, {
+        pointLabel: need.sourcePointLabel, city: need.sourcePointCity, address: need.sourcePointAddress,
+      })
+      canonicalPointByKey.set(need.destinationPointKey, {
+        pointLabel: need.destinationPointLabel, city: need.destinationPointCity, address: need.destinationPointAddress,
+      })
+    }
+    const sanitizedStops = parsed.stops.map((stop) => {
+      if (stop.kind !== 'service') return stop
+      const canonical = canonicalPointByKey.get(stop.pointKey)
+      if (!canonical) throw new Error('Маршрут содержит точку, которой нет в составе рейса')
+      return { ...stop, ...canonical }
+    })
+    if (sanitizedStops[0]?.kind !== 'service' || sanitizedStops.some((stop) => stop.kind === 'start')) {
+      throw new Error('Маршрут должен начинаться с точки забора')
+    }
+    if (sanitizedStops.some((stop, index) => stop.kind === 'finish' && index !== sanitizedStops.length - 1)) {
+      throw new Error('Точка завершения должна быть последней')
+    }
+    const orderError = getTransportStopOrderError(
+      sanitizedStops.map((stop) => ({ clientId: stop.clientId, plannedTime: stop.plannedArrivalAt })),
+      parsed.assignments,
+    )
+    if (orderError) throw new Error(orderError)
+
+    const stopByClientId = new Map(sanitizedStops.map((stop) => [stop.clientId, stop]))
+    const links = selectedNeeds.map((need) => {
+      const assignment = assignmentByNeed.get(need.key)
+      if (!assignment) throw new Error(`Не найден маршрут для потребности «${need.title}»`)
+      const pickupStop = stopByClientId.get(assignment.pickupStopClientId)
+      const deliveryStop = stopByClientId.get(assignment.deliveryStopClientId)
+      if (!pickupStop || !deliveryStop) throw new Error('Точка маршрута не найдена')
+      if (pickupStop.pointKey !== need.sourcePointKey || deliveryStop.pointKey !== need.destinationPointKey) {
+        throw new Error('Маршрут потребности не соответствует её точкам забора и доставки')
+      }
+      return {
+        needKind: need.kind,
+        needSource: need.source,
+        needId: need.id,
+        direction: need.direction,
+        sourcePointKey: need.sourcePointKey,
+        sourcePointLabel: need.sourcePointLabel,
+        destinationPointKey: need.destinationPointKey,
+        destinationPointLabel: need.destinationPointLabel,
+        title: need.title,
+        subtitle: need.subtitle,
+        neededDate: need.neededDate,
+        pickupStopClientId: assignment.pickupStopClientId,
+        deliveryStopClientId: assignment.deliveryStopClientId,
+      }
+    })
+
+    const { error } = await transportDb(createAdminClient()).rpc('fn_update_transport_trip_v4', {
       p_trip_id: parsed.tripId,
-      p_status: parsed.status,
       p_carrier_supplier_id: parsed.carrierSupplierId,
       p_scheduled_date: parsed.scheduledDate,
       p_price: parsed.price,
-      p_route: parsed.route,
       p_comment: parsed.comment || null,
-      p_stops: parsed.stops || null,
+      p_stops: sanitizedStops,
+      p_links: links,
+      p_remove_reason: parsed.removalReason || null,
       p_date_change_reason: parsed.dateChangeReason || null,
       p_actor: userId,
     })
     if (error) throw new Error(error.message || 'Не удалось сохранить рейс')
+    revalidateTransportWorkspace()
+    return { success: true, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function cancelTransportTrip(input: z.input<typeof cancelTripSchema>) {
+  try {
+    const parsed = cancelTripSchema.parse(input)
+    const { userId } = await requirePermission('supply_transport', 'manage')
+    const { error } = await transportDb(createAdminClient()).rpc('fn_cancel_transport_trip_v1', {
+      p_trip_id: parsed.tripId,
+      p_reason: parsed.reason,
+      p_actor: userId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось отменить рейс')
     revalidateTransportWorkspace()
     return { success: true, error: null }
   } catch (error) {

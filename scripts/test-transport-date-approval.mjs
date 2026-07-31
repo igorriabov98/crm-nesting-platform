@@ -36,11 +36,12 @@ try {
     CREATE TABLE machine_outsourcing_transport_orders(id uuid PRIMARY KEY default gen_random_uuid(), direction outsourcing_transport_direction, status outsourcing_transport_order_status default 'found', carrier_supplier_id uuid, scheduled_date date, price numeric, route_start_key text, route_start text, route text, comment text, created_by uuid, updated_by uuid, created_at timestamptz default now(), updated_at timestamptz default now());
     CREATE TABLE transport_trip_stops(id uuid PRIMARY KEY default gen_random_uuid(), transport_order_id uuid REFERENCES machine_outsourcing_transport_orders(id), client_key text, sequence_no integer, stop_kind text, point_key text, point_label text, city text, address text, planned_arrival_at timestamptz, service_duration_minutes integer, status text, arrived_at timestamptz, completed_at timestamptz, created_at timestamptz default now(), updated_at timestamptz default now());
     CREATE TABLE transport_trip_need_links(id uuid PRIMARY KEY default gen_random_uuid(), transport_order_id uuid REFERENCES machine_outsourcing_transport_orders(id), need_kind text, need_source text, need_id uuid, direction text, source_point_key text, source_point_label text, destination_point_key text, destination_point_label text, need_title text, need_subtitle text, needed_date date, pickup_stop_id uuid, delivery_stop_id uuid, released_at timestamptz, created_at timestamptz default now());
+    CREATE UNIQUE INDEX idx_transport_trip_need_links_one_active ON transport_trip_need_links(need_source, need_id) WHERE released_at IS NULL;
     CREATE TABLE machine_outsourcing_operations(id uuid PRIMARY KEY, planned_send_date date, planned_return_date date, supply_terms_confirmed_at timestamptz, supply_terms_confirmed_by uuid, updated_at timestamptz default now());
-    CREATE TABLE machine_outsourcing_transport_needs(id uuid PRIMARY KEY, operation_id uuid, direction text, needed_date date, task_id uuid, status text, updated_at timestamptz default now());
-    CREATE TABLE detailing_transfers(id uuid PRIMARY KEY, expected_arrival_date date, updated_at timestamptz default now());
-    CREATE TABLE inventory_transfers(id uuid PRIMARY KEY, expected_arrival_date date, updated_at timestamptz default now());
-    CREATE TABLE supply_order_delivery_schedules(id uuid PRIMARY KEY, delivery_date date, change_reason text, updated_at timestamptz default now());
+    CREATE TABLE machine_outsourcing_transport_needs(id uuid PRIMARY KEY, operation_id uuid, direction text, plan_state text default 'confirmed', needed_date date, task_id uuid, transport_order_id uuid, status text, updated_at timestamptz default now());
+    CREATE TABLE detailing_transfers(id uuid PRIMARY KEY, status text default 'planned', expected_arrival_date date, updated_at timestamptz default now());
+    CREATE TABLE inventory_transfers(id uuid PRIMARY KEY, status text default 'planned', expected_arrival_date date, updated_at timestamptz default now());
+    CREATE TABLE supply_order_delivery_schedules(id uuid PRIMARY KEY, status text default 'planned', delivery_date date, change_reason text, updated_at timestamptz default now());
     CREATE FUNCTION public.is_director() RETURNS boolean LANGUAGE sql AS 'SELECT true';
     CREATE FUNCTION public.fn_create_transport_trip_v2(uuid,date,numeric,text,jsonb,jsonb,uuid) RETURNS uuid LANGUAGE plpgsql SET search_path = 'public' AS $$
     DECLARE trip_id uuid; link jsonb; first_stop uuid; second_stop uuid;
@@ -75,6 +76,130 @@ try {
       PERFORM fn_decide_transport_trip_date_change(request_id,'approved','Проверено',approver);
       IF (SELECT expected_arrival_date FROM detailing_transfers WHERE id=need_id) <> '2026-08-01' THEN RAISE EXCEPTION 'approved date not applied'; END IF;
       IF (SELECT date_change_state FROM machine_outsourcing_transport_orders WHERE id=trip_id) <> 'approved' THEN RAISE EXCEPTION 'trip not approved'; END IF;
+    END $$;
+  `)
+  psql(String.raw`
+    INSERT INTO machine_outsourcing_transport_orders(id,direction,status,scheduled_date,price,route_start,route)
+    VALUES ('30000000-0000-0000-0000-000000000001','outbound','found','2026-08-28',200,'Varian — Ужгород','Varian — Ужгород → Берегово');
+    INSERT INTO inventory_transfers(id,status,expected_arrival_date)
+    VALUES ('40000000-0000-0000-0000-000000000001','planned','2026-08-28');
+    INSERT INTO transport_trip_need_links(
+      transport_order_id,need_kind,need_source,need_id,direction,source_point_key,source_point_label,
+      destination_point_key,destination_point_label,need_title,needed_date,released_at
+    ) VALUES (
+      '30000000-0000-0000-0000-000000000001','materials','inventory_transfer',
+      '40000000-0000-0000-0000-000000000001','outbound','supplier:varian','Varian — Ужгород',
+      'factory:berehove','Берегово','тест брони 3','2026-08-28',now()
+    );
+  `)
+  run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260730160000_transport_trip_edit_cancel.sql')])
+  psql(String.raw`
+    DO $$
+    DECLARE
+      actor uuid := '10000000-0000-0000-0000-000000000001';
+      trip_id uuid := '30000000-0000-0000-0000-000000000001';
+      edit_trip uuid := '30000000-0000-0000-0000-000000000002';
+      need_one uuid := '40000000-0000-0000-0000-000000000002';
+      need_two uuid := '40000000-0000-0000-0000-000000000003';
+      failed boolean;
+    BEGIN
+      IF (SELECT released_at FROM transport_trip_need_links WHERE transport_order_id=trip_id) IS NOT NULL THEN
+        RAISE EXCEPTION 'active trip repair did not reactivate its released need';
+      END IF;
+
+      failed := false;
+      BEGIN
+        PERFORM fn_cancel_transport_trip_v1(trip_id, '   ', actor);
+      EXCEPTION WHEN OTHERS THEN failed := position('Укажите причину' in SQLERRM) > 0;
+      END;
+      IF NOT failed THEN RAISE EXCEPTION 'cancellation without reason was accepted'; END IF;
+      PERFORM fn_cancel_transport_trip_v1(trip_id, 'Ошибка планирования', actor);
+      IF (SELECT status FROM machine_outsourcing_transport_orders WHERE id=trip_id) <> 'cancelled' THEN
+        RAISE EXCEPTION 'trip was not cancelled';
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM transport_trip_need_links
+        WHERE transport_order_id=trip_id AND released_at IS NOT NULL
+          AND released_reason='Ошибка планирования' AND released_by=actor
+      ) THEN RAISE EXCEPTION 'cancelled need was not released with audit data'; END IF;
+
+      INSERT INTO inventory_transfers(id,status,expected_arrival_date)
+      VALUES (need_one,'planned','2026-08-28'),(need_two,'planned','2026-08-29');
+      INSERT INTO machine_outsourcing_transport_orders(id,direction,status,scheduled_date,price,route_start,route,date_change_state)
+      VALUES (edit_trip,'outbound','found','2026-08-28',200,'A','A → B','not_required');
+      PERFORM fn_update_transport_trip_v4(
+        edit_trip, '50000000-0000-0000-0000-000000000001', '2026-08-28', 200, 'test',
+        jsonb_build_array(
+          jsonb_build_object('clientId','a','kind','service','pointKey','a','pointLabel','A','plannedArrivalAt','2026-08-28T08:00:00+00:00','serviceDurationMinutes',30),
+          jsonb_build_object('clientId','b','kind','service','pointKey','b','pointLabel','B','plannedArrivalAt','2026-08-28T09:00:00+00:00','serviceDurationMinutes',30),
+          jsonb_build_object('clientId','c','kind','finish','pointKey','c','pointLabel','C','plannedArrivalAt','2026-08-28T10:00:00+00:00','serviceDurationMinutes',30)
+        ),
+        jsonb_build_array(
+          jsonb_build_object('needKind','materials','needSource','inventory_transfer','needId',need_one,'direction','outbound','sourcePointKey','a','sourcePointLabel','A','destinationPointKey','c','destinationPointLabel','C','title','Первая','neededDate','2026-08-28','pickupStopClientId','a','deliveryStopClientId','c'),
+          jsonb_build_object('needKind','materials','needSource','inventory_transfer','needId',need_two,'direction','outbound','sourcePointKey','b','sourcePointLabel','B','destinationPointKey','c','destinationPointLabel','C','title','Вторая','neededDate','2026-08-29','pickupStopClientId','b','deliveryStopClientId','c')
+        ), NULL, 'Совмещаем даты', actor
+      );
+      IF (SELECT count(*) FROM transport_trip_need_links WHERE transport_order_id=edit_trip AND released_at IS NULL) <> 2 THEN
+        RAISE EXCEPTION 'composition additions were not saved';
+      END IF;
+      IF (SELECT date_change_state FROM machine_outsourcing_transport_orders WHERE id=edit_trip) <> 'pending' THEN
+        RAISE EXCEPTION 'different-date addition did not start approval';
+      END IF;
+
+      failed := false;
+      BEGIN
+        PERFORM fn_update_transport_trip_v4(
+          edit_trip, '50000000-0000-0000-0000-000000000001', '2026-08-28', 200, 'test',
+          (SELECT jsonb_agg(jsonb_build_object('id',id,'clientId',client_key,'kind',stop_kind,'pointKey',point_key,'pointLabel',point_label,'city',city,'address',address,'plannedArrivalAt',planned_arrival_at,'serviceDurationMinutes',service_duration_minutes) ORDER BY sequence_no) FROM transport_trip_stops WHERE transport_order_id=edit_trip),
+          jsonb_build_array(jsonb_build_object('needKind','materials','needSource','inventory_transfer','needId',need_one,'direction','outbound','sourcePointKey','a','sourcePointLabel','A','destinationPointKey','c','destinationPointLabel','C','title','Первая','neededDate','2026-08-28','pickupStopClientId','a','deliveryStopClientId','c')),
+          NULL, NULL, actor
+        );
+      EXCEPTION WHEN OTHERS THEN failed := position('причину исключения' in SQLERRM) > 0;
+      END;
+      IF NOT failed THEN RAISE EXCEPTION 'removal without reason was accepted'; END IF;
+
+      PERFORM fn_update_transport_trip_v4(
+        edit_trip, '50000000-0000-0000-0000-000000000001', '2026-08-28', 200, 'test',
+        (SELECT jsonb_agg(jsonb_build_object('id',id,'clientId',client_key,'kind',stop_kind,'pointKey',point_key,'pointLabel',point_label,'city',city,'address',address,'plannedArrivalAt',planned_arrival_at,'serviceDurationMinutes',service_duration_minutes) ORDER BY sequence_no) FROM transport_trip_stops WHERE transport_order_id=edit_trip),
+        jsonb_build_array(jsonb_build_object('needKind','materials','needSource','inventory_transfer','needId',need_one,'direction','outbound','sourcePointKey','a','sourcePointLabel','A','destinationPointKey','c','destinationPointLabel','C','title','Первая','neededDate','2026-08-28','pickupStopClientId','a','deliveryStopClientId','c')),
+        'Не влезло в машину', NULL, actor
+      );
+      IF NOT EXISTS (
+        SELECT 1 FROM transport_trip_need_links
+        WHERE transport_order_id=edit_trip AND need_id=need_two AND released_at IS NOT NULL
+          AND released_reason='Не влезло в машину' AND released_by=actor
+      ) THEN RAISE EXCEPTION 'removed need audit data was not saved'; END IF;
+      IF (SELECT date_change_state FROM machine_outsourcing_transport_orders WHERE id=edit_trip) <> 'not_required'
+         OR EXISTS (SELECT 1 FROM transport_trip_date_change_requests WHERE transport_order_id=edit_trip AND status='pending') THEN
+        RAISE EXCEPTION 'stale date approval remained after composition change';
+      END IF;
+
+      UPDATE machine_outsourcing_transport_orders SET status='in_transit' WHERE id=edit_trip;
+      UPDATE transport_trip_stops SET status='arrived', arrived_at=now()
+      WHERE id=(SELECT pickup_stop_id FROM transport_trip_need_links WHERE transport_order_id=edit_trip AND need_id=need_one AND released_at IS NULL);
+      failed := false;
+      BEGIN
+        PERFORM fn_update_transport_trip_v4(
+          edit_trip, '50000000-0000-0000-0000-000000000001', '2026-08-28', 200, 'test',
+          (SELECT jsonb_agg(jsonb_build_object('id',id,'clientId',client_key,'kind',stop_kind,'pointKey',point_key,'pointLabel',point_label,'city',city,'address',address,'plannedArrivalAt',planned_arrival_at,'serviceDurationMinutes',service_duration_minutes) ORDER BY sequence_no) FROM transport_trip_stops WHERE transport_order_id=edit_trip),
+          jsonb_build_array(jsonb_build_object('needKind','materials','needSource','inventory_transfer','needId',need_two,'direction','outbound','sourcePointKey','b','sourcePointLabel','B','destinationPointKey','c','destinationPointLabel','C','title','Вторая','neededDate','2026-08-28','pickupStopClientId','b','deliveryStopClientId','c')),
+          'Меняем будущую часть', NULL, actor
+        );
+      EXCEPTION WHEN OTHERS THEN failed := position('после начала её точки забора' in SQLERRM) > 0;
+      END;
+      IF NOT failed THEN RAISE EXCEPTION 'picked need was removed from in-transit trip'; END IF;
+
+      INSERT INTO machine_outsourcing_transport_orders(id,direction,status,scheduled_date,price,route_start,route,date_change_state)
+      VALUES ('30000000-0000-0000-0000-000000000003','outbound','found','2026-08-28',200,'A','A → C','not_required');
+      failed := false;
+      BEGIN
+        INSERT INTO transport_trip_need_links(
+          transport_order_id,need_kind,need_source,need_id,direction,source_point_key,source_point_label,
+          destination_point_key,destination_point_label,need_title,needed_date
+        ) VALUES ('30000000-0000-0000-0000-000000000003','materials','inventory_transfer',need_one,'outbound','a','A','c','C','Конфликт','2026-08-28');
+      EXCEPTION WHEN unique_violation THEN failed := true;
+      END;
+      IF NOT failed THEN RAISE EXCEPTION 'active-need uniqueness did not stop a parallel assignment'; END IF;
     END $$;
   `)
   console.log('Transport date approval DB test: OK')

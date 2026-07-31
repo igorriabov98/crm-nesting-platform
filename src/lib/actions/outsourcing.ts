@@ -119,6 +119,9 @@ export type MachineOutsourcingTransportOrder = {
   route: string | null
   comment: string | null
   date_change_state?: 'not_required' | 'pending' | 'approved' | 'rejected' | 'conflicted'
+  cancellation_reason?: string | null
+  cancelled_at?: string | null
+  cancelled_by?: string | null
 }
 
 export type MachineOutsourcingOperation = {
@@ -2011,6 +2014,10 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
       route_start: order.route_start as string | null,
       route: order.route as string | null,
       comment: order.comment as string | null,
+      date_change_state: order.date_change_state as MachineOutsourcingTransportOrder['date_change_state'],
+      cancellation_reason: order.cancellation_reason as string | null,
+      cancelled_at: order.cancelled_at as string | null,
+      cancelled_by: order.cancelled_by as string | null,
       needs: needsByOrder.get(order.id) || [],
     }))
 

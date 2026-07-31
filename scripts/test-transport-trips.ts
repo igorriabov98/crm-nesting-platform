@@ -206,5 +206,25 @@ assert.match(pickupStartMigration, /'planned', NULL/)
 const transportWorkspace = readFileSync(resolve('src/components/features/supply/TransportWorkspacePage.tsx'), 'utf8')
 assert.doesNotMatch(transportWorkspace, />Точка выезда</)
 assert.match(transportWorkspace, /aria-label=\{title\}/)
+assert.match(transportWorkspace, /Отменить рейс/)
+assert.match(transportWorkspace, /Причина исключения/)
+assert.match(transportWorkspace, /reconcileTransportStopPlan/)
+assert.match(transportWorkspace, /editingNeeds\.length === 1/)
+assert.doesNotMatch(transportWorkspace, /<SelectItem value="cancelled"/)
+
+const editCancelMigration = readFileSync(
+  resolve('supabase/migrations/20260730160000_transport_trip_edit_cancel.sql'),
+  'utf8',
+)
+assert.match(editCancelMigration, /fn_cancel_transport_trip_v1/)
+assert.match(editCancelMigration, /fn_update_transport_trip_v4/)
+assert.match(editCancelMigration, /FOR UPDATE/)
+assert.match(editCancelMigration, /released_reason = btrim\(p_remove_reason\)/)
+assert.match(editCancelMigration, /pickup\.status <> 'planned'/)
+assert.match(editCancelMigration, /Конфликт освобождённых потребностей активных рейсов/)
+assert.match(editCancelMigration, /date_change_state = CASE/)
+assert.match(transportActions, /releasedAt: link\.released_at/)
+assert.match(transportActions, /fn_cancel_transport_trip_v1/)
+assert.match(transportActions, /fn_update_transport_trip_v4/)
 
 console.log('Transport trip rules: OK')

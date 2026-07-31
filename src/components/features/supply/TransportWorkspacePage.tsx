@@ -32,12 +32,30 @@ import {
   Plus,
   Route,
   Search,
+  Trash2,
   Truck,
   Wrench,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -61,6 +79,7 @@ import {
   type SupplyOutsourcingAgreement,
 } from '@/lib/actions/outsourcing'
 import {
+  cancelTransportTrip,
   createTransportTrip,
   decideTransportTripDateChange,
   updateTransportTrip,
@@ -139,6 +158,13 @@ type AgreementDraft = {
   serviceCostPlanned: string
 }
 
+type EditingTransportStop = TransportDraftStop & {
+  id: string | null
+  status: TransportTrip['stops'][number]['status']
+  arrivedAt: string | null
+  completedAt: string | null
+}
+
 function formatDate(value: string | null) {
   if (!value) return 'Дата не указана'
   const [year, month, day] = value.split('-')
@@ -169,6 +195,42 @@ function plannedArrivalIso(date: string, time: string) {
 function addHour(time: string) {
   const [hours = 0, minutes = 0] = time.split(':').map(Number)
   return `${String((hours + 1) % 24).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+function timeFromDate(value: string | null) {
+  if (!value) return ''
+  return new Date(value).toTimeString().slice(0, 5)
+}
+
+function editableTripNeed(trip: TransportTrip, need: TransportTrip['needs'][number]): UnifiedTransportNeed {
+  const pickup = trip.stops.find((stop) => stop.id === need.pickupStopId)
+  const delivery = trip.stops.find((stop) => stop.id === need.deliveryStopId)
+  return {
+    key: need.key,
+    id: need.id,
+    kind: need.kind,
+    source: need.source,
+    direction: need.direction,
+    planState: 'confirmed',
+    status: 'linked',
+    title: need.title,
+    subtitle: need.subtitle,
+    sourcePointKey: need.sourcePointKey,
+    sourcePointLabel: need.sourcePointLabel,
+    sourcePointCity: pickup?.city || null,
+    sourcePointAddress: pickup?.address || null,
+    destinationPointKey: need.destinationPointKey,
+    destinationPointLabel: need.destinationPointLabel,
+    destinationPointCity: delivery?.city || null,
+    destinationPointAddress: delivery?.address || null,
+    neededDate: need.neededDate,
+    deadline: need.neededDate,
+    itemLabels: [],
+    volumeLabel: null,
+    deliveryRisk: false,
+    selectable: true,
+    unavailableReason: null,
+  }
 }
 
 function matchesSearch(need: UnifiedTransportNeed, search: string) {
@@ -328,8 +390,16 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   const [mobileShortcutHidden, setMobileShortcutHidden] = useState(false)
   const [editingTripId, setEditingTripId] = useState<string | null>(null)
   const [editingDraft, setEditingDraft] = useState<TripDraft | null>(null)
-  const [editingStops, setEditingStops] = useState<TransportTrip['stops']>([])
+  const [editingNeeds, setEditingNeeds] = useState<UnifiedTransportNeed[]>([])
+  const [editingStops, setEditingStops] = useState<EditingTransportStop[]>([])
+  const [editingAssignments, setEditingAssignments] = useState<TransportDraftAssignment[]>([])
   const [editingDateChangeReason, setEditingDateChangeReason] = useState('')
+  const [editingRemovalReason, setEditingRemovalReason] = useState('')
+  const [editingDirty, setEditingDirty] = useState(false)
+  const [needPickerOpen, setNeedPickerOpen] = useState(false)
+  const [needPickerSearch, setNeedPickerSearch] = useState('')
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
   const [agreementDrafts, setAgreementDrafts] = useState<Record<string, AgreementDraft>>(() =>
     Object.fromEntries(workspace.agreements.map((agreement) => [
       agreement.operation_id,
@@ -401,6 +471,12 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   const historyTrips = workspace.trips.filter((trip) => ['completed', 'cancelled'].includes(trip.status))
   const editingTrip = workspace.trips.find((trip) => trip.id === editingTripId) || null
   const visibleEditingStops = editingStops.filter((stop) => stop.kind !== 'start')
+  const editingNeedKeys = new Set(editingNeeds.map((need) => need.key))
+  const removedEditingNeeds = editingTrip?.needs.filter((need) => !need.released && !editingNeedKeys.has(need.key)) || []
+  const availableEditingNeeds = workspace.needs.filter((need) => (
+    !editingNeedKeys.has(need.key)
+    && matchesSearch(need, needPickerSearch.trim().toLocaleLowerCase('ru'))
+  ))
 
   const toggleNeed = useCallback((need: UnifiedTransportNeed) => {
     setMobileShortcutHidden(false)
@@ -505,10 +581,90 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   }
 
   function openTrip(trip: TransportTrip) {
+    const stopById = new Map(trip.stops.map((stop) => [stop.id, stop]))
     setEditingTripId(trip.id)
     setEditingDraft(tripDraft(trip))
-    setEditingStops(trip.stops)
+    setEditingNeeds(trip.needs.filter((need) => !need.released).map((need) => editableTripNeed(trip, need)))
+    setEditingStops(trip.stops.map((stop) => ({
+      id: stop.id,
+      clientId: stop.clientKey,
+      pointKey: stop.pointKey,
+      pointLabel: stop.pointLabel,
+      city: stop.city,
+      address: stop.address,
+      kind: stop.kind,
+      plannedTime: timeFromDate(stop.plannedArrivalAt),
+      serviceDurationMinutes: stop.serviceDurationMinutes,
+      status: stop.status,
+      arrivedAt: stop.arrivedAt,
+      completedAt: stop.completedAt,
+    })))
+    setEditingAssignments(trip.needs.filter((need) => !need.released).flatMap((need) => {
+      const pickup = need.pickupStopId ? stopById.get(need.pickupStopId) : null
+      const delivery = need.deliveryStopId ? stopById.get(need.deliveryStopId) : null
+      return pickup && delivery ? [{
+        needKey: need.key,
+        pickupStopClientId: pickup.clientKey,
+        deliveryStopClientId: delivery.clientKey,
+      }] : []
+    }))
     setEditingDateChangeReason('')
+    setEditingRemovalReason('')
+    setEditingDirty(false)
+    setNeedPickerOpen(false)
+    setNeedPickerSearch('')
+    setCancelReason('')
+  }
+
+  function reconcileEditingComposition(nextNeeds: UnifiedTransportNeed[]) {
+    const plan = reconcileTransportStopPlan(editingStops, editingAssignments, nextNeeds)
+    const currentByClientId = new Map(editingStops.map((stop) => [stop.clientId, stop]))
+    let nextStops = plan.stops.map((stop): EditingTransportStop => {
+      const current = currentByClientId.get(stop.clientId)
+      return current ? { ...current, ...stop } : {
+        ...stop,
+        id: null,
+        status: 'planned',
+        arrivedAt: null,
+        completedAt: null,
+      }
+    })
+    if (editingTrip?.status === 'in_transit') {
+      const locked = editingStops.filter((stop) => stop.status !== 'planned')
+      const lockedKeys = new Set(locked.map((stop) => stop.clientId))
+      nextStops = [...locked, ...nextStops.filter((stop) => !lockedKeys.has(stop.clientId))]
+    }
+    setEditingNeeds(nextNeeds)
+    setEditingStops(nextStops)
+    setEditingAssignments(plan.assignments)
+    setEditingDirty(true)
+  }
+
+  function addNeedToEditingTrip(need: UnifiedTransportNeed) {
+    reconcileEditingComposition([...editingNeeds, need])
+    setNeedPickerOpen(false)
+    setNeedPickerSearch('')
+  }
+
+  function canRemoveEditingNeed(need: UnifiedTransportNeed) {
+    if (editingTrip?.status !== 'in_transit') return true
+    const tripNeed = editingTrip.needs.find((candidate) => candidate.key === need.key)
+    const pickup = tripNeed?.pickupStopId
+      ? editingTrip.stops.find((stop) => stop.id === tripNeed.pickupStopId)
+      : null
+    return !pickup || pickup.status === 'planned'
+  }
+
+  function removeNeedFromEditingTrip(need: UnifiedTransportNeed) {
+    if (!canRemoveEditingNeed(need)) {
+      toast.error('Нельзя исключить потребность после начала её точки забора')
+      return
+    }
+    if (editingNeeds.length === 1) {
+      setCancelDialogOpen(true)
+      return
+    }
+    reconcileEditingComposition(editingNeeds.filter((candidate) => candidate.key !== need.key))
   }
 
   function saveTrip() {
@@ -517,23 +673,25 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     startTransition(async () => {
       const result = await updateTransportTrip({
         tripId: editingTrip.id,
-        status: editingDraft.status,
+        needs: editingNeeds.map((need) => ({ source: need.source, id: need.id })),
         carrierSupplierId: editingDraft.carrierSupplierId,
         scheduledDate: editingDraft.scheduledDate,
         price: editingDraft.price,
-        route: editingStops.length > 0
-          ? editingStops.map((stop) => stop.pointLabel).join(' → ')
-          : editingDraft.route,
         comment: editingDraft.comment || null,
         dateChangeReason: editingDateChangeReason || null,
-        stops: editingTrip.status === 'found' && editingStops.length > 0
-          ? editingStops.map((stop, sequence) => ({
-            id: stop.id,
-            sequence,
-            plannedArrivalAt: stop.plannedArrivalAt,
-            serviceDurationMinutes: stop.serviceDurationMinutes,
-          }))
-          : null,
+        removalReason: editingRemovalReason || null,
+        stops: editingStops.map((stop) => ({
+          id: stop.id,
+          clientId: stop.clientId,
+          pointKey: stop.pointKey,
+          pointLabel: stop.pointLabel,
+          city: stop.city,
+          address: stop.address,
+          kind: stop.kind,
+          plannedArrivalAt: plannedArrivalIso(editingDraft.scheduledDate, stop.plannedTime),
+          serviceDurationMinutes: stop.serviceDurationMinutes,
+        })),
+        assignments: editingAssignments,
       })
       setPendingAction(null)
       if (!result.success) {
@@ -543,30 +701,36 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
       toast.success(editingDraft.status === 'completed' ? 'Рейс завершён' : 'Рейс сохранён')
       setEditingTripId(null)
       setEditingDraft(null)
+      setEditingNeeds([])
+      setEditingAssignments([])
       router.refresh()
     })
   }
 
   function moveEditingStop(stopId: string, direction: -1 | 1) {
-    setEditingStops((current) => {
-      const from = current.findIndex((stop) => stop.id === stopId)
-      const target = from + direction
-      if (from < 0 || target < 0 || target >= current.length) return current
-      if (current[from].kind !== 'service' || current[target].kind !== 'service') return current
-      const next = [...current]
-      const [moved] = next.splice(from, 1)
-      next.splice(target, 0, moved)
-      const positions = new Map(next.map((stop, index) => [stop.id, index]))
-      if (editingTrip?.needs.some((need) => (
-        need.pickupStopId && need.deliveryStopId
-        && (positions.get(need.pickupStopId) ?? -1) >= (positions.get(need.deliveryStopId) ?? -1)
-      ))) {
-        toast.error('Доставка не может быть раньше забора')
-        return current
-      }
-      const orderedEta = current.map((stop) => stop.plannedArrivalAt)
-      return next.map((stop, index) => ({ ...stop, plannedArrivalAt: orderedEta[index] }))
-    })
+    const from = editingStops.findIndex((stop) => stop.clientId === stopId)
+    const target = from + direction
+    if (from < 0 || target < 0 || target >= editingStops.length) return
+    if (editingStops[from].kind !== 'service' || editingStops[target].kind !== 'service') return
+    if (editingTrip?.status === 'in_transit' && (
+      editingStops[from].status !== 'planned' || editingStops[target].status !== 'planned'
+    )) {
+      toast.error('Пройденную или начатую часть маршрута нельзя изменить')
+      return
+    }
+    const next = [...editingStops]
+    const [moved] = next.splice(from, 1)
+    next.splice(target, 0, moved)
+    const positions = new Map(next.map((stop, index) => [stop.clientId, index]))
+    if (editingAssignments.some((assignment) => (
+      (positions.get(assignment.pickupStopClientId) ?? -1) >= (positions.get(assignment.deliveryStopClientId) ?? -1)
+    ))) {
+      toast.error('Доставка не может быть раньше забора')
+      return
+    }
+    const orderedTimes = editingStops.map((stop) => stop.plannedTime)
+    setEditingStops(next.map((stop, index) => ({ ...stop, plannedTime: orderedTimes[index] })))
+    setEditingDirty(true)
   }
 
   function changeStopStatus(stopId: string, status: 'arrived' | 'completed') {
@@ -582,6 +746,27 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
       setEditingTripId(null)
       setEditingDraft(null)
       setEditingStops([])
+      router.refresh()
+    })
+  }
+
+  function cancelTrip() {
+    if (!editingTrip || !cancelReason.trim()) return
+    setPendingAction(`cancel:${editingTrip.id}`)
+    startTransition(async () => {
+      const result = await cancelTransportTrip({ tripId: editingTrip.id, reason: cancelReason })
+      setPendingAction(null)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось отменить рейс')
+        return
+      }
+      toast.success('Рейс отменён, потребности возвращены в очередь')
+      setCancelDialogOpen(false)
+      setEditingTripId(null)
+      setEditingDraft(null)
+      setEditingNeeds([])
+      setEditingStops([])
+      setEditingAssignments([])
       router.refresh()
     })
   }
@@ -920,7 +1105,11 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
           if (!open) {
             setEditingTripId(null)
             setEditingDraft(null)
+            setEditingNeeds([])
             setEditingStops([])
+            setEditingAssignments([])
+            setEditingRemovalReason('')
+            setEditingDirty(false)
           }
         }}
       >
@@ -938,27 +1127,103 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
 
               <div className="space-y-5 px-5 pb-5">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Состав рейса</div>
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Состав рейса</div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        {['completed', 'cancelled'].includes(editingTrip.status)
+                          ? `${editingTrip.needs.length} потребн.`
+                          : `${editingNeeds.length} потребн.`}
+                      </div>
+                    </div>
+                    {!['completed', 'cancelled'].includes(editingTrip.status) && (
+                      <Button type="button" variant="outline" size="sm" onClick={() => setNeedPickerOpen(true)} className="rounded-xl">
+                        <Plus className="h-4 w-4" /> Добавить
+                      </Button>
+                    )}
+                  </div>
                   <div className="space-y-2">
-                    {editingTrip.needs.map((need) => (
-                      <div key={need.linkId || need.key} className="rounded-xl bg-white px-3 py-2.5 text-sm shadow-sm">
-                        <div className="flex items-center gap-2">
+                    {(['completed', 'cancelled'].includes(editingTrip.status)
+                      ? editingTrip.needs
+                      : editingNeeds
+                    ).map((need) => (
+                      <div key={'linkId' in need ? need.linkId || need.key : need.key} className="rounded-xl bg-white px-3 py-2.5 text-sm shadow-sm">
+                        <div className="flex items-start gap-2">
                           <Badge variant="outline" className={categoryMeta[need.kind].chip}>
                             {categoryMeta[need.kind].label}
                           </Badge>
-                          <span className="font-semibold text-slate-900">{need.title}</span>
+                          <span className="min-w-0 flex-1 font-semibold text-slate-900">{need.title}</span>
+                          {!['completed', 'cancelled'].includes(editingTrip.status) && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Исключить потребность ${need.title}`}
+                              disabled={!canRemoveEditingNeed(need as UnifiedTransportNeed)}
+                              onClick={() => removeNeedFromEditingTrip(need as UnifiedTransportNeed)}
+                              className="h-8 w-8 shrink-0 rounded-lg text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                         <div className="mt-1 text-xs text-slate-500">
                           {need.sourcePointLabel} → {need.destinationPointLabel}
                         </div>
                         <div className="mt-1 text-xs text-slate-500">
-                          Текущая дата: {formatDate(tripNeedCurrentDate(editingTrip, need))}
-                          {tripNeedCurrentDate(editingTrip, need) !== need.neededDate && ` · первоначальная: ${formatDate(need.neededDate)}`}
+                          Текущая дата: {formatDate('linkId' in need ? tripNeedCurrentDate(editingTrip, need) : need.neededDate)}
                         </div>
+                        {'released' in need && need.released && (
+                          <div className="mt-2 rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-800">
+                            Исключена {formatDateTime(need.releasedAt)} · {need.releasedByName || 'Автор не указан'}
+                            <span className="mt-0.5 block">Причина: {need.releasedReason || 'не указана в старой версии'}</span>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
                 </div>
+
+                {!['completed', 'cancelled'].includes(editingTrip.status) && editingTrip.needs.some((need) => need.released) && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">История исключений</div>
+                    <div className="mt-3 space-y-2">
+                      {editingTrip.needs.filter((need) => need.released).map((need) => (
+                        <div key={need.linkId || need.key} className="rounded-xl bg-white px-3 py-2.5 text-sm shadow-sm">
+                          <div className="font-semibold text-slate-900">{need.title}</div>
+                          <div className="mt-1 text-xs text-slate-500">{need.sourcePointLabel} → {need.destinationPointLabel}</div>
+                          <div className="mt-2 text-xs text-rose-800">
+                            Исключена {formatDateTime(need.releasedAt)} · {need.releasedByName || 'Автор не указан'}
+                            <span className="mt-0.5 block">Причина: {need.releasedReason || 'не указана в старой версии'}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {removedEditingNeeds.length > 0 && (
+                  <Label className="grid gap-1.5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-950">
+                    Причина исключения {removedEditingNeeds.length === 1 ? 'потребности' : 'потребностей'}
+                    <Textarea
+                      value={editingRemovalReason}
+                      onChange={(event) => setEditingRemovalReason(event.target.value)}
+                      placeholder="Обязательно для сохранения истории изменений"
+                      aria-required="true"
+                      className="min-h-20 bg-white"
+                    />
+                  </Label>
+                )}
+
+                {editingTrip.status === 'cancelled' && (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-950">
+                    <div className="font-semibold">Рейс отменён</div>
+                    <div className="mt-1">Причина: {editingTrip.cancellationReason || 'не указана в старой версии'}</div>
+                    <div className="mt-1 text-xs text-rose-800">
+                      {editingTrip.cancelledByName || 'Автор не указан'} · {formatDateTime(editingTrip.cancelledAt)}
+                    </div>
+                  </div>
+                )}
 
                 {editingTrip.dateChangeState !== 'not_required' && (
                   <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -987,40 +1252,23 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                   </div>
                 )}
 
-                <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                <div className="grid gap-1.5 text-sm font-medium text-slate-700">
                   Статус
-                  <Select
-                    value={editingDraft.status}
-                    onValueChange={(value) => value && setEditingDraft((current) => current && ({
-                      ...current,
-                      status: value as TripDraft['status'],
-                    }))}
-                    disabled={['completed', 'cancelled'].includes(editingTrip.status)}
-                  >
-                    <SelectTrigger className="h-11 w-full rounded-xl">
-                      <SelectValue>{statusMeta[editingDraft.status].label}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      {(editingTrip.status === 'found'
-                        ? ['found', 'cancelled'] as const
-                        : editingTrip.status === 'in_transit'
-                          ? ['in_transit', 'cancelled'] as const
-                          : [editingTrip.status] as const
-                      ).map((status) => (
-                        <SelectItem key={status} value={status}>{statusMeta[status].label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Label>
+                  <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-slate-50 px-3">
+                    <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusMeta[editingTrip.status].badge)}>
+                      {statusMeta[editingTrip.status].label}
+                    </span>
+                  </div>
+                </div>
 
                 <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
                   Перевозчик
                   <Select
                     value={editingDraft.carrierSupplierId}
-                    onValueChange={(value) => setEditingDraft((current) => current && ({
-                      ...current,
-                      carrierSupplierId: value || '',
-                    }))}
+                    onValueChange={(value) => {
+                      setEditingDraft((current) => current && ({ ...current, carrierSupplierId: value || '' }))
+                      setEditingDirty(true)
+                    }}
                     disabled={['completed', 'cancelled'].includes(editingTrip.status)}
                   >
                     <SelectTrigger className="h-11 w-full rounded-xl">
@@ -1043,10 +1291,10 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                     <Input
                       type="date"
                       value={editingDraft.scheduledDate}
-                      onChange={(event) => setEditingDraft((current) => current && ({
-                        ...current,
-                        scheduledDate: event.target.value,
-                      }))}
+                      onChange={(event) => {
+                        setEditingDraft((current) => current && ({ ...current, scheduledDate: event.target.value }))
+                        setEditingDirty(true)
+                      }}
                       disabled={['completed', 'cancelled'].includes(editingTrip.status)}
                       className="h-11 rounded-xl"
                     />
@@ -1058,17 +1306,17 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                       min={0}
                       step="0.01"
                       value={editingDraft.price}
-                      onChange={(event) => setEditingDraft((current) => current && ({
-                        ...current,
-                        price: event.target.value,
-                      }))}
+                      onChange={(event) => {
+                        setEditingDraft((current) => current && ({ ...current, price: event.target.value }))
+                        setEditingDirty(true)
+                      }}
                       disabled={['completed', 'cancelled'].includes(editingTrip.status)}
                       className="h-11 rounded-xl"
                     />
                   </Label>
                 </div>
 
-                {editingDraft.scheduledDate && editingTrip.needs.some((need) => need.neededDate && need.neededDate !== editingDraft.scheduledDate) && (
+                {editingDraft.scheduledDate && editingNeeds.some((need) => need.neededDate && need.neededDate !== editingDraft.scheduledDate) && (
                   <Label className="grid gap-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-950">
                     Причина переноса даты рейса
                     <Textarea value={editingDateChangeReason} onChange={(event) => setEditingDateChangeReason(event.target.value)}
@@ -1095,7 +1343,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                         const canArrive = stop.status === 'planned'
                           && previousServiceStops.every((candidate) => candidate.status === 'completed')
                         return (
-                          <li key={stop.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                          <li key={stop.clientId} className="rounded-xl border border-slate-200 bg-white p-3">
                             <div className="flex items-start gap-2">
                               <span className={cn(
                                 'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold',
@@ -1110,7 +1358,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <span className="font-semibold text-slate-900">{stop.pointLabel}</span>
-                                  <span className="text-sm font-bold text-slate-700">{formatTime(stop.plannedArrivalAt)}</span>
+                                  <span className="text-sm font-bold text-slate-700">{stop.plannedTime || 'Время не указано'}</span>
                                 </div>
                                 <div className="mt-1 text-xs text-slate-500">
                                   {stop.kind === 'finish'
@@ -1118,30 +1366,56 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                                       : `${stop.serviceDurationMinutes} мин. на площадке`}
                                 </div>
 
-                                {editingTrip.status === 'found' && (
+                                {!['completed', 'cancelled'].includes(editingTrip.status) && (
                                   <div className={cn(
                                     'mt-2 grid gap-1.5',
-                                    stop.kind === 'service' ? 'grid-cols-[1fr_auto_auto]' : 'grid-cols-1',
+                                    stop.kind === 'service' ? 'grid-cols-[minmax(0,1fr)_5.5rem_auto_auto]' : 'grid-cols-1',
                                   )}>
                                     <Input
                                       type="time"
-                                      value={stop.plannedArrivalAt ? new Date(stop.plannedArrivalAt).toTimeString().slice(0, 5) : ''}
-                                      onChange={(event) => setEditingStops((current) => current.map((candidate) => (
-                                        candidate.id === stop.id
-                                          ? { ...candidate, plannedArrivalAt: plannedArrivalIso(editingDraft.scheduledDate, event.target.value) }
-                                          : candidate
-                                      )))}
+                                      value={stop.plannedTime}
+                                      disabled={editingTrip.status === 'in_transit' && stop.status !== 'planned'}
+                                      onChange={(event) => {
+                                        setEditingStops((current) => current.map((candidate) => (
+                                          candidate.clientId === stop.clientId
+                                            ? { ...candidate, plannedTime: event.target.value }
+                                            : candidate
+                                        )))
+                                        setEditingDirty(true)
+                                      }}
                                       className="h-9 rounded-lg"
                                     />
                                     {stop.kind === 'service' && (
                                       <>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          step={5}
+                                          value={stop.serviceDurationMinutes}
+                                          aria-label={`Время на площадке ${stop.pointLabel}, минут`}
+                                          disabled={editingTrip.status === 'in_transit' && stop.status !== 'planned'}
+                                          onChange={(event) => {
+                                            setEditingStops((current) => current.map((candidate) => (
+                                              candidate.clientId === stop.clientId
+                                                ? { ...candidate, serviceDurationMinutes: Number(event.target.value) }
+                                                : candidate
+                                            )))
+                                            setEditingDirty(true)
+                                          }}
+                                          className="h-9 rounded-lg"
+                                        />
                                         <Button
                                           type="button"
                                           variant="outline"
                                           size="icon"
                                           aria-label={`Поднять остановку ${stop.pointLabel}`}
-                                          disabled={visibleEditingStops[index - 1]?.kind !== 'service'}
-                                          onClick={() => moveEditingStop(stop.id, -1)}
+                                          disabled={
+                                            visibleEditingStops[index - 1]?.kind !== 'service'
+                                            || (editingTrip.status === 'in_transit' && (
+                                              stop.status !== 'planned' || visibleEditingStops[index - 1]?.status !== 'planned'
+                                            ))
+                                          }
+                                          onClick={() => moveEditingStop(stop.clientId, -1)}
                                           className="h-9 w-9 rounded-lg"
                                         >
                                           <ArrowUp className="h-4 w-4" />
@@ -1151,8 +1425,13 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                                           variant="outline"
                                           size="icon"
                                           aria-label={`Опустить остановку ${stop.pointLabel}`}
-                                          disabled={visibleEditingStops[index + 1]?.kind !== 'service'}
-                                          onClick={() => moveEditingStop(stop.id, 1)}
+                                          disabled={
+                                            visibleEditingStops[index + 1]?.kind !== 'service'
+                                            || (editingTrip.status === 'in_transit' && (
+                                              stop.status !== 'planned' || visibleEditingStops[index + 1]?.status !== 'planned'
+                                            ))
+                                          }
+                                          onClick={() => moveEditingStop(stop.clientId, 1)}
                                           className="h-9 w-9 rounded-lg"
                                         >
                                           <ArrowDown className="h-4 w-4" />
@@ -1162,26 +1441,26 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                                   </div>
                                 )}
 
-                                {editingTrip.status === 'in_transit' && stop.status !== 'completed' && (
+                                {editingTrip.status === 'in_transit' && stop.id && !editingDirty && stop.status !== 'completed' && (
                                   <Button
                                     type="button"
                                     size="sm"
                                     variant={stop.status === 'arrived' ? 'default' : 'outline'}
                                     disabled={isPending || (!canArrive && stop.status === 'planned')}
-                                    onClick={() => changeStopStatus(stop.id, stop.status === 'arrived' ? 'completed' : 'arrived')}
+                                    onClick={() => changeStopStatus(stop.id as string, stop.status === 'arrived' ? 'completed' : 'arrived')}
                                     className="mt-2 rounded-lg"
                                   >
                                     {pendingAction?.startsWith(`stop:${stop.id}`) && <Loader2 className="h-4 w-4 animate-spin" />}
                                     {stop.status === 'arrived' ? 'Остановка выполнена' : 'Машина прибыла'}
                                   </Button>
                                 )}
-                                {editingTrip.status === 'found' && canArrive && (
+                                {editingTrip.status === 'found' && stop.id && !editingDirty && canArrive && (
                                   <Button
                                     type="button"
                                     size="sm"
                                     variant="outline"
                                     disabled={isPending || !['not_required', 'approved'].includes(editingTrip.dateChangeState)}
-                                    onClick={() => changeStopStatus(stop.id, 'arrived')}
+                                    onClick={() => changeStopStatus(stop.id as string, 'arrived')}
                                     className="mt-2 rounded-lg"
                                   >
                                     Начать рейс: машина прибыла
@@ -1200,10 +1479,10 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                   Комментарий
                   <Textarea
                     value={editingDraft.comment}
-                    onChange={(event) => setEditingDraft((current) => current && ({
-                      ...current,
-                      comment: event.target.value,
-                    }))}
+                    onChange={(event) => {
+                      setEditingDraft((current) => current && ({ ...current, comment: event.target.value }))
+                      setEditingDirty(true)
+                    }}
                     disabled={['completed', 'cancelled'].includes(editingTrip.status)}
                     className="min-h-24 resize-none rounded-xl"
                   />
@@ -1211,7 +1490,16 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
               </div>
 
               {!['completed', 'cancelled'].includes(editingTrip.status) && (
-                <SheetFooter className="sticky bottom-0 border-t border-slate-100 bg-white p-5">
+                <SheetFooter className="sticky bottom-0 grid grid-cols-1 gap-2 border-t border-slate-100 bg-white p-5 sm:grid-cols-[auto_1fr]">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCancelDialogOpen(true)}
+                    disabled={isPending}
+                    className="h-12 rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                  >
+                    <Trash2 className="h-4 w-4" /> Отменить рейс
+                  </Button>
                   <Button
                     type="button"
                     onClick={saveTrip}
@@ -1220,8 +1508,13 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                       || !editingDraft.carrierSupplierId
                       || !editingDraft.scheduledDate
                       || editingDraft.price === ''
-                      || !editingDraft.route.trim()
-                      || (editingDraft.scheduledDate !== editingTrip.scheduledDate && !editingDateChangeReason.trim())
+                      || editingNeeds.length === 0
+                      || editingStops.length < 2
+                      || editingStops.some((stop) => !stop.pointLabel.trim() || !stop.plannedTime)
+                      || Boolean(getTransportStopOrderError(editingStops, editingAssignments))
+                      || (editingNeeds.some((need) => need.neededDate && need.neededDate !== editingDraft.scheduledDate)
+                        && !editingDateChangeReason.trim())
+                      || (removedEditingNeeds.length > 0 && !editingRemovalReason.trim())
                     }
                     className="h-12 rounded-xl"
                   >
@@ -1236,6 +1529,78 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
           )}
         </SheetContent>
       </Sheet>
+
+      <Dialog open={needPickerOpen} onOpenChange={setNeedPickerOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Добавить потребности в рейс</DialogTitle>
+            <DialogDescription>
+              Выберите свободную потребность — точки забора и доставки добавятся в будущую часть маршрута.
+            </DialogDescription>
+          </DialogHeader>
+          <Label htmlFor="trip-need-search" className="grid gap-1.5 text-sm font-medium text-slate-700">
+            Поиск
+            <Input
+              id="trip-need-search"
+              value={needPickerSearch}
+              onChange={(event) => setNeedPickerSearch(event.target.value)}
+              placeholder="Машина, компания или маршрут…"
+              className="h-11 rounded-xl"
+            />
+          </Label>
+          <div className="space-y-2">
+            {availableEditingNeeds.length > 0 ? availableEditingNeeds.map((need) => (
+              <NeedCard
+                key={need.key}
+                need={need}
+                selected={false}
+                compatible
+                onToggle={addNeedToEditingTrip}
+              />
+            )) : (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                Свободных потребностей по этому запросу нет.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Отменить рейс?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Рейс останется в истории, а {editingNeeds.length || editingTrip?.needs.length || 0} потребн. вернутся в свободную очередь.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Label htmlFor="trip-cancel-reason" className="grid gap-1.5 text-sm font-medium text-slate-800">
+            Причина отмены <span className="text-rose-700">*</span>
+            <Textarea
+              id="trip-cancel-reason"
+              value={cancelReason}
+              onChange={(event) => setCancelReason(event.target.value)}
+              placeholder="Почему рейс больше не должен выполняться"
+              aria-required="true"
+              className="min-h-24"
+            />
+          </Label>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Вернуться</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault()
+                cancelTrip()
+              }}
+              disabled={isPending || !cancelReason.trim()}
+              className="bg-rose-700 text-white hover:bg-rose-800 focus-visible:ring-rose-700"
+            >
+              {pendingAction?.startsWith('cancel:') && <Loader2 className="h-4 w-4 animate-spin" />}
+              Отменить рейс
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
