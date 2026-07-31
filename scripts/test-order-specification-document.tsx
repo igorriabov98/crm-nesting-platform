@@ -48,8 +48,8 @@ const data: DocumentData = {
   items: [
     {
       sort_order: 1,
-      product_name_en: 'Metal cabinet',
-      product_name_uk: 'Металева шафа',
+      product_name_en: 'Tipping bucket for forklift truck AMC-600 WNA ECO RAL7016',
+      product_name_uk: 'Ковш відкидний для вилкового автонавантажувача AMC-600 WNA ECO RAL7016',
       product_uktzed: '',
       quantity: 3,
       price: 125.5,
@@ -61,8 +61,8 @@ const data: DocumentData = {
     },
     {
       sort_order: 2,
-      product_name_en: 'Mounting frame',
-      product_name_uk: 'Монтажна рама',
+      product_name_en: 'Mounting frame for industrial equipment',
+      product_name_uk: 'Монтажна рама для промислового обладнання',
       product_uktzed: '',
       quantity: 2,
       price: 80,
