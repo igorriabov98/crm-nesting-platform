@@ -41,9 +41,13 @@ assert.equal(countPendingMaterialRequests([
 ]), 2)
 
 const sidebarSource = readFileSync(resolve('src/components/layout/Sidebar.tsx'), 'utf8')
+const mailBadgeSource = readFileSync(resolve('src/components/features/mail/MailUnreadBadge.tsx'), 'utf8')
 assert.match(sidebarSource, /SIDEBAR_QUEUE_POLL_INTERVAL_MS = 15_000/)
 assert.match(sidebarSource, /setInterval\(\(\) => void refresh\(true\), SIDEBAR_QUEUE_POLL_INTERVAL_MS\)/)
 assert.match(sidebarSource, /table: 'department_requests'/)
 assert.match(sidebarSource, /SUPPLY_OUTSOURCING_REQUESTS, label: 'Согласование аутсорсинга'/)
+assert.match(mailBadgeSource, /useId\(\)/)
+assert.match(mailBadgeSource, /mail_sidebar_count_\$\{channelInstanceId/)
+assert.doesNotMatch(mailBadgeSource, /channel\('mail_sidebar_count'\)/)
 
 console.log('sidebar work queue badges: ok')
