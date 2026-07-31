@@ -281,7 +281,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
       : []),
     ...supplySectionItems.filter((item) => item.href !== ROUTES.SUPPLY_TRANSPORT),
     ...(permissions.supply_transport?.canView
-      ? [{ href: ROUTES.SUPPLY_OUTSOURCING_REQUESTS, label: 'Аутсорсинг', icon: ClipboardList }]
+      ? [{ href: ROUTES.SUPPLY_OUTSOURCING_REQUESTS, label: 'Согласование аутсорсинга', icon: ClipboardList }]
       : []),
     ...supplySectionItems.filter((item) => item.href === ROUTES.SUPPLY_TRANSPORT),
   ]

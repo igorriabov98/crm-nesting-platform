@@ -24,7 +24,7 @@ try {
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
     CREATE SCHEMA auth;
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid';
-    CREATE TYPE public.task_type AS ENUM ('outsourcing_transport');
+    CREATE TYPE public.task_type AS ENUM ('outsourcing_transport','inventory_transfer','detailing_transfer');
     CREATE TYPE public.task_status AS ENUM ('pending','in_progress','completed','cancelled');
     CREATE TYPE public.outsourcing_transport_direction AS ENUM ('outbound','return','mixed');
     CREATE TYPE public.outsourcing_transport_order_status AS ENUM ('needed','found','in_transit','completed','cancelled');
@@ -61,13 +61,24 @@ try {
   `)
   run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260728130000_transport_trip_date_task_type.sql')])
   run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260728130100_transport_trip_date_approval.sql')])
+  run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260731160000_transport_need_date_task_fallback.sql')])
   psql(String.raw`
     DO $$
-    DECLARE actor uuid := '10000000-0000-0000-0000-000000000001'; approver uuid := '10000000-0000-0000-0000-000000000002'; need_id uuid := '20000000-0000-0000-0000-000000000001'; trip_id uuid; request_id uuid;
+    DECLARE actor uuid := '10000000-0000-0000-0000-000000000001'; approver uuid := '10000000-0000-0000-0000-000000000002'; need_id uuid := '20000000-0000-0000-0000-000000000001'; fallback_need_id uuid := '20000000-0000-0000-0000-000000000002'; trip_id uuid; fallback_trip_id uuid; request_id uuid;
     BEGIN
       INSERT INTO users(id,role,full_name,is_active) VALUES(actor,'crm_admin','Оператор',true),(approver,'planning_director','Планировщик',true);
       INSERT INTO departments(name,head_user_id,is_active,sort_order) VALUES('Отдел планирования',approver,true,1);
       IF (SELECT city FROM factories LIMIT 1) <> 'Берегово' THEN RAISE EXCEPTION 'factory city backfill failed'; END IF;
+      INSERT INTO inventory_transfers(id,expected_arrival_date) VALUES(fallback_need_id,NULL);
+      INSERT INTO tasks(assigned_to,task_type,title,status,deadline,inventory_transfer_id)
+      VALUES(actor,'inventory_transfer','Перевезти материалы','pending','2026-07-31',fallback_need_id);
+      IF transport_need_current_date('inventory_transfer', fallback_need_id) <> '2026-07-31' THEN
+        RAISE EXCEPTION 'inventory transfer task deadline fallback failed';
+      END IF;
+      fallback_trip_id := fn_create_transport_trip_v3(NULL,'2026-07-31',0,NULL,'[{},{}]'::jsonb,jsonb_build_array(jsonb_build_object('needKind','materials','needSource','inventory_transfer','needId',fallback_need_id,'direction','outbound','title','Материалы','neededDate','2026-07-31')),NULL,actor);
+      IF (SELECT date_change_state FROM machine_outsourcing_transport_orders WHERE id=fallback_trip_id) <> 'not_required' THEN
+        RAISE EXCEPTION 'fallback date incorrectly started approval';
+      END IF;
       INSERT INTO detailing_transfers(id,expected_arrival_date) VALUES(need_id,'2026-08-02');
       trip_id := fn_create_transport_trip_v3(NULL,'2026-08-01',0,NULL,'[{},{}]'::jsonb,jsonb_build_array(jsonb_build_object('needKind','detailing','needSource','detailing_transfer','needId',need_id,'direction','outbound','title','Детали','neededDate','2026-08-02')),'Совмещаем маршрут',actor);
       IF (SELECT expected_arrival_date FROM detailing_transfers WHERE id=need_id) <> '2026-08-02' THEN RAISE EXCEPTION 'date changed before approval'; END IF;

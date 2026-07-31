@@ -44,5 +44,6 @@ const sidebarSource = readFileSync(resolve('src/components/layout/Sidebar.tsx'),
 assert.match(sidebarSource, /SIDEBAR_QUEUE_POLL_INTERVAL_MS = 15_000/)
 assert.match(sidebarSource, /setInterval\(\(\) => void refresh\(true\), SIDEBAR_QUEUE_POLL_INTERVAL_MS\)/)
 assert.match(sidebarSource, /table: 'department_requests'/)
+assert.match(sidebarSource, /SUPPLY_OUTSOURCING_REQUESTS, label: 'Согласование аутсорсинга'/)
 
 console.log('sidebar work queue badges: ok')
