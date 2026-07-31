@@ -9,7 +9,7 @@ import {
   useState,
   useTransition,
 } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import {
   ArrowRight,
   ArrowDown,
@@ -75,14 +75,12 @@ import {
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  confirmOutsourcingServiceTerms,
-  type OutsourcingSupplierOption,
-  type SupplyOutsourcingAgreement,
-} from '@/lib/actions/outsourcing'
-import {
   cancelTransportTrip,
+  completeTransportTrip,
   createTransportTrip,
   decideTransportTripDateChange,
+  getTransportWorkspace,
+  startTransportTrip,
   updateTransportTrip,
   updateTransportTripStopStatus,
   type TransportNeedKind,
@@ -98,6 +96,7 @@ import {
   type TransportDraftAssignment,
   type TransportDraftStop,
 } from '@/lib/transport/trip-rules'
+import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
 import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 40
@@ -138,7 +137,7 @@ const statusMeta: Record<TransportTripStatus, {
 }> = {
   needed: { label: 'Нужен транспорт', badge: 'border-slate-200 bg-slate-50 text-slate-700' },
   found: { label: 'Запланирован', badge: 'border-blue-200 bg-blue-50 text-blue-800' },
-  in_transit: { label: 'В пути', badge: 'border-amber-200 bg-amber-50 text-amber-900' },
+  in_transit: { label: 'Выполняется', badge: 'border-amber-200 bg-amber-50 text-amber-900' },
   completed: { label: 'Выполнен', badge: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
   cancelled: { label: 'Отменён', badge: 'border-rose-200 bg-rose-50 text-rose-800' },
 }
@@ -152,13 +151,6 @@ type TripDraft = {
   price: string
   route: string
   comment: string
-}
-
-type AgreementDraft = {
-  supplierId: string
-  plannedSendDate: string
-  plannedReturnDate: string
-  serviceCostPlanned: string
 }
 
 type EditingTransportStop = TransportDraftStop & {
@@ -271,6 +263,25 @@ function operationalStops(trip: TransportTrip) {
   return trip.stops.filter((stop) => stop.kind !== 'start')
 }
 
+function tripStartAvailable(trip: TransportTrip, clockNow: number | null) {
+  const firstStop = operationalStops(trip)[0]
+  return Boolean(
+    firstStop?.plannedArrivalAt
+      && clockNow !== null
+      && new Date(firstStop.plannedArrivalAt).getTime() <= clockNow,
+  )
+}
+
+function tripEndAvailable(trip: TransportTrip, clockNow: number | null) {
+  const stops = operationalStops(trip)
+  const lastStop = stops[stops.length - 1]
+  return Boolean(
+    lastStop?.plannedArrivalAt
+      && clockNow !== null
+      && new Date(lastStop.plannedArrivalAt).getTime() + lastStop.serviceDurationMinutes * 60_000 <= clockNow,
+  )
+}
+
 function tripRouteLabel(trip: TransportTrip) {
   const stops = operationalStops(trip)
   return stops.length > 0
@@ -371,8 +382,8 @@ const NeedCard = memo(function NeedCard({
   )
 })
 
-export function TransportWorkspacePage({ workspace }: { workspace: TransportWorkspace }) {
-  const router = useRouter()
+export function TransportWorkspacePage({ workspace: initialWorkspace }: { workspace: TransportWorkspace }) {
+  const [workspace, setWorkspace] = useState(initialWorkspace)
   const searchParams = useSearchParams()
   const focusedNeedKey = searchParams.get('focus')
   const [isPending, startTransition] = useTransition()
@@ -403,19 +414,21 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
   const [needPickerSearch, setNeedPickerSearch] = useState('')
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
-  const [agreementDrafts, setAgreementDrafts] = useState<Record<string, AgreementDraft>>(() =>
-    Object.fromEntries(workspace.agreements.map((agreement) => [
-      agreement.operation_id,
-      {
-        supplierId: agreement.supplier_id || '',
-        plannedSendDate: agreement.planned_send_date || '',
-        plannedReturnDate: agreement.planned_return_date || '',
-        serviceCostPlanned: agreement.service_cost_planned === null
-          ? ''
-          : String(agreement.service_cost_planned),
-      },
-    ])),
-  )
+  const [lifecycleConfirmation, setLifecycleConfirmation] = useState<{
+    action: 'start' | 'complete'
+    tripId: string
+  } | null>(null)
+  const [clockNow, setClockNow] = useState<number | null>(null)
+
+  useEffect(() => {
+    const updateClock = () => setClockNow(Date.now())
+    const initialClock = window.setTimeout(updateClock, 0)
+    const interval = window.setInterval(updateClock, 30_000)
+    return () => {
+      window.clearTimeout(initialClock)
+      window.clearInterval(interval)
+    }
+  }, [])
 
   const needByKey = useMemo(
     () => new Map(workspace.needs.map((need) => [need.key, need])),
@@ -482,6 +495,10 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     !editingNeedKeys.has(need.key)
     && matchesSearch(need, needPickerSearch.trim().toLocaleLowerCase('ru'))
   ))
+  const editingOperationalStops = editingTrip ? operationalStops(editingTrip) : []
+  const editingFirstStop = editingOperationalStops[0] || null
+  const editingEndAvailable = editingTrip ? tripEndAvailable(editingTrip, clockNow) : false
+  const editingStartAvailable = editingTrip ? tripStartAvailable(editingTrip, clockNow) : false
 
   const toggleNeed = useCallback((need: UnifiedTransportNeed) => {
     setMobileShortcutHidden(false)
@@ -510,6 +527,17 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     setRouteAssignments([])
     setComment('')
     setDateChangeReason('')
+  }
+
+  async function refreshWorkspaceData() {
+    const result = await getTransportWorkspace()
+    if (result.error) {
+      toast.error(result.error || 'Не удалось обновить транспортный раздел')
+      return null
+    }
+    setWorkspace(result.data)
+    notifySidebarWorkQueuesChanged()
+    return result.data
   }
 
   function updateRouteStop(clientId: string, patch: Partial<TransportDraftStop>) {
@@ -581,7 +609,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
       }
       toast.success('Рейс создан и потребности объединены')
       resetComposer()
-      router.refresh()
+      await refreshWorkspaceData()
     })
   }
 
@@ -708,7 +736,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
       setEditingDraft(null)
       setEditingNeeds([])
       setEditingAssignments([])
-      router.refresh()
+      await refreshWorkspaceData()
     })
   }
 
@@ -748,10 +776,9 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
         return
       }
       toast.success(status === 'arrived' ? 'Прибытие отмечено' : 'Остановка выполнена')
-      setEditingTripId(null)
-      setEditingDraft(null)
-      setEditingStops([])
-      router.refresh()
+      const refreshed = await refreshWorkspaceData()
+      const refreshedTrip = refreshed?.trips.find((trip) => trip.id === editingTripId)
+      if (refreshedTrip) openTrip(refreshedTrip)
     })
   }
 
@@ -772,7 +799,7 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
       setEditingNeeds([])
       setEditingStops([])
       setEditingAssignments([])
-      router.refresh()
+      await refreshWorkspaceData()
     })
   }
 
@@ -788,36 +815,41 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
         return
       }
       toast.success(result.outcome === 'conflicted' ? 'Обнаружен конфликт исходных дат' : decision === 'approved' ? 'Перенос дат одобрен' : 'Перенос дат отклонён')
-      router.refresh()
+      const refreshed = await refreshWorkspaceData()
+      const refreshedTrip = refreshed?.trips.find((trip) => trip.id === editingTripId)
+      if (refreshedTrip) openTrip(refreshedTrip)
     })
   }
 
-  function updateAgreementDraft(operationId: string, patch: Partial<AgreementDraft>) {
-    setAgreementDrafts((current) => ({
-      ...current,
-      [operationId]: { ...current[operationId], ...patch },
-    }))
-  }
-
-  function confirmAgreement(agreement: SupplyOutsourcingAgreement) {
-    const draft = agreementDrafts[agreement.operation_id]
-    if (!draft?.supplierId || !draft.plannedSendDate || !draft.plannedReturnDate) return
-    setPendingAction(`agreement:${agreement.operation_id}`)
+  function confirmTripLifecycle() {
+    if (!lifecycleConfirmation) return
+    const { action, tripId } = lifecycleConfirmation
+    const targetTrip = workspace.trips.find((trip) => trip.id === tripId)
+    if (!targetTrip) return
+    setPendingAction(`${action}:${tripId}`)
     startTransition(async () => {
-      const result = await confirmOutsourcingServiceTerms({
-        operationId: agreement.operation_id,
-        supplierId: draft.supplierId,
-        plannedSendDate: draft.plannedSendDate,
-        plannedReturnDate: draft.plannedReturnDate,
-        serviceCostPlanned: draft.serviceCostPlanned ? Number(draft.serviceCostPlanned) : null,
-      })
+      const result = action === 'start'
+        ? await startTransportTrip({ tripId })
+        : await completeTransportTrip({ tripId })
       setPendingAction(null)
       if (!result.success) {
-        toast.error(result.error || 'Не удалось подтвердить условия')
+        toast.error(result.error || (action === 'start' ? 'Не удалось начать рейс' : 'Не удалось завершить рейс'))
         return
       }
-      toast.success('Условия аутсорсинга сохранены')
-      router.refresh()
+
+      toast.success(action === 'start' ? 'Рейс выполняется' : 'Рейс выполнен и перенесён в историю')
+      setLifecycleConfirmation(null)
+      const refreshed = await refreshWorkspaceData()
+      if (action === 'start') {
+        const refreshedTrip = refreshed?.trips.find((trip) => trip.id === tripId)
+        if (refreshedTrip && editingTripId === tripId) openTrip(refreshedTrip)
+      } else if (editingTripId === tripId) {
+        setEditingTripId(null)
+        setEditingDraft(null)
+        setEditingNeeds([])
+        setEditingStops([])
+        setEditingAssignments([])
+      }
     })
   }
 
@@ -1086,6 +1118,8 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
         trips={activeTrips}
         onOpen={openTrip}
         emptyText="Активных рейсов пока нет."
+        clockNow={clockNow}
+        onLifecycle={(trip, action) => setLifecycleConfirmation({ action, tripId: trip.id })}
       />
 
       {historyTrips.length > 0 && (
@@ -1098,15 +1132,6 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
           collapsible
         />
       )}
-
-      <AgreementsPanel
-        agreements={workspace.agreements}
-        suppliers={workspace.outsourcingSuppliers}
-        drafts={agreementDrafts}
-        pendingAction={pendingAction}
-        onDraftChange={updateAgreementDraft}
-        onConfirm={confirmAgreement}
-      />
 
       <Sheet
         open={Boolean(editingTrip)}
@@ -1269,6 +1294,74 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                     </span>
                   </div>
                 </div>
+
+                {editingTrip.status === 'found' && (
+                  <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">
+                    <div className="font-semibold">Подтверждение начала рейса</div>
+                    <div className="mt-1 text-blue-800">
+                      Плановое начало: {formatDateTime(editingFirstStop?.plannedArrivalAt || null)}.
+                      После подтверждения статус изменится на «Выполняется» и станут доступны отметки остановок.
+                    </div>
+                    {!editingStartAvailable && (
+                      <div className="mt-2 text-xs font-medium text-amber-800">
+                        Кнопка станет доступна в запланированное время начала рейса.
+                      </div>
+                    )}
+                    {!['not_required', 'approved'].includes(editingTrip.dateChangeState) && (
+                      <div className="mt-2 text-xs font-medium text-amber-800">
+                        Сначала необходимо завершить согласование переноса дат.
+                      </div>
+                    )}
+                    <Button
+                      type="button"
+                      disabled={
+                        isPending
+                        || editingDirty
+                        || !editingStartAvailable
+                        || !['not_required', 'approved'].includes(editingTrip.dateChangeState)
+                      }
+                      onClick={() => setLifecycleConfirmation({ action: 'start', tripId: editingTrip.id })}
+                      className="mt-3 h-11 w-full rounded-xl bg-blue-800 hover:bg-blue-900"
+                    >
+                      {pendingAction === `start:${editingTrip.id}` && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Подтвердить начало рейса
+                    </Button>
+                  </div>
+                )}
+
+                {editingTrip.status === 'in_transit' && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                    <div className="font-semibold">Рейс выполняется</div>
+                    <div className="mt-1 text-amber-900">
+                      {editingTrip.startedAt
+                        ? `Начат ${formatDateTime(editingTrip.startedAt)} · ${editingTrip.startedByName || 'Пользователь'}`
+                        : 'Начало подтверждено в старой версии без записи автора и времени.'}
+                    </div>
+                    <div className="mt-2 text-xs text-amber-800">
+                      {editingEndAvailable
+                        ? 'Плановое время маршрута закончилось. Подтвердите выполнение рейса, чтобы перенести его в историю.'
+                        : 'Подтверждение завершения станет доступно после планового времени последней остановки.'}
+                    </div>
+                    <Button
+                      type="button"
+                      disabled={isPending || editingDirty || !editingEndAvailable}
+                      onClick={() => setLifecycleConfirmation({ action: 'complete', tripId: editingTrip.id })}
+                      className="mt-3 h-11 w-full rounded-xl bg-emerald-700 hover:bg-emerald-800"
+                    >
+                      {pendingAction === `complete:${editingTrip.id}` && <Loader2 className="h-4 w-4 animate-spin" />}
+                      Подтвердить: рейс выполнен
+                    </Button>
+                  </div>
+                )}
+
+                {editingTrip.status === 'completed' && editingTrip.completedAt && (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+                    <div className="font-semibold">Выполнение подтверждено</div>
+                    <div className="mt-1 text-emerald-800">
+                      {formatDateTime(editingTrip.completedAt)} · {editingTrip.completedByName || 'Пользователь'}
+                    </div>
+                  </div>
+                )}
 
                 <Label className="grid gap-1.5 text-sm font-medium text-slate-700">
                   Перевозчик
@@ -1463,18 +1556,6 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
                                     {stop.status === 'arrived' ? 'Остановка выполнена' : 'Машина прибыла'}
                                   </Button>
                                 )}
-                                {editingTrip.status === 'found' && stop.id && !editingDirty && canArrive && (
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={isPending || !['not_required', 'approved'].includes(editingTrip.dateChangeState)}
-                                    onClick={() => changeStopStatus(stop.id as string, 'arrived')}
-                                    className="mt-2 rounded-lg"
-                                  >
-                                    Начать рейс: машина прибыла
-                                  </Button>
-                                )}
                               </div>
                             </div>
                           </li>
@@ -1606,6 +1687,42 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
             >
               {pendingAction?.startsWith('cancel:') && <Loader2 className="h-4 w-4 animate-spin" />}
               Отменить рейс
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={lifecycleConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !isPending) setLifecycleConfirmation(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {lifecycleConfirmation?.action === 'start' ? 'Начать выполнение рейса?' : 'Подтвердить выполнение рейса?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {lifecycleConfirmation?.action === 'start'
+                ? 'Статус изменится на «Выполняется». После этого можно отмечать прибытие и выполнение остановок.'
+                : 'Статус изменится на «Выполнен», потребности будут закрыты, а рейс переместится в историю.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Вернуться</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault()
+                confirmTripLifecycle()
+              }}
+              disabled={isPending}
+              className={lifecycleConfirmation?.action === 'start'
+                ? 'bg-blue-800 text-white hover:bg-blue-900 focus-visible:ring-blue-800'
+                : 'bg-emerald-700 text-white hover:bg-emerald-800 focus-visible:ring-emerald-700'}
+            >
+              {lifecycleConfirmation && pendingAction?.startsWith(`${lifecycleConfirmation.action}:`) && <Loader2 className="h-4 w-4 animate-spin" />}
+              {lifecycleConfirmation?.action === 'start' ? 'Начать рейс' : 'Рейс выполнен'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1890,6 +2007,8 @@ function TripsSection({
   onOpen,
   emptyText,
   collapsible = false,
+  clockNow = null,
+  onLifecycle,
 }: {
   title: string
   description: string
@@ -1897,6 +2016,8 @@ function TripsSection({
   onOpen: (trip: TransportTrip) => void
   emptyText: string
   collapsible?: boolean
+  clockNow?: number | null
+  onLifecycle?: (trip: TransportTrip, action: 'start' | 'complete') => void
 }) {
   const heading = (
     <div className="flex items-end justify-between gap-4">
@@ -1921,6 +2042,10 @@ function TripsSection({
         const stops = operationalStops(trip)
         const nextStop = stops.find((stop) => stop.status !== 'completed')
         const completedStopCount = stops.filter((stop) => stop.status === 'completed').length
+        const canStart = trip.status === 'found'
+          && tripStartAvailable(trip, clockNow)
+          && ['not_required', 'approved'].includes(trip.dateChangeState)
+        const canComplete = trip.status === 'in_transit' && tripEndAvailable(trip, clockNow)
         return (
           <li
             key={trip.id}
@@ -1970,18 +2095,48 @@ function TripsSection({
               </span>
             </div>
 
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={`Открыть рейс ${trip.id.slice(0, 8)}`}
-              onClick={() => onOpen(trip)}
-              className="h-11 w-11 justify-self-end rounded-xl"
-            >
-              {['completed', 'cancelled'].includes(trip.status)
-                ? <ChevronRight className="h-5 w-5" />
-                : <Pencil className="h-4 w-4" />}
-            </Button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {trip.status === 'found' && onLifecycle && (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!canStart}
+                  title={!canStart
+                    ? !['not_required', 'approved'].includes(trip.dateChangeState)
+                      ? 'Ожидается согласование переноса дат'
+                      : 'Запланированное время начала ещё не наступило'
+                    : undefined}
+                  onClick={() => onLifecycle(trip, 'start')}
+                  className="min-h-10 rounded-xl bg-blue-800 px-3 hover:bg-blue-900"
+                >
+                  Начать рейс
+                </Button>
+              )}
+              {trip.status === 'in_transit' && onLifecycle && (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!canComplete}
+                  title={!canComplete ? 'Плановое время завершения ещё не наступило' : undefined}
+                  onClick={() => onLifecycle(trip, 'complete')}
+                  className="min-h-10 rounded-xl bg-emerald-700 px-3 hover:bg-emerald-800"
+                >
+                  Рейс выполнен
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={`Открыть рейс ${trip.id.slice(0, 8)}`}
+                onClick={() => onOpen(trip)}
+                className="h-11 w-11 rounded-xl"
+              >
+                {['completed', 'cancelled'].includes(trip.status)
+                  ? <ChevronRight className="h-5 w-5" />
+                  : <Pencil className="h-4 w-4" />}
+              </Button>
+            </div>
           </li>
         )
       })}
@@ -2007,127 +2162,5 @@ function TripsSection({
 
       {content}
     </section>
-  )
-}
-
-function AgreementsPanel({
-  agreements,
-  suppliers,
-  drafts,
-  pendingAction,
-  onDraftChange,
-  onConfirm,
-}: {
-  agreements: SupplyOutsourcingAgreement[]
-  suppliers: OutsourcingSupplierOption[]
-  drafts: Record<string, AgreementDraft>
-  pendingAction: string | null
-  onDraftChange: (operationId: string, patch: Partial<AgreementDraft>) => void
-  onConfirm: (agreement: SupplyOutsourcingAgreement) => void
-}) {
-  if (agreements.length === 0) return null
-
-  return (
-    <details className="group rounded-3xl border border-slate-200 bg-white shadow-[0_10px_32px_rgba(15,23,42,0.05)]">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-700">
-        <div>
-          <h2 className="font-bold text-slate-950">Согласование аутсорсинга</h2>
-          <p className="mt-1 text-sm text-slate-500">Дата возврата и стоимость услуги внешней компании.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="rounded-full px-3">{agreements.length}</Badge>
-          <ChevronRight className="h-5 w-5 text-slate-400 transition-transform group-open:rotate-90" />
-        </div>
-      </summary>
-
-      <div className="grid gap-3 border-t border-slate-100 p-5">
-        {agreements.map((agreement) => {
-          const draft = drafts[agreement.operation_id]
-          const isSaving = pendingAction === `agreement:${agreement.operation_id}`
-          const companyId = `agreement-company-${agreement.operation_id}`
-          const sendDateId = `agreement-send-${agreement.operation_id}`
-          const returnDateId = `agreement-return-${agreement.operation_id}`
-          const costId = `agreement-cost-${agreement.operation_id}`
-          return (
-            <article key={agreement.operation_id} className="rounded-2xl border border-slate-200 p-4">
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(190px,0.8fr)_150px_150px_150px_auto] xl:items-end">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={agreement.supply_terms_confirmed_at ? 'secondary' : 'outline'}>
-                      {agreement.supply_terms_confirmed_at ? 'Подтверждено' : 'Ожидает'}
-                    </Badge>
-                    <span className="font-semibold text-slate-900">{agreement.machine_name}</span>
-                    <span className="text-sm text-slate-600">{agreement.work_type_name}</span>
-                  </div>
-                  <div className="mt-2 text-sm text-slate-500">
-                    {agreement.source_factory_name || 'Завод не указан'} → {agreement.supplier_name || 'Компания не указана'}
-                  </div>
-                </div>
-                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500" htmlFor={companyId}>
-                  Компания-исполнитель
-                  <Select
-                    value={draft?.supplierId || ''}
-                    onValueChange={(value) => value && onDraftChange(agreement.operation_id, { supplierId: value })}
-                  >
-                    <SelectTrigger id={companyId} className="h-10 w-full rounded-xl">
-                      <SelectValue>
-                        {suppliers.find((supplier) => supplier.id === draft?.supplierId)?.name
-                          || agreement.supplier_name
-                          || 'Выберите компанию'}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {suppliers.map((supplier) => (
-                        <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Label>
-                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500" htmlFor={sendDateId}>
-                  Дата отправки
-                  <Input
-                    id={sendDateId}
-                    type="date"
-                    value={draft?.plannedSendDate || ''}
-                    onChange={(event) => onDraftChange(agreement.operation_id, { plannedSendDate: event.target.value })}
-                    className="h-10 rounded-xl"
-                  />
-                </Label>
-                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500" htmlFor={returnDateId}>
-                  Ожидаемый возврат
-                  <Input
-                    id={returnDateId}
-                    type="date"
-                    value={draft?.plannedReturnDate || ''}
-                    onChange={(event) => onDraftChange(agreement.operation_id, { plannedReturnDate: event.target.value })}
-                    className="h-10 rounded-xl"
-                  />
-                </Label>
-                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500" htmlFor={costId}>
-                  Стоимость услуги
-                  <Input
-                    id={costId}
-                    type="number"
-                    min={0}
-                    value={draft?.serviceCostPlanned || ''}
-                    onChange={(event) => onDraftChange(agreement.operation_id, { serviceCostPlanned: event.target.value })}
-                    className="h-10 rounded-xl"
-                  />
-                </Label>
-                <Button
-                  type="button"
-                  disabled={isSaving || !draft?.supplierId || !draft.plannedSendDate || !draft.plannedReturnDate}
-                  onClick={() => onConfirm(agreement)}
-                  className="h-10 rounded-xl"
-                >
-                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  Сохранить
-                </Button>
-              </div>
-            </article>
-          )
-        })}
-      </div>
-    </details>
   )
 }

@@ -18,12 +18,14 @@ const counts: SidebarWorkQueueCounts = {
     unreadResults: 2,
   },
   transport: 5,
+  outsourcingApprovals: 7,
   materialRequests: 6,
 }
 
 assert.equal(getSidebarWorkQueueCount(ROUTES.REQUESTS, counts), 11)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_DEPARTMENT_REQUESTS, counts), 3)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_TRANSPORT, counts), 5)
+assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_OUTSOURCING_REQUESTS, counts), 7)
 assert.equal(getSidebarWorkQueueCount(ROUTES.MATERIAL_REQUESTS, counts), 6)
 assert.equal(getSidebarWorkQueueCount(ROUTES.DASHBOARD, counts), 0)
 
@@ -45,6 +47,7 @@ const mailBadgeSource = readFileSync(resolve('src/components/features/mail/MailU
 assert.match(sidebarSource, /SIDEBAR_QUEUE_POLL_INTERVAL_MS = 15_000/)
 assert.match(sidebarSource, /setInterval\(\(\) => void refresh\(true\), SIDEBAR_QUEUE_POLL_INTERVAL_MS\)/)
 assert.match(sidebarSource, /table: 'department_requests'/)
+assert.match(sidebarSource, /table: 'machine_outsourcing_operations'/)
 assert.match(sidebarSource, /SUPPLY_OUTSOURCING_REQUESTS, label: 'Согласование аутсорсинга'/)
 assert.match(mailBadgeSource, /useId\(\)/)
 assert.match(mailBadgeSource, /mail_sidebar_count_\$\{channelInstanceId/)

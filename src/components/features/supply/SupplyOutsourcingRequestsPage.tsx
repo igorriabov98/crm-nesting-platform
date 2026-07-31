@@ -17,6 +17,7 @@ import {
   type OutsourcingSupplierOption,
   type SupplyOutsourcingAgreement,
 } from '@/lib/actions/outsourcing'
+import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
 
 type AgreementDraft = {
   supplierId: string
@@ -83,6 +84,7 @@ export function SupplyOutsourcingRequestsPage({
         return
       }
       toast.success('Запрос взят в работу')
+      notifySidebarWorkQueuesChanged()
       router.refresh()
     })
   }
@@ -115,6 +117,7 @@ export function SupplyOutsourcingRequestsPage({
       }
 
       toast.success(agreement.supply_terms_confirmed_at ? 'Условия запроса обновлены' : 'Запрос подтверждён')
+      notifySidebarWorkQueuesChanged()
       router.refresh()
     })
   }
