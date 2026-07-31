@@ -79,6 +79,7 @@ const EMPTY_QUEUE_COUNTS: SidebarWorkQueueCounts = {
     unreadResults: 0,
   },
   transport: 0,
+  outsourcingApprovals: 0,
   materialRequests: 0,
 }
 
@@ -207,6 +208,11 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'department_requests' },
+        refreshAfterMutation,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'machine_outsourcing_operations' },
         refreshAfterMutation,
       )
       .subscribe()

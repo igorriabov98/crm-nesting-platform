@@ -22,6 +22,7 @@ const EMPTY_COUNTS: SidebarWorkQueueCounts = {
     unreadResults: 0,
   },
   transport: 0,
+  outsourcingApprovals: 0,
   materialRequests: 0,
 }
 
@@ -82,17 +83,31 @@ async function loadMaterialRequestCount() {
   return countPendingMaterialRequests(result.data.items)
 }
 
+async function loadOutsourcingApprovalCount() {
+  const { count, error } = await createAdminClient()
+    .from('machine_outsourcing_operations')
+    .select('id', { count: 'exact', head: true })
+    .eq('executor_type', 'supplier')
+    .eq('responsible', 'supply')
+    .is('archived_at', null)
+    .is('actual_returned_at', null)
+    .is('supply_terms_confirmed_at', null)
+    .is('supply_taken_at', null)
+  return error ? 0 : count || 0
+}
+
 export async function getSidebarWorkQueueCounts(): Promise<SidebarWorkQueueCounts> {
   try {
     const context = await requirePermission('department_requests', 'view')
     const permissions = context.permissionDetails.permissions
-    const [departmentRequests, transport, materialRequests] = await Promise.all([
+    const [departmentRequests, transport, outsourcingApprovals, materialRequests] = await Promise.all([
       loadDepartmentRequestCounts(context),
       permissions.supply_transport?.canView ? loadTransportCount() : Promise.resolve(0),
+      permissions.supply_transport?.canView ? loadOutsourcingApprovalCount() : Promise.resolve(0),
       permissions.material_request_queue?.canView ? loadMaterialRequestCount() : Promise.resolve(0),
     ])
 
-    return { departmentRequests, transport, materialRequests }
+    return { departmentRequests, transport, outsourcingApprovals, materialRequests }
   } catch {
     return EMPTY_COUNTS
   }

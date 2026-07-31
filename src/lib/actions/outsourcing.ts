@@ -122,6 +122,10 @@ export type MachineOutsourcingTransportOrder = {
   cancellation_reason?: string | null
   cancelled_at?: string | null
   cancelled_by?: string | null
+  started_at?: string | null
+  started_by?: string | null
+  completed_at?: string | null
+  completed_by?: string | null
 }
 
 export type MachineOutsourcingOperation = {
@@ -2020,6 +2024,10 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
       cancellation_reason: order.cancellation_reason as string | null,
       cancelled_at: order.cancelled_at as string | null,
       cancelled_by: order.cancelled_by as string | null,
+      started_at: order.started_at as string | null,
+      started_by: order.started_by as string | null,
+      completed_at: order.completed_at as string | null,
+      completed_by: order.completed_by as string | null,
       needs: needsByOrder.get(order.id) || [],
     }))
 

@@ -5,7 +5,6 @@ import { z } from 'zod'
 import {
   getOutsourcingTransportWorkspace,
   type OutsourcingSupplierOption,
-  type SupplyOutsourcingAgreement,
   type TransportWorkspaceNeed,
 } from '@/lib/actions/outsourcing'
 import {
@@ -106,6 +105,10 @@ export type TransportTrip = {
   cancellationReason: string | null
   cancelledAt: string | null
   cancelledByName: string | null
+  startedAt: string | null
+  startedByName: string | null
+  completedAt: string | null
+  completedByName: string | null
   dateChangeState: TransportTripDateChangeState
   dateChangeRequests: TransportTripDateChangeRequest[]
   needs: TransportTripNeed[]
@@ -135,8 +138,6 @@ export type TransportWorkspace = {
   needs: UnifiedTransportNeed[]
   trips: TransportTrip[]
   carriers: OutsourcingSupplierOption[]
-  outsourcingSuppliers: OutsourcingSupplierOption[]
-  agreements: SupplyOutsourcingAgreement[]
   errors: Partial<Record<TransportNeedKind | 'trips', string>>
 }
 
@@ -270,6 +271,10 @@ const cancelTripSchema = z.object({
 const updateStopStatusSchema = z.object({
   stopId: z.string().uuid(),
   status: z.enum(['arrived', 'completed']),
+})
+
+const tripLifecycleSchema = z.object({
+  tripId: z.string().uuid(),
 })
 
 function transportDb(value: unknown): TransportDb {
@@ -629,8 +634,8 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
   const actorNames = await loadActorNames(
     db,
     outsourcingResult.data.orders
-      .map((order) => order.cancelled_by || '')
-      .filter(Boolean),
+      .flatMap((order) => [order.cancelled_by, order.started_by, order.completed_by])
+      .filter((id): id is string => Boolean(id)),
   )
 
   const activeLinkedNeeds = new Set(
@@ -717,6 +722,10 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       cancellationReason: order.cancellation_reason || null,
       cancelledAt: order.cancelled_at || null,
       cancelledByName: order.cancelled_by ? actorNames.get(order.cancelled_by) || null : null,
+      startedAt: order.started_at || null,
+      startedByName: order.started_by ? actorNames.get(order.started_by) || null : null,
+      completedAt: order.completed_at || null,
+      completedByName: order.completed_by ? actorNames.get(order.completed_by) || null : null,
       dateChangeState: ((order as typeof order & { date_change_state?: TransportTripDateChangeState }).date_change_state || 'not_required'),
       dateChangeRequests: dateRequestsByTrip.get(order.id) || [],
       needs: tripNeeds,
@@ -735,8 +744,6 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
     needs,
     trips,
     carriers: outsourcingResult.data.carriers,
-    outsourcingSuppliers: outsourcingResult.data.suppliers,
-    agreements: outsourcingResult.data.agreements,
     errors,
   }
 }
@@ -753,8 +760,6 @@ export async function getTransportWorkspace(): Promise<{
         needs: [],
         trips: [],
         carriers: [],
-        outsourcingSuppliers: [],
-        agreements: [],
         errors: {},
       },
       error: getErrorMessage(error),
@@ -763,7 +768,8 @@ export async function getTransportWorkspace(): Promise<{
 }
 
 function revalidateTransportWorkspace() {
-  revalidatePath(ROUTES.SUPPLY_TRANSPORT)
+  // The transport client reloads its workspace state in place after mutations.
+  // Revalidating the current route here would force a visible RSC page refresh.
   revalidatePath(ROUTES.TASKS)
   revalidatePath(ROUTES.PRODUCTION)
   revalidatePath(ROUTES.INVENTORY)
@@ -924,6 +930,38 @@ export async function updateTransportTripStopStatus(input: z.input<typeof update
     return { success: true, error: null }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function startTransportTrip(input: z.input<typeof tripLifecycleSchema>) {
+  try {
+    const parsed = tripLifecycleSchema.parse(input)
+    const { userId } = await requirePermission('supply_transport', 'manage')
+    const { data, error } = await transportDb(createAdminClient()).rpc('fn_start_transport_trip_v1', {
+      p_trip_id: parsed.tripId,
+      p_actor: userId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось начать рейс')
+    revalidateTransportWorkspace()
+    return { success: true, status: String(data) as TransportTripStatus, error: null }
+  } catch (error) {
+    return { success: false, status: null, error: getErrorMessage(error) }
+  }
+}
+
+export async function completeTransportTrip(input: z.input<typeof tripLifecycleSchema>) {
+  try {
+    const parsed = tripLifecycleSchema.parse(input)
+    const { userId } = await requirePermission('supply_transport', 'manage')
+    const { data, error } = await transportDb(createAdminClient()).rpc('fn_complete_transport_trip_v1', {
+      p_trip_id: parsed.tripId,
+      p_actor: userId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось завершить рейс')
+    revalidateTransportWorkspace()
+    return { success: true, status: String(data) as TransportTripStatus, error: null }
+  } catch (error) {
+    return { success: false, status: null, error: getErrorMessage(error) }
   }
 }
 
