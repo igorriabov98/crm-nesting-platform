@@ -256,8 +256,8 @@ jobs:
         run: |
           deployed=""
           for attempt in 1 2 3; do
-            probe="$(curl -fsS -o /dev/null -w '%{http_code} %{url_effective}' https://crm-nesting-platform.vercel.app/api/version || true)"
-            deployed="$(curl -fsS https://crm-nesting-platform.vercel.app/api/version | jq -r '.sha' || true)"
+            probe="$(curl -fsS -o /dev/null -w '%{http_code} %{url_effective}' https://www.crmleda.online/api/version || true)"
+            deployed="$(curl -fsS https://www.crmleda.online/api/version | jq -r '.sha' || true)"
             echo "Vercel version check ${attempt}/3: probe=${probe:-failed} body=${deployed:-missing}"
             if [ "$deployed" = "$GITHUB_SHA" ]; then
               exit 0
