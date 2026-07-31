@@ -7,6 +7,7 @@ import { getDocumentData, type DocumentData } from '@/lib/actions/document-gener
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import { AuthRequiredError } from '@/lib/auth/current-user'
 import { SpecificationDocument } from '@/lib/pdf/SpecificationDocument'
+import { OrderSpecificationDocument } from '@/lib/pdf/OrderSpecificationDocument'
 import { InvoiceDocument } from '@/lib/pdf/InvoiceDocument'
 import { PackingListDocument } from '@/lib/pdf/PackingListDocument'
 import { QualityControlDocument } from '@/lib/pdf/QualityControlDocument'
@@ -15,7 +16,7 @@ export const runtime = 'nodejs'
 
 const requestSchema = z.object({
   machineId: z.string().uuid(),
-  type: z.enum(['specification', 'invoice', 'packing_list', 'quality_control', 'all']),
+  type: z.enum(['specification', 'order_specification', 'invoice', 'packing_list', 'quality_control', 'all']),
 })
 
 type DocumentType = z.infer<typeof requestSchema>['type']
@@ -23,6 +24,7 @@ type PdfComponent = ComponentType<{ data: DocumentData }>
 
 const singleDocuments: Record<Exclude<DocumentType, 'all'>, { component: PdfComponent; fileBase: string }> = {
   specification: { component: SpecificationDocument, fileBase: 'Specification' },
+  order_specification: { component: OrderSpecificationDocument, fileBase: 'OrderSpecification' },
   invoice: { component: InvoiceDocument, fileBase: 'Invoice' },
   packing_list: { component: PackingListDocument, fileBase: 'PackingList' },
   quality_control: { component: QualityControlDocument, fileBase: 'QualityControl' },
@@ -68,14 +70,16 @@ export async function POST(request: Request) {
     const number = safeFilePart(data.machine.specification_number || data.machine.id)
 
     if (parsed.type === 'all') {
-      const [specBuffer, invoiceBuffer, packingBuffer, qualityBuffer] = await Promise.all([
+      const [specBuffer, orderSpecBuffer, invoiceBuffer, packingBuffer, qualityBuffer] = await Promise.all([
         renderPdf(SpecificationDocument, data),
+        renderPdf(OrderSpecificationDocument, data),
         renderPdf(InvoiceDocument, data),
         renderPdf(PackingListDocument, data),
         renderPdf(QualityControlDocument, data),
       ])
       const zip = new JSZip()
       zip.file('Specification.pdf', specBuffer)
+      zip.file('OrderSpecification.pdf', orderSpecBuffer)
       zip.file('Invoice.pdf', invoiceBuffer)
       zip.file('PackingList.pdf', packingBuffer)
       zip.file('QualityControl.pdf', qualityBuffer)

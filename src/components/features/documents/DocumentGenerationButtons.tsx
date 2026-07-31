@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-type DocumentType = "specification" | "invoice" | "packing_list" | "quality_control" | "all"
+type DocumentType = "specification" | "order_specification" | "invoice" | "packing_list" | "quality_control" | "all"
 
 interface DocumentGenerationButtonsProps {
   machineId: string
@@ -28,6 +28,7 @@ const DOCUMENT_OPTIONS: Array<{
   kind: "pdf" | "zip"
 }> = [
   { type: "specification", label: "Specification (PDF)", kind: "pdf" },
+  { type: "order_specification", label: "Спецификация заказа (PDF)", kind: "pdf" },
   { type: "invoice", label: "Invoice (PDF)", kind: "pdf" },
   { type: "packing_list", label: "Packing List (PDF)", kind: "pdf" },
   { type: "quality_control", label: "Контроль качества (PDF)", kind: "pdf" },
@@ -44,6 +45,8 @@ function getFileName(type: DocumentType, documentNumber: string) {
   switch (type) {
     case "specification":
       return `Specification_${safeDocumentNumber}.pdf`
+    case "order_specification":
+      return `OrderSpecification_${safeDocumentNumber}.pdf`
     case "invoice":
       return `Invoice_${safeDocumentNumber}.pdf`
     case "packing_list":
