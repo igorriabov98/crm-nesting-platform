@@ -26,11 +26,24 @@ $$;
 CREATE TYPE public.material_category AS ENUM ('sheet_metal', 'chain_cord', 'knives', 'circle', 'pipe', 'components', 'other');
 CREATE TYPE public.inventory_transaction_type AS ENUM ('receipt', 'reserve', 'unreserve', 'write_off', 'adjustment');
 CREATE TYPE public.stage_type AS ENUM ('cutting', 'welding', 'painting', 'assembly', 'shipping');
+CREATE TYPE public.pipe_subtype AS ENUM ('round', 'square', 'rectangular', 'wire');
+CREATE TYPE public.user_role AS ENUM ('technologist', 'supply_manager', 'procurement_head', 'planning_director', 'financial_director', 'commercial_director');
 
 CREATE TABLE public.factories (id uuid PRIMARY KEY, name text);
 CREATE TABLE public.users (id uuid PRIMARY KEY, is_active boolean NOT NULL DEFAULT true);
 CREATE TABLE public.materials (id uuid PRIMARY KEY, category public.material_category NOT NULL);
-CREATE TABLE public.material_variants (id uuid PRIMARY KEY);
+CREATE TABLE public.material_variants (
+  id uuid PRIMARY KEY,
+  material_id uuid REFERENCES public.materials(id),
+  category public.material_category,
+  diameter_mm numeric,
+  steel_type_id uuid,
+  material_grade text,
+  is_calibrated boolean,
+  pipe_type public.pipe_subtype,
+  piece_description text,
+  wall_thickness_mm numeric
+);
 CREATE TABLE public.machines (
   id uuid PRIMARY KEY,
   factory_id uuid REFERENCES public.factories(id)
@@ -112,6 +125,7 @@ CREATE TABLE public.inventory_reservations (
   consumed_cutting_event_id uuid,
   reservation_source text NOT NULL DEFAULT 'stock',
   supply_order_schedule_id uuid,
+  inventory_transfer_item_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE public.inventory
@@ -131,6 +145,7 @@ CREATE TABLE public.inventory_transactions (
   request_item_table text,
   request_item_id uuid,
   performed_by uuid NOT NULL REFERENCES public.users(id),
+  supplier_id uuid,
   comment text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -143,10 +158,21 @@ CREATE TABLE public.request_sheet_metal (
   reserved_from_stock_kg numeric NOT NULL DEFAULT 0
 );
 CREATE TABLE public.request_round_tube (id uuid PRIMARY KEY, reserved_from_stock_kg numeric NOT NULL DEFAULT 0, reserved_from_stock_m numeric NOT NULL DEFAULT 0);
-CREATE TABLE public.request_circle (id uuid PRIMARY KEY, reserved_from_stock_mm numeric NOT NULL DEFAULT 0);
+CREATE TABLE public.request_circle (
+  id uuid PRIMARY KEY,
+  reserved_from_stock_mm numeric NOT NULL DEFAULT 0,
+  diameter_mm numeric,
+  steel_type_id uuid,
+  steel_grade text,
+  is_calibrated boolean NOT NULL DEFAULT false
+);
 CREATE TABLE public.request_pipe (
   id uuid PRIMARY KEY,
-  pipe_type text NOT NULL,
+  pipe_type public.pipe_subtype NOT NULL,
+  size text,
+  wall_thickness_mm numeric,
+  diameter_mm numeric,
+  steel_type_id uuid,
   reserved_from_stock_length_mm numeric NOT NULL DEFAULT 0,
   reserved_from_stock_qty numeric NOT NULL DEFAULT 0,
   reserved_from_stock_kg numeric NOT NULL DEFAULT 0
@@ -216,6 +242,36 @@ CREATE TABLE public.supply_order_delivery_schedules (
 ALTER TABLE public.inventory_reservations
   ADD CONSTRAINT inventory_reservation_supply_schedule_fk
   FOREIGN KEY (supply_order_schedule_id) REFERENCES public.supply_order_delivery_schedules(id) ON DELETE SET NULL;
+
+CREATE TABLE public.inventory_transfer_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  requested_quantity numeric NOT NULL DEFAULT 0,
+  received_quantity numeric NOT NULL DEFAULT 0
+);
+
+CREATE OR REPLACE FUNCTION public.inventory_transfer_assert_actor(
+  p_actor uuid,
+  p_roles public.user_role[]
+) RETURNS void LANGUAGE plpgsql AS $$ BEGIN RETURN; END; $$;
+
+CREATE OR REPLACE FUNCTION public.inventory_attach_reservation_to_transfer(
+  p_reservation_id uuid,
+  p_destination_factory_id uuid,
+  p_actor uuid
+) RETURNS uuid LANGUAGE plpgsql AS $$
+DECLARE v_item_id uuid;
+BEGIN
+  INSERT INTO public.inventory_transfer_items (requested_quantity)
+  SELECT reserved_quantity
+  FROM public.inventory_reservations
+  WHERE id = p_reservation_id
+  RETURNING id INTO v_item_id;
+  UPDATE public.inventory_reservations
+  SET inventory_transfer_item_id = v_item_id
+  WHERE id = p_reservation_id;
+  RETURN v_item_id;
+END;
+$$;
 CREATE UNIQUE INDEX inventory_reservation_supply_schedule_idx
   ON public.inventory_reservations(supply_order_schedule_id)
   WHERE supply_order_schedule_id IS NOT NULL;

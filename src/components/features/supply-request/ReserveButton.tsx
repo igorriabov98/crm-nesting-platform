@@ -174,9 +174,10 @@ function formatPieceLength(value: number | null) {
 
 function formatStockItemOption(item: SupplyStockItem, fallbackUnit: string) {
   const prefix = item.is_business_scrap ? 'Отход ' : ''
+  const legacy = item.is_legacy_bar_stock ? 'Старый количественный остаток ' : ''
   const piece = item.piece_length_mm !== null ? `${formatPieceLength(item.piece_length_mm)} ` : ''
   const label = item.label ? `${item.label} ` : ''
-  return `${item.factory_name}: ${prefix}${piece}${label}(${formatStockQuantity(item.available_quantity, item.unit || fallbackUnit, item.available_secondary_quantity, item.secondary_unit)})`
+  return `${item.factory_name}: ${prefix}${legacy}${piece}${label}(${formatStockQuantity(item.available_quantity, item.unit || fallbackUnit, item.available_secondary_quantity, item.secondary_unit)})`
 }
 
 function formatStockQuantity(quantity: number, unit: string, secondaryQuantity: number | null, secondaryUnit: string | null) {

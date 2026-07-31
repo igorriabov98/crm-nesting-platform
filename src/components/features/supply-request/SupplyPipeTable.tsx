@@ -60,13 +60,20 @@ export function SupplyPipeTable({ rows, machineId, canManageOrders = true }: Pro
 
 function stockBreakdown(items: SupplyRequestRow<RequestPipe>['stock_items'], fallbackUnit: string) {
   const lengthItems = items.filter((item) => item.piece_length_mm !== null && Number(item.available_quantity || 0) > 0)
-  if (lengthItems.length === 0) return null
+  const legacyItems = items.filter((item) => item.is_legacy_bar_stock && Number(item.available_quantity || 0) > 0)
+  if (lengthItems.length === 0 && legacyItems.length === 0) return null
   return (
     <div className="space-y-1">
       {lengthItems.map((item) => (
         <div key={item.id} className="whitespace-nowrap">
           {item.is_business_scrap && <span className="mr-1 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Отход</span>}
           {formatPieceLength(item.piece_length_mm)}: {formatStockQuantity(item.available_quantity, item.unit || fallbackUnit, item.available_secondary_quantity, item.secondary_unit)}
+        </div>
+      ))}
+      {legacyItems.map((item) => (
+        <div key={item.id} className="whitespace-nowrap">
+          <span className="mr-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">Старый количественный остаток</span>
+          {formatStockQuantity(item.available_quantity, item.unit || fallbackUnit, item.available_secondary_quantity, item.secondary_unit)}
         </div>
       ))}
     </div>

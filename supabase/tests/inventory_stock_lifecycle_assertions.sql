@@ -841,4 +841,326 @@ BEGIN
 END;
 $$;
 
+DO $$
+DECLARE
+  v_user uuid := '70000000-0000-0000-0000-000000000001';
+  v_factory uuid := '70000000-0000-0000-0000-000000000002';
+  v_material uuid := '70000000-0000-0000-0000-000000000003';
+  v_variant uuid := '70000000-0000-0000-0000-000000000004';
+  v_machine uuid := '70000000-0000-0000-0000-000000000005';
+  v_request uuid := '70000000-0000-0000-0000-000000000006';
+  v_item uuid := '70000000-0000-0000-0000-000000000007';
+  v_inventory uuid := '70000000-0000-0000-0000-000000000008';
+  v_steel uuid := '70000000-0000-0000-0000-000000000009';
+  v_reservation uuid;
+  v_scrap uuid;
+  v_value numeric;
+BEGIN
+  INSERT INTO public.factories (id, name) VALUES (v_factory, 'Whole bar circle factory');
+  INSERT INTO public.users (id) VALUES (v_user);
+  INSERT INTO public.materials (id, category) VALUES (v_material, 'circle');
+  INSERT INTO public.material_variants (
+    id, material_id, category, diameter_mm, steel_type_id, material_grade, is_calibrated
+  ) VALUES (
+    v_variant, v_material, 'circle', 40, v_steel, '40Х', true
+  );
+  INSERT INTO public.machines (id, factory_id) VALUES (v_machine, v_factory);
+  INSERT INTO public.technologist_requests (id, machine_id) VALUES (v_request, v_machine);
+  INSERT INTO public.request_circle (
+    id, request_id, material_id, material_variant_id,
+    diameter_mm, steel_type_id, steel_grade, is_calibrated
+  ) VALUES (
+    v_item, v_request, v_material, v_variant,
+    40, v_steel, '40Х', true
+  );
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, unit, total_secondary_quantity, secondary_unit, last_updated_by
+  ) VALUES (
+    v_inventory, v_factory, v_material, v_variant, 6000,
+    12000, 'мм', 2, 'шт', v_user
+  );
+
+  SELECT public.fn_reserve_whole_bar_inventory_row_for_machine(
+    v_inventory, v_machine, 2000, 'request_circle', v_item, v_user
+  ) INTO v_reservation;
+
+  SELECT reserved_quantity INTO v_value
+  FROM public.inventory_reservations WHERE id = v_reservation;
+  PERFORM public.test_assert_numeric(v_value, 6000, 'circle 2000 need reserves one physical 6000 bar');
+  SELECT logical_reserved_quantity INTO v_value
+  FROM public.inventory_reservations WHERE id = v_reservation;
+  PERFORM public.test_assert_numeric(v_value, 2000, 'circle reservation preserves logical 2000 need');
+  SELECT reserved_secondary_quantity INTO v_value
+  FROM public.inventory_reservations WHERE id = v_reservation;
+  PERFORM public.test_assert_numeric(v_value, 1, 'circle reservation locks one physical bar');
+  SELECT business_scrap_inventory_id INTO v_scrap
+  FROM public.inventory_reservations WHERE id = v_reservation;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory
+    WHERE id = v_scrap
+      AND total_quantity = 4000
+      AND business_scrap_state = 'future'
+      AND source_machine_id = v_machine
+  ) THEN
+    RAISE EXCEPTION 'circle 4000 future business scrap was not created with provenance';
+  END IF;
+  SELECT reserved_from_stock_mm INTO v_value FROM public.request_circle WHERE id = v_item;
+  PERFORM public.test_assert_numeric(v_value, 2000, 'circle request mirror uses logical reservation');
+
+  PERFORM public.fn_unreserve_inventory_reservation(v_reservation, v_user, 'whole bar lifecycle test');
+  SELECT reserved_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 0, 'unreserve releases the full physical circle bar');
+  IF NOT EXISTS (SELECT 1 FROM public.inventory WHERE id = v_scrap AND deleted_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'unreserve did not archive untouched future circle scrap';
+  END IF;
+END;
+$$;
+
+DO $$
+DECLARE
+  v_user uuid := '71000000-0000-0000-0000-000000000001';
+  v_factory uuid := '71000000-0000-0000-0000-000000000002';
+  v_material uuid := '71000000-0000-0000-0000-000000000003';
+  v_variant uuid := '71000000-0000-0000-0000-000000000004';
+  v_machine uuid := '71000000-0000-0000-0000-000000000005';
+  v_request uuid := '71000000-0000-0000-0000-000000000006';
+  v_item uuid := '71000000-0000-0000-0000-000000000007';
+  v_inventory uuid := '71000000-0000-0000-0000-000000000008';
+  v_steel uuid := '71000000-0000-0000-0000-000000000009';
+  v_section uuid := '71000000-0000-0000-0000-00000000000a';
+  v_fact uuid := '71000000-0000-0000-0000-00000000000b';
+  v_reservation uuid;
+  v_scrap uuid;
+  v_value numeric;
+BEGIN
+  INSERT INTO public.factories (id, name) VALUES (v_factory, 'Whole bar pipe factory');
+  INSERT INTO public.users (id) VALUES (v_user);
+  INSERT INTO public.materials (id, category) VALUES (v_material, 'pipe');
+  INSERT INTO public.material_variants (
+    id, material_id, category, pipe_type, piece_description,
+    wall_thickness_mm, diameter_mm, steel_type_id
+  ) VALUES (
+    v_variant, v_material, 'pipe', 'round', '60', 4, 60, v_steel
+  );
+  INSERT INTO public.machines (id, factory_id) VALUES (v_machine, v_factory);
+  INSERT INTO public.technologist_requests (id, machine_id) VALUES (v_request, v_machine);
+  INSERT INTO public.request_pipe (
+    id, request_id, material_id, material_variant_id, pipe_type,
+    size, wall_thickness_mm, diameter_mm, steel_type_id
+  ) VALUES (
+    v_item, v_request, v_material, v_variant, 'round',
+    '60', 4, 60, v_steel
+  );
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, unit, total_secondary_quantity, secondary_unit, last_updated_by
+  ) VALUES (
+    v_inventory, v_factory, v_material, v_variant, 6000,
+    12000, 'мм', 2, 'шт', v_user
+  );
+  INSERT INTO public.production_stages (machine_id, stage_type, updated_by)
+  VALUES (v_machine, 'cutting', v_user);
+
+  SELECT public.fn_reserve_whole_bar_inventory_row_for_machine(
+    v_inventory, v_machine, 8000, 'request_pipe', v_item, v_user
+  ) INTO v_reservation;
+  SELECT business_scrap_inventory_id INTO v_scrap
+  FROM public.inventory_reservations WHERE id = v_reservation;
+  SELECT reserved_quantity INTO v_value
+  FROM public.inventory_reservations WHERE id = v_reservation;
+  PERFORM public.test_assert_numeric(v_value, 12000, 'pipe 8000 need reserves two physical 6000 bars');
+  SELECT logical_reserved_quantity INTO v_value
+  FROM public.inventory_reservations WHERE id = v_reservation;
+  PERFORM public.test_assert_numeric(v_value, 8000, 'pipe reservation preserves logical 8000 need');
+  IF NOT EXISTS (
+    SELECT 1 FROM public.inventory
+    WHERE id = v_scrap AND total_quantity = 4000 AND business_scrap_state = 'future'
+  ) THEN
+    RAISE EXCEPTION 'pipe 4000 future business scrap was not created';
+  END IF;
+
+  INSERT INTO public.production_fact_sections (id, production_stage_type)
+  VALUES (v_section, 'cutting');
+  INSERT INTO public.production_machine_facts (id, machine_id, section_id, fact_date)
+  VALUES (v_fact, v_machine, v_section, '2026-07-31');
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 0, 'pipe cutting removes both physical bars from source stock');
+  IF NOT EXISTS (SELECT 1 FROM public.inventory WHERE id = v_scrap AND business_scrap_state = 'available') THEN
+    RAISE EXCEPTION 'pipe future scrap did not become available on cutting fact';
+  END IF;
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine AND transaction_type = 'write_off' AND quantity = -8000;
+  PERFORM public.test_assert_numeric(v_value, 1, 'pipe production consumption records only logical 8000 need');
+
+  PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+  SELECT count(*) INTO v_value
+  FROM public.inventory_transactions
+  WHERE machine_id = v_machine AND transaction_type = 'write_off';
+  PERFORM public.test_assert_numeric(v_value, 1, 'repeated pipe cutting fact is idempotent');
+
+  PERFORM public.fn_apply_production_cutting_rollback(v_machine, NULL, v_user, 'pipe whole bar rollback');
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 12000, 'pipe rollback restores both physical bars');
+  IF NOT EXISTS (SELECT 1 FROM public.inventory WHERE id = v_scrap AND business_scrap_state = 'future') THEN
+    RAISE EXCEPTION 'pipe rollback did not return scrap to future state';
+  END IF;
+END;
+$$;
+
+DO $$
+DECLARE
+  v_user uuid := '72000000-0000-0000-0000-000000000001';
+  v_factory uuid := '72000000-0000-0000-0000-000000000002';
+  v_material uuid := '72000000-0000-0000-0000-000000000003';
+  v_variant uuid := '72000000-0000-0000-0000-000000000004';
+  v_machine uuid := '72000000-0000-0000-0000-000000000005';
+  v_request uuid := '72000000-0000-0000-0000-000000000006';
+  v_item uuid := '72000000-0000-0000-0000-000000000007';
+  v_inventory uuid := '72000000-0000-0000-0000-000000000008';
+  v_reservation uuid;
+  v_value numeric;
+BEGIN
+  INSERT INTO public.factories (id, name) VALUES (v_factory, 'Exact whole bar factory');
+  INSERT INTO public.users (id) VALUES (v_user);
+  INSERT INTO public.materials (id, category) VALUES (v_material, 'circle');
+  INSERT INTO public.material_variants (id, material_id, category, diameter_mm)
+  VALUES (v_variant, v_material, 'circle', 20);
+  INSERT INTO public.machines (id, factory_id) VALUES (v_machine, v_factory);
+  INSERT INTO public.technologist_requests (id, machine_id) VALUES (v_request, v_machine);
+  INSERT INTO public.request_circle (id, request_id, material_id, material_variant_id, diameter_mm)
+  VALUES (v_item, v_request, v_material, v_variant, 20);
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, unit, total_secondary_quantity, secondary_unit, last_updated_by
+  ) VALUES (
+    v_inventory, v_factory, v_material, v_variant, 6000,
+    6000, 'мм', 1, 'шт', v_user
+  );
+
+  BEGIN
+    PERFORM public.fn_add_inventory_receipt(
+      v_material, 6000, 'мм', v_user, 'invalid legacy circle receipt',
+      NULL, NULL, NULL, v_variant, NULL, v_factory
+    );
+    RAISE EXCEPTION 'new circle receipt without whole-bar parameters was unexpectedly allowed';
+  EXCEPTION
+    WHEN raise_exception THEN
+      IF SQLERRM = 'new circle receipt without whole-bar parameters was unexpectedly allowed' THEN
+        RAISE;
+      END IF;
+      IF position('приход задаётся длиной хлыста' IN SQLERRM) = 0 THEN
+        RAISE;
+      END IF;
+  END;
+
+  SELECT public.fn_reserve_whole_bar_inventory_row_for_machine(
+    v_inventory, v_machine, 6000, 'request_circle', v_item, v_user
+  ) INTO v_reservation;
+  SELECT count(*) INTO v_value
+  FROM public.inventory
+  WHERE source_reservation_id = v_reservation AND is_business_scrap = true AND deleted_at IS NULL;
+  PERFORM public.test_assert_numeric(v_value, 0, 'exact whole-bar consumption creates no business scrap');
+END;
+$$;
+
+DO $$
+DECLARE
+  v_user uuid := '73000000-0000-0000-0000-000000000001';
+  v_factory uuid := '73000000-0000-0000-0000-000000000002';
+  v_material uuid := '73000000-0000-0000-0000-000000000003';
+  v_variant uuid := '73000000-0000-0000-0000-000000000004';
+  v_inventory uuid;
+  v_value numeric;
+BEGIN
+  INSERT INTO public.factories (id, name) VALUES (v_factory, 'Wire legacy factory');
+  INSERT INTO public.users (id) VALUES (v_user);
+  INSERT INTO public.materials (id, category) VALUES (v_material, 'pipe');
+  INSERT INTO public.material_variants (id, material_id, category, pipe_type, diameter_mm)
+  VALUES (v_variant, v_material, 'pipe', 'wire', 2);
+
+  SELECT public.fn_add_inventory_receipt(
+    v_material, 25, 'кг', v_user, 'wire remains quantitative',
+    NULL, NULL, NULL, v_variant, NULL, v_factory
+  ) INTO v_inventory;
+  SELECT total_quantity INTO v_value FROM public.inventory WHERE id = v_inventory;
+  PERFORM public.test_assert_numeric(v_value, 25, 'wire receipt remains quantitative in kilograms');
+  IF EXISTS (SELECT 1 FROM public.inventory WHERE id = v_inventory AND piece_length_mm IS NOT NULL) THEN
+    RAISE EXCEPTION 'wire receipt unexpectedly created a whole-bar stock row';
+  END IF;
+END;
+$$;
+
+DO $$
+DECLARE
+  v_user uuid := '74000000-0000-0000-0000-000000000001';
+  v_source_factory uuid := '74000000-0000-0000-0000-000000000002';
+  v_destination_factory uuid := '74000000-0000-0000-0000-000000000003';
+  v_material uuid := '74000000-0000-0000-0000-000000000004';
+  v_variant uuid := '74000000-0000-0000-0000-000000000005';
+  v_machine uuid := '74000000-0000-0000-0000-000000000006';
+  v_request uuid := '74000000-0000-0000-0000-000000000007';
+  v_item uuid := '74000000-0000-0000-0000-000000000008';
+  v_inventory uuid := '74000000-0000-0000-0000-000000000009';
+  v_section uuid := '74000000-0000-0000-0000-00000000000a';
+  v_fact uuid := '74000000-0000-0000-0000-00000000000b';
+  v_reservation uuid;
+  v_transfer_item uuid;
+  v_value numeric;
+BEGIN
+  INSERT INTO public.factories (id, name) VALUES
+    (v_source_factory, 'Whole bar transfer source'),
+    (v_destination_factory, 'Whole bar transfer destination');
+  INSERT INTO public.users (id) VALUES (v_user);
+  INSERT INTO public.materials (id, category) VALUES (v_material, 'circle');
+  INSERT INTO public.material_variants (id, material_id, category, diameter_mm)
+  VALUES (v_variant, v_material, 'circle', 30);
+  INSERT INTO public.machines (id, factory_id) VALUES (v_machine, v_destination_factory);
+  INSERT INTO public.technologist_requests (id, machine_id) VALUES (v_request, v_machine);
+  INSERT INTO public.request_circle (id, request_id, material_id, material_variant_id, diameter_mm)
+  VALUES (v_item, v_request, v_material, v_variant, 30);
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, unit, total_secondary_quantity, secondary_unit, last_updated_by
+  ) VALUES (
+    v_inventory, v_source_factory, v_material, v_variant, 6000,
+    6000, 'мм', 1, 'шт', v_user
+  );
+
+  SELECT public.fn_reserve_whole_bar_inventory_row_for_machine_transfer(
+    v_inventory, v_machine, 2000, 'request_circle', v_item, v_user
+  ) INTO v_reservation;
+  SELECT inventory_transfer_item_id INTO v_transfer_item
+  FROM public.inventory_reservations WHERE id = v_reservation;
+  SELECT requested_quantity INTO v_value
+  FROM public.inventory_transfer_items WHERE id = v_transfer_item;
+  PERFORM public.test_assert_numeric(v_value, 6000, 'transfer stores full physical whole-bar length');
+  SELECT logical_requested_quantity INTO v_value
+  FROM public.inventory_transfer_items WHERE id = v_transfer_item;
+  PERFORM public.test_assert_numeric(v_value, 2000, 'transfer stores logical machine need separately');
+
+  INSERT INTO public.production_stages (machine_id, stage_type, updated_by)
+  VALUES (v_machine, 'cutting', v_user);
+  INSERT INTO public.production_fact_sections (id, production_stage_type)
+  VALUES (v_section, 'cutting');
+  INSERT INTO public.production_machine_facts (id, machine_id, section_id, fact_date)
+  VALUES (v_fact, v_machine, v_section, '2026-07-31');
+  BEGIN
+    PERFORM public.fn_apply_production_fact_cutting(v_fact, v_user);
+    RAISE EXCEPTION 'cutting fact was unexpectedly allowed before whole-bar transfer receipt';
+  EXCEPTION
+    WHEN raise_exception THEN
+      IF SQLERRM = 'cutting fact was unexpectedly allowed before whole-bar transfer receipt' THEN
+        RAISE;
+      END IF;
+      IF position('до полной приёмки межзаводской перевозки' IN SQLERRM) = 0 THEN
+        RAISE;
+      END IF;
+  END;
+END;
+$$;
+
 SELECT 'inventory_stock_lifecycle_ok' AS result;

@@ -154,6 +154,15 @@ export type InventoryWithMaterial = Inventory & {
     secondary_quantity: number | null
     created_at: string
   }>
+  active_whole_bar_reservations: Array<{
+    id: string
+    machine_id: string
+    machine_name: string
+    physical_quantity: number
+    logical_quantity: number
+    piece_count: number | null
+    created_at: string
+  }>
 }
 
 export type InventoryFactory = Pick<Factory, 'id' | 'name'>
@@ -276,21 +285,29 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
     for (const supplier of (suppliersData || []) as { id: string; name: string }[]) supplierMap.set(supplier.id, supplier.name)
   }
   const inventoryIds = rows.map((row) => row.id)
-  const activeCutReservations: Array<Pick<
+  type ActivePieceReservation = Pick<
     InventoryReservation,
     'id' | 'inventory_id' | 'source_inventory_id' | 'machine_id' | 'request_item_table' | 'request_item_id' | 'reserved_quantity' | 'reserved_secondary_quantity' | 'created_at'
-  >> = []
+  > & {
+    is_cut_reservation: boolean
+    reservation_source: string
+    logical_reserved_quantity: number | null
+  }
+  const activePieceReservations: ActivePieceReservation[] = []
   if (inventoryIds.length) {
     const ids = inventoryIds.join(',')
     const { data: reservationData, error: reservationError } = await db
       .from('inventory_reservations')
-      .select('id, inventory_id, source_inventory_id, machine_id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity, created_at')
-      .eq('is_cut_reservation', true)
+      .select('id, inventory_id, source_inventory_id, machine_id, request_item_table, request_item_id, reserved_quantity, logical_reserved_quantity, reserved_secondary_quantity, is_cut_reservation, reservation_source, created_at')
       .is('consumed_at', null)
       .or(`source_inventory_id.in.(${ids}),inventory_id.in.(${ids})`)
     if (reservationError) throw new Error(reservationError.message || 'Не удалось загрузить активные мерные бронирования')
-    activeCutReservations.push(...((reservationData || []) as typeof activeCutReservations))
+    activePieceReservations.push(...((reservationData || []) as ActivePieceReservation[]).filter((reservation) => (
+      reservation.is_cut_reservation || reservation.reservation_source === 'whole_bar_stock'
+    )))
   }
+  const activeCutReservations = activePieceReservations.filter((reservation) => reservation.is_cut_reservation)
+  const activeWholeBarReservations = activePieceReservations.filter((reservation) => reservation.reservation_source === 'whole_bar_stock')
   const transactionMachineByInventory = new Map<string, string>()
   const scrapIdsWithoutMachine = rows
     .filter((row) => row.is_business_scrap && !row.source_machine_id)
@@ -311,6 +328,7 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
     ...rows.map((row) => row.source_machine_id).filter(Boolean),
     ...Array.from(transactionMachineByInventory.values()),
     ...activeCutReservations.map((reservation) => reservation.machine_id),
+    ...activeWholeBarReservations.map((reservation) => reservation.machine_id),
   ])) as string[]
   const sourceMachineMap = new Map<string, string>()
   if (sourceMachineIds.length) {
@@ -331,6 +349,18 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
     activeCutByInventory.set(inventoryId, current)
   }
   const requestItemWeightMap = await loadRequestItemWeightMap(db, activeCutReservations)
+
+  const activeWholeBarByInventory = new Map<string, ActivePieceReservation[]>()
+  for (const reservation of activeWholeBarReservations) {
+    const inventoryId = reservation.source_inventory_id && inventoryIdSet.has(reservation.source_inventory_id)
+      ? reservation.source_inventory_id
+      : reservation.inventory_id
+    if (!inventoryIdSet.has(inventoryId)) continue
+    activeWholeBarByInventory.set(inventoryId, [
+      ...(activeWholeBarByInventory.get(inventoryId) || []),
+      reservation,
+    ])
+  }
 
   return rows.map((row) => {
     const material = materialMap.get(row.material_id) || null
@@ -378,6 +408,17 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
         machine_name: sourceMachineMap.get(reservation.machine_id) || 'Машина',
         quantity: Number(reservation.reserved_quantity || 0),
         secondary_quantity: reservation.reserved_secondary_quantity === null
+          ? null
+          : Number(reservation.reserved_secondary_quantity || 0),
+        created_at: reservation.created_at,
+      })),
+      active_whole_bar_reservations: (activeWholeBarByInventory.get(row.id) || []).map((reservation) => ({
+        id: reservation.id,
+        machine_id: reservation.machine_id,
+        machine_name: sourceMachineMap.get(reservation.machine_id) || 'Машина',
+        physical_quantity: Number(reservation.reserved_quantity || 0),
+        logical_quantity: Number(reservation.logical_reserved_quantity ?? reservation.reserved_quantity ?? 0),
+        piece_count: reservation.reserved_secondary_quantity === null
           ? null
           : Number(reservation.reserved_secondary_quantity || 0),
         created_at: reservation.created_at,
@@ -506,10 +547,43 @@ export async function addReceipt(data: {
   try {
     const { db, userId } = await requireAccess('manage')
     if (!data.factory_id) throw new Error('Выберите завод склада')
+    const { data: rawMaterialData, error: materialError } = await db
+      .from('materials')
+      .select('category')
+      .eq('id', data.material_id)
+      .maybeSingle()
+    const materialData = rawMaterialData as { category?: MaterialCategory } | null
+    if (materialError || !materialData?.category) throw new Error(materialError?.message || 'Материал прихода не найден')
+
+    let pipeType: string | null = null
+    if (materialData.category === 'circle' || materialData.category === 'pipe') {
+      if (!data.material_variant_id) throw new Error('Для круга и трубы выберите точную характеристику')
+      const { data: rawVariantData, error: variantError } = await db
+        .from('material_variants')
+        .select('pipe_type')
+        .eq('id', data.material_variant_id)
+        .eq('material_id', data.material_id)
+        .maybeSingle()
+      const variantData = rawVariantData as { pipe_type?: string | null } | null
+      if (variantError || !variantData) throw new Error(variantError?.message || 'Характеристика материала не найдена')
+      pipeType = variantData.pipe_type ?? null
+    }
+
+    const isWholeBarReceipt = materialData.category === 'circle'
+      || (materialData.category === 'pipe' && pipeType !== 'wire')
+    let receiptQuantity = Number(data.quantity)
+    if (isWholeBarReceipt) {
+      const pieceLength = Number(data.piece_length_mm || 0)
+      const pieceCount = Number(data.secondary_quantity || 0)
+      if (pieceLength <= 0 || pieceCount <= 0 || !Number.isInteger(pieceCount)) {
+        throw new Error('Для круга и непроволочной трубы укажите длину хлыста и целое количество штук')
+      }
+      receiptQuantity = pieceLength * pieceCount
+    }
     const { error } = await db.rpc('fn_add_inventory_receipt', {
       p_factory_id: data.factory_id,
       p_material_id: data.material_id,
-      p_quantity: Number(data.quantity),
+      p_quantity: receiptQuantity,
       p_unit: data.unit || 'кг',
       p_performed_by: userId,
       p_comment: data.comment || null,
@@ -555,11 +629,30 @@ export async function reserveForMachine(data: {
   request_item_id: string
   secondary_quantity?: number | null
   use_cut_reservation?: boolean
+  use_whole_bar_reservation?: boolean
   use_inventory_transfer?: boolean
 }): Promise<ActionResult> {
   try {
     const { db, userId } = await requireAccess('manage')
-    const { error } = data.inventory_id && data.use_inventory_transfer
+    const { error } = data.inventory_id && data.use_whole_bar_reservation && data.use_inventory_transfer
+      ? await db.rpc('fn_reserve_whole_bar_inventory_row_for_machine_transfer', {
+          p_inventory_id: data.inventory_id,
+          p_machine_id: data.machine_id,
+          p_logical_quantity: Number(data.quantity),
+          p_request_item_table: data.request_item_table,
+          p_request_item_id: data.request_item_id,
+          p_reserved_by: userId,
+        })
+      : data.inventory_id && data.use_whole_bar_reservation
+        ? await db.rpc('fn_reserve_whole_bar_inventory_row_for_machine', {
+            p_inventory_id: data.inventory_id,
+            p_machine_id: data.machine_id,
+            p_logical_quantity: Number(data.quantity),
+            p_request_item_table: data.request_item_table,
+            p_request_item_id: data.request_item_id,
+            p_reserved_by: userId,
+          })
+        : data.inventory_id && data.use_inventory_transfer
       ? await db.rpc('fn_reserve_inventory_row_for_machine_transfer', {
           p_inventory_id: data.inventory_id,
           p_machine_id: data.machine_id,
