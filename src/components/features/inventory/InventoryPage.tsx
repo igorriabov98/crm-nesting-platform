@@ -611,6 +611,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                 <tr
                   key={row.id}
                   className={row.active_cut_reservations.length > 0
+                    || row.active_whole_bar_reservations.length > 0
                     ? 'bg-blue-50/70'
                     : row.available_quantity <= 0
                       ? 'bg-red-50/60'
@@ -640,6 +641,22 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                         )}
                       </div>
                     ))}
+                    {row.active_whole_bar_reservations.map((reservation) => (
+                      <div key={reservation.id} className="mt-1 text-xs font-semibold text-blue-700">
+                        Целые хлысты для {reservation.machine_name}: {quantityText(
+                          reservation.physical_quantity,
+                          row.unit,
+                          reservation.piece_count,
+                          row.secondary_unit,
+                        )} · потребность {formatAmount(reservation.logical_quantity)} {row.unit}
+                      </div>
+                    ))}
+                    {(row.material?.category === 'circle' || (row.material?.category === 'pipe' && row.variant?.pipe_type !== 'wire'))
+                      && !row.piece_length_mm && (
+                      <div className="mt-1 text-xs font-normal text-slate-600">
+                        Старый количественный остаток
+                      </div>
+                    )}
                     {row.is_legacy_variant && (
                       <div className="mt-1 text-xs font-normal text-amber-700">
                         Остаток без привязки к характеристикам
@@ -989,7 +1006,7 @@ function getUnitsForReceipt(category: MaterialCategory, variant: MaterialVariant
 }
 
 function receiptNeedsPieceLength(category: MaterialCategory, variant: MaterialVariant | null) {
-  return (category === 'pipe' && variant?.pipe_type !== 'wire') || category === 'knives'
+  return (category === 'pipe' && variant?.pipe_type !== 'wire') || category === 'knives' || category === 'circle'
 }
 
 function needsReceiptSteelType(category: MaterialCategory, variant: MaterialVariant | null) {
@@ -1002,12 +1019,13 @@ function needsReceiptUnitWeight(category: MaterialCategory) {
 }
 
 function receiptAutoCalculatesPieces(category: MaterialCategory, variant: MaterialVariant | null) {
-  return (category === 'pipe' && variant?.pipe_type !== 'wire') || category === 'knives'
+  return (category === 'pipe' && variant?.pipe_type !== 'wire') || category === 'knives' || category === 'circle'
 }
 
 function receiptQuantityLabel(category: MaterialCategory, variant: MaterialVariant | null) {
   if (category === 'pipe' && variant?.pipe_type !== 'wire') return 'Приход, длина мм'
   if (category === 'knives') return 'Приход, длина мм'
+  if (category === 'circle') return 'Приход, длина мм'
   return `Приход, ${getUnitsForReceipt(category, variant).primary}`
 }
 
@@ -1108,7 +1126,7 @@ function inventoryCharacteristicsSummary(row: InventoryWithMaterial, steelTypes:
   if (!category) return '—'
   if (!variant) return legacyCharacteristicsText(row)
   const values = characteristicFields(category, variant, steelTypes).map((field) => String(field.value))
-  if ((category === 'pipe' || category === 'knives') && row.piece_length_mm !== null && row.piece_length_mm !== undefined) {
+  if ((category === 'pipe' || category === 'knives' || category === 'circle') && row.piece_length_mm !== null && row.piece_length_mm !== undefined) {
     values.push(`Длина куска: ${formatAmount(row.piece_length_mm)} мм`)
   }
   if (values.length) return values.join(', ')

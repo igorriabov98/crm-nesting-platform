@@ -86,6 +86,7 @@ type RawOrderItem = {
   delivered_at: string | null
   calculated_weight_kg: number | null
   selected_piece_length_mm: number | null
+  pipe_type: string | null
 }
 
 export type SupplyOrderDeliverySchedule = {
@@ -306,6 +307,7 @@ export type MaterialReceivingItem = {
   supplier_id: string | null
   supplier_name: string | null
   category: MaterialCategory
+  is_whole_bar: boolean
   item_name: string
   material_id: string | null
   material_variant_id: string | null
@@ -351,7 +353,7 @@ export type MaterialDeliveryBarAllocationPreviewRow = {
 }
 
 export type MaterialDeliveryBarAllocationPreview = {
-  category: 'knives' | 'circle'
+  category: 'knives' | 'circle' | 'pipe'
   piece_length_mm: number
   piece_count: number
   received_quantity: number
@@ -950,6 +952,7 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
       delivered_at: row.delivered_at || null,
       calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
       selected_piece_length_mm: selectedPieceLength(table, row),
+      pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
     }
   }
 
@@ -1135,7 +1138,7 @@ export async function getSupplyOrders(
     const makeItem = (table: string, category: MaterialCategory, row: RequestItemRow, name: unknown, supplierId: string | null = null): RawOrderItem => {
       const requested = requestedQuantity(table, row)
       const reserved = reservedQuantity(table, row)
-      return { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row) }
+      return { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row), pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null }
     }
     const rawItems: RawOrderItem[] = [
       ...sheet.map((row) => makeItem('request_sheet_metal', 'sheet_metal', row, row.material_name, supplierForRow(row))),
@@ -1397,6 +1400,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
         delivered_at: row.delivered_at || null,
         calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
         selected_piece_length_mm: selectedPieceLength(table, row),
+        pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
         raw: row,
         machine_id: machine.id || request.machine_id,
         machine_name: machine.name || 'Машина',
@@ -1632,6 +1636,7 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
       delivered_at: row.delivered_at || null,
       calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
       selected_piece_length_mm: selectedPieceLength(table, row),
+      pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
       raw: row,
       machine_id: machine.id || request.machine_id,
       machine_name: machine.name || 'Машина',
@@ -2031,29 +2036,31 @@ function itemKey(item: Pick<RawOrderItem, 'table' | 'id'>) {
   return `${item.table}:${item.id}`
 }
 
-function isBarCategory(category: MaterialCategory): category is 'knives' | 'circle' {
-  return category === 'knives' || category === 'circle'
+function isWholeBarItem(item: { category: MaterialCategory; pipe_type?: string | null; raw?: RequestItemRow }) {
+  return item.category === 'knives'
+    || item.category === 'circle'
+    || (item.category === 'pipe' && (item.raw?.pipe_type ?? item.pipe_type) !== 'wire')
 }
 
-function parseBarReceipt(input: MaterialDeliveryInput, category: MaterialCategory) {
+function parseBarReceipt(input: MaterialDeliveryInput, item: { category: MaterialCategory; pipe_type?: string | null; raw?: RequestItemRow }) {
   const pieceLengthMm = input.piece_length_mm === null || input.piece_length_mm === undefined
     ? null
     : Number(input.piece_length_mm)
   const pieceCount = input.piece_count === null || input.piece_count === undefined
     ? null
     : Number(input.piece_count)
-  const receivedQuantity = Number(input.received_quantity)
+  let receivedQuantity = Number(input.received_quantity)
 
-  if (isBarCategory(category)) {
+  if (isWholeBarItem(item)) {
     if (
       !pieceLengthMm || pieceLengthMm <= 0 ||
-      !pieceCount || !Number.isInteger(pieceCount) || pieceCount <= 0 ||
-      Math.abs(receivedQuantity - pieceLengthMm * pieceCount) > 0.000001
+      !pieceCount || !Number.isInteger(pieceCount) || pieceCount <= 0
     ) {
-      throw new Error('Для ножей и круга укажите длину бруска и целое количество брусков')
+      throw new Error('Для ножей, круга и непроволочной трубы укажите длину хлыста и целое количество штук')
     }
+    receivedQuantity = pieceLengthMm * pieceCount
   } else if (pieceLengthMm !== null || pieceCount !== null) {
-    throw new Error('Параметры бруска допустимы только для ножей и круга')
+    throw new Error('Параметры хлыста допустимы только для ножей, круга и непроволочной трубы')
   }
 
   return { pieceLengthMm, pieceCount, receivedQuantity }
@@ -2140,8 +2147,8 @@ async function buildBarAllocationPreview(
   sourceItem: SupplyOrderAggregateInputItem,
   allOpenItems: SupplyOrderAggregateInputItem[],
 ): Promise<MaterialDeliveryBarAllocationPreview> {
-  if (!isBarCategory(sourceItem.category)) throw new Error('Preview брусков доступен только для ножей и круга')
-  const { pieceLengthMm, pieceCount, receivedQuantity } = parseBarReceipt(input, sourceItem.category)
+  if (!isWholeBarItem(sourceItem)) throw new Error('Preview хлыстов доступен только для ножей, круга и непроволочной трубы')
+  const { pieceLengthMm, pieceCount, receivedQuantity } = parseBarReceipt(input, sourceItem)
   if (!pieceLengthMm || !pieceCount) throw new Error('Не указаны параметры бруска')
 
   const sourceIdentity = getAggregateIdentityKey(sourceItem.table, sourceItem.raw, sourceItem)
@@ -2225,7 +2232,7 @@ async function buildBarAllocationPreview(
   const priorityKeys = rows.map((row) => `${row.cutting_date || '9999-12-31'}|${row.material_date || '9999-12-31'}`)
 
   return {
-    category: sourceItem.category,
+    category: sourceItem.category as 'knives' | 'circle' | 'pipe',
     piece_length_mm: pieceLengthMm,
     piece_count: pieceCount,
     received_quantity: receivedQuantity,
@@ -2294,6 +2301,7 @@ function makeReceivingItem(
     supplier_id: supplierId || null,
     supplier_name: supplierId ? supplierNameMap.get(supplierId) || 'Поставщик' : null,
     category: item.category,
+    is_whole_bar: isWholeBarItem(item),
     item_name: item.item_name,
     material_id: item.material_id,
     material_variant_id: item.material_variant_id,
@@ -2542,7 +2550,7 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
       && affectedItems.get(item.table)?.includes(item.id))
     if (!sourceItem) throw new Error('Не удалось определить исходную позицию поставки')
 
-    const { pieceLengthMm, pieceCount } = parseBarReceipt(input, sourceItem.category)
+    const { pieceLengthMm, pieceCount } = parseBarReceipt(input, sourceItem)
 
     let allocations: Array<{
       table: string
@@ -2552,7 +2560,7 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
       physical_quantity: number
       piece_count: number | null
     }>
-    if (isBarCategory(sourceItem.category)) {
+    if (isWholeBarItem(sourceItem)) {
       if (!Array.isArray(input.confirmed_bar_allocations)) {
         throw new Error('Сначала проверьте и подтвердите распределение целых брусков')
       }
@@ -2814,12 +2822,12 @@ export async function saveAggregateDeliverySchedule(
       if (!item.material_id) throw new Error(`Позиция "${item.item_name}" не привязана к материалу`)
       if (item.to_order <= 0) throw new Error(`Позиция "${item.item_name}" полностью закрыта складом и не требует закупки`)
     }
-    const isBarSchedule = openItems.every((item) => isBarCategory(item.category))
+    const isBarSchedule = openItems.every(isWholeBarItem)
     if (isBarSchedule && normalizedSchedules.some((schedule) => !schedule.piece_length_mm || !schedule.piece_count)) {
-      throw new Error('Для ножей и круга укажите длину бруска и количество брусков')
+      throw new Error('Для ножей, круга и непроволочной трубы укажите длину хлыста и количество штук')
     }
     if (!isBarSchedule && normalizedSchedules.some((schedule) => schedule.piece_length_mm || schedule.piece_count)) {
-      throw new Error('Длина и количество брусков применяются только для ножей и круга')
+      throw new Error('Длина и количество хлыстов применяются только для ножей, круга и непроволочной трубы')
     }
 
     const existingSchedules = await loadReceivingSchedules(db, selectedItems)

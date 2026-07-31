@@ -77,6 +77,7 @@ export type SupplyStockItem = {
   material_variant_id: string | null
   piece_length_mm: number | null
   is_business_scrap: boolean
+  is_legacy_bar_stock: boolean
   label: string | null
   total_quantity: number
   available_quantity: number
@@ -154,6 +155,7 @@ type ReservationRow = {
   request_item_table: string
   request_item_id: string
   reserved_quantity: number
+  logical_reserved_quantity?: number | null
   reserved_secondary_quantity: number | null
   consumed_at: string | null
   reservation_source?: string | null
@@ -248,11 +250,21 @@ function getRoundSecondaryReserve(quantity: number, row: Record<string, unknown>
 }
 
 function requiresExactVariant(table: RequestItemTable, row: Record<string, unknown>) {
-  return table === 'request_knives' || (table === 'request_pipe' && row.pipe_type !== 'wire')
+  return table === 'request_knives'
+    || table === 'request_circle'
+    || (table === 'request_pipe' && row.pipe_type !== 'wire')
 }
 
-function isCutReservationTable(table: RequestItemTable, row: Record<string, unknown>) {
-  return requiresExactVariant(table, row)
+function isImmediateCutReservationTable(table: RequestItemTable) {
+  return table === 'request_knives'
+}
+
+function isWholeBarRequest(table: RequestItemTable, row: Record<string, unknown>) {
+  return table === 'request_circle' || (table === 'request_pipe' && row.pipe_type !== 'wire')
+}
+
+function usesWholeBarStock(table: RequestItemTable, row: Record<string, unknown>, item: InventoryRow) {
+  return isWholeBarRequest(table, row) && Number(item.piece_length_mm || 0) > 0
 }
 
 function normalizeText(value: unknown) {
@@ -271,6 +283,10 @@ function optionalTextMatches(left: unknown, right: unknown) {
   const b = normalizeText(right)
   if (!a || !b) return true
   return a === b
+}
+
+function exactTextMatches(left: unknown, right: unknown) {
+  return normalizeText(left) === normalizeText(right)
 }
 
 function singleDimension(value: unknown) {
@@ -313,16 +329,22 @@ function knifeDimensionMatches(row: Record<string, unknown>, variant: MaterialVa
 function variantMatchesRequest(table: RequestItemTable, row: Record<string, unknown>, variant?: MaterialVariant | null) {
   if (!variant) return false
   if (table === 'request_pipe') {
-    return optionalTextMatches(row.pipe_type, variant.pipe_type)
-      && optionalTextMatches(row.size, variant.piece_description)
+    return exactTextMatches(row.pipe_type, variant.pipe_type)
+      && exactTextMatches(row.size, variant.piece_description)
       && numbersMatch(row.wall_thickness_mm, variant.wall_thickness_mm)
       && pipeDiameterMatches(row, variant)
-      && optionalTextMatches(row.steel_type_id, variant.steel_type_id)
+      && exactTextMatches(row.steel_type_id, variant.steel_type_id)
   }
   if (table === 'request_knives') {
     return knifeDimensionMatches(row, variant)
       && optionalTextMatches(row.steel_type_id, variant.steel_type_id)
       && optionalTextMatches(row.steel_grade, variant.material_grade ?? variant.knife_material)
+  }
+  if (table === 'request_circle') {
+    return numbersMatch(row.diameter_mm, variant.diameter_mm)
+      && exactTextMatches(row.steel_type_id, variant.steel_type_id)
+      && exactTextMatches(row.steel_grade, variant.material_grade)
+      && Boolean(row.is_calibrated) === Boolean(variant.is_calibrated)
   }
   if (table === 'request_components') {
     return numbersMatch(row.diameter_mm, variant.diameter_mm)
@@ -345,7 +367,7 @@ function variantMatchesRequest(table: RequestItemTable, row: Record<string, unkn
 }
 
 function getReservableQuantity(table: RequestItemTable, row: Record<string, unknown>, item: InventoryRow) {
-  if (isCutReservationTable(table, row)) {
+  if (isImmediateCutReservationTable(table) || usesWholeBarStock(table, row, item)) {
     const pieceLength = Number(item.piece_length_mm || 0)
     const pieces = Math.floor(Number(item.available_secondary_quantity || 0))
     return pieceLength > 0 && pieces > 0 ? pieceLength * pieces : 0
@@ -442,7 +464,14 @@ function findStockItems(
     return variantMatchesRequest(table, rowRecord, item.variant)
   })
   if (requiresExactVariant(table, rowRecord)) {
-    const matchingItems = uniqueInventoryRows([...exactItems, ...matchedByCharacteristics])
+    const legacyQuantitativeItems = isWholeBarRequest(table, rowRecord)
+      ? allMaterialItems.filter((item) => !item.material_variant_id && !Number(item.piece_length_mm || 0))
+      : []
+    const matchingItems = uniqueInventoryRows([
+      ...exactItems,
+      ...matchedByCharacteristics,
+      ...legacyQuantitativeItems,
+    ])
     if (hasAvailableStock(table, rowRecord, matchingItems)) return matchingItems
     return matchingItems
   }
@@ -546,11 +575,16 @@ function buildReservationMap(rows: ReservationRow[]) {
     const key = reservationKey(row.request_item_table, row.request_item_id)
     const current = map.get(key)
     if (!current) {
-      map.set(key, { ...row, id: row.consumed_at ? null : row.id })
+      map.set(key, {
+        ...row,
+        id: row.consumed_at ? null : row.id,
+        reserved_quantity: Number(row.logical_reserved_quantity ?? row.reserved_quantity ?? 0),
+      })
       continue
     }
     if (!current.id && !row.consumed_at) current.id = row.id
-    current.reserved_quantity = Number(current.reserved_quantity || 0) + Number(row.reserved_quantity || 0)
+    current.reserved_quantity = Number(current.reserved_quantity || 0)
+      + Number(row.logical_reserved_quantity ?? row.reserved_quantity ?? 0)
     current.reserved_secondary_quantity = Number(current.reserved_secondary_quantity || 0) + Number(row.reserved_secondary_quantity || 0)
   }
   return map
@@ -606,6 +640,7 @@ function withStock<T extends { id: string; material_id: string | null; material_
         material_variant_id: item.material_variant_id,
         piece_length_mm: item.piece_length_mm,
         is_business_scrap: Boolean(item.is_business_scrap),
+        is_legacy_bar_stock: isWholeBarRequest(table, rowRecord) && !Number(item.piece_length_mm || 0),
         label: describeStockItem(table, item.variant),
         total_quantity: item.total_quantity,
         available_quantity: getReservableQuantity(table, rowRecord, item),
@@ -710,7 +745,7 @@ async function loadRequestForStockSource(
         ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at').in('material_id', materialIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       itemIds.length
-        ? db.from('inventory_reservations').select('id, inventory_id, source_inventory_id, request_item_table, request_item_id, reserved_quantity, reserved_secondary_quantity, consumed_at, reservation_source').in('request_item_id', itemIds)
+        ? db.from('inventory_reservations').select('id, inventory_id, source_inventory_id, request_item_table, request_item_id, reserved_quantity, logical_reserved_quantity, reserved_secondary_quantity, consumed_at, reservation_source').in('request_item_id', itemIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       steelTypeIds.length
         ? db.from('steel_types').select('id, name').in('id', steelTypeIds)
@@ -911,7 +946,10 @@ export async function reserveItemFromStock(data: {
       if (selectedVariantData && !variantMatchesRequest(data.request_item_table, row, selectedVariantData as MaterialVariant | null)) {
         throw new Error('Выбранный складской остаток не совпадает с характеристикой позиции заявки.')
       }
-    } else if (requiresExactVariant(data.request_item_table, row)) {
+    } else if (
+      requiresExactVariant(data.request_item_table, row)
+      && !(isWholeBarRequest(data.request_item_table, row) && !Number(selectedInventory.piece_length_mm || 0))
+    ) {
       throw new Error('Выберите складской остаток с точной характеристикой материала.')
     }
     const needed = getNeededForRow(data.request_item_table, row)
@@ -935,7 +973,8 @@ export async function reserveItemFromStock(data: {
       machine_id: request.machine_id,
       quantity,
       secondary_quantity: secondaryQuantity,
-      use_cut_reservation: isCutReservationTable(data.request_item_table, row),
+      use_cut_reservation: isImmediateCutReservationTable(data.request_item_table),
+      use_whole_bar_reservation: usesWholeBarStock(data.request_item_table, row, selectedInventory),
       use_inventory_transfer: requiresInventoryTransfer,
       request_item_table: data.request_item_table,
       request_item_id: data.request_item_id,

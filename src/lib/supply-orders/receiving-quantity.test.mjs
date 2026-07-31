@@ -147,12 +147,15 @@ test('two 6000 mm bars reserve one for a 2000 mm need and leave one untouched', 
   assert.equal(result.excessQuantity, 6_000)
 })
 
-test('an 8000 mm need uses two whole 6000 mm bars', () => {
+test('an 8000 mm non-wire pipe need uses two whole 6000 mm bars', () => {
   const result = allocateReceiptByPriority({
     receivedQuantity: 12_000,
     pieceLengthMm: 6_000,
     pieceCount: 2,
-    candidates: [candidate('knife', '2026-08-01', 8_000, { isSource: true })],
+    candidates: [candidate('pipe', '2026-08-01', 8_000, {
+      table: 'request_pipe',
+      isSource: true,
+    })],
   })
 
   assert.equal(result.allocations[0].quantity, 8_000)

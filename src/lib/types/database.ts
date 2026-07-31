@@ -115,6 +115,8 @@ export type DetailingTransferItemRow = {
   part_id: string
   requested_quantity: number
   received_quantity: number
+  logical_requested_quantity: number | null
+  logical_received_quantity: number | null
   created_at: string
   updated_at: string
 }
@@ -2059,7 +2061,9 @@ export type Database = {
           request_item_table: string
           request_item_id: string
           reserved_quantity: number
+          logical_reserved_quantity: number | null
           reserved_secondary_quantity: number | null
+          reservation_source: string
           is_cut_reservation: boolean
           created_at: string
         }
@@ -2073,7 +2077,9 @@ export type Database = {
           request_item_table: string
           request_item_id: string
           reserved_quantity: number
+          logical_reserved_quantity?: number | null
           reserved_secondary_quantity?: number | null
+          reservation_source?: string
           is_cut_reservation?: boolean
           created_at?: string
         }
@@ -2087,7 +2093,9 @@ export type Database = {
           request_item_table?: string
           request_item_id?: string
           reserved_quantity?: number
+          logical_reserved_quantity?: number | null
           reserved_secondary_quantity?: number | null
+          reservation_source?: string
           is_cut_reservation?: boolean
           created_at?: string
         }

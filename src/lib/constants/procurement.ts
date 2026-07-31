@@ -41,7 +41,7 @@ export const PAINT_FINISH_OPTIONS = ['матовый', 'глянец', 'шагр
 
 export const CATEGORY_UNITS: Record<string, { primary: string; secondary?: string }> = {
   sheet_metal: { primary: 'шт' },
-  circle: { primary: 'мм' },
+  circle: { primary: 'мм', secondary: 'шт' },
   pipe: { primary: 'мм', secondary: 'шт' },
   knives: { primary: 'мм', secondary: 'шт' },
   paint: { primary: 'кг' },
