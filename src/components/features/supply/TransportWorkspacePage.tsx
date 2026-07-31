@@ -160,6 +160,8 @@ type EditingTransportStop = TransportDraftStop & {
   completedAt: string | null
 }
 
+const TRANSPORT_TIME_ZONE = 'Europe/Uzhgorod'
+
 function formatDate(value: string | null) {
   if (!value) return 'Дата не указана'
   const [year, month, day] = value.split('-')
@@ -172,12 +174,22 @@ function formatMoney(value: number | null) {
 }
 
 function formatDateTime(value: string | null) {
-  return value ? new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—'
+  return value
+    ? new Intl.DateTimeFormat('ru-RU', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+        timeZone: TRANSPORT_TIME_ZONE,
+      }).format(new Date(value))
+    : '—'
 }
 
 function formatTime(value: string | null) {
   if (!value) return 'Время не указано'
-  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+  return new Intl.DateTimeFormat('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: TRANSPORT_TIME_ZONE,
+  }).format(new Date(value))
 }
 
 function plannedArrivalIso(date: string, time: string) {
