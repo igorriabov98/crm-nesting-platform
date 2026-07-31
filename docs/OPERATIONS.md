@@ -26,7 +26,7 @@ Use this table shape in release reports:
 | --- | --- | --- |
 | `origin/main` | GitHub `main` at the release SHA | `git log origin/main --oneline -3` |
 | Railway production | Deployment SHA equals `origin/main` | `railway deployment list --service <service> --limit 1 --json` |
-| Vercel production | Production deployment serves the release SHA | `curl -fsS https://crm-nesting-platform.vercel.app/api/version | jq -r '.sha'` |
+| Vercel production | Production deployment serves the release SHA | `curl -fsS https://www.crmleda.online/api/version | jq -r '.sha'` |
 | Prod DB schema | Prisma migrations applied, pending 0 | `npx prisma migrate status --schema nesting-service/prisma/schema.prisma` |
 | Prod DB seed | Steel catalog contains required rows | `steel_types` count and exact names such as `Ст3сп`, `09Г2С` |
 
