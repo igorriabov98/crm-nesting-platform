@@ -135,6 +135,7 @@ export type TransportWorkspace = {
   needs: UnifiedTransportNeed[]
   trips: TransportTrip[]
   carriers: OutsourcingSupplierOption[]
+  outsourcingSuppliers: OutsourcingSupplierOption[]
   agreements: SupplyOutsourcingAgreement[]
   errors: Partial<Record<TransportNeedKind | 'trips', string>>
 }
@@ -734,6 +735,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
     needs,
     trips,
     carriers: outsourcingResult.data.carriers,
+    outsourcingSuppliers: outsourcingResult.data.suppliers,
     agreements: outsourcingResult.data.agreements,
     errors,
   }
@@ -751,6 +753,7 @@ export async function getTransportWorkspace(): Promise<{
         needs: [],
         trips: [],
         carriers: [],
+        outsourcingSuppliers: [],
         agreements: [],
         errors: {},
       },

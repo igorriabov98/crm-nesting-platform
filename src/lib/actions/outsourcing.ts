@@ -245,6 +245,7 @@ export type OutsourcingTransportWorkspace = {
   needs: TransportWorkspaceNeed[]
   orders: TransportWorkspaceOrder[]
   carriers: OutsourcingSupplierOption[]
+  suppliers: OutsourcingSupplierOption[]
 }
 
 const executorTypeSchema = z.enum(['supplier', 'factory'])
@@ -1958,9 +1959,10 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
     await requirePermission('supply_transport', 'view')
     const db = dbFrom(createAdminClient())
     await reconcileConfirmedSupplierTransportNeeds(db)
-    const [ordersRaw, carriers, openNeedRows, agreements] = await Promise.all([
+    const [ordersRaw, carriers, suppliers, openNeedRows, agreements] = await Promise.all([
       loadTransportOrders(db),
       loadTransportCarriers(db),
+      loadSuppliers(db),
       loadTransportNeeds(db, { status: 'open' }),
       loadSupplyOutsourcingAgreements(db, true),
     ])
@@ -2027,11 +2029,12 @@ export async function getOutsourcingTransportWorkspace(): Promise<{ data: Outsou
         needs: openTransportNeeds,
         orders,
         carriers,
+        suppliers: suppliers.filter((supplier) => supplier.can_outsource),
       },
       error: null,
     }
   } catch (error) {
-    return { data: { agreements: [], needs: [], orders: [], carriers: [] }, error: getErrorMessage(error) }
+    return { data: { agreements: [], needs: [], orders: [], carriers: [], suppliers: [] }, error: getErrorMessage(error) }
   }
 }
 

@@ -76,6 +76,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import {
   confirmOutsourcingServiceTerms,
+  type OutsourcingSupplierOption,
   type SupplyOutsourcingAgreement,
 } from '@/lib/actions/outsourcing'
 import {
@@ -154,6 +155,8 @@ type TripDraft = {
 }
 
 type AgreementDraft = {
+  supplierId: string
+  plannedSendDate: string
   plannedReturnDate: string
   serviceCostPlanned: string
 }
@@ -404,6 +407,8 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
     Object.fromEntries(workspace.agreements.map((agreement) => [
       agreement.operation_id,
       {
+        supplierId: agreement.supplier_id || '',
+        plannedSendDate: agreement.planned_send_date || '',
         plannedReturnDate: agreement.planned_return_date || '',
         serviceCostPlanned: agreement.service_cost_planned === null
           ? ''
@@ -796,11 +801,13 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
 
   function confirmAgreement(agreement: SupplyOutsourcingAgreement) {
     const draft = agreementDrafts[agreement.operation_id]
-    if (!draft?.plannedReturnDate) return
+    if (!draft?.supplierId || !draft.plannedSendDate || !draft.plannedReturnDate) return
     setPendingAction(`agreement:${agreement.operation_id}`)
     startTransition(async () => {
       const result = await confirmOutsourcingServiceTerms({
         operationId: agreement.operation_id,
+        supplierId: draft.supplierId,
+        plannedSendDate: draft.plannedSendDate,
         plannedReturnDate: draft.plannedReturnDate,
         serviceCostPlanned: draft.serviceCostPlanned ? Number(draft.serviceCostPlanned) : null,
       })
@@ -1088,11 +1095,13 @@ export function TransportWorkspacePage({ workspace }: { workspace: TransportWork
           trips={historyTrips}
           onOpen={openTrip}
           emptyText=""
+          collapsible
         />
       )}
 
       <AgreementsPanel
         agreements={workspace.agreements}
+        suppliers={workspace.outsourcingSuppliers}
         drafts={agreementDrafts}
         pendingAction={pendingAction}
         onDraftChange={updateAgreementDraft}
@@ -1880,111 +1889,137 @@ function TripsSection({
   trips,
   onOpen,
   emptyText,
+  collapsible = false,
 }: {
   title: string
   description: string
   trips: TransportTrip[]
   onOpen: (trip: TransportTrip) => void
   emptyText: string
+  collapsible?: boolean
 }) {
+  const heading = (
+    <div className="flex items-end justify-between gap-4">
+      <div>
+        <h2 className="text-lg font-bold text-slate-950">{title}</h2>
+        <p className="mt-1 text-sm text-slate-500">{description}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" className="rounded-full px-3">{trips.length}</Badge>
+        {collapsible && <ChevronRight className="h-5 w-5 text-slate-400 transition-transform group-open:rotate-90" />}
+      </div>
+    </div>
+  )
+
+  const content = trips.length === 0 ? (
+    <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">
+      {emptyText}
+    </div>
+  ) : (
+    <ul className="mt-4 divide-y divide-slate-200 overflow-hidden rounded-2xl border border-slate-200" aria-label={title}>
+      {trips.map((trip) => {
+        const stops = operationalStops(trip)
+        const nextStop = stops.find((stop) => stop.status !== 'completed')
+        const completedStopCount = stops.filter((stop) => stop.status === 'completed').length
+        return (
+          <li
+            key={trip.id}
+            className="grid min-w-0 gap-3 bg-white px-4 py-3 transition-colors hover:bg-slate-50 sm:grid-cols-[minmax(0,1.5fr)_minmax(190px,0.8fr)_auto] sm:items-center"
+          >
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusMeta[trip.status].badge)}>
+                  {statusMeta[trip.status].label}
+                </span>
+                <span className="text-xs font-semibold text-slate-400">#{trip.id.slice(0, 8).toUpperCase()}</span>
+                {Array.from(new Set(trip.needs.map((need) => need.kind))).map((kind) => (
+                  <span key={kind} className={cn('rounded-full border px-2 py-1 text-[11px] font-semibold', categoryMeta[kind].chip)}>
+                    {categoryMeta[kind].label}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-2 flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-900">
+                <Route className="h-4 w-4 shrink-0 text-blue-700" />
+                <span className="truncate">{tripRouteLabel(trip)}</span>
+              </div>
+              {nextStop && (
+                <div className="mt-1.5 flex min-w-0 items-center gap-2 text-xs text-blue-800">
+                  <MapPin className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate"><span className="font-semibold">Следующая:</span> {nextStop.pointLabel}</span>
+                  <span className="shrink-0 font-semibold">{formatTime(nextStop.plannedArrivalAt)}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-slate-600 sm:grid-cols-1">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                <span className="truncate font-medium">{trip.carrierName || 'Не назначен'}</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CalendarDays className="h-3.5 w-3.5 text-slate-400" />
+                {formatDate(trip.scheduledDate)}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <Banknote className="h-3.5 w-3.5 text-slate-400" />
+                {formatMoney(trip.price)}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                {stops.length > 0 ? `${completedStopCount} из ${stops.length}` : `${trip.needs.length} потребн.`}
+              </span>
+            </div>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Открыть рейс ${trip.id.slice(0, 8)}`}
+              onClick={() => onOpen(trip)}
+              className="h-11 w-11 justify-self-end rounded-xl"
+            >
+              {['completed', 'cancelled'].includes(trip.status)
+                ? <ChevronRight className="h-5 w-5" />
+                : <Pencil className="h-4 w-4" />}
+            </Button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+
+  if (collapsible) {
+    return (
+      <details className="group rounded-3xl border border-slate-200 bg-white shadow-[0_10px_32px_rgba(15,23,42,0.05)]">
+        <summary className="cursor-pointer list-none p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-700 sm:p-5">
+          {heading}
+        </summary>
+        <div className="border-t border-slate-100 px-4 pb-4 sm:px-5 sm:pb-5">
+          {content}
+        </div>
+      </details>
+    )
+  }
+
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_10px_32px_rgba(15,23,42,0.05)] sm:p-5">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-bold text-slate-950">{title}</h2>
-          <p className="mt-1 text-sm text-slate-500">{description}</p>
-        </div>
-        <Badge variant="outline" className="rounded-full px-3">{trips.length}</Badge>
-      </div>
+      {heading}
 
-      {trips.length === 0 ? (
-        <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">
-          {emptyText}
-        </div>
-      ) : (
-        <ul className="mt-4 divide-y divide-slate-200 overflow-hidden rounded-2xl border border-slate-200" aria-label={title}>
-          {trips.map((trip) => {
-            const stops = operationalStops(trip)
-            const nextStop = stops.find((stop) => stop.status !== 'completed')
-            const completedStopCount = stops.filter((stop) => stop.status === 'completed').length
-            return (
-              <li
-                key={trip.id}
-                className="grid min-w-0 gap-3 bg-white px-4 py-3 transition-colors hover:bg-slate-50 sm:grid-cols-[minmax(0,1.5fr)_minmax(190px,0.8fr)_auto] sm:items-center"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusMeta[trip.status].badge)}>
-                      {statusMeta[trip.status].label}
-                    </span>
-                    <span className="text-xs font-semibold text-slate-400">#{trip.id.slice(0, 8).toUpperCase()}</span>
-                    {Array.from(new Set(trip.needs.map((need) => need.kind))).map((kind) => (
-                      <span key={kind} className={cn('rounded-full border px-2 py-1 text-[11px] font-semibold', categoryMeta[kind].chip)}>
-                        {categoryMeta[kind].label}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="mt-2 flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-900">
-                    <Route className="h-4 w-4 shrink-0 text-blue-700" />
-                    <span className="truncate">{tripRouteLabel(trip)}</span>
-                  </div>
-                  {nextStop && (
-                    <div className="mt-1.5 flex min-w-0 items-center gap-2 text-xs text-blue-800">
-                      <MapPin className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate"><span className="font-semibold">Следующая:</span> {nextStop.pointLabel}</span>
-                      <span className="shrink-0 font-semibold">{formatTime(nextStop.plannedArrivalAt)}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-slate-600 sm:grid-cols-1">
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                    <span className="truncate font-medium">{trip.carrierName || 'Не назначен'}</span>
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <CalendarDays className="h-3.5 w-3.5 text-slate-400" />
-                    {formatDate(trip.scheduledDate)}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <Banknote className="h-3.5 w-3.5 text-slate-400" />
-                    {formatMoney(trip.price)}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                    {stops.length > 0 ? `${completedStopCount} из ${stops.length}` : `${trip.needs.length} потребн.`}
-                  </span>
-                </div>
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`Открыть рейс ${trip.id.slice(0, 8)}`}
-                  onClick={() => onOpen(trip)}
-                  className="h-11 w-11 justify-self-end rounded-xl"
-                >
-                  {['completed', 'cancelled'].includes(trip.status)
-                    ? <ChevronRight className="h-5 w-5" />
-                    : <Pencil className="h-4 w-4" />}
-                </Button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
+      {content}
     </section>
   )
 }
 
 function AgreementsPanel({
   agreements,
+  suppliers,
   drafts,
   pendingAction,
   onDraftChange,
   onConfirm,
 }: {
   agreements: SupplyOutsourcingAgreement[]
+  suppliers: OutsourcingSupplierOption[]
   drafts: Record<string, AgreementDraft>
   pendingAction: string | null
   onDraftChange: (operationId: string, patch: Partial<AgreementDraft>) => void
@@ -2009,9 +2044,13 @@ function AgreementsPanel({
         {agreements.map((agreement) => {
           const draft = drafts[agreement.operation_id]
           const isSaving = pendingAction === `agreement:${agreement.operation_id}`
+          const companyId = `agreement-company-${agreement.operation_id}`
+          const sendDateId = `agreement-send-${agreement.operation_id}`
+          const returnDateId = `agreement-return-${agreement.operation_id}`
+          const costId = `agreement-cost-${agreement.operation_id}`
           return (
             <article key={agreement.operation_id} className="rounded-2xl border border-slate-200 p-4">
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_170px_170px_auto] xl:items-end">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(190px,0.8fr)_150px_150px_150px_auto] xl:items-end">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant={agreement.supply_terms_confirmed_at ? 'secondary' : 'outline'}>
@@ -2024,18 +2063,50 @@ function AgreementsPanel({
                     {agreement.source_factory_name || 'Завод не указан'} → {agreement.supplier_name || 'Компания не указана'}
                   </div>
                 </div>
-                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500">
+                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500" htmlFor={companyId}>
+                  Компания-исполнитель
+                  <Select
+                    value={draft?.supplierId || ''}
+                    onValueChange={(value) => value && onDraftChange(agreement.operation_id, { supplierId: value })}
+                  >
+                    <SelectTrigger id={companyId} className="h-10 w-full rounded-xl">
+                      <SelectValue>
+                        {suppliers.find((supplier) => supplier.id === draft?.supplierId)?.name
+                          || agreement.supplier_name
+                          || 'Выберите компанию'}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suppliers.map((supplier) => (
+                        <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Label>
+                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500" htmlFor={sendDateId}>
+                  Дата отправки
+                  <Input
+                    id={sendDateId}
+                    type="date"
+                    value={draft?.plannedSendDate || ''}
+                    onChange={(event) => onDraftChange(agreement.operation_id, { plannedSendDate: event.target.value })}
+                    className="h-10 rounded-xl"
+                  />
+                </Label>
+                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500" htmlFor={returnDateId}>
                   Ожидаемый возврат
                   <Input
+                    id={returnDateId}
                     type="date"
                     value={draft?.plannedReturnDate || ''}
                     onChange={(event) => onDraftChange(agreement.operation_id, { plannedReturnDate: event.target.value })}
                     className="h-10 rounded-xl"
                   />
                 </Label>
-                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500">
+                <Label className="grid gap-1.5 text-xs font-semibold text-slate-500" htmlFor={costId}>
                   Стоимость услуги
                   <Input
+                    id={costId}
                     type="number"
                     min={0}
                     value={draft?.serviceCostPlanned || ''}
@@ -2045,7 +2116,7 @@ function AgreementsPanel({
                 </Label>
                 <Button
                   type="button"
-                  disabled={isSaving || !draft?.plannedReturnDate}
+                  disabled={isSaving || !draft?.supplierId || !draft.plannedSendDate || !draft.plannedReturnDate}
                   onClick={() => onConfirm(agreement)}
                   className="h-10 rounded-xl"
                 >

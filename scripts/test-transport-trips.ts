@@ -195,6 +195,16 @@ assert.match(dateApprovalMigration, /fn_decide_transport_trip_date_change/)
 assert.match(dateApprovalMigration, /date_change_state NOT IN \('not_required', 'approved'\)/)
 assert.match(dateApprovalMigration, /UPDATE public\.factories SET city = name/)
 
+const needDateFallbackMigration = readFileSync(
+  resolve('supabase/migrations/20260731160000_transport_need_date_task_fallback.sql'),
+  'utf8',
+)
+assert.match(needDateFallbackMigration, /CREATE OR REPLACE FUNCTION public\.transport_need_current_date/)
+assert.match(needDateFallbackMigration, /transfer\.expected_arrival_date/)
+assert.match(needDateFallbackMigration, /task\.inventory_transfer_id = p_need_id/)
+assert.match(needDateFallbackMigration, /task\.detailing_transfer_id = p_need_id/)
+assert.match(needDateFallbackMigration, /task\.status IN \('pending', 'in_progress'\)/)
+
 const pickupStartMigration = readFileSync(
   resolve('supabase/migrations/20260730130000_transport_trip_starts_at_pickup.sql'),
   'utf8',
@@ -210,6 +220,9 @@ assert.match(transportWorkspace, /Отменить рейс/)
 assert.match(transportWorkspace, /Причина исключения/)
 assert.match(transportWorkspace, /reconcileTransportStopPlan/)
 assert.match(transportWorkspace, /editingNeeds\.length === 1/)
+assert.match(transportWorkspace, /supplierId: draft\.supplierId/)
+assert.match(transportWorkspace, /plannedSendDate: draft\.plannedSendDate/)
+assert.match(transportWorkspace, /collapsible/)
 assert.doesNotMatch(transportWorkspace, /<SelectItem value="cancelled"/)
 
 const editCancelMigration = readFileSync(

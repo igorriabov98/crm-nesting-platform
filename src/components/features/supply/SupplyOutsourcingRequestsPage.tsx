@@ -127,7 +127,7 @@ export function SupplyOutsourcingRequestsPage({
             <Building2 className="h-5 w-5" />
           </span>
           <div>
-            <h1 className="text-xl font-bold text-blue-950 sm:text-2xl">Запросы на аутсорсинг</h1>
+            <h1 className="text-xl font-bold text-blue-950 sm:text-2xl">Согласование аутсорсинга</h1>
             <p className="mt-1 text-sm text-slate-600">
               Возьмите заявку в работу, выберите исполнителя, подтвердите обе даты и стоимость. После подтверждения она появится в транспорте.
             </p>
