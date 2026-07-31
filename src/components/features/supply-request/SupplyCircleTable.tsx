@@ -35,7 +35,7 @@ export function SupplyCircleTable({ rows, machineId, canManageOrders = true }: P
                 <td className={tdClass}>{row.is_calibrated ? 'Да' : 'Нет'}</td>
                 <td className={tdClass}>{formatAmount(needed)}</td>
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
-                <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockText(row.available_stock, unit)}</td>
+                <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockBreakdown(row.stock_items, unit) || stockText(row.available_stock, unit)}</td>
                 <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
                 <td className={tdClass}><OrderStatusCell table="request_circle" id={row.id} status={row.order_status} canEdit={canManageOrders} /></td>
                 <td className={tdClass}>
@@ -51,6 +51,29 @@ export function SupplyCircleTable({ rows, machineId, canManageOrders = true }: P
       </table>
     </Section>
   )
+}
+
+function stockBreakdown(items: SupplyRequestRow<RequestCircle>['stock_items'], fallbackUnit: string) {
+  const availableItems = items.filter((item) => Number(item.available_quantity || 0) > 0)
+  if (availableItems.length === 0) return null
+  return (
+    <div className="space-y-1">
+      {availableItems.map((item) => (
+        <div key={item.id} className="whitespace-nowrap">
+          {item.is_business_scrap && <span className="mr-1 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Деловой остаток</span>}
+          {item.is_legacy_bar_stock && <span className="mr-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">Старый количественный остаток</span>}
+          {item.piece_length_mm ? `${formatAmount(item.piece_length_mm)} мм: ` : ''}
+          {formatStockQuantity(item.available_quantity, item.unit || fallbackUnit, item.available_secondary_quantity, item.secondary_unit)}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function formatStockQuantity(quantity: number, unit: string, secondaryQuantity: number | null, secondaryUnit: string | null) {
+  const primary = `${formatAmount(quantity)} ${unit}`
+  if (secondaryQuantity === null || secondaryQuantity === undefined || !secondaryUnit) return primary
+  return `${primary} / ${formatAmount(secondaryQuantity)} ${secondaryUnit}`
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

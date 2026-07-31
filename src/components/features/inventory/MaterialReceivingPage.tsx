@@ -86,7 +86,7 @@ export function MaterialReceivingPage({ data }: Props) {
     const draft = drafts[item.key] || defaultDrafts[item.key]
     const pieceLength = Number((draft?.pieceLength || '').replace(',', '.'))
     const pieceCount = Number((draft?.pieceCount || '').replace(',', '.'))
-    const isBar = item.category === 'knives' || item.category === 'circle'
+    const isBar = item.is_whole_bar
     const receivedQuantity = isBar
       ? pieceLength * pieceCount
       : Number((draft?.quantity || '').replace(',', '.'))
@@ -258,7 +258,7 @@ export function MaterialReceivingPage({ data }: Props) {
                         const draft = drafts[item.key] || defaultDrafts[item.key]
                         const pieceLength = Number((draft?.pieceLength || '').replace(',', '.'))
                         const pieceCount = Number((draft?.pieceCount || '').replace(',', '.'))
-                        const isBar = item.category === 'knives' || item.category === 'circle'
+                        const isBar = item.is_whole_bar
                         const actualQuantity = isBar
                           ? pieceLength * pieceCount
                           : Number((draft?.quantity || '').replace(',', '.'))

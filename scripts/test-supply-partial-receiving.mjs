@@ -17,6 +17,22 @@ const barLifecycleMigration = await readFile(
   new URL('../supabase/migrations/20260730133000_bar_receiving_lifecycle.sql', import.meta.url),
   'utf8',
 )
+const wholeBarCirclePipeMigration = await readFile(
+  new URL('../supabase/migrations/20260731120000_whole_bar_circle_pipe_lifecycle.sql', import.meta.url),
+  'utf8',
+)
+const inventoryPage = await readFile(
+  new URL('../src/components/features/inventory/InventoryPage.tsx', import.meta.url),
+  'utf8',
+)
+const receivingPage = await readFile(
+  new URL('../src/components/features/inventory/MaterialReceivingPage.tsx', import.meta.url),
+  'utf8',
+)
+const circleTable = await readFile(
+  new URL('../src/components/features/supply-request/SupplyCircleTable.tsx', import.meta.url),
+  'utf8',
+)
 
 assert.match(
   supplyOrderActions,
@@ -52,6 +68,56 @@ assert.match(
   barLifecycleMigration,
   /request_item_table IN \('request_knives', 'request_circle'\)/,
   'the database lifecycle must cover both knife and circle requests',
+)
+assert.match(
+  supplyOrderActions,
+  /item\.category === 'pipe' && \(item\.raw\?\.pipe_type \?\? item\.pipe_type\) !== 'wire'/,
+  'whole-bar receiving must include every non-wire pipe subtype and exclude wire',
+)
+assert.match(
+  wholeBarCirclePipeMigration,
+  /logical_reserved_quantity[\s\S]*reservation_source[\s\S]*'whole_bar_stock'/,
+  'whole-bar reservations must preserve logical demand separately from physical length',
+)
+assert.match(
+  inventoryPage,
+  /receiptNeedsPieceLength[\s\S]{0,250}category === 'circle'/,
+  'manual circle receipt must request a piece length and derive a whole piece count',
+)
+assert.match(
+  receivingPage,
+  /const isBar = item\.is_whole_bar/,
+  'receiving UI must use the server whole-bar predicate for circles and pipes',
+)
+assert.match(
+  circleTable,
+  /Старый количественный остаток[\s\S]*available_secondary_quantity/,
+  'circle stock UI must show legacy rows and physical piece availability',
+)
+assert.match(
+  wholeBarCirclePipeMigration,
+  /fn_reserve_whole_bar_inventory_row_for_machine[\s\S]*ceil\(p_logical_quantity \/ v_inventory\.piece_length_mm\)/,
+  'local reservation must atomically round logical demand up to whole bars',
+)
+assert.match(
+  wholeBarCirclePipeMigration,
+  /inventory_transfer_items[\s\S]*logical_requested_quantity[\s\S]*logical_received_quantity/,
+  'transfer items must store physical and logical quantities',
+)
+assert.match(
+  wholeBarCirclePipeMigration,
+  /Факт Заготовки заблокирован до полной приёмки межзаводской перевозки/,
+  'cutting must remain blocked until the transfer is fully received',
+)
+assert.match(
+  wholeBarCirclePipeMigration,
+  /logical_requested_quantity IS NOT NULL[\s\S]*v_remaining <= 0[\s\S]*CONTINUE/,
+  'repeated whole-bar transfer receipt must be idempotent',
+)
+assert.match(
+  wholeBarCirclePipeMigration,
+  /FOR UPDATE[\s\S]*Недостаточно целых хлыстов/,
+  'whole-bar stock rows must be locked before availability is checked',
 )
 assert.match(
   barLifecycleMigration,

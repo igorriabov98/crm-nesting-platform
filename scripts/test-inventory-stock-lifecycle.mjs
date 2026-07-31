@@ -46,6 +46,7 @@ const deliveredSupplyCuttingMigration = read('supabase/migrations/20260712152924
 const supplyReceiptPriorityMigration = read('supabase/migrations/20260714101554_supply_receipt_priority_allocation.sql')
 const knifeSupplyFutureScrapMigration = read('supabase/migrations/20260714120049_knife_supply_future_scrap.sql')
 const barReceivingLifecycleMigration = read('supabase/migrations/20260730133000_bar_receiving_lifecycle.sql')
+const wholeBarCirclePipeMigration = read('supabase/migrations/20260731120000_whole_bar_circle_pipe_lifecycle.sql')
 const archiveScrapMigration = read('supabase/migrations/92_archive_empty_business_scrap_on_unreserve.sql')
 
 const sql = [
@@ -55,6 +56,7 @@ const sql = [
   chainCordMigration,
   'COMMIT;',
   extractFunction(factoryMigration, 'public.fn_upsert_inventory_stock'),
+  extractFunction(factoryMigration, 'public.fn_add_inventory_receipt'),
   extractFunction(cutMigration, 'fn_insert_cut_reservation'),
   extractFunction(factoryMigration, 'public.fn_reserve_inventory_row_for_machine'),
   extractFunction(factoryMigration, 'public.fn_unreserve_inventory_reservation'),
@@ -63,6 +65,7 @@ const sql = [
   supplyReceiptPriorityMigration,
   knifeSupplyFutureScrapMigration,
   barReceivingLifecycleMigration,
+  wholeBarCirclePipeMigration,
   read('supabase/tests/inventory_stock_lifecycle_assertions.sql'),
 ].join('\n\n')
 
