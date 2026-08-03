@@ -4,6 +4,7 @@ import { join, relative } from 'node:path'
 import {
   PERMISSION_RESOURCES,
   getDefaultPermissionMap,
+  getFullPermissionMap,
   getPermissionRequirementForPath,
   hasPermission,
   type PermissionResource,
@@ -36,12 +37,13 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 49, 'Реестр должен содержать все 49 ресурсов')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 49, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 50, 'Реестр должен содержать все 50 ресурсов')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 50, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
 const supplyManagerPermissions = getDefaultPermissionMap('supply_manager')
+const engineerPermissions = getDefaultPermissionMap('engineer')
 assert(hasPermission(technologistPermissions, 'inventory_detailing', 'manage'), 'Технолог должен управлять деталировкой')
 assert(hasPermission(technologistPermissions, 'inventory_detailing_receiving', 'manage'), 'Технолог должен принимать деталировку')
 assert(hasPermission(procurementHeadPermissions, 'inventory_detailing', 'manage'), 'Руководитель снабжения должен управлять каталогом деталировки')
@@ -51,6 +53,11 @@ assert(!hasPermission(supplyManagerPermissions, 'inventory_detailing', 'manage')
 assert(!hasPermission(technologistPermissions, 'future_detailing', 'view'), 'Новые права будущей деталировки назначаются только через структуру')
 assert(!hasPermission(technologistPermissions, 'metal_scrap', 'view'), 'Новые права металлолома назначаются только через структуру')
 assert(!hasPermission(technologistPermissions, 'metal_scrap_sales', 'manage'), 'Право сдачи металлолома назначается только через структуру')
+assert(!hasPermission(technologistPermissions, 'product_production_drawings', 'view'), 'Комплектные чертежи по умолчанию закрыты')
+assert(!hasPermission(supplyManagerPermissions, 'product_production_drawings', 'manage'), 'Управление комплектными чертежами назначается только через структуру')
+assert(hasPermission(engineerPermissions, 'products', 'view'), 'Инженер должен видеть карточки изделий')
+assert(!hasPermission(engineerPermissions, 'product_production_drawings', 'view'), 'products.view не должен раскрывать комплектные чертежи')
+assert(hasPermission(getFullPermissionMap(), 'product_production_drawings', 'manage'), 'CRM-администратор должен получать полный доступ')
 assert(hasPermission(supplyManagerPermissions, 'department_requests', 'manage'), 'Снабженец должен создавать и обрабатывать запросы')
 assert(hasPermission(technologistPermissions, 'department_requests', 'manage'), 'Технолог должен создавать и обрабатывать запросы')
 assert.equal(
@@ -124,6 +131,20 @@ assert(
   'Сотрудник технического отдела с nesting.manage должен запускать раскладку независимо от legacy-роли',
 )
 
+const productionDrawingViewOnly = resolveDepartmentPermissions(
+  [{ departmentId: 'engineering', departmentName: 'Инженерный отдел', isDepartmentHead: false }],
+  [{ department_id: 'engineering', subject_scope: 'member', resource_key: 'product_production_drawings', can_view: true, can_manage: false }],
+)
+assert(hasPermission(productionDrawingViewOnly.permissions, 'product_production_drawings', 'view'))
+assert(!hasPermission(productionDrawingViewOnly.permissions, 'product_production_drawings', 'manage'))
+
+const productionDrawingManage = resolveDepartmentPermissions(
+  [{ departmentId: 'production', departmentName: 'Производство', isDepartmentHead: false }],
+  [{ department_id: 'production', subject_scope: 'member', resource_key: 'product_production_drawings', can_view: false, can_manage: true }],
+)
+assert(hasPermission(productionDrawingManage.permissions, 'product_production_drawings', 'view'), 'manage должен включать view')
+assert(hasPermission(productionDrawingManage.permissions, 'product_production_drawings', 'manage'))
+
 const nestingRoutes = walk(join(root, 'src/app/api/nesting'), 'route.ts')
 assert(nestingRoutes.length > 0, 'Не найдены API-маршруты nesting')
 for (const filePath of nestingRoutes) {
@@ -157,7 +178,7 @@ for (const filePath of walk(join(root, 'src/app/api'), 'route.ts')) {
   if (apiRoutesWithDedicatedAuthorization.has(relativePath)) continue
   const source = readFileSync(filePath, 'utf8')
   assert(
-    /(?:get|require)NestingProxyAccess\(|requirePermission\(/u.test(source),
+    /(?:get|require)NestingProxyAccess\(|requirePermission\(|requireProductProductionDrawingAccess\(/u.test(source),
     `API-маршрут ${relativePath} не проверяет право модуля`,
   )
 }
