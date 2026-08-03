@@ -15,12 +15,18 @@ import { ProductForm } from '@/components/features/products/ProductForm'
 import { ProductVersionHistory } from '@/components/features/products/ProductVersionHistory'
 import { getProduct } from '@/lib/actions/products'
 import { getProductVersions } from '@/lib/actions/product-versions'
+import {
+  getProductProductionDrawings,
+  type ProductProductionDrawingDto,
+} from '@/lib/actions/product-production-drawings'
 import { getCurrentUserContextOrRedirect } from '@/lib/auth/current-user'
 import { ROUTES } from '@/lib/constants/routes'
 import { buttonVariants } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { versionDocumentState } from '@/lib/products/product-file-upload'
+import { getCurrentUserPermissions } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 
 export const metadata = {
   title: 'Изделие — CRM Завода',
@@ -72,6 +78,17 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     getCurrentUserContextOrRedirect(),
   ])
   const { supabase } = currentUserContext
+  const permissionDetails = await getCurrentUserPermissions(currentUserContext.userId)
+  const canViewProductionDrawings = hasPermission(
+    permissionDetails.permissions,
+    'product_production_drawings',
+    'view',
+  )
+  const canManageProductionDrawings = hasPermission(
+    permissionDetails.permissions,
+    'product_production_drawings',
+    'manage',
+  )
   const versions = versionsData || []
   const currentVersion = versions.find((version) => version.status === 'current') || null
   const documentState = versionDocumentState(currentVersion?.product_files || [])
@@ -79,6 +96,26 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     versions.map((version) => version.created_by).filter((value): value is string => Boolean(value))
   ))
   const authorsById: Record<string, { id: string; full_name: string | null }> = {}
+  let productionDrawingsByVersion: Record<string, ProductProductionDrawingDto[]> | undefined
+  let productionDrawingsError: string | null = null
+
+  if (canViewProductionDrawings) {
+    const drawingsResult = await getProductProductionDrawings(id)
+    if (!drawingsResult.success || !drawingsResult.data) {
+      productionDrawingsError = drawingsResult.error || 'Неизвестная ошибка'
+    } else {
+      productionDrawingsByVersion = {}
+      for (const drawing of drawingsResult.data) {
+        productionDrawingsByVersion[drawing.product_version_id] = [
+          ...(productionDrawingsByVersion[drawing.product_version_id] || []),
+          drawing,
+        ]
+      }
+      for (const version of versions) {
+        productionDrawingsByVersion[version.id] ||= []
+      }
+    }
+  }
 
   if (authorIds.length > 0) {
     const { data: authors } = await supabase.from('users').select('id, full_name').in('id', authorIds)
@@ -109,7 +146,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
                 {currentVersion && <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-800">Версия {currentVersion.version_number}</Badge>}
                 <Badge variant="outline" className={documentState.complete ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}>
                   {documentState.complete ? <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> : <CircleAlert className="mr-1 h-3.5 w-3.5" />}
-                  {documentState.complete ? 'Документы готовы' : 'Документы не полные'}
+                  {documentState.complete ? 'Основные файлы готовы' : 'Основные файлы не полные'}
                 </Badge>
               </div>
               <div className="mt-4 flex items-start gap-3">
@@ -142,7 +179,14 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
               {versionsError}
             </div>
           ) : (
-            <ProductVersionHistory productId={data.id} versions={versions} authorsById={authorsById} />
+            <ProductVersionHistory
+              productId={data.id}
+              versions={versions}
+              authorsById={authorsById}
+              productionDrawingsByVersion={productionDrawingsByVersion}
+              productionDrawingsError={productionDrawingsError}
+              canManageProductionDrawings={canManageProductionDrawings}
+            />
           )}
         </div>
         <aside className="order-1 xl:sticky xl:top-5 xl:order-2">

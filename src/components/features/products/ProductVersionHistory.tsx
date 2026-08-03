@@ -17,6 +17,7 @@ import {
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { ProductProductionDrawingManager } from '@/components/features/products/ProductProductionDrawingManager'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -66,6 +67,7 @@ import {
 } from '@/lib/products/direct-product-upload-client'
 import { versionDocumentState, type DirectProductUpload } from '@/lib/products/product-file-upload'
 import type { ProductFile } from '@/lib/types'
+import type { ProductProductionDrawingDto } from '@/lib/actions/product-production-drawings'
 import { usePermissions } from '@/components/providers/PermissionProvider'
 
 type ProductVersionAuthor = {
@@ -77,6 +79,9 @@ type ProductVersionHistoryProps = {
   productId: string
   versions: ProductVersionWithFiles[]
   authorsById: Record<string, ProductVersionAuthor>
+  productionDrawingsByVersion?: Record<string, ProductProductionDrawingDto[]>
+  productionDrawingsError?: string | null
+  canManageProductionDrawings?: boolean
 }
 
 const FASTENING_OPTIONS = Object.entries(PRODUCT_FASTENING_TYPE_LABELS) as Array<[ProductFasteningType, string]>
@@ -333,7 +338,7 @@ function VersionFilesActionDialog({ productId, version }: { productId: string; v
         <DialogHeader>
           <DialogTitle>{isNewVersionMode ? 'Новая версия изделия' : 'Дополнить текущую версию'}</DialogTitle>
           <DialogDescription>
-            PDF и STEP загружаются независимо. Можно сохранить один файл сейчас и добавить второй позже.
+            Сборочный PDF и STEP загружаются независимо. Можно сохранить один файл сейчас и добавить второй позже.
           </DialogDescription>
         </DialogHeader>
 
@@ -371,7 +376,7 @@ function VersionFilesActionDialog({ productId, version }: { productId: string; v
             {(isNewVersionMode || !documentState.hasDrawing) && (
               <FilePicker
                 id="version-pdf-file"
-                title="PDF-чертёж"
+                title="Сборочный PDF-чертёж"
                 description="Необязательно добавлять вместе со STEP · до 50 МБ"
                 accept=".pdf,application/pdf"
                 file={drawingFile}
@@ -394,7 +399,7 @@ function VersionFilesActionDialog({ productId, version }: { productId: string; v
 
           {!isNewVersionMode && (documentState.hasDrawing || documentState.hasStep) && (
             <div className="flex flex-wrap gap-2 rounded-xl bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
-              {documentState.hasDrawing && <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" /> PDF уже загружен</span>}
+              {documentState.hasDrawing && <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" /> Сборочный чертёж уже загружен</span>}
               {documentState.hasStep && <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" /> STEP уже загружен</span>}
             </div>
           )}
@@ -599,11 +604,15 @@ function CurrentVersionCard({
   version,
   authorsById,
   canManageVersions,
+  productionDrawings,
+  canManageProductionDrawings,
 }: {
   productId: string
   version: ProductVersionWithFiles
   authorsById: Record<string, ProductVersionAuthor>
   canManageVersions: boolean
+  productionDrawings?: ProductProductionDrawingDto[]
+  canManageProductionDrawings: boolean
 }) {
   const groups = fileGroups(version.product_files)
   const state = versionDocumentState(version.product_files)
@@ -619,7 +628,7 @@ function CurrentVersionCard({
                 <h2 className="text-xl font-semibold text-slate-950">Версия {version.version_number}</h2>
               </div>
               <Badge className={state.complete ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}>
-                {state.complete ? 'Комплект готов' : 'Файлы не полные'}
+                {state.complete ? 'Основные файлы готовы' : 'Основные файлы не полные'}
               </Badge>
             </div>
             <p className="mt-2 text-sm text-slate-500">{formatVersionDate(version.created_at)} · {authorName(version, authorsById)}</p>
@@ -630,9 +639,19 @@ function CurrentVersionCard({
 
       <div className="space-y-5 p-5 sm:p-6">
         <div className="grid gap-3 sm:grid-cols-2">
-          <DocumentCard title="PDF-чертёж" files={groups.drawing} ready={state.hasDrawing} />
+          <DocumentCard title="Сборочный чертёж" files={groups.drawing} ready={state.hasDrawing} />
           <DocumentCard title="STEP-модель" files={groups.step} ready={state.hasStep} />
         </div>
+
+        {productionDrawings && (
+          <ProductProductionDrawingManager
+            productId={productId}
+            productVersionId={version.id}
+            files={productionDrawings}
+            canManage={canManageProductionDrawings}
+            isCurrent
+          />
+        )}
 
         <div className="grid gap-4 rounded-2xl border border-slate-200 p-4 sm:grid-cols-2">
           <InfoField label="Номер чертежа">{version.drawing_number}</InfoField>
@@ -652,11 +671,15 @@ function ArchivedVersions({
   versions,
   authorsById,
   canManageVersions,
+  productionDrawingsByVersion,
+  canManageProductionDrawings,
 }: {
   productId: string
   versions: ProductVersionWithFiles[]
   authorsById: Record<string, ProductVersionAuthor>
   canManageVersions: boolean
+  productionDrawingsByVersion?: Record<string, ProductProductionDrawingDto[]>
+  canManageProductionDrawings: boolean
 }) {
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -689,11 +712,22 @@ function ArchivedVersions({
                   {canManageVersions && <RollbackVersionAction productId={productId} version={version} />}
                 </div>
                 <div className="mt-4 grid gap-4 border-t border-slate-100 pt-4 md:grid-cols-2">
-                  <InfoField label="PDF"><FileLinks files={groups.drawing} /></InfoField>
+                  <InfoField label="Сборочный чертёж"><FileLinks files={groups.drawing} /></InfoField>
                   <InfoField label="STEP"><FileLinks files={groups.step} /></InfoField>
                   <InfoField label="Крепление"><FasteningBadges version={version} /></InfoField>
                   <InfoField label="Комплектация"><CompletionBadge version={version} /></InfoField>
                 </div>
+                {productionDrawingsByVersion && (
+                  <div className="mt-4">
+                    <ProductProductionDrawingManager
+                      productId={productId}
+                      productVersionId={version.id}
+                      files={productionDrawingsByVersion[version.id] || []}
+                      canManage={canManageProductionDrawings}
+                      isCurrent={false}
+                    />
+                  </div>
+                )}
                 {version.change_summary && <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">{version.change_summary}</p>}
               </article>
             )
@@ -704,7 +738,14 @@ function ArchivedVersions({
   )
 }
 
-export function ProductVersionHistory({ productId, versions, authorsById }: ProductVersionHistoryProps) {
+export function ProductVersionHistory({
+  productId,
+  versions,
+  authorsById,
+  productionDrawingsByVersion,
+  productionDrawingsError,
+  canManageProductionDrawings = false,
+}: ProductVersionHistoryProps) {
   const { can } = usePermissions()
   const currentVersion = versions.find((version) => version.status === 'current') || null
   const archivedVersions = versions
@@ -728,12 +769,19 @@ export function ProductVersionHistory({ productId, versions, authorsById }: Prod
 
   return (
     <div className="space-y-5">
+      {productionDrawingsError && (
+        <section role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          Не удалось загрузить комплектные чертежи: {productionDrawingsError}
+        </section>
+      )}
       {currentVersion ? (
         <CurrentVersionCard
           productId={productId}
           version={currentVersion}
           authorsById={authorsById}
           canManageVersions={canManageVersions}
+          productionDrawings={productionDrawingsByVersion?.[currentVersion.id]}
+          canManageProductionDrawings={canManageProductionDrawings}
         />
       ) : (
         <section role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
@@ -745,6 +793,8 @@ export function ProductVersionHistory({ productId, versions, authorsById }: Prod
         versions={archivedVersions}
         authorsById={authorsById}
         canManageVersions={canManageVersions}
+        productionDrawingsByVersion={productionDrawingsByVersion}
+        canManageProductionDrawings={canManageProductionDrawings}
       />
     </div>
   )

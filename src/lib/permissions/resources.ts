@@ -11,6 +11,7 @@ export type ResourceKey =
   | 'material_request_queue'
   | 'business_scrap_reservations'
   | 'products'
+  | 'product_production_drawings'
   | 'product_projects'
   | 'clients'
   | 'contracts'
@@ -236,6 +237,15 @@ export const PERMISSION_RESOURCES = [
       { path: ROUTES.PRODUCTS, match: 'prefix', operation: 'view' },
     ],
     sidebar: { section: 'sales', icon: 'products', order: 20 },
+  },
+  {
+    key: 'product_production_drawings',
+    label: 'Комплектные чертежи',
+    description: 'Производственные PDF-комплекты по версиям изделий',
+    group: 'Sales',
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [],
   },
   {
     key: 'product_projects',
