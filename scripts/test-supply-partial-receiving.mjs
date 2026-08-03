@@ -21,12 +21,20 @@ const wholeBarCirclePipeMigration = await readFile(
   new URL('../supabase/migrations/20260731120000_whole_bar_circle_pipe_lifecycle.sql', import.meta.url),
   'utf8',
 )
+const manualAllocationMigration = await readFile(
+  new URL('../supabase/migrations/20260803130000_supply_receipt_manual_allocation_guard.sql', import.meta.url),
+  'utf8',
+)
 const inventoryPage = await readFile(
   new URL('../src/components/features/inventory/InventoryPage.tsx', import.meta.url),
   'utf8',
 )
 const receivingPage = await readFile(
   new URL('../src/components/features/inventory/MaterialReceivingPage.tsx', import.meta.url),
+  'utf8',
+)
+const receivingAllocationDialog = await readFile(
+  new URL('../src/components/features/inventory/MaterialReceivingAllocationDialog.tsx', import.meta.url),
   'utf8',
 )
 const circleTable = await readFile(
@@ -56,13 +64,33 @@ assert.match(
 )
 assert.match(
   supplyOrderActions,
-  /previewMaterialDeliveryAllocation[\s\S]*requireReceivingAccess\('manage'\)[\s\S]*buildBarAllocationPreview/,
-  'whole-bar preview must be authorized and calculated on the server',
+  /previewMaterialDeliveryAllocation[\s\S]*requireReceivingAccess\('manage'\)[\s\S]*buildMaterialAllocationPreview/,
+  'allocation preview for every category must be authorized and calculated on the server',
 )
 assert.match(
   supplyOrderActions,
-  /confirmedBarAllocations\(preview, input\.confirmed_bar_allocations\)/,
+  /buildMaterialAllocationPreview\([\s\S]*confirmedMaterialAllocations\(preview, input\.confirmed_allocations\)/,
   'receipt confirmation must revalidate the operator allocation against a fresh preview',
+)
+assert.match(
+  supplyOrderActions,
+  /mode: 'quantity'[\s\S]*quantity: number[\s\S]*mode: 'whole_bar'[\s\S]*piece_count: number/,
+  'operator confirmation must use one discriminated allocation field for quantity and whole-bar modes',
+)
+assert.match(
+  supplyOrderActions,
+  /item\.factory_id === sourceItem\.factory_id[\s\S]*item\.table === sourceItem\.table[\s\S]*item\.material_id === sourceItem\.material_id[\s\S]*item\.material_variant_id === sourceItem\.material_variant_id[\s\S]*getAggregateIdentityKey/,
+  'preview candidates must match factory, request type, material, variant, and characteristics',
+)
+assert.match(
+  supplyOrderActions,
+  /Для машины уже запланирована отдельная поставка[\s\S]*is_eligible: candidate\.isEligible/,
+  'a machine with a separate active delivery must stay visible but unavailable',
+)
+assert.match(
+  supplyOrderActions,
+  /quantity > row\.outstanding_quantity[\s\S]*totalPhysical > preview\.received_quantity[\s\S]*allocations\.length === 0/,
+  'fresh server validation must reject per-machine overflow, receipt overflow, and an all-zero allocation',
 )
 assert.match(
   barLifecycleMigration,
@@ -88,6 +116,31 @@ assert.match(
   receivingPage,
   /const isBar = item\.is_whole_bar/,
   'receiving UI must use the server whole-bar predicate for circles and pipes',
+)
+assert.match(
+  receivingPage,
+  /preview\.mode === 'quantity' && !preview\.has_shortage[\s\S]*performReceipt\(item, values\)/,
+  'ordinary material without a shortage must still be accepted directly',
+)
+assert.match(
+  receivingPage,
+  /MaterialReceivingAllocationDialog[\s\S]*confirmed_allocations: confirmedAllocations/,
+  'shortages and whole bars must confirm through the shared allocation dialog',
+)
+assert.match(
+  receivingAllocationDialog,
+  /<Dialog open=[\s\S]*<DialogContent[\s\S]*finalFocus=[\s\S]*max-h-\[calc\(100dvh-1rem\)\][\s\S]*overflow-y-auto/,
+  'the allocation list must use the existing focus-managed dialog, restore focus, and remain scrollable on small screens',
+)
+assert.match(
+  receivingAllocationDialog,
+  /<label[\s\S]*htmlFor=[\s\S]*aria-describedby=[\s\S]*aria-invalid=/,
+  'allocation inputs must be labelled and expose validation state',
+)
+assert.match(
+  receivingAllocationDialog,
+  /lg:grid-cols[\s\S]*aria-live="polite"/,
+  'allocation errors must use a live region and rows must have a responsive layout',
 )
 assert.match(
   circleTable,
@@ -128,6 +181,31 @@ assert.match(
   barLifecycleMigration,
   /fn_block_supply_bar_future_scrap_reservation[\s\S]*станет доступен только после факта Заготовки/,
   'future supply-bar scrap must be blocked from preliminary reservations',
+)
+assert.match(
+  manualAllocationMigration,
+  /jsonb_array_elements\(p_allocations\)[\s\S]*GROUP BY[\s\S]*HAVING count\(\*\) > 1/,
+  'the receiving RPC must reject duplicate allocation targets',
+)
+assert.match(
+  manualAllocationMigration,
+  /Распределение превышает актуальный остаток потребности[\s\S]*FOR UPDATE/,
+  'the migration must preserve current-outstanding and row-lock concurrency guards',
+)
+assert.match(
+  manualAllocationMigration,
+  /v_source_status_replacement text := 'status = ''delivered'','/,
+  'a real source receipt must remain delivered even when its machine receives zero allocation',
+)
+assert.match(
+  receivingMigration,
+  /v_delivered_total >= v_required[\s\S]*USING 'delivered'[\s\S]*ELSIF[\s\S]*USING 'ordered'/,
+  'fully covered requests must become delivered while partial requests remain ordered',
+)
+assert.match(
+  manualAllocationMigration,
+  /REVOKE ALL ON FUNCTION public\.fn_receive_supply_order_schedule_v2\([^)]+\) FROM anon, authenticated;[\s\S]*GRANT EXECUTE ON FUNCTION public\.fn_receive_supply_order_schedule_v2\([^)]+\) TO service_role;/,
+  'the hardened RPC must remain service-role-only',
 )
 
 assert.equal(outstandingReceivingQuantity(10, []), 10)

@@ -35,6 +35,48 @@ test('normal receipt closes the earliest preparation demands and leaves excess f
   assert.equal(result.excessQuantity, 3)
 })
 
+test('3/2 shortage suggests 1+1 by cutting date and leaves the choice editable', () => {
+  const result = allocateReceiptByPriority({
+    receivedQuantity: 2,
+    candidates: [
+      candidate('needs-two', '2026-08-01', 2, {
+        table: 'request_components',
+        cuttingDate: '2026-08-12',
+        materialDate: '2026-08-01',
+      }),
+      candidate('needs-one', '2026-08-02', 1, {
+        table: 'request_components',
+        cuttingDate: '2026-08-10',
+        materialDate: '2026-08-02',
+      }),
+    ],
+  })
+
+  assert.deepEqual(result.allocations.map((row) => [row.key, row.quantity]), [
+    ['needs-one', 1],
+    ['needs-two', 1],
+  ])
+  assert.equal(result.excessQuantity, 0)
+})
+
+test('quantity priority uses cutting date before material-plan date', () => {
+  const result = allocateReceiptByPriority({
+    receivedQuantity: 1,
+    candidates: [
+      candidate('early-material', '2026-08-01', 1, {
+        cuttingDate: '2026-08-20',
+        materialDate: '2026-08-01',
+      }),
+      candidate('early-cutting', '2026-08-10', 1, {
+        cuttingDate: '2026-08-15',
+        materialDate: '2026-08-10',
+      }),
+    ],
+  })
+
+  assert.deepEqual(result.allocations.map((row) => row.key), ['early-cutting'])
+})
+
 test('receipt keeps a separate target request for every destination machine', () => {
   const result = allocateReceiptByPriority({
     receivedQuantity: 9,

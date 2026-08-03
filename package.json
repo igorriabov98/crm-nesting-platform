@@ -25,7 +25,7 @@
     "test:supply-order-view": "tsx scripts/test-supply-order-view.ts",
     "test:supply-request-flow": "tsx scripts/test-supply-request-flow.ts",
     "test:user-impersonation": "tsx scripts/test-user-impersonation.ts",
-    "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && node scripts/test-supply-partial-receiving.mjs",
+    "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && tsx --test src/lib/supply-orders/manual-allocation.test.ts && node scripts/test-supply-partial-receiving.mjs",
     "test:detailing": "node scripts/test-detailing-module.mjs",
     "test:inventory-transfers": "node scripts/test-inventory-transfers.mjs",
     "test:outsourcing": "tsx scripts/test-outsourcing-workflow.ts",
