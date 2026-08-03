@@ -24,7 +24,7 @@ export function committedScheduleQuantity(schedule) {
 
 /**
  * Distribute one physical receipt over matching open demands. Demands with the
- * earliest preparation date are closed first. A different active supplier
+ * earliest cutting date and then material-plan date are closed first. A different active supplier
  * schedule is not touched, so an already committed future shipment is not
  * silently duplicated.
  *
@@ -57,7 +57,7 @@ export function allocateReceiptByPriority(input) {
   const candidates = [...input.candidates]
     .filter((candidate) => positiveNumber(candidate.outstandingQuantity) > 0)
     .filter((candidate) => candidate.isSource || !candidate.hasOtherPlannedSchedule)
-    .sort((left, right) => comparePriority(left, right, pieceMode(input)))
+    .sort((left, right) => comparePriority(left, right, true))
 
   const pieceLengthMm = positiveNumber(input.pieceLengthMm)
   const pieceCount = positiveInteger(input.pieceCount)
@@ -131,10 +131,6 @@ function comparePriority(left, right, useBarPriority = false) {
   const leftDate = left.priorityDate || '9999-12-31'
   const rightDate = right.priorityDate || '9999-12-31'
   return leftDate.localeCompare(rightDate) || left.key.localeCompare(right.key)
-}
-
-function pieceMode(input) {
-  return positiveNumber(input.pieceLengthMm) > 0 || positiveInteger(input.pieceCount) > 0
 }
 
 function positiveNumber(value) {

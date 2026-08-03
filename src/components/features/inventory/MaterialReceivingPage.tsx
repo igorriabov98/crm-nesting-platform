@@ -1,10 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { Fragment, useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { AlertTriangle, CheckCircle2, ChevronDown, Eye, Factory, PackageCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Factory, PackageCheck } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
@@ -12,11 +12,13 @@ import { ROUTES } from '@/lib/constants/routes'
 import {
   previewMaterialDeliveryAllocation,
   receiveMaterialDelivery,
-  type MaterialDeliveryBarAllocationPreview,
+  type MaterialDeliveryAllocationInput,
+  type MaterialDeliveryAllocationPreview,
   type MaterialReceivingPageData,
   type MaterialReceivingItem,
 } from '@/lib/actions/supply-orders'
 import { cn } from '@/lib/utils'
+import { MaterialReceivingAllocationDialog } from './MaterialReceivingAllocationDialog'
 
 type Props = {
   data: MaterialReceivingPageData
@@ -30,17 +32,27 @@ type ReceiptDraft = {
 
 type DraftMap = Record<string, ReceiptDraft>
 
-type PreviewState = {
+type ReceiptValues = {
+  pieceLength: number
+  pieceCount: number
+  receivedQuantity: number
+  isBar: boolean
+}
+
+type AllocationState = {
   itemKey: string
-  data: MaterialDeliveryBarAllocationPreview
-  pieceCounts: Record<string, string>
+  item: MaterialReceivingItem
+  receipt: ReceiptValues
+  data: MaterialDeliveryAllocationPreview
+  values: Record<string, string>
+  returnFocus: HTMLElement | null
 }
 
 export function MaterialReceivingPage({ data }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [pendingKey, setPendingKey] = useState<string | null>(null)
-  const [previewState, setPreviewState] = useState<PreviewState | null>(null)
+  const [allocationState, setAllocationState] = useState<AllocationState | null>(null)
   const initialOpenDates = useMemo(
     () => new Set(data.groups.filter((group) => group.is_initially_open).map((group) => group.date)),
     [data.groups],
@@ -60,7 +72,7 @@ export function MaterialReceivingPage({ data }: Props) {
   const drafts = draftState.key === draftKey ? draftState.drafts : defaultDrafts
 
   function setDraft(itemKey: string, patch: Partial<ReceiptDraft>) {
-    if (previewState?.itemKey === itemKey) setPreviewState(null)
+    if (allocationState?.itemKey === itemKey) setAllocationState(null)
     setDraftState((current) => ({
       key: draftKey,
       drafts: {
@@ -110,69 +122,90 @@ export function MaterialReceivingPage({ data }: Props) {
     return values
   }
 
-  function preview(item: MaterialReceivingItem) {
+  function receiptInput(item: MaterialReceivingItem, values: ReceiptValues) {
+    return {
+      schedule_id: item.schedule_id,
+      table: item.table,
+      id: item.id,
+      delivery_date: item.delivery_date,
+      planned_quantity: item.planned_quantity,
+      received_quantity: values.receivedQuantity,
+      piece_length_mm: values.isBar ? values.pieceLength : null,
+      piece_count: values.isBar ? values.pieceCount : null,
+    }
+  }
+
+  async function performReceipt(
+    item: MaterialReceivingItem,
+    values: ReceiptValues,
+    confirmedAllocations?: MaterialDeliveryAllocationInput[],
+  ) {
+    const result = await receiveMaterialDelivery({
+      ...receiptInput(item, values),
+      confirmed_allocations: confirmedAllocations,
+    })
+    if (!result.success) {
+      toast.error(result.error || 'Не удалось принять поставку')
+      return false
+    }
+
+    toast.success('Материал принят на склад')
+    setAllocationState(null)
+    router.refresh()
+    return true
+  }
+
+  function prepareReceipt(item: MaterialReceivingItem) {
     const values = validateReceipt(item)
     if (!values) return
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setPendingKey(item.key)
     startTransition(async () => {
-      const result = await previewMaterialDeliveryAllocation({
-        schedule_id: item.schedule_id,
-        table: item.table,
-        id: item.id,
-        delivery_date: item.delivery_date,
-        planned_quantity: item.planned_quantity,
-        received_quantity: values.receivedQuantity,
-        piece_length_mm: values.pieceLength,
-        piece_count: values.pieceCount,
-      })
-      setPendingKey(null)
+      const result = await previewMaterialDeliveryAllocation(receiptInput(item, values))
       if (!result.success || !result.data) {
+        setPendingKey(null)
         toast.error(result.error || 'Не удалось рассчитать распределение')
         return
       }
-      setPreviewState({
-        itemKey: item.key,
-        data: result.data,
-        pieceCounts: Object.fromEntries(result.data.allocations.map((row) => [
-          `${row.table}:${row.id}`,
-          String(row.piece_count),
-        ])),
-      })
-    })
-  }
+      const preview = result.data
 
-  function receive(item: MaterialReceivingItem) {
-    const values = validateReceipt(item)
-    if (!values) return
-    const activePreview = previewState?.itemKey === item.key ? previewState : null
-
-    setPendingKey(item.key)
-    startTransition(async () => {
-      const result = await receiveMaterialDelivery({
-        schedule_id: item.schedule_id,
-        table: item.table,
-        id: item.id,
-        delivery_date: item.delivery_date,
-        planned_quantity: item.planned_quantity,
-        received_quantity: values.receivedQuantity,
-        piece_length_mm: values.isBar ? values.pieceLength : null,
-        piece_count: values.isBar ? values.pieceCount : null,
-        confirmed_bar_allocations: activePreview?.data.allocations.map((row) => ({
-          table: row.table,
-          id: row.id,
-          piece_count: Number(activePreview.pieceCounts[`${row.table}:${row.id}`] || 0),
-        })),
-      })
-      setPendingKey(null)
-
-      if (!result.success) {
-        toast.error(result.error || 'Не удалось принять поставку')
+      if (preview.mode === 'quantity' && !preview.has_shortage) {
+        await performReceipt(item, values)
+        setPendingKey(null)
         return
       }
 
-      toast.success('Материал принят на склад')
-      setPreviewState(null)
-      router.refresh()
+      setAllocationState({
+        itemKey: item.key,
+        item,
+        receipt: values,
+        data: preview,
+        returnFocus,
+        values: Object.fromEntries(preview.allocations.map((row) => [
+          `${row.table}:${row.id}`,
+          String(preview.mode === 'whole_bar' ? row.suggested_piece_count || 0 : row.suggested_quantity),
+        ])),
+      })
+      setPendingKey(null)
+    })
+  }
+
+  function confirmAllocation() {
+    if (!allocationState) return
+    const { item, receipt, data, values } = allocationState
+    const confirmedAllocations: MaterialDeliveryAllocationInput[] = data.allocations
+      .filter((row) => row.is_eligible)
+      .map((row) => {
+        const value = Number((values[`${row.table}:${row.id}`] || '0').replace(',', '.'))
+        return data.mode === 'whole_bar'
+          ? { mode: 'whole_bar' as const, table: row.table, id: row.id, piece_count: value }
+          : { mode: 'quantity' as const, table: row.table, id: row.id, quantity: value }
+      })
+
+    setPendingKey(item.key)
+    startTransition(async () => {
+      await performReceipt(item, receipt, confirmedAllocations)
+      setPendingKey(null)
     })
   }
 
@@ -264,10 +297,8 @@ export function MaterialReceivingPage({ data }: Props) {
                           : Number((draft?.quantity || '').replace(',', '.'))
                         const variance = getVariance(item.planned_quantity, actualQuantity)
                         const actualWeight = weightForQuantity(item, actualQuantity)
-                        const activePreview = previewState?.itemKey === item.key ? previewState : null
                         return (
-                          <Fragment key={item.key}>
-                          <tr className="align-top">
+                          <tr key={item.key} className="align-top">
                             <td className="px-4 py-3">
                               <div className="font-semibold text-[#111827]">{item.item_name}</div>
                               <div className="mt-1 flex flex-wrap gap-1.5">
@@ -358,31 +389,14 @@ export function MaterialReceivingPage({ data }: Props) {
                               <Button
                                 type="button"
                                 disabled={isPending || pendingKey === item.key}
-                                onClick={() => isBar ? preview(item) : receive(item)}
-                                aria-label={isBar ? `Проверить распределение ${item.item_name}` : `Принять ${item.item_name} на склад`}
+                                onClick={() => prepareReceipt(item)}
+                                aria-label={`Принять ${item.item_name} на склад`}
                               >
-                                {isBar ? <Eye className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                                {pendingKey === item.key ? 'Расчёт...' : isBar ? 'Проверить' : 'Принять'}
+                                <CheckCircle2 className="h-4 w-4" />
+                                {pendingKey === item.key ? 'Проверка...' : 'Принять'}
                               </Button>
                             </td>
                           </tr>
-                          {activePreview && (
-                            <tr>
-                              <td colSpan={7} className="bg-[#F8FAFC] px-4 py-4">
-                                <BarAllocationPreview
-                                  preview={activePreview.data}
-                                  pieceCounts={activePreview.pieceCounts}
-                                  disabled={isPending}
-                                  onPieceCountChange={(key, value) => setPreviewState((current) => current?.itemKey === item.key
-                                    ? { ...current, pieceCounts: { ...current.pieceCounts, [key]: value } }
-                                    : current)}
-                                  onCancel={() => setPreviewState(null)}
-                                  onConfirm={() => receive(item)}
-                                />
-                              </td>
-                            </tr>
-                          )}
-                          </Fragment>
                         )
                       })}
                     </tbody>
@@ -393,128 +407,23 @@ export function MaterialReceivingPage({ data }: Props) {
           )
         })
       )}
-    </div>
-  )
-}
 
-function BarAllocationPreview({
-  preview,
-  pieceCounts,
-  disabled,
-  onPieceCountChange,
-  onCancel,
-  onConfirm,
-}: {
-  preview: MaterialDeliveryBarAllocationPreview
-  pieceCounts: Record<string, string>
-  disabled: boolean
-  onPieceCountChange: (key: string, value: string) => void
-  onCancel: () => void
-  onConfirm: () => void
-}) {
-  const selectedRows = preview.allocations.map((row) => {
-    const value = Number(pieceCounts[`${row.table}:${row.id}`] || 0)
-    const pieces = Number.isInteger(value) && value >= 0 ? value : Number.NaN
-    const physical = Number.isFinite(pieces) ? pieces * preview.piece_length_mm : 0
-    const logical = Math.min(row.outstanding_quantity, physical)
-    return { ...row, pieces, physical, logical, futureScrap: Math.max(physical - logical, 0) }
-  })
-  const allocatedPieces = selectedRows.reduce((sum, row) => sum + (Number.isFinite(row.pieces) ? row.pieces : 0), 0)
-  const invalid = selectedRows.some((row) => !Number.isInteger(row.pieces) || row.pieces < 0 || row.pieces > row.needed_piece_count)
-  const freePieces = Math.max(preview.piece_count - allocatedPieces, 0)
-  const canConfirm = !invalid && allocatedPieces > 0 && allocatedPieces <= preview.piece_count
-
-  return (
-    <section className="rounded-xl border border-blue-200 bg-white p-4" aria-live="polite" aria-label="Предварительное распределение брусков">
-      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h3 className="font-semibold text-[#1B3A6B]">Проверьте распределение целых брусков</h3>
-          <p className="mt-1 text-xs text-[#64748B]">
-            Приход: {formatAmount(preview.piece_count)} шт × {formatAmount(preview.piece_length_mm)} мм = {formatAmount(preview.received_quantity)} мм.
-            Приоритет предложения: дата Заготовки, затем Мат.план.
-          </p>
-        </div>
-        {(preview.has_shortage || preview.has_priority_tie) && (
-          <Badge variant="outline" className="w-fit gap-1 border-amber-200 bg-amber-50 text-amber-800">
-            <AlertTriangle className="h-3.5 w-3.5" />
-            Нужен выбор оператора
-          </Badge>
-        )}
-      </div>
-
-      <div className="mt-3 overflow-x-auto rounded-lg border border-[#E8ECF0]">
-        <table className="w-full min-w-[900px] text-left text-xs">
-          <thead className="bg-[#F8F9FA] font-semibold uppercase text-[#64748B]">
-            <tr>
-              <th className="px-3 py-2">Машина и приоритет</th>
-              <th className="px-3 py-2">Потребность</th>
-              <th className="px-3 py-2">Брусков</th>
-              <th className="px-3 py-2">Физически в бронь</th>
-              <th className="px-3 py-2">Закроется</th>
-              <th className="px-3 py-2">Будущий отход</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#E8ECF0]">
-            {selectedRows.map((row) => {
-              const key = `${row.table}:${row.id}`
-              return (
-                <tr key={key}>
-                  <td className="px-3 py-2">
-                    <div className="font-semibold text-[#111827]">{row.machine_name}</div>
-                    <div className="mt-0.5 text-[#64748B]">
-                      Заготовка: {row.cutting_date ? formatDate(row.cutting_date) : 'дата не указана'} · Мат.план: {row.material_date ? formatDate(row.material_date) : 'дата не указана'}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-[#374151]">{formatAmount(row.outstanding_quantity)} мм</td>
-                  <td className="px-3 py-2">
-                    <label className="sr-only" htmlFor={`bar-allocation-${row.id}`}>Брусков для машины {row.machine_name}</label>
-                    <input
-                      id={`bar-allocation-${row.id}`}
-                      type="number"
-                      min="0"
-                      max={row.needed_piece_count}
-                      step="1"
-                      value={pieceCounts[key] ?? '0'}
-                      disabled={disabled}
-                      onChange={(event) => onPieceCountChange(key, event.target.value)}
-                      className="h-9 w-24 rounded-md border border-[#CBD5E1] bg-white px-2 text-sm tabular-nums outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:opacity-50"
-                    />
-                    <div className="mt-0.5 text-[11px] text-[#64748B]">нужно до {row.needed_piece_count}</div>
-                  </td>
-                  <td className="px-3 py-2 font-medium tabular-nums text-[#111827]">{formatAmount(row.physical)} мм</td>
-                  <td className="px-3 py-2 tabular-nums text-[#374151]">{formatAmount(row.logical)} мм</td>
-                  <td className="px-3 py-2 tabular-nums text-[#7C3AED]">
-                    {row.futureScrap > 0 ? `${formatAmount(row.futureScrap)} мм после Заготовки` : 'нет'}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          Свободный основной склад: <strong>{freePieces} шт / {formatAmount(freePieces * preview.piece_length_mm)} мм</strong>
-        </div>
-        <div className="rounded-lg bg-violet-50 px-3 py-2 text-sm text-violet-800">
-          Будущий деловой отход: <strong>{formatAmount(selectedRows.reduce((sum, row) => sum + row.futureScrap, 0))} мм</strong>
-        </div>
-      </div>
-      {(invalid || allocatedPieces > preview.piece_count) && (
-        <p className="mt-2 text-sm text-red-700">Проверьте целое количество брусков: распределить можно не больше {preview.piece_count} шт.</p>
+      {allocationState && (
+        <MaterialReceivingAllocationDialog
+          open
+          itemName={allocationState.item.item_name}
+          preview={allocationState.data}
+          values={allocationState.values}
+          disabled={isPending && pendingKey === allocationState.itemKey}
+          returnFocus={allocationState.returnFocus}
+          onValueChange={(key, value) => setAllocationState((current) => current
+            ? { ...current, values: { ...current.values, [key]: value } }
+            : current)}
+          onClose={() => setAllocationState(null)}
+          onConfirm={confirmAllocation}
+        />
       )}
-      <p className="mt-2 text-xs text-[#64748B]">
-        Будущий отход нельзя передать другой машине. Он станет обычным доступным деловым отходом после сохранения факта производства на этапе Заготовка исходной машины.
-      </p>
-      <div className="mt-3 flex flex-wrap justify-end gap-2">
-        <Button type="button" variant="outline" disabled={disabled} onClick={onCancel}>Отмена</Button>
-        <Button type="button" disabled={disabled || !canConfirm} onClick={onConfirm}>
-          <CheckCircle2 className="h-4 w-4" />
-          {disabled ? 'Приём...' : 'Подтвердить приёмку'}
-        </Button>
-      </div>
-    </section>
+    </div>
   )
 }
 
