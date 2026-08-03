@@ -1361,6 +1361,38 @@ export type Database = {
           created_at?: string
         }
       }
+      product_production_drawings: {
+        Row: {
+          id: string
+          product_version_id: string
+          file_name: string
+          file_path: string
+          mime_type: 'application/pdf'
+          file_size: number
+          uploaded_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          product_version_id: string
+          file_name: string
+          file_path: string
+          mime_type?: 'application/pdf'
+          file_size: number
+          uploaded_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          product_version_id?: string
+          file_name?: string
+          file_path?: string
+          mime_type?: 'application/pdf'
+          file_size?: number
+          uploaded_by?: string | null
+          created_at?: string
+        }
+      }
       product_versions: {
         Row: {
           id: string

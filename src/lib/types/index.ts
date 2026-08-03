@@ -41,6 +41,7 @@ export type MachineExpense = Database['public']['Tables']['machine_expenses']['R
 export type MachinePackingGroup = Database['public']['Tables']['machine_packing_groups']['Row']
 export type Product = Database['public']['Tables']['products']['Row']
 export type ProductFile = Database['public']['Tables']['product_files']['Row']
+export type ProductProductionDrawing = Database['public']['Tables']['product_production_drawings']['Row']
 export type ProductProject = Database['public']['Tables']['product_projects']['Row']
 export type ProductProjectVersion = Database['public']['Tables']['product_project_versions']['Row']
 export type ProductProjectFile = Database['public']['Tables']['product_project_files']['Row']

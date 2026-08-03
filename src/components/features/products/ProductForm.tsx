@@ -228,7 +228,7 @@ export function ProductForm({ product }: { product?: Product | null }) {
         </div>
         {!isEdit && (
           <div className="space-y-1.5">
-            <Label htmlFor="pdf_file">PDF-чертёж <span className="font-normal text-slate-500">(необязательно)</span></Label>
+            <Label htmlFor="pdf_file">Сборочный PDF-чертёж <span className="font-normal text-slate-500">(необязательно)</span></Label>
             <Input id="pdf_file" ref={pdfInputRef} type="file" accept=".pdf,application/pdf" disabled={isSubmitting} className="min-h-11 cursor-pointer file:cursor-pointer" />
             <p className="text-xs text-slate-500">STEP можно добавить позже в карточке изделия.</p>
           </div>
