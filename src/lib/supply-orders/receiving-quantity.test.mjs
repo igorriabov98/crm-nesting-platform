@@ -129,6 +129,26 @@ test('one 12000 mm knife bar closes 6000 mm but reserves the whole physical bar'
   assert.equal(result.excessQuantity, 0)
 })
 
+test('one 6000 mm supplier bar closes the 1000 mm left after a 6000 mm stock reservation', () => {
+  const result = allocateReceiptByPriority({
+    receivedQuantity: 6_000,
+    pieceLengthMm: 6_000,
+    pieceCount: 1,
+    candidates: [candidate('knife-after-stock', '2026-08-28', 1_000, { isSource: true })],
+  })
+
+  assert.deepEqual(result.allocations, [{
+    table: 'request_knives',
+    id: 'knife-after-stock',
+    key: 'knife-after-stock',
+    quantity: 1_000,
+    physical_quantity: 6_000,
+    piece_count: 1,
+  }])
+  assert.equal(result.allocations[0].physical_quantity - result.allocations[0].quantity, 5_000)
+  assert.equal(result.excessQuantity, 0)
+})
+
 test('extra knife bars satisfy later demands before becoming free stock', () => {
   const result = allocateReceiptByPriority({
     receivedQuantity: 36_000,

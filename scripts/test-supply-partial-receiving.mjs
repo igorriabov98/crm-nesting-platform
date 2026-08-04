@@ -87,6 +87,16 @@ assert.match(
   /Для машины уже запланирована отдельная поставка[\s\S]*is_eligible: candidate\.isEligible/,
   'a machine with a separate active delivery must stay visible but unavailable',
 )
+assert.doesNotMatch(
+  supplyOrderActions,
+  /loadActiveReservationKeys|По заявке уже действует складской резерв/,
+  'an active stock reservation must reduce to_order instead of blocking the remaining supplier need',
+)
+assert.match(
+  supplyOrderActions,
+  /const outstandingQuantity = Math\.max\(item\.to_order - delivered, 0\)[\s\S]*isEligible: outstandingQuantity > 0 && unavailableReason === null/,
+  'allocation eligibility must use the current need after stock reservation and accepted deliveries',
+)
 assert.match(
   supplyOrderActions,
   /quantity > row\.outstanding_quantity[\s\S]*totalPhysical > preview\.received_quantity[\s\S]*allocations\.length === 0/,

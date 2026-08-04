@@ -2108,24 +2108,6 @@ async function loadCuttingDateMap(db: LooseDb, machineIds: string[]) {
   return result
 }
 
-async function loadActiveReservationKeys(db: LooseDb, items: SupplyOrderAggregateInputItem[]) {
-  const itemIds = Array.from(new Set(items.map((item) => item.id)))
-  if (itemIds.length === 0) return new Set<string>()
-  const { data, error } = await db
-    .from('inventory_reservations')
-    .select('request_item_table, request_item_id, consumed_at')
-    .in('request_item_id', itemIds)
-  if (error) throw new Error(error.message || 'Не удалось проверить действующие складские брони')
-  const validKeys = new Set(items.map((item) => `${item.table}:${item.id}`))
-  return new Set(((data || []) as Array<{
-    request_item_table: string
-    request_item_id: string
-    consumed_at: string | null
-  }>).filter((row) => !row.consumed_at)
-    .map((row) => `${row.request_item_table}:${row.request_item_id}`)
-    .filter((key) => validKeys.has(key)))
-}
-
 async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput) {
   let sourceTable = input.table || ''
   let sourceId = input.id || ''
@@ -2192,7 +2174,6 @@ async function buildMaterialAllocationPreview(
     schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
   }
   const cuttingDates = await loadCuttingDateMap(db, matchingItems.map((item) => item.machine_id))
-  const activeReservationKeys = isBar ? await loadActiveReservationKeys(db, matchingItems) : new Set<string>()
   const sourceKey = `${sourceItem.table}:${sourceItem.id}`
   const candidates = matchingItems.map((item) => {
     const key = `${item.table}:${item.id}`
@@ -2204,13 +2185,10 @@ async function buildMaterialAllocationPreview(
     const hasOtherPlannedSchedule = itemSchedules.some((schedule) => (
       schedule.status === 'planned' && schedule.id !== scheduleId
     ))
-    const hasActiveReservation = isBar && activeReservationKeys.has(key)
     const isSource = key === sourceKey
     const unavailableReason = !isSource && hasOtherPlannedSchedule
       ? 'Для машины уже запланирована отдельная поставка'
-      : hasActiveReservation
-        ? 'По заявке уже действует складской резерв'
-        : null
+      : null
     return {
       key,
       table: item.table,
@@ -2225,7 +2203,6 @@ async function buildMaterialAllocationPreview(
       deliveredQuantity: delivered,
       outstandingQuantity,
       hasOtherPlannedSchedule,
-      hasActiveReservation,
       isSource,
       isEligible: outstandingQuantity > 0 && unavailableReason === null,
       unavailableReason,
