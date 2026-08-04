@@ -75,6 +75,18 @@ export type SupplyOrderDateGroup = {
   }>
 }
 
+export type SupplyOrderDateSlice = {
+  id: string
+  dateKey: string
+  aggregate: SupplyOrderAggregate
+  quantity: number
+  plannedQuantity: number
+  deliveredQuantity: number
+  unscheduledQuantity: number
+  plannedScheduleCount: number
+  deliveredScheduleCount: number
+}
+
 export function filterSupplyOrderItems(
   items: SupplyOrderItem[],
   filters: OrderFiltersState,
@@ -213,6 +225,97 @@ export function groupSupplyOrderAggregates(aggregates: SupplyOrderAggregate[], s
     .map(([dateKey, rows]) => ({ dateKey, rows }))
 }
 
+export function groupSupplyOrderAggregatesBySupplyDate(
+  aggregates: SupplyOrderAggregate[],
+  sort: SupplyOrderAggregateSort,
+) {
+  const groups = new Map<string, SupplyOrderDateSlice[]>()
+
+  for (const aggregate of aggregates) {
+    const slices = buildSupplyOrderDateSlices(aggregate)
+    for (const slice of slices) {
+      groups.set(slice.dateKey, [...(groups.get(slice.dateKey) || []), slice])
+    }
+  }
+
+  return Array.from(groups.entries())
+    .sort(([left], [right]) => compareDateGroupKeys(
+      left,
+      right,
+      sort === 'date_desc' ? 'desc' : 'asc',
+      'no_supply_date',
+    ))
+    .map(([dateKey, rows]) => ({
+      dateKey,
+      rows: sortSupplyOrderDateSlices(rows, sort),
+    }))
+}
+
+function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
+  const slices = new Map<string, Omit<SupplyOrderDateSlice, 'id' | 'aggregate'>>()
+
+  const getSlice = (dateKey: string) => {
+    const existing = slices.get(dateKey)
+    if (existing) return existing
+    const created = {
+      dateKey,
+      quantity: 0,
+      plannedQuantity: 0,
+      deliveredQuantity: 0,
+      unscheduledQuantity: 0,
+      plannedScheduleCount: 0,
+      deliveredScheduleCount: 0,
+    }
+    slices.set(dateKey, created)
+    return created
+  }
+
+  for (const factory of aggregate.factories) {
+    for (const item of factory.items) {
+      for (const schedule of item.delivery_schedules) {
+        if (schedule.status === 'cancelled') continue
+        const dateKey = schedule.delivery_date || factory.production_date || aggregate.planned_material_date || 'no_supply_date'
+        const slice = getSlice(dateKey)
+        const plannedQuantity = Math.max(Number(schedule.quantity || 0), 0)
+        slice.quantity += plannedQuantity
+        if (schedule.status === 'planned') {
+          slice.plannedQuantity += plannedQuantity
+          slice.plannedScheduleCount += 1
+        } else if (schedule.status === 'delivered') {
+          slice.deliveredQuantity += deliveredScheduleQuantity(schedule)
+          slice.deliveredScheduleCount += 1
+        }
+      }
+
+      const unscheduledQuantity = Math.max(Number(item.unscheduled_quantity || 0), 0)
+      if (unscheduledQuantity > 0) {
+        const dateKey = factory.production_date || aggregate.planned_material_date || 'no_supply_date'
+        const slice = getSlice(dateKey)
+        slice.quantity += unscheduledQuantity
+        slice.unscheduledQuantity += unscheduledQuantity
+      }
+    }
+  }
+
+  return Array.from(slices.values()).map((slice) => ({
+    ...slice,
+    id: `${aggregate.id}|supply-date:${slice.dateKey}`,
+    aggregate,
+  }))
+}
+
+function sortSupplyOrderDateSlices(rows: SupplyOrderDateSlice[], sort: SupplyOrderAggregateSort) {
+  return [...rows].sort((left, right) => {
+    if (sort === 'quantity_desc') {
+      return right.quantity - left.quantity || compareText(left.aggregate.item_name, right.aggregate.item_name)
+    }
+    if (sort === 'remaining_desc') {
+      return right.unscheduledQuantity - left.unscheduledQuantity || compareText(left.aggregate.item_name, right.aggregate.item_name)
+    }
+    return compareText(left.aggregate.item_name, right.aggregate.item_name)
+  })
+}
+
 export function partitionSupplyOrderAggregatesByRedelivery(aggregates: SupplyOrderAggregate[]) {
   const redeliveries: SupplyOrderAggregate[] = []
   const regular: SupplyOrderAggregate[] = []
@@ -325,6 +428,12 @@ function receivedScheduleQuantity(schedule: SupplyOrderAggregateSourceItem['deli
   const value = schedule.received_quantity ?? schedule.allocated_quantity
   if (value === null || value === undefined) return Number(schedule.quantity || 0)
   const quantity = Number(value)
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 0
+}
+
+function deliveredScheduleQuantity(schedule: SupplyOrderAggregateSourceItem['delivery_schedules'][number]) {
+  const value = schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity
+  const quantity = Number(value || 0)
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 0
 }
 

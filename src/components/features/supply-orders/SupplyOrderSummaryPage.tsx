@@ -41,7 +41,7 @@ import {
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import {
   filterAndSortAggregates,
-  groupSupplyOrderAggregates,
+  groupSupplyOrderAggregatesBySupplyDate,
   hasSupplyOrderRedelivery,
   isSupplyOrderAggregateClosed,
   partitionSupplyOrderAggregatesByRedelivery,
@@ -51,6 +51,7 @@ import {
   type AggregateFiltersState,
   type SupplyOrderAggregateSort,
   type SupplyOrderAggregateStatusFilter,
+  type SupplyOrderDateSlice,
 } from './supply-order-view'
 
 type SupplyOrderSummaryPageProps = {
@@ -102,7 +103,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
     return partitionSupplyOrderAggregatesByRedelivery(visibleAggregates)
   }, [visibleAggregates])
   const grouped = useMemo(() => {
-    return groupSupplyOrderAggregates(
+    return groupSupplyOrderAggregatesBySupplyDate(
       filters.status === 'unscheduled' ? [] : prioritizedAggregates.regular,
       filters.sort,
     )
@@ -218,21 +219,22 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><CalendarDays className="h-4 w-4" /></div>
                 <div>
                   <h2 id={`aggregate-date-${group.dateKey}`} className="text-base font-semibold text-foreground sm:text-lg">
-                    {group.dateKey === 'no_planned_date' ? 'Без даты Мат.план' : formatDate(group.dateKey)}
+                    {group.dateKey === 'no_supply_date' ? 'Без даты поставки' : formatDate(group.dateKey)}
                   </h2>
-                  <p className="text-xs text-muted-foreground">{group.rows.length} агрегированных материалов</p>
+                  <p className="text-xs text-muted-foreground">{group.rows.length} поставок материалов</p>
                 </div>
               </div>
 
               <div className="space-y-3">
-                  {group.rows.map((aggregate) => (
+                  {group.rows.map((slice) => (
                     <MaterialOrderCard
-                      key={aggregate.id}
-                      aggregate={aggregate}
-                      factory={aggregate.factories[0]}
+                      key={slice.id}
+                      aggregate={slice.aggregate}
+                      factory={slice.aggregate.factories[0]}
                       suppliers={suppliers}
-                      isExpanded={expanded.has(aggregate.id)}
-                      onToggle={() => toggle(aggregate.id)}
+                      isExpanded={expanded.has(slice.id)}
+                      onToggle={() => toggle(slice.id)}
+                      dateSlice={slice}
                     />
                   ))}
               </div>
@@ -251,6 +253,7 @@ function MaterialOrderCard({
   isExpanded,
   onToggle,
   attentionKind = 'standard',
+  dateSlice,
 }: {
   aggregate: SupplyOrderAggregate
   factory?: SupplyOrderAggregateFactory
@@ -258,6 +261,7 @@ function MaterialOrderCard({
   isExpanded: boolean
   onToggle: () => void
   attentionKind?: 'standard' | 'redelivery'
+  dateSlice?: SupplyOrderDateSlice
 }) {
   const [deliveryOpen, setDeliveryOpen] = useState(false)
   const routes = factory ? summarizeSupplyOrderMachineRoutes(factory.items) : []
@@ -271,9 +275,17 @@ function MaterialOrderCard({
     route.machineId || route.machineName,
     route.originalDeliveryDates,
   ]))
-  const detailsId = `machine-details-${aggregate.id}`
-  const deliveryId = `delivery-details-${aggregate.id}`
+  const cardId = dateSlice?.id || aggregate.id
+  const detailsId = `machine-details-${cardId}`
+  const deliveryId = `delivery-details-${cardId}`
   const supplyPlan = factory ? makeSupplyPlanDateInfo(factory) : null
+  const displayQuantity = dateSlice?.quantity ?? aggregate.quantity
+  const displayUnscheduledQuantity = dateSlice?.unscheduledQuantity ?? factory?.unscheduled_quantity ?? 0
+  const displayWeight = dateSlice && factory
+    ? formatWeightForQuantity(displayQuantity, factory)
+    : aggregate.weight_kg !== null
+      ? `${formatAmount(aggregate.weight_kg)} кг`
+      : null
 
   return (
     <article className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
@@ -282,25 +294,40 @@ function MaterialOrderCard({
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs leading-5">
             <div className="text-sm text-muted-foreground">{MATERIAL_CATEGORY_LABELS[aggregate.category]}</div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              {aggregate.ordered_count > 0 && (
-                <div className="flex items-center gap-1.5 font-medium text-primary">
-                  <Check className="h-3.5 w-3.5" />
-                  {aggregate.ordered_count} заказано
-                </div>
+              {dateSlice ? (
+                <>
+                  {dateSlice.plannedScheduleCount > 0 && (
+                    <div className="flex items-center gap-1.5 font-medium text-primary">
+                      <Check className="h-3.5 w-3.5" />
+                      В графике
+                    </div>
+                  )}
+                  {dateSlice.deliveredScheduleCount > 0 && <div className="font-medium text-emerald-700">Принято</div>}
+                  {dateSlice.unscheduledQuantity > 0 && <div className="font-medium text-amber-700">Без графика</div>}
+                </>
+              ) : (
+                <>
+                  {aggregate.ordered_count > 0 && (
+                    <div className="flex items-center gap-1.5 font-medium text-primary">
+                      <Check className="h-3.5 w-3.5" />
+                      {aggregate.ordered_count} заказано
+                    </div>
+                  )}
+                  {aggregate.pending_count > 0 && <div className="text-muted-foreground">{aggregate.pending_count} не заказано</div>}
+                  {aggregate.delivered_count > 0 && <div className="font-medium text-emerald-700">{aggregate.delivered_count} принято</div>}
+                </>
               )}
-              {aggregate.pending_count > 0 && <div className="text-muted-foreground">{aggregate.pending_count} не заказано</div>}
-              {aggregate.delivered_count > 0 && <div className="font-medium text-emerald-700">{aggregate.delivered_count} принято</div>}
             </div>
           </div>
           <h3 className="mt-1 break-words text-lg font-semibold text-foreground sm:text-xl">{aggregate.item_name}</h3>
 
-          {factory && factory.unscheduled_quantity > 0 && (
+          {factory && displayUnscheduledQuantity > 0 && (
             <div className="mt-3 flex w-fit flex-wrap items-center gap-x-1.5 gap-y-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-sm text-amber-950">
               <CalendarX2 className="h-4 w-4 shrink-0 text-amber-700" />
               <span className="font-semibold">{attentionKind === 'redelivery' ? 'Нужно довезти:' : 'Без графика:'}</span>
-              <span className="font-medium tabular-nums">{formatAmount(factory.unscheduled_quantity)} {aggregate.unit}</span>
-              {formatWeightForQuantity(factory.unscheduled_quantity, factory) && (
-                <span className="text-amber-800">· {formatWeightForQuantity(factory.unscheduled_quantity, factory)}</span>
+              <span className="font-medium tabular-nums">{formatAmount(displayUnscheduledQuantity)} {aggregate.unit}</span>
+              {formatWeightForQuantity(displayUnscheduledQuantity, factory) && (
+                <span className="text-amber-800">· {formatWeightForQuantity(displayUnscheduledQuantity, factory)}</span>
               )}
             </div>
           )}
@@ -317,15 +344,15 @@ function MaterialOrderCard({
 
         <dl className="border-t border-border bg-muted/20 p-4 lg:border-l lg:border-t-0 lg:p-5">
           <div className="flex items-baseline justify-between gap-3 lg:block">
-            <dt className="text-sm text-muted-foreground">{attentionKind === 'redelivery' ? 'Было заявлено' : 'Количество'}</dt>
+            <dt className="text-sm text-muted-foreground">{attentionKind === 'redelivery' ? 'Было заявлено' : dateSlice ? 'Количество на дату' : 'Количество'}</dt>
             <dd className="text-xl font-semibold text-foreground tabular-nums lg:mt-1">
-              {formatAmount(aggregate.quantity)} {aggregate.unit}
+              {formatAmount(displayQuantity)} {aggregate.unit}
             </dd>
           </div>
           <div className="mt-2 flex items-center justify-between gap-3 text-sm">
             <dt className="text-muted-foreground">Вес</dt>
             <dd className="font-medium text-foreground tabular-nums">
-              {aggregate.weight_kg !== null ? `${formatAmount(aggregate.weight_kg)} кг` : 'Не рассчитан'}
+              {displayWeight || 'Не рассчитан'}
             </dd>
           </div>
           <div className="mt-1 flex items-center justify-between gap-3 text-sm">
@@ -345,6 +372,12 @@ function MaterialOrderCard({
             <span className="text-xs text-muted-foreground">{routes.length}</span>
           </div>
 
+          {dateSlice && (
+            <p className="mt-1 text-xs leading-5 text-muted-foreground xl:max-w-3xl">
+              Потребности по машинам. Распределение объёма этой даты фиксируется при приёмке.
+            </p>
+          )}
+
           {routes.length > 0 ? (
             <ul className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border xl:max-w-3xl">
               {routes.map((route) => (
@@ -362,7 +395,10 @@ function MaterialOrderCard({
                       )}
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-0.5 tabular-nums">
-                      <span className="font-semibold text-foreground">{formatAmount(route.quantity)} {aggregate.unit}</span>
+                      <span className="font-semibold text-foreground">
+                        {dateSlice && <span className="mr-1 text-xs font-normal text-muted-foreground">Потребность</span>}
+                        {formatAmount(route.quantity)} {aggregate.unit}
+                      </span>
                       {attentionByMachine.get(route.machineId || route.machineName) && (
                         <span className="text-xs font-medium text-amber-700">
                           {attentionKind === 'redelivery' ? 'Довезти' : 'Без графика'} {formatAmount(attentionByMachine.get(route.machineId || route.machineName)!.quantity)} {aggregate.unit}
@@ -407,13 +443,27 @@ function MaterialOrderCard({
                 <Truck className="h-4 w-4 shrink-0 text-primary" />
                 <span className="min-w-0">
                   <span className="block text-sm font-semibold text-foreground">Поставка · {factory.factory_name}</span>
-                  <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                    Мат.план {factory.production_date ? formatDate(factory.production_date) : 'не указан'} · снабжение {supplyPlan?.value || 'не указано'}
-                  </span>
-                  <span className="block text-xs leading-5 text-muted-foreground">
-                    График {factory.has_delivery_schedules ? dateCountLabel(factory.delivery_schedule_count) : 'не создан'}
-                    {factory.unscheduled_quantity > 0 && ` · остаток ${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit}`}
-                  </span>
+                  {dateSlice ? (
+                    <>
+                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                        Дата {dateSlice.dateKey === 'no_supply_date' ? 'не указана' : formatDate(dateSlice.dateKey)} · {dateSlice.plannedScheduleCount + dateSlice.deliveredScheduleCount > 0 ? 'из графика снабжения' : 'по Мат.план производства'}
+                      </span>
+                      <span className="block text-xs leading-5 text-muted-foreground">
+                        {formatAmount(dateSlice.quantity - dateSlice.unscheduledQuantity)} по графику / {formatAmount(dateSlice.deliveredQuantity)} принято
+                        {dateSlice.unscheduledQuantity > 0 && ` · без графика ${formatAmount(dateSlice.unscheduledQuantity)} ${aggregate.unit}`}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                        Мат.план {factory.production_date ? formatDate(factory.production_date) : 'не указан'} · снабжение {supplyPlan?.value || 'не указано'}
+                      </span>
+                      <span className="block text-xs leading-5 text-muted-foreground">
+                        График {factory.has_delivery_schedules ? dateCountLabel(factory.delivery_schedule_count) : 'не создан'}
+                        {factory.unscheduled_quantity > 0 && ` · остаток ${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit}`}
+                      </span>
+                    </>
+                  )}
                 </span>
               </span>
               <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${deliveryOpen ? 'rotate-180' : ''}`} />
@@ -898,12 +948,12 @@ function FactoryDeliveryEditor({
         <div className="mt-3 rounded-md border border-[#E8ECF0] bg-white p-3">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div className="text-sm font-semibold text-[#1B3A6B]">График поставки</div>
+              <div className="text-sm font-semibold text-[#1B3A6B]">Полный график поставки</div>
               <div className="text-xs text-[#64748B]">
                 План {formatAmount(plannedTotal)} из {formatAmount(remainingQuantity)} {aggregate.unit}
                 {factory.weight_kg !== null && ` · ${formatWeightForQuantity(plannedTotal, factory)}`}
               </div>
-              <div className="text-xs text-[#64748B]">Сохранение графика сразу отмечает материал как заказанный.</div>
+              <div className="text-xs text-[#64748B]">Изменения сохраняют все даты графика целиком и сразу отмечают материал как заказанный.</div>
             </div>
             <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={addDraft}>
               <Plus className="h-3.5 w-3.5" />

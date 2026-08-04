@@ -10,6 +10,7 @@ import {
   filterAndSortHistory,
   filterSupplyOrderItems,
   getSupplyOrderRedeliveryDates,
+  groupSupplyOrderAggregatesBySupplyDate,
   groupSupplyOrderItems,
   isSupplyOrderRedeliveryItem,
   partitionSupplyOrderAggregatesByRedelivery,
@@ -102,6 +103,109 @@ assert.deepEqual(
   prioritized.regular.map((row) => row.id),
   ['aggregate', 'later-date'],
   'ordinary materials must remain in the dated sections'
+)
+
+const splitScheduleAggregate = makeDateScheduleAggregate([
+  makeDeliverySchedule({
+    id: 'planned-july',
+    delivery_date: '2026-07-31',
+    quantity: 3_000,
+    status: 'planned',
+    received_quantity: null,
+    allocated_quantity: null,
+    allocated_physical_quantity: null,
+    delivered_at: null,
+  }),
+  makeDeliverySchedule({
+    id: 'delivered-august',
+    delivery_date: '2026-08-02',
+    quantity: 5_000,
+    received_quantity: 5_000,
+    allocated_quantity: 4_000,
+    allocated_physical_quantity: 5_000,
+  }),
+  makeDeliverySchedule({
+    id: 'cancelled-july',
+    delivery_date: '2026-07-29',
+    quantity: 9_000,
+    status: 'cancelled',
+    received_quantity: null,
+    allocated_quantity: null,
+    allocated_physical_quantity: null,
+    delivered_at: null,
+  }),
+], { plannedMaterialDate: '2026-08-28', unscheduledQuantity: 1_000 })
+const supplyDateGroups = groupSupplyOrderAggregatesBySupplyDate([splitScheduleAggregate], 'date_asc')
+assert.deepEqual(
+  supplyDateGroups.map((group) => group.dateKey),
+  ['2026-07-31', '2026-08-02', '2026-08-28'],
+  'supplier schedule dates must replace the production date, while an uncovered remainder falls back to production plan',
+)
+assert.deepEqual(
+  supplyDateGroups.map((group) => ({
+    quantity: group.rows[0].quantity,
+    planned: group.rows[0].plannedQuantity,
+    delivered: group.rows[0].deliveredQuantity,
+    unscheduled: group.rows[0].unscheduledQuantity,
+  })),
+  [
+    { quantity: 3_000, planned: 3_000, delivered: 0, unscheduled: 0 },
+    { quantity: 5_000, planned: 0, delivered: 4_000, unscheduled: 0 },
+    { quantity: 1_000, planned: 0, delivered: 0, unscheduled: 1_000 },
+  ],
+  'every date card must expose only its scheduled, accepted, and uncovered quantities',
+)
+assert.equal(
+  new Set(supplyDateGroups.flatMap((group) => group.rows.map((row) => row.id))).size,
+  3,
+  'date slices of the same aggregate must have distinct stable ids',
+)
+assert.equal(
+  supplyDateGroups.every((group) => group.rows[0].aggregate === splitScheduleAggregate),
+  true,
+  'date slicing must keep the original aggregate for totals and full-schedule editing',
+)
+
+const mergedDateGroups = groupSupplyOrderAggregatesBySupplyDate([
+  makeDateScheduleAggregate([
+    makeDeliverySchedule({
+      id: 'same-date-planned',
+      delivery_date: '2026-08-28',
+      quantity: 2_000,
+      status: 'planned',
+      received_quantity: null,
+      allocated_quantity: null,
+      allocated_physical_quantity: null,
+      delivered_at: null,
+    }),
+    makeDeliverySchedule({
+      id: 'same-date-delivered',
+      delivery_date: '2026-08-28',
+      quantity: 3_000,
+      received_quantity: 2_500,
+      allocated_quantity: 2_500,
+      allocated_physical_quantity: 2_500,
+    }),
+  ], { plannedMaterialDate: '2026-08-28', unscheduledQuantity: 1_000 }),
+], 'date_asc')
+assert.equal(mergedDateGroups.length, 1, 'schedules and fallback remainder on the same date must share one card')
+assert.deepEqual(
+  {
+    quantity: mergedDateGroups[0].rows[0].quantity,
+    planned: mergedDateGroups[0].rows[0].plannedQuantity,
+    delivered: mergedDateGroups[0].rows[0].deliveredQuantity,
+    unscheduled: mergedDateGroups[0].rows[0].unscheduledQuantity,
+  },
+  { quantity: 6_000, planned: 2_000, delivered: 2_500, unscheduled: 1_000 },
+  'same-date schedule parts must be merged without losing their separate states',
+)
+
+assert.deepEqual(
+  groupSupplyOrderAggregatesBySupplyDate([
+    makeDateScheduleAggregate([], { plannedMaterialDate: null, unscheduledQuantity: 4 }),
+  ], 'date_asc').map((group) => group.dateKey),
+  ['no_supply_date'],
+  'an unscheduled material without production date must stay visible in the no-date group',
 )
 
 const partialItem = partiallyAccepted.factories[0].items[0]
@@ -317,6 +421,67 @@ function makePartiallyAcceptedAggregate(): SupplyOrderAggregate {
       delivered_schedule_quantity: 1,
       unscheduled_quantity: 9,
       supply_delivery_date: null,
+      items: [item],
+    }],
+  }
+}
+
+function makeDateScheduleAggregate(
+  schedules: SupplyOrderDeliverySchedule[],
+  options: { plannedMaterialDate: string | null; unscheduledQuantity: number },
+): SupplyOrderAggregate {
+  const base = makeAggregate()
+  const plannedQuantity = schedules
+    .filter((schedule) => schedule.status === 'planned')
+    .reduce((sum, schedule) => sum + Number(schedule.quantity || 0), 0)
+  const deliveredQuantity = schedules
+    .filter((schedule) => schedule.status === 'delivered')
+    .reduce((sum, schedule) => sum + Number(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0), 0)
+  const activeDates = Array.from(new Set(schedules
+    .filter((schedule) => schedule.status !== 'cancelled')
+    .map((schedule) => schedule.delivery_date)))
+  const quantity = schedules
+    .filter((schedule) => schedule.status !== 'cancelled')
+    .reduce((sum, schedule) => sum + Number(schedule.quantity || 0), options.unscheduledQuantity)
+  const item = makeAggregateSourceItem({
+    id: 'date-schedule-item',
+    machine_id: 'machine-a',
+    machine_name: 'Машина А',
+    quantity,
+    supplier_id: 'supplier-a',
+    supplier_name: 'Металл А',
+    weight_kg: quantity,
+    order_status: plannedQuantity > 0 ? 'ordered' : 'delivered',
+    supply_delivery_date: activeDates.length === 1 ? activeDates[0] : null,
+    planned_schedule_quantity: plannedQuantity,
+    delivered_schedule_quantity: deliveredQuantity,
+    unscheduled_quantity: options.unscheduledQuantity,
+    delivery_schedules: schedules,
+  })
+
+  return {
+    ...base,
+    id: `date-schedule:${options.plannedMaterialDate || 'none'}`,
+    planned_material_date: options.plannedMaterialDate,
+    quantity,
+    requested_quantity: quantity,
+    weight_kg: quantity,
+    planned_schedule_quantity: plannedQuantity,
+    delivered_schedule_quantity: deliveredQuantity,
+    unscheduled_quantity: options.unscheduledQuantity,
+    factories: [{
+      ...base.factories[0],
+      quantity,
+      requested_quantity: quantity,
+      weight_kg: quantity,
+      planned_schedule_quantity: plannedQuantity,
+      delivered_schedule_quantity: deliveredQuantity,
+      unscheduled_quantity: options.unscheduledQuantity,
+      delivery_schedule_count: activeDates.length,
+      has_delivery_schedules: activeDates.length > 0,
+      production_date: options.plannedMaterialDate,
+      supply_delivery_date: activeDates.length === 1 ? activeDates[0] : null,
+      has_mixed_supply_delivery_dates: activeDates.length > 1,
       items: [item],
     }],
   }
