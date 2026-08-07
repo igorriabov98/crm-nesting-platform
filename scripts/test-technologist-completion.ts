@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { calculatePlasmaTime, calculateWaste, nextWeekday } from '../src/lib/request-completion-calculations'
+import { resolveCompletionWorkspaceNavigation } from '../src/lib/request-completion-navigation'
+import { ROUTES } from '../src/lib/constants/routes'
 
 assert.deepEqual(calculateWaste(1000, 15.5), { scrapKg: 155, usefulKg: 845 })
 assert.deepEqual(calculateWaste(123.456, 15.5), { scrapKg: 19.136, usefulKg: 104.32 })
 assert.deepEqual(calculatePlasmaTime(1, 1), { enteredMinutes: 61, addedMinutes: 16, actualMinutes: 77 })
 assert.equal(nextWeekday(new Date('2026-07-31T00:00:00Z')).toISOString().slice(0, 10), '2026-08-03')
+assert.deepEqual(resolveCompletionWorkspaceNavigation('pending_stock_check'), { kind: 'open' })
+assert.deepEqual(resolveCompletionWorkspaceNavigation('stock_checked'), { kind: 'open' })
+assert.deepEqual(resolveCompletionWorkspaceNavigation('submitted_to_supply'), { kind: 'redirect', href: ROUTES.MATERIAL_REQUESTS })
+assert.deepEqual(resolveCompletionWorkspaceNavigation('completed'), { kind: 'redirect', href: ROUTES.MATERIAL_REQUESTS })
+assert.deepEqual(resolveCompletionWorkspaceNavigation('draft'), { kind: 'unavailable' })
 
 const migration = readFileSync('supabase/migrations/20260729120000_technologist_completion_future_detailing_scrap.sql', 'utf8')
 for (const required of [
@@ -18,5 +25,8 @@ for (const required of [
 const supplyPage = readFileSync('src/components/features/supply-request/SupplyRequestPage.tsx', 'utf8')
 assert.ok(supplyPage.includes('/technologist/requests/${request.id}/complete'))
 assert.ok(!supplyPage.includes("toast.success('Бронь завершена. Заявка передана в снабжение.')"))
+
+const completionPage = readFileSync('src/app/(protected)/technologist/requests/[requestId]/complete/page.tsx', 'utf8')
+assert.ok(completionPage.includes('if (result.redirectTo) redirect(result.redirectTo)'))
 
 console.log('Technologist completion regression passed')
