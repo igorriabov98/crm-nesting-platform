@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { CheckCircle2, FilePlus2, Hand, Paperclip, Trash2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
@@ -21,6 +22,8 @@ import {
 } from '@/lib/department-request-files'
 import { Button } from '@/components/ui/button'
 import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
+import { ROUTES } from '@/lib/constants/routes'
+import { cn } from '@/lib/utils'
 import {
   Dialog,
   DialogContent,
@@ -38,10 +41,16 @@ export function RequestActions({
   requestId,
   status,
   mode,
+  requestKind,
+  machineId,
+  canClaimMachineLayout,
 }: {
   requestId: string
   status: DepartmentRequestStatus
   mode: 'mine' | 'inbox'
+  requestKind: 'manual' | 'machine_layout'
+  machineId: string | null
+  canClaimMachineLayout: boolean
 }) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -134,21 +143,30 @@ export function RequestActions({
   }
 
   if (!['new', 'in_progress'].includes(status)) return null
+  const isMachineLayout = requestKind === 'machine_layout'
 
   return (
     <>
       <div className="flex flex-wrap gap-2">
-        {status === 'new' && (
+        {status === 'new' && (!isMachineLayout || canClaimMachineLayout) && (
           <Button type="button" className="min-h-11 bg-[#1B3A6B] text-white hover:bg-[#152f59]" disabled={pending} onClick={claim}>
             <Hand className="size-4" aria-hidden="true" />
             {pending ? 'Назначаем…' : 'Взять в работу'}
           </Button>
         )}
-        {status === 'in_progress' && (
+        {status === 'in_progress' && !isMachineLayout && (
           <Button type="button" className="min-h-11 bg-emerald-700 text-white hover:bg-emerald-800" onClick={() => setDecision('done')}>
             <CheckCircle2 className="size-4" aria-hidden="true" />
             Завершить запрос
           </Button>
+        )}
+        {status === 'in_progress' && isMachineLayout && machineId && (
+          <Link
+            href={`${ROUTES.SALES_PLAN}/${machineId}?tab=technologist`}
+            className={cn('inline-flex min-h-11 items-center justify-center rounded-md bg-[#1B3A6B] px-4 text-sm font-medium text-white hover:bg-[#152f59]')}
+          >
+            Открыть машину
+          </Link>
         )}
         <Button type="button" variant="outline" className="min-h-11 border-red-200 text-red-700 hover:bg-red-50" onClick={() => setDecision('rejected')}>
           <XCircle className="size-4" aria-hidden="true" />

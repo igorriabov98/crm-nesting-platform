@@ -175,7 +175,10 @@ function canAccessRequest(context: Awaited<ReturnType<typeof requireAnyPermissio
   const departmentAllowed = canManageDepartmentRequestTarget({
     target: request.target_department,
     role: context.role,
-    memberships: context.permissionDetails.memberships.map((membership) => ({ departmentName: membership.departmentName })),
+    memberships: context.permissionDetails.memberships.map((membership) => ({
+      departmentName: membership.departmentName,
+      positionName: membership.positionName,
+    })),
   })
   const factoryAllowed = request.target_department !== 'production'
     || DIRECTORS.includes(context.role)

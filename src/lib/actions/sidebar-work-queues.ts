@@ -32,6 +32,7 @@ const DIRECTORS = ['financial_director', 'commercial_director', 'planning_direct
 async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof requirePermission>>) {
   const memberships = context.permissionDetails.memberships.map((membership) => ({
     departmentName: membership.departmentName,
+    positionName: membership.positionName,
   }))
   const manageableTargets = TARGETS.filter((target) => canManageDepartmentRequestTarget({
     target,

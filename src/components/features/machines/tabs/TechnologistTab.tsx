@@ -24,6 +24,7 @@ import {
 } from '@/lib/actions/machine-layout'
 import { cn } from '@/lib/utils'
 import { ROUTES } from '@/lib/constants/routes'
+import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
 import type { MachineDetails, MaterialType } from '@/lib/types'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 
@@ -56,15 +57,24 @@ function formatQuantity(value: number) {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)
 }
 
+function closedWithoutPdfLabel(version: MachineLayoutVersion) {
+  if (version.departmentRequestStatus === 'cancelled') return 'Запрос отменён'
+  if (version.departmentRequestStatus === 'rejected') return 'Запрос отклонён'
+  return 'Номенклатура изменилась'
+}
+
 function LayoutStatusBadge({ version }: { version: MachineLayoutVersion | null }) {
   if (!version) return <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">Нет запроса</Badge>
   if (version.isSupersededBeforePdf) {
-    return <Badge variant="outline" className="border-slate-200 bg-slate-100 text-slate-600">Номенклатура изменилась</Badge>
+    return <Badge variant="outline" className="border-slate-200 bg-slate-100 text-slate-600">{closedWithoutPdfLabel(version)}</Badge>
   }
   if (version.status === 'completed') {
     return <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">PDF загружен</Badge>
   }
-  return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Ожидает расстановки</Badge>
+  if (version.assignedTo) {
+    return <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-800">В работе</Badge>
+  }
+  return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Ожидает исполнителя</Badge>
 }
 
 function DrawingLink({ item }: { item: MachineLayoutSnapshotItem }) {
@@ -184,7 +194,7 @@ function VersionHistory({ versions }: { versions: MachineLayoutVersion[] }) {
               <div className="text-sm text-slate-500">
                 Запрос: {formatDateTime(version.createdAt)}
                 {version.isSupersededBeforePdf && version.completedAt
-                  ? ` · Закрыта: номенклатура изменилась ${formatDateTime(version.completedAt)}`
+                  ? ` · ${closedWithoutPdfLabel(version)}: ${formatDateTime(version.completedAt)}`
                   : version.completedAt
                   ? ` · PDF: ${formatDateTime(version.completedAt)}`
                   : ''}
@@ -234,7 +244,7 @@ export function TechnologistTab({
   const hasOpenLayoutRequest = Boolean(openLayoutVersion)
   const canRequestLayout = !machine.is_archived && currentItems.length > 0 && !hasOpenLayoutRequest && can('sales_plan', 'manage')
   const canUploadPdf = !machine.is_archived && latest?.status === 'requested' && (
-    can('nesting', 'manage') && (isDirector || latest.assignedTo === user?.id)
+    can('department_requests', 'manage') && (isDirector || latest.assignedTo === user?.id)
   )
   const materialTypeValue = (machine.material_type || 'undefined') as MaterialType
   const materialTypeLabel = MATERIAL_TYPE_LABELS[materialTypeValue] ?? MATERIAL_TYPE_LABELS['undefined']
@@ -260,7 +270,8 @@ export function TechnologistTab({
       toast.error(result.error || 'Не удалось создать запрос на расстановку')
       return
     }
-    toast.success('Запрос на расстановку отправлен технологу')
+    toast.success('Заявка добавлена в «Технолог → Запросы»')
+    notifySidebarWorkQueuesChanged()
     router.refresh()
   }
 
@@ -281,6 +292,7 @@ export function TechnologistTab({
       return
     }
     toast.success('PDF расстановки загружен, задача закрыта')
+    notifySidebarWorkQueuesChanged()
     router.refresh()
   }
 
@@ -331,7 +343,9 @@ export function TechnologistTab({
             </div>
             <p className="mt-1 text-sm text-slate-500">
               {openLayoutVersion
-                ? `Версия ${openLayoutVersion.versionNo} ожидает расстановки. Новый запрос появится после загрузки PDF.`
+                ? openLayoutVersion.assignedToName
+                  ? `Версия ${openLayoutVersion.versionNo} в работе у ${openLayoutVersion.assignedToName}. Задача завершится после загрузки PDF.`
+                  : `Версия ${openLayoutVersion.versionNo} ожидает, пока технолог или инженер возьмёт заявку в работу.`
                 : latest
                 ? `Текущая версия ${latest.versionNo}, запрос создан ${formatDateTime(latest.createdAt)}.`
                 : 'Запрос на расстановку ещё не создан.'}
@@ -371,8 +385,15 @@ export function TechnologistTab({
               </Button>
             )}
             {hasOpenLayoutRequest && (
-              <div className="inline-flex min-h-11 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-medium text-amber-800">
-                Ожидает расстановки
+              <div className={cn(
+                'inline-flex min-h-11 items-center rounded-xl border px-4 text-sm font-medium',
+                openLayoutVersion?.assignedTo
+                  ? 'border-violet-200 bg-violet-50 text-violet-800'
+                  : 'border-amber-200 bg-amber-50 text-amber-800',
+              )}>
+                {openLayoutVersion?.assignedToName
+                  ? `В работе: ${openLayoutVersion.assignedToName}`
+                  : 'Ожидает исполнителя'}
               </div>
             )}
           </div>

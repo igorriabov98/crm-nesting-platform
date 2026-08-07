@@ -92,10 +92,12 @@ function RequestListItem({
   request,
   mode,
   factoryId,
+  canClaimMachineLayout,
 }: {
   request: DepartmentRequestRow
   mode: 'mine' | 'inbox'
   factoryId?: string
+  canClaimMachineLayout: boolean
 }) {
   const target = DEPARTMENT_REQUEST_TARGETS[request.target_department]
   const sourceFiles = (request.attachments || []).filter((attachment) => attachment.phase === 'source').length
@@ -129,6 +131,11 @@ function RequestListItem({
             {mode === 'mine' && (
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
                 {target.label}
+              </span>
+            )}
+            {request.request_kind === 'machine_layout' && (
+              <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-800">
+                Расстановка
               </span>
             )}
           </div>
@@ -198,7 +205,14 @@ function RequestListItem({
         </div>
 
         <div className="flex min-w-max flex-wrap items-center gap-1 xl:justify-end">
-          <RequestActions requestId={request.id} status={request.status} mode={mode} />
+          <RequestActions
+            requestId={request.id}
+            status={request.status}
+            mode={mode}
+            requestKind={request.request_kind}
+            machineId={request.machine_id}
+            canClaimMachineLayout={canClaimMachineLayout}
+          />
           <Link
             href={detailHref}
             aria-label={['done', 'rejected'].includes(request.status) ? 'Открыть результат' : 'Открыть запрос'}
@@ -418,7 +432,13 @@ export function DepartmentRequestsPage({
               </p>
             </div>
           ) : workspace.requests.map((request) => (
-            <RequestListItem key={request.id} request={request} mode={workspace.mode} factoryId={factoryId} />
+            <RequestListItem
+              key={request.id}
+              request={request}
+              mode={workspace.mode}
+              factoryId={factoryId}
+              canClaimMachineLayout={workspace.canClaimMachineLayout}
+            />
           ))}
         </div>
 

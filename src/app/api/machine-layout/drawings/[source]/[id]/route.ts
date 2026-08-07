@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 import { downloadFileBytes } from '@/lib/file-archive/resolver'
 
 type FileRow = { file_path: string | null; file_name: string | null; mime_type: string | null }
@@ -13,8 +14,25 @@ function contentDisposition(fileName: string) {
 
 export async function GET(_request: Request, { params }: { params: Promise<{ source: string; id: string }> }) {
   const { source, id } = await params
-  await requirePermission('nesting', 'view')
+  const context = await requirePermission('sales_plan', 'view')
   const admin = createAdminClient()
+  const machineId = new URL(_request.url).searchParams.get('machineId')
+
+  if (!hasPermission(context.permissions, 'nesting', 'view')) {
+    if (!machineId) return NextResponse.json({ error: 'File not found' }, { status: 404 })
+
+    const { data: assignedLayout } = await admin
+      .from('machine_layout_requests')
+      .select('id')
+      .eq('machine_id', machineId)
+      .eq('assigned_to', context.userId)
+      .eq('status', 'requested')
+      .contains('item_snapshot', [{ drawingFileSource: source, drawingFileId: id }])
+      .limit(1)
+      .maybeSingle()
+
+    if (!assignedLayout) return NextResponse.json({ error: 'File not found' }, { status: 404 })
+  }
 
   let filePath: string | null = null
   let fileName = 'drawing.pdf'

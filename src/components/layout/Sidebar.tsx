@@ -241,6 +241,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const workflowItems = sectionItems(user, permissions, 'workflow')
   const requestMemberships = (user.department_memberships || []).map((membership) => ({
     departmentName: membership.department?.name || null,
+    positionName: membership.position?.name || null,
   }))
   const canManageTechnologistRequests = permissions.department_requests?.canView && canManageDepartmentRequestTarget({
     target: 'technologist',

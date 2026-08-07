@@ -28,6 +28,7 @@ const cleanupSchema = z.object({
 function memberships(permissionDetails: Awaited<ReturnType<typeof requirePermission>>['permissionDetails']) {
   return permissionDetails.memberships.map((membership) => ({
     departmentName: membership.departmentName,
+    positionName: membership.positionName,
   }))
 }
 

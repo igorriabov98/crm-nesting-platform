@@ -269,6 +269,7 @@ async function enrichTasksWithDelegationState(
       can_delegate: (
         task.assigned_to === userId &&
         isActiveTaskStatus(task.status) &&
+        task.task_type !== MACHINE_LAYOUT_TASK_TYPE &&
         !pendingDelegation &&
         canDelegateFromAnyDepartment
       ),
@@ -308,20 +309,6 @@ async function hasSubmittedTechnologistRequest(db: LooseSupabaseClient, machineI
 
   if (error) throw new Error(error.message || 'Не удалось проверить заявку технолога')
   return ((data || []) as { id: string }[]).length > 0
-}
-
-async function hasCompletedMachineLayoutPdf(db: LooseSupabaseClient, taskId: string) {
-  const { data, error } = await db
-    .from('machine_layout_requests')
-    .select('id, pdf_file_path')
-    .eq('task_id', taskId)
-    .eq('status', 'completed')
-    .order('version_no', { ascending: false })
-    .limit(1)
-
-  if (error) throw new Error(error.message || 'Не удалось проверить PDF расстановки')
-  const request = ((data || []) as Array<{ id: string; pdf_file_path: string | null }>)[0] || null
-  return Boolean(request?.pdf_file_path)
 }
 
 class TaskBusinessError extends Error {
@@ -678,15 +665,18 @@ async function getCandidatesForHeadDepartments(
 async function assertTaskCanBeDelegated(db: LooseSupabaseClient, taskId: string, userId: string) {
   const { data, error } = await db
     .from('tasks')
-    .select('id, title, assigned_to, status, machine_id, product_project_id')
+    .select('id, title, assigned_to, status, task_type, machine_id, product_project_id')
     .eq('id', taskId)
     .single()
 
   if (error || !data) throw new Error('Задача не найдена')
 
-  const task = data as Pick<Task, 'id' | 'title' | 'assigned_to' | 'status' | 'machine_id' | 'product_project_id'>
+  const task = data as Pick<Task, 'id' | 'title' | 'assigned_to' | 'status' | 'task_type' | 'machine_id' | 'product_project_id'>
   if (task.assigned_to !== userId) throw new Error('Делегировать можно только задачу, назначенную вам')
   if (!isActiveTaskStatus(task.status)) throw new Error('Завершённые и отменённые задачи нельзя делегировать')
+  if (task.task_type === MACHINE_LAYOUT_TASK_TYPE) {
+    throw new Error('Задача расстановки закреплена за сотрудником, который взял заявку в работу')
+  }
 
   const pendingDelegation = await getPendingDelegationForTask(db, taskId)
   if (pendingDelegation) throw new Error('По задаче уже есть делегирование, ожидающее ответа')
@@ -1093,6 +1083,12 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       throw new Error('Задача рабочего запроса меняется автоматически на странице запроса')
     }
     if (
+      taskRow.task_type === MACHINE_LAYOUT_TASK_TYPE
+      && (status === 'completed' || status === 'cancelled')
+    ) {
+      throw new Error('Задача расстановки закрывается автоматически после загрузки PDF или закрытия связанной заявки')
+    }
+    if (
       role === 'production_manager' &&
       taskRow.machine_id &&
       (!taskRow.machine || (taskRow.machine.factory_id !== null && taskRow.machine.factory_id !== factoryId))
@@ -1138,13 +1134,6 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
       (!taskRow.machine?.material_type || taskRow.machine.material_type === 'undefined')
     ) {
       throw new Error('Выберите тип материала во вкладке «Технолог»: стандартный или нестандартный.')
-    }
-
-    if (status === 'completed' && taskRow.task_type === MACHINE_LAYOUT_TASK_TYPE) {
-      const hasPdf = await hasCompletedMachineLayoutPdf(db, taskId)
-      if (!hasPdf) {
-        throw new Error('Задача расстановки закрывается автоматически после загрузки PDF во вкладке «Технолог».')
-      }
     }
 
     if (
