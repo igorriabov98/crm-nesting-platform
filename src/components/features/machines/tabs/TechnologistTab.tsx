@@ -6,11 +6,13 @@ import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { toast } from 'sonner'
-import { ClipboardList, FileText, Loader2, Upload, Wrench } from 'lucide-react'
+import { ClipboardList, FileText, LayoutGrid, Loader2, Scissors, Upload, Wrench } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MachineRequestPanel } from '@/components/features/machines/MachineRequestPanel'
+import { MachineCuttingPanel } from '@/components/features/machines/MachineCuttingPanel'
 import { useRole } from '@/lib/hooks/useRole'
 import { useUser } from '@/lib/hooks/useUser'
 import { updateMachineMaterialType } from '@/app/(protected)/sales-plan/actions'
@@ -26,13 +28,18 @@ import { cn } from '@/lib/utils'
 import { ROUTES } from '@/lib/constants/routes'
 import type { MachineDetails, MaterialType } from '@/lib/types'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
+import type { MachineCuttingPayload } from '@/lib/actions/machine-cutting'
 
 type Props = {
   machine: MachineDetails
   requestData: TechnologistRequestPayload | null
   layoutData: MachineLayoutPayload | null
+  cuttingData: MachineCuttingPayload | null
+  cuttingError: string | null
   canManageTechnologistRequests: boolean
   canViewSupplyRequest: boolean
+  canViewMachineCutting: boolean
+  canManageMachineCutting: boolean
 }
 
 const MATERIAL_TYPE_LABELS = {
@@ -215,8 +222,12 @@ export function TechnologistTab({
   machine,
   requestData,
   layoutData,
+  cuttingData,
+  cuttingError,
   canManageTechnologistRequests,
   canViewSupplyRequest,
+  canViewMachineCutting,
+  canManageMachineCutting,
 }: Props) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -225,6 +236,7 @@ export function TechnologistTab({
   const [isUpdatingMaterialType, setIsUpdatingMaterialType] = useState(false)
   const [isRequestingLayout, setIsRequestingLayout] = useState(false)
   const [isUploadingPdf, setIsUploadingPdf] = useState(false)
+  const [workspace, setWorkspace] = useState<'layout' | 'cutting'>('layout')
 
   const currentItems = layoutData?.currentItems || []
   const latest = layoutData?.latest || null
@@ -293,7 +305,7 @@ export function TechnologistTab({
           </div>
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-slate-950">Технолог</h2>
-            <p className="mt-1 text-sm text-slate-500">Материалы, заявки и расстановка изделий в машине.</p>
+            <p className="mt-1 text-sm text-slate-500">Материалы, заявки, расстановка и порезка изделий.</p>
           </div>
         </div>
         <div className="w-full sm:w-72">
@@ -322,6 +334,27 @@ export function TechnologistTab({
         canViewSupplyRequest={canViewSupplyRequest}
       />
 
+      <Tabs value={workspace} onValueChange={(value) => setWorkspace(value as 'layout' | 'cutting')}>
+        {canViewMachineCutting && (
+          <TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl border border-slate-200 bg-slate-100 p-1 shadow-sm" aria-label="Рабочая область технолога">
+            <TabsTrigger
+              value="layout"
+              className="min-h-11 min-w-0 gap-2 rounded-xl px-3 text-sm font-semibold text-slate-600 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-white data-[state=active]:text-blue-950 data-[state=active]:shadow-sm"
+            >
+              <LayoutGrid className="h-4 w-4 shrink-0" aria-hidden="true" />
+              Расстановка
+            </TabsTrigger>
+            <TabsTrigger
+              value="cutting"
+              className="min-h-11 min-w-0 gap-2 rounded-xl px-3 text-sm font-semibold text-slate-600 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-white data-[state=active]:text-blue-950 data-[state=active]:shadow-sm"
+            >
+              <Scissors className="h-4 w-4 shrink-0" aria-hidden="true" />
+              Порезка
+            </TabsTrigger>
+          </TabsList>
+        )}
+
+        <TabsContent value="layout" className={cn('space-y-4 outline-none', canViewMachineCutting ? 'mt-4' : 'mt-0')}>
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -395,6 +428,19 @@ export function TechnologistTab({
       </section>
 
       <VersionHistory versions={versions} />
+        </TabsContent>
+
+        {canViewMachineCutting && (
+          <TabsContent value="cutting" className="mt-4 outline-none">
+            <MachineCuttingPanel
+              machineId={machine.id}
+              initialData={cuttingData}
+              error={cuttingError}
+              canManage={canManageMachineCutting}
+            />
+          </TabsContent>
+        )}
+      </Tabs>
     </div>
   )
 }

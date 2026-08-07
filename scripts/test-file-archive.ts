@@ -8,6 +8,7 @@ const root = process.cwd()
 const read = (path: string) => readFileSync(join(root, path), 'utf8')
 
 const migration = read('supabase/migrations/20260807120000_file_archive_google_drive.sql')
+const cuttingMigration = read('supabase/migrations/20260807190000_machine_cutting_archives.sql')
 for (const table of [
   'file_archive_connections', 'file_archive_policies', 'file_archive_settings', 'file_archive_runs',
   'file_archive_run_items', 'file_archive_assets', 'file_archive_folders',
@@ -31,6 +32,8 @@ assert(migration.includes("'machine_chat'"))
 assert(migration.includes("'production_drawing'"))
 assert(migration.includes("'nesting_input'"))
 assert(migration.includes("'nesting_output'"))
+assert(cuttingMigration.includes("'nesting_output',\n    'machine_cutting_archive'"))
+assert(cuttingMigration.includes("'nesting_output', 'machine_cutting_archive'"))
 
 const permission = PERMISSION_RESOURCES.find((resource) => resource.key === 'file_archive_settings')
 assert(permission)
@@ -88,6 +91,7 @@ for (const route of [
   'src/app/api/department-requests/files/[id]/route.ts',
   'src/app/api/products/production-drawings/[id]/route.ts',
   'src/app/api/machine-layout/files/[id]/route.ts',
+  'src/app/api/machine-cutting/files/[id]/route.ts',
 ]) {
   assert(read(route).includes('resolveFileResponse'), `${route} не использует общий resolver`)
 }

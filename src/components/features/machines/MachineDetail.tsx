@@ -39,6 +39,7 @@ import type { TaskWithRelations } from '@/lib/actions/tasks'
 import type { TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 import type { MachineItemNestingState } from '@/lib/actions/machine-item-nesting'
 import type { MachineLayoutPayload } from '@/lib/actions/machine-layout'
+import type { MachineCuttingPayload } from '@/lib/actions/machine-cutting'
 import type { MachineActivityPayload } from '@/lib/actions/machine-activity'
 import type { MachineOutsourcingData } from '@/lib/actions/outsourcing'
 import { ROUTES } from '@/lib/constants/routes'
@@ -75,12 +76,16 @@ interface MachineDetailProps {
   tasks?: TaskWithRelations[]
   requestData?: TechnologistRequestPayload | null
   layoutData?: MachineLayoutPayload | null
+  cuttingData?: MachineCuttingPayload | null
+  cuttingError?: string | null
   nestingStates?: MachineItemNestingState[]
   activity: MachineActivityPayload
   outsourcingData?: MachineOutsourcingData | null
   canManageTechnologistRequests?: boolean
   canViewSupplyRequest?: boolean
   canManageNesting?: boolean
+  canViewMachineCutting?: boolean
+  canManageMachineCutting?: boolean
 }
 
 const machineTabTriggerClassName = 'min-h-11 w-full min-w-0 gap-1.5 whitespace-normal rounded-xl px-2 text-center text-xs font-medium leading-tight text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm sm:text-sm'
@@ -127,12 +132,16 @@ export function MachineDetail({
   tasks = [],
   requestData = null,
   layoutData = null,
+  cuttingData = null,
+  cuttingError = null,
   nestingStates = [],
   activity,
   outsourcingData = null,
   canManageTechnologistRequests = false,
   canViewSupplyRequest = false,
   canManageNesting = false,
+  canViewMachineCutting = false,
+  canManageMachineCutting = false,
 }: MachineDetailProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -453,8 +462,12 @@ export function MachineDetail({
               machine={machine}
               requestData={requestData}
               layoutData={layoutData}
+              cuttingData={cuttingData}
+              cuttingError={cuttingError}
               canManageTechnologistRequests={canManageTechnologistRequests}
               canViewSupplyRequest={canViewSupplyRequest}
+              canViewMachineCutting={canViewMachineCutting}
+              canManageMachineCutting={canManageMachineCutting}
             />
           </TabsContent>
           <TabsContent value="production" className="outline-none">

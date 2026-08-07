@@ -59,6 +59,7 @@ export type TaskDelegation = Database['public']['Tables']['task_delegations']['R
 export type Task = Database['public']['Tables']['tasks']['Row']
 export type TechnologistRequest = Database['public']['Tables']['technologist_requests']['Row']
 export type MachineLayoutRequest = Database['public']['Tables']['machine_layout_requests']['Row']
+export type MachineCuttingArchive = Database['public']['Tables']['machine_cutting_archives']['Row']
 export type RequestSheetMetal = Database['public']['Tables']['request_sheet_metal']['Row']
 export type RequestRoundTube = Database['public']['Tables']['request_round_tube']['Row']
 export type RequestCircle = Database['public']['Tables']['request_circle']['Row']

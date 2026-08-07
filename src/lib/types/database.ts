@@ -1074,6 +1074,44 @@ export type Database = {
           updated_at?: string
         }
       }
+      machine_cutting_archives: {
+        Row: {
+          id: string
+          machine_id: string
+          request_id: string
+          completion_id: string
+          file_name: string
+          storage_path: string
+          mime_type: string | null
+          file_size: number
+          uploaded_by: string
+          uploaded_at: string
+        }
+        Insert: {
+          id?: string
+          machine_id: string
+          request_id: string
+          completion_id: string
+          file_name: string
+          storage_path: string
+          mime_type?: string | null
+          file_size: number
+          uploaded_by: string
+          uploaded_at?: string
+        }
+        Update: {
+          id?: string
+          machine_id?: string
+          request_id?: string
+          completion_id?: string
+          file_name?: string
+          storage_path?: string
+          mime_type?: string | null
+          file_size?: number
+          uploaded_by?: string
+          uploaded_at?: string
+        }
+      }
       nesting_batches: {
         Row: {
           id: string
