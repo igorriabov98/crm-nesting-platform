@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Bot, Building2, Factory, Mail, Send, Settings, ShieldCheck, Users } from 'lucide-react'
+import { Archive, Bot, Building2, Factory, Mail, Send, Settings, ShieldCheck, Users } from 'lucide-react'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -89,6 +89,14 @@ export default async function AdminSettingsPage() {
       href: ROUTES.ADMIN_MAIL_SETTINGS,
       buttonLabel: 'Открыть настройки почты',
       icon: Mail,
+    },
+    canViewSettingsContent && canViewResource(permissions, 'file_archive_settings') && {
+      key: 'file-archive',
+      title: 'Архив файлов',
+      description: 'Google Drive, сроки хранения, очередь переноса и безопасный исторический backfill.',
+      href: ROUTES.ADMIN_FILE_ARCHIVE_SETTINGS,
+      buttonLabel: 'Открыть архив файлов',
+      icon: Archive,
     },
     canViewSettingsContent && canViewResource(permissions, 'company_settings') && {
       key: 'company',

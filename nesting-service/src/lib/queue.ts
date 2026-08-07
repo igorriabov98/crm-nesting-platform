@@ -6,6 +6,9 @@ let startingBoss: Promise<PgBoss> | null = null;
 
 export const QUEUE_STEP_PARSING = 'step-parsing';
 export const QUEUE_NESTING_CALCULATION = 'nesting-calculation';
+export const QUEUE_FILE_ARCHIVE_SCAN = 'file-archive-scan';
+export const QUEUE_FILE_ARCHIVE_COPY = 'file-archive-copy';
+export const QUEUE_FILE_ARCHIVE_DELETE = 'file-archive-delete';
 
 export interface StepParsingJobData {
   projectId: string;
@@ -90,6 +93,9 @@ async function startBoss(): Promise<PgBoss> {
     await instance.start();
     await ensureQueue(instance, QUEUE_STEP_PARSING);
     await ensureQueue(instance, QUEUE_NESTING_CALCULATION);
+    await ensureQueue(instance, QUEUE_FILE_ARCHIVE_SCAN);
+    await ensureQueue(instance, QUEUE_FILE_ARCHIVE_COPY);
+    await ensureQueue(instance, QUEUE_FILE_ARCHIVE_DELETE);
   } catch (error) {
     await instance.stop({ graceful: false }).catch(() => undefined);
     throw error;

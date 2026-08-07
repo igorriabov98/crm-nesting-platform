@@ -7,8 +7,10 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config';
+import { downloadArchivedAsset, findArchivedAsset, registerNestingOutput } from './file-archive';
 
 const STORAGE_SCHEME = 'supabase://';
+const CRM_FILE_SCHEME = 'crm-file://';
 const ALLOWED_PREFIXES: Record<string, readonly string[]> = {
   'product-files': ['products/'],
   'nesting-files': ['uploads/', 'projects/'],
@@ -31,6 +33,22 @@ export function isStorageUri(value: string | null | undefined): value is string 
   return Boolean(value?.startsWith(STORAGE_SCHEME));
 }
 
+export function createCrmFileUri(assetId: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(assetId)) {
+    throw new Error('Invalid CRM file asset ID');
+  }
+  return `${CRM_FILE_SCHEME}${assetId}`;
+}
+
+export function isCrmFileUri(value: string | null | undefined): value is string {
+  return Boolean(value?.startsWith(CRM_FILE_SCHEME));
+}
+
+export function parseCrmFileUri(uri: string): string {
+  if (!isCrmFileUri(uri)) throw new Error('Invalid CRM file URI');
+  return createCrmFileUri(uri.slice(CRM_FILE_SCHEME.length)).slice(CRM_FILE_SCHEME.length);
+}
+
 export function isStorageConfigured(): boolean {
   return Boolean(config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY);
 }
@@ -47,19 +65,38 @@ export function parseStorageUri(uri: string): { bucket: string; objectPath: stri
 }
 
 export async function materializeStorageObject(uriOrPath: string): Promise<MaterializedStorageObject> {
-  if (!isStorageUri(uriOrPath)) {
+  if (!isStorageUri(uriOrPath) && !isCrmFileUri(uriOrPath)) {
     return { filePath: uriOrPath, cleanup: async () => undefined };
   }
 
-  const { bucket, objectPath } = parseStorageUri(uriOrPath);
   const directory = path.join(tmpdir(), 'nesting-service', randomUUID());
   await mkdir(directory, { recursive: true });
-  const filePath = path.join(directory, safeFileName(path.basename(objectPath)));
-  const { data, error } = await getStorageClient().storage.from(bucket).download(objectPath);
-  if (error || !data) {
-    await rm(directory, { recursive: true, force: true });
-    throw new Error(error?.message || `Storage object not found: ${uriOrPath}`);
+  let data: Blob;
+  let fileName: string;
+  if (isCrmFileUri(uriOrPath)) {
+    const assetId = parseCrmFileUri(uriOrPath);
+    data = await downloadArchivedAsset(assetId);
+    fileName = `${assetId}.bin`;
+  } else {
+    const { bucket, objectPath } = parseStorageUri(uriOrPath);
+    fileName = safeFileName(path.basename(objectPath));
+    const archived = isStorageConfigured() ? await findArchivedAsset(bucket, objectPath) : null;
+    if (archived?.state === 'archived') {
+      data = await downloadArchivedAsset(archived.id);
+    } else {
+      const downloaded = await getStorageClient().storage.from(bucket).download(objectPath);
+      if (downloaded.error || !downloaded.data) {
+        if (archived?.drive_file_id) data = await downloadArchivedAsset(archived.id);
+        else {
+          await rm(directory, { recursive: true, force: true });
+          throw new Error(downloaded.error?.message || `Storage object not found: ${uriOrPath}`);
+        }
+      } else {
+        data = downloaded.data;
+      }
+    }
   }
+  const filePath = path.join(directory, fileName);
   try {
     await pipeline(
       Readable.fromWeb(data.stream() as Parameters<typeof Readable.fromWeb>[0]),
@@ -124,6 +161,17 @@ export async function uploadStorageBuffer(
     upsert: true,
   });
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
+  if (objectPath.startsWith('projects/')) {
+    const sizeBytes = typeof body === 'string' ? Buffer.byteLength(body) : body.byteLength;
+    await registerNestingOutput({
+      objectPath,
+      fileName: path.basename(objectPath),
+      mimeType: contentType,
+      sizeBytes,
+    }).catch((archiveError) => {
+      console.warn('[file-archive] Nesting output registration failed:', archiveError instanceof Error ? archiveError.message : archiveError);
+    });
+  }
   return createStorageUri(bucket, objectPath);
 }
 

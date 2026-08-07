@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
+import { removeFileObject } from '@/lib/file-archive/resolver'
 import { requirePermission } from '@/lib/permissions/server'
 import { buildProductVersionFileInsert } from '@/lib/actions/product-version-file-helpers'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
@@ -848,11 +849,11 @@ export async function registerProductFileUpload(productId: string, input: Direct
 
 export async function deleteProductFile(fileId: string, productId: string) {
   try {
-    const { supabase, db } = await requireProductManageAccess()
+    const { db } = await requireProductManageAccess()
     const { data, error } = await db.from('product_files').select('file_path').eq('id', fileId).eq('product_id', productId).single()
     if (error) throw error
     const row = data as Pick<ProductFile, 'file_path'>
-    await supabase.storage.from('product-files').remove([row.file_path])
+    await removeFileObject('product-files', row.file_path)
     const { error: deleteError } = await db.from('product_files').delete().eq('id', fileId).eq('product_id', productId)
     if (deleteError) throw deleteError
     revalidatePath(`${ROUTES.PRODUCTS}/${productId}`)
@@ -1576,11 +1577,11 @@ export async function uploadProductProjectFile(formData: FormData) {
 
 export async function deleteProductProjectFile(fileId: string, projectId: string) {
   try {
-    const { supabase, db } = await requireProductManageAccess('product_projects')
+    const { db } = await requireProductManageAccess('product_projects')
     const { data, error } = await db.from('product_project_files').select('file_path').eq('id', fileId).eq('project_id', projectId).single()
     if (error) throw error
     const row = data as Pick<ProductProjectFile, 'file_path'>
-    await supabase.storage.from('product-files').remove([row.file_path])
+    await removeFileObject('product-files', row.file_path)
     const { error: deleteError } = await db.from('product_project_files').delete().eq('id', fileId).eq('project_id', projectId)
     if (deleteError) throw deleteError
     revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${projectId}`)

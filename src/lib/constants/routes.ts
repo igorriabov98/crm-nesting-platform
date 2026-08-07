@@ -20,6 +20,7 @@ export const ROUTES = {
   ADMIN_ACCESS_SETTINGS:'/admin/settings/access',
   ADMIN_TELEGRAM_SETTINGS:'/admin/settings/telegram',
   ADMIN_MAIL_SETTINGS:'/admin/settings/mail',
+  ADMIN_FILE_ARCHIVE_SETTINGS:'/admin/settings/file-archive',
   ADMIN_COMPANY_SETTINGS:'/admin/settings/company',
   ADMIN_PRODUCTION_FACT_SETTINGS:'/admin/settings/production-fact',
   ADMIN_FACTORY_SETTINGS:'/admin/settings/factories',

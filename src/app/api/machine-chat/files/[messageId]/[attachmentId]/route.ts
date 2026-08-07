@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { decodeMachineChatBody } from '@/lib/machine-chat-attachments'
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
+import { resolveFileResponse } from '@/lib/file-archive/resolver'
 
 type MachineRelation = { id: string; factory_id: string | null }
 type MessageFileRow = {
@@ -48,12 +49,13 @@ export async function GET(
       return NextResponse.json({ error: 'File not found' }, { status: 404 })
     }
 
-    const { data: signed, error: signedError } = await admin.storage
-      .from('product-files')
-      .createSignedUrl(attachment.path, 60)
-
-    if (signedError || !signed?.signedUrl) return NextResponse.json({ error: 'Cannot open file' }, { status: 500 })
-    return NextResponse.redirect(signed.signedUrl)
+    try {
+      return await resolveFileResponse({
+        bucket: 'product-files', objectPath: attachment.path, fileName: attachment.fileName, mimeType: attachment.mimeType,
+      })
+    } catch {
+      return NextResponse.json({ error: 'Cannot open file' }, { status: 500 })
+    }
   } catch (error) {
     const status = error instanceof PermissionDeniedError ? 403 : 401
     return NextResponse.json({ error: status === 403 ? 'Forbidden' : 'Unauthorized' }, { status })

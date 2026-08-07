@@ -106,6 +106,7 @@ assert(uploadRoute.includes("requireProductProductionDrawingAccess('manage')"))
 assert(uploadRoute.includes('requireOwnedVersion(input.productId, input.productVersionId, true)'))
 assert(uploadRoute.includes('requireOwnedVersion(input.productId, input.productVersionId, false)'))
 assert(downloadRoute.includes("requireProductProductionDrawingAccess('view')"))
-assert(downloadRoute.includes('createSignedUrl(drawing.file_path, 60)'))
+assert(downloadRoute.includes('resolveFileResponse({'))
+assert(downloadRoute.includes('objectPath: drawing.file_path'))
 
 console.log('product-production-drawings: OK')

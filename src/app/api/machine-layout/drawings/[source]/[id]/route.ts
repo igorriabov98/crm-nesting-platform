@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
+import { downloadFileBytes } from '@/lib/file-archive/resolver'
 
 type FileRow = { file_path: string | null; file_name: string | null; mime_type: string | null }
 
@@ -48,15 +49,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ sou
 
   if (error || !filePath) return NextResponse.json({ error: 'File not found' }, { status: 404 })
 
-  const { data: file, error: downloadError } = await admin.storage
-    .from('product-files')
-    .download(filePath)
-
-  if (downloadError || !file) return NextResponse.json({ error: 'Cannot download file' }, { status: 500 })
-  return new NextResponse(file, {
+  let file: Buffer
+  try {
+    file = await downloadFileBytes('product-files', filePath)
+  } catch {
+    return NextResponse.json({ error: 'Cannot download file' }, { status: 500 })
+  }
+  return new NextResponse(new Uint8Array(file), {
     headers: {
-      'Content-Type': mimeType || file.type || 'application/octet-stream',
-      'Content-Length': String(file.size),
+      'Content-Type': mimeType || 'application/octet-stream',
+      'Content-Length': String(file.byteLength),
       'Content-Disposition': contentDisposition(fileName),
       'Cache-Control': 'private, no-store',
     },
