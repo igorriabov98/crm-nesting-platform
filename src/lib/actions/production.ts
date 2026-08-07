@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { requirePermission } from '@/lib/permissions/server'
 import { ROUTES } from '@/lib/constants/routes'
+import { isZincCoating } from '@/lib/constants/coatings'
 import { STAGE_ORDER, stageHasSingleDate, stageHasWorkshop } from '@/lib/constants/stages'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
@@ -96,7 +97,7 @@ function stageLabel(stageType: StageDateRow['stage_type']) {
     cutting: 'Заготовка',
     assembly: 'Сборка',
     cleaning: 'Зачистка',
-    galvanizing: 'Цинк',
+    galvanizing: 'Цинкование',
     post_galvanizing_cleaning: 'Зачистка после цинка',
     painting: 'Малярка',
     packaging: 'Упаковка',
@@ -237,9 +238,9 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
 
       if (itemsErr) throw itemsErr
       const machineItems = (machineItemsData ?? []) as MachineItemCoating[]
-      const hasZinc = machineItems.some((item) => item.coating === 'zinc')
+      const hasZinc = machineItems.some((item) => isZincCoating(item.coating))
       if (hasZinc) {
-        throw new Error('Нельзя пропустить цинкование, если хотя бы у одного товара выбрано покрытие цинком')
+        throw new Error('Нельзя пропустить цинкование, если хотя бы у одного товара выбрано цинковое покрытие')
       }
     }
 

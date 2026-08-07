@@ -330,7 +330,8 @@ function productionRowToGanttMachine(row: ProductionRow, fallback?: GanttMachine
   const coatings = fallbackCoatings.length > 0
     ? fallbackCoatings
     : [
-      row.machine.has_zinc ? 'zinc' : null,
+      row.machine.has_hot_zinc ? 'zinc' : null,
+      row.machine.has_cold_zinc ? 'cold_zinc' : null,
       row.machine.has_painting ? 'powder_coating' : null,
     ].filter((coating): coating is string => Boolean(coating))
 

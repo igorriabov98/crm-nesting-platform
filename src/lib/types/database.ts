@@ -4737,7 +4737,13 @@ export type Database = {
           contract_id: string | null
           specification_number: string | null
           specification_date: string | null
+          delivery_basis_type: 'own_delivery' | 'partner_truck' | null
           freight_cost: number | null
+          packing_boxes_count: number
+          packing_gross_weight_kg: number | null
+          packing_net_weight_kg: number | null
+          packing_summary_en: string | null
+          packing_summary_ua: string | null
           payment_terms_type: Database['public']['Enums']['payment_terms_type']
           payment_due_days: number
           prepayment_percent: number | null
@@ -4753,6 +4759,8 @@ export type Database = {
           item_count: number
           has_zinc: boolean
           has_painting: boolean
+          has_hot_zinc: boolean
+          has_cold_zinc: boolean
           status: Database['public']['Enums']['machine_status']
           material_type: Database['public']['Enums']['material_type']
         }
@@ -4810,7 +4818,7 @@ export type Database = {
         | 'production_manager'
         | 'procurement_head'
         | 'painting_head'
-      coating_type: 'zinc' | 'powder_coating' | 'none'
+      coating_type: 'cold_zinc' | 'zinc' | 'powder_coating' | 'none'
       stage_type:
         | 'cutting'
         | 'assembly'

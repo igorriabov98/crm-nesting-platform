@@ -13,7 +13,7 @@ export const STAGES: Record<
   cutting:     { label: 'Заготовка',  color: '#3B82F6', fixedWorkshop: 1,    canSkip: false },
   assembly:    { label: 'Сборка',     color: '#22C55E', fixedWorkshop: null,  canSkip: true },
   cleaning:    { label: 'Зачистка',   color: '#EAB308', fixedWorkshop: null,  canSkip: true },
-  galvanizing: { label: 'Цинк',       color: '#6B7280', fixedWorkshop: null,  canSkip: true }, // canSkip=false если coating=zinc (дополнительная проверка в UI и триггере БД)
+  galvanizing: { label: 'Цинкование', color: '#6B7280', fixedWorkshop: null,  canSkip: true }, // canSkip=false для обоих цинковых покрытий (дополнительная проверка в UI и БД)
   post_galvanizing_cleaning: { label: 'Зачистка после цинка', color: '#D6A500', fixedWorkshop: null, canSkip: true },
   painting:    { label: 'Малярка',    color: '#F97316', fixedWorkshop: null,  canSkip: true },
   packaging:   { label: 'Упаковка',   color: '#8B5CF6', fixedWorkshop: null,  canSkip: true },

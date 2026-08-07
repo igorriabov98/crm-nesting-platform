@@ -10,7 +10,7 @@ import { updateMachine } from '@/app/(protected)/sales-plan/actions'
 import { getOrderClientProductPrices } from '@/lib/actions/client-product-prices'
 import { getNextSpecificationNumber } from '@/lib/actions/contracts'
 import { getProductOptions, getProductProjectSampleOptions, type ProductOption, type ProductProjectSampleOption } from '@/lib/actions/products'
-import { COATINGS } from '@/lib/constants/coatings'
+import { COATING_OPTIONS, COATINGS, getCoatingLabel } from '@/lib/constants/coatings'
 import { getFactoryWorkshopOptionsById, productionQueueLabel } from '@/lib/constants/factory-workshops'
 import { formatProductionMonth, getProductionMonthOptions } from '@/lib/utils/production-months'
 import { ContractSelectField } from '@/components/features/contracts/ContractSelectField'
@@ -899,12 +899,12 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                             >
                               <FormControl>
                                 <SelectTrigger className="h-8 text-sm bg-white">
-                                  <SelectValue />
+                                  <SelectValue>{() => getCoatingLabel(field.value)}</SelectValue>
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {Object.entries(COATINGS).map(([val, {label}]) => (
-                                  <SelectItem key={val} value={val}>{label}</SelectItem>
+                                {COATING_OPTIONS.map((val) => (
+                                  <SelectItem key={val} value={val}>{COATINGS[val].label}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -1084,10 +1084,14 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
                             }}
                             value={field.value || ''}
                           >
-                            <FormControl><SelectTrigger className="h-8 text-sm bg-white"><SelectValue /></SelectTrigger></FormControl>
+                            <FormControl>
+                              <SelectTrigger className="h-8 text-sm bg-white">
+                                <SelectValue>{() => getCoatingLabel(field.value)}</SelectValue>
+                              </SelectTrigger>
+                            </FormControl>
                             <SelectContent>
-                              {Object.entries(COATINGS).map(([val, {label}]) => (
-                                <SelectItem key={val} value={val}>{label}</SelectItem>
+                              {COATING_OPTIONS.map((val) => (
+                                <SelectItem key={val} value={val}>{COATINGS[val].label}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>

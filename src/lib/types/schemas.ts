@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { COATING_OPTIONS } from '@/lib/constants/coatings'
 import { MACHINE_DELIVERY_BASIS_VALUES } from '@/lib/constants/machine-delivery-basis'
 
 const roles = [
@@ -117,7 +118,7 @@ export const machineItemSchema = z.object({
   weight: z.number().positive('Вес должен быть больше 0'),
   price: z.number().min(0, 'Цена не может быть отрицательной'),
   quantity: z.number().int().positive('Количество должно быть больше 0'),
-  coating: z.enum(['zinc', 'powder_coating', 'none']),
+  coating: z.enum(COATING_OPTIONS),
   ral_number: z.string().optional(),
   is_sample: z.boolean().optional(),
 })
