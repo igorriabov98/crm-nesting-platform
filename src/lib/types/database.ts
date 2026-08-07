@@ -1019,6 +1019,7 @@ export type Database = {
         Row: {
           id: string
           machine_id: string
+          department_request_id: string | null
           task_id: string | null
           requested_by: string | null
           assigned_to: string | null
@@ -1038,6 +1039,7 @@ export type Database = {
         Insert: {
           id?: string
           machine_id: string
+          department_request_id?: string | null
           task_id?: string | null
           requested_by?: string | null
           assigned_to?: string | null
@@ -1057,6 +1059,7 @@ export type Database = {
         Update: {
           id?: string
           machine_id?: string
+          department_request_id?: string | null
           task_id?: string | null
           requested_by?: string | null
           assigned_to?: string | null
@@ -2923,6 +2926,7 @@ export type Database = {
       department_requests: {
         Row: {
           id: string
+          request_kind: 'manual' | 'machine_layout'
           target_department: string
           title: string
           description: string
@@ -2943,6 +2947,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          request_kind?: 'manual' | 'machine_layout'
           target_department: string
           title: string
           description: string
@@ -2963,6 +2968,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          request_kind?: 'manual' | 'machine_layout'
           target_department?: string
           title?: string
           description?: string
@@ -4917,6 +4923,43 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {
+      can_claim_machine_layout_request: {
+        Args: { p_user_id: string }
+        Returns: boolean
+      }
+      create_machine_layout_department_request: {
+        Args: {
+          p_machine_id: string
+          p_requested_by: string
+          p_item_snapshot: Json
+        }
+        Returns: Array<{
+          department_request_id: string
+          layout_request_id: string
+        }>
+      }
+      sync_machine_layout_request_version: {
+        Args: {
+          p_machine_id: string
+          p_item_snapshot: Json
+        }
+        Returns: string | null
+      }
+      machine_layout_next_workday: {
+        Args: { p_date: string }
+        Returns: string
+      }
+      complete_machine_layout_request: {
+        Args: {
+          p_request_id: string
+          p_uploaded_by: string
+          p_file_name: string
+          p_file_path: string
+          p_mime_type: string
+          p_file_size: number
+        }
+        Returns: string
+      }
       fn_cancel_transport_trip_v1: {
         Args: { p_trip_id: string; p_reason: string; p_actor: string }
         Returns: Database['public']['Enums']['outsourcing_transport_order_status']

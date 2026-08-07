@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
 import { ROUTES } from '@/lib/constants/routes'
+import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import {
   DEPARTMENT_REQUEST_TARGETS,
   canManageDepartmentRequestTarget,
@@ -70,6 +71,7 @@ export type DepartmentRequestEvent = {
 
 export type DepartmentRequestRow = {
   id: string
+  request_kind: 'manual' | 'machine_layout'
   target_department: DepartmentRequestTarget
   title: string
   description: string
@@ -107,6 +109,7 @@ export type DepartmentRequestWorkspace = {
   mode: 'mine' | 'inbox'
   target?: DepartmentRequestTarget
   userId: string
+  canClaimMachineLayout: boolean
   requests: DepartmentRequestRow[]
   total: number
   page: number
@@ -180,6 +183,7 @@ type MachineSearchRow = {
 
 const requestListSelect = `
   id,
+  request_kind,
   target_department,
   title,
   description,
@@ -227,7 +231,18 @@ const requestDetailSelect = `
 function membershipInput(permissionDetails: Awaited<ReturnType<typeof requirePermission>>['permissionDetails']) {
   return permissionDetails.memberships.map((membership) => ({
     departmentName: membership.departmentName,
+    positionName: membership.positionName,
   }))
+}
+
+function canClaimMachineLayout(
+  context: Awaited<ReturnType<typeof requirePermission>>,
+) {
+  if (context.role === 'technologist' || context.role === 'engineer') return true
+  return context.permissionDetails.memberships.some((membership) => {
+    const structure = `${membership.departmentName || ''} ${membership.positionName || ''}`.toLowerCase()
+    return structure.includes('технолог') || structure.includes('technolog')
+  })
 }
 
 function isDirector(role: string) {
@@ -370,6 +385,7 @@ async function loadWorkspace(input: {
     mode: input.mode,
     target: input.target,
     userId: context.userId,
+    canClaimMachineLayout: canClaimMachineLayout(context),
     requests: (data || []) as unknown as DepartmentRequestRow[],
     total: count || 0,
     page: input.filters.page,
@@ -434,6 +450,7 @@ export async function getDepartmentRequestDetail(requestId: string) {
     request,
     userId: context.userId,
     canManage,
+    canClaimMachineLayout: canClaimMachineLayout(context),
   }
 }
 
@@ -445,7 +462,7 @@ async function callRpc(
   return (context.supabase as unknown as RpcClient).rpc(name, args)
 }
 
-function revalidateRequest(requestId: string, target?: DepartmentRequestTarget) {
+function revalidateRequest(requestId: string, target?: DepartmentRequestTarget, machineId?: string | null) {
   revalidatePath('/requests')
   revalidatePath(`/requests/detail/${requestId}`)
   if (target) revalidatePath(DEPARTMENT_REQUEST_TARGETS[target].route)
@@ -454,6 +471,21 @@ function revalidateRequest(requestId: string, target?: DepartmentRequestTarget) 
   }
   revalidatePath('/notifications')
   revalidatePath(ROUTES.TASKS)
+  if (machineId) revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
+}
+
+async function loadRequestMutationMeta(requestId: string) {
+  const { data } = await createAdminClient()
+    .from('department_requests')
+    .select('target_department, machine_id, request_kind')
+    .eq('id', requestId)
+    .maybeSingle()
+
+  return data as {
+    target_department: DepartmentRequestTarget
+    machine_id: string | null
+    request_kind: 'manual' | 'machine_layout'
+  } | null
 }
 
 export async function createDepartmentRequest(
@@ -495,9 +527,23 @@ export async function createDepartmentRequest(
 export async function claimDepartmentRequest(requestId: string): Promise<DepartmentRequestActionResult> {
   try {
     const id = z.string().uuid().parse(requestId)
-    const { error } = await callRpc('claim_department_request', { p_request_id: id })
+    const context = await requirePermission('department_requests', 'manage')
+    const { error } = await (context.supabase as unknown as RpcClient).rpc('claim_department_request', {
+      p_request_id: id,
+    })
     if (error) throw new Error(error.message)
-    revalidateRequest(id)
+    const meta = await loadRequestMutationMeta(id)
+    revalidateRequest(id, meta?.target_department, meta?.machine_id)
+    if (meta?.request_kind === 'machine_layout') {
+      try {
+        await dispatchPendingTelegramDeliveries({
+          machineId: meta.machine_id || undefined,
+          userId: context.userId,
+        })
+      } catch (notificationError) {
+        console.error('[DepartmentRequests] Не удалось отправить Telegram по взятой расстановке:', notificationError)
+      }
+    }
     return { ok: true, message: 'Запрос взят в работу', requestId: id }
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : 'Не удалось взять запрос в работу' }
@@ -522,7 +568,8 @@ export async function completeDepartmentRequest(
       p_attachments: attachments,
     })
     if (error) throw new Error(error.message)
-    revalidateRequest(parsed.requestId)
+    const meta = await loadRequestMutationMeta(parsed.requestId)
+    revalidateRequest(parsed.requestId, meta?.target_department, meta?.machine_id)
     return { ok: true, message: 'Запрос завершён', requestId: parsed.requestId }
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : 'Не удалось завершить запрос' }
@@ -539,7 +586,8 @@ export async function rejectDepartmentRequest(
       p_response: parsed.response,
     })
     if (error) throw new Error(error.message)
-    revalidateRequest(parsed.requestId)
+    const meta = await loadRequestMutationMeta(parsed.requestId)
+    revalidateRequest(parsed.requestId, meta?.target_department, meta?.machine_id)
     return { ok: true, message: 'Запрос отклонён', requestId: parsed.requestId }
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : 'Не удалось отклонить запрос' }
@@ -551,7 +599,8 @@ export async function cancelDepartmentRequest(requestId: string): Promise<Depart
     const id = z.string().uuid().parse(requestId)
     const { error } = await callRpc('cancel_department_request', { p_request_id: id })
     if (error) throw new Error(error.message)
-    revalidateRequest(id)
+    const meta = await loadRequestMutationMeta(id)
+    revalidateRequest(id, meta?.target_department, meta?.machine_id)
     return { ok: true, message: 'Запрос отменён', requestId: id }
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : 'Не удалось отменить запрос' }

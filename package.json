@@ -35,6 +35,7 @@
     "test:transport-trips": "tsx scripts/test-transport-trips.ts",
     "test:transport-date-approval": "node scripts/test-transport-date-approval.mjs",
     "test:department-requests": "tsx scripts/test-department-requests.ts",
+    "test:machine-layout-queue": "tsx scripts/test-machine-layout-queue.ts",
     "test:technologist-request-readiness": "tsx scripts/test-technologist-request-readiness.ts",
     "test:material-request-queue": "tsx scripts/test-material-request-queue.ts",
     "test:people-planning": "tsx scripts/test-people-planning.ts",

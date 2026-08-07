@@ -8,8 +8,7 @@ import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import type { Database } from '@/lib/types/database'
-import type { MachineLayoutRequest, TaskStatus, UserRole } from '@/lib/types'
+import type { MachineLayoutRequest } from '@/lib/types'
 
 type DbError = { message?: string; code?: string } | null
 type DbResult = { data: unknown; error: DbError }
@@ -25,11 +24,9 @@ type LooseQuery = PromiseLike<DbResult> & {
   maybeSingle: () => Promise<DbResult>
 }
 type LooseDb = { from: (table: string) => LooseQuery }
-
-type MachineLayoutRequestInsert = Database['public']['Tables']['machine_layout_requests']['Insert']
-type MachineLayoutRequestUpdate = Database['public']['Tables']['machine_layout_requests']['Update']
-type TaskInsert = Database['public']['Tables']['tasks']['Insert']
-type TaskUpdate = Database['public']['Tables']['tasks']['Update']
+type RpcClient = {
+  rpc: (name: string, args: Record<string, unknown>) => Promise<DbResult>
+}
 
 type ActionResult<T> = {
   success: boolean
@@ -64,12 +61,15 @@ export type MachineLayoutDiffItem = {
 export type MachineLayoutVersion = {
   id: string
   machineId: string
+  departmentRequestId: string | null
+  departmentRequestStatus: 'new' | 'in_progress' | 'done' | 'rejected' | 'cancelled' | null
   taskId: string | null
   versionNo: number
   status: 'requested' | 'completed'
   isSupersededBeforePdf: boolean
   requestedBy: string | null
   assignedTo: string | null
+  assignedToName: string | null
   items: MachineLayoutSnapshotItem[]
   diff: MachineLayoutDiffItem[]
   pdfFileName: string | null
@@ -114,70 +114,28 @@ type ProductFileRow = {
   file_name: string
 }
 
-type TaskRow = {
-  id: string
-  status: TaskStatus
-  assigned_to: string
-}
 type LayoutUploadMachineRow = Pick<MachineRow, 'id' | 'name' | 'created_by'>
 type Relation<T> = T | T[] | null
-type StructuralTechnologistRow = {
-  user_id: string
-  user: Relation<{ id: string; full_name: string | null; email: string | null; is_active: boolean | null }>
-  department: Relation<{ name: string | null; is_active: boolean | null }>
-  position: Relation<{ name: string | null }>
+type MachineLayoutRow = MachineLayoutRequest & {
+  assignee: Relation<{ full_name: string | null }>
+  department_request: Relation<{
+    status: 'new' | 'in_progress' | 'done' | 'rejected' | 'cancelled'
+  }>
 }
 
-const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
-const SETTINGS_ID = '00000000-0000-0000-0000-000000000001'
 const MAX_PDF_SIZE = 50 * 1024 * 1024
 
 function dbFrom(client: unknown): LooseDb {
   return client as LooseDb
 }
 
+function rpcFrom(client: unknown): RpcClient {
+  return client as RpcClient
+}
+
 function relationOne<T>(value: Relation<T> | undefined) {
   if (Array.isArray(value)) return value[0] || null
   return value || null
-}
-
-function isServiceAccount(user: { full_name?: string | null; email?: string | null } | null | undefined) {
-  return /(^|\s)(ci\s+)?smoke(\s|$)|smoke[-_.+@]/i.test(`${user?.full_name || ''} ${user?.email || ''}`)
-}
-
-async function loadStructuralTechnologists(db: LooseDb) {
-  const { data, error } = await db
-    .from('department_members')
-    .select(`
-      user_id,
-      user:users!department_members_user_id_fkey!inner(id, full_name, email, is_active),
-      department:departments!inner(name, is_active),
-      position:positions(name)
-    `)
-    .eq('user.is_active', true)
-    .eq('department.is_active', true)
-
-  if (error) throw new Error(error.message || 'Не удалось проверить технологов в структуре компании')
-
-  return ((data || []) as StructuralTechnologistRow[])
-    .filter((row) => {
-      const user = relationOne(row.user)
-      const department = relationOne(row.department)
-      const position = relationOne(row.position)
-      const structure = `${department?.name || ''} ${position?.name || ''}`.toLowerCase()
-      return Boolean(user && !isServiceAccount(user) && (structure.includes('технолог') || structure.includes('technolog')))
-    })
-    .sort((left, right) => {
-      const leftName = relationOne(left.user)?.full_name || ''
-      const rightName = relationOne(right.user)?.full_name || ''
-      return leftName.localeCompare(rightName, 'ru')
-    })
-}
-
-function datePlusDays(days: number) {
-  const date = new Date()
-  date.setDate(date.getDate() + days)
-  return date.toISOString().slice(0, 10)
 }
 
 function normalizeQuantity(value: unknown) {
@@ -200,12 +158,16 @@ function chooseDrawingFile(files: ProductFileRow[]) {
     })[0] || null
 }
 
-function drawingUrl(item: Pick<MachineLayoutSnapshotItem, 'drawingFileSource' | 'drawingFileId'>) {
+function drawingUrl(
+  item: Pick<MachineLayoutSnapshotItem, 'drawingFileSource' | 'drawingFileId'>,
+  machineId?: string,
+) {
   if (!item.drawingFileSource || !item.drawingFileId) return null
-  return `/api/machine-layout/drawings/${item.drawingFileSource}/${item.drawingFileId}`
+  const machineQuery = machineId ? `?machineId=${encodeURIComponent(machineId)}` : ''
+  return `/api/machine-layout/drawings/${item.drawingFileSource}/${item.drawingFileId}${machineQuery}`
 }
 
-function normalizeStoredItem(raw: unknown): MachineLayoutSnapshotItem | null {
+function normalizeStoredItem(raw: unknown, machineId?: string): MachineLayoutSnapshotItem | null {
   if (!raw || typeof raw !== 'object') return null
   const item = raw as Partial<MachineLayoutSnapshotItem>
   const machineItemId = typeof item.machineItemId === 'string' ? item.machineItemId : null
@@ -227,13 +189,13 @@ function normalizeStoredItem(raw: unknown): MachineLayoutSnapshotItem | null {
     drawingFileName: typeof item.drawingFileName === 'string' ? item.drawingFileName : null,
     drawingUrl: null,
   } satisfies MachineLayoutSnapshotItem
-  return { ...normalized, drawingUrl: drawingUrl(normalized) }
+  return { ...normalized, drawingUrl: drawingUrl(normalized, machineId) }
 }
 
-function normalizeStoredItems(value: unknown): MachineLayoutSnapshotItem[] {
+function normalizeStoredItems(value: unknown, machineId?: string): MachineLayoutSnapshotItem[] {
   if (!Array.isArray(value)) return []
   return value
-    .map(normalizeStoredItem)
+    .map((item) => normalizeStoredItem(item, machineId))
     .filter((item): item is MachineLayoutSnapshotItem => Boolean(item))
     .sort((left, right) => left.sortOrder - right.sortOrder || left.productName.localeCompare(right.productName, 'ru'))
 }
@@ -342,7 +304,7 @@ async function buildCurrentSnapshot(db: LooseDb, machine: MachineRow) {
       drawingUrl: null,
     } satisfies MachineLayoutSnapshotItem
 
-    return { ...snapshot, drawingUrl: drawingUrl(snapshot) }
+    return { ...snapshot, drawingUrl: drawingUrl(snapshot, machine.id) }
   })
 }
 
@@ -402,17 +364,20 @@ function isPreparedLayout(row: MachineLayoutRequest) {
   return row.status === 'completed' && Boolean(row.pdf_file_path)
 }
 
-function normalizeVersion(row: MachineLayoutRequest, diff: MachineLayoutDiffItem[]): MachineLayoutVersion {
-  const items = normalizeStoredItems(row.item_snapshot)
+function normalizeVersion(row: MachineLayoutRow, diff: MachineLayoutDiffItem[]): MachineLayoutVersion {
+  const items = normalizeStoredItems(row.item_snapshot, row.machine_id)
   return {
     id: row.id,
     machineId: row.machine_id,
+    departmentRequestId: row.department_request_id,
+    departmentRequestStatus: relationOne(row.department_request)?.status || null,
     taskId: row.task_id,
     versionNo: row.version_no,
     status: row.status,
     isSupersededBeforePdf: row.status === 'completed' && !row.pdf_file_path,
     requestedBy: row.requested_by,
     assignedTo: row.assigned_to,
+    assignedToName: relationOne(row.assignee)?.full_name || null,
     items,
     diff,
     pdfFileName: row.pdf_file_name,
@@ -442,12 +407,16 @@ function serializeSnapshotItem(item: MachineLayoutSnapshotItem) {
 async function loadLayoutRows(db: LooseDb, machineId: string) {
   const { data, error } = await db
     .from('machine_layout_requests')
-    .select('*')
+    .select(`
+      *,
+      assignee:users!machine_layout_requests_assigned_to_fkey(full_name),
+      department_request:department_requests!machine_layout_requests_department_request_id_fkey(status)
+    `)
     .eq('machine_id', machineId)
     .order('version_no', { ascending: false })
 
   if (error) throw new Error(error.message || 'Не удалось загрузить расстановки машины')
-  return (data || []) as MachineLayoutRequest[]
+  return (data || []) as MachineLayoutRow[]
 }
 
 async function loadLayoutPayload(db: LooseDb, machineId: string): Promise<MachineLayoutPayload> {
@@ -463,7 +432,7 @@ async function loadLayoutPayload(db: LooseDb, machineId: string): Promise<Machin
   let previousPreparedItems: MachineLayoutSnapshotItem[] = []
 
   for (let index = 0; index < rowsAsc.length; index += 1) {
-    const current = normalizeStoredItems(rowsAsc[index].item_snapshot)
+    const current = normalizeStoredItems(rowsAsc[index].item_snapshot, rowsAsc[index].machine_id)
     const baseline = previousPreparedItems.length > 0
       ? previousPreparedItems
       : previousItems
@@ -501,179 +470,11 @@ async function loadLayoutPayload(db: LooseDb, machineId: string): Promise<Machin
   }
 }
 
-async function resolveConfiguredTechnologist(db: LooseDb) {
-  const { data: settingsData, error: settingsError } = await db
-    .from('company_settings')
-    .select('auto_task_technologist_user_id')
-    .eq('id', SETTINGS_ID)
-    .maybeSingle()
-
-  if (settingsError) throw new Error(settingsError.message || 'Не удалось загрузить ответственного технолога')
-  const configuredId = (settingsData as { auto_task_technologist_user_id?: string | null } | null)
-    ?.auto_task_technologist_user_id || null
-
-  if (configuredId) {
-    const { data: userData, error: userError } = await db
-      .from('users')
-      .select('id, is_active, role, full_name, email')
-      .eq('id', configuredId)
-      .maybeSingle()
-
-    if (userError) throw new Error(userError.message || 'Не удалось проверить ответственного технолога')
-    const user = userData as { id: string; is_active: boolean | null; role: UserRole | null; full_name: string | null; email: string | null } | null
-    if (user && !isServiceAccount(user) && user.is_active !== false) {
-      if (user.role === 'technologist') return user.id
-      const structuralIds = new Set((await loadStructuralTechnologists(db)).map((row) => row.user_id))
-      if (structuralIds.has(user.id)) return user.id
-    }
-  }
-
-  const { data: fallbackData, error: fallbackError } = await db
-    .from('users')
-    .select('id, full_name, email')
-    .eq('role', 'technologist')
-    .eq('is_active', true)
-    .order('full_name', { ascending: true })
-
-  if (fallbackError) throw new Error(fallbackError.message || 'Не удалось найти активного технолога')
-  const fallbackId = ((fallbackData || []) as Array<{ id: string; full_name: string | null; email: string | null }>)
-    .find((user) => !isServiceAccount(user))
-    ?.id || null
-  if (fallbackId) return fallbackId
-
-  const structuralTechnologist = (await loadStructuralTechnologists(db))[0] || null
-  if (!structuralTechnologist) {
-    throw new Error('В настройках компании выберите ответственного технолога или добавьте технолога в структуру компании')
-  }
-  return structuralTechnologist.user_id
-}
-
-async function upsertLayoutTask(db: LooseDb, input: {
-  machineId: string
-  machineName: string
-  assignedTo: string
-}) {
-  const now = new Date().toISOString()
-  const deadline = datePlusDays(2)
-  const taskPayload = {
-    machine_id: input.machineId,
-    assigned_to: input.assignedTo,
-    task_type: MACHINE_LAYOUT_TASK_TYPE,
-    title: 'Сделать расстановку изделий в машине',
-    description: `Сделайте расстановку изделий в машине ${input.machineName} и загрузите PDF во вкладке "Технолог".`,
-    status: 'pending' satisfies TaskStatus,
-    start_date: now.slice(0, 10),
-    deadline,
-    completed_at: null,
-    notified_at: null,
-    telegram_error: null,
-    updated_at: now,
-  } satisfies TaskInsert & TaskUpdate
-
-  const { data: activeData, error: activeError } = await db
-    .from('tasks')
-    .select('id, status, assigned_to')
-    .eq('machine_id', input.machineId)
-    .eq('task_type', MACHINE_LAYOUT_TASK_TYPE)
-    .in('status', ['pending', 'in_progress'])
-    .order('created_at', { ascending: false })
-
-  if (activeError) throw new Error(activeError.message || 'Не удалось проверить задачу расстановки')
-
-  const activeTasks = (activeData || []) as TaskRow[]
-  const staleTaskIds = activeTasks
-    .filter((task) => task.assigned_to !== input.assignedTo)
-    .map((task) => task.id)
-
-  if (staleTaskIds.length > 0) {
-    const { error } = await db
-      .from('tasks')
-      .update({ status: 'cancelled', updated_at: now } satisfies TaskUpdate)
-      .in('id', staleTaskIds)
-
-    if (error) throw new Error(error.message || 'Не удалось отменить старые задачи расстановки')
-  }
-
-  const { data: existingData, error: existingError } = await db
-    .from('tasks')
-    .select('id, status, assigned_to')
-    .eq('machine_id', input.machineId)
-    .eq('assigned_to', input.assignedTo)
-    .eq('task_type', MACHINE_LAYOUT_TASK_TYPE)
-    .order('created_at', { ascending: false })
-    .limit(1)
-
-  if (existingError) throw new Error(existingError.message || 'Не удалось проверить задачу расстановки')
-  const existing = ((existingData || []) as TaskRow[])[0] || null
-
-  if (existing) {
-    const { error } = await db
-      .from('tasks')
-      .update({
-        ...taskPayload,
-        status: existing.status === 'in_progress' ? 'in_progress' : 'pending',
-      })
-      .eq('id', existing.id)
-
-    if (error) throw new Error(error.message || 'Не удалось обновить задачу расстановки')
-    return existing.id
-  }
-
-  const { data: insertedData, error: insertError } = await db
-    .from('tasks')
-    .insert(taskPayload)
-    .select('id')
-    .single()
-
-  if (insertError || !insertedData) throw new Error(insertError?.message || 'Не удалось создать задачу расстановки')
-  return (insertedData as { id: string }).id
-}
-
-async function createLayoutRequest(db: LooseDb, input: {
-  machineId: string
-  taskId: string
-  requestedBy: string | null
-  assignedTo: string
-  versionNo: number
-  snapshot: MachineLayoutSnapshotItem[]
-}) {
-  const payload = {
-    machine_id: input.machineId,
-    task_id: input.taskId,
-    requested_by: input.requestedBy,
-    assigned_to: input.assignedTo,
-    version_no: input.versionNo,
-    status: 'requested',
-    item_snapshot: input.snapshot.map(serializeSnapshotItem),
-  } satisfies MachineLayoutRequestInsert
-
-  const { error } = await db.from('machine_layout_requests').insert(payload)
-  if (error) throw new Error(error.message || 'Не удалось создать версию расстановки')
-}
-
-async function closeOpenLayoutRequests(db: LooseDb, openRows: MachineLayoutRequest[]) {
-  const ids = openRows.map((row) => row.id)
-  if (ids.length === 0) return
-
-  const now = new Date().toISOString()
-  const { error } = await db
-    .from('machine_layout_requests')
-    .update({
-      status: 'completed',
-      task_id: null,
-      completed_at: now,
-      updated_at: now,
-    } satisfies MachineLayoutRequestUpdate)
-    .in('id', ids)
-
-  if (error) throw new Error(error.message || 'Не удалось закрыть устаревшую расстановку')
-}
-
 async function syncOpenLayoutRequest(
   db: LooseDb,
   machine: MachineRow,
   currentItems: MachineLayoutSnapshotItem[],
-  rows: MachineLayoutRequest[],
+  rows: MachineLayoutRow[],
 ) {
   if (currentItems.length === 0) return rows
 
@@ -683,50 +484,13 @@ async function syncOpenLayoutRequest(
   if (openRows.length === 0) return rows
 
   const latestOpen = openRows[0]
-  const latestOpenItems = normalizeStoredItems(latestOpen.item_snapshot)
-  const assignedTo = await resolveConfiguredTechnologist(db)
+  if (snapshotsEqual(currentItems, normalizeStoredItems(latestOpen.item_snapshot, machine.id))) return rows
 
-  if (snapshotsEqual(currentItems, latestOpenItems)) {
-    if (latestOpen.assigned_to === assignedTo) return rows
-
-    const taskId = await upsertLayoutTask(db, {
-      machineId: machine.id,
-      machineName: machine.name || 'машина',
-      assignedTo,
-    })
-
-    const { error } = await db
-      .from('machine_layout_requests')
-      .update({
-        task_id: taskId,
-        assigned_to: assignedTo,
-        updated_at: new Date().toISOString(),
-      } satisfies MachineLayoutRequestUpdate)
-      .eq('id', latestOpen.id)
-
-    if (error) throw new Error(error.message || 'Не удалось обновить ответственного за расстановку')
-    await dispatchPendingTelegramDeliveries({ machineId: machine.id, userId: assignedTo })
-    return loadLayoutRows(db, machine.id)
-  }
-
-  await closeOpenLayoutRequests(db, openRows)
-
-  const taskId = await upsertLayoutTask(db, {
-    machineId: machine.id,
-    machineName: machine.name || 'машина',
-    assignedTo,
+  const { error } = await rpcFrom(createAdminClient()).rpc('sync_machine_layout_request_version', {
+    p_machine_id: machine.id,
+    p_item_snapshot: currentItems.map(serializeSnapshotItem),
   })
-  const nextVersionNo = Math.max(0, ...rows.map((row) => row.version_no)) + 1
-
-  await createLayoutRequest(db, {
-    machineId: machine.id,
-    taskId,
-    requestedBy: latestOpen.requested_by,
-    assignedTo,
-    versionNo: nextVersionNo,
-    snapshot: currentItems,
-  })
-  await dispatchPendingTelegramDeliveries({ machineId: machine.id, userId: assignedTo })
+  if (error) throw new Error(error.message || 'Не удалось обновить версию расстановки')
 
   return loadLayoutRows(db, machine.id)
 }
@@ -748,6 +512,9 @@ function fileExtension(name: string) {
 function revalidateLayout(machineId: string) {
   revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
   revalidatePath(ROUTES.TASKS)
+  revalidatePath(ROUTES.REQUESTS)
+  revalidatePath(ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS)
+  revalidatePath(ROUTES.NOTIFICATIONS)
 }
 
 async function notifyManagerAboutLayoutUpload(db: LooseDb, input: {
@@ -804,7 +571,7 @@ async function notifyManagerAboutLayoutUpload(db: LooseDb, input: {
 
 export async function getMachineLayout(machineId: string): Promise<ActionResult<MachineLayoutPayload>> {
   try {
-    await requirePermission('nesting', 'view')
+    await requirePermission('sales_plan', 'view')
     const db = dbFrom(createAdminClient())
     const data = await loadLayoutPayload(db, machineId)
     return { success: true, data }
@@ -830,31 +597,21 @@ export async function requestMachineLayout(machineId: string): Promise<ActionRes
       .sort((left, right) => right.version_no - left.version_no)
     const latestOpen = openRows[0] || null
 
-    if (latestOpen && snapshotsEqual(snapshot, normalizeStoredItems(latestOpen.item_snapshot))) {
+    if (latestOpen && snapshotsEqual(snapshot, normalizeStoredItems(latestOpen.item_snapshot, machineId))) {
       throw new Error(`Расстановка версии ${latestOpen.version_no} уже ожидает PDF. Загрузите PDF перед новым запросом.`)
     }
 
     if (openRows.length > 0) {
-      await closeOpenLayoutRequests(db, openRows)
+      throw new Error('По машине уже есть открытый запрос на расстановку')
     }
 
-    const assignedTo = await resolveConfiguredTechnologist(db)
-    const taskId = await upsertLayoutTask(db, {
-      machineId,
-      machineName: machine.name || 'машина',
-      assignedTo,
+    const { error } = await rpcFrom(createAdminClient()).rpc('create_machine_layout_department_request', {
+      p_machine_id: machineId,
+      p_requested_by: userId,
+      p_item_snapshot: snapshot.map(serializeSnapshotItem),
     })
+    if (error) throw new Error(error.message || 'Не удалось создать заявку на расстановку')
 
-    await createLayoutRequest(db, {
-      machineId,
-      taskId,
-      requestedBy: userId,
-      assignedTo,
-      versionNo: Math.max(0, ...rows.map((row) => row.version_no)) + 1,
-      snapshot,
-    })
-
-    await dispatchPendingTelegramDeliveries({ machineId, userId: assignedTo })
     revalidateLayout(machineId)
     const data = await loadLayoutPayload(db, machineId)
     return { success: true, data }
@@ -867,7 +624,7 @@ export async function uploadMachineLayoutPdf(formData: FormData): Promise<Action
   let uploadedPath: string | null = null
 
   try {
-    const { userId, role } = await requirePermission('nesting', 'manage')
+    const { userId, role } = await requirePermission('department_requests', 'manage')
 
     const requestId = String(formData.get('request_id') || '')
     const file = formData.get('file')
@@ -891,7 +648,6 @@ export async function uploadMachineLayoutPdf(formData: FormData): Promise<Action
       throw new Error('Загрузить PDF может только назначенный технолог')
     }
 
-    const now = new Date().toISOString()
     uploadedPath = `machine-layouts/${request.machine_id}/${request.version_no}-${Date.now()}-${randomUUID()}${fileExtension(file.name)}`
     const { error: uploadError } = await admin.storage.from('product-files').upload(uploadedPath, file, {
       cacheControl: '3600',
@@ -900,35 +656,15 @@ export async function uploadMachineLayoutPdf(formData: FormData): Promise<Action
     })
     if (uploadError) throw new Error(uploadError.message || 'Не удалось загрузить PDF')
 
-    const updatePayload = {
-      status: 'completed',
-      pdf_file_name: file.name,
-      pdf_file_path: uploadedPath,
-      pdf_mime_type: file.type || 'application/pdf',
-      pdf_file_size: file.size,
-      uploaded_by: userId,
-      uploaded_at: now,
-      completed_at: now,
-      updated_at: now,
-    } satisfies MachineLayoutRequestUpdate
-
-    const { error: updateError } = await db
-      .from('machine_layout_requests')
-      .update(updatePayload)
-      .eq('id', request.id)
-    if (updateError) throw new Error(updateError.message || 'Не удалось сохранить PDF расстановки')
-
-    if (request.task_id) {
-      const { error: taskError } = await db
-        .from('tasks')
-        .update({
-          status: 'completed',
-          completed_at: now,
-          updated_at: now,
-        } satisfies TaskUpdate)
-        .eq('id', request.task_id)
-      if (taskError) throw new Error(taskError.message || 'Не удалось закрыть задачу расстановки')
-    }
+    const { error: completeError } = await rpcFrom(admin).rpc('complete_machine_layout_request', {
+      p_request_id: request.id,
+      p_uploaded_by: userId,
+      p_file_name: file.name,
+      p_file_path: uploadedPath,
+      p_mime_type: file.type || 'application/pdf',
+      p_file_size: file.size,
+    })
+    if (completeError) throw new Error(completeError.message || 'Не удалось сохранить PDF расстановки')
 
     await notifyManagerAboutLayoutUpload(db, {
       requestId: request.id,
