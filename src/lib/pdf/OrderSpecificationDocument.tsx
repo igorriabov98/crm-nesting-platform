@@ -114,7 +114,8 @@ function productName(item: DocumentItem, language: 'en' | 'uk') {
 }
 
 export function formatOrderSpecificationCoating(item: DocumentItem) {
-  if (item.coating === 'zinc') return 'Zinc coating'
+  if (item.coating === 'cold_zinc') return 'Cold zinc coating'
+  if (item.coating === 'zinc') return 'Hot-dip zinc coating'
   if (item.coating === 'powder_coating') {
     const ralNumber = normalizedRalNumber(item.ral_number)
     return ralNumber ? `Powder coating (RAL ${ralNumber})` : 'Powder coating'
@@ -122,8 +123,9 @@ export function formatOrderSpecificationCoating(item: DocumentItem) {
   return 'No coating'
 }
 
-function formatOrderSpecificationCoatingUk(item: DocumentItem) {
-  if (item.coating === 'zinc') return 'Цинкове покриття'
+export function formatOrderSpecificationCoatingUk(item: DocumentItem) {
+  if (item.coating === 'cold_zinc') return 'Холодне цинкове покриття'
+  if (item.coating === 'zinc') return 'Гаряче цинкове покриття'
   if (item.coating === 'powder_coating') {
     const ralNumber = normalizedRalNumber(item.ral_number)
     return ralNumber ? `Порошкове фарбування (RAL ${ralNumber})` : 'Порошкове фарбування'

@@ -50,7 +50,8 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
   const drawingsConfirmed = tasks.some((task) => task.task_type === 'engineer_confirm' && task.status === 'completed')
 
   const getCoatingBadge = (c: CoatingType, ral?: string | null) => {
-    if (c === 'zinc') return <Badge variant="secondary" className="bg-[#E8ECF0] text-[#1B3A6B]">{COATINGS.zinc.label}</Badge>
+    if (c === 'cold_zinc') return <Badge variant="secondary" className="bg-sky-50 text-sky-700">{COATINGS.cold_zinc.label}</Badge>
+    if (c === 'zinc') return <Badge variant="secondary" className="bg-blue-50 text-blue-700">{COATINGS.zinc.label}</Badge>
     if (c === 'powder_coating') return (
       <Badge variant="outline" className="text-orange-400 border-orange-400/20 bg-orange-400/10">
         {COATINGS.powder_coating.label} {ral ? `(RAL ${ral})` : ''}

@@ -148,7 +148,7 @@ export function ClientProductPricesTable({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-[920px] w-full text-left text-sm">
+        <table className="min-w-[1160px] w-full text-left text-sm">
           <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
             <tr>
               <th className="w-[36%] px-4 py-3 font-semibold">Изделие</th>
@@ -162,7 +162,7 @@ export function ClientProductPricesTable({
           <tbody className="divide-y divide-slate-100">
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-sm text-slate-500">
+                <td colSpan={CLIENT_PRICE_COATINGS.length + 1} className="px-4 py-10 text-center text-sm text-slate-500">
                   {rows.length === 0 ? 'Активных изделий пока нет.' : 'По этому поиску ничего не найдено.'}
                 </td>
               </tr>

@@ -8,6 +8,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
+import { isZincCoating } from '@/lib/constants/coatings'
 import { STAGE_ORDER } from '@/lib/constants/stages'
 import { isDirector } from '@/lib/utils/permissions'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
@@ -1440,7 +1441,7 @@ async function syncZincOperation(db: LooseDb, machineId: string, stageDates: { d
   const zincWorkType = workTypes.find((workType) => workType.is_zinc || workType.code === 'zinc')
   if (!zincWorkType || !defaultExecutor) return
 
-  const zincItems = items.filter((item) => item.coating === 'zinc')
+  const zincItems = items.filter((item) => isZincCoating(item.coating))
   if (zincItems.length === 0) return
 
   const { data: currentData, error: currentError } = await db
@@ -1464,7 +1465,7 @@ async function syncZincOperation(db: LooseDb, machineId: string, stageDates: { d
     executor_factory_id: defaultExecutor.executor_type === 'factory' ? defaultExecutor.executor_factory_id : null,
     planned_send_date: dateOnly(stageDates.dateStart),
     planned_return_date: dateOnly(stageDates.dateEnd),
-    note: 'Синхронизировано с этапом Цинк',
+    note: 'Синхронизировано с этапом Цинкование',
     updated_by: actorUserId || null,
     updated_at: new Date().toISOString(),
   }

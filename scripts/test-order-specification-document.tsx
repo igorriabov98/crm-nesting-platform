@@ -5,6 +5,7 @@ import { renderToBuffer } from '@react-pdf/renderer'
 import type { DocumentData } from '../src/lib/actions/document-generation'
 import {
   formatOrderSpecificationCoating,
+  formatOrderSpecificationCoatingUk,
   OrderSpecificationDocument,
 } from '../src/lib/pdf/OrderSpecificationDocument'
 
@@ -72,15 +73,28 @@ const data: DocumentData = {
       coating: 'zinc',
       ral_number: '',
     },
+    {
+      sort_order: 3,
+      product_name_en: 'Cold zinc coated mounting plate',
+      product_name_uk: 'Монтажна пластина з холодним цинком',
+      product_uktzed: '',
+      quantity: 1,
+      price: 50,
+      total: 50,
+      weight: 4,
+      net_weight: 4,
+      coating: 'cold_zinc',
+      ral_number: '',
+    },
   ],
   expenses: [],
   packingGroups: [],
   totals: {
-    goods_total: 536.5,
+    goods_total: 586.5,
     expenses_total: 0,
-    grand_total: 536.5,
-    total_net_weight: 73.75,
-    total_gross_weight: 73.75,
+    grand_total: 586.5,
+    total_net_weight: 77.75,
+    total_gross_weight: 77.75,
     total_places: 0,
   },
   signatureUrl: null,
@@ -91,7 +105,10 @@ const data: DocumentData = {
 
 async function main() {
   assert.equal(formatOrderSpecificationCoating(data.items[0]), 'Powder coating (RAL 7016)')
-  assert.equal(formatOrderSpecificationCoating(data.items[1]), 'Zinc coating')
+  assert.equal(formatOrderSpecificationCoating(data.items[1]), 'Hot-dip zinc coating')
+  assert.equal(formatOrderSpecificationCoatingUk(data.items[1]), 'Гаряче цинкове покриття')
+  assert.equal(formatOrderSpecificationCoating(data.items[2]), 'Cold zinc coating')
+  assert.equal(formatOrderSpecificationCoatingUk(data.items[2]), 'Холодне цинкове покриття')
 
   const buffer = await renderToBuffer(<OrderSpecificationDocument data={data} />)
   assert.ok(buffer.length > 1_000, `Expected rendered PDF, received ${buffer.length} bytes`)

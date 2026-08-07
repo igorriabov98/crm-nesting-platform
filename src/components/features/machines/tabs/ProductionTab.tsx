@@ -14,7 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { getDesiredShippingInfo } from '@/lib/utils/desired-shipping'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { COATINGS } from '@/lib/constants/coatings'
+import { COATINGS, isZincCoating } from '@/lib/constants/coatings'
 import type { MachineDetails, MachineItem, ProductionStage } from '@/lib/types'
 import { toast } from 'sonner'
 
@@ -125,7 +125,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
     { value: '2', label: 'Цех 2' },
   ]
 
-  const itemsWithZinc = (machine.machine_items || []).filter((i) => i.coating === 'zinc')
+  const itemsWithZinc = (machine.machine_items || []).filter((i) => isZincCoating(i.coating))
   const itemsWithPainting = (machine.machine_items || []).filter((i) => i.coating === 'powder_coating')
 
   const hasZinc = itemsWithZinc.length > 0
@@ -326,11 +326,12 @@ export function ProductionTab({ machine }: ProductionTabProps) {
                           <Info className="w-3 h-3 mr-1" /> Детально
                       </PopoverTrigger>
                       <PopoverContent className="w-80 p-4">
-                        <h4 className="font-semibold text-[#1B3A6B] mb-2">{COATINGS.zinc.label}</h4>
+                        <h4 className="font-semibold text-[#1B3A6B] mb-2">Цинкование</h4>
                         <ul className="text-sm space-y-2 mb-3">
                           {itemsWithZinc.map((item: MachineItem) => (
                             <li key={item.id} className="text-[#374151]">
                               • {item.product_name} <span className="text-[#9CA3AF]">({item.drawing_number})</span><br />
+                              <span className="text-xs font-medium text-[#1B3A6B] ml-3">{COATINGS[item.coating].label}</span><br />
                               <span className="text-xs text-[#6B7280] ml-3">{item.quantity} шт, {Number(item.weight).toFixed(2)} т</span>
                             </li>
                           ))}

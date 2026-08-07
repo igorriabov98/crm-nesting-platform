@@ -8,7 +8,7 @@ import { useForm, useFieldArray, useWatch, type FieldPath, type Resolver } from 
 import { Trash2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { ROUTES } from '@/lib/constants/routes'
-import { COATINGS } from '@/lib/constants/coatings'
+import { COATING_OPTIONS, COATINGS, getCoatingLabel } from '@/lib/constants/coatings'
 import { createMachineSchema, type CreateMachineInput } from '@/lib/types/schemas'
 import { createMachine } from '@/app/(protected)/sales-plan/actions'
 import { getOrderClientProductPrices } from '@/lib/actions/client-product-prices'
@@ -63,10 +63,6 @@ function parseIntegerInput(value: string) {
 function toFiniteNumber(value: unknown, fallback = 0) {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : fallback
-}
-
-function getCoatingLabel(coating: CoatingType | null | undefined) {
-  return coating ? COATINGS[coating].label : 'Выберите покрытие'
 }
 
 export function MachineCreateForm({
@@ -668,8 +664,8 @@ export function MachineCreateForm({
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {Object.entries(COATINGS).map(([val, {label}]) => (
-                                  <SelectItem key={val} value={val}>{label}</SelectItem>
+                                {COATING_OPTIONS.map((val) => (
+                                  <SelectItem key={val} value={val}>{COATINGS[val].label}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -871,8 +867,8 @@ export function MachineCreateForm({
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {Object.entries(COATINGS).map(([val, { label }]) => (
-                                  <SelectItem key={val} value={val}>{label}</SelectItem>
+                                {COATING_OPTIONS.map((val) => (
+                                  <SelectItem key={val} value={val}>{COATINGS[val].label}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
