@@ -8,6 +8,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { completeStockReservation } from '@/lib/actions/technologist-requests'
+import { resolveCompletionWorkspaceNavigation } from '@/lib/request-completion-navigation'
+import type { RequestStatus } from '@/lib/types'
 
 const wasteSchema = z.object({
   sourceTable: z.enum(['request_sheet_metal', 'request_pipe', 'request_circle', 'request_knives']),
@@ -97,7 +99,13 @@ function mapWaste(sourceTable: CompletionWasteItem['sourceTable'], row: RawWaste
   }
 }
 
-export async function getCompletionWorkspace(requestId: string): Promise<{ data: CompletionWorkspace | null; error: string | null }> {
+type CompletionWorkspaceResult = {
+  data: CompletionWorkspace | null
+  error: string | null
+  redirectTo: string | null
+}
+
+export async function getCompletionWorkspace(requestId: string): Promise<CompletionWorkspaceResult> {
   try {
     const id = z.string().uuid().parse(requestId)
     const { userId } = await requirePermission('technologist_requests', 'manage')
@@ -105,7 +113,9 @@ export async function getCompletionWorkspace(requestId: string): Promise<{ data:
     const requestResult = await client.from('technologist_requests').select('id,machine_id,created_by,status').eq('id', id).single()
     if (requestResult.error || !requestResult.data) throw new Error('Заявка не найдена')
     if (requestResult.data.created_by !== userId) throw new Error('Завершить заявку может только её автор')
-    if (!['pending_stock_check', 'stock_checked'].includes(requestResult.data.status)) throw new Error('Заявка не находится на этапе бронирования')
+    const navigation = resolveCompletionWorkspaceNavigation(requestResult.data.status as RequestStatus)
+    if (navigation.kind === 'redirect') return { data: null, error: null, redirectTo: navigation.href }
+    if (navigation.kind === 'unavailable') throw new Error('Заявка не находится на этапе бронирования')
     const [machineResult, sheet, pipe, circle, knives] = await Promise.all([
       client.from('machines').select('id,name,factory_id,factories(id,name)').eq('id', requestResult.data.machine_id).single(),
       client.from('request_sheet_metal').select('id,material_id,material_variant_id,material_name,material_grade,sheet_size,quantity_sheets,calculated_weight_kg').eq('request_id', id).order('sort_order'),
@@ -122,8 +132,8 @@ export async function getCompletionWorkspace(requestId: string): Promise<{ data:
       ...(circle.data || []).map((row: RawWasteRow) => mapWaste('request_circle', row)),
       ...(knives.data || []).map((row: RawWasteRow) => mapWaste('request_knives', row)),
     ]
-    return { data: { requestId: id, machineId: machineResult.data.id, machineName: machineResult.data.name, factoryId: machineResult.data.factory_id, factoryName: factory.name, wasteItems }, error: null }
-  } catch (error) { return { data: null, error: getErrorMessage(error) } }
+    return { data: { requestId: id, machineId: machineResult.data.id, machineName: machineResult.data.name, factoryId: machineResult.data.factory_id, factoryName: factory.name, wasteItems }, error: null, redirectTo: null }
+  } catch (error) { return { data: null, error: getErrorMessage(error), redirectTo: null } }
 }
 
 export async function searchFutureDetailingParts(query: string, page = 0) {
