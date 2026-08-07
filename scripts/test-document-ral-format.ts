@@ -35,7 +35,7 @@ const legacyName = item({
 assert.equal(formatDocumentItemName(legacyName, 'en'), 'Tipper bucket for forklift truck VUC-750 DF RAL9010')
 assert.equal(formatDocumentItemName(legacyName, 'uk'), 'Ковш відкидний для вилкового автонавантажувача VUC-750 DF RAL9010')
 
-for (const coating of ['none', 'zinc'] as const) {
+for (const coating of ['none', 'zinc', 'cold_zinc'] as const) {
   const nonPowder = item({
     coating,
     ral_number: '5010',

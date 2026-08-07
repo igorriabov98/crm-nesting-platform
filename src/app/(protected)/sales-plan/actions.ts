@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
+import { isZincCoating, normalizeRalNumberForCoating } from '@/lib/constants/coatings'
 import { requirePermission } from '@/lib/permissions/server'
 import { dispatchPendingTelegramDeliveries, notifyNewTasks } from '@/lib/services/task-notifications'
 import { createMachineSchema, machineExpenseSchema, machineItemSchema, machinePackingSettingsSchema } from '@/lib/types/schemas'
@@ -241,11 +242,6 @@ function clientPriceDb() {
 
 function itemCoating(item: { coating?: CoatingType | null }) {
   return (item.coating || 'none') as CoatingType
-}
-
-function ralNumberForCoating(coating: CoatingType | null | undefined, value: string | null | undefined) {
-  if (coating !== 'powder_coating') return null
-  return value?.trim() || null
 }
 
 async function resolveProductBackedPrice(
@@ -496,7 +492,7 @@ function productBackedItemPayload(
     price: priceEur,
     quantity: item.quantity,
     coating: item.coating,
-    ral_number: ralNumberForCoating(item.coating, item.ral_number),
+    ral_number: normalizeRalNumberForCoating(item.coating, item.ral_number),
     is_sample: item.is_sample ?? false,
     sort_order: index,
   }
@@ -524,7 +520,7 @@ function projectSampleItemPayload(
     price: Number(sample.base_price_eur),
     quantity: item.quantity,
     coating: item.coating,
-    ral_number: ralNumberForCoating(item.coating, item.ral_number),
+    ral_number: normalizeRalNumberForCoating(item.coating, item.ral_number),
     is_sample: true,
     sort_order: index,
   }
@@ -538,7 +534,7 @@ function productBackedItemUpdate(
   const payload: MachineItemUpdate = {
     quantity: item.quantity,
     coating: item.coating,
-    ral_number: ralNumberForCoating(item.coating, item.ral_number),
+    ral_number: normalizeRalNumberForCoating(item.coating, item.ral_number),
     is_sample: item.is_sample ?? false,
     sort_order: index,
   }
@@ -919,7 +915,7 @@ async function syncCoatingDependentProductionStages(db: LooseDb, machineId: stri
   if (itemsError) throw itemsError
 
   const coatings = ((itemsData || []) as Pick<MachineItem, 'coating'>[]).map((item) => item.coating)
-  const hasZinc = coatings.includes('zinc')
+  const hasZinc = coatings.some(isZincCoating)
   const hasPainting = coatings.includes('powder_coating')
 
   const zincStages = ['galvanizing', 'post_galvanizing_cleaning']
@@ -1136,7 +1132,9 @@ export async function getMachine(id: string) {
     const total_items_cost = items.reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity)), 0)
     const total_expenses = expenses.reduce((sum, exp) => sum + Number(exp.amount), 0)
     const total_cost = total_items_cost + total_expenses
-    const has_zinc = items.some((i) => i.coating === 'zinc')
+    const has_hot_zinc = items.some((i) => i.coating === 'zinc')
+    const has_cold_zinc = items.some((i) => i.coating === 'cold_zinc')
+    const has_zinc = has_hot_zinc || has_cold_zinc
     const has_painting = items.some((i) => i.coating === 'powder_coating')
     const [progressContexts, actualMaterialDateFallbacks] = await Promise.all([
       loadMachineProgressContexts(db, [machineData.id]),
@@ -1158,6 +1156,8 @@ export async function getMachine(id: string) {
       total_cost,
       item_count: items.length,
       has_zinc,
+      has_hot_zinc,
+      has_cold_zinc,
       has_painting,
       progress: resolveMachineProgressWithContext(machineWithActualMaterialDate, progressContexts.get(machineData.id)),
     }
@@ -1777,7 +1777,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
               price: item.price,
               quantity: item.quantity,
               coating: item.coating,
-              ral_number: ralNumberForCoating(item.coating, item.ral_number),
+              ral_number: normalizeRalNumberForCoating(item.coating, item.ral_number),
               is_sample: item.is_sample ?? false,
               sort_order: index
             } satisfies MachineItemUpdate).eq('id', itemObj.id)
@@ -2102,7 +2102,7 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
       updatePayload = {
         quantity: parsed.quantity,
         coating: parsed.coating,
-        ral_number: ralNumberForCoating(parsed.coating || existing.coating, parsed.ral_number ?? existing.ral_number),
+        ral_number: normalizeRalNumberForCoating(parsed.coating || existing.coating, parsed.ral_number ?? existing.ral_number),
       }
       if (existing.product_id && parsed.coating && parsed.coating !== existing.coating) {
         const priceDb = clientPriceDb()
@@ -2182,7 +2182,7 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
         ...legacyPayload,
         ...(
           parsed.coating !== undefined || parsed.ral_number !== undefined
-            ? { ral_number: ralNumberForCoating(parsed.coating || existing.coating, parsed.ral_number ?? existing.ral_number) }
+            ? { ral_number: normalizeRalNumberForCoating(parsed.coating || existing.coating, parsed.ral_number ?? existing.ral_number) }
             : {}
         ),
       }

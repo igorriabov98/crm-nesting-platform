@@ -29,6 +29,8 @@ export type ProductionRow = {
     created_at: string
     total_weight: number
     has_zinc: boolean
+    has_hot_zinc: boolean
+    has_cold_zinc: boolean
     has_painting: boolean
     factory_id: string | null
     production_month: string | null
@@ -64,6 +66,8 @@ type SelectedProductionMachine = {
   created_at: string
   total_weight: number | null
   has_zinc: boolean | null
+  has_hot_zinc: boolean | null
+  has_cold_zinc: boolean | null
   has_painting: boolean | null
   factory_id: string | null
   production_month: string | null
@@ -147,7 +151,7 @@ export async function getProductionData(factoryFilter?: string | null) {
   const { supabase, role: userRole, factoryId: userFactoryId } = await requirePermission('production', 'view')
 
   const selectWithDeadline = `
-    id, name, created_at, total_weight, has_zinc, has_painting, factory_id,
+    id, name, created_at, total_weight, has_zinc, has_hot_zinc, has_cold_zinc, has_painting, factory_id,
     production_month, production_workshop, production_queue_number,
     is_confirmed, desired_shipping_date, planned_material_date,
     actual_material_date, actual_shipping_date, delivery_to_client_date,
@@ -158,7 +162,7 @@ export async function getProductionData(factoryFilter?: string | null) {
   `
 
   const selectWithDeadlineLegacy = `
-    id, name, created_at, total_weight, has_zinc, has_painting, factory_id,
+    id, name, created_at, total_weight, has_zinc, has_hot_zinc, has_cold_zinc, has_painting, factory_id,
     production_month, production_workshop, production_queue_number,
     is_confirmed, desired_shipping_date, planned_material_date,
     actual_material_date, actual_shipping_date, delivery_to_client_date,
@@ -169,7 +173,7 @@ export async function getProductionData(factoryFilter?: string | null) {
   `
 
   const selectWithoutDeadline = `
-    id, name, created_at, total_weight, has_zinc, has_painting, factory_id,
+    id, name, created_at, total_weight, has_zinc, has_hot_zinc, has_cold_zinc, has_painting, factory_id,
     production_month, production_workshop, production_queue_number,
     production_stages(
       id, stage_type, workshop, date_start, date_end, manual_overdue,
@@ -178,7 +182,7 @@ export async function getProductionData(factoryFilter?: string | null) {
   `
 
   const selectWithoutDeadlineLegacy = `
-    id, name, created_at, total_weight, has_zinc, has_painting, factory_id,
+    id, name, created_at, total_weight, has_zinc, has_hot_zinc, has_cold_zinc, has_painting, factory_id,
     production_month, production_workshop, production_queue_number,
     production_stages(
       id, stage_type, workshop, date_start, date_end,
@@ -289,6 +293,8 @@ export async function getProductionData(factoryFilter?: string | null) {
         created_at: m.created_at,
         total_weight: m.total_weight || 0,
         has_zinc: Boolean(m.has_zinc),
+        has_hot_zinc: Boolean(m.has_hot_zinc),
+        has_cold_zinc: Boolean(m.has_cold_zinc),
         has_painting: Boolean(m.has_painting),
         factory_id: m.factory_id,
         production_month: m.production_month,

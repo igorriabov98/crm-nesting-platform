@@ -22,6 +22,7 @@
     "test:product-project-lifecycle": "tsx scripts/test-product-project-lifecycle.ts",
     "test:document-ral": "tsx scripts/test-document-ral-format.ts",
     "test:order-specification-document": "tsx scripts/test-order-specification-document.tsx",
+    "test:coating-variants": "tsx scripts/test-coating-variants.ts",
     "test:notification-bell": "tsx scripts/test-notification-bell-state.ts",
     "test:mail": "tsx scripts/test-mail-integration.ts",
     "test:supply-order-view": "tsx scripts/test-supply-order-view.ts",

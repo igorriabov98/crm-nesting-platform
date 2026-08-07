@@ -199,6 +199,8 @@ export type MachineDetails = Machine & {
   total_cost: number
   item_count: number
   has_zinc: boolean
+  has_hot_zinc: boolean
+  has_cold_zinc: boolean
   has_painting: boolean
   progress: MachineProgress
 }

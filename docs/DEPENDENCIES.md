@@ -18,7 +18,7 @@ factories (seed, создаётся 1 раз при развертывании)
 
 ### machines → production_stages
 - **Размножение:** При создании 1 машины, триггер БД создает 7 заготовок этапов производства (`cutting`, `assembly`, `cleaning`, `galvanizing`, `painting`, `packaging`, `shipping`).
-- **Правило цинкования:** Если у машины `coating = 'zinc'`, этап `galvanizing` защищается от пропуска (`is_skipped` нельзя выставить в `true`). При `coating ≠ 'zinc'`, этот этап может быть пропущен.
+- **Правило цинкования:** Если хотя бы у одной позиции машины `coating IN ('zinc', 'cold_zinc')`, этапы `galvanizing` и `post_galvanizing_cleaning` защищены от пропуска. `zinc` — стабильный ключ горячего цинка, `cold_zinc` — холодного.
 - **Автоматическое назначение цехов (workshop):**
   - `cutting` → 1 (жесткая привязка)
   - `assembly`, `cleaning`, `galvanizing`, `shipping` → NULL (оставляет выбор за начальником производства)
@@ -60,7 +60,7 @@ factories (seed, создаётся 1 раз при развертывании)
 
 ## 4. Зависимости валидации и бизнес-правила
 На уровне базы данных (триггеров) жестко зафиксировано:
-1. Невозможно пропустить (skip) этап `galvanizing`, если покрытие (`coating`) = `'zinc'`.
+1. Невозможно пропустить (skip) этапы `galvanizing` и `post_galvanizing_cleaning`, если покрытие (`coating`) равно `'zinc'` или `'cold_zinc'`.
 2. `cutting.workshop` всегда равен 1. Попытка изменить вызывает исключение `RAISE EXCEPTION`.
 3. `painting.workshop` всегда равен 2.
 4. `packaging.workshop` всегда равен 2.

@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 
 import { ROUTES } from '@/lib/constants/routes'
+import { COATINGS } from '@/lib/constants/coatings'
 import type { CoatingType, FactorySummary, Invoice, MachineListItem } from '@/lib/types'
 import { usePermissions } from '@/components/providers/PermissionProvider'
 import { Button } from '@/components/ui/button'
@@ -85,9 +86,10 @@ const initialFilters: SalesPlanFilters = {
 
 const coatingFilterLabels: Record<string, string> = {
   all: 'Все покрытия',
-  zinc: 'Цинк',
-  powder_coating: 'Порошковая покраска',
-  none: 'Без покрытия',
+  cold_zinc: COATINGS.cold_zinc.label,
+  zinc: COATINGS.zinc.label,
+  powder_coating: COATINGS.powder_coating.label,
+  none: COATINGS.none.label,
 }
 
 const materialFilterLabels: Record<string, string> = {
@@ -144,14 +146,17 @@ function getMaterialBadge(type: string) {
 }
 
 function getCoatingBadge(coating: CoatingType) {
+  if (coating === 'cold_zinc') {
+    return <Badge key={coating} variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">{COATINGS.cold_zinc.label}</Badge>
+  }
   if (coating === 'zinc') {
-    return <Badge key={coating} variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">Цинк</Badge>
+    return <Badge key={coating} variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">{COATINGS.zinc.label}</Badge>
   }
   if (coating === 'powder_coating') {
-    return <Badge key={coating} variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">Порошковая</Badge>
+    return <Badge key={coating} variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">{COATINGS.powder_coating.label}</Badge>
   }
   if (coating === 'none') {
-    return <Badge key={coating} variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">Без покрытия</Badge>
+    return <Badge key={coating} variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">{COATINGS.none.label}</Badge>
   }
   return null
 }

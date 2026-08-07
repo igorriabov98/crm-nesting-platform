@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { COATING_OPTIONS } from '@/lib/constants/coatings'
 import { ROUTES } from '@/lib/constants/routes'
 import { hasPermission } from '@/lib/permissions/resources'
 import { requirePermission } from '@/lib/permissions/server'
@@ -19,7 +20,7 @@ import { getErrorMessage } from '@/lib/utils/get-error-message'
 const priceInputSchema = z.object({
   clientId: z.string().uuid(),
   productId: z.string().uuid(),
-  coating: z.enum(['none', 'zinc', 'powder_coating']),
+  coating: z.enum(COATING_OPTIONS),
   priceEur: z.coerce.number().min(0, 'Цена не может быть отрицательной'),
 })
 

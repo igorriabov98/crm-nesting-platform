@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { STAGES, STAGE_ORDER } from '@/lib/constants/stages'
+import { COATINGS, isZincCoating } from '@/lib/constants/coatings'
 import {
   archiveOutsourcingOperation,
   saveOutsourcingOperation,
@@ -107,7 +108,11 @@ export function OutsourcingTab({ data }: { data: MachineOutsourcingData }) {
     () => data.suppliers.filter((supplier) => supplier.can_outsource || supplier.can_transport),
     [data.suppliers],
   )
-  const zincItems = data.items.filter((item) => item.coating === 'zinc')
+  const zincItems = data.items.filter((item) => isZincCoating(item.coating))
+  const zincBreakdown = [
+    { label: COATINGS.cold_zinc.label, count: zincItems.filter((item) => item.coating === 'cold_zinc').length },
+    { label: COATINGS.zinc.label, count: zincItems.filter((item) => item.coating === 'zinc').length },
+  ].filter((entry) => entry.count > 0)
   const canSaveZincDefault = Boolean(data.machine.factory_id && (zincExecutorType === 'supplier' ? zincSupplierId : zincFactoryId))
 
   function openCreate() {
@@ -251,10 +256,13 @@ export function OutsourcingTab({ data }: { data: MachineOutsourcingData }) {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-900">Цинк</Badge>
+                <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-900">Цинкование</Badge>
                 <span className="text-sm font-semibold text-slate-900">{zincItems.length} позиций</span>
               </div>
-              <div className="mt-1 text-sm text-slate-500">Исполнитель по умолчанию для цинка на заводе отправителя.</div>
+              <div className="mt-1 text-sm text-slate-600">
+                {zincBreakdown.map((entry) => `${entry.label}: ${entry.count}`).join(' · ')}
+              </div>
+              <div className="mt-1 text-sm text-slate-500">Исполнитель по умолчанию для обоих видов цинка на заводе отправителя.</div>
             </div>
             <div className="grid w-full gap-2 sm:grid-cols-[140px_minmax(160px,1fr)_auto] lg:max-w-2xl">
               <Select value={zincExecutorType} onValueChange={(value) => value && setZincExecutorType(value as 'supplier' | 'factory')}>
@@ -318,7 +326,7 @@ export function OutsourcingTab({ data }: { data: MachineOutsourcingData }) {
                 <div className="flex flex-wrap gap-1.5">
                   {operation.items.map((item) => (
                     <Badge key={item.id} variant="outline" className="bg-slate-50">
-                      {item.product_name} · {item.quantity} шт.
+                      {item.product_name} · {item.quantity} шт. · {COATINGS[item.coating].label}
                     </Badge>
                   ))}
                 </div>
