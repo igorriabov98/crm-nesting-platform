@@ -8,6 +8,7 @@ import { requirePermission } from '@/lib/permissions/server'
 import { fetchNestingService as fetch, getNestingServiceUrl, getResult, markProjectSuperseded, type SheetResult } from '@/lib/nesting/api'
 import { resolveSheetMetalMaterialForRequestRow } from '@/lib/actions/request-sheet-metal-materials'
 import { getProductVersionNestingGuard, getProductVersionNestingGuards, type ProductVersionNestingDb } from '@/lib/actions/product-version-nesting-guard'
+import { resolveNestingFileUri } from '@/lib/file-archive/uri'
 import type { Database } from '@/lib/types/database'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { MachineItemNestingRun } from '@/lib/types'
@@ -250,14 +251,18 @@ async function createNestingProject(input: {
 }) {
   let res: Response
   try {
+    const [stepStorageUri, pdfStorageUri] = await Promise.all([
+      resolveNestingFileUri({ bucket: 'product-files', objectPath: input.stepFile.file_path, sourceRecordId: input.stepFile.id }),
+      resolveNestingFileUri({ bucket: 'product-files', objectPath: input.drawingFile.file_path, sourceRecordId: input.drawingFile.id }),
+    ])
     res = await fetch(`${getNestingServiceUrl()}/api/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         orderNumber: input.orderNumber,
         quantity: input.quantity,
-        stepStorageUri: `supabase://product-files/${input.stepFile.file_path}`,
-        pdfStorageUri: `supabase://product-files/${input.drawingFile.file_path}`,
+        stepStorageUri,
+        pdfStorageUri,
         createdBy: input.createdBy,
       }),
     })

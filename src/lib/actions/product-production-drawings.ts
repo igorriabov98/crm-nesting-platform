@@ -13,6 +13,7 @@ import {
   type DirectProductProductionDrawingUpload,
 } from '@/lib/products/product-production-drawing'
 import type { ProductProductionDrawing } from '@/lib/types'
+import { removeFileObject } from '@/lib/file-archive/resolver'
 
 const uuidSchema = z.string().uuid()
 
@@ -237,7 +238,7 @@ export async function deleteProductProductionDrawing(
 
     // The database row is removed first so a transient storage error cannot expose
     // a broken download entry. A failed object cleanup only leaves a private orphan.
-    await admin.storage.from(PRODUCT_PRODUCTION_DRAWING_BUCKET).remove([drawing.file_path]).catch(() => undefined)
+    await removeFileObject(PRODUCT_PRODUCTION_DRAWING_BUCKET, drawing.file_path).catch(() => undefined)
     revalidateProduct(productId)
     return { success: true, data: null, error: null }
   } catch (error) {

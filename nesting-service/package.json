@@ -12,6 +12,7 @@
     "db:studio": "prisma studio",
     "worker:step": "tsx src/workers/step-worker.ts",
     "worker:nesting": "tsx src/workers/nesting-worker.ts",
+    "worker:file-archive": "tsx src/workers/file-archive-worker.ts",
     "brep:dump": "tsx scripts/brep-dump.ts",
     "brep:solids": "tsx scripts/brep-solids.ts",
     "fixtures": "tsx scripts/generate-fixtures.ts",

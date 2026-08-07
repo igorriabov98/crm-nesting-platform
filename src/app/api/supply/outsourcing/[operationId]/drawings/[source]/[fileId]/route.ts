@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
+import { downloadFileBytes } from '@/lib/file-archive/resolver'
 
 type FileRow = {
   id: string
@@ -76,17 +77,17 @@ export async function GET(
       return NextResponse.json({ error: 'File not found' }, { status: 404 })
     }
 
-    const { data: storedFile, error: downloadError } = await admin.storage
-      .from('product-files')
-      .download(file.file_path)
-    if (downloadError || !storedFile) {
+    let storedFile: Buffer
+    try {
+      storedFile = await downloadFileBytes('product-files', file.file_path)
+    } catch {
       return NextResponse.json({ error: 'Cannot open file' }, { status: 500 })
     }
 
-    return new NextResponse(storedFile, {
+    return new NextResponse(new Uint8Array(storedFile), {
       headers: {
-        'Content-Type': file.mime_type || storedFile.type || 'application/octet-stream',
-        'Content-Length': String(storedFile.size),
+        'Content-Type': file.mime_type || 'application/octet-stream',
+        'Content-Length': String(storedFile.byteLength),
         'Content-Disposition': contentDisposition(file.file_name || 'drawing.pdf'),
         'Cache-Control': 'private, no-store',
       },

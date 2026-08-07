@@ -55,6 +55,7 @@ const PAGE_TITLES: Record<string, string> = {
   [ROUTES.NOTIFICATIONS]: 'Уведомления',
   [ROUTES.MAIL]: 'Почта',
   [ROUTES.ADMIN_MAIL_SETTINGS]: 'Настройки почты',
+  [ROUTES.ADMIN_FILE_ARCHIVE_SETTINGS]: 'Архив файлов',
 }
 
 interface HeaderProps {

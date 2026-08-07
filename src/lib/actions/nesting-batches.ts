@@ -9,6 +9,7 @@ import { requirePermission } from '@/lib/permissions/server'
 import { fetchNestingService as fetch, getNestingServiceUrl, getProjectStatus, markProjectSuperseded } from '@/lib/nesting/api'
 import { isCompletedNestingStatus } from '@/lib/nesting/status'
 import { getProductVersionNestingGuards, type ProductVersionNestingDb } from '@/lib/actions/product-version-nesting-guard'
+import { resolveNestingFileUri } from '@/lib/file-archive/uri'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 
 type ActionResult<T> = {
@@ -631,23 +632,24 @@ export async function createNestingBatch(input: {
     })
 
     const orderNumber = `Batch ${new Date().toISOString().slice(0, 10)} / ${prepared.length} поз.`
+    const serviceInputs = await Promise.all(prepared.map(async (row) => ({
+      sourceId: row.item.id,
+      sourceType: 'crm_machine_item',
+      machineId: row.machine.id,
+      machineName: row.machine.name,
+      machineItemId: row.item.id,
+      productId: row.product.id,
+      productName: row.item.product_name || row.product.name_uk,
+      drawingNumber: row.item.drawing_number || row.product.drawing_number || '',
+      quantity: row.quantityToNest,
+      stepStorageUri: await resolveNestingFileUri({ bucket: 'product-files', objectPath: row.stepFile.file_path, sourceRecordId: row.stepFile.id }),
+      pdfStorageUri: await resolveNestingFileUri({ bucket: 'product-files', objectPath: row.drawingFile.file_path, sourceRecordId: row.drawingFile.id }),
+      sortOrder: row.sortOrder,
+    })))
     const servicePayload = {
       orderNumber,
       createdBy: userId,
-      inputs: prepared.map((row) => ({
-        sourceId: row.item.id,
-        sourceType: 'crm_machine_item',
-        machineId: row.machine.id,
-        machineName: row.machine.name,
-        machineItemId: row.item.id,
-        productId: row.product.id,
-        productName: row.item.product_name || row.product.name_uk,
-        drawingNumber: row.item.drawing_number || row.product.drawing_number || '',
-        quantity: row.quantityToNest,
-        stepStorageUri: `supabase://product-files/${row.stepFile.file_path}`,
-        pdfStorageUri: `supabase://product-files/${row.drawingFile.file_path}`,
-        sortOrder: row.sortOrder,
-      })),
+      inputs: serviceInputs,
     }
 
     const response = await fetch(`${getNestingServiceUrl()}/api/projects/batch`, {

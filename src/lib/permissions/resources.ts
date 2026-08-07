@@ -51,6 +51,7 @@ export type ResourceKey =
   | 'admin_users'
   | 'telegram_settings'
   | 'mail_settings'
+  | 'file_archive_settings'
   | 'company_settings'
   | 'production_fact_settings'
   | 'access_settings'
@@ -673,6 +674,16 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: DIRECTORS,
     defaultManageRoles: DIRECTORS,
     routes: [{ path: ROUTES.ADMIN_MAIL_SETTINGS, match: 'prefix', operation: 'view', priority: 90 }],
+  },
+  {
+    key: 'file_archive_settings',
+    label: 'Архив файлов',
+    description: 'Политики переноса файлов из Supabase Storage в Google Drive',
+    group: 'Настройки',
+    defaultHref: ROUTES.ADMIN_FILE_ARCHIVE_SETTINGS,
+    defaultViewRoles: DIRECTORS,
+    defaultManageRoles: DIRECTORS,
+    routes: [{ path: ROUTES.ADMIN_FILE_ARCHIVE_SETTINGS, match: 'prefix', operation: 'view', priority: 95 }],
   },
   {
     key: 'company_settings',

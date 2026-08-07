@@ -2,10 +2,13 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import { canManageDepartmentRequestTarget, type DepartmentRequestTarget } from '@/lib/department-requests'
+import { resolveFileResponse } from '@/lib/file-archive/resolver'
 
 type AttachmentRow = {
   id: string
   storage_path: string
+  file_name: string
+  mime_type: string | null
   request: {
     created_by: string
     target_department: DepartmentRequestTarget
@@ -26,6 +29,8 @@ export async function GET(
       .select(`
         id,
         storage_path,
+        file_name,
+        mime_type,
         request:department_requests!department_request_attachments_request_id_fkey(
           created_by,
           target_department,
@@ -57,13 +62,14 @@ export async function GET(
       return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
     }
 
-    const { data: signed, error: signedError } = await admin.storage
-      .from('department-request-files')
-      .createSignedUrl(attachment.storage_path, 60)
-    if (signedError || !signed?.signedUrl) {
+    try {
+      return await resolveFileResponse({
+        bucket: 'department-request-files', objectPath: attachment.storage_path,
+        fileName: attachment.file_name, mimeType: attachment.mime_type,
+      })
+    } catch {
       return NextResponse.json({ error: 'Не удалось открыть файл' }, { status: 500 })
     }
-    return NextResponse.redirect(signed.signedUrl)
   } catch (error) {
     const status = error instanceof PermissionDeniedError ? 403 : 401
     return NextResponse.json({ error: status === 403 ? 'Недостаточно прав' : 'Необходима авторизация' }, { status })
