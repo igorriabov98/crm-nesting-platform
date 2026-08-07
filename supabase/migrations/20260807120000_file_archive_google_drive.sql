@@ -57,6 +57,25 @@ insert into public.file_archive_policies (key, label, category) values
   ('nesting_output', 'DXF, PDF и ZIP раскладки', 'Программы под порезку')
 on conflict (key) do nothing;
 
+create table public.file_archive_settings (
+  id boolean primary key default true check (id),
+  global_enabled boolean not null default false,
+  enabled_at timestamptz,
+  disabled_at timestamptz,
+  changed_by uuid references public.users(id) on delete set null,
+  last_test_status text check (last_test_status is null or last_test_status in ('passed', 'failed')),
+  last_test_at timestamptz,
+  last_test_duration_ms integer check (last_test_duration_ms is null or last_test_duration_ms >= 0),
+  last_test_connection_email text,
+  last_test_error text,
+  last_tested_by uuid references public.users(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.file_archive_settings (id, global_enabled)
+values (true, false)
+on conflict (id) do nothing;
+
 create table public.file_archive_runs (
   id uuid primary key default gen_random_uuid(),
   kind text not null check (kind in ('automatic', 'backfill')),
@@ -164,6 +183,7 @@ create table public.file_archive_folders (
 
 alter table public.file_archive_connections enable row level security;
 alter table public.file_archive_policies enable row level security;
+alter table public.file_archive_settings enable row level security;
 alter table public.file_archive_runs enable row level security;
 alter table public.file_archive_run_items enable row level security;
 alter table public.file_archive_assets enable row level security;
@@ -171,12 +191,14 @@ alter table public.file_archive_folders enable row level security;
 
 revoke all on table public.file_archive_connections from public, anon, authenticated;
 revoke all on table public.file_archive_policies from public, anon, authenticated;
+revoke all on table public.file_archive_settings from public, anon, authenticated;
 revoke all on table public.file_archive_runs from public, anon, authenticated;
 revoke all on table public.file_archive_run_items from public, anon, authenticated;
 revoke all on table public.file_archive_assets from public, anon, authenticated;
 revoke all on table public.file_archive_folders from public, anon, authenticated;
 grant all on table public.file_archive_connections to service_role;
 grant all on table public.file_archive_policies to service_role;
+grant all on table public.file_archive_settings to service_role;
 grant all on table public.file_archive_runs to service_role;
 grant all on table public.file_archive_run_items to service_role;
 grant all on table public.file_archive_assets to service_role;
@@ -195,6 +217,9 @@ before update on public.file_archive_connections for each row
 execute function public.file_archive_touch_updated_at();
 create trigger file_archive_policies_touch
 before update on public.file_archive_policies for each row
+execute function public.file_archive_touch_updated_at();
+create trigger file_archive_settings_touch
+before update on public.file_archive_settings for each row
 execute function public.file_archive_touch_updated_at();
 create trigger file_archive_assets_touch
 before update on public.file_archive_assets for each row

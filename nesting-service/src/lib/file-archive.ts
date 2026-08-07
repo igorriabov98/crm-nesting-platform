@@ -53,6 +53,21 @@ export function getArchiveClient(): SupabaseClient {
   return archiveClient;
 }
 
+export async function isFileArchiveEnabled() {
+  const { data, error } = await getArchiveClient().from('file_archive_settings')
+    .select('global_enabled').eq('id', true).maybeSingle();
+  if (error) throw new Error(`Cannot read file archive switch: ${error.message}`);
+  return Boolean(data?.global_enabled);
+}
+
+export async function releaseArchiveCopyClaim(assetId: string) {
+  const { error } = await getArchiveClient().from('file_archive_assets').update({
+    state: 'queued',
+    last_error: null,
+  }).eq('id', assetId).eq('state', 'copying');
+  if (error) throw new Error(`Cannot release archive copy claim: ${error.message}`);
+}
+
 async function readVaultSecret(secretId: string): Promise<string> {
   const { data, error } = await getArchiveClient().rpc('mail_vault_read_secret', { p_secret_id: secretId });
   if (error || typeof data !== 'string' || !data) throw new Error(`Supabase Vault: ${error?.message || 'secret missing'}`);
@@ -307,12 +322,14 @@ export async function deleteArchiveSource(assetId: string) {
   if (!asset.drive_connection_id || !asset.drive_file_id) throw new Error('Verified Drive copy is missing');
   const connection = await loadConnection(asset.drive_connection_id);
   await verifyDriveFile(connection, asset.drive_file_id, Number(asset.size_bytes || 0));
+  if (!await isFileArchiveEnabled()) return false;
   const removal = await db.storage.from(asset.bucket_id).remove([asset.object_path]);
   if (removal.error) throw new Error(removal.error.message);
   const { error: updateError } = await db.from('file_archive_assets').update({
     state: 'archived', source_deleted_at: new Date().toISOString(), last_error: null,
   }).eq('id', asset.id);
   if (updateError) throw new Error(updateError.message);
+  return true;
 }
 
 export async function markArchiveFailure(assetId: string, error: unknown) {

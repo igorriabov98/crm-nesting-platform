@@ -49,6 +49,14 @@ export type ArchiveRun = {
 }
 
 export type FileArchiveDashboard = {
+  globalEnabled: boolean
+  lastTest: {
+    status: 'passed' | 'failed' | null
+    at: string | null
+    durationMs: number | null
+    connectionEmail: string | null
+    error: string | null
+  }
   connections: DriveArchiveConnection[]
   policies: ArchivePolicy[]
   runs: ArchiveRun[]

@@ -9,7 +9,7 @@ const read = (path: string) => readFileSync(join(root, path), 'utf8')
 
 const migration = read('supabase/migrations/20260807120000_file_archive_google_drive.sql')
 for (const table of [
-  'file_archive_connections', 'file_archive_policies', 'file_archive_runs',
+  'file_archive_connections', 'file_archive_policies', 'file_archive_settings', 'file_archive_runs',
   'file_archive_run_items', 'file_archive_assets', 'file_archive_folders',
 ]) {
   assert(migration.includes(`create table public.${table}`), `Нет таблицы ${table}`)
@@ -22,6 +22,8 @@ for (const state of ['local', 'queued', 'copying', 'pending_delete', 'archived',
 assert(migration.includes('retention_days integer not null default 60'))
 assert(migration.includes('local_grace_days integer not null default 7'))
 assert(migration.includes('enabled boolean not null default false'))
+assert(migration.includes('global_enabled boolean not null default false'))
+assert(migration.includes("last_test_status is null or last_test_status in ('passed', 'failed')"))
 assert(migration.includes('file_archive_build_preview'))
 assert(migration.includes('file_archive_confirm_preview'))
 assert(migration.includes('preview_hash'))
@@ -53,6 +55,7 @@ assert(resolver.includes('alt=media'))
 assert(resolver.includes('.storage.from(bucket).remove([objectPath])'), 'Ручное удаление должно использовать Storage API')
 
 const worker = read('nesting-service/src/lib/file-archive.ts')
+const workerProcess = read('nesting-service/src/workers/file-archive-worker.ts')
 const processConfig = read('nesting-service/ecosystem.config.js')
 assert(processConfig.includes("name: 'file-archive-worker'"))
 assert(worker.includes("['Без привязки', year, month"))
@@ -61,6 +64,17 @@ assert(worker.includes('uploadType=resumable'))
 assert(worker.indexOf('verifyDriveFile(connection, asset.drive_file_id') < worker.indexOf('.remove([asset.object_path])'))
 assert(worker.includes("state: 'pending_delete'"))
 assert(worker.includes("state: 'archived'"))
+assert(worker.includes("from('file_archive_settings')"))
+assert(worker.indexOf('if (!await isFileArchiveEnabled()) return false') < worker.indexOf('.remove([asset.object_path])'))
+assert(workerProcess.includes('Scan skipped: archive is disabled'))
+assert(workerProcess.includes('releaseArchiveCopyClaim'))
+
+const selfTest = read('src/lib/file-archive/self-test.ts')
+assert(selfTest.includes("file-archive-tests/${runId}"))
+assert(selfTest.includes('crmArchiveTestRun'))
+assert(selfTest.includes("{ method: 'DELETE' }"))
+assert(selfTest.includes('storage.from(TEST_BUCKET).remove([storagePath])'))
+assert(selfTest.indexOf('driveRead.arrayBuffer()') < selfTest.indexOf("{ method: 'DELETE' }"))
 
 const storage = read('nesting-service/src/lib/storage.ts')
 assert(storage.includes("const CRM_FILE_SCHEME = 'crm-file://'"))

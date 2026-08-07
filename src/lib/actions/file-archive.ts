@@ -7,6 +7,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { ArchivePolicy, ArchiveRun, DriveArchiveConnection, FileArchiveDashboard } from '@/lib/file-archive/types'
+import { executeFileArchiveSelfTest } from '@/lib/file-archive/self-test'
 
 const uuidSchema = z.string().uuid()
 
@@ -17,13 +18,14 @@ function resultError(error: unknown, fallback: string) {
 export async function getFileArchiveDashboard(): Promise<FileArchiveDashboard> {
   await requirePermission('file_archive_settings', 'view')
   const db = createAdminClient() as any
-  const [connectionsResult, policiesResult, runsResult, assetsResult] = await Promise.all([
+  const [settingsResult, connectionsResult, policiesResult, runsResult, assetsResult] = await Promise.all([
+    db.from('file_archive_settings').select('global_enabled,last_test_status,last_test_at,last_test_duration_ms,last_test_connection_email,last_test_error').eq('id', true).maybeSingle(),
     db.from('file_archive_connections').select('id,email,display_name,status,root_folder_name,last_verified_at,last_error,connected_at').order('connected_at', { ascending: false }),
     db.from('file_archive_policies').select('key,label,category,enabled,enabled_at,retention_days,local_grace_days').order('label'),
     db.from('file_archive_runs').select('id,kind,status,cutoff_at,item_count,total_bytes,missing_relation_count,machine_count,category_summary,preview_hash,created_at,confirmed_at').or('item_count.gt.0,kind.eq.backfill').order('created_at', { ascending: false }).limit(12),
     db.from('file_archive_assets').select('state,size_bytes,copied_at,source_deleted_at,drive_connection_id').limit(10000),
   ])
-  for (const query of [connectionsResult, policiesResult, runsResult, assetsResult]) {
+  for (const query of [settingsResult, connectionsResult, policiesResult, runsResult, assetsResult]) {
     if (query.error) throw new Error(query.error.message)
   }
 
@@ -88,6 +90,14 @@ export async function getFileArchiveDashboard(): Promise<FileArchiveDashboard> {
 
   const copiedDates = assets.map((asset) => asset.copied_at).filter((value): value is string => Boolean(value)).sort()
   return {
+    globalEnabled: Boolean(settingsResult.data?.global_enabled),
+    lastTest: {
+      status: settingsResult.data?.last_test_status || null,
+      at: settingsResult.data?.last_test_at || null,
+      durationMs: settingsResult.data?.last_test_duration_ms ?? null,
+      connectionEmail: settingsResult.data?.last_test_connection_email || null,
+      error: settingsResult.data?.last_test_error || null,
+    },
     connections,
     policies,
     runs,
@@ -101,6 +111,78 @@ export async function getFileArchiveDashboard(): Promise<FileArchiveDashboard> {
       failedFiles: assets.filter((asset) => asset.state === 'failed').length,
       lastSuccessfulCopyAt: copiedDates.at(-1) || null,
     },
+  }
+}
+
+export async function updateFileArchiveEnabled(input: { enabled: boolean }) {
+  try {
+    const { userId } = await requirePermission('file_archive_settings', 'manage')
+    const enabled = z.boolean().parse(input.enabled)
+    const db = createAdminClient() as any
+    const now = new Date().toISOString()
+    if (enabled) {
+      const { data: activeConnection, error: connectionError } = await db.from('file_archive_connections')
+        .select('id').eq('status', 'active').maybeSingle()
+      if (connectionError) throw new Error(connectionError.message)
+      if (!activeConnection) throw new Error('Сначала подключите активный Google Drive')
+    }
+    const { error } = await db.from('file_archive_settings').update({
+      global_enabled: enabled,
+      enabled_at: enabled ? now : null,
+      disabled_at: enabled ? null : now,
+      changed_by: userId,
+    }).eq('id', true)
+    if (error) throw new Error(error.message)
+    if (!enabled) {
+      const { error: queueError } = await db.from('file_archive_assets')
+        .update({ state: 'queued', last_error: null })
+        .eq('state', 'copying')
+      if (queueError) throw new Error(queueError.message)
+    }
+    revalidatePath(ROUTES.ADMIN_FILE_ARCHIVE_SETTINGS)
+    return { success: true as const }
+  } catch (error) {
+    return resultError(error, 'Не удалось изменить состояние архива')
+  }
+}
+
+export async function runFileArchiveSelfTest() {
+  const startedAt = Date.now()
+  let testedBy: string | null = null
+  try {
+    const { userId } = await requirePermission('file_archive_settings', 'manage')
+    testedBy = userId
+    const result = await executeFileArchiveSelfTest()
+    const { error } = await (createAdminClient() as any).from('file_archive_settings').update({
+      last_test_status: result.success ? 'passed' : 'failed',
+      last_test_at: new Date().toISOString(),
+      last_test_duration_ms: result.durationMs,
+      last_test_connection_email: result.connectionEmail,
+      last_test_error: result.error,
+      last_tested_by: userId,
+    }).eq('id', true)
+    if (error) throw new Error(error.message)
+    revalidatePath(ROUTES.ADMIN_FILE_ARCHIVE_SETTINGS)
+    return result.success
+      ? { success: true as const, durationMs: result.durationMs, steps: result.steps }
+      : { success: false as const, error: result.error || 'Тест архива завершился ошибкой', steps: result.steps }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Не удалось выполнить тест архива'
+    if (testedBy) {
+      try {
+        await (createAdminClient() as any).from('file_archive_settings').update({
+          last_test_status: 'failed',
+          last_test_at: new Date().toISOString(),
+          last_test_duration_ms: Date.now() - startedAt,
+          last_test_error: message,
+          last_tested_by: testedBy,
+        }).eq('id', true)
+      } catch {
+        // Preserve the original test error even if its diagnostic record cannot be written.
+      }
+      revalidatePath(ROUTES.ADMIN_FILE_ARCHIVE_SETTINGS)
+    }
+    return { success: false as const, error: message, steps: [] as string[] }
   }
 }
 

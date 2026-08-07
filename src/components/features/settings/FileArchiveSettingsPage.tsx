@@ -2,13 +2,15 @@
 
 import { useEffect, useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { AlertTriangle, Archive, CheckCircle2, Clock3, Cloud, HardDrive, RefreshCw, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, Archive, CheckCircle2, Clock3, Cloud, FlaskConical, HardDrive, LoaderCircle, Power, RefreshCw, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   buildArchivePreview,
   confirmArchivePreview,
   retryFailedArchiveFiles,
+  runFileArchiveSelfTest,
   updateArchivePolicy,
+  updateFileArchiveEnabled,
 } from '@/lib/actions/file-archive'
 import type { ArchiveRun, FileArchiveDashboard } from '@/lib/file-archive/types'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -53,6 +55,10 @@ export function FileArchiveSettingsPage({ initial, canManage }: { initial: FileA
   const [pending, startTransition] = useTransition()
   const [policyPending, setPolicyPending] = useState<string | null>(null)
   const [confirmRun, setConfirmRun] = useState<ArchiveRun | null>(null)
+  const [disableDialogOpen, setDisableDialogOpen] = useState(false)
+  const [globalPending, setGlobalPending] = useState(false)
+  const [testPending, setTestPending] = useState(false)
+  const [testSteps, setTestSteps] = useState<string[]>([])
 
   useEffect(() => {
     if (searchParams.get('connected') === '1') toast.success('Google Drive подключён и выбран активным')
@@ -70,6 +76,31 @@ export function FileArchiveSettingsPage({ initial, canManage }: { initial: FileA
     setPolicyPending(null)
     if (!result.success) return toast.error(result.error)
     toast.success(enabled ? 'Политика включена только для новых загрузок' : 'Политика выключена')
+    refresh()
+  }
+
+  async function setArchiveEnabled(enabled: boolean) {
+    setGlobalPending(true)
+    const result = await updateFileArchiveEnabled({ enabled })
+    setGlobalPending(false)
+    if (!result.success) return toast.error(result.error)
+    setDisableDialogOpen(false)
+    toast.success(enabled ? 'Автоматическое архивирование включено' : 'Автоматическое архивирование выключено')
+    refresh()
+  }
+
+  async function runSelfTest() {
+    setTestPending(true)
+    setTestSteps([])
+    const result = await runFileArchiveSelfTest()
+    setTestPending(false)
+    setTestSteps(result.steps)
+    if (!result.success) {
+      toast.error(result.error)
+      refresh()
+      return
+    }
+    toast.success(`Тест архива пройден за ${(result.durationMs / 1000).toFixed(1)} с`)
     refresh()
   }
 
@@ -111,6 +142,35 @@ export function FileArchiveSettingsPage({ initial, canManage }: { initial: FileA
               <Cloud className="size-4" />{active ? 'Сменить Google Drive' : 'Подключить Google Drive'}
             </Button>
           ) : <Badge variant="outline">Только просмотр</Badge>}
+        </CardContent>
+      </Card>
+
+      <Card className={initial.globalEnabled ? 'border-emerald-200' : 'border-amber-200'}>
+        <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className={`rounded-lg p-2 ${initial.globalEnabled ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+              <Power className="size-5" aria-hidden="true" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label htmlFor="file-archive-global-switch" className="font-medium text-foreground">Автоматическое архивирование</label>
+                <Badge variant={initial.globalEnabled ? 'default' : 'outline'}>{initial.globalEnabled ? 'Включено' : 'Выключено'}</Badge>
+              </div>
+              <p id="file-archive-global-description" className="mt-1 text-sm text-muted-foreground">
+                {initial.globalEnabled
+                  ? 'Worker переносит подходящие файлы и удаляет проверенные Supabase-копии после 7 дней.'
+                  : 'Новые переносы и удаления остановлены. Уже архивированные файлы по-прежнему открываются в CRM.'}
+              </p>
+            </div>
+          </div>
+          <Switch
+            id="file-archive-global-switch"
+            checked={initial.globalEnabled}
+            disabled={!canManage || pending || globalPending || (!initial.globalEnabled && !active)}
+            aria-describedby="file-archive-global-description"
+            aria-label={initial.globalEnabled ? 'Выключить автоматическое архивирование' : 'Включить автоматическое архивирование'}
+            onCheckedChange={(checked) => checked ? void setArchiveEnabled(true) : setDisableDialogOpen(true)}
+          />
         </CardContent>
       </Card>
 
@@ -173,6 +233,44 @@ export function FileArchiveSettingsPage({ initial, canManage }: { initial: FileA
           <Card>
             <CardHeader><CardTitle className="text-lg">Обслуживание</CardTitle></CardHeader>
             <CardContent className="space-y-3">
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <div className="flex items-start gap-2">
+                  <FlaskConical className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                  <div>
+                    <p className="text-sm font-medium">Безопасный тест Supabase → Drive</p>
+                    <p id="archive-self-test-description" className="mt-1 text-xs leading-5 text-muted-foreground">Создаёт отдельный временный файл, проверяет запись и чтение в обоих хранилищах, затем удаляет только тестовые объекты.</p>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  className="mt-3 w-full"
+                  disabled={!canManage || !active || pending || testPending}
+                  aria-describedby="archive-self-test-description"
+                  onClick={() => void runSelfTest()}
+                >
+                  {testPending ? <LoaderCircle className="size-4 animate-spin" /> : <FlaskConical className="size-4" />}
+                  {testPending ? 'Тест выполняется…' : 'Запустить тест архива'}
+                </Button>
+                <div className="mt-3 text-xs" aria-live="polite">
+                  {initial.lastTest.status ? (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={initial.lastTest.status === 'passed' ? 'default' : 'destructive'}>
+                          {initial.lastTest.status === 'passed' ? 'Последний тест пройден' : 'Последний тест: ошибка'}
+                        </Badge>
+                        <span className="text-muted-foreground">{formatDate(initial.lastTest.at)}{initial.lastTest.durationMs !== null ? ` · ${(initial.lastTest.durationMs / 1000).toFixed(1)} с` : ''}</span>
+                      </div>
+                      {initial.lastTest.connectionEmail && <p className="mt-2 text-muted-foreground">Drive: {initial.lastTest.connectionEmail}</p>}
+                      {initial.lastTest.error && <p className="mt-2 text-destructive">{initial.lastTest.error}</p>}
+                    </>
+                  ) : <p className="text-muted-foreground">Тест ещё не запускался.</p>}
+                  {testSteps.length > 0 && (
+                    <ul className="mt-3 space-y-1 text-muted-foreground">
+                      {testSteps.map((step) => <li key={step} className="flex gap-2"><CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />{step}</li>)}
+                    </ul>
+                  )}
+                </div>
+              </div>
               <Button variant="outline" className="w-full" disabled={!canManage || pending} onClick={() => void preview()}><RefreshCw className="size-4" />Построить preview истории</Button>
               <Button variant="outline" className="w-full" disabled={!canManage || pending || initial.metrics.failedFiles === 0} onClick={() => void retry()}><AlertTriangle className="size-4" />Повторить ошибки</Button>
               <p className="text-xs text-muted-foreground">Последнее успешное копирование: {formatDate(initial.metrics.lastSuccessfulCopyAt)}</p>
@@ -217,6 +315,23 @@ export function FileArchiveSettingsPage({ initial, canManage }: { initial: FileA
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
             <AlertDialogAction disabled={pending} onClick={() => void confirm()}><CheckCircle2 className="size-4" />Подтвердить</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={disableDialogOpen} onOpenChange={setDisableDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Выключить автоматическое архивирование?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Новые копирования и удаления из Supabase остановятся. Уже архивированные файлы останутся доступны, а незавершённые задания продолжатся после повторного включения.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={globalPending}>Отмена</AlertDialogCancel>
+            <AlertDialogAction disabled={globalPending} onClick={() => void setArchiveEnabled(false)}>
+              {globalPending ? <LoaderCircle className="size-4 animate-spin" /> : <Power className="size-4" />}
+              Выключить архивирование
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

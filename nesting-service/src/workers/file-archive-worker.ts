@@ -9,7 +9,9 @@ import {
   copyArchiveAsset,
   deleteArchiveSource,
   getArchiveClient,
+  isFileArchiveEnabled,
   markArchiveFailure,
+  releaseArchiveCopyClaim,
   type ArchiveAsset,
 } from '../lib/file-archive';
 
@@ -32,6 +34,7 @@ async function updateRunState(runId: string | null | undefined) {
 }
 
 async function enqueueEligibleAssets() {
+  if (!await isFileArchiveEnabled()) return { copies: 0, deletions: 0, disabled: true };
   const boss = await getBoss();
   const db = getArchiveClient();
   const { data: run, error: runError } = await db.from('file_archive_runs').insert({
@@ -62,7 +65,7 @@ async function enqueueEligibleAssets() {
       singletonKey: asset.id, retryLimit: 5, retryDelay: 60, retryBackoff: true,
     });
   }
-  return { copies: copies?.length || 0, deletions: deletions?.length || 0 };
+  return { copies: copies?.length || 0, deletions: deletions?.length || 0, disabled: false };
 }
 
 async function main() {
@@ -72,12 +75,21 @@ async function main() {
 
   await boss.work<Record<string, never>>(QUEUE_FILE_ARCHIVE_SCAN, { batchSize: 1 }, async () => {
     const result = await enqueueEligibleAssets();
+    if (result.disabled) {
+      console.log('[file-archive-worker] Scan skipped: archive is disabled');
+      return result;
+    }
     console.log(`[file-archive-worker] Scan complete: ${result.copies} copy, ${result.deletions} delete`);
     return result;
   });
   await boss.work<{ assetId: string }>(QUEUE_FILE_ARCHIVE_COPY, { batchSize: 1 }, async (jobs: AssetJob[]) => {
     for (const job of jobs) {
       try {
+        if (!await isFileArchiveEnabled()) {
+          await releaseArchiveCopyClaim(job.data.assetId);
+          console.log(`[file-archive-worker] Copy skipped while disabled: ${job.data.assetId}`);
+          continue;
+        }
         await copyArchiveAsset(job.data.assetId);
         await updateRunState(job.data.runId);
         console.log(`[file-archive-worker] Copied ${job.data.assetId}`);
@@ -91,9 +103,15 @@ async function main() {
   await boss.work<{ assetId: string }>(QUEUE_FILE_ARCHIVE_DELETE, { batchSize: 1 }, async (jobs: AssetJob[]) => {
     for (const job of jobs) {
       try {
-        await deleteArchiveSource(job.data.assetId);
+        if (!await isFileArchiveEnabled()) {
+          console.log(`[file-archive-worker] Delete skipped while disabled: ${job.data.assetId}`);
+          continue;
+        }
+        const deleted = await deleteArchiveSource(job.data.assetId);
         await updateRunState(job.data.runId);
-        console.log(`[file-archive-worker] Removed Supabase source ${job.data.assetId}`);
+        console.log(deleted
+          ? `[file-archive-worker] Removed Supabase source ${job.data.assetId}`
+          : `[file-archive-worker] Delete stopped by archive switch: ${job.data.assetId}`);
       } catch (error) {
         await markArchiveFailure(job.data.assetId, error);
         await updateRunState(job.data.runId);
