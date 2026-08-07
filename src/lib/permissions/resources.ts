@@ -40,6 +40,7 @@ export type ResourceKey =
   | 'suppliers'
   | 'materials'
   | 'nesting'
+  | 'machine_cutting'
   | 'nesting_catalog'
   | 'nesting_settings'
   | 'meetings'
@@ -561,6 +562,15 @@ export const PERMISSION_RESOURCES = [
       { path: ROUTES.NESTING, match: 'exact', operation: 'view' },
     ],
     sidebar: { section: 'technologist', icon: 'nesting', order: 10 },
+  },
+  {
+    key: 'machine_cutting',
+    label: 'Порезка на плазме',
+    description: 'Время плазмы и архивы порезки в карточке машины',
+    group: 'Раскладка',
+    defaultViewRoles: NESTING_ROLES,
+    defaultManageRoles: NESTING_ROLES,
+    routes: [],
   },
   {
     key: 'nesting_catalog',

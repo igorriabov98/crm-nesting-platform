@@ -37,8 +37,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 51, 'Реестр должен содержать все 51 ресурс')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 51, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 52, 'Реестр должен содержать все 52 ресурса')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 52, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -46,6 +46,7 @@ const supplyManagerPermissions = getDefaultPermissionMap('supply_manager')
 const engineerPermissions = getDefaultPermissionMap('engineer')
 assert(hasPermission(technologistPermissions, 'inventory_detailing', 'manage'), 'Технолог должен управлять деталировкой')
 assert(hasPermission(technologistPermissions, 'inventory_detailing_receiving', 'manage'), 'Технолог должен принимать деталировку')
+assert(hasPermission(technologistPermissions, 'machine_cutting', 'manage'), 'Начальные права порезки должны повторять nesting')
 assert(hasPermission(procurementHeadPermissions, 'inventory_detailing', 'manage'), 'Руководитель снабжения должен управлять каталогом деталировки')
 assert(!hasPermission(procurementHeadPermissions, 'inventory_detailing_receiving', 'view'), 'Руководитель снабжения не должен принимать деталировку')
 assert(hasPermission(supplyManagerPermissions, 'supply_transport', 'manage'), 'Снабженец должен управлять транспортом')

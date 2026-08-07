@@ -5,6 +5,7 @@ import { getTasksByMachine } from '@/lib/actions/tasks'
 import { getRequest } from '@/lib/actions/technologist-requests'
 import { getMachineItemNestingStates } from '@/lib/actions/machine-item-nesting'
 import { getMachineLayout } from '@/lib/actions/machine-layout'
+import { getMachineCutting } from '@/lib/actions/machine-cutting'
 import { getMachineActivity, type MachineActivityPayload } from '@/lib/actions/machine-activity'
 import { getMachineOutsourcingData } from '@/lib/actions/outsourcing'
 import { getCurrentUserContext } from '@/lib/auth/current-user'
@@ -26,6 +27,8 @@ export default async function MachineDetailPage({
   const { user } = await getCurrentUserContext()
   const permissionDetails = await getCurrentUserPermissions(user.id)
   const permissions = permissionDetails.permissions
+  const canViewMachineCutting = hasPermission(permissions, 'machine_cutting', 'view')
+  const canManageMachineCutting = hasPermission(permissions, 'machine_cutting', 'manage')
   const [
     { data: machine, error },
     { data: requestData },
@@ -35,6 +38,7 @@ export default async function MachineDetailPage({
     outsourcingResult,
     { data: factories },
     { data: tasks },
+    cuttingResult,
   ] = await Promise.all([
     getMachine(id),
     getRequest(id),
@@ -44,6 +48,9 @@ export default async function MachineDetailPage({
     getMachineOutsourcingData(id),
     supabase.from('factories').select('id, name'),
     getTasksByMachine(id),
+    canViewMachineCutting
+      ? getMachineCutting(id)
+      : Promise.resolve({ success: true as const, data: null, error: null }),
   ])
 
   if (error || !machine) {
@@ -66,12 +73,16 @@ export default async function MachineDetailPage({
         tasks={tasks || []}
         requestData={requestData}
         layoutData={layoutResult.success ? layoutResult.data || null : null}
+        cuttingData={cuttingResult.success ? cuttingResult.data : null}
+        cuttingError={cuttingResult.error}
         nestingStates={nestingStatesResult.success ? nestingStatesResult.data || [] : []}
         activity={activity}
         outsourcingData={outsourcingResult.data}
         canManageTechnologistRequests={hasPermission(permissions, 'technologist_requests', 'manage')}
         canViewSupplyRequest={hasPermission(permissions, 'supply', 'view')}
         canManageNesting={hasPermission(permissions, 'nesting', 'manage')}
+        canViewMachineCutting={canViewMachineCutting}
+        canManageMachineCutting={canManageMachineCutting}
       />
     </div>
   )
