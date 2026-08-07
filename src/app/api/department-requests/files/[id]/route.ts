@@ -48,6 +48,7 @@ export async function GET(
       role: context.role,
       memberships: context.permissionDetails.memberships.map((membership) => ({
         departmentName: membership.departmentName,
+        positionName: membership.positionName,
       })),
     })
     const factoryAllowed = !request

@@ -66,7 +66,7 @@ export default async function DepartmentRequestDetailPage({
   if (!detail) notFound()
   const mailLinks = await getDepartmentRequestMailLinks(id)
 
-  const { request, userId, canManage } = detail
+  const { request, userId, canManage, canClaimMachineLayout } = detail
   const target = DEPARTMENT_REQUEST_TARGETS[request.target_department]
   const mode = request.created_by === userId ? 'mine' : 'inbox'
   const backRoute = mode === 'mine' ? ROUTES.REQUESTS : target.route
@@ -104,6 +104,11 @@ export default async function DepartmentRequestDetailPage({
                 <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
                   {target.label}
                 </span>
+                {request.request_kind === 'machine_layout' && (
+                  <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-800">
+                    Расстановка
+                  </span>
+                )}
               </div>
               <h1 className="mt-4 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{request.title}</h1>
               <p className="mt-2 text-sm text-slate-500">Создан {formatDate(request.created_at)}</p>
@@ -277,6 +282,9 @@ export default async function DepartmentRequestDetailPage({
               requestId={request.id}
               status={request.status}
               mode={mode === 'inbox' && canManage ? 'inbox' : 'mine'}
+              requestKind={request.request_kind}
+              machineId={request.machine_id}
+              canClaimMachineLayout={canClaimMachineLayout}
             />
           </div>
         </div>

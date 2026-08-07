@@ -96,14 +96,17 @@ export function normalizeDepartmentRequestFilters(input: {
 export function canManageDepartmentRequestTarget(input: {
   target: DepartmentRequestTarget
   role: UserRole
-  memberships: Array<{ departmentName: string | null }>
+  memberships: Array<{ departmentName: string | null; positionName?: string | null }>
 }) {
   if (DIRECTOR_ROLES.includes(input.role)) return true
   const config = DEPARTMENT_REQUEST_TARGETS[input.target]
   if ((config.roles as readonly UserRole[]).includes(input.role)) return true
 
-  return input.memberships.some(({ departmentName }) => {
-    const normalized = departmentName?.trim().toLocaleLowerCase('ru') || ''
+  return input.memberships.some(({ departmentName, positionName }) => {
+    const normalized = [
+      departmentName,
+      input.target === 'technologist' ? positionName : null,
+    ].filter(Boolean).join(' ').trim().toLocaleLowerCase('ru')
     return config.departmentKeywords.some((keyword) => normalized.includes(keyword))
   })
 }

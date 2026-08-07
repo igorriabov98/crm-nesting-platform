@@ -797,6 +797,19 @@ export function TaskCards({
       )
     }
 
+    if (task.task_type === 'machine_layout' && task.machine_id) {
+      return (
+        <div className={groupClass}>
+          <Link
+            href={`${ROUTES.SALES_PLAN}/${task.machine_id}?tab=technologist`}
+            className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-[#1B3A6B] px-4 text-sm font-medium text-white hover:bg-[#152f59]')}
+          >
+            Открыть машину
+          </Link>
+        </div>
+      )
+    }
+
     if (['detailing_transfer', 'inventory_transfer'].includes(task.task_type) && task.status === 'in_progress') return null
 
     if (isTransportTripDateChangeTask(task.task_type)) {

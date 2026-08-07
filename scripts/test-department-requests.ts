@@ -58,6 +58,11 @@ assert.equal(canManageDepartmentRequestTarget({
   memberships: [{ departmentName: 'Технический отдел ' }],
 }), true)
 assert.equal(canManageDepartmentRequestTarget({
+  target: 'technologist',
+  role: 'sales_manager',
+  memberships: [{ departmentName: 'Конструкторский отдел', positionName: 'Технолог' }],
+}), true)
+assert.equal(canManageDepartmentRequestTarget({
   target: 'production',
   role: 'sales_manager',
   memberships: [{ departmentName: 'Производство Берегово' }],
