@@ -10,6 +10,20 @@ import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { completeStockReservation } from '@/lib/actions/technologist-requests'
 import { resolveCompletionWorkspaceNavigation } from '@/lib/request-completion-navigation'
 import type { RequestStatus } from '@/lib/types'
+import {
+  MACHINE_CUTTING_BUCKET,
+  validateMachineCuttingRegistration,
+  type DirectMachineCuttingUpload,
+} from '@/lib/machine-cutting/files'
+
+const stagedArchiveSchema = z.object({
+  requestId: z.string().uuid(),
+  completionId: z.string().uuid().nullable(),
+  objectPath: z.string().min(1).max(700),
+  fileName: z.string().min(1).max(240),
+  mimeType: z.string().max(160).nullable(),
+  fileSize: z.number().int().positive(),
+})
 
 const wasteSchema = z.object({
   sourceTable: z.enum(['request_sheet_metal', 'request_pipe', 'request_circle', 'request_knives']),
@@ -48,6 +62,7 @@ const finalizeSchema = z.object({
   minutes: z.coerce.number().int().min(0).max(59),
   wasteItems: z.array(wasteSchema).min(1),
   futureItems: z.array(futureItemSchema),
+  archives: z.array(stagedArchiveSchema).max(20).default([]),
 }).refine((value) => value.decision === 'none' ? value.futureItems.length === 0 : value.futureItems.length > 0, 'Добавьте деталировку или выберите «нет»')
 
 type RawWasteRow = Record<string, unknown>
@@ -162,35 +177,61 @@ export async function getFutureDetailingCompatibilityOptions(query = '') {
 }
 
 export async function finalizeTechnologistRequest(input: z.input<typeof finalizeSchema>) {
+  let stagedArchives: DirectMachineCuttingUpload[] = []
   try {
     const parsed = finalizeSchema.parse(input)
+    const { supabase, userId } = await requirePermission('technologist_requests', 'manage')
+    const machineResult = await db().from('technologist_requests').select('machine_id,created_by').eq('id', parsed.requestId).single()
+    if (machineResult.error || !machineResult.data) throw new Error('Заявка не найдена')
+    if (machineResult.data.created_by !== userId) throw new Error('Завершить заявку может только её автор')
+    stagedArchives = parsed.archives
+    for (const archive of stagedArchives) {
+      if (archive.requestId !== parsed.requestId) throw new Error('Архив относится к другой заявке')
+      if (archive.completionId !== null) throw new Error('Архив уже относится к завершённой заявке')
+      validateMachineCuttingRegistration({ machineId: machineResult.data.machine_id, ...archive })
+    }
     const readiness = await completeStockReservation(parsed.requestId)
     if (!readiness.success) throw new Error(readiness.error || 'Заявка не готова к завершению')
-    const { supabase, userId } = await requirePermission('technologist_requests', 'manage')
     const enteredMinutes = parsed.hours * 60 + parsed.minutes
-    const { data, error } = await (supabase as any).rpc('fn_finalize_technologist_request', {
+    const { data, error } = await (supabase as any).rpc('fn_finalize_technologist_request_with_archives', {
       p_request_id: parsed.requestId,
       p_actor: userId,
       p_decision: parsed.decision,
       p_entered_plasma_minutes: enteredMinutes,
       p_waste_items: parsed.wasteItems,
       p_future_items: parsed.futureItems,
+      p_archives: stagedArchives,
     })
     if (error) throw error
     // Notification is deliberately queued after the transaction so Telegram
     // delivery cannot delay or roll back the finalization button.
-    const request = await db().from('technologist_requests').select('machine_id').eq('id', parsed.requestId).single()
+    const request = machineResult
     if (request.data?.machine_id) {
-      await db().rpc('notify_users_by_role', {
-        p_role: 'supply_manager', p_type: 'technologist_request', p_title: 'Заявка готова для снабжения',
-        p_message: 'Бронь и мастер технолога завершены. Заявка передана в снабжение.', p_machine_id: request.data.machine_id,
-      })
+      try {
+        await db().rpc('notify_users_by_role', {
+          p_role: 'supply_manager', p_type: 'technologist_request', p_title: 'Заявка готова для снабжения',
+          p_message: 'Бронь и мастер технолога завершены. Заявка передана в снабжение.', p_machine_id: request.data.machine_id,
+        })
+      } catch {
+        // Finalization is already committed; notification delivery is best-effort.
+      }
     }
     revalidatePath(ROUTES.MATERIAL_REQUESTS)
     revalidatePath(ROUTES.SUPPLY_MATERIAL_REQUESTS)
     revalidatePath(`${ROUTES.SUPPLY_REQUEST}/${parsed.requestId}`)
+    revalidatePath(`${ROUTES.SALES_PLAN}/${machineResult.data.machine_id}`)
     return { success: true, data }
-  } catch (error) { return { success: false, error: getErrorMessage(error) } }
+  } catch (error) {
+    if (stagedArchives.length > 0) {
+      const admin = createAdminClient()
+      const paths = stagedArchives.map((archive) => archive.objectPath)
+      const { data: registered } = await (admin as any).from('machine_cutting_archives').select('storage_path').in('storage_path', paths)
+      const registeredPaths = new Set((registered || []).map((row: { storage_path: string }) => row.storage_path))
+      const orphanPaths = paths.filter((path) => !registeredPaths.has(path))
+      if (orphanPaths.length > 0) await admin.storage.from(MACHINE_CUTTING_BUCKET).remove(orphanPaths)
+    }
+    return { success: false, error: getErrorMessage(error) }
+  }
 }
 
 export async function getCompletionCorrectionWorkspace(requestId: string) {
@@ -209,7 +250,10 @@ export async function correctTechnologistCompletion(input: { requestId: string; 
     const { supabase, userId } = await requirePermission('technologist_requests', 'manage')
     const { error } = await (supabase as any).rpc('fn_correct_technologist_completion', { p_request_id: parsed.requestId, p_entered_plasma_minutes: parsed.hours * 60 + parsed.minutes, p_waste_items: parsed.wasteItems, p_reason: parsed.reason, p_actor: userId })
     if (error) throw error
+    const request = await db().from('technologist_requests').select('machine_id').eq('id', parsed.requestId).single()
     revalidatePath(`${ROUTES.INVENTORY_METAL_SCRAP}`); revalidatePath(`/technologist/requests/${parsed.requestId}/correction`)
+    revalidatePath(ROUTES.PRODUCTION_CUTTING_AREA)
+    if (request.data?.machine_id) revalidatePath(`${ROUTES.SALES_PLAN}/${request.data.machine_id}`)
     return { success: true }
   } catch (error) { return { success: false, error: getErrorMessage(error) } }
 }

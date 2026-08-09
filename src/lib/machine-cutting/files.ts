@@ -6,7 +6,8 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/u
 const GENERATED_OBJECT_NAME = /^\d+-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:zip|rar|7z)$/iu
 
 export type DirectMachineCuttingUpload = {
-  completionId: string
+  requestId: string
+  completionId: string | null
   objectPath: string
   fileName: string
   mimeType: string | null
@@ -37,8 +38,8 @@ export function validateMachineCuttingUploadRequest(input: { fileName: string; f
   return { fileName, extension }
 }
 
-export function machineCuttingUploadPrefix(machineId: string, completionId: string) {
-  return `machine-cutting/${machineId}/${completionId}/`
+export function machineCuttingUploadPrefix(machineId: string, requestId: string) {
+  return `machine-cutting/${machineId}/${requestId}/`
 }
 
 export function validateMachineCuttingRegistration(input: DirectMachineCuttingUpload & { machineId: string }) {
@@ -46,7 +47,7 @@ export function validateMachineCuttingRegistration(input: DirectMachineCuttingUp
     fileName: input.fileName,
     fileSize: input.fileSize,
   })
-  const prefix = machineCuttingUploadPrefix(input.machineId, input.completionId)
+  const prefix = machineCuttingUploadPrefix(input.machineId, input.requestId)
   if (!input.objectPath.startsWith(prefix) || input.objectPath.includes('..')) {
     throw new Error('Путь архива не принадлежит этой машине')
   }

@@ -20,6 +20,7 @@ import {
   loadMachineCuttingUploadContext,
 } from '@/lib/machine-cutting/server'
 import { canUploadMachineCutting } from '@/lib/machine-cutting/access-policy'
+import { ROUTES } from '@/lib/constants/routes'
 
 export type MachineCuttingCompletion = {
   id: string
@@ -29,6 +30,17 @@ export type MachineCuttingCompletion = {
   actualMinutes: number
   finalizedAt: string
   updatedAt: string
+}
+
+export type MachineCuttingRequest = {
+  id: string
+  number: number
+  createdAt: string
+  authorName: string
+  status: string
+  completion: MachineCuttingCompletion | null
+  archives: MachineCuttingArchive[]
+  canUpload: boolean
 }
 
 export type MachineCuttingArchive = {
@@ -42,10 +54,16 @@ export type MachineCuttingArchive = {
 }
 
 export type MachineCuttingPayload = {
-  completion: MachineCuttingCompletion | null
-  archives: MachineCuttingArchive[]
-  canUpload: boolean
+  requests: MachineCuttingRequest[]
+  totalActualMinutes: number
   isArchived: boolean
+}
+
+type CuttingRequestRow = {
+  id: string
+  created_by: string
+  created_at: string
+  status: string
 }
 
 type CuttingCompletionRow = {
@@ -61,6 +79,7 @@ type CuttingCompletionRow = {
 
 type CuttingArchiveRow = {
   id: string
+  request_id: string
   file_name: string
   file_size: number
   mime_type: string | null
@@ -69,6 +88,7 @@ type CuttingArchiveRow = {
 }
 
 const registrationSchema = z.object({
+  requestId: z.string().uuid(),
   completionId: z.string().uuid(),
   objectPath: z.string().min(1).max(700),
   fileName: z.string().min(1).max(240),
@@ -81,67 +101,95 @@ async function loadPayload(
   actor: { userId: string; role: UserRole; permissions: PermissionMap },
 ): Promise<MachineCuttingPayload> {
   const admin = createAdminClient() as any
-  const [machineResult, completionResult, archivesResult] = await Promise.all([
+  const [machineResult, requestsResult, completionResult, archivesResult] = await Promise.all([
     admin.from('machines').select('id,is_archived').eq('id', machineId).maybeSingle(),
+    admin
+      .from('technologist_requests')
+      .select('id,created_by,created_at,status')
+      .eq('machine_id', machineId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true }),
     admin
       .from('technologist_request_completions')
       .select('id,request_id,created_by,entered_plasma_minutes,added_plasma_minutes,actual_plasma_minutes,finalized_at,updated_at')
       .eq('machine_id', machineId)
       .eq('state', 'finalized')
-      .order('finalized_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .order('finalized_at', { ascending: false }),
     admin
       .from('machine_cutting_archives')
-      .select('id,file_name,file_size,mime_type,uploaded_at,uploaded_by')
+      .select('id,request_id,file_name,file_size,mime_type,uploaded_at,uploaded_by')
       .eq('machine_id', machineId)
       .order('uploaded_at', { ascending: false }),
   ])
   if (machineResult.error || !machineResult.data) throw new Error('Машина не найдена')
+  if (requestsResult.error) throw new Error(requestsResult.error.message)
   if (completionResult.error) throw new Error(completionResult.error.message)
   if (archivesResult.error) throw new Error(archivesResult.error.message)
 
-  const completion = (completionResult.data || null) as CuttingCompletionRow | null
+  const requestRows = (requestsResult.data || []) as CuttingRequestRow[]
+  const completionRows = (completionResult.data || []) as CuttingCompletionRow[]
   const archiveRows = (archivesResult.data || []) as CuttingArchiveRow[]
-  const uploaderIds = Array.from(new Set(archiveRows.map((archive) => archive.uploaded_by)))
-  const uploaderNames = new Map<string, string>()
-  if (uploaderIds.length > 0) {
-    const usersResult = await admin.from('users').select('id,full_name,email').in('id', uploaderIds)
+  const userIds = Array.from(new Set([
+    ...requestRows.map((request) => request.created_by),
+    ...archiveRows.map((archive) => archive.uploaded_by),
+  ]))
+  const userNames = new Map<string, string>()
+  if (userIds.length > 0) {
+    const usersResult = await admin.from('users').select('id,full_name,email').in('id', userIds)
     if (usersResult.error) throw new Error(usersResult.error.message)
     for (const user of usersResult.data || []) {
-      uploaderNames.set(user.id, user.full_name || user.email || 'Пользователь')
+      userNames.set(user.id, user.full_name || user.email || 'Пользователь')
     }
   }
 
   const canManage = hasPermission(actor.permissions, 'machine_cutting', 'manage')
-  const canUpload = canUploadMachineCutting({
-    userId: actor.userId,
-    role: actor.role,
-    canManage,
-    isArchived: Boolean(machineResult.data.is_archived),
-    completionCreatedBy: completion?.created_by || null,
+  const completionByRequest = new Map(completionRows.map((completion) => [completion.request_id, completion]))
+  const archivesByRequest = new Map<string, CuttingArchiveRow[]>()
+  for (const archive of archiveRows) {
+    const group = archivesByRequest.get(archive.request_id) || []
+    group.push(archive)
+    archivesByRequest.set(archive.request_id, group)
+  }
+
+  const requests = requestRows.map((request, index): MachineCuttingRequest => {
+    const completion = completionByRequest.get(request.id) || null
+    return {
+      id: request.id,
+      number: index + 1,
+      createdAt: request.created_at,
+      authorName: userNames.get(request.created_by) || 'Технолог',
+      status: request.status,
+      completion: completion ? {
+        id: completion.id,
+        requestId: completion.request_id,
+        enteredMinutes: completion.entered_plasma_minutes,
+        addedMinutes: completion.added_plasma_minutes,
+        actualMinutes: completion.actual_plasma_minutes,
+        finalizedAt: completion.finalized_at,
+        updatedAt: completion.updated_at,
+      } : null,
+      archives: (archivesByRequest.get(request.id) || []).map((archive) => ({
+        id: archive.id,
+        fileName: archive.file_name,
+        fileSize: archive.file_size,
+        mimeType: archive.mime_type,
+        uploadedAt: archive.uploaded_at,
+        uploadedByName: userNames.get(archive.uploaded_by) || 'Пользователь',
+        downloadUrl: `/api/machine-cutting/files/${archive.id}`,
+      })),
+      canUpload: canUploadMachineCutting({
+        userId: actor.userId,
+        role: actor.role,
+        canManage,
+        isArchived: Boolean(machineResult.data.is_archived),
+        completionCreatedBy: completion?.created_by || null,
+      }),
+    }
   })
 
   return {
-    completion: completion ? {
-      id: completion.id,
-      requestId: completion.request_id,
-      enteredMinutes: completion.entered_plasma_minutes,
-      addedMinutes: completion.added_plasma_minutes,
-      actualMinutes: completion.actual_plasma_minutes,
-      finalizedAt: completion.finalized_at,
-      updatedAt: completion.updated_at,
-    } : null,
-    archives: archiveRows.map((archive) => ({
-      id: archive.id,
-      fileName: archive.file_name,
-      fileSize: archive.file_size,
-      mimeType: archive.mime_type,
-      uploadedAt: archive.uploaded_at,
-      uploadedByName: uploaderNames.get(archive.uploaded_by) || 'Пользователь',
-      downloadUrl: `/api/machine-cutting/files/${archive.id}`,
-    })),
-    canUpload,
+    requests,
+    totalActualMinutes: requests.reduce((sum, request) => sum + (request.completion?.actualMinutes || 0), 0),
     isArchived: Boolean(machineResult.data.is_archived),
   }
 }
@@ -177,11 +225,9 @@ export async function registerMachineCuttingArchive(machineId: string, upload: D
     const id = z.string().uuid().parse(machineId)
     const parsed = registrationSchema.parse(upload)
     const permission = await requirePermission('machine_cutting', 'manage')
-    const context = await loadMachineCuttingUploadContext(id)
-    if (context.completion?.id !== parsed.completionId) {
-      throw new Error('Завершение заявки изменилось. Подготовьте загрузку заново')
-    }
-    const completion = assertMachineCuttingUploadAccess(context, permission)
+    const context = await loadMachineCuttingUploadContext(id, parsed.requestId, parsed.completionId)
+    const target = assertMachineCuttingUploadAccess(context, permission)
+    if (target.completion?.id !== parsed.completionId) throw new Error('Завершение заявки изменилось. Подготовьте загрузку заново')
     const validated = validateMachineCuttingRegistration({ machineId: id, ...parsed })
     const stored = await getStoredObject(parsed.objectPath)
     if (stored.size !== parsed.fileSize) {
@@ -190,8 +236,8 @@ export async function registerMachineCuttingArchive(machineId: string, upload: D
 
     const { error } = await (createAdminClient() as any).from('machine_cutting_archives').insert({
       machine_id: id,
-      request_id: completion.request_id,
-      completion_id: completion.id,
+      request_id: target.request.id,
+      completion_id: target.completion.id,
       file_name: validated.fileName,
       storage_path: parsed.objectPath,
       mime_type: stored.mimeType || parsed.mimeType,
@@ -201,6 +247,7 @@ export async function registerMachineCuttingArchive(machineId: string, upload: D
     if (error) throw new Error(error.message)
 
     revalidatePath(`/sales-plan/${id}`)
+    revalidatePath(ROUTES.PRODUCTION_CUTTING_AREA)
     return { success: true as const, data: await loadPayload(id, permission), error: null }
   } catch (error) {
     return { success: false as const, data: null, error: getErrorMessage(error) }

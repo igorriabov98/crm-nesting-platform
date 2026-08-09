@@ -22,6 +22,7 @@ export type ResourceKey =
   | 'department_requests'
   | 'production'
   | 'production_fact'
+  | 'production_cutting_area'
   | 'consumable_requests'
   | 'consumables'
   | 'supply'
@@ -360,6 +361,17 @@ export const PERMISSION_RESOURCES = [
       { path: ROUTES.PRODUCTION_FACT, match: 'prefix', operation: 'view', priority: 100 },
     ],
     sidebar: { section: 'production', icon: 'history', order: 20 },
+  },
+  {
+    key: 'production_cutting_area',
+    label: 'Участок заготовки',
+    description: 'Очередь заказов, программы порезки и циклы работы участка',
+    group: 'Производство',
+    defaultHref: ROUTES.PRODUCTION_CUTTING_AREA,
+    defaultViewRoles: PRODUCTION_CONSUMABLE_ROLES,
+    defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
+    routes: [{ path: ROUTES.PRODUCTION_CUTTING_AREA, match: 'prefix', operation: 'view', priority: 180 }],
+    sidebar: { section: 'production', icon: 'production', order: 25 },
   },
   {
     key: 'consumable_requests',

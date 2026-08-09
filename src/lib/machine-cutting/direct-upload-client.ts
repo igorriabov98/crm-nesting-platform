@@ -6,7 +6,7 @@ import type { DirectMachineCuttingUpload } from '@/lib/machine-cutting/files'
 type SignedUploadResponse = {
   data?: {
     bucket: string
-    completionId: string
+    completionId: string | null
     objectPath: string
     token: string
   }
@@ -15,21 +15,22 @@ type SignedUploadResponse = {
 
 export async function cleanupDirectMachineCuttingUpload(
   machineId: string,
-  upload: Pick<DirectMachineCuttingUpload, 'completionId' | 'objectPath'>,
+  upload: Pick<DirectMachineCuttingUpload, 'requestId' | 'completionId' | 'objectPath'>,
 ) {
   await fetch('/api/machine-cutting/upload-url', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ machineId, completionId: upload.completionId, objectPath: upload.objectPath }),
+    body: JSON.stringify({ machineId, requestId: upload.requestId, completionId: upload.completionId, objectPath: upload.objectPath }),
   }).catch(() => undefined)
 }
 
-export async function uploadMachineCuttingFileDirect(machineId: string, file: File): Promise<DirectMachineCuttingUpload> {
+export async function uploadMachineCuttingFileDirect(machineId: string, requestId: string, file: File): Promise<DirectMachineCuttingUpload> {
   const response = await fetch('/api/machine-cutting/upload-url', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       machineId,
+      requestId,
       fileName: file.name,
       contentType: file.type || 'application/octet-stream',
       size: file.size,
@@ -42,6 +43,7 @@ export async function uploadMachineCuttingFileDirect(machineId: string, file: Fi
 
   const { bucket, completionId, objectPath, token } = payload.data
   const upload: DirectMachineCuttingUpload = {
+    requestId,
     completionId,
     objectPath,
     fileName: file.name,

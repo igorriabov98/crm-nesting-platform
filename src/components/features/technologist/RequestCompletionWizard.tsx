@@ -10,6 +10,7 @@ import {
   ChevronsUpDown,
   CircleSlash2,
   Clock3,
+  FileArchive,
   Loader2,
   PackagePlus,
   Plus,
@@ -25,10 +26,13 @@ import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { finalizeTechnologistRequest, getFutureDetailingCompatibilityOptions, searchFutureDetailingParts, type CompletionWorkspace } from '@/lib/actions/request-completion'
 import { ROUTES } from '@/lib/constants/routes'
 import { calculatePlasmaTime, calculateWaste } from '@/lib/request-completion-calculations'
 import { cn } from '@/lib/utils'
+import { cleanupDirectMachineCuttingUpload, uploadMachineCuttingFileDirect } from '@/lib/machine-cutting/direct-upload-client'
+import { validateMachineCuttingUploadRequest, type DirectMachineCuttingUpload } from '@/lib/machine-cutting/files'
 
 type PartSearch = { id: string; name: string; drawing_number: string; unit_weight_kg: number }
 type ProductOption = { id: string; name_uk: string; name_en: string; drawing_number: string; versions: Array<{ id: string; version_number: number; drawing_number: string }> }
@@ -56,6 +60,8 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   const [percentages, setPercentages] = useState<Record<string, string>>(() => Object.fromEntries(workspace.wasteItems.map((item) => [item.sourceId, '0'])))
   const [hours, setHours] = useState('0')
   const [minutes, setMinutes] = useState('0')
+  const [archiveFiles, setArchiveFiles] = useState<File[]>([])
+  const [uploadFailure, setUploadFailure] = useState<{ successful: DirectMachineCuttingUpload[]; failed: File[] } | null>(null)
 
   useEffect(() => {
     let active = true
@@ -122,24 +128,62 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
     setStep(2)
   }
 
+  function completionPayload(archives: DirectMachineCuttingUpload[]) {
+    return {
+      requestId: workspace.requestId, decision, hours: Number(hours), minutes: Number(minutes),
+      wasteItems: workspace.wasteItems.map((item) => ({ ...item, wastePercent: Number(percentages[item.sourceId]) })),
+      futureItems: decision === 'none' ? [] : rows.map((row) => ({
+        partId: row.partId || null, quantity: row.quantity, name: row.name, drawingNumber: row.drawingNumber, unitWeightKg: row.unitWeightKg,
+        compatibilities: row.partId ? [] : [{ productId: row.productId!, allVersions: false, versionIds: [row.versionId!] }],
+      })),
+      archives,
+    }
+  }
+
+  async function finish(archives: DirectMachineCuttingUpload[]) {
+    const result = await finalizeTechnologistRequest(completionPayload(archives))
+    if (!result.success) { toast.error(result.error || 'Не удалось завершить заявку'); return false }
+    toast.success('Заявка зафиксирована и передана снабжению')
+    router.replace(ROUTES.MATERIAL_REQUESTS)
+    return true
+  }
+
+  async function uploadFiles(files: File[], successful: DirectMachineCuttingUpload[] = []) {
+    const settled = await Promise.allSettled(files.map((file) => uploadMachineCuttingFileDirect(workspace.machineId, workspace.requestId, file)))
+    const uploaded = [...successful]
+    const failed: File[] = []
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') uploaded.push(result.value)
+      else failed.push(files[index])
+    })
+    return { successful: uploaded, failed }
+  }
+
   function submit() {
     const missing = workspace.wasteItems.find((item) => item.weightKg == null || item.weightKg <= 0)
     if (missing) return toast.error(`CRM не рассчитала вес: ${missing.itemName}`)
     const invalid = Object.values(percentages).some((value) => value === '' || Number(value) < 0 || Number(value) > 100 || Math.round(Number(value) * 10) !== Number(value) * 10)
     if (invalid || Number(minutes) > 59) return toast.error('Проверьте проценты отходности и время')
     startTransition(async () => {
-      const result = await finalizeTechnologistRequest({
-        requestId: workspace.requestId, decision, hours: Number(hours), minutes: Number(minutes),
-        wasteItems: workspace.wasteItems.map((item) => ({ ...item, wastePercent: Number(percentages[item.sourceId]) })),
-        futureItems: decision === 'none' ? [] : rows.map((row) => ({
-          partId: row.partId || null, quantity: row.quantity, name: row.name, drawingNumber: row.drawingNumber, unitWeightKg: row.unitWeightKg,
-          compatibilities: row.partId ? [] : [{ productId: row.productId!, allVersions: false, versionIds: [row.versionId!] }],
-        })),
-      })
-      if (!result.success) { toast.error(result.error || 'Не удалось завершить заявку'); return }
-      toast.success('Заявка зафиксирована и передана снабжению')
-      router.replace(ROUTES.MATERIAL_REQUESTS)
+      const uploads = await uploadFiles(archiveFiles)
+      if (uploads.failed.length > 0) {
+        setUploadFailure(uploads)
+        return
+      }
+      await finish(uploads.successful)
     })
+  }
+
+  function selectArchives(files: FileList | null) {
+    if (!files) return
+    const selected = Array.from(files)
+    try {
+      if (selected.length > 20) throw new Error('Можно выбрать не более 20 архивов')
+      selected.forEach((file) => validateMachineCuttingUploadRequest({ fileName: file.name, fileSize: file.size }))
+      setArchiveFiles(selected)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Некорректный архив')
+    }
   }
 
   return <main className="mx-auto max-w-6xl space-y-6 pb-28">
@@ -324,6 +368,19 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
       </Card>
       <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
         <CardHeader className="border-b border-slate-100 bg-slate-50/70 px-5 py-5 sm:px-7">
+          <CardTitle className="flex items-center gap-2 text-xl text-slate-950"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700"><FileArchive className="h-5 w-5" /></span>Программа порезки</CardTitle>
+          <CardDescription>Необязательно. Выберите один или несколько архивов ZIP, RAR или 7Z до 500 МБ каждый.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 p-5 sm:p-7">
+          <Label htmlFor="cutting-archives" className="flex min-h-12 cursor-pointer items-center justify-center rounded-xl border border-dashed border-blue-300 bg-blue-50 px-4 text-center font-medium text-blue-800 hover:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500">
+            Выбрать программы порезки
+            <input id="cutting-archives" type="file" multiple accept=".zip,.rar,.7z,application/zip,application/x-rar-compressed,application/vnd.rar,application/x-7z-compressed" className="sr-only" onChange={(event) => selectArchives(event.target.files)} />
+          </Label>
+          {archiveFiles.length === 0 ? <p className="text-sm text-slate-500">Программа не выбрана — заявку можно завершить без неё.</p> : <ul className="space-y-2" aria-label="Выбранные программы">{archiveFiles.map((file, index) => <li key={`${file.name}-${file.lastModified}-${index}`} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"><span className="min-w-0 break-all text-sm font-medium text-slate-800">{file.name}</span><Button type="button" variant="ghost" size="sm" className="min-h-11 shrink-0 text-red-700" onClick={() => setArchiveFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Удалить</Button></li>)}</ul>}
+        </CardContent>
+      </Card>
+      <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
+        <CardHeader className="border-b border-slate-100 bg-slate-50/70 px-5 py-5 sm:px-7">
           <CardTitle className="flex items-center gap-2 text-xl text-slate-950"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700"><Clock3 className="h-5 w-5" /></span>Время работы плазмы</CardTitle>
           <CardDescription>К введённому времени CRM автоматически добавит технологический коэффициент 25%.</CardDescription>
         </CardHeader>
@@ -344,5 +401,30 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
         </Button>
       </div>
     </div>}
+    <Dialog open={Boolean(uploadFailure)} onOpenChange={() => undefined}>
+      <DialogContent className="sm:max-w-lg" showCloseButton={false}>
+        <DialogHeader><DialogTitle>Не все программы загружены</DialogTitle><DialogDescription>Успешно: {uploadFailure?.successful.length || 0}. Не загружено: {uploadFailure?.failed.length || 0}. Выберите, как завершить заявку.</DialogDescription></DialogHeader>
+        <DialogFooter className="flex-col gap-2 sm:flex-col">
+          <Button type="button" disabled={pending} className="min-h-11 w-full" onClick={() => startTransition(async () => {
+            if (!uploadFailure) return
+            const retried = await uploadFiles(uploadFailure.failed, uploadFailure.successful)
+            if (retried.failed.length > 0) setUploadFailure(retried)
+            else { setUploadFailure(null); await finish(retried.successful) }
+          })}>Повторить неудачные загрузки</Button>
+          <Button type="button" disabled={pending || !uploadFailure?.successful.length} variant="outline" className="min-h-11 w-full" onClick={() => startTransition(async () => {
+            if (!uploadFailure) return
+            const uploads = uploadFailure.successful
+            setUploadFailure(null)
+            await finish(uploads)
+          })}>Завершить с загруженными</Button>
+          <Button type="button" disabled={pending} variant="ghost" className="min-h-11 w-full" onClick={() => startTransition(async () => {
+            if (!uploadFailure) return
+            await Promise.all(uploadFailure.successful.map((upload) => cleanupDirectMachineCuttingUpload(workspace.machineId, upload)))
+            setUploadFailure(null)
+            await finish([])
+          })}>Завершить без программы</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </main>
 }
