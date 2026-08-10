@@ -19,6 +19,7 @@ export const dynamic = 'force-dynamic'
 
 const uploadSchema = z.object({
   machineId: z.string().uuid(),
+  requestId: z.string().uuid(),
   fileName: z.string().min(1).max(240),
   contentType: z.string().max(160).optional(),
   size: z.number().int(),
@@ -26,7 +27,8 @@ const uploadSchema = z.object({
 
 const cleanupSchema = z.object({
   machineId: z.string().uuid(),
-  completionId: z.string().uuid(),
+  requestId: z.string().uuid(),
+  completionId: z.string().uuid().nullable(),
   objectPath: z.string().min(1).max(700),
 })
 
@@ -42,10 +44,10 @@ export async function POST(request: NextRequest) {
   try {
     const input = uploadSchema.parse(await request.json())
     const permission = await requirePermission('machine_cutting', 'manage')
-    const context = await loadMachineCuttingUploadContext(input.machineId)
-    const completion = assertMachineCuttingUploadAccess(context, permission)
+    const context = await loadMachineCuttingUploadContext(input.machineId, input.requestId)
+    const uploadTarget = assertMachineCuttingUploadAccess(context, permission, { allowPendingRequest: true })
     const { extension } = validateMachineCuttingUploadRequest({ fileName: input.fileName, fileSize: input.size })
-    const objectPath = `${machineCuttingUploadPrefix(input.machineId, completion.id)}${Date.now()}-${randomUUID()}${extension}`
+    const objectPath = `${machineCuttingUploadPrefix(input.machineId, uploadTarget.request.id)}${Date.now()}-${randomUUID()}${extension}`
 
     const { data, error } = await createAdminClient().storage
       .from(MACHINE_CUTTING_BUCKET)
@@ -55,7 +57,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       data: {
         bucket: MACHINE_CUTTING_BUCKET,
-        completionId: completion.id,
+        completionId: uploadTarget.completion?.id || null,
         objectPath,
         token: data.token,
       },
@@ -69,10 +71,11 @@ export async function DELETE(request: NextRequest) {
   try {
     const input = cleanupSchema.parse(await request.json())
     const permission = await requirePermission('machine_cutting', 'manage')
-    const context = await loadMachineCuttingUploadContext(input.machineId, input.completionId)
-    assertMachineCuttingUploadAccess(context, permission, { allowArchivedCleanup: true })
+    const context = await loadMachineCuttingUploadContext(input.machineId, input.requestId, input.completionId)
+    assertMachineCuttingUploadAccess(context, permission, { allowArchivedCleanup: true, allowPendingRequest: true })
     validateMachineCuttingRegistration({
       machineId: input.machineId,
+      requestId: input.requestId,
       completionId: input.completionId,
       objectPath: input.objectPath,
       fileName: input.objectPath.slice(input.objectPath.lastIndexOf('/') + 1),
