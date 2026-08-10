@@ -2,6 +2,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PERMISSION_RESOURCES, getPermissionRequirementForPath, hasPermission, type PermissionMap } from '../src/lib/permissions/resources'
+import {
+  cuttingAreaFileCategory,
+  isCuttingAreaFileForItem,
+  type CuttingAreaItemFileBinding,
+} from '../src/lib/production-cutting-area/files'
 
 const root = process.cwd()
 const read = (path: string) => readFileSync(join(root, path), 'utf8')
@@ -43,12 +48,16 @@ assert(action.includes(".eq('is_confirmed', true)"))
 assert(action.includes(".eq('is_archived', false)"))
 assert(action.includes(".eq('stage_type', 'cutting')"))
 assert(action.includes('getProductionCuttingAreaDetails'))
+assert(action.includes('production_month'))
+assert(action.includes(".in('product_id', productIds)"), 'Файлы старых позиций должны находиться по product_id')
+assert(action.includes("['drawing','step','pdf']"), 'PDF изделия должен отображаться вместе с чертежами')
 
 const page = read('src/components/features/production/CuttingAreaPage.tsx')
-for (const label of ['Ожидают', 'В работе', 'Выполненные', 'Все чертежи и STEP', 'Взял в работу', 'Машина завершена']) {
+for (const label of ['Ожидают', 'В работе', 'Выполненные', 'Все месяцы', 'Сборочный чертёж', 'Общие чертежи', 'STEP file', 'Чертежи и STEP', 'Взял в работу', 'Машина завершена']) {
   assert(page.includes(label), `UI не содержит ${label}`)
 }
 assert(page.includes('aria-expanded={isExpanded}'))
+assert(page.includes('showCloseButton={false}'), 'Модальное окно файлов должно использовать крупную кнопку закрытия')
 assert(!page.includes('min-w-['), 'Страница не должна задавать фиксированную горизонтальную ширину')
 
 const archiveRoute = read('src/app/api/production/cutting-area/archives/[id]/route.ts')
@@ -57,7 +66,33 @@ for (const route of [archiveRoute, fileRoute]) {
   assert(route.includes("requirePermission('production_cutting_area', 'view')"))
   assert(route.includes('resolveFileResponse'))
 }
-assert(fileRoute.includes(".eq('machine_id', parsed.data.machineId)"))
+assert(fileRoute.includes(".eq('machine_id', machineId)"))
 assert(fileRoute.includes(".eq('is_sample', false)"))
+assert(fileRoute.includes("['drawing','step','pdf']"))
+
+const legacyItem: CuttingAreaItemFileBinding = {
+  productId: 'product-1',
+  productVersionId: 'current-version',
+  productProjectId: 'project-1',
+  productProjectVersionId: 'approved-project-version',
+}
+assert(isCuttingAreaFileForItem(legacyItem, {
+  kind: 'product', productId: 'product-1', productVersionId: 'current-version', fileKind: 'pdf',
+}))
+assert(!isCuttingAreaFileForItem(legacyItem, {
+  kind: 'product', productId: 'product-1', productVersionId: 'other-version', fileKind: 'pdf',
+}))
+assert(isCuttingAreaFileForItem(legacyItem, {
+  kind: 'project', productProjectId: 'project-1', productProjectVersionId: 'approved-project-version', fileKind: 'step',
+}))
+assert.equal(cuttingAreaFileCategory({
+  kind: 'product', productId: 'product-1', productVersionId: 'current-version', fileKind: 'drawing',
+}), 'assembly')
+assert.equal(cuttingAreaFileCategory({
+  kind: 'production_drawing', productVersionId: 'current-version', fileKind: 'pdf',
+}), 'general')
+assert.equal(cuttingAreaFileCategory({
+  kind: 'project', productProjectId: 'project-1', productProjectVersionId: 'approved-project-version', fileKind: 'step',
+}), 'step')
 
 console.log('production-cutting-area: OK')

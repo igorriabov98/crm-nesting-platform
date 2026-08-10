@@ -8,6 +8,13 @@ import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import {
+  cuttingAreaFileCategory,
+  isCuttingAreaFileForItem,
+  type CuttingAreaFileBinding,
+  type CuttingAreaFileCategory,
+  type CuttingAreaItemFileBinding,
+} from '@/lib/production-cutting-area/files'
 
 export type CuttingAreaQueueStatus = 'waiting' | 'in_progress' | 'completed'
 
@@ -22,6 +29,7 @@ export type CuttingAreaOrder = {
   name: string
   factoryId: string
   factoryName: string
+  productionMonth: string | null
   plannedStartDate: string | null
   completedRequestCount: number
   requestCount: number
@@ -62,6 +70,7 @@ export type CuttingAreaRequestDetails = {
 export type CuttingAreaOrderFile = {
   id: string
   kind: 'product' | 'project' | 'production_drawing'
+  category: CuttingAreaFileCategory
   label: string
   fileName: string
   downloadUrl: string
@@ -69,8 +78,13 @@ export type CuttingAreaOrderFile = {
 
 export type CuttingAreaOrderDetails = {
   requests: CuttingAreaRequestDetails[]
-  items: Array<{ id: string; productName: string; drawingNumber: string; quantity: number }>
-  files: CuttingAreaOrderFile[]
+  items: Array<{
+    id: string
+    productName: string
+    drawingNumber: string
+    quantity: number
+    files: CuttingAreaOrderFile[]
+  }>
 }
 
 function admin() { return createAdminClient() as any }
@@ -102,7 +116,7 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
   const permission = await requirePermission('production_cutting_area', 'view')
   const db = admin()
   let machineQuery = db.from('machines')
-    .select('id,name,factory_id,status,factories(name)')
+    .select('id,name,factory_id,status,production_month,factories(name)')
     .eq('is_confirmed', true)
     .eq('is_archived', false)
   if (!DIRECTOR_ROLES.has(permission.role) && permission.factoryId) machineQuery = machineQuery.eq('factory_id', permission.factoryId)
@@ -162,6 +176,7 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
       name: machine.name,
       factoryId: machine.factory_id,
       factoryName: factory?.name || 'Завод',
+      productionMonth: machine.production_month || null,
       plannedStartDate: stage?.date_start || null,
       completedRequestCount: machineRequests.filter((request: any) => completionByRequest.has(request.id)).length,
       requestCount: machineRequests.length,
@@ -198,23 +213,55 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
     assertFactoryScope(permission, machine.data.factory_id)
     const [requestResult, itemResult] = await Promise.all([
       db.from('technologist_requests').select('id,created_by,created_at,status').eq('machine_id', id).order('created_at').order('id'),
-      db.from('machine_items').select('id,product_name,product_name_uk,product_drawing_number,drawing_number,quantity,product_version_id,product_project_version_id,is_sample').eq('machine_id', id).eq('is_sample', false).order('sort_order'),
+      db.from('machine_items').select('id,product_id,product_version_id,product_project_id,product_project_version_id,product_name,product_name_uk,product_drawing_number,drawing_number,quantity,is_sample').eq('machine_id', id).eq('is_sample', false).order('sort_order'),
     ])
     if (requestResult.error) throw new Error(requestResult.error.message)
     if (itemResult.error) throw new Error(itemResult.error.message)
     const requests = requestResult.data || []
     const items = itemResult.data || []
     const requestIds = requests.map((request: any) => request.id)
-    const productVersionIds = Array.from(new Set(items.map((item: any) => item.product_version_id).filter(Boolean))) as string[]
-    const projectVersionIds = Array.from(new Set(items.map((item: any) => item.product_project_version_id).filter(Boolean))) as string[]
-    const [completionResult, archiveResult, productFileResult, projectFileResult, drawingResult] = await Promise.all([
+    const productIds = Array.from(new Set(items.map((item: any) => item.product_id).filter(Boolean))) as string[]
+    const projectIds = Array.from(new Set(items.map((item: any) => item.product_project_id).filter(Boolean))) as string[]
+    const [completionResult, archiveResult, currentVersionResult, projectResult] = await Promise.all([
       requestIds.length ? db.from('technologist_request_completions').select('id,request_id,entered_plasma_minutes,added_plasma_minutes,actual_plasma_minutes,finalized_at,state').in('request_id', requestIds).eq('state', 'finalized') : { data: [], error: null },
       requestIds.length ? db.from('machine_cutting_archives').select('id,request_id,file_name,file_size,uploaded_at,uploaded_by').in('request_id', requestIds).order('uploaded_at', { ascending: false }) : { data: [], error: null },
-      productVersionIds.length ? db.from('product_files').select('id,file_name,file_kind,product_version_id,mime_type').in('product_version_id', productVersionIds).in('file_kind', ['drawing','step']) : { data: [], error: null },
-      projectVersionIds.length ? db.from('product_project_files').select('id,file_name,file_kind,version_id,mime_type').in('version_id', projectVersionIds).neq('file_kind', 'photo') : { data: [], error: null },
-      productVersionIds.length ? db.from('product_production_drawings').select('id,file_name,product_version_id').in('product_version_id', productVersionIds).order('created_at', { ascending: false }) : { data: [], error: null },
+      productIds.length ? db.from('product_versions').select('id,product_id').in('product_id', productIds).eq('status', 'current') : { data: [], error: null },
+      projectIds.length ? db.from('product_projects').select('id,approved_version_id').in('id', projectIds) : { data: [], error: null },
     ])
-    for (const result of [completionResult, archiveResult, productFileResult, projectFileResult, drawingResult]) if (result.error) throw new Error(result.error.message)
+    for (const result of [completionResult, archiveResult, currentVersionResult, projectResult]) if (result.error) throw new Error(result.error.message)
+
+    const currentVersionByProduct = new Map((currentVersionResult.data || []).map((version: any) => [version.product_id, version.id]))
+    const approvedVersionByProject = new Map((projectResult.data || []).map((project: any) => [project.id, project.approved_version_id]))
+    const itemBindings = new Map<string, CuttingAreaItemFileBinding>(items.map((item: any) => [item.id, {
+      productId: item.product_id || null,
+      productVersionId: item.product_version_id || currentVersionByProduct.get(item.product_id) || null,
+      productProjectId: item.product_project_id || null,
+      productProjectVersionId: item.product_project_version_id || approvedVersionByProject.get(item.product_project_id) || null,
+    }]))
+    const productVersionIds = Array.from(new Set(Array.from(itemBindings.values()).map((item) => item.productVersionId).filter(Boolean))) as string[]
+    const [productFileResult, projectFileResult, drawingResult] = await Promise.all([
+      productIds.length ? db.from('product_files').select('id,product_id,product_version_id,file_name,file_kind,created_at').in('product_id', productIds).in('file_kind', ['drawing','step','pdf']).order('created_at', { ascending: false }) : { data: [], error: null },
+      projectIds.length ? db.from('product_project_files').select('id,project_id,version_id,file_name,file_kind,created_at').in('project_id', projectIds).neq('file_kind', 'photo').order('created_at', { ascending: false }) : { data: [], error: null },
+      productVersionIds.length ? db.from('product_production_drawings').select('id,file_name,product_version_id,created_at').in('product_version_id', productVersionIds).order('created_at', { ascending: false }) : { data: [], error: null },
+    ])
+    for (const result of [productFileResult, projectFileResult, drawingResult]) if (result.error) throw new Error(result.error.message)
+
+    type FileCandidate = CuttingAreaOrderFile & { binding: CuttingAreaFileBinding; createdAt: string }
+    const fileCandidates: FileCandidate[] = [
+      ...(productFileResult.data || []).map((file: any): FileCandidate => {
+        const binding: CuttingAreaFileBinding = { kind: 'product', productId: file.product_id, productVersionId: file.product_version_id, fileKind: file.file_kind }
+        return { id: file.id, kind: 'product', category: cuttingAreaFileCategory(binding), label: 'Файл изделия', fileName: file.file_name, downloadUrl: `/api/production/cutting-area/files/product/${file.id}?machineId=${id}`, binding, createdAt: file.created_at }
+      }),
+      ...(projectFileResult.data || []).map((file: any): FileCandidate => {
+        const binding: CuttingAreaFileBinding = { kind: 'project', productProjectId: file.project_id, productProjectVersionId: file.version_id, fileKind: file.file_kind }
+        return { id: file.id, kind: 'project', category: cuttingAreaFileCategory(binding), label: 'Файл проекта', fileName: file.file_name, downloadUrl: `/api/production/cutting-area/files/project/${file.id}?machineId=${id}`, binding, createdAt: file.created_at }
+      }),
+      ...(drawingResult.data || []).map((file: any): FileCandidate => {
+        const binding: CuttingAreaFileBinding = { kind: 'production_drawing', productVersionId: file.product_version_id, fileKind: 'pdf' }
+        return { id: file.id, kind: 'production_drawing', category: cuttingAreaFileCategory(binding), label: 'Комплект для производства', fileName: file.file_name, downloadUrl: `/api/production/cutting-area/files/production_drawing/${file.id}?machineId=${id}`, binding, createdAt: file.created_at }
+      }),
+    ].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+
     const userIds = Array.from(new Set([...requests.map((request: any) => request.created_by), ...(archiveResult.data || []).map((archive: any) => archive.uploaded_by)]))
     const users = userIds.length ? await db.from('users').select('id,full_name,email').in('id', userIds) : { data: [], error: null }
     if (users.error) throw new Error(users.error.message)
@@ -234,12 +281,25 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
           })),
         }
       }),
-      items: items.map((item: any) => ({ id: item.id, productName: item.product_name_uk || item.product_name, drawingNumber: item.product_drawing_number || item.drawing_number, quantity: item.quantity })),
-      files: [
-        ...(productFileResult.data || []).map((file: any) => ({ id: file.id, kind: 'product' as const, label: file.file_kind === 'step' ? 'STEP' : 'Чертёж', fileName: file.file_name, downloadUrl: `/api/production/cutting-area/files/product/${file.id}?machineId=${id}` })),
-        ...(projectFileResult.data || []).map((file: any) => ({ id: file.id, kind: 'project' as const, label: file.file_kind === 'step' ? 'STEP проекта' : 'Файл проекта', fileName: file.file_name, downloadUrl: `/api/production/cutting-area/files/project/${file.id}?machineId=${id}` })),
-        ...(drawingResult.data || []).map((file: any) => ({ id: file.id, kind: 'production_drawing' as const, label: 'Комплектный PDF', fileName: file.file_name, downloadUrl: `/api/production/cutting-area/files/production_drawing/${file.id}?machineId=${id}` })),
-      ],
+      items: items.map((item: any) => {
+        const binding = itemBindings.get(item.id)!
+        return {
+          id: item.id,
+          productName: item.product_name_uk || item.product_name,
+          drawingNumber: item.product_drawing_number || item.drawing_number,
+          quantity: item.quantity,
+          files: fileCandidates
+            .filter((file) => isCuttingAreaFileForItem(binding, file.binding))
+            .map((file) => ({
+              id: file.id,
+              kind: file.kind,
+              category: file.category,
+              label: file.label,
+              fileName: file.fileName,
+              downloadUrl: file.downloadUrl,
+            })),
+        }
+      }),
     }
     return { success: true as const, data: details, error: null }
   } catch (error) { return { success: false as const, data: null, error: getErrorMessage(error) } }
