@@ -56,6 +56,9 @@ assert(action.includes(".eq('is_confirmed', true)"))
 assert(action.includes(".eq('is_archived', false)"))
 assert(action.includes(".eq('stage_type', 'cutting')"))
 assert(action.includes('getProductionCuttingAreaDetails'))
+assert(action.includes('getProductionCuttingAreaRequest'))
+assert(action.includes(".eq('machine_id', parsed.machineId)"), 'Заявка должна проверяться в контексте выбранной машины')
+assert(action.includes("assertFactoryAccess(permission, CUTTING_AREA_RESOURCE, 'view', machineResult.data.factory_id)"), 'Read-only заявка должна сохранять заводской охват')
 assert(action.includes('canAccessAllFactories'))
 assert(action.includes('assertFactoryAccess'))
 assert(!action.includes('DIRECTOR_ROLES'), 'Серверные действия должны использовать единый резолвер охвата')
@@ -64,12 +67,21 @@ assert(action.includes(".in('product_id', productIds)"), 'Файлы стары�
 assert(action.includes("['drawing','step','pdf']"), 'PDF изделия должен отображаться вместе с чертежами')
 
 const page = read('src/components/features/production/CuttingAreaPage.tsx')
-for (const label of ['Ожидают', 'В работе', 'Выполненные', 'Все месяцы', 'Сборочный чертёж', 'Общие чертежи', 'STEP file', 'Чертежи и STEP', 'Взял в работу', 'Машина завершена']) {
+for (const label of ['Ожидают', 'В работе', 'Выполненные', 'Все месяцы', 'Сборочный чертёж', 'Общие чертежи', 'STEP file', 'Чертежи и STEP', 'Открыть заявку', 'Взял в работу', 'Машина завершена']) {
   assert(page.includes(label), `UI не содержит ${label}`)
 }
 assert(page.includes('aria-expanded={isExpanded}'))
 assert(page.includes('showCloseButton={false}'), 'Модальное окно файлов должно использовать крупную кнопку закрытия')
 assert(!page.includes('min-w-['), 'Страница не должна задавать фиксированную горизонтальную ширину')
+
+const requestPage = read('src/app/(protected)/production/cutting-area/[machineId]/request/[requestId]/page.tsx')
+assert(requestPage.includes('TechnologistRequestPage'))
+assert(requestPage.includes('canManage={false}'), 'Производственная страница заявки должна быть строго read-only')
+assert(requestPage.includes('Назад к участку заготовки'))
+
+const breadcrumbs = read('src/components/features/layout/Breadcrumbs.tsx')
+assert(breadcrumbs.includes('"cutting-area": "Участок заготовки"'))
+assert(breadcrumbs.includes('"request": "Заявка на материалы"'))
 
 const archiveRoute = read('src/app/api/production/cutting-area/archives/[id]/route.ts')
 const fileRoute = read('src/app/api/production/cutting-area/files/[kind]/[id]/route.ts')

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { addMesh, deleteMesh, updateMesh, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { InlineEditCell } from './InlineEditCell'
+import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
@@ -114,6 +115,7 @@ export function MeshSection({ requestId, items, isEditable, onRowsChange }: Prop
               <th className="min-w-[120px] px-3 py-2 text-left">Длина, мм</th>
               <th className="min-w-[120px] px-3 py-2 text-left">Ширина, мм</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Необходимо, шт</th>
+              <th className="min-w-[120px] px-3 py-2 text-left">Статус</th>
               <th className="w-[60px] px-3 py-2 text-right">Действия</th>
             </tr>
           </thead>
@@ -129,6 +131,7 @@ export function MeshSection({ requestId, items, isEditable, onRowsChange }: Prop
                 <td className="px-3 py-2"><InlineEditCell value={row.length_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { length_mm: toNumber(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={row.width_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { width_mm: toNumber(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={row.remainder_qty} type="number" step="1" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_qty: Number(value || 0) })} /></td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
                 <td className="px-3 py-2 text-right">
                   {isEditable && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
@@ -141,7 +144,7 @@ export function MeshSection({ requestId, items, isEditable, onRowsChange }: Prop
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
                   {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
                 </td>

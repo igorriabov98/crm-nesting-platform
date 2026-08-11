@@ -42,6 +42,12 @@ jobs:
         run: npm run test:supply-reservation-scope
       - name: Supply order filters and sorting
         run: npm run test:supply-order-view
+      - name: Supply request lifecycle
+        run: npm run test:supply-request-flow
+      - name: Technologist request editability
+        run: npm run test:technologist-request-editability
+      - name: Production cutting area request view
+        run: npm run test:production-cutting-area
       - name: Nesting STEP/PDF dimension choice
         run: npm run test:nesting-dimension-choice
       - name: Nesting AI match application policy

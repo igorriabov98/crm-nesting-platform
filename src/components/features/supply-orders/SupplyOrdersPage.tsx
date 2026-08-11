@@ -135,7 +135,7 @@ export function SupplyOrdersPage({
         toast.error(result.error || 'Не удалось обновить позиции')
         return
       }
-      toast.success(mode === 'ordered' ? 'Позиции отмечены как заказанные' : 'Позиции отмечены как доставленные')
+      toast.success(mode === 'ordered' ? 'Позиции отмечены как заказанные' : 'Материал принят на склад')
       setSelected(new Set())
       setShowFinanceStep(false)
       setFinanceDrafts({})

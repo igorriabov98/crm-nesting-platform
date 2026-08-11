@@ -12,6 +12,8 @@ const routeMap: Record<string, string> = {
   "mail": "Почта",
   "new": "Создание",
   "production": "Производство",
+  "cutting-area": "Участок заготовки",
+  "request": "Заявка на материалы",
   "requests": "Запросы",
   "technologist": "Технолог",
   "gantt": "Гант-график",

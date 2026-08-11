@@ -5,6 +5,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { InlineEditCell } from './InlineEditCell'
+import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import { addCircle, deleteCircle, updateCircle, type WithMaterialName } from '@/lib/actions/technologist-requests'
@@ -110,6 +111,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
               <th className="min-w-[100px] px-3 py-2 text-left">Калибровка</th>
               <th className="min-w-[120px] px-3 py-2 text-left">Необходимо, мм</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Вес, кг</th>
+              <th className="min-w-[120px] px-3 py-2 text-left">Статус</th>
               <th className="w-[60px] px-3 py-2 text-right">Действия</th>
             </tr>
           </thead>
@@ -154,6 +156,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
                 </td>
                 <td className="px-3 py-2"><InlineEditCell value={row.remainder_mm} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_mm: Number(value || 0) })} /></td>
                 <td className="px-3 py-2 text-slate-700">{formatWeight(row.calculated_weight_kg)}</td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
                 <td className="px-3 py-2 text-right">
                   {isEditable && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
@@ -166,7 +169,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
                   {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
                 </td>

@@ -1,10 +1,11 @@
 'use client'
 
 import { useMemo, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { Archive, CalendarRange, CheckCircle2, ChevronDown, Download, FileStack, Loader2, Play, RotateCcw, Search } from 'lucide-react'
+import { Archive, CalendarRange, CheckCircle2, ChevronDown, ClipboardList, Download, FileStack, Loader2, Play, RotateCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -24,6 +25,7 @@ import {
   type CuttingAreaWorkspace,
 } from '@/lib/actions/production-cutting-area'
 import { formatProductionMonth } from '@/lib/utils/production-months'
+import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
 
 type Filter = CuttingAreaQueueStatus | 'all'
@@ -199,7 +201,50 @@ export function CuttingAreaPage({ workspace }: { workspace: CuttingAreaWorkspace
 
           {isExpanded && <div id={`cutting-details-${order.machineId}`} className="border-t border-slate-200 bg-slate-50/70 p-4 sm:p-5">
             {detailsLoading === order.machineId ? <div className="flex min-h-28 items-center justify-center text-sm text-slate-600" role="status"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Загружаем заявки и файлы…</div> : detailsError[order.machineId] ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{detailsError[order.machineId]}</div> : orderDetails ? <div className="min-w-0 space-y-5">
-              <section aria-labelledby={`requests-${order.machineId}`}><h2 id={`requests-${order.machineId}`} className="font-semibold text-slate-950">Заявки технолога</h2><div className="mt-3 grid min-w-0 gap-3 xl:grid-cols-2">{orderDetails.requests.length === 0 ? <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">Заявок нет</div> : orderDetails.requests.map((request) => <article key={request.id} className="min-w-0 rounded-xl border border-slate-200 bg-white p-4"><div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-medium text-slate-950">Заявка №{request.number}</h3><p className="mt-1 text-sm text-slate-500">{formatDateTime(request.createdAt)} · {request.authorName}</p></div><Badge variant="outline" className={request.completion ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800'}>{request.completion ? 'Завершена' : 'Не завершена'}</Badge></div>{request.completion && <div className="mt-3 grid grid-cols-3 gap-2 text-sm"><div className="rounded-lg bg-slate-50 p-2"><span className="block text-xs text-slate-500">Технолог</span><strong>{request.completion.enteredMinutes} мин</strong></div><div className="rounded-lg bg-slate-50 p-2"><span className="block text-xs text-slate-500">+25%</span><strong>+{request.completion.addedMinutes} мин</strong></div><div className="rounded-lg bg-blue-950 p-2 text-white"><span className="block text-xs text-blue-200">Итого</span><strong>{request.completion.actualMinutes} мин</strong></div></div>}<div className="mt-3"><p className="flex items-center gap-2 text-sm font-medium text-slate-800"><Archive className="h-4 w-4" />Программы: {request.archives.length}</p>{request.archives.map((archive) => <a key={archive.id} href={archive.downloadUrl} className="mt-2 flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 text-sm text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><span className="min-w-0 break-all">{archive.fileName}<span className="ml-2 text-xs text-blue-700">{formatFileSize(archive.fileSize)}</span></span><Download className="h-4 w-4 shrink-0" /></a>)}{request.archives.length === 0 && <p className="mt-1 text-sm text-slate-500">Программа не добавлена</p>}</div></article>)}</div></section>
+              <section aria-labelledby={`requests-${order.machineId}`}>
+                <h2 id={`requests-${order.machineId}`} className="font-semibold text-slate-950">Заявки технолога</h2>
+                <div className="mt-3 grid min-w-0 gap-3 xl:grid-cols-2">
+                  {orderDetails.requests.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">Заявок нет</div>
+                  ) : orderDetails.requests.map((request) => (
+                    <article key={request.id} className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-wrap justify-between gap-2">
+                        <div>
+                          <h3 className="font-medium text-slate-950">Заявка №{request.number}</h3>
+                          <p className="mt-1 text-sm text-slate-500">{formatDateTime(request.createdAt)} · {request.authorName}</p>
+                        </div>
+                        <Badge variant="outline" className={request.completion ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800'}>
+                          {request.completion ? 'Завершена' : 'Не завершена'}
+                        </Badge>
+                      </div>
+                      {request.completion && (
+                        <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+                          <div className="rounded-lg bg-slate-50 p-2"><span className="block text-xs text-slate-500">Технолог</span><strong>{request.completion.enteredMinutes} мин</strong></div>
+                          <div className="rounded-lg bg-slate-50 p-2"><span className="block text-xs text-slate-500">+25%</span><strong>+{request.completion.addedMinutes} мин</strong></div>
+                          <div className="rounded-lg bg-blue-950 p-2 text-white"><span className="block text-xs text-blue-200">Итого</span><strong>{request.completion.actualMinutes} мин</strong></div>
+                        </div>
+                      )}
+                      <div className="mt-3 flex-1">
+                        <p className="flex items-center gap-2 text-sm font-medium text-slate-800"><Archive className="h-4 w-4" />Программы: {request.archives.length}</p>
+                        {request.archives.map((archive) => (
+                          <a key={archive.id} href={archive.downloadUrl} className="mt-2 flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 text-sm text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                            <span className="min-w-0 break-all">{archive.fileName}<span className="ml-2 text-xs text-blue-700">{formatFileSize(archive.fileSize)}</span></span>
+                            <Download className="h-4 w-4 shrink-0" />
+                          </a>
+                        ))}
+                        {request.archives.length === 0 && <p className="mt-1 text-sm text-slate-500">Программа не добавлена</p>}
+                      </div>
+                      <Link
+                        href={`${ROUTES.PRODUCTION_CUTTING_AREA}/${order.machineId}/request/${request.id}`}
+                        className={cn(buttonVariants({ variant: 'outline' }), 'mt-4 min-h-11 w-full border-blue-200 text-blue-950 hover:bg-blue-50')}
+                      >
+                        <ClipboardList className="mr-2 h-4 w-4" aria-hidden="true" />
+                        Открыть заявку
+                      </Link>
+                    </article>
+                  ))}
+                </div>
+              </section>
               <section><h2 className="font-semibold text-slate-950">Изделия заказа</h2><div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{orderDetails.items.map((item) => <article key={item.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3"><div className="min-w-0 flex-1"><p className="break-words font-medium text-slate-900">{item.productName}</p><p className="mt-1 text-sm text-slate-500">{item.drawingNumber} · {item.quantity} шт.</p></div><Button type="button" variant="outline" className="min-h-11 w-full border-blue-200 text-blue-900" onClick={() => setFileItem(item)}><FileStack className="mr-2 h-4 w-4" aria-hidden="true" />Чертежи и STEP ({item.files.length})</Button></article>)}</div></section>
             </div> : null}
           </div>}

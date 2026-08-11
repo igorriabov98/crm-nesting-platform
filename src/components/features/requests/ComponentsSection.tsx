@@ -5,6 +5,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { InlineEditCell } from './InlineEditCell'
+import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import { addComponent, deleteComponent, updateComponent, type WithMaterialName } from '@/lib/actions/technologist-requests'
@@ -121,6 +122,7 @@ export function ComponentsSection({ requestId, items, canEdit, onRowsChange }: P
               <th className="min-w-[200px] px-3 py-2 text-left">Материал</th>
               <th className="min-w-[120px] px-3 py-2 text-left">Диаметр, мм</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Необходимо, шт</th>
+              <th className="min-w-[120px] px-3 py-2 text-left">Статус</th>
               <th className="w-[60px] px-3 py-2 text-right">Действия</th>
             </tr>
           </thead>
@@ -146,6 +148,7 @@ export function ComponentsSection({ requestId, items, canEdit, onRowsChange }: P
                 <td className="px-3 py-2">
                   <InlineEditCell value={row.quantity_needed} type="number" step="1" disabled={!canEdit} onSave={(value) => handleUpdate(row.id, { quantity_needed: toNumber(value) })} />
                 </td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
                 <td className="px-3 py-2 text-right">
                   {canEdit && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
@@ -158,7 +161,7 @@ export function ComponentsSection({ requestId, items, canEdit, onRowsChange }: P
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
                   {canEdit && (
                     <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>

@@ -12,6 +12,8 @@ import {
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { loadTechnologistRequestPayload } from '@/lib/technologist-requests/request-payload'
+import type { TechnologistRequest } from '@/lib/types'
 import {
   cuttingAreaFileCategory,
   isCuttingAreaFileForItem,
@@ -109,6 +111,53 @@ async function loadCoveredRequestIds(db: any, requestIds: string[]) {
     .neq('production_cutting_cycles.status', 'cancelled')
   if (snapshots.error) throw new Error(snapshots.error.message)
   return new Set((snapshots.data || []).map((row: any) => row.request_id as string))
+}
+
+export async function getProductionCuttingAreaRequest(machineId: string, requestId: string) {
+  try {
+    const parsed = z.object({
+      machineId: z.string().uuid(),
+      requestId: z.string().uuid(),
+    }).parse({ machineId, requestId })
+    const permission = await requirePermission('production_cutting_area', 'view')
+    const db = admin()
+
+    const machineResult = await db
+      .from('machines')
+      .select('id,name,factory_id')
+      .eq('id', parsed.machineId)
+      .eq('is_confirmed', true)
+      .eq('is_archived', false)
+      .maybeSingle()
+    if (machineResult.error) throw new Error(machineResult.error.message)
+    if (!machineResult.data) throw new Error('Заказ не найден')
+    assertFactoryAccess(permission, CUTTING_AREA_RESOURCE, 'view', machineResult.data.factory_id)
+
+    const [stageResult, requestResult, steelTypesResult] = await Promise.all([
+      db.from('production_stages').select('id').eq('machine_id', parsed.machineId).eq('stage_type', 'cutting').eq('is_skipped', false).limit(1).maybeSingle(),
+      db.from('technologist_requests').select('*').eq('id', parsed.requestId).eq('machine_id', parsed.machineId).maybeSingle(),
+      db.from('steel_types').select('*').order('name'),
+    ])
+    for (const result of [stageResult, requestResult, steelTypesResult]) {
+      if (result.error) throw new Error(result.error.message)
+    }
+    if (!stageResult.data) throw new Error('Заказ не относится к участку заготовки')
+    if (!requestResult.data) throw new Error('Заявка не найдена')
+
+    const request = requestResult.data as TechnologistRequest
+    const payload = await loadTechnologistRequestPayload(db, request)
+    return {
+      success: true as const,
+      data: {
+        machine: { id: machineResult.data.id as string, name: machineResult.data.name as string },
+        request: payload,
+        steelTypes: steelTypesResult.data || [],
+      },
+      error: null,
+    }
+  } catch (error) {
+    return { success: false as const, data: null, error: getErrorMessage(error) }
+  }
 }
 
 export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWorkspace> {
