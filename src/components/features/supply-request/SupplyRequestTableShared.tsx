@@ -64,7 +64,7 @@ export function OrderStatusCell({
         toast.error(result.error || 'Не удалось обновить статус')
         return
       }
-      toast.success(mode === 'ordered' ? 'Отмечено как заказано' : 'Отмечено как доставлено')
+      toast.success(mode === 'ordered' ? 'Отмечено как заказано' : 'Материал принят на склад')
       router.refresh()
     })
   }
@@ -79,7 +79,7 @@ export function OrderStatusCell({
       )}
       {canEdit && status === 'ordered' && (
         <button type="button" disabled={isPending} onClick={() => update('delivered')} className="text-xs font-medium text-emerald-700 hover:underline">
-          Отметить доставлено
+          Принять на склад
         </button>
       )}
     </div>

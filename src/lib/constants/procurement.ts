@@ -79,7 +79,7 @@ export const REQUEST_SECTIONS = [
 export const ORDER_STATUS_LABELS: Record<OrderItemStatus, string> = {
   pending: 'Не заказано',
   ordered: 'Заказано',
-  delivered: 'Доставлено',
+  delivered: 'Получено',
 }
 
 export const INVENTORY_TRANSACTION_LABELS: Record<InventoryTransactionType, string> = {

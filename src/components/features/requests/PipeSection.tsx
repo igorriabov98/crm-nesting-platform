@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import { addPipe, deletePipe, updatePipe, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { InlineEditCell } from './InlineEditCell'
+import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
@@ -198,6 +199,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               <th className="min-w-[140px] px-3 py-2 text-left">Необходимо длина, мм</th>
               <th className="min-w-[110px] px-3 py-2 text-left">Необходимо, кг</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Вес, кг</th>
+              <th className="min-w-[120px] px-3 py-2 text-left">Статус</th>
               <th className="w-[60px] px-3 py-2 text-right">Действия</th>
             </tr>
           </thead>
@@ -258,6 +260,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
                   <td className="px-3 py-2">{isRegularPipe ? <InlineEditCell value={row.remainder_length_mm} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_length_mm: Number(value || 0) })} /> : <span className="text-gray-400">—</span>}</td>
                   <td className="px-3 py-2">{isWire ? <InlineEditCell value={row.remainder_kg} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_kg: Number(value || 0) })} /> : <span className="text-gray-400">—</span>}</td>
                   <td className="px-3 py-2 text-slate-700">{formatWeight(displayWeight)}</td>
+                  <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
                   <td className="px-3 py-2 text-right">
                     {isEditable && (
                       <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
@@ -270,7 +273,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
                   {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
                 </td>

@@ -29,7 +29,7 @@ export function OrderActions({ selectedCount, isPending, onMarkOrdered, onMarkDe
     </Button>
     <Button className="min-h-10" variant="outline" disabled={selectedCount === 0 || isPending} onClick={onMarkDelivered}>
      <PackageCheck className="h-4 w-4" />
-     Отметить доставлено
+     Принять на склад
     </Button>
    </div>
   </div>
