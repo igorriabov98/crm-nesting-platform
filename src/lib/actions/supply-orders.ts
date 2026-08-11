@@ -14,6 +14,7 @@ import type { MaterialCategory, OrderItemStatus } from '@/lib/types'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { formatCompanyLocation } from '@/lib/transport/company-location'
 import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
+import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -821,7 +822,9 @@ function normalizeCharacteristicValue(value: unknown) {
 function getCharacteristicParts(table: string, row: RequestItemRow, displayOnly = false) {
   const fields = (displayOnly ? DISPLAY_FIELDS : IDENTITY_FIELDS)[table] || []
   return fields.flatMap(([label, field]) => {
-    const value = normalizeCharacteristicValue(row[field])
+    const value = displayOnly
+      ? formatSupplyOrderCharacteristicValue(table, field, row[field]) ?? normalizeCharacteristicValue(row[field])
+      : normalizeCharacteristicValue(row[field])
     return value ? [{ label, value }] : []
   })
 }
@@ -3201,7 +3204,7 @@ export async function addOrderDeliverySchedule(
     assertOrderTable(item.table)
     validateScheduleInput(data)
     const orderItem = await loadOneOrderItem(db, item.table, item.id)
-    if (orderItem.order_status === 'delivered') throw new Error('Нельзя менять график уже доставленной позиции')
+    if (orderItem.order_status === 'delivered') throw new Error('Нельзя менять график уже принятой позиции')
     const { error } = await db.from('supply_order_delivery_schedules').insert({
       request_item_table: item.table,
       request_item_id: item.id,

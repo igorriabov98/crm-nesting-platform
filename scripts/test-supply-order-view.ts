@@ -21,6 +21,7 @@ import {
   type OrderFiltersState,
 } from '@/components/features/supply-orders/supply-order-view'
 import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
+import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
 
 assert.equal(
   getRequestItemSelect('request_pipe'),
@@ -50,6 +51,13 @@ assert.deepEqual(
   ],
   'pipe cards must show the steel grade selected in the request'
 )
+
+assert.equal(formatSupplyOrderCharacteristicValue('request_pipe', 'pipe_type', 'square'), 'Квадратная')
+assert.equal(formatSupplyOrderCharacteristicValue('request_pipe', 'pipe_type', 'rectangular'), 'Прямоугольная')
+assert.equal(formatSupplyOrderCharacteristicValue('request_pipe', 'pipe_type', 'round'), 'Круглая')
+assert.equal(formatSupplyOrderCharacteristicValue('request_pipe', 'pipe_type', 'wire'), 'Проволока')
+assert.equal(formatSupplyOrderCharacteristicValue('request_pipe', 'pipe_type', 'legacy-value'), 'Не указан')
+assert.equal(formatSupplyOrderCharacteristicValue('request_knives', 'knife_type', 'standard'), null)
 
 const baseFilters: OrderFiltersState = {
   query: '',

@@ -73,7 +73,7 @@ function materialName(row: { materials?: { name?: string | null } | null }, fall
 }
 
 function stageNote(row: RequestMaterialRow, requestStatus: RequestStatus) {
-  if (row.orderStatus === 'delivered') return row.deliveredAt ? `Доставлено ${formatDate(row.deliveredAt)}` : 'Поставка закрыта'
+  if (row.orderStatus === 'delivered') return row.deliveredAt ? `Получено ${formatDate(row.deliveredAt)}` : 'Получено на склад'
   if (row.orderStatus === 'ordered') return row.orderedAt ? `Заказано ${formatDate(row.orderedAt)}` : 'Заказ размещён'
   if (row.customDeliveryDate) return `План: ${formatDate(row.customDeliveryDate)}`
   if (requestStatus === 'submitted_to_supply') return 'В работе у снабжения'

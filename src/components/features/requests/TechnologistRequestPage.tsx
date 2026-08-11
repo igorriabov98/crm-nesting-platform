@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Send } from 'lucide-react'
+import { ArrowLeft, Lock, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -17,6 +17,7 @@ import { RequestStatusBadge } from './RequestStatusBadge'
 import { SheetMetalSection } from './SheetMetalSection'
 import { submitRequest, type TechnologistRequestPayload } from '@/lib/actions/technologist-requests'
 import { ROUTES } from '@/lib/constants/routes'
+import { isTechnologistRequestEditable } from '@/lib/technologist-request-editability'
 import type { Machine, RequestStatus, Supplier } from '@/lib/types'
 import type { SteelType } from '@/lib/types/database'
 
@@ -32,6 +33,7 @@ type Props = {
   steelTypes: SteelType[]
   backHref?: string
   backLabel?: string
+  readOnlyMessage?: string
 }
 
 type PaintRows = TechnologistRequestPayload['paint']
@@ -40,7 +42,7 @@ type MeshRows = TechnologistRequestPayload['meshItems']
 type ChainCordRows = TechnologistRequestPayload['chainCords']
 type PipeRows = TechnologistRequestPayload['pipes']
 
-export function TechnologistRequestPage({ machine, data, suppliers, canManage, steelTypes, backHref, backLabel }: Props) {
+export function TechnologistRequestPage({ machine, data, suppliers, canManage, steelTypes, backHref, backLabel, readOnlyMessage }: Props) {
   const router = useRouter()
   const [status, setStatus] = useState<RequestStatus>(data.request.status)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -49,7 +51,12 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
   const [meshRows, setMeshRows] = useState(data.meshItems)
   const [chainCordRows, setChainCordRows] = useState(data.chainCords)
   const [pipeRows, setPipeRows] = useState(data.pipes)
-  const canEdit = canManage
+  const canEdit = canManage && isTechnologistRequestEditable(status)
+  const resolvedReadOnlyMessage = readOnlyMessage || (
+    isTechnologistRequestEditable(status)
+      ? 'У вас есть доступ к составу заявки, но нет права изменять её позиции.'
+      : 'Заявка уже передана в снабжение и доступна только для просмотра.'
+  )
   const handlePaintRowsChange = useCallback((rows: PaintRows) => {
     setPaintRows(rows)
   }, [])
@@ -117,6 +124,16 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
         </div>
       </div>
 
+      {!canEdit && (
+        <div role="status" className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" aria-hidden="true" />
+          <div>
+            <p className="font-semibold">Только просмотр</p>
+            <p className="mt-0.5 text-blue-800">{resolvedReadOnlyMessage}</p>
+          </div>
+        </div>
+      )}
+
       <Tabs defaultValue="sheet" className="w-full">
         <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-lg border border-slate-200 bg-white p-1">
           <TabsTrigger value="sheet">Листовой металл</TabsTrigger>
@@ -165,17 +182,19 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
         </div>
       </div>
 
-      <div className="flex flex-wrap justify-end gap-3">
-        <Button type="button" variant="outline" onClick={() => router.refresh()}>
-          Сохранить черновик
-        </Button>
-        {(status === 'draft' || status === 'pending_stock_check' || status === 'stock_checked') && canEdit && (
-          <Button type="button" onClick={handleSubmitRequest} disabled={isSubmitting}>
-            <Send className="mr-2 h-4 w-4" />
-            {status === 'draft' ? 'Заявка оформлена' : 'Перейти к брони делового отхода'}
+      {canEdit && (
+        <div className="flex flex-wrap justify-end gap-3">
+          <Button type="button" variant="outline" onClick={() => router.refresh()}>
+            Сохранить черновик
           </Button>
-        )}
-      </div>
+          {(status === 'draft' || status === 'pending_stock_check' || status === 'stock_checked') && (
+            <Button type="button" onClick={handleSubmitRequest} disabled={isSubmitting}>
+              <Send className="mr-2 h-4 w-4" />
+              {status === 'draft' ? 'Заявка оформлена' : 'Перейти к брони делового отхода'}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -9,6 +9,16 @@ import { repairImportedSheetMetalMaterials } from '@/lib/actions/request-sheet-m
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { requirePermission } from '@/lib/permissions/server'
 import { assertMachineCanUseTechnologistRequest } from '@/lib/actions/machine-progress'
+import {
+  assertTechnologistRequestEditable,
+} from '@/lib/technologist-request-editability'
+import {
+  loadTechnologistRequestPayload,
+} from '@/lib/technologist-requests/request-payload'
+export type {
+  TechnologistRequestPayload,
+  WithMaterialName,
+} from '@/lib/technologist-requests/request-payload'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import {
   availabilitySchema,
@@ -36,15 +46,6 @@ import type {
   MaterialCategory,
   MaterialVariant,
   OrderItemStatus,
-  RequestChainCord,
-  RequestCircle,
-  RequestComponents,
-  RequestKnives,
-  RequestMesh,
-  RequestPaint,
-  RequestPipe,
-  RequestRoundTube,
-  RequestSheetMetal,
   RequestStatus,
   Supplier,
   TechnologistRequest,
@@ -65,26 +66,6 @@ type LooseQuery = PromiseLike<DbResult> & {
   delete: () => LooseQuery
 }
 type LooseDb = { from: (table: string) => LooseQuery; rpc: (fn: string, args: Record<string, unknown>) => Promise<DbResult> }
-
-export type WithMaterialName<T> = T & {
-  materials?: { id: string; name: string } | null
-}
-
-export type TechnologistRequestPayload = {
-  request: TechnologistRequest
-  sheetMetal: WithMaterialName<RequestSheetMetal>[]
-  roundTube: WithMaterialName<RequestRoundTube>[]
-  circles: WithMaterialName<RequestCircle>[]
-  pipes: WithMaterialName<RequestPipe>[]
-  knives: WithMaterialName<RequestKnives>[]
-  components: WithMaterialName<RequestComponents>[]
-  paint: WithMaterialName<RequestPaint>[]
-  meshItems: WithMaterialName<RequestMesh>[]
-  chainCords: WithMaterialName<RequestChainCord>[]
-  sheetMetals?: WithMaterialName<RequestSheetMetal>[]
-  paints?: WithMaterialName<RequestPaint>[]
-  roundTubes?: WithMaterialName<RequestRoundTube>[]
-}
 
 export type RequestLifecycleStatus = 'draft' | 'stock_check' | 'submitted_to_supply' | 'delivery' | 'received'
 
@@ -500,7 +481,7 @@ export async function getRequest(machineId: string) {
     const request = pickActiveRequest(requests)
     if (!request) return { data: null, error: null }
 
-    return { data: await loadRequestPayload(db, request), error: null }
+    return { data: await loadTechnologistRequestPayload(db, request), error: null }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заявку' }
   }
@@ -550,43 +531,9 @@ export async function getRequestById(machineId: string, requestId: string) {
       return { data: null, error: 'Заявка ещё не отправлена в снабжение' }
     }
 
-    return { data: await loadRequestPayload(db, request), error: null }
+    return { data: await loadTechnologistRequestPayload(db, request), error: null }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заявку' }
-  }
-}
-
-async function loadRequestPayload(db: LooseDb, request: TechnologistRequest): Promise<TechnologistRequestPayload> {
-  const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
-    db.from('request_sheet_metal').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_round_tube').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_circle').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_pipe').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_knives').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_components').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_paint').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_mesh').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_chain_cord').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-  ])
-
-  for (const result of [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords]) {
-    if (result.error) throw new Error(result.error.message || 'Не удалось загрузить раздел заявки')
-  }
-
-  return {
-    request,
-    sheetMetal: (sheetMetal.data || []) as WithMaterialName<RequestSheetMetal>[],
-    sheetMetals: (sheetMetal.data || []) as WithMaterialName<RequestSheetMetal>[],
-    roundTube: (roundTube.data || []) as WithMaterialName<RequestRoundTube>[],
-    roundTubes: (roundTube.data || []) as WithMaterialName<RequestRoundTube>[],
-    circles: (circles.data || []) as WithMaterialName<RequestCircle>[],
-    pipes: (pipes.data || []) as WithMaterialName<RequestPipe>[],
-    knives: (knives.data || []) as WithMaterialName<RequestKnives>[],
-    components: (components.data || []) as WithMaterialName<RequestComponents>[],
-    paint: (paint.data || []) as WithMaterialName<RequestPaint>[],
-    paints: (paint.data || []) as WithMaterialName<RequestPaint>[],
-    meshItems: (meshItems.data || []) as WithMaterialName<RequestMesh>[],
-    chainCords: (chainCords.data || []) as WithMaterialName<RequestChainCord>[],
   }
 }
 
@@ -617,6 +564,9 @@ export async function submitRequest(requestId: string): Promise<ActionResult> {
     const request = await getRequestMachine(db, requestId)
     await assertMachineNotArchived(db, request.machine_id)
     await assertMachineCanUseTechnologistRequest(db, request.machine_id)
+    if (request.status !== 'draft') {
+      throw new Error('Оформить можно только заявку в статусе «Черновик»')
+    }
 
     await validateRequestReadyForSupply(db, requestId, userId)
 
@@ -644,6 +594,7 @@ export async function completeStockReservation(requestId: string): Promise<Actio
     const { db, userId } = await requireRequestPermission('manage')
     const request = await getRequestMachine(db, requestId)
     await assertMachineNotArchived(db, request.machine_id)
+
     await assertMachineCanUseTechnologistRequest(db, request.machine_id)
 
     if (request.status !== 'pending_stock_check' && request.status !== 'stock_checked') {
@@ -675,6 +626,9 @@ export async function markStockChecked(requestId: string): Promise<ActionResult>
     const { db } = await requireRequestPermission('manage')
     const request = await getRequestMachine(db, requestId)
     await assertMachineNotArchived(db, request.machine_id)
+    if (request.status !== 'pending_stock_check' && request.status !== 'stock_checked') {
+      throw new Error('Проверка склада уже завершена или заявка находится на другом этапе')
+    }
 
     const { error } = await db
       .from('technologist_requests')
@@ -751,6 +705,7 @@ async function addSectionRow<T>(requestId: string, table: RequestSectionTable, s
     const { db } = await requireRequestPermission('manage')
     const request = await getRequestMachine(db, requestId)
     await assertMachineNotArchived(db, request.machine_id)
+    assertTechnologistRequestEditable(request.status)
     const parsed = schema.parse(data) as Record<string, unknown>
     const insertResult = await db.from(table).insert({ request_id: requestId, ...parsed }).select('*').single()
     let row = insertResult.data
@@ -780,6 +735,7 @@ async function updateSectionRow<T>(id: string, table: RequestSectionTable, schem
     const { db } = await requireRequestPermission('manage')
     const meta = await getRequestIdAndMachineByItem(db, table, id)
     await assertMachineNotArchived(db, meta.machineId)
+    assertTechnologistRequestEditable(meta.status)
     const parsed = schema.parse(data) as Record<string, unknown>
     const explicitKeys = objectKeys(data)
     const patchKeys = explicitKeys.length > 0 ? explicitKeys : Object.keys(parsed)
@@ -940,6 +896,7 @@ async function deleteSectionRow(id: string, table: RequestSectionTable): Promise
       throw error
     }
     await assertMachineNotArchived(db, meta.machineId)
+    assertTechnologistRequestEditable(meta.status)
     const { data: reservationsData, error: reservationsError } = await db
       .from('inventory_reservations')
       .select('id')
@@ -1162,6 +1119,7 @@ export async function updateKnifeStock(id: string, stock_remainder_mm: number): 
     const { db, role } = await requireRequestPermission('manage')
     assertRole(role, ['procurement_head', ...DIRECTOR_ROLES])
     const meta = await getRequestIdAndMachineByItem(db, 'request_knives', id)
+    assertTechnologistRequestEditable(meta.status)
     const { error } = await db.from('request_knives').update({ stock_remainder_mm }).eq('id', id)
     if (error) throw new Error(error.message || 'Не удалось обновить остаток')
     revalidateRequest(meta.machineId, meta.requestId)
@@ -1180,6 +1138,7 @@ export async function updateComponentStock(id: string, data: { stock_remainder: 
       availability: availabilitySchema.parse(data.availability),
     }
     const meta = await getRequestIdAndMachineByItem(db, 'request_components', id)
+    assertTechnologistRequestEditable(meta.status)
     const { error } = await db.from('request_components').update(parsed).eq('id', id)
     if (error) throw new Error(error.message || 'Не удалось обновить остаток')
     revalidateRequest(meta.machineId, meta.requestId)
@@ -1194,6 +1153,7 @@ export async function updatePaintStock(id: string, stock_remainder_kg: number): 
     const { db, role } = await requireRequestPermission('manage')
     assertRole(role, ['painting_head', ...DIRECTOR_ROLES])
     const meta = await getRequestIdAndMachineByItem(db, 'request_paint', id)
+    assertTechnologistRequestEditable(meta.status)
     const { error } = await db.from('request_paint').update({ stock_remainder_kg }).eq('id', id)
     if (error) throw new Error(error.message || 'Не удалось обновить остаток')
     revalidateRequest(meta.machineId, meta.requestId)

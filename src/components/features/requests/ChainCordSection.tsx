@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { CHAIN_CORD_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import { addChainCord, deleteChainCord, updateChainCord, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { InlineEditCell } from './InlineEditCell'
+import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
@@ -116,6 +117,7 @@ export function ChainCordSection({ requestId, items, isEditable, onRowsChange }:
               <th className="min-w-[120px] px-3 py-2 text-left">Тип</th>
               <th className="min-w-[200px] px-3 py-2 text-left">Параметры</th>
               <th className="min-w-[120px] px-3 py-2 text-left">Необходимо, мм</th>
+              <th className="min-w-[120px] px-3 py-2 text-left">Статус</th>
               <th className="w-[60px] px-3 py-2 text-right">Действия</th>
             </tr>
           </thead>
@@ -140,6 +142,7 @@ export function ChainCordSection({ requestId, items, isEditable, onRowsChange }:
                 </td>
                 <td className="px-3 py-2"><InlineEditCell value={row.parameters} disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { parameters: value === null ? null : String(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={neededLengthMm(row)} type="number" step="1" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_meters: mmToMeters(value) })} /></td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
                 <td className="px-3 py-2 text-right">
                   {isEditable && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
@@ -152,7 +155,7 @@ export function ChainCordSection({ requestId, items, isEditable, onRowsChange }:
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
                   {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
                 </td>
