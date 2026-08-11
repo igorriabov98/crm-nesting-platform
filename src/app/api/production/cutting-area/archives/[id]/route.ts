@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/permissions/server'
+import { canAccessFactory } from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveFileResponse } from '@/lib/file-archive/resolver'
 import { MACHINE_CUTTING_BUCKET } from '@/lib/machine-cutting/files'
@@ -14,8 +15,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!parsed.success) return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
   const db = createAdminClient() as any
   const machine = await db.from('machines').select('factory_id').eq('id', parsed.data.machineId).maybeSingle()
-  const isDirector = ['financial_director','commercial_director','planning_director'].includes(permission.role)
-  if (machine.error || !machine.data || (!isDirector && permission.factoryId !== machine.data.factory_id)) return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
+  if (machine.error || !machine.data || !canAccessFactory(permission, 'production_cutting_area', 'view', machine.data.factory_id)) {
+    return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
+  }
   const { data, error } = await db.from('machine_cutting_archives')
     .select('machine_id,storage_path,file_name,mime_type')
     .eq('id', parsed.data.id).eq('machine_id', parsed.data.machineId).maybeSingle()

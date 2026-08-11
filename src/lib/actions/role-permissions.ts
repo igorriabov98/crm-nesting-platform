@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import {
   PERMISSION_RESOURCES,
   RESOURCE_BY_KEY,
+  DIRECTOR_ACCESS_ROLES,
   getDefaultPermission,
   getDefaultPermissionMap,
   getEmptyPermissionMap,
@@ -13,6 +14,7 @@ import {
   isLockedResource,
   type PermissionMap,
   type PermissionState,
+  type FactoryAccessScope,
   type ResourceKey,
 } from '@/lib/permissions/resources'
 import {
@@ -23,6 +25,7 @@ import {
 import {
   resolveDepartmentPermissions,
   type DepartmentAccessPermissionRow,
+  type FactoryAccessOperationScopes,
 } from '@/lib/permissions/resolve'
 import type { UserRole } from '@/lib/types'
 
@@ -34,6 +37,7 @@ type DepartmentAccessRow = DepartmentAccessPermissionRow & {
   resource_key: string
   can_view: boolean
   can_manage: boolean
+  factory_scope: FactoryAccessScope
   updated_by?: string | null
   updated_at?: string | null
 }
@@ -80,6 +84,8 @@ type AuditRow = {
   old_can_manage: boolean | null
   new_can_view: boolean
   new_can_manage: boolean
+  old_factory_scope: FactoryAccessScope | null
+  new_factory_scope: FactoryAccessScope
   changed_by: string | null
   changed_at: string
   user?: { full_name: string | null } | { full_name: string | null }[] | null
@@ -123,6 +129,7 @@ export type DepartmentAccessPermissionInput = {
   resourceKey: ResourceKey
   canView: boolean
   canManage: boolean
+  factoryScope: FactoryAccessScope
 }
 
 export type RolePermissionInput = DepartmentAccessPermissionInput
@@ -152,6 +159,8 @@ export type UserAccessPreview = {
     group: string
     canView: boolean
     canManage: boolean
+    factoryViewScope: FactoryAccessScope
+    factoryManageScope: FactoryAccessScope
     sources: string[]
   }>
 }
@@ -167,6 +176,7 @@ export type RolePermissionsPageData = {
     label: string
     description?: string
     group: string
+    supportsFactoryScope: boolean
   }>
   permissions: DepartmentAccessPermissionInput[]
   auditLog: Array<{
@@ -179,6 +189,8 @@ export type RolePermissionsPageData = {
     oldCanManage: boolean | null
     newCanView: boolean
     newCanManage: boolean
+    oldFactoryScope: FactoryAccessScope | null
+    newFactoryScope: FactoryAccessScope
     changedAt: string
     changedByName: string | null
   }>
@@ -200,6 +212,15 @@ function normalizeState(input: Pick<DepartmentAccessPermissionInput, 'canView' |
     canView: input.canView || input.canManage,
     canManage: input.canManage,
   }
+}
+
+function normalizedFactoryScope(
+  input: Pick<DepartmentAccessPermissionInput, 'canView' | 'canManage' | 'factoryScope'>,
+  supportsFactoryScope: boolean,
+): FactoryAccessScope {
+  return supportsFactoryScope && (input.canView || input.canManage) && input.factoryScope === 'all'
+    ? 'all'
+    : 'own'
 }
 
 function normalizeMembership(row: MembershipRow): DepartmentPermissionMembership {
@@ -278,7 +299,7 @@ async function getMembershipRows(db: LooseDb) {
 async function getAccessRows(db: LooseDb) {
   const { data, error } = await db
     .from<DepartmentAccessRow[]>('department_access_permissions')
-    .select('department_id, subject_scope, resource_key, can_view, can_manage, updated_by, updated_at')
+    .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope, updated_by, updated_at')
 
   if (error) throw new Error(error.message || 'Не удалось загрузить права доступа отделов')
   return Array.isArray(data) ? data : []
@@ -287,7 +308,7 @@ async function getAccessRows(db: LooseDb) {
 async function getAuditRows(db: LooseDb) {
   const { data, error } = await db
     .from<AuditRow[]>('department_access_audit_log')
-    .select('id, department_id, subject_scope, resource_key, old_can_view, old_can_manage, new_can_view, new_can_manage, changed_by, changed_at, user:users(full_name), department:departments(name)')
+    .select('id, department_id, subject_scope, resource_key, old_can_view, old_can_manage, new_can_view, new_can_manage, old_factory_scope, new_factory_scope, changed_by, changed_at, user:users(full_name), department:departments(name)')
     .order('changed_at', { ascending: false })
     .limit(30)
 
@@ -296,12 +317,13 @@ async function getAuditRows(db: LooseDb) {
 }
 
 function buildAccessInputs(departments: DepartmentRow[], rows: DepartmentAccessRow[]) {
-  const matrix = new Map<string, PermissionState>()
+  const matrix = new Map<string, PermissionState & { factoryScope: FactoryAccessScope }>()
   for (const row of rows) {
     if (!(row.resource_key in RESOURCE_BY_KEY)) continue
     matrix.set(accessKey(row.department_id, row.subject_scope, row.resource_key as ResourceKey), {
       canView: row.can_view || row.can_manage,
       canManage: row.can_manage,
+      factoryScope: row.factory_scope || 'own',
     })
   }
 
@@ -311,6 +333,7 @@ function buildAccessInputs(departments: DepartmentRow[], rows: DepartmentAccessR
         const state = matrix.get(accessKey(department.id, subjectScope, resource.key)) || {
           canView: false,
           canManage: false,
+          factoryScope: 'own' as const,
         }
         return {
           departmentId: department.id,
@@ -318,6 +341,7 @@ function buildAccessInputs(departments: DepartmentRow[], rows: DepartmentAccessR
           resourceKey: resource.key,
           canView: state.canView,
           canManage: state.canManage,
+          factoryScope: state.factoryScope,
         }
       })
     )
@@ -408,10 +432,12 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
   let usedLegacyFallback = false
   let permissions = isAdminPosition ? getFullPermissionMap() : getEmptyPermissionMap()
   const sources: Partial<Record<ResourceKey, string[]>> = {}
+  const factoryScopes: Partial<Record<ResourceKey, FactoryAccessOperationScopes>> = {}
 
   if (isAdminPosition) {
     for (const resource of PERMISSION_RESOURCES) {
       sources[resource.key] = [CRM_ADMIN_POSITION_NAME]
+      factoryScopes[resource.key] = { view: 'all', manage: 'all' }
     }
   } else if (userData.is_active === false) {
     permissions = getEmptyPermissionMap()
@@ -422,7 +448,7 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
     if (departmentIds.length > 0) {
       const { data: accessData } = await db
         .from<DepartmentAccessRow[]>('department_access_permissions')
-        .select('department_id, subject_scope, resource_key, can_view, can_manage')
+        .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope')
         .in('department_id', departmentIds)
 
       accessRows = Array.isArray(accessData) ? accessData : []
@@ -431,10 +457,14 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
     const resolved = resolveDepartmentPermissions(memberships, accessRows)
     permissions = resolved.permissions
     Object.assign(sources, resolved.sources)
+    Object.assign(factoryScopes, resolved.factoryScopes)
 
     if (resolved.appliedDepartmentRows === 0 && userData.role) {
       permissions = await getLegacyPermissionMap(db, userData.role)
       usedLegacyFallback = true
+      if ((DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(userData.role)) {
+        factoryScopes.production_cutting_area = { view: 'all', manage: 'all' }
+      }
       for (const resource of PERMISSION_RESOURCES) {
         const state = permissions[resource.key]
         if (state?.canView || state?.canManage) {
@@ -460,6 +490,8 @@ async function buildUserAccessPreview(db: LooseDb, userId: string): Promise<User
         group: resource.group,
         canView: state.canView,
         canManage: state.canManage,
+        factoryViewScope: factoryScopes[resource.key]?.view || 'own',
+        factoryManageScope: factoryScopes[resource.key]?.manage || 'own',
         sources: sources[resource.key] || [],
       }
     }),
@@ -491,6 +523,7 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
           label: resource.label,
           description: 'description' in resource ? resource.description : undefined,
           group: resource.group,
+          supportsFactoryScope: 'supportsFactoryScope' in resource && resource.supportsFactoryScope === true,
         })),
         permissions: buildAccessInputs(departments, accessRows),
         auditLog: auditRows
@@ -505,6 +538,8 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
             oldCanManage: row.old_can_manage,
             newCanView: row.new_can_view,
             newCanManage: row.new_can_manage,
+            oldFactoryScope: row.old_factory_scope,
+            newFactoryScope: row.new_factory_scope,
             changedAt: row.changed_at,
             changedByName: relationOne(row.user)?.full_name || null,
           })),
@@ -520,6 +555,9 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
 
 function validateInput(input: DepartmentAccessPermissionInput[], departmentIds: Set<string>) {
   const validResources = new Set(PERMISSION_RESOURCES.map((resource) => resource.key))
+  const resourcesWithFactoryScope = new Set(PERMISSION_RESOURCES
+    .filter((resource) => 'supportsFactoryScope' in resource && resource.supportsFactoryScope === true)
+    .map((resource) => resource.key))
   const normalized: DepartmentAccessPermissionInput[] = []
 
   for (const item of input) {
@@ -534,6 +572,7 @@ function validateInput(input: DepartmentAccessPermissionInput[], departmentIds: 
       resourceKey: item.resourceKey,
       canView: item.canView === true || canManage,
       canManage,
+      factoryScope: normalizedFactoryScope(item, resourcesWithFactoryScope.has(item.resourceKey)),
     })
   }
 
@@ -547,13 +586,14 @@ export async function saveDepartmentAccessPermissions(input: DepartmentAccessPer
     const departments = await getDepartments(db)
     const normalized = validateInput(input, new Set(departments.map((department) => department.id)))
     const existingRows = await getAccessRows(db)
-    const existing = new Map<string, PermissionState>()
+    const existing = new Map<string, PermissionState & { factoryScope: FactoryAccessScope }>()
 
     for (const row of existingRows) {
       if (!(row.resource_key in RESOURCE_BY_KEY)) continue
       existing.set(accessKey(row.department_id, row.subject_scope, row.resource_key as ResourceKey), {
         canView: row.can_view || row.can_manage,
         canManage: row.can_manage,
+        factoryScope: row.factory_scope || 'own',
       })
     }
 
@@ -562,9 +602,12 @@ export async function saveDepartmentAccessPermissions(input: DepartmentAccessPer
         const previous = existing.get(accessKey(item.departmentId, item.subjectScope, item.resourceKey)) || {
           canView: false,
           canManage: false,
+          factoryScope: 'own' as const,
         }
         const next = normalizeState(item)
-        if (previous.canView === next.canView && previous.canManage === next.canManage) return null
+        if (previous.canView === next.canView
+          && previous.canManage === next.canManage
+          && previous.factoryScope === item.factoryScope) return null
         return {
           department_id: item.departmentId,
           subject_scope: item.subjectScope,
@@ -573,6 +616,8 @@ export async function saveDepartmentAccessPermissions(input: DepartmentAccessPer
           old_can_manage: previous.canManage,
           new_can_view: next.canView,
           new_can_manage: next.canManage,
+          old_factory_scope: previous.factoryScope,
+          new_factory_scope: item.factoryScope,
           changed_by: context.userId,
         }
       })
@@ -584,6 +629,7 @@ export async function saveDepartmentAccessPermissions(input: DepartmentAccessPer
       resource_key: item.resourceKey,
       can_view: item.canView || item.canManage,
       can_manage: item.canManage,
+      factory_scope: item.factoryScope,
       updated_by: context.userId,
     }))
 

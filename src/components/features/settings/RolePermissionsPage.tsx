@@ -28,7 +28,7 @@ import {
   type RolePermissionsPageData,
 } from '@/lib/actions/role-permissions'
 import { startUserImpersonation } from '@/lib/actions/impersonation'
-import type { ResourceKey } from '@/lib/permissions/resources'
+import type { FactoryAccessScope, ResourceKey } from '@/lib/permissions/resources'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -59,6 +59,7 @@ type RolePermissionsPageProps = {
 type PermissionState = {
   canView: boolean
   canManage: boolean
+  factoryScope: FactoryAccessScope
 }
 
 type PermissionStateMap = Record<string, PermissionState>
@@ -66,7 +67,7 @@ type PermissionField = 'view' | 'manage'
 type Resource = RolePermissionsPageData['resources'][number]
 
 const SUBJECT_SCOPES = ['head', 'member'] as const satisfies readonly DepartmentAccessSubjectScope[]
-const EMPTY_PERMISSION: PermissionState = { canView: false, canManage: false }
+const EMPTY_PERMISSION: PermissionState = { canView: false, canManage: false, factoryScope: 'own' }
 
 function permissionKey(departmentId: string, subjectScope: DepartmentAccessSubjectScope, resourceKey: ResourceKey) {
   return `${departmentId}:${subjectScope}:${resourceKey}`
@@ -84,6 +85,10 @@ function operationLabel(field: PermissionField) {
   return field === 'view' ? 'просмотр' : 'управление'
 }
 
+function factoryScopeLabel(scope: FactoryAccessScope) {
+  return scope === 'all' ? 'Все заводы' : 'Свой завод'
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',
@@ -98,6 +103,7 @@ function buildState(permissions: DepartmentAccessPermissionInput[]) {
     permissions.map((permission) => [permissionKey(permission.departmentId, permission.subjectScope, permission.resourceKey), {
       canView: permission.canView || permission.canManage,
       canManage: permission.canManage,
+      factoryScope: permission.factoryScope,
     }])
   ) as PermissionStateMap
 }
@@ -225,7 +231,9 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
           const key = permissionKey(department.id, scope, resource.key)
           const before = initialPermissions[key] || EMPTY_PERMISSION
           const current = permissions[key] || EMPTY_PERMISSION
-          if (before.canView !== current.canView || before.canManage !== current.canManage) count += 1
+          if (before.canView !== current.canView
+            || before.canManage !== current.canManage
+            || before.factoryScope !== current.factoryScope) count += 1
         }
       }
     }
@@ -267,13 +275,29 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
 
       if (field === 'view') {
         next.canView = checked
-        if (!checked) next.canManage = false
+        if (!checked) {
+          next.canManage = false
+          next.factoryScope = 'own'
+        }
       } else {
         next.canManage = checked
         if (checked) next.canView = true
       }
 
       return { ...current, [key]: next }
+    })
+  }
+
+  function updateFactoryScope(
+    departmentId: string,
+    subjectScope: DepartmentAccessSubjectScope,
+    resourceKey: ResourceKey,
+    factoryScope: FactoryAccessScope,
+  ) {
+    setPermissions((current) => {
+      const key = permissionKey(departmentId, subjectScope, resourceKey)
+      const previous = current[key] || EMPTY_PERMISSION
+      return { ...current, [key]: { ...previous, factoryScope } }
     })
   }
 
@@ -295,6 +319,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
               resourceKey: resource.key,
               canView: state.canView || state.canManage,
               canManage: state.canManage,
+              factoryScope: state.factoryScope,
             }
           })
         )
@@ -341,6 +366,45 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
         disabled={isSaving}
         onCheckedChange={(checked) => updatePermission(selectedDepartment.id, scope, resource.key, field, checked)}
       />
+    )
+  }
+
+  function renderFactoryScopeSelect(
+    resource: Resource,
+    scope: DepartmentAccessSubjectScope,
+    placement: 'desktop' | 'mobile',
+  ) {
+    if (!selectedDepartment || !resource.supportsFactoryScope) return null
+    const state = getState(permissions, selectedDepartment.id, scope, resource.key)
+    const id = `${placement}-${resource.key}-${scope}-factory-scope`
+    return (
+      <div className="mx-auto w-full max-w-64 space-y-1.5 text-left">
+        <label htmlFor={id} className="text-xs font-medium text-muted-foreground">
+          Охват заказов
+        </label>
+        <Select
+          value={state.factoryScope}
+          disabled={isSaving || !state.canView}
+          onValueChange={(value) => updateFactoryScope(
+            selectedDepartment.id,
+            scope,
+            resource.key,
+            value === 'all' ? 'all' : 'own',
+          )}
+        >
+          <SelectTrigger
+            id={id}
+            className="h-11 w-full bg-background text-foreground"
+            aria-label={`${resource.label}: ${subjectLabel(scope)}, охват заказов`}
+          >
+            <SelectValue>{factoryScopeLabel(state.factoryScope)}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="own">Свой завод</SelectItem>
+            <SelectItem value="all">Все заводы</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
     )
   }
 
@@ -593,26 +657,44 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                             </TableCell>
                           </TableRow>
                           {resources.map((resource) => (
-                            <TableRow key={resource.key} className="group/permission-row">
-                              <TableCell className="whitespace-normal px-4 py-2.5">
-                                <div className="font-medium text-foreground">{resource.label}</div>
-                                {resource.description && (
-                                  <p className="mt-0.5 max-w-xl text-xs leading-5 text-muted-foreground">{resource.description}</p>
-                                )}
-                              </TableCell>
-                              <TableCell className="border-l bg-primary/[0.018] p-0 text-center group-hover/permission-row:bg-primary/[0.04]">
-                                {renderPermissionSwitch(resource, 'head', 'view')}
-                              </TableCell>
-                              <TableCell className="bg-primary/[0.018] p-0 text-center group-hover/permission-row:bg-primary/[0.04]">
-                                {renderPermissionSwitch(resource, 'head', 'manage')}
-                              </TableCell>
-                              <TableCell className="border-l bg-primary/[0.045] p-0 text-center group-hover/permission-row:bg-primary/[0.075]">
-                                {renderPermissionSwitch(resource, 'member', 'view')}
-                              </TableCell>
-                              <TableCell className="bg-primary/[0.045] p-0 text-center group-hover/permission-row:bg-primary/[0.075]">
-                                {renderPermissionSwitch(resource, 'member', 'manage')}
-                              </TableCell>
-                            </TableRow>
+                            <Fragment key={resource.key}>
+                              <TableRow className="group/permission-row">
+                                <TableCell className="whitespace-normal px-4 py-2.5">
+                                  <div className="font-medium text-foreground">{resource.label}</div>
+                                  {resource.description && (
+                                    <p className="mt-0.5 max-w-xl text-xs leading-5 text-muted-foreground">{resource.description}</p>
+                                  )}
+                                </TableCell>
+                                <TableCell className="border-l bg-primary/[0.018] p-0 text-center group-hover/permission-row:bg-primary/[0.04]">
+                                  {renderPermissionSwitch(resource, 'head', 'view')}
+                                </TableCell>
+                                <TableCell className="bg-primary/[0.018] p-0 text-center group-hover/permission-row:bg-primary/[0.04]">
+                                  {renderPermissionSwitch(resource, 'head', 'manage')}
+                                </TableCell>
+                                <TableCell className="border-l bg-primary/[0.045] p-0 text-center group-hover/permission-row:bg-primary/[0.075]">
+                                  {renderPermissionSwitch(resource, 'member', 'view')}
+                                </TableCell>
+                                <TableCell className="bg-primary/[0.045] p-0 text-center group-hover/permission-row:bg-primary/[0.075]">
+                                  {renderPermissionSwitch(resource, 'member', 'manage')}
+                                </TableCell>
+                              </TableRow>
+                              {resource.supportsFactoryScope && (
+                                <TableRow className="bg-muted/20 hover:bg-muted/30">
+                                  <TableCell className="whitespace-normal px-4 py-3 align-top">
+                                    <div className="font-medium text-foreground">Заводы в очереди</div>
+                                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                                      По умолчанию виден только завод сотрудника.
+                                    </p>
+                                  </TableCell>
+                                  <TableCell colSpan={2} className="border-l bg-primary/[0.018] px-4 py-3">
+                                    {renderFactoryScopeSelect(resource, 'head', 'desktop')}
+                                  </TableCell>
+                                  <TableCell colSpan={2} className="border-l bg-primary/[0.045] px-4 py-3">
+                                    {renderFactoryScopeSelect(resource, 'member', 'desktop')}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </Fragment>
                           ))}
                         </Fragment>
                       ))}
@@ -649,6 +731,12 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                               </div>
                             ))}
                           </div>
+                          {resource.supportsFactoryScope && (
+                            <div className="mt-3 grid gap-3 rounded-lg border bg-muted/25 p-3 sm:grid-cols-2">
+                              <div>{renderFactoryScopeSelect(resource, 'head', 'mobile')}</div>
+                              <div>{renderFactoryScopeSelect(resource, 'member', 'mobile')}</div>
+                            </div>
+                          )}
                         </article>
                       ))}
                     </section>
@@ -738,7 +826,10 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                 <div className="space-y-3">
                   {visibleAudit.map((item) => {
                     const resource = data.resources.find((candidate) => candidate.key === item.resourceKey)
-                    const permissionGranted = (!item.oldCanView && item.newCanView) || (!item.oldCanManage && item.newCanManage)
+                    const scopeExpanded = (item.oldFactoryScope || 'own') === 'own' && item.newFactoryScope === 'all'
+                    const permissionGranted = (!item.oldCanView && item.newCanView)
+                      || (!item.oldCanManage && item.newCanManage)
+                      || scopeExpanded
                     return (
                       <article key={item.id} className="relative pl-5">
                         <span className={cn(
@@ -756,6 +847,11 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                           <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
                             Упр: {item.oldCanManage ? 'да' : 'нет'} → {item.newCanManage ? 'да' : 'нет'}
                           </Badge>
+                          {(item.oldFactoryScope || 'own') !== item.newFactoryScope && (
+                            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                              Заводы: {factoryScopeLabel(item.oldFactoryScope || 'own')} → {factoryScopeLabel(item.newFactoryScope)}
+                            </Badge>
+                          )}
                         </div>
                         <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
                           <Clock3 className="size-3" />
