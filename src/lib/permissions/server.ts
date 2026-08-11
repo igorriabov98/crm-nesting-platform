@@ -7,6 +7,7 @@ import {
   resolveDepartmentPermissions,
   shouldUseLegacyPermissionFallback,
   type DepartmentAccessPermissionRow,
+  type FactoryAccessOperationScopes,
 } from '@/lib/permissions/resolve'
 import {
   PERMISSION_RESOURCES,
@@ -52,6 +53,7 @@ export type UserPermissionDetails = {
   usedLegacyFallback: boolean
   memberships: DepartmentPermissionMembership[]
   sources: Partial<Record<ResourceKey, string[]>>
+  factoryScopes: Partial<Record<ResourceKey, FactoryAccessOperationScopes>>
 }
 
 type PermissionQueryResult<T> = {
@@ -119,6 +121,7 @@ function makeFullAdminPermissionDetails(memberships: DepartmentPermissionMembers
     usedLegacyFallback: false,
     memberships,
     sources,
+    factoryScopes: Object.fromEntries(PERMISSION_RESOURCES.map((resource) => [resource.key, { view: 'all', manage: 'all' }])) as Partial<Record<ResourceKey, FactoryAccessOperationScopes>>,
   }
 }
 
@@ -170,6 +173,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
       usedLegacyFallback: false,
       memberships: [],
       sources: {},
+      factoryScopes: {},
     }
   }
 
@@ -196,7 +200,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
   if (departmentIds.length > 0) {
     const { data: accessData, error: accessError } = await db
       .from('department_access_permissions')
-      .select('department_id, subject_scope, resource_key, can_view, can_manage')
+      .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope')
       .in('department_id', departmentIds)
 
     if (accessError) {
@@ -206,7 +210,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
     accessRows = Array.isArray(accessData) ? (accessData as DepartmentAccessPermissionRow[]) : []
   }
 
-  const { permissions, sources, appliedDepartmentRows } = resolveDepartmentPermissions(memberships, accessRows)
+  const { permissions, sources, factoryScopes, appliedDepartmentRows } = resolveDepartmentPermissions(memberships, accessRows)
 
   if (shouldUseLegacyPermissionFallback(appliedDepartmentRows) && userRow.role) {
     const legacyPermissions = await getRolePermissionMap(userRow.role)
@@ -222,6 +226,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
       usedLegacyFallback: true,
       memberships,
       sources: legacySources,
+      factoryScopes: {},
     }
   }
 
@@ -231,6 +236,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
     usedLegacyFallback: false,
     memberships,
     sources,
+    factoryScopes,
   }
 })
 

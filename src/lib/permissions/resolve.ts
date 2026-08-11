@@ -2,6 +2,7 @@ import {
   RESOURCE_BY_KEY,
   getEmptyPermissionMap,
   type PermissionMap,
+  type FactoryAccessScope,
   type ResourceKey,
 } from '@/lib/permissions/resources'
 
@@ -13,6 +14,7 @@ export type DepartmentAccessPermissionRow = {
   resource_key: string
   can_view: boolean
   can_manage: boolean
+  factory_scope?: FactoryAccessScope | null
 }
 
 export type DepartmentPermissionMembershipInput = {
@@ -21,9 +23,15 @@ export type DepartmentPermissionMembershipInput = {
   isDepartmentHead: boolean
 }
 
+export type FactoryAccessOperationScopes = {
+  view: FactoryAccessScope
+  manage: FactoryAccessScope
+}
+
 export type ResolvedDepartmentPermissions = {
   permissions: PermissionMap
   sources: Partial<Record<ResourceKey, string[]>>
+  factoryScopes: Partial<Record<ResourceKey, FactoryAccessOperationScopes>>
   appliedDepartmentRows: number
 }
 
@@ -45,6 +53,7 @@ export function resolveDepartmentPermissions(
 ): ResolvedDepartmentPermissions {
   const permissions = getEmptyPermissionMap()
   const sources: Partial<Record<ResourceKey, string[]>> = {}
+  const factoryScopes: Partial<Record<ResourceKey, FactoryAccessOperationScopes>> = {}
   let appliedDepartmentRows = 0
 
   for (const membership of memberships) {
@@ -62,9 +71,18 @@ export function resolveDepartmentPermissions(
         canManage: current.canManage || row.can_manage,
       }
       if (row.can_view || row.can_manage) addSource(sources, resourceKey, source)
+      const currentFactoryScopes = factoryScopes[resourceKey] || { view: 'own', manage: 'own' }
+      factoryScopes[resourceKey] = {
+        view: (row.can_view || row.can_manage) && row.factory_scope === 'all'
+          ? 'all'
+          : currentFactoryScopes.view,
+        manage: row.can_manage && row.factory_scope === 'all'
+          ? 'all'
+          : currentFactoryScopes.manage,
+      }
       appliedDepartmentRows += 1
     }
   }
 
-  return { permissions, sources, appliedDepartmentRows }
+  return { permissions, sources, factoryScopes, appliedDepartmentRows }
 }

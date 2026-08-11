@@ -11,6 +11,7 @@ import {
 const root = process.cwd()
 const read = (path: string) => readFileSync(join(root, path), 'utf8')
 const migration = read('supabase/migrations/20260809120000_production_cutting_area.sql')
+const factoryScopeMigration = read('supabase/migrations/20260811120000_production_cutting_area_factory_scope.sql')
 
 for (const table of ['production_cutting_cycles', 'production_cutting_cycle_requests', 'production_cutting_cycle_events']) {
   assert(migration.includes(`create table public.${table}`), `Нет таблицы ${table}`)
@@ -30,11 +31,18 @@ assert(/select role, 'production_cutting_area', can_view, can_manage[\s\S]*resou
 assert(/resource_key = 'production_fact'[\s\S]*'production_cutting_area'/u.test(migration))
 assert(migration.includes('to service_role'))
 assert(migration.includes('from public, anon, authenticated'))
+assert(factoryScopeMigration.includes("default 'own'"), 'Существующие настройки должны остаться в охвате своего завода')
+assert(factoryScopeMigration.includes("factory_scope in ('own', 'all')"))
+assert(factoryScopeMigration.includes("factory_scope = 'own' or resource_key = 'production_cutting_area'"))
+assert(factoryScopeMigration.includes('old_factory_scope'))
+assert(factoryScopeMigration.includes('new_factory_scope'))
+assert(!factoryScopeMigration.includes("set factory_scope = 'all'"), 'Миграция не должна автоматически открывать оба завода')
 
 const resource = PERMISSION_RESOURCES.find((candidate) => candidate.key === 'production_cutting_area')
 assert(resource)
 assert.equal(resource.label, 'Участок заготовки')
 assert.equal(resource.defaultHref, '/production/cutting-area')
+assert.equal(resource.supportsFactoryScope, true)
 const pathRequirement = getPermissionRequirementForPath('/production/cutting-area')
 assert.equal(pathRequirement?.resourceKey, 'production_cutting_area')
 const viewOnly: PermissionMap = { production_cutting_area: { canView: true, canManage: false } }
@@ -48,6 +56,9 @@ assert(action.includes(".eq('is_confirmed', true)"))
 assert(action.includes(".eq('is_archived', false)"))
 assert(action.includes(".eq('stage_type', 'cutting')"))
 assert(action.includes('getProductionCuttingAreaDetails'))
+assert(action.includes('canAccessAllFactories'))
+assert(action.includes('assertFactoryAccess'))
+assert(!action.includes('DIRECTOR_ROLES'), 'Серверные действия должны использовать единый резолвер охвата')
 assert(action.includes('production_month'))
 assert(action.includes(".in('product_id', productIds)"), 'Файлы старых позиций должны находиться по product_id')
 assert(action.includes("['drawing','step','pdf']"), 'PDF изделия должен отображаться вместе с чертежами')
@@ -64,8 +75,17 @@ const archiveRoute = read('src/app/api/production/cutting-area/archives/[id]/rou
 const fileRoute = read('src/app/api/production/cutting-area/files/[kind]/[id]/route.ts')
 for (const route of [archiveRoute, fileRoute]) {
   assert(route.includes("requirePermission('production_cutting_area', 'view')"))
+  assert(route.includes('canAccessFactory'))
   assert(route.includes('resolveFileResponse'))
 }
+assert(!archiveRoute.includes('isDirector'))
+assert(!fileRoute.includes('isDirector'))
+
+const accessPage = read('src/components/features/settings/RolePermissionsPage.tsx')
+for (const label of ['Охват заказов', 'Свой завод', 'Все заводы']) {
+  assert(accessPage.includes(label), `Матрица доступа не содержит ${label}`)
+}
+assert(accessPage.includes('supportsFactoryScope'))
 assert(fileRoute.includes(".eq('machine_id', machineId)"))
 assert(fileRoute.includes(".eq('is_sample', false)"))
 assert(fileRoute.includes("['drawing','step','pdf']"))

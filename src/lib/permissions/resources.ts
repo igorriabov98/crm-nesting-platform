@@ -2,6 +2,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import type { UserRole } from '@/lib/types'
 
 export type PermissionOperation = 'view' | 'manage'
+export type FactoryAccessScope = 'own' | 'all'
 
 export type ResourceKey =
   | 'dashboard'
@@ -114,6 +115,7 @@ export type PermissionResource = {
     order: number
   }
   locked?: boolean
+  supportsFactoryScope?: boolean
 }
 
 export type PermissionState = {
@@ -372,6 +374,7 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: PRODUCTION_CONSUMABLE_ROLES,
     routes: [{ path: ROUTES.PRODUCTION_CUTTING_AREA, match: 'prefix', operation: 'view', priority: 180 }],
     sidebar: { section: 'production', icon: 'production', order: 25 },
+    supportsFactoryScope: true,
   },
   {
     key: 'consumable_requests',

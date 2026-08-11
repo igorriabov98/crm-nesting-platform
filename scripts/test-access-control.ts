@@ -15,6 +15,10 @@ import {
   type DepartmentAccessPermissionRow,
   type DepartmentPermissionMembershipInput,
 } from '../src/lib/permissions/resolve'
+import {
+  canAccessAllFactories,
+  canAccessFactory,
+} from '../src/lib/permissions/factory-scope'
 
 const root = process.cwd()
 
@@ -106,6 +110,8 @@ const rows: DepartmentAccessPermissionRow[] = [
   { department_id: 'technical', subject_scope: 'member', resource_key: 'nesting_settings', can_view: false, can_manage: false },
   { department_id: 'production', subject_scope: 'head', resource_key: 'nesting', can_view: false, can_manage: true },
   { department_id: 'production', subject_scope: 'head', resource_key: 'supply', can_view: true, can_manage: false },
+  { department_id: 'production', subject_scope: 'head', resource_key: 'production_cutting_area', can_view: true, can_manage: true, factory_scope: 'all' },
+  { department_id: 'technical', subject_scope: 'member', resource_key: 'production_cutting_area', can_view: true, can_manage: false, factory_scope: 'own' },
 ]
 
 const resolved = resolveDepartmentPermissions(memberships, rows)
@@ -117,6 +123,35 @@ assert(!hasPermission(resolved.permissions, 'nesting_catalog', 'manage'), 'view 
 assert(!hasPermission(resolved.permissions, 'nesting_settings', 'view'), 'Настройки nesting должны быть независимы от nesting.manage')
 assert(!shouldUseLegacyPermissionFallback(resolved.appliedDepartmentRows), 'Явные строки отделов нельзя обходить legacy-ролью')
 assert(shouldUseLegacyPermissionFallback(0), 'Legacy fallback допустим только без настроенных строк отделов')
+assert.equal(resolved.factoryScopes.production_cutting_area?.view, 'all', 'Охват просмотра нескольких отделов должен объединяться через OR')
+assert.equal(resolved.factoryScopes.production_cutting_area?.manage, 'all', 'Охват управления должен учитываться только из строки с manage')
+
+const ownFactoryPermission = {
+  role: 'production_manager',
+  factoryId: 'uzhhorod',
+  permissionDetails: { isAdminPosition: false, factoryScopes: { production_cutting_area: { view: 'own' as const, manage: 'own' as const } } },
+}
+assert(canAccessFactory(ownFactoryPermission, 'production_cutting_area', 'view', 'uzhhorod'))
+assert(!canAccessFactory(ownFactoryPermission, 'production_cutting_area', 'view', 'berehove'))
+assert(!canAccessFactory({ ...ownFactoryPermission, factoryId: null }, 'production_cutting_area', 'view', 'uzhhorod'), 'Пользователь без завода должен быть закрыт по умолчанию')
+assert(canAccessAllFactories({
+  ...ownFactoryPermission,
+  permissionDetails: { isAdminPosition: false, factoryScopes: { production_cutting_area: { view: 'all', manage: 'own' } } },
+}, 'production_cutting_area', 'view'), 'Настраиваемый охват просмотра должен открывать оба завода')
+assert(!canAccessAllFactories({
+  ...ownFactoryPermission,
+  permissionDetails: { isAdminPosition: false, factoryScopes: { production_cutting_area: { view: 'all', manage: 'own' } } },
+}, 'production_cutting_area', 'manage'), 'Глобальный просмотр не должен расширять управление другого отдела')
+assert(canAccessAllFactories({
+  ...ownFactoryPermission,
+  role: 'planning_director',
+  factoryId: null,
+}, 'production_cutting_area', 'manage'), 'Действующий глобальный доступ директоров должен сохраниться')
+assert(canAccessAllFactories({
+  ...ownFactoryPermission,
+  factoryId: null,
+  permissionDetails: { isAdminPosition: true, factoryScopes: {} },
+}, 'production_cutting_area', 'manage'), 'Администратор CRM должен видеть все заводы')
 
 const denied = resolveDepartmentPermissions(
   [{ departmentId: 'technical', departmentName: 'Технический', isDepartmentHead: false }],

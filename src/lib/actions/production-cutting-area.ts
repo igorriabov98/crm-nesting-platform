@@ -5,6 +5,10 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requirePermission } from '@/lib/permissions/server'
+import {
+  assertFactoryAccess,
+  canAccessAllFactories,
+} from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
@@ -88,12 +92,7 @@ export type CuttingAreaOrderDetails = {
 }
 
 function admin() { return createAdminClient() as any }
-const DIRECTOR_ROLES = new Set(['financial_director','commercial_director','planning_director'])
-
-function assertFactoryScope(permission: { role: string; factoryId: string | null }, factoryId: string) {
-  if (DIRECTOR_ROLES.has(permission.role) || permission.factoryId === factoryId) return
-  throw new Error('Недостаточно прав для выбранного завода')
-}
+const CUTTING_AREA_RESOURCE = 'production_cutting_area' as const
 
 function kyivDateOnly() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -115,11 +114,20 @@ async function loadCoveredRequestIds(db: any, requestIds: string[]) {
 export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWorkspace> {
   const permission = await requirePermission('production_cutting_area', 'view')
   const db = admin()
+  const canSeeAllFactories = canAccessAllFactories(permission, CUTTING_AREA_RESOURCE, 'view')
+  if (!canSeeAllFactories && !permission.factoryId) {
+    return {
+      orders: [],
+      sections: [],
+      canManage: permission.permissions.production_cutting_area?.canManage || false,
+      today: kyivDateOnly(),
+    }
+  }
   let machineQuery = db.from('machines')
     .select('id,name,factory_id,status,production_month,factories(name)')
     .eq('is_confirmed', true)
     .eq('is_archived', false)
-  if (!DIRECTOR_ROLES.has(permission.role) && permission.factoryId) machineQuery = machineQuery.eq('factory_id', permission.factoryId)
+  if (!canSeeAllFactories) machineQuery = machineQuery.eq('factory_id', permission.factoryId)
   const machineResult = await machineQuery.order('name')
   if (machineResult.error) throw new Error(machineResult.error.message)
   const machines = machineResult.data || []
@@ -192,6 +200,7 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
   const rawSections = sectionResult.data || []
   const sectionById = new Map(rawSections.map((section: any) => [section.id, section]))
   const sections = rawSections.filter((section: any) => {
+    if (!canSeeAllFactories && section.factory_id !== permission.factoryId) return false
     if (!section.parent_id) return false
     const parent = sectionById.get(section.parent_id) as any
     return (section.production_stage_type || parent?.production_stage_type) === 'cutting'
@@ -210,7 +219,7 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
     const db = admin()
     const machine = await db.from('machines').select('id,factory_id').eq('id', id).eq('is_archived', false).maybeSingle()
     if (machine.error || !machine.data) throw new Error('Заказ не найден')
-    assertFactoryScope(permission, machine.data.factory_id)
+    assertFactoryAccess(permission, CUTTING_AREA_RESOURCE, 'view', machine.data.factory_id)
     const [requestResult, itemResult] = await Promise.all([
       db.from('technologist_requests').select('id,created_by,created_at,status').eq('machine_id', id).order('created_at').order('id'),
       db.from('machine_items').select('id,product_id,product_version_id,product_project_id,product_project_version_id,product_name,product_name_uk,product_drawing_number,drawing_number,quantity,is_sample').eq('machine_id', id).eq('is_sample', false).order('sort_order'),
@@ -323,9 +332,12 @@ export async function startProductionCuttingCycle(input: z.input<typeof startSch
     const parsed = startSchema.parse(input)
     const permission = await requirePermission('production_cutting_area', 'manage')
     const { userId } = permission
-    assertFactoryScope(permission, parsed.factoryId)
     if (parsed.factDate !== kyivDateOnly()) throw new Error('Фактическая дата должна быть сегодняшней')
     const db = admin()
+    const machine = await db.from('machines').select('factory_id').eq('id', parsed.machineId).eq('is_archived', false).maybeSingle()
+    if (machine.error || !machine.data) throw new Error('Заказ не найден')
+    if (machine.data.factory_id !== parsed.factoryId) throw new Error('Заказ не принадлежит выбранному заводу')
+    assertFactoryAccess(permission, CUTTING_AREA_RESOURCE, 'manage', machine.data.factory_id)
     const requestIds = await unprocessedRequestIds(db, parsed.machineId)
     const { data, error } = await db.rpc('fn_start_production_cutting_cycle', {
       p_machine_id: parsed.machineId, p_factory_id: parsed.factoryId, p_section_id: parsed.sectionId,
@@ -346,7 +358,7 @@ export async function completeProductionCuttingCycle(cycleId: string) {
     const db = admin()
     const cycle = await db.from('production_cutting_cycles').select('factory_id').eq('id', id).maybeSingle()
     if (cycle.error || !cycle.data) throw new Error('Цикл не найден')
-    assertFactoryScope(permission, cycle.data.factory_id)
+    assertFactoryAccess(permission, CUTTING_AREA_RESOURCE, 'manage', cycle.data.factory_id)
     const { error } = await db.rpc('fn_complete_production_cutting_cycle', { p_cycle_id: id, p_actor: permission.userId })
     if (error) throw new Error(error.message)
     revalidatePath(ROUTES.PRODUCTION_CUTTING_AREA)
@@ -361,7 +373,7 @@ export async function reopenProductionCuttingCycle(input: { cycleId: string; rea
     const db = admin()
     const cycle = await db.from('production_cutting_cycles').select('factory_id').eq('id', parsed.cycleId).maybeSingle()
     if (cycle.error || !cycle.data) throw new Error('Цикл не найден')
-    assertFactoryScope(permission, cycle.data.factory_id)
+    assertFactoryAccess(permission, CUTTING_AREA_RESOURCE, 'manage', cycle.data.factory_id)
     const { error } = await db.rpc('fn_reopen_production_cutting_cycle', { p_cycle_id: parsed.cycleId, p_reason: parsed.reason, p_actor: permission.userId })
     if (error) throw new Error(error.message)
     revalidatePath(ROUTES.PRODUCTION_CUTTING_AREA)
