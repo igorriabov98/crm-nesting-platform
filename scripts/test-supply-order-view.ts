@@ -20,6 +20,36 @@ import {
   sortSupplyOrderItems,
   type OrderFiltersState,
 } from '@/components/features/supply-orders/supply-order-view'
+import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
+
+assert.equal(
+  getRequestItemSelect('request_pipe'),
+  '*, materials(id, name), steel_types(name)',
+  'pipe order rows must load the human-readable steel grade'
+)
+assert.equal(
+  getRequestItemSelect('request_knives'),
+  '*, materials(id, name)',
+  'the steel type relation must only be added to pipe order queries'
+)
+assert.deepEqual(
+  withPipeSteelGrade(
+    'request_pipe',
+    { steel_types: { name: 'S355' } },
+    [
+      { label: 'Тип трубы', value: 'square' },
+      { label: 'Размер', value: '40x40' },
+      { label: 'Стенка', value: '10' },
+    ]
+  ),
+  [
+    { label: 'Тип трубы', value: 'square' },
+    { label: 'Марка', value: 'S355' },
+    { label: 'Размер', value: '40x40' },
+    { label: 'Стенка', value: '10' },
+  ],
+  'pipe cards must show the steel grade selected in the request'
+)
 
 const baseFilters: OrderFiltersState = {
   query: '',

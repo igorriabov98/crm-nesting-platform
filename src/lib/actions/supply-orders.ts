@@ -13,6 +13,7 @@ import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { MaterialCategory, OrderItemStatus } from '@/lib/types'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { formatCompanyLocation } from '@/lib/transport/company-location'
+import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -64,6 +65,7 @@ type RequestItemRow = Record<string, unknown> & {
   order_status?: OrderItemStatus
   delivered_at?: string | null
   calculated_weight_kg?: number | null
+  steel_types?: { name?: string | null } | null
 }
 
 type RawOrderItem = {
@@ -531,14 +533,14 @@ async function getDeliveryDays(db: LooseDb, supplierIds: string[]) {
 
 async function loadRows(db: LooseDb, table: string, requestIds: string[]) {
   if (requestIds.length === 0) return []
-  const { data, error } = await db.from(table).select('*, materials(id, name)').in('request_id', requestIds)
+  const { data, error } = await db.from(table).select(getRequestItemSelect(table)).in('request_id', requestIds)
   if (error) throw new Error(error.message || 'Не удалось загрузить позиции')
   return (data || []) as RequestItemRow[]
 }
 
 async function loadRowsByIds(db: LooseDb, table: string, ids: string[]) {
   if (ids.length === 0) return []
-  const { data, error } = await db.from(table).select('*, materials(id, name)').in('id', ids)
+  const { data, error } = await db.from(table).select(getRequestItemSelect(table)).in('id', ids)
   if (error) throw new Error(error.message || 'Не удалось загрузить позиции')
   return (data || []) as RequestItemRow[]
 }
@@ -843,7 +845,7 @@ function getAggregateIdentityKey(table: string, row: RequestItemRow, item: RawOr
 }
 
 function getAggregateCharacteristics(table: string, row: RequestItemRow, item: RawOrderItem): SupplyOrderAggregateCharacteristic[] {
-  const characteristics = getCharacteristicParts(table, row, true)
+  const characteristics = withPipeSteelGrade(table, row, getCharacteristicParts(table, row, true))
   return characteristics.length ? characteristics : [{ label: 'Позиция', value: item.item_name }]
 }
 
