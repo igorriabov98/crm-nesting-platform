@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/permissions/server'
 import type { StageType } from '@/lib/types'
 import { STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
 import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
+import { getStageIntervals, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
 
 export type StageStatus = 'not_planned' | 'active' | 'completed' | 'overdue' | 'skipped'
 
@@ -20,6 +21,7 @@ export type ProductionStageRow = {
   night_shift_dates: string[]
   status: StageStatus
   delay_days: number
+  intervals: ProductionStageIntervalValue[]
 }
 
 export type ProductionRow = {
@@ -58,6 +60,7 @@ type SelectedProductionStage = {
   is_night_shift: boolean | null
   night_shift_date: string | null
   night_shift_dates?: string[] | null
+  production_stage_intervals?: ProductionStageIntervalValue[] | null
 }
 
 type SelectedProductionMachine = {
@@ -157,7 +160,10 @@ export async function getProductionData(factoryFilter?: string | null) {
     actual_material_date, actual_shipping_date, delivery_to_client_date,
     production_stages(
       id, stage_type, workshop, date_start, date_end, manual_overdue,
-      is_skipped, is_night_shift, night_shift_date, night_shift_dates
+      is_skipped, is_night_shift, night_shift_date, night_shift_dates,
+      production_stage_intervals(
+        id, production_stage_id, position, date_start, date_end, workshop, created_at, updated_at
+      )
     )
   `
 
@@ -177,7 +183,10 @@ export async function getProductionData(factoryFilter?: string | null) {
     production_month, production_workshop, production_queue_number,
     production_stages(
       id, stage_type, workshop, date_start, date_end, manual_overdue,
-      is_skipped, is_night_shift, night_shift_date, night_shift_dates
+      is_skipped, is_night_shift, night_shift_date, night_shift_dates,
+      production_stage_intervals(
+        id, production_stage_id, position, date_start, date_end, workshop, created_at, updated_at
+      )
     )
   `
 
@@ -207,6 +216,12 @@ export async function getProductionData(factoryFilter?: string | null) {
 
   let { data: machines, error } = await buildQuery(selectWithDeadline)
 
+  if (error && error.message?.includes('production_stage_intervals')) {
+    const fallback = await buildQuery(selectWithDeadlineLegacy)
+    machines = fallback.data
+    error = fallback.error
+  }
+
   if (error && error.message?.includes('night_shift_dates')) {
     const fallback = await buildQuery(selectWithDeadlineLegacy)
     machines = fallback.data
@@ -223,6 +238,12 @@ export async function getProductionData(factoryFilter?: string | null) {
     const fallback = await buildQuery(selectWithoutDeadline)
     machines = fallback.data
     error = fallback.error
+
+    if (error && error.message?.includes('production_stage_intervals')) {
+      const legacyFallback = await buildQuery(selectWithoutDeadlineLegacy)
+      machines = legacyFallback.data
+      error = legacyFallback.error
+    }
 
     if (error && error.message?.includes('manual_overdue')) {
       const legacyFallback = await buildQuery(selectWithoutDeadlineLegacy)
@@ -283,6 +304,14 @@ export async function getProductionData(factoryFilter?: string | null) {
         night_shift_dates: normalizeNightShiftDates(s.night_shift_dates, s.night_shift_date),
         status,
         delay_days,
+        intervals: getStageIntervals({
+          id: s.id,
+          stage_type: s.stage_type,
+          workshop: s.workshop,
+          date_start: s.date_start,
+          date_end: s.date_end,
+          intervals: s.production_stage_intervals,
+        }),
       }
     })
 

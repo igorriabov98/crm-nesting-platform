@@ -1973,6 +1973,41 @@ export type Database = {
           updated_at?: string
         }
       }
+      production_stage_intervals: {
+        Row: {
+          id: string
+          production_stage_id: string
+          position: number
+          date_start: string | null
+          date_end: string | null
+          workshop: number | null
+          created_at: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          id?: string
+          production_stage_id: string
+          position: number
+          date_start?: string | null
+          date_end?: string | null
+          workshop?: number | null
+          created_at?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          production_stage_id?: string
+          position?: number
+          date_start?: string | null
+          date_end?: string | null
+          workshop?: number | null
+          created_at?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+      }
       production_fact_sections: {
         Row: {
           id: string
@@ -2699,13 +2734,17 @@ export type Database = {
           id: string
           request_id: string
           machine_id: string
-          target_type: 'machine' | 'stage' | 'outsourcing'
+          target_type: 'machine' | 'stage' | 'outsourcing' | 'stage_interval'
           production_stage_id: string | null
+          production_stage_interval_id: string | null
           outsourcing_operation_id: string | null
           stage_type: Database['public']['Enums']['stage_type'] | null
           field_name: string
           old_value: string | null
           new_value: string | null
+          interval_operation: 'create' | 'update' | 'delete' | null
+          old_payload: Json | null
+          new_payload: Json | null
           status: Database['public']['Enums']['production_date_change_request_status']
           sort_order: number
           created_at: string
@@ -2715,13 +2754,17 @@ export type Database = {
           id?: string
           request_id: string
           machine_id: string
-          target_type: 'machine' | 'stage' | 'outsourcing'
+          target_type: 'machine' | 'stage' | 'outsourcing' | 'stage_interval'
           production_stage_id?: string | null
+          production_stage_interval_id?: string | null
           outsourcing_operation_id?: string | null
           stage_type?: Database['public']['Enums']['stage_type'] | null
           field_name: string
           old_value?: string | null
           new_value?: string | null
+          interval_operation?: 'create' | 'update' | 'delete' | null
+          old_payload?: Json | null
+          new_payload?: Json | null
           status?: Database['public']['Enums']['production_date_change_request_status']
           sort_order?: number
           created_at?: string
@@ -2731,13 +2774,17 @@ export type Database = {
           id?: string
           request_id?: string
           machine_id?: string
-          target_type?: 'machine' | 'stage' | 'outsourcing'
+          target_type?: 'machine' | 'stage' | 'outsourcing' | 'stage_interval'
           production_stage_id?: string | null
+          production_stage_interval_id?: string | null
           outsourcing_operation_id?: string | null
           stage_type?: Database['public']['Enums']['stage_type'] | null
           field_name?: string
           old_value?: string | null
           new_value?: string | null
+          interval_operation?: 'create' | 'update' | 'delete' | null
+          old_payload?: Json | null
+          new_payload?: Json | null
           status?: Database['public']['Enums']['production_date_change_request_status']
           sort_order?: number
           created_at?: string
@@ -4923,6 +4970,33 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {
+      fn_mutate_production_stage_interval: {
+        Args: {
+          p_operation: string
+          p_stage_id: string
+          p_interval_id?: string | null
+          p_date_start?: string | null
+          p_date_end?: string | null
+          p_workshop?: number | null
+          p_updated_by?: string | null
+        }
+        Returns: string
+      }
+      fn_apply_production_stage_interval_changes: {
+        Args: {
+          p_changes: Json
+          p_updated_by?: string | null
+        }
+        Returns: undefined
+      }
+      fn_apply_production_plan_date_change_items: {
+        Args: {
+          p_request_id: string
+          p_updated_by?: string | null
+          p_decision_comment?: string | null
+        }
+        Returns: undefined
+      }
       can_claim_machine_layout_request: {
         Args: { p_user_id: string }
         Returns: boolean

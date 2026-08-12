@@ -7,10 +7,10 @@ import {
   buildTonnageMetric,
   daysBetween,
   mergeTodayOrders,
-  prorateWeightForPeriod,
   sortPersonalItems,
   splitSupplyRisks,
 } from './calculations'
+import { getStageIntervals, prorateStageIntervalsForPeriod, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
 import type {
   PlanningAssemblyTonnage,
   PlanningDashboardFactory,
@@ -175,7 +175,7 @@ export async function getPlanningAssemblyTonnage(
   const bounds = monthBounds(month)
   const [machinesResult, sectionsResult] = await Promise.all([
     admin.from('machines_with_totals')
-      .select('id, total_weight, production_stages(stage_type, date_start, date_end, planned_date_end, is_skipped)')
+      .select('id, total_weight, production_stages(id, stage_type, workshop, date_start, date_end, planned_date_end, is_skipped, production_stage_intervals(id, production_stage_id, position, date_start, date_end, workshop))')
       .eq('factory_id', factoryId)
       .eq('is_archived', false),
     admin.from('production_fact_sections')
@@ -188,11 +188,14 @@ export async function getPlanningAssemblyTonnage(
   throwOnError(sectionsResult, 'Не удалось загрузить участки факта')
 
   type Stage = {
+    id: string
     stage_type: string
+    workshop: number | null
     date_start: string | null
     date_end: string | null
     planned_date_end: string | null
     is_skipped: boolean | null
+    production_stage_intervals: ProductionStageIntervalValue[] | null
   }
   type MachineRow = { total_weight: number | null; production_stages: Stage[] | null }
   const machineRows = (machinesResult.data || []) as MachineRow[]
@@ -201,9 +204,14 @@ export async function getPlanningAssemblyTonnage(
   for (const machine of machineRows) {
     const assembly = (machine.production_stages || []).find((stage) => stage.stage_type === 'assembly' && !stage.is_skipped)
     if (!assembly) continue
-    const end = assembly.planned_date_end || assembly.date_end || assembly.date_start
-    monthPlan += prorateWeightForPeriod(Number(machine.total_weight || 0), assembly.date_start, end, bounds.start, bounds.end)
-    todayPlan += prorateWeightForPeriod(Number(machine.total_weight || 0), assembly.date_start, end, today, today)
+    const intervals = getStageIntervals({
+      ...assembly,
+      date_end: assembly.production_stage_intervals?.length ? assembly.date_end : assembly.planned_date_end || assembly.date_end,
+      intervals: assembly.production_stage_intervals,
+    })
+    const weight = Number(machine.total_weight || 0)
+    monthPlan += prorateStageIntervalsForPeriod(weight, intervals, bounds.start, bounds.end).tons
+    todayPlan += prorateStageIntervalsForPeriod(weight, intervals, today, today).tons
   }
 
   type SectionRow = { id: string; parent_id: string | null; name: string }

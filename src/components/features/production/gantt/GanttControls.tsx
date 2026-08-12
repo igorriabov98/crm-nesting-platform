@@ -41,6 +41,7 @@ interface GanttControlsProps {
   productionMonthOptions?: GanttMonthOption[]
   showStageFilters?: boolean
   stageOptions?: StageType[]
+  showTimelineControls?: boolean
 }
 
 export function GanttControls({
@@ -54,6 +55,7 @@ export function GanttControls({
   productionMonthOptions = [],
   showStageFilters = true,
   stageOptions = STAGE_ORDER,
+  showTimelineControls = true,
 }: GanttControlsProps) {
   const setF = (partial: Partial<GanttFilters>) => onFiltersChange({ ...filters, ...partial })
   const availableStageSet = new Set(stageOptions)
@@ -69,29 +71,31 @@ export function GanttControls({
   return (
     <div className="space-y-3 rounded-lg border border-[#E8ECF0] bg-white px-3 py-3 shadow-sm sm:px-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
-        <Button variant="outline" size="sm" onClick={onToday} className="min-h-11 gap-1.5 px-3 text-sm sm:min-h-10">
-          <CalendarDays className="h-3.5 w-3.5" />
-          Сегодня
-        </Button>
+        {showTimelineControls && <>
+          <Button variant="outline" size="sm" onClick={onToday} className="min-h-11 gap-1.5 px-3 text-sm sm:min-h-10">
+            <CalendarDays className="h-3.5 w-3.5" />
+            Сегодня
+          </Button>
 
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-[#6B7280]">Масштаб:</span>
-          <Button variant="outline" size="icon-sm" className="min-h-11 min-w-11 sm:min-h-10 sm:min-w-10" onClick={onZoomOut} aria-label="Уменьшить масштаб">
-            <Minus className="h-3.5 w-3.5" />
-          </Button>
-          <input
-            type="range"
-            min={15}
-            max={80}
-            aria-label="Масштаб дней на графике"
-            value={dayWidth}
-            onChange={(event) => onDayWidthChange(Number(event.target.value))}
-            className="h-10 min-w-32 flex-1 accent-[#1B3A6B] sm:flex-none"
-          />
-          <Button variant="outline" size="icon-sm" className="min-h-11 min-w-11 sm:min-h-10 sm:min-w-10" onClick={onZoomIn} aria-label="Увеличить масштаб">
-            <Plus className="h-3.5 w-3.5" />
-          </Button>
-        </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-[#6B7280]">Масштаб:</span>
+            <Button variant="outline" size="icon-sm" className="min-h-11 min-w-11 sm:min-h-10 sm:min-w-10" onClick={onZoomOut} aria-label="Уменьшить масштаб">
+              <Minus className="h-3.5 w-3.5" />
+            </Button>
+            <input
+              type="range"
+              min={15}
+              max={80}
+              aria-label="Масштаб дней на графике"
+              value={dayWidth}
+              onChange={(event) => onDayWidthChange(Number(event.target.value))}
+              className="h-10 min-w-32 flex-1 accent-[#1B3A6B] sm:flex-none"
+            />
+            <Button variant="outline" size="icon-sm" className="min-h-11 min-w-11 sm:min-h-10 sm:min-w-10" onClick={onZoomIn} aria-label="Увеличить масштаб">
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </>}
 
         <label className={cn(
           'flex min-h-11 cursor-pointer select-none items-center gap-2 rounded-md border px-3 text-sm transition-colors sm:min-h-10',

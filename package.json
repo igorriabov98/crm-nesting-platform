@@ -20,6 +20,7 @@
     "test:file-archive": "tsx scripts/test-file-archive.ts",
     "test:machine-cutting": "tsx scripts/test-machine-cutting.ts",
     "test:production-cutting-area": "tsx scripts/test-production-cutting-area.ts",
+    "test:production-stage-intervals": "tsx scripts/test-production-stage-intervals.ts",
     "test:product-project-lifecycle": "tsx scripts/test-product-project-lifecycle.ts",
     "test:document-ral": "tsx scripts/test-document-ral-format.ts",
     "test:order-specification-document": "tsx scripts/test-order-specification-document.tsx",

@@ -11,7 +11,7 @@ import { STAGES } from '@/lib/constants/stages'
 import { isDirector } from '@/lib/utils/permissions'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
+import { getStageIntervalSequenceError, intervalPayloadEquals, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
 import { createSystemMachineChatMessage } from '@/lib/actions/machine-activity'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { getIncomingOutsourcingPlanBlockers, syncOutsourcingTransportForProductionPlan, syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
@@ -32,7 +32,10 @@ type LooseQuery = PromiseLike<DbResult> & {
   maybeSingle: () => Promise<DbResult>
   single: () => Promise<DbResult>
 }
-type LooseDb = { from: (table: string) => LooseQuery }
+type LooseDb = {
+  from: (table: string) => LooseQuery
+  rpc: (fn: string, args: Record<string, unknown>) => Promise<DbResult>
+}
 
 export type ProductionMonthPlanSummary = {
   id: string
@@ -43,12 +46,28 @@ export type ProductionMonthPlanSummary = {
   confirmed_at: string | null
 }
 
-export type ProductionPlanDateChangeInput = {
+type ProductionPlanDateFieldChangeInput = {
   target_type: 'machine' | 'stage' | 'outsourcing'
   production_stage_id?: string | null
   outsourcing_operation_id?: string | null
   field_name: 'planned_material_date' | 'date_start' | 'date_end' | 'night_shift_date' | 'planned_send_date' | 'planned_return_date'
   new_value: string | null
+}
+
+export type ProductionPlanStageIntervalChangeInput = {
+  target_type: 'stage_interval'
+  production_stage_id: string
+  production_stage_interval_id: string
+  interval_operation: 'create' | 'update' | 'delete'
+  new_payload: ProductionStageIntervalValue | null
+}
+
+export type ProductionPlanDateChangeInput = ProductionPlanDateFieldChangeInput | ProductionPlanStageIntervalChangeInput
+
+function isStageIntervalChange(
+  change: ProductionPlanDateChangeInput,
+): change is ProductionPlanStageIntervalChangeInput {
+  return change.target_type === 'stage_interval'
 }
 
 export type ProductionPlanDateChangeApprovalPayload = {
@@ -68,13 +87,17 @@ export type ProductionPlanDateChangeApprovalPayload = {
 
 export type ProductionPlanDateChangeApprovalItem = {
   id: string
-  target_type: 'machine' | 'stage' | 'outsourcing'
+  target_type: 'machine' | 'stage' | 'outsourcing' | 'stage_interval'
   production_stage_id: string | null
+  production_stage_interval_id: string | null
   outsourcing_operation_id: string | null
   stage_type: StageType | null
   field_name: string
   old_value: string | null
   new_value: string | null
+  interval_operation: 'create' | 'update' | 'delete' | null
+  old_payload: ProductionStageIntervalValue | null
+  new_payload: ProductionStageIntervalValue | null
   status: ProductionDateChangeRequestStatus
 }
 
@@ -133,7 +156,7 @@ type TaskRow = {
 
 const planStatusSchema = z.enum(['preliminary_ready', 'confirmed'])
 const dateValueSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Некорректная дата').nullable()
-const changeSchema = z.object({
+const dateFieldChangeSchema = z.object({
   target_type: z.enum(['machine', 'stage', 'outsourcing']),
   production_stage_id: z.string().uuid().optional().nullable(),
   outsourcing_operation_id: z.string().uuid().optional().nullable(),
@@ -150,6 +173,29 @@ const changeSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['outsourcing_operation_id'], message: 'Для аутсорсинга нужна операция и дата отправки или возврата' })
   }
 })
+const intervalPayloadSchema = z.object({
+  id: z.string().uuid(),
+  production_stage_id: z.string().uuid(),
+  position: z.number().int().positive(),
+  date_start: dateValueSchema,
+  date_end: dateValueSchema,
+  workshop: z.number().int().min(1).max(2).nullable(),
+})
+const intervalChangeSchema = z.object({
+  target_type: z.literal('stage_interval'),
+  production_stage_id: z.string().uuid(),
+  production_stage_interval_id: z.string().uuid(),
+  interval_operation: z.enum(['create', 'update', 'delete']),
+  new_payload: intervalPayloadSchema.nullable(),
+}).superRefine((value, ctx) => {
+  if (value.interval_operation !== 'delete' && !value.new_payload) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['new_payload'], message: 'Для подхода нужны новые данные' })
+  }
+  if (value.new_payload && (value.new_payload.id !== value.production_stage_interval_id || value.new_payload.production_stage_id !== value.production_stage_id)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['new_payload'], message: 'Подход не соответствует этапу' })
+  }
+})
+const changeSchema = z.union([dateFieldChangeSchema, intervalChangeSchema])
 const createRequestSchema = z.object({
   machineId: z.string().uuid(),
   changes: z.array(changeSchema).min(1),
@@ -205,6 +251,10 @@ function fieldLabel(item: Pick<DateChangeItemRow, 'target_type' | 'stage_type' |
       ? 'Аутсорсинг: готовы отправить'
       : 'Аутсорсинг: ожидаем возврат'
   }
+  if (item.target_type === 'stage_interval') {
+    const stage = item.stage_type ? STAGES[item.stage_type]?.label || item.stage_type : 'Этап'
+    return `${stage}: подход`
+  }
   const stage = item.stage_type ? STAGES[item.stage_type]?.label || item.stage_type : 'Этап'
   const field = item.field_name === 'date_start'
     ? 'начало'
@@ -214,7 +264,16 @@ function fieldLabel(item: Pick<DateChangeItemRow, 'target_type' | 'stage_type' |
   return `${stage}: ${field}`
 }
 
-function formatChangeLine(item: Pick<DateChangeItemRow, 'target_type' | 'stage_type' | 'field_name' | 'old_value' | 'new_value'>) {
+function formatIntervalPayload(value: ProductionStageIntervalValue | null | undefined) {
+  if (!value) return 'нет'
+  const workshop = value.workshop ? `, Цех ${value.workshop}` : ''
+  return `Подход ${value.position}: ${formatDate(value.date_start)} — ${formatDate(value.date_end)}${workshop}`
+}
+
+function formatChangeLine(item: Pick<DateChangeItemRow, 'target_type' | 'stage_type' | 'field_name' | 'old_value' | 'new_value' | 'old_payload' | 'new_payload'>) {
+  if (item.target_type === 'stage_interval') {
+    return `${fieldLabel(item)}: ${formatIntervalPayload(item.old_payload)} -> ${formatIntervalPayload(item.new_payload)}`
+  }
   return `${fieldLabel(item)}: ${formatDate(item.old_value)} -> ${formatDate(item.new_value)}`
 }
 
@@ -560,8 +619,11 @@ export async function createProductionPlanDateChangeRequest(input: {
       throw new Error('Запрос на изменение дат нужен только для подтверждённого плана')
     }
 
-    const stageIds = Array.from(new Set(parsed.changes.map((change) => change.production_stage_id).filter((id): id is string => Boolean(id))))
-    const outsourcingOperationIds = Array.from(new Set(parsed.changes.map((change) => change.outsourcing_operation_id).filter((id): id is string => Boolean(id))))
+    const parsedChanges = parsed.changes as ProductionPlanDateChangeInput[]
+    const stageIds = Array.from(new Set(parsedChanges.map((change) => change.production_stage_id).filter((id): id is string => Boolean(id))))
+    const outsourcingOperationIds = Array.from(new Set(parsedChanges
+      .map((change) => change.target_type === 'outsourcing' ? change.outsourcing_operation_id : null)
+      .filter((id): id is string => Boolean(id))))
     const stagesById = new Map<string, { id: string; machine_id: string; stage_type: StageType; date_start: string | null; date_end: string | null; night_shift_date: string | null }>()
     if (stageIds.length > 0) {
       const { data: stagesData, error: stagesError } = await db
@@ -573,6 +635,15 @@ export async function createProductionPlanDateChangeRequest(input: {
       for (const stage of (stagesData || []) as Array<{ id: string; machine_id: string; stage_type: StageType; date_start: string | null; date_end: string | null; night_shift_date: string | null }>) {
         if (stage.machine_id === machine.id) stagesById.set(stage.id, stage)
       }
+    }
+    const intervalsById = new Map<string, ProductionStageIntervalValue>()
+    if (stageIds.length > 0) {
+      const { data: intervalsData, error: intervalsError } = await db
+        .from('production_stage_intervals')
+        .select('id, production_stage_id, position, date_start, date_end, workshop')
+        .in('production_stage_id', stageIds)
+      if (intervalsError) throw new Error(intervalsError.message || 'Не удалось загрузить подходы')
+      for (const interval of (intervalsData || []) as ProductionStageIntervalValue[]) intervalsById.set(interval.id, interval)
     }
     const outsourcingById = new Map<string, { id: string; machine_id: string; planned_send_date: string | null; planned_return_date: string | null }>()
     if (outsourcingOperationIds.length > 0) {
@@ -589,37 +660,76 @@ export async function createProductionPlanDateChangeRequest(input: {
     }
 
     const items: Array<Record<string, unknown>> = []
-    parsed.changes.forEach((change, index) => {
+    parsedChanges.forEach((change, index) => {
       let oldValue: string | null = null
       let stageType: StageType | null = null
-      if (change.target_type === 'machine') {
+      let oldPayload: ProductionStageIntervalValue | null = null
+      let newPayload: ProductionStageIntervalValue | null = null
+      let intervalOperation: 'create' | 'update' | 'delete' | null = null
+      if (isStageIntervalChange(change)) {
+        const stage = stagesById.get(change.production_stage_id)
+        if (!stage) throw new Error('Этап производства не найден')
+        const currentInterval = intervalsById.get(change.production_stage_interval_id) ?? null
+        if (change.interval_operation === 'create' && currentInterval) throw new Error('Подход уже существует')
+        if (change.interval_operation !== 'create' && (!currentInterval || currentInterval.production_stage_id !== stage.id)) {
+          throw new Error('Подход производства не найден')
+        }
+        stageType = stage.stage_type
+        oldPayload = currentInterval
+        newPayload = change.interval_operation === 'delete' ? null : change.new_payload
+        if (newPayload?.date_start && newPayload.date_end && newPayload.date_end < newPayload.date_start) {
+          throw new Error(`У подхода ${newPayload.position} окончание раньше начала`)
+        }
+        if (stage.stage_type === 'assembly' && newPayload && (newPayload.date_start || newPayload.date_end) && !newPayload.workshop) {
+          throw new Error(`Для подхода ${newPayload.position} сборки/сварки выберите цех`)
+        }
+        intervalOperation = change.interval_operation
+      } else if (change.target_type === 'machine') {
         oldValue = dateOnly(machine.planned_material_date)
       } else if (change.target_type === 'stage') {
         const stage = change.production_stage_id ? stagesById.get(change.production_stage_id) : null
         if (!stage) throw new Error('Этап производства не найден')
         oldValue = dateOnly(stage[change.field_name as 'date_start' | 'date_end' | 'night_shift_date'])
         stageType = stage.stage_type
-      } else {
+      } else if (change.target_type === 'outsourcing') {
         const operation = change.outsourcing_operation_id ? outsourcingById.get(change.outsourcing_operation_id) : null
         if (!operation) throw new Error('Операция аутсорсинга не найдена')
         oldValue = dateOnly(operation[change.field_name as 'planned_send_date' | 'planned_return_date'])
       }
 
-      const newValue = dateOnly(change.new_value)
-      if (oldValue === newValue) return
+      const newValue = change.target_type === 'stage_interval' ? null : dateOnly(change.new_value)
+      if (change.target_type !== 'stage_interval' && oldValue === newValue) return
+      if (change.target_type === 'stage_interval' && intervalPayloadEquals(oldPayload, newPayload)) return
 
       items.push({
         machine_id: machine.id,
         target_type: change.target_type,
-        production_stage_id: change.target_type === 'stage' ? change.production_stage_id : null,
+        production_stage_id: change.target_type === 'stage' || change.target_type === 'stage_interval' ? change.production_stage_id : null,
+        production_stage_interval_id: change.target_type === 'stage_interval' ? change.production_stage_interval_id : null,
         outsourcing_operation_id: change.target_type === 'outsourcing' ? change.outsourcing_operation_id : null,
         stage_type: stageType,
-        field_name: change.field_name,
+        field_name: change.target_type === 'stage_interval' ? 'interval' : change.field_name,
         old_value: oldValue,
         new_value: newValue,
+        interval_operation: intervalOperation,
+        old_payload: oldPayload,
+        new_payload: newPayload,
         sort_order: index,
       })
     })
+
+    const simulatedIntervals = new Map(intervalsById)
+    for (const change of parsedChanges) {
+      if (!isStageIntervalChange(change)) continue
+      if (change.interval_operation === 'delete') simulatedIntervals.delete(change.production_stage_interval_id)
+      else if (change.new_payload) simulatedIntervals.set(change.production_stage_interval_id, change.new_payload)
+    }
+    for (const stageId of stageIds) {
+      const error = getStageIntervalSequenceError(
+        [...simulatedIntervals.values()].filter((interval) => interval.production_stage_id === stageId),
+      )
+      if (error) throw new Error(error)
+    }
 
     if (items.length === 0) throw new Error('Нет изменений дат для согласования')
 
@@ -729,7 +839,7 @@ export async function getProductionPlanDateChangeApproval(taskId: string): Promi
 
     const { data: itemsData, error: itemsError } = await db
       .from('production_plan_date_change_request_items')
-      .select('id, target_type, production_stage_id, outsourcing_operation_id, stage_type, field_name, old_value, new_value, status')
+      .select('id, target_type, production_stage_id, production_stage_interval_id, outsourcing_operation_id, stage_type, field_name, old_value, new_value, interval_operation, old_payload, new_payload, status')
       .eq('request_id', request.id)
       .order('sort_order', { ascending: true })
 
@@ -802,8 +912,10 @@ async function findApprovalConflicts(db: LooseDb, machineId: string, items: Date
   const conflicts: string[] = []
   const stageIds = items.map((item) => item.production_stage_id).filter((id): id is string => Boolean(id))
   const outsourcingOperationIds = items.map((item) => item.outsourcing_operation_id).filter((id): id is string => Boolean(id))
+  const intervalIds = items.map((item) => item.production_stage_interval_id).filter((id): id is string => Boolean(id))
   const stagesById = new Map<string, Record<string, unknown>>()
   const outsourcingById = new Map<string, Record<string, unknown>>()
+  const intervalsById = new Map<string, ProductionStageIntervalValue>()
 
   if (stageIds.length > 0) {
     const { data, error } = await db
@@ -827,6 +939,15 @@ async function findApprovalConflicts(db: LooseDb, machineId: string, items: Date
     }
   }
 
+  if (intervalIds.length > 0) {
+    const { data, error } = await db
+      .from('production_stage_intervals')
+      .select('id, production_stage_id, position, date_start, date_end, workshop')
+      .in('id', intervalIds)
+    if (error) throw new Error(error.message || 'Не удалось проверить подходы этапов')
+    for (const interval of (data || []) as ProductionStageIntervalValue[]) intervalsById.set(interval.id, interval)
+  }
+
   const machineItems = items.filter((item) => item.target_type === 'machine')
   let machine: Record<string, unknown> | null = null
   if (machineItems.length > 0) {
@@ -840,6 +961,16 @@ async function findApprovalConflicts(db: LooseDb, machineId: string, items: Date
   }
 
   for (const item of items) {
+    if (item.target_type === 'stage_interval') {
+      const current = item.production_stage_interval_id ? intervalsById.get(item.production_stage_interval_id) ?? null : null
+      const hasConflict = item.interval_operation === 'create'
+        ? current !== null
+        : !intervalPayloadEquals(current, item.old_payload)
+      if (hasConflict) {
+        conflicts.push(`${fieldLabel(item)}: исходный подход уже изменён параллельно`)
+      }
+      continue
+    }
     const source = item.target_type === 'machine'
       ? machine
       : item.target_type === 'stage'
@@ -854,50 +985,13 @@ async function findApprovalConflicts(db: LooseDb, machineId: string, items: Date
   return conflicts
 }
 
-async function applyRequestItems(db: LooseDb, items: DateChangeItemRow[]) {
-  for (const item of items) {
-    if (item.target_type === 'machine') {
-      const { error } = await db
-        .from('machines')
-        .update({ [item.field_name]: dateOnly(item.new_value) })
-        .eq('id', item.machine_id)
-      if (error) throw new Error(error.message || 'Не удалось обновить дату машины')
-      continue
-    }
-
-    if (item.target_type === 'stage') {
-      if (!item.production_stage_id) throw new Error('В запросе не указан этап')
-      const value = dateOnly(item.new_value)
-      const patch = item.field_name === 'night_shift_date'
-        ? {
-            night_shift_date: value,
-            night_shift_dates: normalizeNightShiftDates([], value),
-            is_night_shift: Boolean(value),
-          }
-        : { [item.field_name]: value }
-      const { error } = await db
-        .from('production_stages')
-        .update(patch)
-        .eq('id', item.production_stage_id)
-      if (error) throw new Error(error.message || 'Не удалось обновить дату этапа')
-      continue
-    }
-
-    if (!item.outsourcing_operation_id) throw new Error('В запросе не указана операция аутсорсинга')
-    const value = dateOnly(item.new_value)
-    const patch = item.field_name === 'planned_return_date'
-      ? {
-          planned_return_date: value,
-          supply_terms_confirmed_at: null,
-          supply_terms_confirmed_by: null,
-        }
-      : { [item.field_name]: value }
-    const { error } = await db
-      .from('machine_outsourcing_operations')
-      .update(patch)
-      .eq('id', item.outsourcing_operation_id)
-    if (error) throw new Error(error.message || 'Не удалось обновить дату аутсорсинга')
-  }
+async function applyRequestItems(db: LooseDb, requestId: string, actorId: string, decisionComment: string | null) {
+  const { error } = await db.rpc('fn_apply_production_plan_date_change_items', {
+    p_request_id: requestId,
+    p_updated_by: actorId,
+    p_decision_comment: decisionComment,
+  })
+  if (error) throw new Error(error.message || 'Не удалось атомарно применить изменения подтверждённого плана')
 }
 
 export async function decideProductionPlanDateChangeRequest(input: {
@@ -985,7 +1079,17 @@ export async function decideProductionPlanDateChangeRequest(input: {
       return { success: true, outcome: 'conflicted' as const, error: null }
     }
 
-    await applyRequestItems(db, items)
+    await applyRequestItems(db, request.id, context.userId, parsed.comment || null)
+    if (items.some((item) => item.stage_type === 'cutting' && (
+      item.target_type === 'stage_interval' || item.field_name === 'date_start'
+    ))) {
+      try {
+        await db.rpc('fn_promote_due_future_business_scrap', {})
+      } catch {
+        // Applying an approved calendar request remains authoritative if best-effort promotion is temporarily unavailable.
+      }
+      revalidatePath(ROUTES.INVENTORY)
+    }
     if (items.some((item) => item.stage_type === 'shipping' && item.field_name === 'date_end')) {
       await syncTransportCostTask(db, request.machine.id)
     }
@@ -1007,20 +1111,6 @@ export async function decideProductionPlanDateChangeRequest(input: {
     if (items.some((item) => item.target_type === 'outsourcing') && request.machine.factory_id && request.plan.production_month) {
       await syncOutsourcingTransportForProductionPlan(request.machine.factory_id, request.plan.production_month, 'confirmed', context.userId)
     }
-
-    const { error: requestError } = await db
-      .from('production_plan_date_change_requests')
-      .update({
-        status: 'approved',
-        decided_by: context.userId,
-        decided_at: now,
-        decision_comment: parsed.comment || null,
-      })
-      .eq('id', request.id)
-    if (requestError) throw new Error(requestError.message || 'Не удалось одобрить запрос')
-
-    await db.from('production_plan_date_change_request_items').update({ status: 'approved', decided_at: now }).eq('request_id', request.id)
-    await db.from('tasks').update({ status: 'completed', completed_at: now, updated_at: now }).eq('id', task.id)
 
     await createSystemMachineChatMessage({
       machineId: request.machine.id,
