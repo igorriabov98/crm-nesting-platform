@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { Archive, CalendarRange, CheckCircle2, ChevronDown, ClipboardList, Download, FileStack, Loader2, Play, RotateCcw, Search } from 'lucide-react'
+import { Archive, CalendarRange, CheckCircle2, ChevronDown, ClipboardList, Download, Factory, FileStack, Loader2, Play, RotateCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -78,6 +78,7 @@ export function CuttingAreaPage({ workspace }: { workspace: CuttingAreaWorkspace
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [filter, setFilter] = useState<Filter>('waiting')
+  const [factoryFilter, setFactoryFilter] = useState('all')
   const [productionMonth, setProductionMonth] = useState('all')
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -101,15 +102,25 @@ export function CuttingAreaPage({ workspace }: { workspace: CuttingAreaWorkspace
     : productionMonth === 'none'
       ? 'Без месяца'
       : formatProductionMonth(productionMonth)
+  const selectedFactoryLabel = factoryFilter === 'all'
+    ? 'Все заводы'
+    : workspace.factories.find((factory) => factory.id === factoryFilter)?.name || 'Все заводы'
 
   const orders = useMemo(() => workspace.orders
     .filter((order) => filter === 'all' || order.queueStatus === filter)
+    .filter((order) => factoryFilter === 'all' || order.factoryId === factoryFilter)
     .filter((order) => productionMonth === 'all' || (productionMonth === 'none' ? !order.productionMonth : order.productionMonth === productionMonth))
     .filter((order) => order.name.toLocaleLowerCase('ru').includes(search.trim().toLocaleLowerCase('ru')))
     .sort((left, right) => dueRank(left, workspace.today) - dueRank(right, workspace.today)
       || (left.plannedStartDate || '9999').localeCompare(right.plannedStartDate || '9999')
       || left.name.localeCompare(right.name, 'ru')),
-  [filter, productionMonth, search, workspace.orders, workspace.today])
+  [factoryFilter, filter, productionMonth, search, workspace.orders, workspace.today])
+
+  function changeFactory(value: string | null) {
+    setFactoryFilter(value || 'all')
+    setExpanded(null)
+    setDetailsLoading(null)
+  }
 
   async function toggleDetails(order: CuttingAreaOrder) {
     if (expanded === order.machineId) { setExpanded(null); return }
@@ -166,9 +177,10 @@ export function CuttingAreaPage({ workspace }: { workspace: CuttingAreaWorkspace
 
   return <main className="min-w-0 space-y-5 pb-16">
     <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div><div className="flex flex-wrap gap-2"><Badge className="bg-blue-100 text-blue-800">Производство</Badge>{!workspace.canManage && <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">Только просмотр</Badge>}</div><h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">Участок заготовки</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Заказы по плану производства, программы порезки, актуальные чертежи и STEP.</p></div>
-        <div className="grid w-full gap-3 sm:grid-cols-2 lg:max-w-2xl">
+        <div className={cn('grid w-full gap-3 sm:grid-cols-2', workspace.canViewAllFactories ? 'xl:max-w-3xl xl:grid-cols-3' : 'lg:max-w-2xl')}>
+          {workspace.canViewAllFactories && <div><Label className="sr-only" htmlFor="cutting-factory">Завод</Label><Select value={factoryFilter} onValueChange={changeFactory}><SelectTrigger id="cutting-factory" className="h-11 w-full bg-white" aria-label="Завод"><Factory className="h-4 w-4 text-slate-500" aria-hidden="true" /><SelectValue>{selectedFactoryLabel}</SelectValue></SelectTrigger><SelectContent align="start"><SelectItem value="all">Все заводы</SelectItem>{workspace.factories.map((factory) => <SelectItem key={factory.id} value={factory.id}>{factory.name}</SelectItem>)}</SelectContent></Select></div>}
           <div><Label className="sr-only" htmlFor="cutting-production-month">Месяц производства</Label><Select value={productionMonth} onValueChange={(value) => setProductionMonth(value || 'all')}><SelectTrigger id="cutting-production-month" className="h-11 w-full bg-white"><CalendarRange className="h-4 w-4 text-slate-500" aria-hidden="true" /><SelectValue>{selectedMonthLabel}</SelectValue></SelectTrigger><SelectContent align="start"><SelectItem value="all">Все месяцы</SelectItem>{productionMonths.map((month) => <SelectItem key={month} value={month}>{formatProductionMonth(month)}</SelectItem>)}{hasOrdersWithoutMonth && <SelectItem value="none">Без месяца</SelectItem>}</SelectContent></Select></div>
           <div className="relative"><Search className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" aria-hidden="true" /><Input value={search} onChange={(event) => setSearch(event.target.value)} className="h-11 pl-10" placeholder="Найти заказ" aria-label="Поиск по названию заказа" /></div>
         </div>
@@ -187,7 +199,7 @@ export function CuttingAreaPage({ workspace }: { workspace: CuttingAreaWorkspace
           <div className="flex min-w-0 flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center">
             <button type="button" className="flex min-h-11 min-w-0 flex-1 items-start gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-blue-500" aria-expanded={isExpanded} aria-controls={`cutting-details-${order.machineId}`} onClick={() => void toggleDetails(order)}>
               <ChevronDown className={cn('mt-1 h-5 w-5 shrink-0 text-slate-500 transition-transform', isExpanded && 'rotate-180')} aria-hidden="true" />
-              <span className="min-w-0"><span className="block break-words text-lg font-semibold text-slate-950">{order.name}</span><span className="mt-2 flex flex-wrap gap-2"><Badge variant="outline" className={statusStyles[order.queueStatus]}>{statusLabels[order.queueStatus]}</Badge><DueBadge order={order} today={workspace.today} /><Badge variant="outline" className="border-slate-200 bg-white text-slate-700">{order.productionMonth ? formatProductionMonth(order.productionMonth) : 'Без месяца'}</Badge>{order.cycleNumber && <Badge variant="outline">Цикл №{order.cycleNumber}</Badge>}</span></span>
+              <span className="min-w-0"><span className="block break-words text-lg font-semibold text-slate-950">{order.name}</span><span className="mt-2 flex flex-wrap gap-2"><Badge variant="outline" className={statusStyles[order.queueStatus]}>{statusLabels[order.queueStatus]}</Badge><DueBadge order={order} today={workspace.today} />{workspace.canViewAllFactories && <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-800">{order.factoryName}</Badge>}<Badge variant="outline" className="border-slate-200 bg-white text-slate-700">{order.productionMonth ? formatProductionMonth(order.productionMonth) : 'Без месяца'}</Badge>{order.cycleNumber && <Badge variant="outline">Цикл №{order.cycleNumber}</Badge>}</span></span>
             </button>
             <dl className="grid min-w-0 grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:w-[480px]">
               <div><dt className="text-slate-500">Начало</dt><dd className="mt-1 font-medium text-slate-900">{formatDate(order.plannedStartDate)}</dd></div>
