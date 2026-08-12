@@ -61,15 +61,21 @@ assert(action.includes(".eq('machine_id', parsed.machineId)"), 'Заявка д�
 assert(action.includes("assertFactoryAccess(permission, CUTTING_AREA_RESOURCE, 'view', machineResult.data.factory_id)"), 'Read-only заявка должна сохранять заводской охват')
 assert(action.includes('canAccessAllFactories'))
 assert(action.includes('assertFactoryAccess'))
+assert(action.includes("db.from('factories').select('id,name')"), 'Payload должен содержать доступные заводы для фильтра')
+assert(action.includes('canViewAllFactories: canSeeAllFactories'), 'Payload должен сообщать о полном заводском охвате')
 assert(!action.includes('DIRECTOR_ROLES'), 'Серверные действия должны использовать единый резолвер охвата')
 assert(action.includes('production_month'))
 assert(action.includes(".in('product_id', productIds)"), 'Файлы старых позиций должны находиться по product_id')
 assert(action.includes("['drawing','step','pdf']"), 'PDF изделия должен отображаться вместе с чертежами')
 
 const page = read('src/components/features/production/CuttingAreaPage.tsx')
-for (const label of ['Ожидают', 'В работе', 'Выполненные', 'Все месяцы', 'Сборочный чертёж', 'Общие чертежи', 'STEP file', 'Чертежи и STEP', 'Открыть заявку', 'Взял в работу', 'Машина завершена']) {
+for (const label of ['Ожидают', 'В работе', 'Выполненные', 'Все заводы', 'Все месяцы', 'Сборочный чертёж', 'Общие чертежи', 'STEP file', 'Чертежи и STEP', 'Открыть заявку', 'Взял в работу', 'Машина завершена']) {
   assert(page.includes(label), `UI не содержит ${label}`)
 }
+assert(page.includes('workspace.canViewAllFactories && <div>'), 'Фильтр заводов должен быть скрыт без полного охвата')
+assert(page.includes("order.factoryId === factoryFilter"), 'Очередь должна фильтроваться по выбранному заводу')
+assert(page.includes('setExpanded(null)'), 'Смена завода должна закрывать открытые подробности')
+assert(page.includes('aria-label="Завод"'), 'Фильтр заводов должен иметь доступное имя')
 assert(page.includes('aria-expanded={isExpanded}'))
 assert(page.includes('showCloseButton={false}'), 'Модальное окно файлов должно использовать крупную кнопку закрытия')
 assert(!page.includes('min-w-['), 'Страница не должна задавать фиксированную горизонтальную ширину')

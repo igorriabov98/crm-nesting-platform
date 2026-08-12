@@ -30,6 +30,11 @@ export type CuttingAreaSectionOption = {
   label: string
 }
 
+export type CuttingAreaFactoryOption = {
+  id: string
+  name: string
+}
+
 export type CuttingAreaOrder = {
   machineId: string
   name: string
@@ -50,7 +55,9 @@ export type CuttingAreaOrder = {
 export type CuttingAreaWorkspace = {
   orders: CuttingAreaOrder[]
   sections: CuttingAreaSectionOption[]
+  factories: CuttingAreaFactoryOption[]
   canManage: boolean
+  canViewAllFactories: boolean
   today: string
 }
 
@@ -164,11 +171,14 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
   const permission = await requirePermission('production_cutting_area', 'view')
   const db = admin()
   const canSeeAllFactories = canAccessAllFactories(permission, CUTTING_AREA_RESOURCE, 'view')
+  const canManage = permission.permissions.production_cutting_area?.canManage || false
   if (!canSeeAllFactories && !permission.factoryId) {
     return {
       orders: [],
       sections: [],
-      canManage: permission.permissions.production_cutting_area?.canManage || false,
+      factories: [],
+      canManage,
+      canViewAllFactories: false,
       today: kyivDateOnly(),
     }
   }
@@ -177,11 +187,28 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
     .eq('is_confirmed', true)
     .eq('is_archived', false)
   if (!canSeeAllFactories) machineQuery = machineQuery.eq('factory_id', permission.factoryId)
-  const machineResult = await machineQuery.order('name')
+  let factoryQuery = db.from('factories').select('id,name')
+  if (!canSeeAllFactories) factoryQuery = factoryQuery.eq('id', permission.factoryId)
+  const [machineResult, factoryResult] = await Promise.all([
+    machineQuery.order('name'),
+    factoryQuery.order('name'),
+  ])
   if (machineResult.error) throw new Error(machineResult.error.message)
+  if (factoryResult.error) throw new Error(factoryResult.error.message)
   const machines = machineResult.data || []
+  const factories = (factoryResult.data || []).map((factory: any): CuttingAreaFactoryOption => ({
+    id: factory.id,
+    name: factory.name,
+  }))
   const machineIds = machines.map((machine: any) => machine.id as string)
-  if (machineIds.length === 0) return { orders: [], sections: [], canManage: permission.permissions.production_cutting_area?.canManage || false, today: kyivDateOnly() }
+  if (machineIds.length === 0) return {
+    orders: [],
+    sections: [],
+    factories,
+    canManage,
+    canViewAllFactories: canSeeAllFactories,
+    today: kyivDateOnly(),
+  }
 
   const [stageResult, requestResult, completionResult, cycleResult, sectionResult] = await Promise.all([
     db.from('production_stages').select('machine_id,date_start,is_skipped').in('machine_id', machineIds).eq('stage_type', 'cutting'),
@@ -258,7 +285,14 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
     return { id: section.id, factoryId: section.factory_id, label: parent ? `${parent.name} · ${section.name}` : section.name }
   })
 
-  return { orders, sections, canManage: permission.permissions.production_cutting_area?.canManage || false, today: kyivDateOnly() }
+  return {
+    orders,
+    sections,
+    factories,
+    canManage,
+    canViewAllFactories: canSeeAllFactories,
+    today: kyivDateOnly(),
+  }
 }
 
 export async function getProductionCuttingAreaDetails(machineId: string) {
