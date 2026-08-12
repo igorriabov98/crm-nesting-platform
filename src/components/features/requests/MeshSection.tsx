@@ -131,7 +131,7 @@ export function MeshSection({ requestId, items, isEditable, onRowsChange }: Prop
                 <td className="px-3 py-2"><InlineEditCell value={row.length_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { length_mm: toNumber(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={row.width_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { width_mm: toNumber(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={row.remainder_qty} type="number" step="1" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_qty: Number(value || 0) })} /></td>
-                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_mesh" item={row} /></td>
                 <td className="px-3 py-2 text-right">
                   {isEditable && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
