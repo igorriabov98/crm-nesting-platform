@@ -7,6 +7,7 @@ interface StickyTableProps {
   children: React.ReactNode
   stickyColumns?: number
   stickyColumnWidths?: number[]
+  headerRowHeight?: number
   className?: string
   scrollRef?: React.Ref<HTMLDivElement>
 }
@@ -22,6 +23,7 @@ export function StickyTable({
   children,
   stickyColumns = 4,
   stickyColumnWidths = [40, 160, 60, 90, 90, 90, 90],
+  headerRowHeight = 40,
   className,
   scrollRef,
 }: StickyTableProps) {
@@ -46,7 +48,11 @@ export function StickyTable({
     .join('\n')
 
   return (
-    <div ref={scrollRef} className={cn("relative overflow-x-auto scroll-smooth rounded-md border border-[#E8ECF0]", className)}>
+    <div
+      ref={scrollRef}
+      className={cn("relative overflow-x-auto scroll-smooth rounded-md border border-[#E8ECF0]", className)}
+      style={{ '--sticky-table-header-row-height': `${headerRowHeight}px` } as React.CSSProperties}
+    >
       <style>{`
         .sticky-table thead tr:first-child th:nth-child(-n+${stickyColumns}),
         .sticky-table tbody td:nth-child(-n+${stickyColumns}) {
@@ -59,10 +65,16 @@ export function StickyTable({
         .sticky-table tbody td:nth-child(${stickyColumns}) {
           box-shadow: 4px 0 8px -2px rgba(27,58,107,0.16);
         }
-        .sticky-table thead th {
+        .sticky-table thead tr:first-child th {
           position: sticky;
           top: 0;
-          z-index: 20;
+          z-index: 22;
+          white-space: nowrap;
+        }
+        .sticky-table thead tr:nth-child(2) th {
+          position: sticky;
+          top: var(--sticky-table-header-row-height);
+          z-index: 21;
           white-space: nowrap;
         }
         .sticky-table thead tr:first-child th:nth-child(-n+${stickyColumns}) {

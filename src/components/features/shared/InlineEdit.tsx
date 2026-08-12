@@ -17,14 +17,17 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
-interface InlineEditProps {
-  value: string | number | null | undefined
-  onSave: (value: any) => Promise<any>
+type InlineEditValue = string | number | null | undefined
+
+interface InlineEditProps<TValue extends InlineEditValue> {
+  value: TValue
+  onSave: (value: TValue) => Promise<unknown>
   type: 'text' | 'number' | 'date' | 'select'
   options?: { value: string; label: string }[]
   editable: boolean
   debounceMs?: number
   className?: string
+  controlClassName?: string
   placeholder?: string
   fallbackText?: string
   dateDisplayFormat?: string
@@ -45,7 +48,7 @@ function formatDateOnly(date: Date) {
   return `${year}-${month}-${day}`
 }
 
-export function InlineEdit({
+export function InlineEdit<TValue extends InlineEditValue>({
   value,
   onSave,
   type,
@@ -53,12 +56,13 @@ export function InlineEdit({
   editable,
   debounceMs = 600,
   className,
+  controlClassName,
   placeholder = '',
   dateDisplayFormat = 'dd.MM.yyyy',
   fallbackText = '—',
   compact = false,
-}: InlineEditProps) {
-  const [localValue, setLocalValue] = useState<any>(value)
+}: InlineEditProps<TValue>) {
+  const [localValue, setLocalValue] = useState<TValue>(value)
   const [isSaving, setIsSaving] = useState(false)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -72,23 +76,26 @@ export function InlineEdit({
     }
   }, [])
 
-  const triggerSave = async (newValue: any) => {
+  const triggerSave = async (newValue: TValue) => {
     setIsSaving(true)
     try {
       const result = await onSave(newValue)
       if (result && typeof result === 'object' && 'success' in result && result.success === false) {
-        throw new Error(result.error || 'Сохранение отменено')
+        const message = 'error' in result && typeof result.error === 'string'
+          ? result.error
+          : 'Сохранение отменено'
+        throw new Error(message)
       }
       toast.success('Сохранено')
-    } catch (err: any) {
-      toast.error(err.message || 'Ошибка сохранения')
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Ошибка сохранения')
       setLocalValue(value)
     } finally {
       setIsSaving(false)
     }
   }
 
-  const handleChange = (newValue: any) => {
+  const handleChange = (newValue: TValue) => {
     setLocalValue(newValue)
 
     if (timerRef.current) clearTimeout(timerRef.current)
@@ -125,8 +132,8 @@ export function InlineEdit({
           type="text"
           value={localValue || ''}
           placeholder={placeholder}
-          onChange={(event) => handleChange(event.target.value)}
-          className={cn('bg-white border-[#E8ECF0] text-[#1B3A6B]', compact ? 'h-7 text-xs' : 'h-8')}
+          onChange={(event) => handleChange(event.target.value as TValue)}
+          className={cn('bg-white border-[#E8ECF0] text-[#1B3A6B]', compact ? 'h-7 text-xs' : 'h-8', controlClassName)}
         />
       )}
 
@@ -135,17 +142,17 @@ export function InlineEdit({
           type="number"
           value={localValue !== null && localValue !== undefined ? localValue : ''}
           placeholder={placeholder}
-          onChange={(event) => handleChange(event.target.value ? parseFloat(event.target.value) : null)}
-          className={cn('bg-white border-[#E8ECF0] text-[#1B3A6B]', compact ? 'h-7 text-xs' : 'h-8')}
+          onChange={(event) => handleChange((event.target.value ? parseFloat(event.target.value) : null) as TValue)}
+          className={cn('bg-white border-[#E8ECF0] text-[#1B3A6B]', compact ? 'h-7 text-xs' : 'h-8', controlClassName)}
         />
       )}
 
       {type === 'select' && (
         <Select
           value={localValue === null || localValue === undefined ? '' : String(localValue)}
-          onValueChange={(selectedValue) => handleChange(selectedValue)}
+          onValueChange={(selectedValue) => handleChange(selectedValue as TValue)}
         >
-          <SelectTrigger className={cn('w-full bg-white border-[#E8ECF0] text-[#1B3A6B]', compact ? 'h-7 text-xs' : 'h-8')}>
+          <SelectTrigger className={cn('w-full bg-white border-[#E8ECF0] text-[#1B3A6B]', compact ? 'h-7 text-xs' : 'h-8', controlClassName)}>
             <SelectValue placeholder={placeholder} />
           </SelectTrigger>
           <SelectContent className={cn('bg-[#F8F9FA] border-[#E8ECF0] text-[#1B3A6B]', compact && 'text-xs')}>
@@ -161,9 +168,9 @@ export function InlineEdit({
       {type === 'date' && (
         <DatePicker
           value={parseDateOnly(localValue)}
-          onChange={(date) => handleChange(date ? formatDateOnly(date) : null)}
+          onChange={(date) => handleChange((date ? formatDateOnly(date) : null) as TValue)}
           placeholder={placeholder}
-          className={compact ? 'h-7 text-xs' : 'h-8'}
+          className={cn(compact ? 'h-7 text-xs' : 'h-8', controlClassName)}
           displayFormat={dateDisplayFormat}
           popoverClassName={compact ? 'origin-top-left scale-90 text-xs' : undefined}
         />
