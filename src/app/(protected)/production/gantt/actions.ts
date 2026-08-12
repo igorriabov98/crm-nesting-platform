@@ -10,6 +10,9 @@ export type GanttStageStatus = 'not_planned' | 'active' | 'completed' | 'overdue
 
 export interface GanttStage {
   id: string
+  parent_stage_id?: string
+  interval_id?: string
+  interval_position?: number
   stage_type: StageType
   workshop: number | null
   date_start: string

@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ArrowUpDown, Eraser, Loader2 } from 'lucide-react'
+import { ArrowUpDown, Eraser, Loader2, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Checkbox } from '@/components/ui/checkbox'
@@ -11,22 +11,41 @@ import { InlineEdit } from '@/components/features/shared/InlineEdit'
 import { StickyTable } from '@/components/features/shared/StickyTable'
 import { ProductionSummary } from './ProductionSummary'
 import { ProductionFilters, type ProductionFilterValues } from './ProductionFilters'
-import { STAGES, STAGE_ORDER, stageHasWorkshop } from '@/lib/constants/stages'
+import { STAGES, STAGE_ORDER, stageHasWorkshop, stageSupportsIntervals } from '@/lib/constants/stages'
 import { useRole } from '@/lib/hooks/useRole'
-import { clearProductionStageDates, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
+import { clearProductionStageDates, mutateProductionStageInterval, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
 import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
 import { getDesiredShippingInfo } from '@/lib/utils/desired-shipping'
 import { formatNightShiftDates, normalizeNightShiftDates, primaryNightShiftDate } from '@/lib/utils/night-shift-dates'
 import type { ProductionRow, StageStatus } from '@/app/(protected)/production/actions'
 import type { StageType } from '@/lib/types'
+import type { ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
 
 interface ProductionTableProps {
   data: ProductionRow[]
   filters?: ProductionFilterValues
   onFiltersChange?: (filters: ProductionFilterValues) => void
   hideFilters?: boolean
+  hideSummary?: boolean
   visibleStageTypes?: StageType[]
+  selectedMachineId?: string | null
+  onSelectMachine?: (machineId: string) => void
+  onMachineDateUpdate?: (machineId: string, field: 'planned_material_date', value: string | null) => Promise<unknown>
+  onStageDateUpdate?: (row: ProductionRow, stage: ProductionStage, field: 'date_start' | 'date_end' | 'night_shift_date', value: string | null) => Promise<unknown>
+  onStageUpdate?: (stageId: string, field: string, value: string | number | boolean | string[] | null) => Promise<unknown>
+  onClearStageDates?: (stage: ProductionStage) => Promise<unknown>
+  onIntervalMutation?: (
+    row: ProductionRow,
+    stage: ProductionStage,
+    mutation: {
+      operation: 'create' | 'update' | 'delete'
+      intervalId: string
+      dateStart: string | null
+      dateEnd: string | null
+      workshop: number | null
+    },
+  ) => Promise<unknown>
 }
 
 type ProductionStage = ProductionRow['stages'][number]
@@ -35,8 +54,8 @@ type SortConfig = { key: string; direction: SortDirection }
 type TableDensity = 'compact' | 'normal' | 'comfortable'
 
 const workshopOptions = [
-  { value: '1', label: '1' },
-  { value: '2', label: '2' },
+  { value: '1', label: 'Цех 1' },
+  { value: '2', label: 'Цех 2' },
 ]
 
 const statusBgClass: Record<StageStatus, string> = {
@@ -120,7 +139,21 @@ function SortableHeader({
   )
 }
 
-export function ProductionTable({ data, filters: externalFilters, onFiltersChange, hideFilters = false, visibleStageTypes }: ProductionTableProps) {
+export function ProductionTable({
+  data,
+  filters: externalFilters,
+  onFiltersChange,
+  hideFilters = false,
+  hideSummary = false,
+  visibleStageTypes,
+  selectedMachineId,
+  onSelectMachine,
+  onMachineDateUpdate,
+  onStageDateUpdate,
+  onStageUpdate,
+  onClearStageDates,
+  onIntervalMutation,
+}: ProductionTableProps) {
   const tableScrollRef = useRef<HTMLDivElement>(null)
   const { canManageProduction } = useRole()
   const canEdit = canManageProduction
@@ -162,6 +195,18 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
         ? { ...row, machine: { ...row.machine, ...patch } }
         : row
     )))
+  }
+
+  const patchLocalIntervals = (stageId: string, intervals: ProductionStageIntervalValue[]) => {
+    const sorted = [...intervals].sort((a, b) => a.position - b.position)
+    const dated = sorted.filter((interval) => interval.date_start || interval.date_end)
+    const workshops = new Set(dated.map((interval) => interval.workshop).filter((value): value is number => value !== null))
+    patchLocalStage(stageId, {
+      intervals: sorted,
+      date_start: dated.map((interval) => interval.date_start).filter((value): value is string => Boolean(value)).sort()[0] ?? null,
+      date_end: dated.map((interval) => interval.date_end).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null,
+      workshop: workshops.size === 1 && dated.every((interval) => interval.workshop !== null) ? [...workshops][0] : null,
+    })
   }
 
   const compactControls = tableDensity === 'compact'
@@ -207,7 +252,11 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
 
       if (filters.workshop) {
         const ws = parseInt(filters.workshop)
-        const hasWs = row.stages.some((stage) => stageHasWorkshop(stage.stage_type) && !stage.is_skipped && stage.workshop === ws)
+        const hasWs = row.stages.some((stage) => (
+          stage.stage_type === 'assembly'
+          && !stage.is_skipped
+          && (stage.workshop === ws || stage.intervals.some((interval) => interval.workshop === ws))
+        ))
         if (!hasWs) return false
       }
 
@@ -277,7 +326,9 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
       : null
 
     patchLocalStage(stageId, { [field]: value } as Partial<ProductionStage>)
-    const res = await updateProductionStage(stageId, { [field]: value }, { revalidate: false })
+    const res = onStageUpdate
+      ? await onStageUpdate(stageId, field, value) as { success?: boolean; error?: string | null }
+      : await updateProductionStage(stageId, { [field]: value }, { revalidate: false })
     if (!res.success) {
       if (rollbackPatch) patchLocalStage(stageId, rollbackPatch)
       toast.error(res.error || 'Ошибка сохранения')
@@ -304,6 +355,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
       if (!confirmed) return { success: false, error: null }
     }
 
+    if (onStageDateUpdate) return onStageDateUpdate(row, stage, field, value)
     return handleUpdate(stage.id, field, value)
   }
 
@@ -316,7 +368,9 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
     const rollbackPatch = currentMachine ? { [field]: currentMachine[field] } : null
 
     patchLocalMachine(machineId, { [field]: value })
-    const res = await updateMachineDate(machineId, field, value, { revalidate: false })
+    const res = field === 'planned_material_date' && onMachineDateUpdate
+      ? await onMachineDateUpdate(machineId, field, value) as { success?: boolean; error?: string | null }
+      : await updateMachineDate(machineId, field, value, { revalidate: false })
     if (!res.success) {
       if (rollbackPatch) patchLocalMachine(machineId, rollbackPatch)
       toast.error(res.error || 'Ошибка сохранения')
@@ -328,7 +382,9 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
     patchLocalStage(stage.id, { date_start: null, date_end: null })
     setClearingStageId(stage.id)
     try {
-      const res = await clearProductionStageDates(stage.id, { revalidate: false })
+      const res = onClearStageDates
+        ? await onClearStageDates(stage) as { success?: boolean; error?: string | null }
+        : await clearProductionStageDates(stage.id, { revalidate: false })
       if (!res.success) {
         patchLocalStage(stage.id, { date_start: stage.date_start, date_end: stage.date_end })
         toast.error(res.error || 'Ошибка очистки дат')
@@ -340,6 +396,58 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
     } finally {
       setClearingStageId(null)
     }
+  }
+
+  const handleIntervalMutation = async (
+    row: ProductionRow,
+    stage: ProductionStage,
+    mutation: {
+      operation: 'create' | 'update' | 'delete'
+      intervalId: string
+      dateStart: string | null
+      dateEnd: string | null
+      workshop: number | null
+    },
+  ) => {
+    const previous = stage.intervals
+    let next = previous
+    if (mutation.operation === 'create') {
+      next = [...previous, {
+        id: mutation.intervalId,
+        production_stage_id: stage.id,
+        position: previous.length + 1,
+        date_start: mutation.dateStart,
+        date_end: mutation.dateEnd,
+        workshop: mutation.workshop,
+      }]
+    } else if (mutation.operation === 'update') {
+      next = previous.map((interval) => interval.id === mutation.intervalId ? {
+        ...interval,
+        date_start: mutation.dateStart,
+        date_end: mutation.dateEnd,
+        workshop: mutation.workshop,
+      } : interval)
+    } else {
+      next = previous
+        .filter((interval) => interval.id !== mutation.intervalId)
+        .map((interval, index) => ({ ...interval, position: index + 1 }))
+    }
+    patchLocalIntervals(stage.id, next)
+
+    const result = onIntervalMutation
+      ? await onIntervalMutation(row, stage, mutation) as { success?: boolean; error?: string | null }
+      : await mutateProductionStageInterval(stage.id, {
+          operation: mutation.operation,
+          intervalId: mutation.intervalId,
+          dateStart: mutation.dateStart,
+          dateEnd: mutation.dateEnd,
+          workshop: mutation.workshop,
+        }, { revalidate: false })
+    if (result && result.success === false) {
+      patchLocalIntervals(stage.id, previous)
+      toast.error(result.error || 'Не удалось сохранить подход')
+    }
+    return result
   }
 
   const isHighlighted = (stageType: string) => Boolean(
@@ -408,7 +516,7 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
 
   return (
     <div className="space-y-4">
-      <ProductionSummary data={filtered} />
+      {!hideSummary && <ProductionSummary data={filtered} />}
       {!hideFilters && <ProductionFilters filters={filters} onChange={setFilters} />}
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E8ECF0] bg-white px-3 py-2 shadow-sm">
@@ -542,8 +650,10 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                   ref={rowVirtualizer.measureElement}
                   className={cn(
                     'border-b border-[#E8ECF0] bg-white hover:bg-[#FAFBFC]',
+                    selectedMachineId === row.machine.id && 'ring-2 ring-inset ring-blue-500',
                     !row.machine.is_confirmed && 'bg-amber-50/45 text-slate-500'
                   )}
+                  onClick={() => onSelectMachine?.(row.machine.id)}
                 >
                   <td className={cn('w-[164px] min-w-[164px] px-2 py-1.5 bg-white', !row.machine.is_confirmed && 'bg-amber-50')}>
                     <Link href={`${ROUTES.SALES_PLAN}/${row.machine.id}`} className="text-[#2563EB] hover:underline font-medium text-sm truncate block max-w-[154px]" title={row.machine.name}>
@@ -600,6 +710,122 @@ export function ProductionTable({ data, filters: externalFilters, onFiltersChang
                           )}
                         </td>
                       )
+                    }
+
+                    if (stageSupportsIntervals(stageType)) {
+                      const intervals = stage.intervals
+                      const updateInterval = (
+                        interval: ProductionStageIntervalValue,
+                        patch: Partial<Pick<ProductionStageIntervalValue, 'date_start' | 'date_end' | 'workshop'>>,
+                      ) => handleIntervalMutation(row, stage, {
+                        operation: 'update',
+                        intervalId: interval.id,
+                        dateStart: patch.date_start === undefined ? interval.date_start : patch.date_start,
+                        dateEnd: patch.date_end === undefined ? interval.date_end : patch.date_end,
+                        workshop: patch.workshop === undefined ? interval.workshop : patch.workshop,
+                      })
+                      const rowClass = 'flex min-h-9 items-center justify-center gap-1 border-b border-slate-200/70 px-1 last:border-b-0'
+                      const intervalCells: React.ReactNode[] = []
+
+                      if (stageType === 'assembly') {
+                        intervalCells.push(
+                          <td key={`${stageType}_w`} className={cn(workshopCellClass, 'border-l border-[#E8ECF0] align-top', bgClass, hl)}>
+                            <div className="grid">
+                              {intervals.map((interval) => (
+                                <div key={interval.id} className={rowClass}>
+                                  <InlineEdit
+                                    type="select"
+                                    value={interval.workshop?.toString() || null}
+                                    options={workshopOptions}
+                                    editable={canEdit && !isSkipped}
+                                    onSave={(value) => updateInterval(interval, { workshop: value ? parseInt(value) : null })}
+                                    className="w-[58px] max-w-[62px]"
+                                    placeholder="Цех"
+                                    compact={compactControls}
+                                  />
+                                </div>
+                              ))}
+                              <div className="h-9" aria-hidden="true" />
+                            </div>
+                          </td>,
+                        )
+                      }
+
+                      intervalCells.push(
+                        <td key={`${stageType}_s`} className={cn(dateCellClass, 'align-top', bgClass, hl, stageType !== 'assembly' && 'border-l border-[#E8ECF0]')}>
+                          <div className="grid">
+                            {intervals.map((interval) => (
+                              <div key={interval.id} className={rowClass}>
+                                <span className="w-4 shrink-0 text-[10px] font-semibold text-slate-500" title={`Подход ${interval.position}`}>{interval.position}</span>
+                                {renderDateEdit(interval.date_start, canEdit && !isSkipped, (value) => updateInterval(interval, { date_start: value }))}
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              disabled={!canEdit || isSkipped}
+                              className="flex min-h-9 items-center justify-center gap-1 rounded text-[10px] font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:opacity-40"
+                              onClick={() => handleIntervalMutation(row, stage, {
+                                operation: 'create',
+                                intervalId: crypto.randomUUID(),
+                                dateStart: null,
+                                dateEnd: null,
+                                workshop: stageType === 'assembly' ? (stage.workshop ?? 1) : null,
+                              })}
+                            >
+                              <Plus className="h-3 w-3" /> Добавить подход
+                            </button>
+                          </div>
+                        </td>,
+                        <td key={`${stageType}_e`} className={cn(dateCellClass, 'align-top', bgClass, hl)}>
+                          <div className="grid">
+                            {intervals.map((interval) => (
+                              <div key={interval.id} className={rowClass}>
+                                {renderDateEdit(interval.date_end, canEdit && !isSkipped, (value) => updateInterval(interval, { date_end: value }))}
+                                <button
+                                  type="button"
+                                  disabled={!canEdit || isSkipped}
+                                  title={`Удалить подход ${interval.position}`}
+                                  aria-label={`Удалить подход ${interval.position}`}
+                                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-40"
+                                  onClick={() => handleIntervalMutation(row, stage, {
+                                    operation: 'delete',
+                                    intervalId: interval.id,
+                                    dateStart: interval.date_start,
+                                    dateEnd: interval.date_end,
+                                    workshop: interval.workshop,
+                                  })}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                            <div className="h-9" aria-hidden="true" />
+                          </div>
+                        </td>,
+                      )
+
+                      if (stageType === 'painting') {
+                        const nightDates = normalizeNightShiftDates(stage.night_shift_dates, stage.night_shift_date)
+                        intervalCells.push(
+                          <td key={`${stageType}_n`} className={cn(nightCellClass, 'align-top', bgClass, hl)}>
+                            <div className="flex min-h-9 items-center justify-center gap-1">
+                              <Checkbox
+                                checked={stage.is_night_shift}
+                                disabled={!canEdit}
+                                onCheckedChange={(checked) => handleUpdate(stage.id, 'is_night_shift', checked === true)}
+                                className="h-3.5 w-3.5"
+                              />
+                              {stage.is_night_shift && (
+                                <span className="max-w-[70px] truncate text-[10px]" title={formatNightShiftDates(nightDates)}>
+                                  {nightDates.length > 0 ? formatNightShiftDates(nightDates) : 'ночь'}
+                                </span>
+                              )}
+                            </div>
+                          </td>,
+                        )
+                      }
+
+                      return intervalCells
                     }
 
                     const cells: React.ReactNode[] = []

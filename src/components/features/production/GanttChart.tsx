@@ -852,7 +852,7 @@ export function GanttChart({ data, filters: externalFilters, onFiltersChange, hi
         >
           <span>
             <span className="block text-sm font-semibold text-[#1B3A6B]">Нагрузка сварки по цехам</span>
-            <span className="block text-xs text-[#6B7280]">Тоннаж машины делится равномерно на каждый день этапа «Сборка», затем суммируется по цеху.</span>
+            <span className="block text-xs text-[#6B7280]">Тоннаж машины делится равномерно на каждый активный день этапа «Сборка/Сварка», затем суммируется по цеху.</span>
           </span>
           <ChevronDown className={cn("h-4 w-4 shrink-0 text-[#6B7280] transition-transform", weldingLoadOpen && "rotate-180")} />
         </button>

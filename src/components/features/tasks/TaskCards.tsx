@@ -282,12 +282,20 @@ function dateChangeFieldLabel(item: ProductionPlanDateChangeApprovalItem) {
     return item.field_name === 'planned_send_date' ? 'Аутсорсинг: готовы отправить' : 'Аутсорсинг: ожидаем возврат'
   }
   const stage = item.stage_type ? STAGES[item.stage_type]?.label || item.stage_type : 'Этап'
+  if (item.target_type === 'stage_interval') return `${stage}: подход`
   const field = item.field_name === 'date_start'
     ? 'начало'
     : item.field_name === 'date_end'
       ? 'окончание'
       : 'ночная смена'
   return `${stage}: ${field}`
+}
+
+function formatIntervalPlanValue(item: ProductionPlanDateChangeApprovalItem, side: 'old' | 'new') {
+  const payload = side === 'old' ? item.old_payload : item.new_payload
+  if (!payload) return '—'
+  const workshop = payload.workshop ? ` · Цех ${payload.workshop}` : ''
+  return `№${payload.position} · ${formatTaskDate(payload.date_start)} — ${formatTaskDate(payload.date_end)}${workshop}`
 }
 
 function getStatusIcon(status: TaskStatus, overdue: boolean) {
@@ -1319,8 +1327,12 @@ export function TaskCards({
                   {dateChangeApproval.items.map((item) => (
                     <TableRow key={item.id}>
                       <TableCell className="font-medium text-slate-900">{dateChangeFieldLabel(item)}</TableCell>
-                      <TableCell className="tabular-nums text-slate-600">{formatTaskDate(item.old_value)}</TableCell>
-                      <TableCell className="tabular-nums font-semibold text-slate-950">{formatTaskDate(item.new_value)}</TableCell>
+                      <TableCell className="tabular-nums text-slate-600">
+                        {item.target_type === 'stage_interval' ? formatIntervalPlanValue(item, 'old') : formatTaskDate(item.old_value)}
+                      </TableCell>
+                      <TableCell className="tabular-nums font-semibold text-slate-950">
+                        {item.target_type === 'stage_interval' ? formatIntervalPlanValue(item, 'new') : formatTaskDate(item.new_value)}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

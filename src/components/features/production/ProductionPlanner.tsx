@@ -16,7 +16,11 @@ import {
   PackageCheck,
   PanelRightClose,
   PanelRightOpen,
+  Plus,
   Route,
+  Table2,
+  Trash2,
+  ChartGantt,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -33,11 +37,17 @@ import { GanttBar } from '@/components/features/production/gantt/GanttBar'
 import { GanttSupplyMarker } from '@/components/features/production/gantt/GanttSupplyMarker'
 import { GanttMaterialMarker } from '@/components/features/production/gantt/GanttMaterialMarker'
 import { ProductionOutsourcingQuickAdd } from '@/components/features/production/ProductionOutsourcingQuickAdd'
-import { STAGES, STAGE_ORDER, stageHasWorkshop } from '@/lib/constants/stages'
+import { ProductionTable } from '@/components/features/production/ProductionTable'
+import { STAGES, STAGE_ORDER, stageHasWorkshop, stageSupportsIntervals } from '@/lib/constants/stages'
 import { COATINGS } from '@/lib/constants/coatings'
 import { productionQueueLabel } from '@/lib/constants/factory-workshops'
-import { clearProductionStageDates, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
-import { createProductionPlanDateChangeRequest, type ProductionMonthPlanSummary, type ProductionPlanDateChangeInput } from '@/lib/actions/production-plan'
+import { clearProductionStageDates, mutateProductionStageInterval, updateMachineDate, updateProductionStage } from '@/lib/actions/production'
+import {
+  createProductionPlanDateChangeRequest,
+  type ProductionMonthPlanSummary,
+  type ProductionPlanDateChangeInput,
+  type ProductionPlanStageIntervalChangeInput,
+} from '@/lib/actions/production-plan'
 import type { ProductionOutsourcingSummaryOperation } from '@/lib/actions/outsourcing'
 import { useRole } from '@/lib/hooks/useRole'
 import { ROUTES } from '@/lib/constants/routes'
@@ -55,6 +65,8 @@ import type {
 } from '@/app/(protected)/production/gantt/actions'
 import type { ProductionRow } from '@/app/(protected)/production/actions'
 import type { StageType } from '@/lib/types'
+import { getStageIntervals, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
+import type { ProductionFilterValues } from '@/components/features/production/ProductionFilters'
 
 interface ProductionPlannerProps {
   data: GanttData
@@ -115,12 +127,27 @@ type StageOptimisticPatch = Partial<Pick<
 type ProductionStage = ProductionRow['stages'][number]
 type ActionResult = { success?: boolean; error?: string | null }
 type StageFieldValue = string | number | boolean | string[] | null
-type DateChangeDraft = ProductionPlanDateChangeInput & {
+type DateChangeDraft = Exclude<ProductionPlanDateChangeInput, { target_type: 'stage_interval' }> & {
   key: string
   machineId: string
   label: string
   old_value: string | null
 }
+type IntervalMutation = {
+  operation: 'create' | 'update' | 'delete'
+  intervalId: string
+  dateStart: string | null
+  dateEnd: string | null
+  workshop: number | null
+}
+type IntervalChangeDraft = ProductionPlanStageIntervalChangeInput & {
+  key: string
+  machineId: string
+  label: string
+  old_payload: ProductionStageIntervalValue | null
+}
+type PlanChangeDraft = DateChangeDraft | IntervalChangeDraft
+type PlannerView = 'gantt' | 'table'
 
 const MACHINE_RAIL_WIDTH = 248
 const TIMELINE_HEIGHT = 56
@@ -357,20 +384,46 @@ function productionRowToGanttMachine(row: ProductionRow, fallback?: GanttMachine
   }
 }
 
-function productionStageToGanttStage(stage: ProductionStage): GanttStage | null {
-  if (stage.is_skipped) return null
+function productionStageToGanttStages(stage: ProductionStage): GanttStage[] {
+  if (stage.is_skipped) return []
+  const status: GanttStage['status'] = stage.status === 'skipped' ? 'not_planned' : stage.status
+
+  if (stageSupportsIntervals(stage.stage_type)) {
+    return getStageIntervals(stage).flatMap((interval) => {
+      if (!interval.date_start) return []
+      const endValue = interval.date_end || formatDateOnly(addDays(parseDateOnly(interval.date_start)!, 7))
+      const nightDates = getStageNightShiftDates(stage).filter((date) => (
+        interval.date_start && interval.date_end && date >= interval.date_start && date <= interval.date_end
+      ))
+      return [{
+        id: interval.id,
+        parent_stage_id: stage.id,
+        interval_id: interval.id,
+        interval_position: interval.position,
+        stage_type: stage.stage_type,
+        workshop: stage.stage_type === 'assembly' ? interval.workshop : stage.workshop,
+        date_start: interval.date_start,
+        date_end: endValue,
+        manual_overdue: stage.manual_overdue,
+        is_night_shift: nightDates.length > 0,
+        night_shift_date: nightDates[0] ?? null,
+        night_shift_dates: nightDates,
+        status,
+        delay_days: stage.delay_days,
+        display_label: `${STAGES[stage.stage_type].label} · Подход ${interval.position}`,
+      }]
+    })
+  }
 
   const timelineStart = getProductionStageTimelineStart(stage)
-  if (!timelineStart) return null
-
+  if (!timelineStart) return []
   const startDate = new Date(timelineStart)
   const endValue = stage.date_end || (stage.stage_type === 'shipping'
     ? timelineStart
     : addDays(startDate, 7).toISOString().split('T')[0])
-  const status: GanttStage['status'] = stage.status === 'skipped' ? 'not_planned' : stage.status
-
-  return {
+  return [{
     id: stage.id,
+    parent_stage_id: stage.id,
     stage_type: stage.stage_type,
     workshop: stage.workshop,
     date_start: timelineStart,
@@ -381,7 +434,7 @@ function productionStageToGanttStage(stage: ProductionStage): GanttStage | null 
     night_shift_dates: getStageNightShiftDates(stage),
     status,
     delay_days: stage.delay_days,
-  }
+  }]
 }
 
 function getProductionStageTimelineStart(stage: Pick<ProductionStage, 'stage_type' | 'date_start' | 'date_end'>) {
@@ -771,7 +824,7 @@ function PlannerVirtualRow({
   todayOffset: number
   selected: boolean
   showSupply: boolean
-  onSelect: (machineId: string) => void
+  onSelect: (machineId: string, intervalId?: string) => void
 }) {
   const machine = row.machine
   const queueLabel = productionQueueLabel(machine.production_workshop, machine.production_queue_number)
@@ -900,7 +953,7 @@ function PlannerVirtualRow({
               unitWidth={dayWidth}
               machineId={machine.id}
               isConfirmed={machine.is_confirmed}
-              onSelect={() => onSelect(machine.id)}
+              onSelect={() => onSelect(machine.id, stage.interval_id)}
               planOnly
             />
           </div>
@@ -1085,17 +1138,20 @@ function StageEditor({
   stage,
   canEdit,
   clearingStageId,
+  selectedIntervalId,
   getDateValue,
   getNightShiftDateValues,
   onStageDateUpdate,
   onNightShiftDatesUpdate,
   onStageUpdate,
   onClearDates,
+  onIntervalMutation,
 }: {
   row: ProductionRow
   stage: ProductionStage
   canEdit: boolean
   clearingStageId: string | null
+  selectedIntervalId?: string | null
   getDateValue?: (stage: ProductionStage, field: 'date_start' | 'date_end' | 'night_shift_date') => string | null
   getNightShiftDateValues?: (stage: ProductionStage) => string[]
   onStageDateUpdate: (
@@ -1107,6 +1163,7 @@ function StageEditor({
   onNightShiftDatesUpdate: (stage: ProductionStage, values: string[]) => Promise<ActionResult | void>
   onStageUpdate: (stageId: string, field: string, value: StageFieldValue) => Promise<ActionResult | void>
   onClearDates: (stage: ProductionStage) => Promise<ActionResult | void>
+  onIntervalMutation: (row: ProductionRow, stage: ProductionStage, mutation: IntervalMutation) => Promise<ActionResult | void>
 }) {
   const meta = STAGES[stage.stage_type]
   const isShippingDateOnly = stage.stage_type === 'shipping'
@@ -1115,6 +1172,14 @@ function StageEditor({
   const isClearing = clearingStageId === stage.id
   const hasDates = Boolean(stage.date_start || stage.date_end)
   const hasWorkshop = stageHasWorkshop(stage.stage_type)
+  const supportsIntervals = stageSupportsIntervals(stage.stage_type)
+  const intervals = getStageIntervals(stage)
+  const intervalWorkshopSummary = stage.stage_type === 'assembly'
+    ? [...new Set(intervals.map((interval) => interval.workshop).filter((value): value is number => value !== null))]
+        .sort()
+        .map((workshop) => `Цех ${workshop}`)
+        .join(' + ')
+    : ''
 
   return (
     <div className={cn('rounded-lg border bg-white p-3', isSkipped ? 'border-slate-200 opacity-75' : 'border-slate-200')}>
@@ -1130,19 +1195,24 @@ function StageEditor({
                 ночь
               </span>
             )}
+            {intervalWorkshopSummary && (
+              <span className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                {intervalWorkshopSummary}
+              </span>
+            )}
           </div>
         </div>
 
         <div className="flex shrink-0 gap-1.5">
           <button
             type="button"
-            disabled={!editable || isClearing || !hasDates}
-            title="Очистить даты этапа"
+            disabled={!editable || isClearing || !hasDates || supportsIntervals}
+            title={supportsIntervals ? 'Очищайте или удаляйте подходы отдельно' : 'Очистить даты этапа'}
             aria-label="Очистить даты этапа"
             onClick={() => onClearDates(stage)}
             className={cn(
               'inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:border-blue-700 hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600',
-              (!editable || isClearing || !hasDates) && 'cursor-not-allowed opacity-40'
+              (!editable || isClearing || !hasDates || supportsIntervals) && 'cursor-not-allowed opacity-40'
             )}
           >
             {isClearing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eraser className="h-4 w-4" />}
@@ -1150,7 +1220,82 @@ function StageEditor({
         </div>
       </div>
 
-      <div className={cn('mt-3 grid gap-2', isShippingDateOnly ? 'grid-cols-1' : hasWorkshop ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2')}>
+      {supportsIntervals ? (
+        <div className="mt-3 space-y-2">
+          {intervals.map((interval) => (
+            <div key={interval.id} className={cn('rounded-lg border bg-slate-50 p-2', selectedIntervalId === interval.id ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200')}>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-600">Подход {interval.position}</span>
+                <button
+                  type="button"
+                  disabled={!editable}
+                  aria-label={`Удалить подход ${interval.position}`}
+                  title={`Удалить подход ${interval.position}`}
+                  className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 disabled:opacity-40"
+                  onClick={() => onIntervalMutation(row, stage, {
+                    operation: 'delete',
+                    intervalId: interval.id,
+                    dateStart: interval.date_start,
+                    dateEnd: interval.date_end,
+                    workshop: interval.workshop,
+                  })}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+              <div className={cn('grid gap-2', stage.stage_type === 'assembly' ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
+                {stage.stage_type === 'assembly' && (
+                  <SelectField
+                    label="Цех"
+                    value={interval.workshop}
+                    editable={editable}
+                    onSave={(value) => onIntervalMutation(row, stage, {
+                      operation: 'update', intervalId: interval.id,
+                      dateStart: interval.date_start, dateEnd: interval.date_end, workshop: value,
+                    })}
+                  />
+                )}
+                <DateField
+                  label="Начало"
+                  value={interval.date_start}
+                  editable={editable}
+                  onSave={(value) => onIntervalMutation(row, stage, {
+                    operation: 'update', intervalId: interval.id,
+                    dateStart: value, dateEnd: interval.date_end, workshop: interval.workshop,
+                  })}
+                  short
+                />
+                <DateField
+                  label="Конец"
+                  value={interval.date_end}
+                  editable={editable}
+                  onSave={(value) => onIntervalMutation(row, stage, {
+                    operation: 'update', intervalId: interval.id,
+                    dateStart: interval.date_start, dateEnd: value, workshop: interval.workshop,
+                  })}
+                  short
+                />
+              </div>
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!editable}
+            className="min-h-10 w-full border-dashed text-blue-800"
+            onClick={() => onIntervalMutation(row, stage, {
+              operation: 'create',
+              intervalId: crypto.randomUUID(),
+              dateStart: null,
+              dateEnd: null,
+              workshop: stage.stage_type === 'assembly' ? (stage.workshop ?? 1) : null,
+            })}
+          >
+            <Plus className="h-4 w-4" /> Добавить подход
+          </Button>
+        </div>
+      ) : <div className={cn('mt-3 grid gap-2', isShippingDateOnly ? 'grid-cols-1' : hasWorkshop ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2')}>
         {isShippingDateOnly ? (
           <DateField
             label="Дата"
@@ -1184,7 +1329,7 @@ function StageEditor({
             />
           </>
         )}
-      </div>
+      </div>}
 
       {stage.stage_type === 'painting' && (
         <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -1269,6 +1414,7 @@ function ProductionMachineInspector({
   pendingDateChanges,
   submittingDateRequest,
   clearingStageId,
+  selectedIntervalId,
   collapsible = false,
   defaultOpen = true,
   getMachineDateValue,
@@ -1279,6 +1425,7 @@ function ProductionMachineInspector({
   onNightShiftDatesUpdate,
   onStageUpdate,
   onClearDates,
+  onIntervalMutation,
   onSubmitDateChangeRequest,
   onResetDateChangeDraft,
   onCollapse,
@@ -1289,9 +1436,10 @@ function ProductionMachineInspector({
   primaryOutsourcingOperation?: ProductionOutsourcingSummaryOperation
   canEdit: boolean
   approvalLocked: boolean
-  pendingDateChanges: DateChangeDraft[]
+  pendingDateChanges: PlanChangeDraft[]
   submittingDateRequest: boolean
   clearingStageId: string | null
+  selectedIntervalId?: string | null
   collapsible?: boolean
   defaultOpen?: boolean
   getMachineDateValue?: (machine: GanttMachine, field: MachineDateField) => string | null
@@ -1307,6 +1455,7 @@ function ProductionMachineInspector({
   onNightShiftDatesUpdate: (stage: ProductionStage, values: string[]) => Promise<ActionResult | void>
   onStageUpdate: (stageId: string, field: string, value: StageFieldValue) => Promise<ActionResult | void>
   onClearDates: (stage: ProductionStage) => Promise<ActionResult | void>
+  onIntervalMutation: (row: ProductionRow, stage: ProductionStage, mutation: IntervalMutation) => Promise<ActionResult | void>
   onSubmitDateChangeRequest: () => Promise<void>
   onResetDateChangeDraft: () => void
   onCollapse?: () => void
@@ -1387,7 +1536,9 @@ function ProductionMachineInspector({
               <div className="space-y-1">
                 {pendingDateChanges.map((change) => (
                   <div key={change.key} className="rounded-md bg-white/70 px-2 py-1 text-xs leading-5">
-                    {change.label}: {formatDateValue(change.old_value)}{' -> '}{formatDateValue(change.new_value)}
+                    {change.target_type === 'stage_interval'
+                      ? `${change.label}: ${change.old_payload ? `${formatDateValue(change.old_payload.date_start)} — ${formatDateValue(change.old_payload.date_end)}` : 'нет'} → ${change.new_payload ? `${formatDateValue(change.new_payload.date_start)} — ${formatDateValue(change.new_payload.date_end)}` : 'удалён'}`
+                      : `${change.label}: ${formatDateValue(change.old_value)} → ${formatDateValue(change.new_value)}`}
                   </div>
                 ))}
               </div>
@@ -1439,12 +1590,14 @@ function ProductionMachineInspector({
                   stage={stage}
                   canEdit={canEdit}
                   clearingStageId={clearingStageId}
+                  selectedIntervalId={selectedIntervalId}
                   getDateValue={getStageDateValue}
                   getNightShiftDateValues={getNightShiftDateValues}
                   onStageDateUpdate={onStageDateUpdate}
                   onNightShiftDatesUpdate={onNightShiftDatesUpdate}
                   onStageUpdate={onStageUpdate}
                   onClearDates={onClearDates}
+                  onIntervalMutation={onIntervalMutation}
                 />
                 {outsourcingOperations
                   .filter((operation) => operation.position_after_stage_type === stage.stage_type)
@@ -1553,18 +1706,21 @@ export function ProductionPlanner({
   const router = useRouter()
   const { isProductionManager, isDirector, can } = useRole()
   const canEdit = can('production', 'manage')
+  const [plannerView, setPlannerView] = useState<PlannerView>('gantt')
   const [dayWidth, setDayWidth] = useState(38)
   const [rangeStart, setRangeStart] = useState<Date>(() => subDays(findEarliestDate(data), 30))
   const [rangeEnd, setRangeEnd] = useState<Date>(() => addDays(findLatestDate(data), 60))
   const [internalFilters, setInternalFilters] = useState<GanttFilters>(defaultFilters)
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null)
+  const [selectedIntervalId, setSelectedIntervalId] = useState<string | null>(null)
   const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(true)
   const [unscheduledOpen, setUnscheduledOpen] = useState(true)
   const [weldingLoadOpen, setWeldingLoadOpen] = useState(true)
   const [scrollShadows, setScrollShadows] = useState({ left: false, right: false })
   const [clearingStageId, setClearingStageId] = useState<string | null>(null)
-  const [dateChangeDrafts, setDateChangeDrafts] = useState<Record<string, DateChangeDraft>>({})
+  const [dateChangeDrafts, setDateChangeDrafts] = useState<Record<string, PlanChangeDraft>>({})
   const [stageOptimisticPatches, setStageOptimisticPatches] = useState<Record<string, StageOptimisticPatch>>({})
+  const [stageIntervalOptimisticPatches, setStageIntervalOptimisticPatches] = useState<Record<string, ProductionStageIntervalValue[]>>({})
   const [machineDateOptimisticPatches, setMachineDateOptimisticPatches] = useState<Record<string, Partial<Record<MachineDateField, string | null>>>>({})
   const [submittingDateRequest, setSubmittingDateRequest] = useState(false)
 
@@ -1577,6 +1733,16 @@ export function ProductionPlanner({
   const scrollCheckTimeoutRef = useRef<number | null>(null)
   const scrollSyncLockRef = useRef(false)
 
+  useEffect(() => {
+    const stored = window.localStorage.getItem('production-planner-view')
+    if (stored === 'gantt' || stored === 'table') setPlannerView(stored)
+  }, [])
+
+  const changePlannerView = useCallback((next: PlannerView) => {
+    setPlannerView(next)
+    window.localStorage.setItem('production-planner-view', next)
+  }, [])
+
   const scaleItems = useMemo(() => generateDateScale(rangeStart, rangeEnd, scale), [rangeStart, rangeEnd])
   const totalWidth = scaleItems.length * dayWidth
   const rangeLabel = useMemo(
@@ -1586,22 +1752,40 @@ export function ProductionPlanner({
 
   useEffect(() => {
     setStageOptimisticPatches({})
+    setStageIntervalOptimisticPatches({})
     setMachineDateOptimisticPatches({})
   }, [data, productionData])
 
   const effectiveProductionData = useMemo(() => productionData.map((row) => {
     const machinePatch = machineDateOptimisticPatches[row.machine.id]
-    const hasStagePatches = row.stages.some((stage) => stageOptimisticPatches[stage.id])
+    const hasStagePatches = row.stages.some((stage) => stageOptimisticPatches[stage.id] || stageIntervalOptimisticPatches[stage.id])
     if (!machinePatch && !hasStagePatches) return row
 
     return {
       ...row,
       machine: machinePatch ? { ...row.machine, ...machinePatch } : row.machine,
       stages: hasStagePatches
-        ? row.stages.map((stage) => ({ ...stage, ...(stageOptimisticPatches[stage.id] ?? {}) }))
+        ? row.stages.map((stage) => {
+            const intervals = stageIntervalOptimisticPatches[stage.id]
+            if (!intervals) return { ...stage, ...(stageOptimisticPatches[stage.id] ?? {}) }
+            const starts = intervals.map((interval) => interval.date_start).filter((value): value is string => Boolean(value)).sort()
+            const ends = intervals.map((interval) => interval.date_end).filter((value): value is string => Boolean(value)).sort()
+            const dated = intervals.filter((interval) => interval.date_start || interval.date_end)
+            const workshops = new Set(dated.map((interval) => interval.workshop).filter((value): value is number => value !== null))
+            return {
+              ...stage,
+              ...(stageOptimisticPatches[stage.id] ?? {}),
+              intervals,
+              date_start: starts[0] ?? null,
+              date_end: ends.at(-1) ?? null,
+              workshop: stage.stage_type === 'assembly' && workshops.size === 1 && dated.every((interval) => interval.workshop !== null)
+                ? [...workshops][0]
+                : stage.stage_type === 'assembly' ? null : stage.workshop,
+            }
+          })
         : row.stages,
     }
-  }), [machineDateOptimisticPatches, productionData, stageOptimisticPatches])
+  }), [machineDateOptimisticPatches, productionData, stageIntervalOptimisticPatches, stageOptimisticPatches])
 
   const effectiveData = useMemo<GanttData>(() => {
     const productionRowsByMachineId = new Map(effectiveProductionData.map((row) => [row.machine.id, row]))
@@ -1611,9 +1795,7 @@ export function ProductionPlanner({
       machines: data.machines.map((machine) => {
         const machinePatch = machineDateOptimisticPatches[machine.id]
         const productionRow = productionRowsByMachineId.get(machine.id)
-        const productionStages = productionRow?.stages
-          .map(productionStageToGanttStage)
-          .filter((stage): stage is GanttStage => Boolean(stage))
+        const productionStages = productionRow?.stages.flatMap(productionStageToGanttStages)
 
         const stages = productionRow ? (productionStages ?? []) : machine.stages
 
@@ -1776,6 +1958,15 @@ export function ProductionPlanner({
     !isDirector &&
     selectedMachinePlanStatus === 'confirmed'
   )
+  const productionRowRequiresApproval = useCallback((row: ProductionRow | undefined) => {
+    if (!row || !isProductionManager || isDirector || !row.machine.factory_id) return false
+    const month = normalizeProductionMonthValue(row.machine.production_month)
+    return Boolean(month && monthPlans.some((plan) => (
+      plan.factory_id === row.machine.factory_id
+      && plan.production_month === month
+      && plan.status === 'confirmed'
+    )))
+  }, [isDirector, isProductionManager, monthPlans])
   const selectedDateChanges = useMemo(
     () => Object.values(dateChangeDrafts).filter((change) => change.machineId === selectedMachineId),
     [dateChangeDrafts, selectedMachineId],
@@ -1783,10 +1974,36 @@ export function ProductionPlanner({
 
   const recordDateDraft = useCallback((change: DateChangeDraft) => {
     setDateChangeDrafts((current) => {
-      if (dateOnlyKey(change.old_value) === dateOnlyKey(change.new_value)) {
+      const existing = current[change.key]
+      const oldValue = existing && existing.target_type !== 'stage_interval'
+        ? existing.old_value
+        : change.old_value
+      if (dateOnlyKey(oldValue) === dateOnlyKey(change.new_value)) {
         const { [change.key]: _removed, ...rest } = current
         void _removed
         return rest
+      }
+      return { ...current, [change.key]: { ...change, old_value: oldValue } }
+    })
+  }, [])
+
+  const recordIntervalDraft = useCallback((change: IntervalChangeDraft) => {
+    setDateChangeDrafts((current) => {
+      const existing = current[change.key]
+      if (existing?.target_type === 'stage_interval') {
+        if (existing.interval_operation === 'create' && change.interval_operation === 'delete') {
+          const { [change.key]: _removed, ...rest } = current
+          void _removed
+          return rest
+        }
+        return {
+          ...current,
+          [change.key]: {
+            ...change,
+            interval_operation: existing.interval_operation === 'create' ? 'create' : change.interval_operation,
+            old_payload: existing.old_payload,
+          },
+        }
       }
       return { ...current, [change.key]: change }
     })
@@ -1814,13 +2031,19 @@ export function ProductionPlanner({
 
   const getMachineDraftValue = useCallback((machine: GanttMachine, field: MachineDateField) => {
     const key = machineDateDraftKey(machine.id, field)
-    return dateChangeDrafts[key]?.new_value ?? machineDateOptimisticPatches[machine.id]?.[field] ?? machine[field]
+    const draft = dateChangeDrafts[key]
+    return (draft && draft.target_type !== 'stage_interval' ? draft.new_value : undefined)
+      ?? machineDateOptimisticPatches[machine.id]?.[field]
+      ?? machine[field]
   }, [dateChangeDrafts, machineDateOptimisticPatches])
 
   const getStageDraftValue = useCallback((stage: ProductionStage, field: StageDateField) => {
     if (!selectedMachineId) return stage[field]
     const key = stageDateDraftKey(selectedMachineId, stage.id, field)
-    return dateChangeDrafts[key]?.new_value ?? stageOptimisticPatches[stage.id]?.[field] ?? stage[field]
+    const draft = dateChangeDrafts[key]
+    return (draft && draft.target_type !== 'stage_interval' ? draft.new_value : undefined)
+      ?? stageOptimisticPatches[stage.id]?.[field]
+      ?? stage[field]
   }, [dateChangeDrafts, selectedMachineId, stageOptimisticPatches])
 
   const getStageNightShiftDraftValues = useCallback((stage: ProductionStage) => {
@@ -1832,10 +2055,37 @@ export function ProductionPlanner({
   }, [stageOptimisticPatches])
 
   const clearSelectedDrafts = useCallback(() => {
+    const clearingDrafts = Object.values(dateChangeDrafts).filter((change) => change.machineId === selectedMachineId)
     setDateChangeDrafts((current) => Object.fromEntries(
       Object.entries(current).filter(([, change]) => change.machineId !== selectedMachineId)
     ))
-  }, [selectedMachineId])
+    const intervalStageIds = new Set(clearingDrafts
+      .filter((change): change is IntervalChangeDraft => change.target_type === 'stage_interval')
+      .map((change) => change.production_stage_id))
+    if (intervalStageIds.size > 0) {
+      setStageIntervalOptimisticPatches((current) => Object.fromEntries(
+        Object.entries(current).filter(([stageId]) => !intervalStageIds.has(stageId)),
+      ))
+    }
+    setStageOptimisticPatches((current) => {
+      const next = { ...current }
+      for (const draft of clearingDrafts) {
+        if (draft.target_type !== 'stage' || !draft.production_stage_id) continue
+        const patch = { ...(next[draft.production_stage_id] ?? {}) }
+        delete patch[draft.field_name as keyof StageOptimisticPatch]
+        if (Object.keys(patch).length === 0) delete next[draft.production_stage_id]
+        else next[draft.production_stage_id] = patch
+      }
+      return next
+    })
+    if (selectedMachineId && clearingDrafts.some((draft) => draft.target_type === 'machine')) {
+      setMachineDateOptimisticPatches((current) => {
+        const { [selectedMachineId]: _removed, ...rest } = current
+        void _removed
+        return rest
+      })
+    }
+  }, [dateChangeDrafts, selectedMachineId])
 
   const rowVirtualizer = useVirtualizer({
     count: plannerRows.length,
@@ -1983,7 +2233,7 @@ export function ProductionPlanner({
         window.clearTimeout(scrollCheckTimeoutRef.current)
       }
     }
-  }, [handleScroll, updateScrollShadows])
+  }, [handleScroll, plannerView, updateScrollShadows])
 
   useEffect(() => {
     if (!weldingLoadOpen) return
@@ -2011,14 +2261,23 @@ export function ProductionPlanner({
       const machineWeight = Number(machine.total_weight || 0)
       if (machineWeight <= 0) continue
 
-      for (const stage of machine.stages) {
-        if (stage.stage_type !== 'assembly' || !stage.date_start || !stage.date_end) continue
+      const assemblyIntervals = machine.stages.filter((stage) => (
+        stage.stage_type === 'assembly' && Boolean(stage.date_start) && Boolean(stage.date_end)
+      ))
+      const totalActiveDays = assemblyIntervals.reduce((sum, stage) => {
+        const start = new Date(stage.date_start)
+        const end = new Date(stage.date_end)
+        return sum + Math.max(1, differenceInCalendarDays(end, start) + 1)
+      }, 0)
+      if (totalActiveDays === 0) continue
+      const dailyTons = machineWeight / totalActiveDays
+
+      for (const stage of assemblyIntervals) {
         if (selectedWorkshop && stage.workshop !== selectedWorkshop) continue
 
         const start = new Date(stage.date_start)
         const end = new Date(stage.date_end)
         const durationDays = Math.max(1, differenceInCalendarDays(end, start) + 1)
-        const dailyTons = machineWeight / durationDays
         const workshopKey = stage.workshop === null ? 'none' : String(stage.workshop)
         const workshopLabel = stage.workshop === null ? 'Без цеха' : getWorkshopLabel(stage.workshop)
         const row = rowsByWorkshop.get(workshopKey) || {
@@ -2062,6 +2321,82 @@ export function ProductionPlanner({
     return totalRow.total > 0 ? [...rows, totalRow] : rows
   }, [effectiveData.machines, filters, rangeStart, rangeEnd])
 
+  const saveStageInterval = useCallback(async (
+    row: ProductionRow,
+    stage: ProductionStage,
+    mutation: IntervalMutation,
+  ) => {
+    const previous = stageIntervalOptimisticPatches[stage.id] ?? stage.intervals
+    let next = previous
+    let oldPayload: ProductionStageIntervalValue | null = null
+    let newPayload: ProductionStageIntervalValue | null = null
+
+    if (mutation.operation === 'create') {
+      newPayload = {
+        id: mutation.intervalId,
+        production_stage_id: stage.id,
+        position: previous.length + 1,
+        date_start: mutation.dateStart,
+        date_end: mutation.dateEnd,
+        workshop: stage.stage_type === 'assembly' ? mutation.workshop : null,
+      }
+      next = [...previous, newPayload]
+    } else {
+      const currentPayload = previous.find((interval) => interval.id === mutation.intervalId) ?? null
+      if (!currentPayload) return { success: false, error: 'Подход не найден' }
+      oldPayload = productionData
+        .find((item) => item.machine.id === row.machine.id)?.stages
+        .find((item) => item.id === stage.id)?.intervals
+        .find((interval) => interval.id === mutation.intervalId) ?? currentPayload
+      if (mutation.operation === 'update') {
+        newPayload = {
+          ...currentPayload,
+          date_start: mutation.dateStart,
+          date_end: mutation.dateEnd,
+          workshop: stage.stage_type === 'assembly' ? mutation.workshop : null,
+        }
+        next = previous.map((interval) => interval.id === mutation.intervalId ? newPayload! : interval)
+      } else {
+        next = previous
+          .filter((interval) => interval.id !== mutation.intervalId)
+          .map((interval, index) => ({ ...interval, position: index + 1 }))
+      }
+    }
+
+    setStageIntervalOptimisticPatches((current) => ({ ...current, [stage.id]: next }))
+
+    if (productionRowRequiresApproval(row)) {
+      recordIntervalDraft({
+        key: `${row.machine.id}:stage_interval:${stage.id}:${mutation.intervalId}`,
+        machineId: row.machine.id,
+        target_type: 'stage_interval',
+        production_stage_id: stage.id,
+        production_stage_interval_id: mutation.intervalId,
+        interval_operation: mutation.operation,
+        old_payload: oldPayload,
+        new_payload: newPayload,
+        label: `${STAGES[stage.stage_type].label}: подход ${oldPayload?.position ?? newPayload?.position ?? ''}`,
+      })
+      toast.success('Изменение подхода добавлено в запрос')
+      return { success: true, error: null }
+    }
+
+    const result = await mutateProductionStageInterval(stage.id, {
+      operation: mutation.operation,
+      intervalId: mutation.intervalId,
+      dateStart: mutation.dateStart,
+      dateEnd: mutation.dateEnd,
+      workshop: mutation.workshop,
+    }, { revalidate: false })
+    if (result.success) {
+      toast.success('Подход сохранён')
+    } else {
+      setStageIntervalOptimisticPatches((current) => ({ ...current, [stage.id]: previous }))
+      toast.error(result.error || 'Не удалось сохранить подход')
+    }
+    return result
+  }, [productionData, productionRowRequiresApproval, recordIntervalDraft, stageIntervalOptimisticPatches])
+
   const saveStageField = useCallback(async (
     stageId: string,
     field: string,
@@ -2069,7 +2404,7 @@ export function ProductionPlanner({
     options: { refresh?: boolean } = {},
   ) => {
     const shouldRefresh = options.refresh === true
-    const stage = selectedProductionRow?.stages.find((item) => item.id === stageId)
+    const stage = effectiveProductionData.flatMap((row) => row.stages).find((item) => item.id === stageId)
     const nextPatch = { [field]: value } as StageOptimisticPatch
     const rollbackPatch = stage && field in stage
       ? ({ [field]: stage[field as keyof ProductionStage] } as StageOptimisticPatch)
@@ -2087,7 +2422,7 @@ export function ProductionPlanner({
       toast.error(result.error || 'Ошибка сохранения')
     }
     return result
-  }, [router, selectedProductionRow, updateStageOptimisticPatch])
+  }, [effectiveProductionData, router, updateStageOptimisticPatch])
 
   const saveNightShiftDates = useCallback(async (stage: ProductionStage, values: string[]) => {
     const previousDates = getStageNightShiftDraftValues(stage)
@@ -2120,7 +2455,8 @@ export function ProductionPlanner({
     field: 'date_start' | 'date_end' | 'night_shift_date',
     value: string | null
   ) => {
-    if (selectedMachineRequiresApproval) {
+    if (productionRowRequiresApproval(row)) {
+      updateStageOptimisticPatch(stage.id, { [field]: dateOnlyKey(value) })
       recordDateDraft({
         key: stageDateDraftKey(row.machine.id, stage.id, field),
         machineId: row.machine.id,
@@ -2157,16 +2493,18 @@ export function ProductionPlanner({
       updateStageOptimisticPatch(stage.id, { [field]: previousValue })
     }
     return result
-  }, [getStageDraftValue, recordDateDraft, saveStageField, selectedMachineRequiresApproval, updateStageOptimisticPatch])
+  }, [getStageDraftValue, productionRowRequiresApproval, recordDateDraft, saveStageField, updateStageOptimisticPatch])
 
   const saveMachineDate = useCallback(async (machineId: string, field: MachineDateField, value: string | null) => {
-    if (selectedMachineRequiresApproval && selectedProductionRow) {
+    const targetRow = effectiveProductionData.find((row) => row.machine.id === machineId)
+    if (productionRowRequiresApproval(targetRow) && targetRow) {
+      updateMachineDateOptimisticPatch(machineId, field, dateOnlyKey(value))
       recordDateDraft({
         key: machineDateDraftKey(machineId, field),
         machineId,
         target_type: 'machine',
         field_name: field,
-        old_value: dateOnlyKey(selectedProductionRow.machine[field]),
+        old_value: dateOnlyKey(targetRow.machine[field]),
         new_value: dateOnlyKey(value),
         label: draftDateLabel(null, field),
       })
@@ -2176,7 +2514,7 @@ export function ProductionPlanner({
 
     const previousValue = selectedMachine?.id === machineId
       ? getMachineDraftValue(selectedMachine, field)
-      : selectedProductionRow?.machine[field] ?? null
+      : targetRow?.machine[field] ?? null
     const nextValue = dateOnlyKey(value)
     updateMachineDateOptimisticPatch(machineId, field, nextValue)
 
@@ -2190,15 +2528,16 @@ export function ProductionPlanner({
     return result
   }, [
     getMachineDraftValue,
+    effectiveProductionData,
+    productionRowRequiresApproval,
     recordDateDraft,
     selectedMachine,
-    selectedMachineRequiresApproval,
-    selectedProductionRow,
     updateMachineDateOptimisticPatch,
   ])
 
   const clearStageDates = useCallback(async (stage: ProductionStage) => {
     if (selectedMachineRequiresApproval && selectedProductionRow) {
+      updateStageOptimisticPatch(stage.id, { date_start: null, date_end: null })
       recordDateDraft({
         key: stageDateDraftKey(selectedProductionRow.machine.id, stage.id, 'date_start'),
         machineId: selectedProductionRow.machine.id,
@@ -2248,13 +2587,24 @@ export function ProductionPlanner({
     try {
       const result = await createProductionPlanDateChangeRequest({
         machineId: selectedMachineId,
-        changes: selectedDateChanges.map(({ target_type, production_stage_id, outsourcing_operation_id, field_name, new_value }) => ({
-          target_type,
-          production_stage_id,
-          outsourcing_operation_id,
-          field_name,
-          new_value,
-        })),
+        changes: selectedDateChanges.map((change): ProductionPlanDateChangeInput => {
+          if (change.target_type === 'stage_interval') {
+            return {
+              target_type: change.target_type,
+              production_stage_id: change.production_stage_id,
+              production_stage_interval_id: change.production_stage_interval_id,
+              interval_operation: change.interval_operation,
+              new_payload: change.new_payload,
+            }
+          }
+          return {
+            target_type: change.target_type,
+            production_stage_id: change.production_stage_id,
+            outsourcing_operation_id: change.outsourcing_operation_id,
+            field_name: change.field_name,
+            new_value: change.new_value,
+          }
+        }),
         comment,
       })
       if (!result.success) throw new Error(result.error || 'Не удалось отправить запрос')
@@ -2272,7 +2622,44 @@ export function ProductionPlanner({
     ...plannerRows.map((row) => row.machine),
     ...unscheduledRows.map((row) => row.machine),
   ].filter((machine) => machine.is_confirmed).length
-  const visibleStageCount = plannerRows.reduce((sum, row) => sum + row.visibleStages.length, 0)
+  const ganttVisibleStageCount = plannerRows.reduce((sum, row) => (
+    sum + new Set(row.visibleStages.map((stage) => stage.parent_stage_id || stage.id)).size
+  ), 0)
+  const tableFilters = useMemo<ProductionFilterValues>(() => ({
+    search: filters.search,
+    workshop: filters.workshop,
+    stageType: '',
+    status: '',
+    confirmation: filters.confirmation,
+    dateFrom: undefined,
+    dateTo: undefined,
+  }), [filters.confirmation, filters.search, filters.workshop])
+  const tableProductionData = useMemo(() => {
+    const month = normalizeProductionMonthValue(filters.productionMonth)
+    return month
+      ? effectiveProductionData.filter((row) => normalizeProductionMonthValue(row.machine.production_month) === month)
+      : effectiveProductionData
+  }, [effectiveProductionData, filters.productionMonth])
+  const tableVisibleRows = useMemo(() => {
+    const query = filters.search.trim().toLowerCase()
+    const workshop = filters.workshop ? Number(filters.workshop) : null
+    return tableProductionData.filter((row) => {
+      if (query && !row.machine.name.toLowerCase().includes(query)) return false
+      if (filters.confirmation === 'confirmed' && !row.machine.is_confirmed) return false
+      if (filters.confirmation === 'unconfirmed' && row.machine.is_confirmed) return false
+      if (workshop && !row.stages.some((stage) => (
+        stage.stage_type === 'assembly'
+        && !stage.is_skipped
+        && (stage.workshop === workshop || stage.intervals.some((interval) => interval.workshop === workshop))
+      ))) return false
+      return true
+    })
+  }, [filters.confirmation, filters.search, filters.workshop, tableProductionData])
+  const tableVisibleStageCount = tableVisibleRows.reduce((sum, row) => (
+    sum + row.stages.filter((stage) => filters.visibleStages.includes(stage.stage_type)).length
+  ), 0)
+  const visibleStageCount = plannerView === 'gantt' ? ganttVisibleStageCount : tableVisibleStageCount
+  const visibleMachineCount = plannerView === 'gantt' ? plannerRows.length + unscheduledRows.length : tableVisibleRows.length
 
   return (
     <div
@@ -2284,8 +2671,8 @@ export function ProductionPlanner({
       <div className="min-w-0 space-y-4">
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
           <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="text-[11px] font-medium uppercase text-slate-500">На графике</div>
-            <div className="mt-1 text-lg font-semibold text-blue-950">{plannerRows.length}</div>
+            <div className="text-[11px] font-medium uppercase text-slate-500">{plannerView === 'gantt' ? 'На графике' : 'В списке'}</div>
+            <div className="mt-1 text-lg font-semibold text-blue-950">{visibleMachineCount}</div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
             <div className="text-[11px] font-medium uppercase text-slate-500">Без дат</div>
@@ -2300,9 +2687,30 @@ export function ProductionPlanner({
             <div className="mt-1 text-lg font-semibold text-blue-950">{visibleStageCount}</div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="text-[11px] font-medium uppercase text-slate-500">Окно графика</div>
-            <div className="mt-1 truncate text-sm font-semibold text-blue-950" title={rangeLabel}>{rangeLabel}</div>
+            <div className="text-[11px] font-medium uppercase text-slate-500">{plannerView === 'gantt' ? 'Окно графика' : 'Режим'}</div>
+            <div className="mt-1 truncate text-sm font-semibold text-blue-950" title={plannerView === 'gantt' ? rangeLabel : 'Табличный список'}>
+              {plannerView === 'gantt' ? rangeLabel : 'Табличный список'}
+            </div>
           </div>
+        </div>
+
+        <div className="inline-flex w-full rounded-lg border border-slate-200 bg-white p-1 shadow-sm sm:w-auto" role="group" aria-label="Вид планировщика производства">
+          <button
+            type="button"
+            aria-pressed={plannerView === 'gantt'}
+            onClick={() => changePlannerView('gantt')}
+            className={cn('flex min-h-10 flex-1 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 sm:flex-none', plannerView === 'gantt' ? 'bg-blue-950 text-white' : 'text-slate-600 hover:bg-slate-50')}
+          >
+            <ChartGantt className="h-4 w-4" /> График
+          </button>
+          <button
+            type="button"
+            aria-pressed={plannerView === 'table'}
+            onClick={() => changePlannerView('table')}
+            className={cn('flex min-h-10 flex-1 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 sm:flex-none', plannerView === 'table' ? 'bg-blue-950 text-white' : 'text-slate-600 hover:bg-slate-50')}
+          >
+            <Table2 className="h-4 w-4" /> Список
+          </button>
         </div>
 
         <GanttControls
@@ -2315,20 +2723,22 @@ export function ProductionPlanner({
           onFiltersChange={setFilters}
           productionMonthOptions={productionMonthOptions}
           stageOptions={PRODUCTION_PLAN_STAGE_ORDER}
+          showTimelineControls={plannerView === 'gantt'}
         />
 
-        <UnscheduledMachinesPanel
+        {plannerView === 'gantt' && <UnscheduledMachinesPanel
           rows={unscheduledRows}
           open={unscheduledOpen}
           selectedMachineId={selectedMachineId}
           onToggle={() => setUnscheduledOpen((current) => !current)}
           onSelect={(machineId) => {
             setSelectedMachineId(machineId)
+            setSelectedIntervalId(null)
             setDesktopInspectorOpen(true)
           }}
-        />
+        />}
 
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        {plannerView === 'gantt' ? <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-2 border-b border-slate-200 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-sm font-semibold text-blue-950">Планировщик производства</h2>
@@ -2420,7 +2830,10 @@ export function ProductionPlanner({
                         todayOffset={todayOffset}
                         selected={row.machine.id === selectedMachineId}
                         showSupply={filters.showSupply}
-                        onSelect={setSelectedMachineId}
+                        onSelect={(machineId, intervalId) => {
+                          setSelectedMachineId(machineId)
+                          if (intervalId !== undefined) setSelectedIntervalId(intervalId)
+                        }}
                       />
                     )
                   })}
@@ -2447,7 +2860,26 @@ export function ProductionPlanner({
               )}
             />
           </div>
-        </div>
+        </div> : (
+          <ProductionTable
+            data={tableProductionData}
+            filters={tableFilters}
+            hideFilters
+            hideSummary
+            visibleStageTypes={filters.visibleStages}
+            selectedMachineId={selectedMachineId}
+            onSelectMachine={(machineId) => {
+              setSelectedMachineId(machineId)
+              setSelectedIntervalId(null)
+              setDesktopInspectorOpen(true)
+            }}
+            onMachineDateUpdate={saveMachineDate}
+            onStageDateUpdate={saveStageDate}
+            onStageUpdate={saveStageField}
+            onClearStageDates={clearStageDates}
+            onIntervalMutation={saveStageInterval}
+          />
+        )}
 
         <div className="xl:hidden">
           <ProductionMachineInspector
@@ -2461,6 +2893,7 @@ export function ProductionPlanner({
             pendingDateChanges={selectedDateChanges}
             submittingDateRequest={submittingDateRequest}
             clearingStageId={clearingStageId}
+            selectedIntervalId={selectedIntervalId}
             collapsible
             defaultOpen
             getMachineDateValue={getMachineDraftValue}
@@ -2471,12 +2904,13 @@ export function ProductionPlanner({
             onNightShiftDatesUpdate={saveNightShiftDates}
             onStageUpdate={saveStageField}
             onClearDates={clearStageDates}
+            onIntervalMutation={saveStageInterval}
             onSubmitDateChangeRequest={submitDateChangeRequest}
             onResetDateChangeDraft={clearSelectedDrafts}
           />
         </div>
 
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        {plannerView === 'gantt' && <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <button
             type="button"
             className="flex min-h-12 w-full items-center justify-between gap-3 border-b border-slate-200 px-3 py-2 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
@@ -2551,9 +2985,9 @@ export function ProductionPlanner({
               </div>
             </div>
           )}
-        </section>
+        </section>}
 
-        <GanttLegend defaultOpen={false} stages={PRODUCTION_PLAN_STAGE_ORDER} />
+        {plannerView === 'gantt' && <GanttLegend defaultOpen={false} stages={PRODUCTION_PLAN_STAGE_ORDER} />}
       </div>
 
       {desktopInspectorOpen && (
@@ -2570,6 +3004,7 @@ export function ProductionPlanner({
               pendingDateChanges={selectedDateChanges}
               submittingDateRequest={submittingDateRequest}
               clearingStageId={clearingStageId}
+              selectedIntervalId={selectedIntervalId}
               getMachineDateValue={getMachineDraftValue}
               getStageDateValue={getStageDraftValue}
               getNightShiftDateValues={getStageNightShiftDraftValues}
@@ -2578,6 +3013,7 @@ export function ProductionPlanner({
               onNightShiftDatesUpdate={saveNightShiftDates}
               onStageUpdate={saveStageField}
               onClearDates={clearStageDates}
+              onIntervalMutation={saveStageInterval}
               onSubmitDateChangeRequest={submitDateChangeRequest}
               onResetDateChangeDraft={clearSelectedDrafts}
               onCollapse={() => setDesktopInspectorOpen(false)}

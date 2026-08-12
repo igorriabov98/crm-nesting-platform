@@ -11,7 +11,7 @@ export const STAGES: Record<
   }
 > = {
   cutting:     { label: 'Заготовка',  color: '#3B82F6', fixedWorkshop: 1,    canSkip: false },
-  assembly:    { label: 'Сборка',     color: '#22C55E', fixedWorkshop: null,  canSkip: true },
+  assembly:    { label: 'Сборка/Сварка', color: '#22C55E', fixedWorkshop: null, canSkip: true },
   cleaning:    { label: 'Зачистка',   color: '#EAB308', fixedWorkshop: null,  canSkip: true },
   galvanizing: { label: 'Цинкование', color: '#6B7280', fixedWorkshop: null,  canSkip: true }, // canSkip=false для обоих цинковых покрытий (дополнительная проверка в UI и БД)
   post_galvanizing_cleaning: { label: 'Зачистка после цинка', color: '#D6A500', fixedWorkshop: null, canSkip: true },
@@ -36,6 +36,8 @@ export const STAGE_ORDER: StageType[] = [
 
 export const SINGLE_DATE_STAGE_TYPES = ['shipping', 'actual_shipping'] as const satisfies readonly StageType[]
 
+export const SPLITTABLE_STAGE_TYPES = ['cutting', 'assembly', 'cleaning', 'painting'] as const satisfies readonly StageType[]
+
 export const STAGE_TYPES_WITHOUT_WORKSHOP = [
   'cutting',
   'cleaning',
@@ -52,6 +54,10 @@ export function stageHasSingleDate(stageType: StageType | string) {
 
 export function stageHasWorkshop(stageType: StageType | string) {
   return !(STAGE_TYPES_WITHOUT_WORKSHOP as readonly string[]).includes(stageType)
+}
+
+export function stageSupportsIntervals(stageType: StageType | string) {
+  return (SPLITTABLE_STAGE_TYPES as readonly string[]).includes(stageType)
 }
 
 // Цвет ночной смены (оверлей поверх основного цвета этапа)

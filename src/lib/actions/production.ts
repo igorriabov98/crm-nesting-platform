@@ -2,10 +2,11 @@
 
 import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePermission } from '@/lib/permissions/server'
 import { ROUTES } from '@/lib/constants/routes'
 import { isZincCoating } from '@/lib/constants/coatings'
-import { STAGE_ORDER, stageHasSingleDate, stageHasWorkshop } from '@/lib/constants/stages'
+import { STAGE_ORDER, stageHasSingleDate, stageHasWorkshop, stageSupportsIntervals } from '@/lib/constants/stages'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
@@ -32,6 +33,13 @@ type MachineDateField =
   | 'delivery_to_client_date'
 type ProductionMutationOptions = {
   revalidate?: boolean
+}
+export type ProductionStageIntervalMutation = {
+  operation: 'create' | 'update' | 'delete'
+  intervalId?: string | null
+  dateStart?: string | null
+  dateEnd?: string | null
+  workshop?: number | null
 }
 type StageForUpdate = {
   machine_id: string
@@ -95,7 +103,7 @@ function getStagePosition(stageType: StageDateRow['stage_type']) {
 function stageLabel(stageType: StageDateRow['stage_type']) {
   const labels: Partial<Record<StageDateRow['stage_type'], string>> = {
     cutting: 'Заготовка',
-    assembly: 'Сборка',
+    assembly: 'Сборка/Сварка',
     cleaning: 'Зачистка',
     galvanizing: 'Цинкование',
     post_galvanizing_cleaning: 'Зачистка после цинка',
@@ -367,6 +375,91 @@ export async function toggleStageSkip(stageId: string, isSkipped: boolean) {
 
 export async function clearProductionStageDates(stageId: string, options: ProductionMutationOptions = {}) {
   return updateProductionStage(stageId, { date_start: null, date_end: null }, options)
+}
+
+export async function mutateProductionStageInterval(
+  stageId: string,
+  mutation: ProductionStageIntervalMutation,
+  options: ProductionMutationOptions = {},
+) {
+  try {
+    const { supabase, user } = await requireAuth()
+    const { data: stage, error: stageError } = await supabase
+      .from('production_stages')
+      .select('id, machine_id, stage_type, date_start, date_end, machines(factory_id, is_archived)')
+      .eq('id', stageId)
+      .single()
+
+    if (stageError || !stage) throw new Error('Этап не найден')
+    const selectedStage = stage as unknown as {
+      id: string
+      machine_id: string
+      stage_type: Database['public']['Enums']['stage_type']
+      machines: { factory_id: string | null; is_archived: boolean } | null
+    }
+    if (!stageSupportsIntervals(selectedStage.stage_type)) throw new Error('Этот этап нельзя делить на подходы')
+    if (!selectedStage.machines) throw new Error('Машина не найдена')
+    if (selectedStage.machines.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
+    if (selectedStage.machines.factory_id !== user.factory_id) throw new Error('Доступ запрещён')
+    if (user.role === 'production_manager' && await isMachineInConfirmedProductionPlan(selectedStage.machine_id)) {
+      throw new Error('План месяца подтверждён. Отправьте запрос на изменение подходов руководителю отдела планирования.')
+    }
+
+    const dateStart = dateOnly(mutation.dateStart)
+    const dateEnd = dateOnly(mutation.dateEnd)
+    if (dateStart && dateEnd && dateEnd < dateStart) {
+      throw new Error('Дата окончания подхода не может быть раньше даты начала')
+    }
+
+    const rpc = createAdminClient() as unknown as {
+      rpc: (fn: 'fn_mutate_production_stage_interval', args: {
+        p_operation: string
+        p_stage_id: string
+        p_interval_id: string | null
+        p_date_start: string | null
+        p_date_end: string | null
+        p_workshop: number | null
+        p_updated_by: string
+      }) => Promise<{ data: string | null; error: { message: string } | null }>
+    }
+    const { data: intervalId, error } = await rpc.rpc('fn_mutate_production_stage_interval', {
+      p_operation: mutation.operation,
+      p_stage_id: stageId,
+      p_interval_id: mutation.intervalId ?? null,
+      p_date_start: dateStart,
+      p_date_end: dateEnd,
+      p_workshop: selectedStage.stage_type === 'assembly' ? (mutation.workshop ?? null) : null,
+      p_updated_by: user.id,
+    })
+    if (error) throw error
+
+    const { data: allStages, error: allStagesError } = await supabase
+      .from('production_stages')
+      .select('id, stage_type, date_start, date_end, is_skipped')
+      .eq('machine_id', selectedStage.machine_id)
+    if (allStagesError) throw allStagesError
+    validateStageDates((allStages ?? []) as StageDateRow[], stageId)
+
+    if (selectedStage.stage_type === 'cutting') {
+      try {
+        await (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<unknown> })
+          .rpc('fn_promote_due_future_business_scrap', {})
+      } catch {
+        // Calendar editing must not fail if best-effort scrap promotion is temporarily unavailable.
+      }
+      revalidatePath(ROUTES.INVENTORY)
+    }
+
+    if (options.revalidate !== false) {
+      revalidatePath(ROUTES.PRODUCTION)
+      revalidatePath(ROUTES.GANTT)
+      revalidatePath(ROUTES.DASHBOARD)
+      revalidatePath(`${ROUTES.SALES_PLAN}/${selectedStage.machine_id}`)
+    }
+    return { success: true, intervalId, error: null }
+  } catch (error: unknown) {
+    return { success: false, intervalId: null, error: getErrorMessage(error) }
+  }
 }
 
 export async function updateMachineDate(

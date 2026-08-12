@@ -17,6 +17,7 @@ import {
   normalizeDashboardMonth,
   todayInUzhgorod,
 } from '@/lib/dashboard/planning-director/data'
+import { getStageIntervals, prorateStageIntervalsForPeriod, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
 
 export const metadata = {
   title: 'Дашборд — CRM Завода',
@@ -41,11 +42,14 @@ type DashboardNotification = {
 }
 
 type DashboardProductionStage = {
+  id: string
   stage_type: string
+  workshop: number | null
   date_start: string | null
   date_end: string | null
   planned_date_end: string | null
   is_skipped: boolean | null
+  production_stage_intervals: ProductionStageIntervalValue[] | null
 }
 
 type DashboardTonnageMachine = {
@@ -207,7 +211,7 @@ async function getMonthlyDirectorTonnage(factoryFilter: string | null, role: str
       .from('machines_with_totals')
       .select(`
         id, name, total_weight, factory_id, planned_material_date, actual_material_date, actual_shipping_date,
-        production_stages(stage_type, date_start, date_end, planned_date_end, is_skipped)
+        production_stages(id, stage_type, workshop, date_start, date_end, planned_date_end, is_skipped, production_stage_intervals(id, production_stage_id, position, date_start, date_end, workshop))
       `)
       .eq('is_archived', false),
     factoryFilter,
@@ -257,15 +261,26 @@ async function getMonthlyDirectorTonnage(factoryFilter: string | null, role: str
     for (const stage of machine.production_stages || []) {
       if (stage.is_skipped) continue
       if (stage.stage_type === 'assembly') {
-        const detail = rangeTonsInMonthDetail(weight, stage.date_start, stage.planned_date_end || stage.date_end, monthStart, monthEnd)
-        if (detail) {
+        const intervals = getStageIntervals({
+          ...stage,
+          date_end: stage.production_stage_intervals?.length ? stage.date_end : stage.planned_date_end || stage.date_end,
+          intervals: stage.production_stage_intervals,
+        })
+        const monthEndInclusive = new Date(monthEnd.getTime() - DAY_MS)
+        const detail = prorateStageIntervalsForPeriod(
+          weight,
+          intervals,
+          monthStart.toISOString().slice(0, 10),
+          monthEndInclusive.toISOString().slice(0, 10),
+        )
+        if (detail.tons > 0) {
           weldingTons += detail.tons
           weldingDetails.push({
             machineId: machine.id,
             machineName: machine.name,
             tons: detail.tons,
             basis: `План сварки: ${detail.overlapDays} из ${detail.totalDays} дн.`,
-            period: detail.period,
+            period: intervals.map((interval) => formatDateRange(interval.date_start, interval.date_end)).join('; '),
           })
         }
       }
