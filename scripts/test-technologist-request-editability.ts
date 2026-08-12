@@ -46,7 +46,7 @@ const sectionFiles = [
 ]
 for (const file of sectionFiles) {
   const source = readFileSync(join(root, 'src/components/features/requests', file), 'utf8')
-  assert(source.includes('<RequestItemOrderStatus status={row.order_status} />'), `${file} должен показывать статус позиции`)
+  assert(source.includes('<RequestItemOrderStatus status={row.order_status}'), `${file} должен показывать статус позиции`)
 }
 
 console.log('technologist-request-editability: OK')
