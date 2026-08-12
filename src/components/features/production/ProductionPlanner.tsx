@@ -1739,11 +1739,15 @@ export function ProductionPlanner({
 
   useEffect(() => {
     const stored = window.localStorage.getItem('production-planner-view')
-    if (stored === 'gantt' || stored === 'table') setPlannerView(stored)
+    if (stored === 'gantt' || stored === 'table') {
+      setPlannerView(stored)
+      setDesktopInspectorOpen(stored === 'gantt')
+    }
   }, [])
 
   const changePlannerView = useCallback((next: PlannerView) => {
     setPlannerView(next)
+    setDesktopInspectorOpen(next === 'gantt')
     window.localStorage.setItem('production-planner-view', next)
   }, [])
 

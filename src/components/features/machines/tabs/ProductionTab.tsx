@@ -252,7 +252,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
                       value={stage.workshop?.toString() || null}
                       options={workshopOptions}
                       editable={canEdit && !stage.is_skipped}
-                      onSave={(val) => handleUpdate(stage.id, 'workshop', parseInt(val))}
+                      onSave={(val) => handleUpdate(stage.id, 'workshop', val ? parseInt(val) : null)}
                       placeholder="Выбрать..."
                     />
                   )}
