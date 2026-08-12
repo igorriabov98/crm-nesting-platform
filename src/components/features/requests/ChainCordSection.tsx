@@ -142,7 +142,7 @@ export function ChainCordSection({ requestId, items, isEditable, onRowsChange }:
                 </td>
                 <td className="px-3 py-2"><InlineEditCell value={row.parameters} disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { parameters: value === null ? null : String(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={neededLengthMm(row)} type="number" step="1" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_meters: mmToMeters(value) })} /></td>
-                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_chain_cord" item={row} /></td>
                 <td className="px-3 py-2 text-right">
                   {isEditable && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>

@@ -156,7 +156,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
                 </td>
                 <td className="px-3 py-2"><InlineEditCell value={row.remainder_mm} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_mm: Number(value || 0) })} /></td>
                 <td className="px-3 py-2 text-slate-700">{formatWeight(row.calculated_weight_kg)}</td>
-                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_circle" item={row} /></td>
                 <td className="px-3 py-2 text-right">
                   {isEditable && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
