@@ -437,6 +437,10 @@ function productionStageToGanttStages(stage: ProductionStage): GanttStage[] {
   }]
 }
 
+function productionStageHasTimelineSegment(stage: ProductionStage) {
+  return productionStageToGanttStages(stage).length > 0
+}
+
 function getProductionStageTimelineStart(stage: Pick<ProductionStage, 'stage_type' | 'date_start' | 'date_end'>) {
   if (stage.date_start) return stage.date_start
   if (stage.stage_type === 'shipping' && stage.date_end) return stage.date_end
@@ -2656,7 +2660,10 @@ export function ProductionPlanner({
     })
   }, [filters.confirmation, filters.search, filters.workshop, tableProductionData])
   const tableVisibleStageCount = tableVisibleRows.reduce((sum, row) => (
-    sum + row.stages.filter((stage) => filters.visibleStages.includes(stage.stage_type)).length
+    sum + row.stages.filter((stage) => (
+      filters.visibleStages.includes(stage.stage_type)
+      && productionStageHasTimelineSegment(stage)
+    )).length
   ), 0)
   const visibleStageCount = plannerView === 'gantt' ? ganttVisibleStageCount : tableVisibleStageCount
   const visibleMachineCount = plannerView === 'gantt' ? plannerRows.length + unscheduledRows.length : tableVisibleRows.length
