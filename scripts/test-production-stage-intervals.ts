@@ -78,6 +78,7 @@ assert.ok(migration.includes("stage_type::text NOT IN ('cutting', 'assembly', 'c
 assert.ok(migration.includes('current_interval.date_start <= previous_interval.date_end'))
 assert.ok(migration.includes('SET CONSTRAINTS production_stage_intervals_sync_parent DEFERRED'))
 assert.ok(migration.includes('REVOKE ALL ON FUNCTION public.fn_mutate_production_stage_interval'))
+assert.ok(!migration.includes('ps.updated_at'), 'production_stages has no updated_at column')
 assert.ok(planner.includes("window.localStorage.setItem('production-planner-view', next)"))
 assert.ok(planner.includes('.flatMap(productionStageToGanttStages)'))
 assert.ok(planner.includes('machineWeight / totalActiveDays'))
