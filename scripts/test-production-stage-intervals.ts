@@ -83,6 +83,7 @@ assert.ok(planner.includes("window.localStorage.setItem('production-planner-view
 assert.ok(planner.includes('.flatMap(productionStageToGanttStages)'))
 assert.ok(planner.includes('machineWeight / totalActiveDays'))
 assert.ok(planner.includes('new Set(row.visibleStages.map((stage) => stage.parent_stage_id || stage.id)).size'))
+assert.ok(planner.includes('productionStageHasTimelineSegment(stage)'))
 assert.ok(table.includes('Добавить подход'))
 assert.ok(table.includes('useVirtualizer'))
 assert.ok(approval.includes("target_type: 'stage_interval'"))
