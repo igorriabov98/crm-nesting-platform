@@ -69,7 +69,7 @@ SELECT
   ps.date_start,
   ps.date_end,
   CASE WHEN ps.stage_type::text = 'assembly' THEN ps.workshop ELSE NULL END,
-  COALESCE(ps.updated_at, now())
+  now()
 FROM public.production_stages ps
 WHERE ps.stage_type::text IN ('cutting', 'assembly', 'cleaning', 'painting')
   AND (ps.date_start IS NOT NULL OR ps.date_end IS NOT NULL)
