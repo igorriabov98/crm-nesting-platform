@@ -170,7 +170,7 @@ export function SheetMetalSection({ requestId, items, canEdit, steelTypes }: Pro
                 <td className="px-3 py-2"><InlineEditCell value={row.thickness_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { thickness_mm: toNumber(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={row.remainder_qty} type="number" step="1" disabled={!canEdit} onSave={(value) => handleUpdate(row.id, { remainder_qty: Number(value || 0) })} /></td>
                 <td className="px-3 py-2 text-slate-700">{formatWeight(row.calculated_weight_kg)}</td>
-                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_sheet_metal" item={row} /></td>
                 <td className="px-3 py-2 text-right">
                   {canEdit && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>

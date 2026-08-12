@@ -148,7 +148,7 @@ export function ComponentsSection({ requestId, items, canEdit, onRowsChange }: P
                 <td className="px-3 py-2">
                   <InlineEditCell value={row.quantity_needed} type="number" step="1" disabled={!canEdit} onSave={(value) => handleUpdate(row.id, { quantity_needed: toNumber(value) })} />
                 </td>
-                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_components" item={row} /></td>
                 <td className="px-3 py-2 text-right">
                   {canEdit && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>

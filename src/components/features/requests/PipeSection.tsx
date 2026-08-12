@@ -260,7 +260,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
                   <td className="px-3 py-2">{isRegularPipe ? <InlineEditCell value={row.remainder_length_mm} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_length_mm: Number(value || 0) })} /> : <span className="text-gray-400">—</span>}</td>
                   <td className="px-3 py-2">{isWire ? <InlineEditCell value={row.remainder_kg} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_kg: Number(value || 0) })} /> : <span className="text-gray-400">—</span>}</td>
                   <td className="px-3 py-2 text-slate-700">{formatWeight(displayWeight)}</td>
-                  <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
+                  <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_pipe" item={row} /></td>
                   <td className="px-3 py-2 text-right">
                     {isEditable && (
                       <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>

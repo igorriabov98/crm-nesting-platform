@@ -138,7 +138,7 @@ export function PaintSection({ requestId, items, canEdit, onRowsChange }: Props)
                   ) : row.finish ?? '—'}
                 </td>
                 <td className="px-3 py-2"><InlineEditCell value={row.remainder_kg} type="number" step="0.01" disabled={!canEdit} onSave={(value) => handleUpdate(row.id, { remainder_kg: Number(value || 0) })} /></td>
-                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} /></td>
+                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_paint" item={row} /></td>
                 <td className="px-3 py-2 text-right">
                   {canEdit && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
