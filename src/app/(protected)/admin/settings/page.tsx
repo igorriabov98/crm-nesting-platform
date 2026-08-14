@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Archive, Bot, Building2, Factory, Mail, Send, Settings, ShieldCheck, Users } from 'lucide-react'
+import { Archive, Bot, Building2, Factory, Flag, Mail, Send, Settings, ShieldCheck, Users } from 'lucide-react'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -42,6 +42,14 @@ export default async function AdminSettingsPage() {
   }
 
   const cards = [
+    permissionDetails.isAdminPosition && {
+      key: 'feature-flags',
+      title: 'Фичефлаги',
+      description: 'Глобальные серверные переключатели и история их изменений.',
+      href: ROUTES.ADMIN_FEATURE_FLAGS,
+      buttonLabel: 'Открыть фичефлаги',
+      icon: Flag,
+    },
     canOpenAccessSettings && {
       key: 'access',
       title: 'Управление доступом',

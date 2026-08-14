@@ -32,6 +32,8 @@ jobs:
         run: npx tsc --noEmit
       - name: Access control registry and policies
         run: npm run test:access-control
+      - name: Feature flag fail-safe and audit contracts
+        run: npm run test:feature-flags
       - name: Product PDF and STEP upload rules
         run: npm run test:product-file-uploads
       - name: Restricted product production drawing rules
