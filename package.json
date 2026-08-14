@@ -33,6 +33,7 @@
     "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && tsx --test src/lib/supply-orders/manual-allocation.test.ts && node scripts/test-supply-partial-receiving.mjs",
     "test:detailing": "node scripts/test-detailing-module.mjs",
     "test:inventory-transfers": "node scripts/test-inventory-transfers.mjs",
+    "test:inventory-transfers:full-schema": "node scripts/test-inventory-transfers-full-schema.mjs",
     "test:outsourcing": "tsx scripts/test-outsourcing-workflow.ts",
     "test:transport-trips": "tsx scripts/test-transport-trips.ts",
     "test:transport-date-approval": "node scripts/test-transport-date-approval.mjs",
