@@ -47,6 +47,7 @@ const supplyReceiptPriorityMigration = read('supabase/migrations/20260714101554_
 const knifeSupplyFutureScrapMigration = read('supabase/migrations/20260714120049_knife_supply_future_scrap.sql')
 const barReceivingLifecycleMigration = read('supabase/migrations/20260730133000_bar_receiving_lifecycle.sql')
 const wholeBarCirclePipeMigration = read('supabase/migrations/20260731120000_whole_bar_circle_pipe_lifecycle.sql')
+const knifeWholeBarStockMigration = read('supabase/migrations/20260814120000_knife_whole_bar_stock_lifecycle.sql')
 const archiveScrapMigration = read('supabase/migrations/92_archive_empty_business_scrap_on_unreserve.sql')
 
 const sql = [
@@ -66,7 +67,9 @@ const sql = [
   knifeSupplyFutureScrapMigration,
   barReceivingLifecycleMigration,
   wholeBarCirclePipeMigration,
+  knifeWholeBarStockMigration,
   read('supabase/tests/inventory_stock_lifecycle_assertions.sql'),
+  read('supabase/tests/knife_whole_bar_stock_assertions.sql'),
 ].join('\n\n')
 
 const tempDir = mkdtempSync(path.join(tmpdir(), 'inventory-stock-test-'))
