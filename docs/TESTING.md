@@ -1,0 +1,26 @@
+# Локальная проверка складских перемещений
+
+## Полно-схемная тестовая БД
+
+Одна команда пересоздаёт отдельную локальную БД, применяет все Prisma- и Supabase SQL-миграции репозитория и запускает полный lifecycle/concurrency-тест перемещений:
+
+```bash
+npm run test:inventory-transfers:full-schema
+```
+
+По умолчанию используется `postgresql://localhost/crm_full_schema_test`. Нужны локальный PostgreSQL и утилиты `psql`, `createdb`, `dropdb`; текущая локальная роль должна иметь право создавать БД. Docker, локальный Supabase stack и production-секреты не нужны.
+
+Команда намеренно удаляет и создаёт заново только БД, имя которой содержит `test`, и отказывается работать не с `localhost`/`127.0.0.1`. Другую локальную тестовую БД можно указать без вывода реквизитов подключения в лог:
+
+```bash
+FULL_SCHEMA_TEST_DATABASE_URL='postgresql://localhost/another_test_database' \
+  npm run test:inventory-transfers:full-schema
+```
+
+Перед миграциями загружается тестовый bootstrap Supabase-схем `auth`, `storage` и `vault`, затем все `nesting-service/prisma/migrations/*/migration.sql`, после них — все `supabase/migrations/*.sql`. Каждый Supabase-файл исполняется в отдельной транзакции (файл с собственным `BEGIN/COMMIT` управляет ею сам), поэтому временные таблицы живут до конца миграции. Поскольку обычный Homebrew PostgreSQL не поставляет расширения Supabase `pg_cron` и `pg_net`, bootstrap добавляет только совместимые заглушки их DDL-контрактов: фоновые задания и HTTP-вызовы в тесте не выполняются. Для старых Supabase-миграций, которые не были replay-safe на пустой схеме или предполагали наличие двух штатных заводов, runner выполняет точечные локальные prelude-команды перед исходным SQL. Product migration-файлы при этом не изменяются; при локальном прогоне удаляются BOM, отсутствующие extension-команды и PG17-only `transaction_timeout` из baseline dump, после чего остальное содержимое каждого файла исполняется в порядке появления в git (файлы одного коммита — по номеру). Поэтому поздние legacy-файлы вроде `111_*` не ошибочно запускаются перед более ранними timestamp-миграциями.
+
+После успешной пересборки test-only compatibility-файл задаёт локальный default для обязательного `factories.city`: неизменяемая lifecycle-фабрика создаёт временный третий завод только с `id/name`. Затем команда запускает неизменённый `scripts/test-inventory-transfers.mjs` с `INVENTORY_TRANSFER_TEST_DATABASE_URL`, поэтому статические assertions, SQL lifecycle и concurrency-проверка выполняются одним запуском.
+
+## Lint baseline
+
+`nesting-service/dist/**` исключён как сгенерированный артефакт. Baseline на 2026-08-14 после исключения: **56 ошибок и 33 предупреждения** (`89 problems`). До исключения было 419 ошибок и 34 предупреждения. Существующий долг не входит в эту инфраструктурную задачу, а новый код не должен увеличивать количество ошибок и предупреждений.
