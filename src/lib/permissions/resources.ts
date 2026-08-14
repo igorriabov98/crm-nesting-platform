@@ -55,6 +55,7 @@ export type ResourceKey =
   | 'telegram_settings'
   | 'mail_settings'
   | 'file_archive_settings'
+  | 'feature_flags'
   | 'company_settings'
   | 'production_fact_settings'
   | 'access_settings'
@@ -709,6 +710,17 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: DIRECTORS,
     defaultManageRoles: DIRECTORS,
     routes: [{ path: ROUTES.ADMIN_FILE_ARCHIVE_SETTINGS, match: 'prefix', operation: 'view', priority: 95 }],
+  },
+  {
+    key: 'feature_flags',
+    label: 'Фичефлаги',
+    description: 'Глобальные серверные переключатели незавершённого функционала',
+    group: 'Настройки',
+    defaultHref: ROUTES.ADMIN_FEATURE_FLAGS,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.ADMIN_FEATURE_FLAGS, match: 'prefix', operation: 'manage', priority: 130 }],
+    locked: true,
   },
   {
     key: 'company_settings',

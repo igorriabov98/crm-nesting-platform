@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const migrationsDir = path.join(root, 'supabase', 'migrations')
 const prismaMigrationsDir = path.join(root, 'nesting-service', 'prisma', 'migrations')
 const bootstrapPath = path.join(root, 'supabase', 'tests', 'full_schema_test_bootstrap.sql')
+const featureFlagAssertionsPath = path.join(root, 'supabase', 'tests', 'feature_flags_assertions.sql')
 const transferCompatPath = path.join(
   root,
   'supabase',
@@ -86,6 +87,10 @@ for (const migration of migrations) {
 
 console.log(
   `[full-schema-test] applied ${prismaMigrations.length} Prisma and ${migrations.length} Supabase migrations`,
+)
+runPsql(
+  'feature_flags_assertions.sql',
+  readFileSync(featureFlagAssertionsPath, 'utf8'),
 )
 runPsql(
   'full_schema_inventory_transfer_compat.sql',

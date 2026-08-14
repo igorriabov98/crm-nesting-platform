@@ -278,6 +278,55 @@ export type Database = {
           updated_at?: string
         }
       }
+      feature_flags: {
+        Row: {
+          key: string
+          enabled: boolean
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          key: string
+          enabled?: boolean
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          key?: string
+          enabled?: boolean
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      feature_flag_audit_log: {
+        Row: {
+          id: string
+          flag_key: string
+          old_enabled: boolean | null
+          new_enabled: boolean
+          changed_by: string | null
+          changed_at: string
+        }
+        Insert: {
+          id?: string
+          flag_key: string
+          old_enabled?: boolean | null
+          new_enabled: boolean
+          changed_by?: string | null
+          changed_at?: string
+        }
+        Update: {
+          id?: string
+          flag_key?: string
+          old_enabled?: boolean | null
+          new_enabled?: boolean
+          changed_by?: string | null
+          changed_at?: string
+        }
+      }
       employees: {
         Row: EmployeeRow
         Insert:
