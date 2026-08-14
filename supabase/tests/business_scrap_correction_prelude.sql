@@ -8,32 +8,74 @@ BEGIN
 END;
 $$;
 
-CREATE TYPE public.user_role AS ENUM (
-  'financial_director', 'commercial_director', 'planning_director', 'sales_manager',
-  'engineer', 'technologist', 'supply_manager', 'production_manager',
-  'procurement_head', 'painting_head'
-);
-CREATE TYPE public.task_type AS ENUM ('supply_start');
-CREATE TYPE public.task_status AS ENUM ('pending', 'in_progress', 'completed', 'cancelled');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_type AS type
+    JOIN pg_namespace AS namespace ON namespace.oid = type.typnamespace
+    WHERE namespace.nspname = 'public' AND type.typname = 'user_role'
+  ) THEN
+    CREATE TYPE public.user_role AS ENUM (
+      'financial_director', 'commercial_director', 'planning_director', 'sales_manager',
+      'engineer', 'technologist', 'supply_manager', 'production_manager',
+      'procurement_head', 'painting_head'
+    );
+  END IF;
+END;
+$$;
+
+ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'sales_manager';
+ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'engineer';
+ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'production_manager';
+ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'painting_head';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_type AS type
+    JOIN pg_namespace AS namespace ON namespace.oid = type.typnamespace
+    WHERE namespace.nspname = 'public' AND type.typname = 'task_type'
+  ) THEN
+    CREATE TYPE public.task_type AS ENUM ('supply_start');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_type AS type
+    JOIN pg_namespace AS namespace ON namespace.oid = type.typnamespace
+    WHERE namespace.nspname = 'public' AND type.typname = 'task_status'
+  ) THEN
+    CREATE TYPE public.task_status AS ENUM ('pending', 'in_progress', 'completed', 'cancelled');
+  END IF;
+END;
+$$;
+
+ALTER TYPE public.task_type ADD VALUE IF NOT EXISTS 'supply_start';
+ALTER TYPE public.task_status ADD VALUE IF NOT EXISTS 'pending';
+ALTER TYPE public.task_status ADD VALUE IF NOT EXISTS 'in_progress';
+ALTER TYPE public.task_status ADD VALUE IF NOT EXISTS 'completed';
+ALTER TYPE public.task_status ADD VALUE IF NOT EXISTS 'cancelled';
 
 ALTER TABLE public.users
-  ADD COLUMN role public.user_role NOT NULL DEFAULT 'technologist';
+  ADD COLUMN IF NOT EXISTS role public.user_role NOT NULL DEFAULT 'technologist';
 ALTER TABLE public.machines
-  ADD COLUMN name text,
-  ADD COLUMN is_archived boolean NOT NULL DEFAULT false;
+  ADD COLUMN IF NOT EXISTS name text,
+  ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false;
 ALTER TABLE public.technologist_requests
-  ADD COLUMN status text NOT NULL DEFAULT 'submitted_to_supply';
+  ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'submitted_to_supply';
 ALTER TABLE public.request_knives
-  ADD COLUMN remainder_meters numeric NOT NULL DEFAULT 0,
-  ADD COLUMN to_order_mm numeric NOT NULL DEFAULT 0,
-  ADD COLUMN order_status text,
-  ADD COLUMN ordered_at timestamptz,
-  ADD COLUMN delivered_at timestamptz;
+  ADD COLUMN IF NOT EXISTS remainder_meters numeric NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS to_order_mm numeric NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS order_status text,
+  ADD COLUMN IF NOT EXISTS ordered_at timestamptz,
+  ADD COLUMN IF NOT EXISTS delivered_at timestamptz;
 ALTER TABLE public.supply_order_delivery_schedules
-  ADD COLUMN change_reason text,
-  ADD COLUMN updated_by uuid;
+  ADD COLUMN IF NOT EXISTS change_reason text,
+  ADD COLUMN IF NOT EXISTS updated_by uuid;
 
-CREATE TABLE public.tasks (
+CREATE TABLE IF NOT EXISTS public.tasks (
   id uuid PRIMARY KEY,
   machine_id uuid NOT NULL REFERENCES public.machines(id),
   assigned_to uuid NOT NULL REFERENCES public.users(id),
@@ -48,7 +90,7 @@ CREATE TABLE public.tasks (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE public.role_permissions (
+CREATE TABLE IF NOT EXISTS public.role_permissions (
   role public.user_role NOT NULL,
   resource_key text NOT NULL,
   can_view boolean NOT NULL DEFAULT false,

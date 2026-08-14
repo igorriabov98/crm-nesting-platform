@@ -69,8 +69,15 @@ DECLARE
 BEGIN
   SELECT id INTO v_beregovo FROM public.factories WHERE name = 'Берегово' LIMIT 1;
   SELECT id INTO v_uzhgorod FROM public.factories WHERE name = 'Ужгород' LIMIT 1;
-  IF v_beregovo IS NULL OR v_uzhgorod IS NULL THEN
-    RAISE EXCEPTION 'Для теста нужны заводы Берегово и Ужгород';
+
+  IF v_beregovo IS NULL THEN
+    v_beregovo := gen_random_uuid();
+    INSERT INTO public.factories(id, name) VALUES (v_beregovo, 'Берегово');
+  END IF;
+
+  IF v_uzhgorod IS NULL THEN
+    v_uzhgorod := gen_random_uuid();
+    INSERT INTO public.factories(id, name) VALUES (v_uzhgorod, 'Ужгород');
   END IF;
 
   INSERT INTO public.factories(id, name) VALUES (v_mukachevo, 'Мукачево — тест перевозок');
