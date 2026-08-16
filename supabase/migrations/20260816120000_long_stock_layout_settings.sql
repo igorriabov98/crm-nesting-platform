@@ -4,39 +4,23 @@
 alter table public.material_variants
   add column if not exists knife_bevel_count smallint;
 
-update public.material_variants
-set knife_bevel_count = 1
-where category = 'knives'
-  and knife_bevel_count is null;
-
-create or replace function public.material_variants_normalize_knife_bevel()
-returns trigger
-language plpgsql
-set search_path = public, pg_temp
-as $$
-begin
-  if new.category = 'knives' and new.knife_bevel_count is null then
-    new.knife_bevel_count := 1;
-  end if;
-  return new;
-end;
-$$;
-
-drop trigger if exists material_variants_normalize_knife_bevel_trigger
-  on public.material_variants;
-create trigger material_variants_normalize_knife_bevel_trigger
-before insert or update of category, knife_bevel_count
-on public.material_variants
-for each row execute function public.material_variants_normalize_knife_bevel();
+alter table public.request_knives
+  add column if not exists knife_bevel_count smallint;
 
 alter table public.material_variants
   drop constraint if exists material_variants_knife_bevel_count_check;
 alter table public.material_variants
   add constraint material_variants_knife_bevel_count_check
   check (
-    (category = 'knives' and knife_bevel_count in (1, 2))
+    (category = 'knives' and knife_bevel_count is not null and knife_bevel_count in (1, 2))
     or (category <> 'knives' and knife_bevel_count is null)
   );
+
+alter table public.request_knives
+  drop constraint if exists request_knives_knife_bevel_count_check;
+alter table public.request_knives
+  add constraint request_knives_knife_bevel_count_check
+  check (knife_bevel_count is null or knife_bevel_count in (1, 2));
 
 create table public.long_stock_layout_settings (
   id boolean primary key default true check (id),
@@ -437,7 +421,6 @@ grant select on table public.long_stock_layout_categories to service_role;
 grant select on table public.long_stock_layout_lengths to service_role;
 grant select on table public.long_stock_layout_settings_audit to service_role;
 
-revoke all on function public.material_variants_normalize_knife_bevel() from public, anon, authenticated;
 revoke all on function public.fn_assert_long_stock_layout_has_standard_length() from public, anon, authenticated;
 revoke all on function public.fn_long_stock_layout_audit_immutable() from public, anon, authenticated;
 revoke all on function public.fn_get_long_stock_layout_settings_snapshot() from public, anon, authenticated;

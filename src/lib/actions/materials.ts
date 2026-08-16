@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { ACTIVE_MATERIAL_CATEGORIES, CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGORY_LABELS, PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
+import { requireKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { Material, MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
@@ -202,7 +203,7 @@ function usageToVariant(data: MaterialUsageInput) {
     wall_thickness_mm: num(c.wall_thickness_mm),
     width_mm: num(c.width_mm),
     height_mm: num(c.height_mm),
-    knife_bevel_count: data.category === 'knives' ? num(c.knife_bevel_count) ?? 1 : null,
+    knife_bevel_count: data.category === 'knives' ? requireKnifeBevelCount(c.knife_bevel_count) : null,
     mesh_description: text(c.mesh_description) || text(c.description),
     mesh_length_mm: num(c.mesh_length_mm) ?? num(c.length_mm),
     mesh_width_mm: num(c.mesh_width_mm) ?? num(c.width_mm),

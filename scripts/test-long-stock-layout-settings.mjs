@@ -18,10 +18,38 @@ const databaseName = decodeURIComponent(databaseUrl.pathname.slice(1))
 assert.ok(databaseName.toLowerCase().includes('test'), 'Test database name must contain "test"')
 
 const materialsSource = readFileSync(path.join(root, 'src', 'lib', 'actions', 'materials.ts'), 'utf8')
+const knivesSectionSource = readFileSync(
+  path.join(root, 'src', 'components', 'features', 'requests', 'KnivesSection.tsx'),
+  'utf8',
+)
+const inventoryPageSource = readFileSync(
+  path.join(root, 'src', 'components', 'features', 'inventory', 'InventoryPage.tsx'),
+  'utf8',
+)
 assert.match(
   materialsSource,
   /same\(row\.knife_bevel_count, input\.knife_bevel_count\)/u,
   'Knife bevel count must participate in material variant identity',
+)
+assert.match(
+  materialsSource,
+  /requireKnifeBevelCount\(c\.knife_bevel_count\)/u,
+  'Knife variant creation must require an explicit bevel count',
+)
+assert.doesNotMatch(
+  materialsSource,
+  /knife_bevel_count:[^\n]+\?\?\s*1/u,
+  'Knife bevel count must not default to 1',
+)
+assert.match(
+  knivesSectionSource,
+  /value=\{row\.knife_bevel_count \?\? ''\}/u,
+  'Knife request variant editor must start without an implicit bevel',
+)
+assert.match(
+  inventoryPageSource,
+  /knife_bevel_count: ''/u,
+  'Inventory material creation must start without an implicit bevel',
 )
 
 run(process.execPath, [path.join(root, 'scripts', 'test-inventory-transfers-full-schema.mjs')])

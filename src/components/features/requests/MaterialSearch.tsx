@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { createMaterial, getMaterialVariants, searchMaterials, type MaterialVariantWithSteelType, type MaterialWithSupplier } from '@/lib/actions/materials'
 import { CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGORY_LABELS, PIPE_SUBTYPE_LABELS, defaultMaterialNameForCategory } from '@/lib/constants/procurement'
+import { knifeBevelLabel } from '@/lib/materials/knife-bevel'
 import { cn } from '@/lib/utils'
 import type { Material, MaterialCategory, MaterialVariant } from '@/lib/types'
 
@@ -355,7 +356,7 @@ function variantLabel(variant: MaterialVariantWithSteelType) {
   if (String(variant.category) === 'knives') {
     const dimensions = variant.knife_dimensions
       || [variant.standard_length_mm, variant.width_mm, variant.height_mm].filter(Boolean).join('x')
-    return [dimensions, variant.knife_material ?? steelLabel(variant)].filter(Boolean).join(' • ') || 'вариант'
+    return [dimensions, variant.knife_material ?? steelLabel(variant), knifeBevelLabel(variant.knife_bevel_count)].filter(Boolean).join(' • ') || 'вариант'
   }
   if (variant.category === 'sheet_metal') return [variant.material_grade, variant.thickness_mm && `${variant.thickness_mm} мм`, variant.sheet_size].filter(Boolean).join(' • ') || 'вариант'
   if (variant.category === 'round_tube') return [variant.length_m && `${variant.length_m} м`, variant.piece_description].filter(Boolean).join(' • ') || 'вариант'
@@ -368,7 +369,7 @@ function variantLabel(variant: MaterialVariantWithSteelType) {
   if (variant.category === 'knives') {
     const dimensions = variant.knife_dimensions
       || [variant.standard_length_mm, variant.width_mm, variant.height_mm].filter(Boolean).join('x')
-    return [dimensions, variant.knife_material ?? variant.material_grade].filter(Boolean).join(' • ') || 'вариант'
+    return [dimensions, variant.knife_material ?? variant.material_grade, knifeBevelLabel(variant.knife_bevel_count)].filter(Boolean).join(' • ') || 'вариант'
   }
   if (variant.category === 'components') {
     return [variant.diameter_mm && `Ø${variant.diameter_mm}`, variant.specification, variant.default_unit].filter(Boolean).join(' • ') || 'вариант'
