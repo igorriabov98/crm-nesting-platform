@@ -526,6 +526,106 @@ create trigger long_stock_cutting_nonstandard_flag_trigger
 after insert or update of length_group or delete on public.long_stock_cutting_candidate_bars
 for each row execute function public.fn_sync_long_stock_cutting_nonstandard_flag();
 
+create or replace function public.fn_assert_long_stock_cutting_business_scrap_length(
+  p_inventory_id uuid,
+  p_bar_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_inventory_length numeric;
+  v_bar_number integer;
+  v_bar_length numeric;
+  v_end_trim numeric;
+  v_cut_length numeric;
+  v_cut_count integer;
+  v_kerf numeric;
+  v_expected_length numeric;
+begin
+  select inventory.piece_length_mm
+  into v_inventory_length
+  from public.inventory inventory
+  where inventory.id = p_inventory_id
+  for share;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      message = 'Деловой остаток не найден';
+  end if;
+
+  select bar.bar_number,
+         bar.stock_length_mm,
+         coalesce((version.settings_snapshot->>'end_trim_mm')::numeric, 0),
+         coalesce(sum(cut.cut_length_mm), 0),
+         count(cut.id)::integer,
+         coalesce((version.settings_snapshot->>'kerf_mm')::numeric, 0)
+  into v_bar_number, v_bar_length, v_end_trim, v_cut_length, v_cut_count, v_kerf
+  from public.long_stock_cutting_candidate_bars bar
+  join public.long_stock_cutting_plan_versions version on version.id = bar.version_id
+  left join public.long_stock_cutting_bar_cuts cut on cut.bar_id = bar.id
+  where bar.id = p_bar_id
+  group by bar.bar_number, bar.stock_length_mm, version.settings_snapshot;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      message = 'Связанный хлыст не найден';
+  end if;
+
+  v_expected_length := v_bar_length
+    - v_end_trim
+    - v_cut_length
+    - v_cut_count * v_kerf;
+
+  if v_inventory_length is distinct from v_expected_length then
+    raise exception using
+      errcode = '23514',
+      message = format(
+        'Длина делового остатка %s мм не совпадает с расчётной для хлыста №%s: %s - %s - %s - %s × %s = %s мм',
+        v_inventory_length,
+        v_bar_number,
+        v_bar_length,
+        v_end_trim,
+        v_cut_length,
+        v_cut_count,
+        v_kerf,
+        v_expected_length
+      );
+  end if;
+end;
+$$;
+
+create or replace function public.fn_long_stock_cutting_inventory_scrap_length_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_bar_id uuid;
+begin
+  for v_bar_id in
+    select link.bar_id
+    from public.long_stock_cutting_business_scraps link
+    where link.inventory_id = new.id
+  loop
+    perform public.fn_assert_long_stock_cutting_business_scrap_length(new.id, v_bar_id);
+  end loop;
+  return null;
+end;
+$$;
+
+create constraint trigger long_stock_cutting_inventory_scrap_length_guard_trigger
+after update of piece_length_mm on public.inventory
+deferrable initially immediate
+for each row
+when (old.piece_length_mm is distinct from new.piece_length_mm)
+execute function public.fn_long_stock_cutting_inventory_scrap_length_guard();
+
 create or replace function public.fn_long_stock_cutting_scrap_link_guard()
 returns trigger
 language plpgsql
@@ -561,6 +661,10 @@ begin
   if v_bar_status is distinct from 'cut' or not coalesce(v_is_selected, false) then
     raise exception 'Деловой остаток связывается только с порезанным хлыстом выбранного варианта';
   end if;
+  perform public.fn_assert_long_stock_cutting_business_scrap_length(
+    new.inventory_id,
+    new.bar_id
+  );
   return new;
 end;
 $$;
@@ -1128,6 +1232,10 @@ revoke all on function public.fn_long_stock_cutting_cut_matches_segment()
 revoke all on function public.fn_assert_long_stock_cutting_three_lengths()
   from public, anon, authenticated;
 revoke all on function public.fn_sync_long_stock_cutting_nonstandard_flag()
+  from public, anon, authenticated;
+revoke all on function public.fn_assert_long_stock_cutting_business_scrap_length(uuid, uuid)
+  from public, anon, authenticated;
+revoke all on function public.fn_long_stock_cutting_inventory_scrap_length_guard()
   from public, anon, authenticated;
 revoke all on function public.fn_long_stock_cutting_scrap_link_guard()
   from public, anon, authenticated;

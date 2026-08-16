@@ -287,6 +287,10 @@ begin
   if v_inventory.material_variant_id is distinct from v_plan_variant_id then
     raise exception 'Деловой остаток использует другой вариант материала';
   end if;
+  perform public.fn_assert_long_stock_cutting_business_scrap_length(
+    new.inventory_id,
+    new.bar_id
+  );
   return new;
 end;
 $$;

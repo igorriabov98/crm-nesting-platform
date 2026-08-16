@@ -18,6 +18,7 @@ declare
   v_repeated_version uuid;
   v_bar uuid;
   v_inventory uuid := gen_random_uuid();
+  v_mismatched_inventory uuid := gen_random_uuid();
   v_input jsonb;
   v_segments jsonb;
   v_candidates jsonb;
@@ -99,21 +100,21 @@ begin
     'candidate_number', 1,
     'is_complete', true,
     'metrics', jsonb_build_object(
-      'purchased_length_mm', 6000,
+      'purchased_length_mm', 7250,
       'net_parts_length_mm', 5998,
       'kerf_loss_length_mm', 2,
       'end_trim_loss_length_mm', 0,
-      'business_scrap_length_mm', 0,
-      'purchased_weight_kg', 19.9,
+      'business_scrap_length_mm', 1250,
+      'purchased_weight_kg', 21.15,
       'net_parts_weight_kg', 19.9,
       'kerf_loss_weight_kg', 0,
       'end_trim_loss_weight_kg', 0,
-      'business_scrap_weight_kg', 0
+      'business_scrap_weight_kg', 1.25
     ),
     'bars', jsonb_build_array(jsonb_build_object(
       'bar_number', 1,
-      'stock_length_mm', 6000,
-      'length_group', 'standard',
+      'stock_length_mm', 7250,
+      'length_group', 'nonstandard',
       'cuts', jsonb_build_array(
         jsonb_build_object('cut_number', 1, 'segment_number', 1, 'cut_length_mm', 3000),
         jsonb_build_object('cut_number', 2, 'segment_number', 2, 'cut_length_mm', 2998)
@@ -265,6 +266,27 @@ begin
     total_secondary_quantity, reserved_secondary_quantity, secondary_unit,
     last_updated_by, is_business_scrap, business_scrap_state
   ) values (
+    v_mismatched_inventory, v_factory, v_material, v_variant, 1249,
+    1249, 0, 'мм', 1, 0, 'шт',
+    v_actor, true, 'future'
+  );
+  begin
+    insert into public.long_stock_cutting_business_scraps(
+      inventory_id, version_id, bar_id, linked_by
+    ) values (v_mismatched_inventory, v_version, v_bar, v_actor);
+    raise exception 'Несовпадающая длина делового остатка была привязана к хлысту';
+  exception when check_violation then
+    if sqlerrm not like '%Длина делового остатка%не совпадает с расчётной%' then
+      raise;
+    end if;
+  end;
+
+  insert into public.inventory(
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit,
+    total_secondary_quantity, reserved_secondary_quantity, secondary_unit,
+    last_updated_by, is_business_scrap, business_scrap_state
+  ) values (
     v_inventory, v_factory, v_material, v_variant, 1250,
     1250, 0, 'мм', 1, 0, 'шт',
     v_actor, true, 'future'
@@ -272,6 +294,16 @@ begin
   insert into public.long_stock_cutting_business_scraps(
     inventory_id, version_id, bar_id, linked_by
   ) values (v_inventory, v_version, v_bar, v_actor);
+  begin
+    update public.inventory
+    set piece_length_mm = 1249
+    where id = v_inventory;
+    raise exception 'Длина уже привязанного делового остатка была изменена';
+  exception when check_violation then
+    if sqlerrm not like '%Длина делового остатка%не совпадает с расчётной%' then
+      raise;
+    end if;
+  end;
   insert into public.long_stock_cutting_actual_losses(
     version_id, bar_id,
     kerf_loss_length_mm, end_trim_loss_length_mm,
