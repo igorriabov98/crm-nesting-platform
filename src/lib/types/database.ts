@@ -3507,6 +3507,7 @@ export type Database = {
           piece_description: string | null
           knife_dimensions: string | null
           knife_material: string | null
+          knife_bevel_count: number | null
           standard_length_mm: number | null
           specification: string | null
           default_unit: string | null
@@ -3544,6 +3545,7 @@ export type Database = {
           piece_description?: string | null
           knife_dimensions?: string | null
           knife_material?: string | null
+          knife_bevel_count?: number | null
           standard_length_mm?: number | null
           specification?: string | null
           default_unit?: string | null
@@ -3581,6 +3583,7 @@ export type Database = {
           piece_description?: string | null
           knife_dimensions?: string | null
           knife_material?: string | null
+          knife_bevel_count?: number | null
           standard_length_mm?: number | null
           specification?: string | null
           default_unit?: string | null
@@ -4352,6 +4355,7 @@ export type Database = {
           length_mm: number | null
           width_mm: number | null
           height_mm: number | null
+          knife_bevel_count: number | null
           steel_type_id: string | null
           calculated_weight_kg: number | null
           is_custom_material_variant: boolean
@@ -4378,6 +4382,7 @@ export type Database = {
           length_mm?: number | null
           width_mm?: number | null
           height_mm?: number | null
+          knife_bevel_count?: number | null
           steel_type_id?: string | null
           calculated_weight_kg?: number | null
           is_custom_material_variant?: boolean
@@ -4404,6 +4409,7 @@ export type Database = {
           length_mm?: number | null
           width_mm?: number | null
           height_mm?: number | null
+          knife_bevel_count?: number | null
           steel_type_id?: string | null
           calculated_weight_kg?: number | null
           is_custom_material_variant?: boolean

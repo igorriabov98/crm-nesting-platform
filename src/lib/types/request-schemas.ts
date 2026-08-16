@@ -92,6 +92,7 @@ export const knifeSchema = z.object({
   length_mm: optionalNumber(z.number().positive()),
   width_mm: optionalNumber(z.number().positive()),
   height_mm: optionalNumber(z.number().positive()),
+  knife_bevel_count: optionalNumber(z.number().int().min(1).max(2)),
   remainder_meters: requiredNumber(z.number().min(0)).default(0),
   remainder_qty: requiredNumber(z.number().int().min(0)).default(0),
   material_id: optionalUuid,

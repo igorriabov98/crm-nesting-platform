@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import { ROUTES } from '@/lib/constants/routes'
+import { parseKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import { recordMaterialUsage } from '@/lib/actions/materials'
 import { repairImportedSheetMetalMaterials } from '@/lib/actions/request-sheet-metal-materials'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
@@ -129,7 +130,7 @@ const MATERIAL_CHARACTERISTIC_FIELDS: Record<RequestSectionTable, Set<string>> =
   request_sheet_metal: new Set(['material_name', 'material_grade', 'steel_type_id', 'sheet_size', 'thickness_mm']),
   request_circle: new Set(['diameter_mm', 'steel_grade', 'steel_type_id', 'is_calibrated']),
   request_pipe: new Set(['pipe_type', 'steel_type_id', 'size', 'wall_thickness_mm', 'diameter_mm']),
-  request_knives: new Set(['knife_type', 'steel_grade', 'steel_type_id', 'length_mm', 'width_mm', 'height_mm']),
+  request_knives: new Set(['knife_type', 'steel_grade', 'steel_type_id', 'length_mm', 'width_mm', 'height_mm', 'knife_bevel_count']),
   request_components: new Set(['component_name', 'diameter_mm', 'unit']),
   request_paint: new Set(['paint_type', 'ral_code', 'finish']),
   request_mesh: new Set(['description', 'length_mm', 'width_mm']),
@@ -141,7 +142,7 @@ const RESERVED_ROW_PROTECTED_FIELDS: Record<RequestSectionTable, Set<string>> = 
   request_sheet_metal: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'material_name', 'material_grade', 'steel_type_id', 'sheet_size', 'thickness_mm', 'remainder_qty']),
   request_circle: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'diameter_mm', 'steel_grade', 'steel_type_id', 'is_calibrated', 'remainder_mm']),
   request_pipe: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'pipe_type', 'steel_type_id', 'size', 'wall_thickness_mm', 'diameter_mm', 'remainder_length_mm', 'remainder_qty', 'remainder_kg']),
-  request_knives: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'knife_type', 'steel_grade', 'steel_type_id', 'length_mm', 'width_mm', 'height_mm', 'remainder_meters', 'remainder_qty']),
+  request_knives: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'knife_type', 'steel_grade', 'steel_type_id', 'length_mm', 'width_mm', 'height_mm', 'knife_bevel_count', 'remainder_meters', 'remainder_qty']),
   request_components: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'component_name', 'diameter_mm', 'quantity_needed', 'stock_remainder', 'unit']),
   request_paint: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'paint_type', 'ral_code', 'finish', 'remainder_kg']),
   request_mesh: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'description', 'length_mm', 'width_mm', 'remainder_qty']),
@@ -373,6 +374,7 @@ function validateRequiredRequestRows(input: {
 
   checkMaterial('Ножи', input.knives)
   input.knives.forEach((row, index) => {
+    if (parseKnifeBevelCount(row.knife_bevel_count) === null) errors.push(`Ножи, позиция ${index + 1}: выберите "Скос"`)
     if (requiredNumber(row.remainder_meters) <= 0) errors.push(`Ножи, позиция ${index + 1}: укажите "Необходимо, мм"`)
   })
 
@@ -407,7 +409,7 @@ async function validateRequestReadyForSupply(db: LooseDb, requestId: string, use
     db.from('request_round_tube').select('id').eq('request_id', requestId),
     db.from('request_circle').select('id, material_id, remainder_mm').eq('request_id', requestId),
     db.from('request_pipe').select('id, material_id, pipe_type, remainder_length_mm, remainder_kg').eq('request_id', requestId),
-    db.from('request_knives').select('id, material_id, remainder_meters').eq('request_id', requestId),
+    db.from('request_knives').select('id, material_id, knife_bevel_count, remainder_meters').eq('request_id', requestId),
     db.from('request_components').select('id, material_id, quantity_needed').eq('request_id', requestId),
     db.from('request_paint').select('id, material_id, remainder_kg').eq('request_id', requestId),
     db.from('request_mesh').select('id, material_id, remainder_qty').eq('request_id', requestId),
@@ -848,6 +850,7 @@ async function recordUsageFromRow(table: RequestSectionTable, row: Record<string
       standard_length_mm: row.length_mm || row.order_mm,
       width_mm: row.width_mm,
       height_mm: row.height_mm,
+      knife_bevel_count: row.knife_bevel_count,
       specification: row.specification,
       component_diameter_mm: row.diameter_mm,
       default_unit: row.unit,
@@ -874,7 +877,13 @@ function isRequestMaterialVariantComplete(table: RequestSectionTable, row: Recor
     if (row.pipe_type === 'wire') return hasValue(row.diameter_mm)
     return hasSteel() && hasValue(row.size) && hasValue(row.wall_thickness_mm)
   }
-  if (table === 'request_knives') return hasSteel() && hasValue(row.length_mm) && hasValue(row.width_mm) && hasValue(row.height_mm)
+  if (table === 'request_knives') {
+    return hasSteel()
+      && hasValue(row.length_mm)
+      && hasValue(row.width_mm)
+      && hasValue(row.height_mm)
+      && parseKnifeBevelCount(row.knife_bevel_count) !== null
+  }
   if (table === 'request_components') return hasValue(row.component_name) && hasValue(row.unit)
   if (table === 'request_paint') return hasValue(row.ral_code) && hasValue(row.finish)
   if (table === 'request_mesh') return hasValue(row.description) && hasValue(row.length_mm) && hasValue(row.width_mm)
@@ -1014,6 +1023,7 @@ export async function addKnife(requestId: string, data: unknown): Promise<Action
     length_mm: parsed.length_mm ?? null,
     width_mm: parsed.width_mm ?? null,
     height_mm: parsed.height_mm ?? null,
+    knife_bevel_count: parsed.knife_bevel_count ?? null,
     remainder_meters: parsed.remainder_meters ?? 0,
     remainder_qty: 0,
     material_id: parsed.material_id ?? null,

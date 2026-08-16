@@ -23,6 +23,7 @@ export const ROUTES = {
   ADMIN_FILE_ARCHIVE_SETTINGS:'/admin/settings/file-archive',
   ADMIN_COMPANY_SETTINGS:'/admin/settings/company',
   ADMIN_PRODUCTION_FACT_SETTINGS:'/admin/settings/production-fact',
+  ADMIN_LONG_STOCK_LAYOUT_SETTINGS:'/admin/settings/long-stock-layout',
   ADMIN_FACTORY_SETTINGS:'/admin/settings/factories',
   SALES_PLAN:          '/sales-plan',
   SALES_PLAN_NEW:      '/sales-plan/new',

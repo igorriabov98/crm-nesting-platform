@@ -94,8 +94,8 @@ BEGIN
     (v_material, 'Тестовая комплектация перевозки', 'components', v_actor),
     (v_scrap_material, 'Тестовый деловой отход перевозки', 'components', v_actor),
     (v_knife_material, 'Тестовый мерный нож перевозки', 'knives', v_actor);
-  INSERT INTO public.material_variants(id, material_id, category, knife_dimensions, default_unit)
-  VALUES (v_knife_variant, v_knife_material, 'knives', 'тест 40×10', 'мм');
+  INSERT INTO public.material_variants(id, material_id, category, knife_dimensions, knife_bevel_count, default_unit)
+  VALUES (v_knife_variant, v_knife_material, 'knives', 'тест 40×10', 1, 'мм');
 
   INSERT INTO public.machines(id, factory_id, name, created_by)
   VALUES (v_machine, v_beregovo, 'INV-TRANSFER-MAIN', v_actor);

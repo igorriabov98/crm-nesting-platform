@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { ACTIVE_MATERIAL_CATEGORIES, CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGORY_LABELS, PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
+import { requireKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { Material, MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
@@ -150,7 +151,7 @@ function variantNumericColumnsForSearch(category?: MaterialCategory | null, matc
     round_tube: ['length_m'],
     circle: ['diameter_mm'],
     pipe: ['diameter_mm', 'wall_thickness_mm'],
-    knives: ['standard_length_mm', 'width_mm', 'height_mm'],
+    knives: ['standard_length_mm', 'width_mm', 'height_mm', 'knife_bevel_count'],
     components: ['diameter_mm'],
     mesh: ['mesh_length_mm', 'mesh_width_mm'],
   }
@@ -163,6 +164,7 @@ function variantNumericColumnsForSearch(category?: MaterialCategory | null, matc
     'wall_thickness_mm',
     'width_mm',
     'height_mm',
+    'knife_bevel_count',
     'mesh_length_mm',
     'mesh_width_mm',
   ]
@@ -201,6 +203,7 @@ function usageToVariant(data: MaterialUsageInput) {
     wall_thickness_mm: num(c.wall_thickness_mm),
     width_mm: num(c.width_mm),
     height_mm: num(c.height_mm),
+    knife_bevel_count: data.category === 'knives' ? requireKnifeBevelCount(c.knife_bevel_count) : null,
     mesh_description: text(c.mesh_description) || text(c.description),
     mesh_length_mm: num(c.mesh_length_mm) ?? num(c.length_mm),
     mesh_width_mm: num(c.mesh_width_mm) ?? num(c.width_mm),
@@ -249,6 +252,7 @@ function isSameVariant(row: MaterialVariant, input: ReturnType<typeof usageToVar
   }
   if (input.category === 'knives') {
     return sameKnifeDimensions()
+      && same(row.knife_bevel_count, input.knife_bevel_count)
       && (sameText(row.knife_material, input.knife_material) || sameText(row.knife_material, input.material_grade) || sameText(row.material_grade, input.knife_material))
       && same(row.steel_type_id, input.steel_type_id)
       && sameKnifeSteel()

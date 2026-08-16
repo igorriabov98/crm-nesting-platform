@@ -10,6 +10,7 @@ import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import { addKnife, deleteKnife, updateKnife, type WithMaterialName } from '@/lib/actions/technologist-requests'
+import { KNIFE_BEVEL_OPTIONS, parseKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import type { MaterialVariant, RequestKnives } from '@/lib/types'
 import type { SteelType } from '@/lib/types/database'
@@ -89,6 +90,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
       length_mm: null,
       width_mm: null,
       height_mm: null,
+      knife_bevel_count: null,
       remainder_meters: 0,
     })
     if (!result.success || !result.data) {
@@ -143,17 +145,19 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
     if (length !== null) updates.length_mm = length
     if (variant?.width_mm !== null && variant?.width_mm !== undefined) updates.width_mm = variant.width_mm
     if (variant?.height_mm !== null && variant?.height_mm !== undefined) updates.height_mm = variant.height_mm
+    updates.knife_bevel_count = parseKnifeBevelCount(variant?.knife_bevel_count)
     void handleUpdate(row.id, updates)
   }
 
   return (
     <div className="space-y-3">
       <div className="overflow-x-auto rounded-lg border border-slate-200">
-        <table className="min-w-[1120px] w-full text-sm">
+        <table className="min-w-[1240px] w-full text-sm">
           <thead className="bg-slate-50 text-sm font-medium text-gray-500">
             <tr>
               <th className="min-w-[200px] px-3 py-2 text-left">Материал</th>
               <th className="min-w-[120px] px-3 py-2 text-left">Тип стали</th>
+              <th className="min-w-[120px] px-3 py-2 text-left">Скос *</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Длина, мм</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Ширина, мм</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Высота, мм</th>
@@ -185,6 +189,25 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
                     ))}
                   </select>
                 </td>
+                <td className="px-3 py-2">
+                  <label className="sr-only" htmlFor={`knife-bevel-${row.id}`}>Скос ножа, обязательное поле</label>
+                  <select
+                    id={`knife-bevel-${row.id}`}
+                    value={row.knife_bevel_count ?? ''}
+                    required
+                    aria-required="true"
+                    disabled={!canEditCharacteristics}
+                    onChange={(event) => void handleUpdate(row.id, {
+                      knife_bevel_count: parseKnifeBevelCount(event.target.value),
+                    })}
+                    className="h-9 w-full min-w-[112px] rounded-md border border-slate-200 bg-white px-2 text-sm disabled:cursor-not-allowed disabled:text-slate-500"
+                  >
+                    <option value="">— выберите —</option>
+                    {KNIFE_BEVEL_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </td>
                 <td className="px-3 py-2"><InlineEditCell value={row.length_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { length_mm: toNumber(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={row.width_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { width_mm: toNumber(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={row.height_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { height_mm: toNumber(value) })} /></td>
@@ -203,7 +226,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
                   {canEdit && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
                 </td>
