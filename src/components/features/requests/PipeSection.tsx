@@ -11,6 +11,7 @@ import { InlineEditCell } from './InlineEditCell'
 import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
+import { LongStockPositionDialog } from './LongStockPositionDialog'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import type { PipeInput } from '@/lib/types/request-schemas'
 import type { MaterialVariant, RequestPipe } from '@/lib/types'
@@ -86,15 +87,16 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
   const router = useRouter()
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
+  const [positionDialogOpen, setPositionDialogOpen] = useState(false)
 
   const applyRows = (nextRows: PipeRow[]) => {
     setRows(nextRows)
     onRowsChange?.(nextRows)
   }
 
-  const handleAdd = async () => {
+  const handleAddWire = async () => {
     const result = await addPipe(requestId, {
-      pipe_type: 'square',
+      pipe_type: 'wire',
       size: null,
       wall_thickness_mm: null,
       diameter_mm: null,
@@ -275,7 +277,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               <tr>
                 <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
+                  {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
                 </td>
               </tr>
             )}
@@ -283,13 +285,24 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
         </table>
       </div>
       {isEditable && (
-        <div className="flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={handleAddWire}>
+            <Plus className="mr-2 h-4 w-4" />
+            Добавить проволоку
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => setPositionDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Добавить позицию
           </Button>
         </div>
       )}
+      <LongStockPositionDialog
+        category="pipe"
+        requestId={requestId}
+        open={positionDialogOpen}
+        onOpenChange={setPositionDialogOpen}
+        onCreated={(row) => applyRows([...rows, row as PipeRow])}
+      />
     </div>
   )
 }

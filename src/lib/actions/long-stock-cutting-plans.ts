@@ -34,7 +34,7 @@ type RequestItemRow = {
   request_id: string
   material_id: string | null
   material_variant_id: string | null
-  steel_grade: string | null
+  steel_grade?: string | null
   steel_type_id: string | null
   pipe_type: string | null
 }
@@ -401,6 +401,7 @@ function calculationResult(context: CalculationContext) {
     materialId: context.materialId,
     materialVariantId: context.materialVariantId,
     gradeKey: context.gradeKey,
+    weightPerMeterKg: context.weightPerMeterKg,
     settingsSnapshot: context.settingsSnapshot,
     layoutCategoryKey: context.layoutCategory.key,
     candidates: context.solverResult.candidates,
@@ -414,7 +415,7 @@ function database() {
 
 async function loadRequestItem(db: LongStockDb, ref: LongStockRequestItemRef) {
   const columns = ref.table === 'request_pipe'
-    ? 'id,request_id,material_id,material_variant_id,steel_grade,steel_type_id,pipe_type'
+    ? 'id,request_id,material_id,material_variant_id,steel_type_id,pipe_type'
     : 'id,request_id,material_id,material_variant_id,steel_grade,steel_type_id'
   return one<RequestItemRow>(
     db.from<RequestItemRow>(ref.table).select(columns).eq('id', ref.id).maybeSingle(),
@@ -466,7 +467,7 @@ function gradeKey(item: RequestItemRow, variant: MaterialVariantRow) {
     ?? 'without_grade'
 }
 
-function normalizedGrade(value: string | null) {
+function normalizedGrade(value: string | null | undefined) {
   const normalized = String(value ?? '').trim().toLocaleLowerCase('ru-RU').replace(/\s+/g, '')
   return normalized || null
 }
@@ -474,7 +475,9 @@ function normalizedGrade(value: string | null) {
 function normalizeSettingsSnapshot(value: LayoutSettingsSnapshot): LayoutSettingsSnapshot {
   const kerf = Number(value.kerf_mm)
   const endTrim = Number(value.end_trim_mm)
-  if (!Number.isFinite(kerf) || kerf < 0 || !Number.isFinite(endTrim) || endTrim < 0) {
+  const threshold = Number(value.optimization_hint_threshold_percent)
+  if (!Number.isFinite(kerf) || kerf < 0 || !Number.isFinite(endTrim) || endTrim < 0
+    || !Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
     throw new Error('Настройки пропила или торцовки повреждены')
   }
   if (!Array.isArray(value.categories)) throw new Error('Категории раскладки хлыстов не найдены')
@@ -482,6 +485,7 @@ function normalizeSettingsSnapshot(value: LayoutSettingsSnapshot): LayoutSetting
     ...value,
     kerf_mm: kerf,
     end_trim_mm: endTrim,
+    optimization_hint_threshold_percent: threshold,
     categories: value.categories.map((category) => ({
       ...category,
       minimum_useful_length_mm: Number(category.minimum_useful_length_mm),

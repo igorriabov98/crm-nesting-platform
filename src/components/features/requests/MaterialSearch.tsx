@@ -16,6 +16,7 @@ export type MaterialSelectionSource = 'existing_material' | 'existing_variant' |
 type MaterialSearchProps = {
   category?: MaterialCategory | null
   onSelect: (material: MaterialWithSupplier, variant: MaterialVariant | undefined, source: MaterialSelectionSource) => void
+  onQueryChange?: (query: string) => void
   onCreateRequest?: (name: string, category: MaterialCategory) => void
   placeholder?: string
   value?: string | null
@@ -32,6 +33,7 @@ const MATERIAL_SEARCH_OPEN_EVENT = 'crm:material-search-open'
 export function MaterialSearch({
   category,
   onSelect,
+  onQueryChange,
   onCreateRequest,
   placeholder = 'Поиск материала...',
   value,
@@ -239,6 +241,7 @@ export function MaterialSearch({
           disabled={disabled}
           onChange={(event) => {
             const nextValue = event.target.value
+            onQueryChange?.(nextValue)
             setLocalSelection(null)
             suppressedQueryRef.current = null
             setQuery(nextValue)
