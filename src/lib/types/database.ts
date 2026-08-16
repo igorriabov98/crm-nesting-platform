@@ -3507,6 +3507,7 @@ export type Database = {
           piece_description: string | null
           knife_dimensions: string | null
           knife_material: string | null
+          knife_bevel_count: number | null
           standard_length_mm: number | null
           specification: string | null
           default_unit: string | null
@@ -3544,6 +3545,7 @@ export type Database = {
           piece_description?: string | null
           knife_dimensions?: string | null
           knife_material?: string | null
+          knife_bevel_count?: number | null
           standard_length_mm?: number | null
           specification?: string | null
           default_unit?: string | null
@@ -3581,6 +3583,7 @@ export type Database = {
           piece_description?: string | null
           knife_dimensions?: string | null
           knife_material?: string | null
+          knife_bevel_count?: number | null
           standard_length_mm?: number | null
           specification?: string | null
           default_unit?: string | null

@@ -41,8 +41,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 53, 'Реестр должен содержать все 53 ресурса')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 53, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 54, 'Реестр должен содержать все 54 ресурса')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 54, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -65,6 +65,16 @@ assert(!hasPermission(supplyManagerPermissions, 'product_production_drawings', '
 assert(hasPermission(engineerPermissions, 'products', 'view'), 'Инженер должен видеть карточки изделий')
 assert(!hasPermission(engineerPermissions, 'product_production_drawings', 'view'), 'products.view не должен раскрывать комплектные чертежи')
 assert(hasPermission(getFullPermissionMap(), 'product_production_drawings', 'manage'), 'CRM-администратор должен получать полный доступ')
+const longStockLayoutSettings = PERMISSION_RESOURCES.find((resource) => resource.key === 'long_stock_layout_settings')
+assert(longStockLayoutSettings?.locked, 'Настройки раскладки хлыстов должны быть закрытым ресурсом администратора')
+assert(!hasPermission(technologistPermissions, 'long_stock_layout_settings', 'view'), 'Технолог не должен видеть настройки раскладки хлыстов')
+assert(!hasPermission(getDefaultPermissionMap('planning_director'), 'long_stock_layout_settings', 'view'), 'Директор не должен видеть настройки раскладки хлыстов по роли')
+assert(hasPermission(getFullPermissionMap(), 'long_stock_layout_settings', 'manage'), 'CRM-администратор должен управлять настройками раскладки хлыстов')
+assert.equal(
+  getPermissionRequirementForPath('/admin/settings/long-stock-layout')?.resourceKey,
+  'long_stock_layout_settings',
+  'Маршрут настроек раскладки должен использовать отдельный закрытый ресурс',
+)
 assert(hasPermission(supplyManagerPermissions, 'department_requests', 'manage'), 'Снабженец должен создавать и обрабатывать запросы')
 assert(hasPermission(technologistPermissions, 'department_requests', 'manage'), 'Технолог должен создавать и обрабатывать запросы')
 assert.equal(

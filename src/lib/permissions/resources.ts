@@ -57,6 +57,7 @@ export type ResourceKey =
   | 'file_archive_settings'
   | 'company_settings'
   | 'production_fact_settings'
+  | 'long_stock_layout_settings'
   | 'access_settings'
 
 export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'technologist' | 'production' | 'supply' | 'inventory' | 'meetings' | 'tools' | 'settings'
@@ -730,6 +731,17 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: DIRECTORS,
     defaultManageRoles: DIRECTORS,
     routes: [{ path: ROUTES.ADMIN_PRODUCTION_FACT_SETTINGS, match: 'prefix', operation: 'view', priority: 90 }],
+  },
+  {
+    key: 'long_stock_layout_settings',
+    label: 'Раскладка хлыстов',
+    description: 'Длины хлыстов, пропил, торцовка и пороги оптимизации',
+    group: 'Настройки',
+    defaultHref: ROUTES.ADMIN_LONG_STOCK_LAYOUT_SETTINGS,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.ADMIN_LONG_STOCK_LAYOUT_SETTINGS, match: 'prefix', operation: 'view', priority: 100 }],
+    locked: true,
   },
   {
     key: 'access_settings',

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Archive, Bot, Building2, Factory, Mail, Send, Settings, ShieldCheck, Users } from 'lucide-react'
+import { Archive, Bot, Building2, Factory, Mail, Ruler, Send, Settings, ShieldCheck, Users } from 'lucide-react'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -121,6 +121,14 @@ export default async function AdminSettingsPage() {
       href: ROUTES.ADMIN_PRODUCTION_FACT_SETTINGS,
       buttonLabel: 'Открыть настройки факта',
       icon: Factory,
+    },
+    canViewSettingsContent && canViewResource(permissions, 'long_stock_layout_settings') && {
+      key: 'long-stock-layout',
+      title: 'Раскладка хлыстов',
+      description: 'Стандартные и нестандартные длины, пропил, торцовка и пороги оптимизации длинномера.',
+      href: ROUTES.ADMIN_LONG_STOCK_LAYOUT_SETTINGS,
+      buttonLabel: 'Открыть настройки раскладки',
+      icon: Ruler,
     },
   ].filter(Boolean) as SettingsCard[]
 

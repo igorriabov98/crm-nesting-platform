@@ -49,6 +49,7 @@ const PAGE_TITLES: Record<string, string> = {
   [ROUTES.ADMIN_DATABASE_TRANSPORT]: 'Транспорт',
   [ROUTES.ADMIN_DATABASE_OUTSOURCING]: 'Аутсорсинговые компании',
   [ROUTES.ADMIN_PRODUCTION_FACT_SETTINGS]: 'Настройки факта производства',
+  [ROUTES.ADMIN_LONG_STOCK_LAYOUT_SETTINGS]: 'Раскладка хлыстов',
   [ROUTES.NESTING_SETTINGS]: 'Настройки AI',
   [ROUTES.ADMIN_USERS]: 'Управление пользователями',
   [ROUTES.ADMIN_USERS_NEW]: 'Новый пользователь',
