@@ -14,7 +14,7 @@ alter table public.material_variants
   check (
     (category = 'knives' and knife_bevel_count is not null and knife_bevel_count in (1, 2))
     or (category <> 'knives' and knife_bevel_count is null)
-  );
+  ) not valid;
 
 alter table public.request_knives
   drop constraint if exists request_knives_knife_bevel_count_check;
