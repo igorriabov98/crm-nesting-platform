@@ -37,6 +37,27 @@ export function candidateWastePercent(candidate: LongStockCuttingCandidate) {
   return totalStockLength > 0 ? candidate.totalRemainderMm / totalStockLength * 100 : 0
 }
 
+export function candidateRemainderPreview(candidate: LongStockCuttingCandidate) {
+  const pieces = candidate.bars
+    .map((bar) => bar.remainderMm)
+    .filter((lengthMm) => Number.isFinite(lengthMm) && lengthMm > 0)
+    .sort((left, right) => right - left)
+  const visiblePieces = pieces.length > 3 ? pieces.slice(0, 2) : pieces
+  return {
+    pieces,
+    visiblePieces,
+    hiddenCount: pieces.length - visiblePieces.length,
+  }
+}
+
+export function cutDisplayLabel(cutNumber: number) {
+  return `Рез ${cutNumber}`
+}
+
+export function shouldShowBarSegmentLabel(lengthMm: number, stockLengthMm: number) {
+  return stockLengthMm > 0 && lengthMm / stockLengthMm >= 0.08
+}
+
 export function candidateComposition(candidate: LongStockCuttingCandidate) {
   const grouped = new Map<string, { label: string; count: number; lengthMm: number }>()
   for (const bar of candidate.bars) {
