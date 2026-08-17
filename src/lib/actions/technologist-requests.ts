@@ -781,7 +781,13 @@ async function updateSectionRow<T>(id: string, table: RequestSectionTable, schem
       patch.is_custom_material_variant = false
     }
 
-    if (table === 'request_pipe') {
+    const validatesCustomPipeCharacteristics = touchesCharacteristics && (
+      entersCustomMode
+      || (current.is_custom_material_variant === true
+        && !selectsExistingVariant
+        && patch.is_custom_material_variant !== false)
+    )
+    if (table === 'request_pipe' && validatesCustomPipeCharacteristics) {
       validatePipeGeometry({ ...(currentData as Record<string, unknown>), ...patch })
     }
 

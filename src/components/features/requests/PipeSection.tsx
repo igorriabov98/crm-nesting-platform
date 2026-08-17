@@ -299,6 +299,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
       <LongStockPositionDialog
         category="pipe"
         requestId={requestId}
+        steelTypes={steelTypes}
         open={positionDialogOpen}
         onOpenChange={setPositionDialogOpen}
         onCreated={(row) => applyRows([...rows, row as PipeRow])}

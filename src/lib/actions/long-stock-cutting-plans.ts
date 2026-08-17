@@ -2,6 +2,14 @@
 
 import { solveLongStockCutting, type LongStockCuttingCandidate } from '@/lib/long-stock-cutting-solver'
 import {
+  createLongStockMaterialDraft,
+  longStockDraftDemandPatch,
+  longStockMaterialCharacteristics,
+  validateLongStockMaterialDraft,
+  type LongStockMaterialCategory,
+  type LongStockNewMaterialDraft,
+} from '@/lib/long-stock-material-draft'
+import {
   normalizeLongStockPlanSegments,
   serializeLongStockCandidates,
   solverModeForPlan,
@@ -14,6 +22,15 @@ import {
   calculateLongStockWeightPerMeterKg,
   type LongStockWeightVariant,
 } from '@/lib/long-stock-material-weight'
+import { createMaterial, recordMaterialUsage } from '@/lib/actions/materials'
+import {
+  addCircle,
+  addKnife,
+  addPipe,
+  updateCircle,
+  updateKnife,
+  updatePipe,
+} from '@/lib/actions/technologist-requests'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
@@ -50,6 +67,15 @@ type MaterialVariantRow = LongStockWeightVariant & {
   knife_material: string | null
   steel_type_id: string | null
   knife_bevel_count: number | null
+  standard_length_mm: number | null
+  is_calibrated: boolean | null
+}
+
+type MaterialRow = {
+  id: string
+  name: string
+  category: string
+  comment: string | null
 }
 
 type SteelTypeRow = {
@@ -100,6 +126,113 @@ type CalculationContext = {
   businessRemnants: Array<{ id: string; lengthMm: number; createdAt: string }>
   purchaseLengths: Array<{ lengthMm: number; kind: 'standard' | 'nonstandard' }>
   solverResult: ReturnType<typeof solveLongStockCutting>
+}
+
+type PrepareLongStockRequestItemDraftInput = {
+  requestId: string
+  requestItem?: LongStockRequestItemRef | null
+  table: LongStockRequestItemRef['table']
+  materialVariantId: string
+  totalLengthMm: number
+  pieceCount: number
+}
+
+export async function createLongStockMaterialVariant(input: LongStockNewMaterialDraft) {
+  await requirePermission('materials', 'manage')
+  const category = normalizeLongStockMaterialCategory(input?.category)
+  const draft = createLongStockMaterialDraft(String(input?.name ?? ''), category)
+  draft.fields = { ...draft.fields, ...(input?.fields ?? {}) }
+  const validationError = validateLongStockMaterialDraft(draft)
+  if (validationError) throw new Error(validationError)
+
+  const steelTypeId = String(draft.fields.steel_type_id ?? '').trim()
+  const steelType = await one<{ id: string; name: string }>(
+    database().from<{ id: string; name: string }>('steel_types')
+      .select('id,name')
+      .eq('id', requireUuid(steelTypeId, 'Тип металла'))
+      .maybeSingle(),
+    'Тип металла не найден',
+  )
+  const materialResult = await createMaterial({ name: draft.name, category })
+  if (!materialResult.success || !materialResult.data) {
+    throw new Error(materialResult.error || 'Не удалось создать материал')
+  }
+  const variantResult = await recordMaterialUsage({
+    material_id: materialResult.data.id,
+    category,
+    characteristics: longStockMaterialCharacteristics(draft, steelType.name),
+  })
+  if (!variantResult.success || !variantResult.data) {
+    throw new Error(variantResult.error || 'Не удалось создать вариант материала')
+  }
+  return {
+    material: { ...materialResult.data, supplier_name: null },
+    variant: variantResult.data,
+  }
+}
+
+export async function prepareLongStockRequestItemDraft(input: PrepareLongStockRequestItemDraftInput) {
+  await requirePermission('technologist_requests', 'manage')
+  const requestId = requireUuid(input?.requestId, 'Идентификатор заявки')
+  const materialVariantId = requireUuid(input?.materialVariantId, 'Идентификатор варианта материала')
+  const totalLengthMm = Number(input?.totalLengthMm)
+  const pieceCount = Number(input?.pieceCount)
+  if (!Number.isFinite(totalLengthMm) || totalLengthMm <= 0) {
+    throw new Error('Суммарная длина отрезков должна быть больше 0 мм')
+  }
+  if (!Number.isSafeInteger(pieceCount) || pieceCount <= 0) {
+    throw new Error('Количество отрезков должно быть положительным целым числом')
+  }
+
+  const table = input?.table
+  if (table !== 'request_circle' && table !== 'request_pipe' && table !== 'request_knives') {
+    throw new Error('Позиция не относится к кругу, трубе или ножам')
+  }
+  const db = database()
+  const variant = await one<MaterialVariantRow>(
+    db.from<MaterialVariantRow>('material_variants')
+      .select('id,material_id,category,material_grade,knife_material,steel_type_id,pipe_type,knife_bevel_count,weight_per_m_kg,diameter_mm,wall_thickness_mm,piece_description,knife_dimensions,standard_length_mm,width_mm,height_mm,is_calibrated')
+      .eq('id', materialVariantId)
+      .maybeSingle(),
+    'Вариант материала не найден',
+  )
+  const material = await one<MaterialRow>(
+    db.from<MaterialRow>('materials').select('id,name,category,comment').eq('id', variant.material_id).maybeSingle(),
+    'Материал варианта не найден',
+  )
+  validateDraftVariant(table, material, variant)
+
+  if (input.requestItem) {
+    const requestItem = normalizeRequestItemRef(input.requestItem)
+    if (requestItem.table !== table) throw new Error('Категория черновика позиции не совпадает')
+    const current = await loadRequestItem(db, requestItem)
+    if (current.request_id !== requestId) throw new Error('Черновик относится к другой заявке')
+    if (current.material_variant_id !== materialVariantId) {
+      throw new Error('Выбранный вариант изменился — создайте черновик позиции заново')
+    }
+    const demandPatch = longStockDraftDemandPatch(table, totalLengthMm, pieceCount)
+    const result = table === 'request_circle'
+      ? await updateCircle(requestItem.id, demandPatch)
+      : table === 'request_pipe'
+        ? await updatePipe(requestItem.id, demandPatch)
+        : await updateKnife(requestItem.id, demandPatch)
+    if (!result.success || !result.data) throw new Error(result.error || 'Не удалось обновить черновик позиции')
+    return { table, id: requestItem.id, row: result.data, materialVariantId }
+  }
+
+  const data = newDraftData(table, material, variant, totalLengthMm, pieceCount)
+  const result = table === 'request_circle'
+    ? await addCircle(requestId, data)
+    : table === 'request_pipe'
+      ? await addPipe(requestId, data)
+      : await addKnife(requestId, data)
+  if (!result.success || !result.data) throw new Error(result.error || 'Не удалось создать черновик позиции')
+  return {
+    table,
+    id: String((result.data as { id: string }).id),
+    row: result.data,
+    materialVariantId,
+  }
 }
 
 export async function calculateLongStockCuttingPlan(input: LongStockPlanCalculationInput) {
@@ -425,6 +558,94 @@ function calculationResult(context: CalculationContext) {
     layoutCategoryKey: context.layoutCategory.key,
     candidates: context.solverResult.candidates,
     recommendedCandidateKey: context.solverResult.recommendedCandidateKey,
+  }
+}
+
+function normalizeLongStockMaterialCategory(value: unknown): LongStockMaterialCategory {
+  if (value === 'circle' || value === 'pipe' || value === 'knives') return value
+  throw new Error('Материал не относится к кругу, трубе или ножам')
+}
+
+function validateDraftVariant(
+  table: LongStockRequestItemRef['table'],
+  material: MaterialRow,
+  variant: MaterialVariantRow,
+) {
+  const expectedCategory = table === 'request_circle'
+    ? 'circle'
+    : table === 'request_pipe' ? 'pipe' : 'knives'
+  if (material.id !== variant.material_id || material.category !== variant.category) {
+    throw new Error('Вариант материала не относится к выбранному материалу')
+  }
+  if (variant.category !== expectedCategory) {
+    throw new Error('Категория варианта не соответствует позиции заявки')
+  }
+  if (table === 'request_pipe' && variant.pipe_type === 'wire') {
+    throw new Error('Проволока остаётся в прежнем интерфейсе')
+  }
+}
+
+function newDraftData(
+  table: LongStockRequestItemRef['table'],
+  material: MaterialRow,
+  variant: MaterialVariantRow,
+  totalLengthMm: number,
+  pieceCount: number,
+) {
+  const common = {
+    material_id: material.id,
+    material_variant_id: variant.id,
+    is_custom_material_variant: false,
+  }
+  if (table === 'request_circle') {
+    return {
+      ...common,
+      diameter_mm: variant.diameter_mm,
+      steel_grade: variant.material_grade ?? material.comment,
+      steel_type_id: variant.steel_type_id,
+      is_calibrated: variant.is_calibrated ?? false,
+      remainder_mm: totalLengthMm,
+    }
+  }
+  if (table === 'request_pipe') {
+    return {
+      ...common,
+      pipe_type: variant.pipe_type,
+      steel_type_id: variant.steel_type_id,
+      size: variant.piece_description,
+      wall_thickness_mm: variant.wall_thickness_mm,
+      diameter_mm: variant.diameter_mm,
+      remainder_length_mm: totalLengthMm,
+      remainder_qty: pieceCount,
+      remainder_kg: 0,
+    }
+  }
+  const dimensions = knifeVariantDimensions(variant)
+  return {
+    ...common,
+    knife_type: material.name,
+    steel_grade: variant.material_grade ?? variant.knife_material,
+    steel_type_id: variant.steel_type_id,
+    length_mm: dimensions.lengthMm,
+    width_mm: dimensions.widthMm,
+    height_mm: dimensions.heightMm,
+    knife_bevel_count: variant.knife_bevel_count,
+    remainder_meters: totalLengthMm / 1000,
+    remainder_qty: pieceCount,
+  }
+}
+
+function knifeVariantDimensions(variant: MaterialVariantRow) {
+  const parsed = String(variant.knife_dimensions ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[х×*]/g, 'x')
+    .split('x')
+    .map((part) => Number(part.trim().replace(',', '.')))
+  return {
+    lengthMm: variant.standard_length_mm ?? (Number.isFinite(parsed[0]) ? parsed[0] : null),
+    widthMm: variant.width_mm ?? (Number.isFinite(parsed[1]) ? parsed[1] : null),
+    heightMm: variant.height_mm ?? (Number.isFinite(parsed[2]) ? parsed[2] : null),
   }
 }
 
