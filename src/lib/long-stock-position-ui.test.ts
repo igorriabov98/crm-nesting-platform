@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  candidateComposition,
+  candidatePurchaseComposition,
   candidateRemainderPreview,
   candidateWastePercent,
+  candidatesForLongStockMode,
   cutDisplayLabel,
+  DEFAULT_MIXED_LONG_STOCK_LENGTHS,
   expandLongStockSegmentRows,
   longStockCutColorMap,
   shouldShowBarSegmentLabel,
@@ -32,16 +34,41 @@ test('rejects a non-integer quantity and points to the row', () => {
   )
 })
 
-test('formats a mixed candidate composition and waste percent', () => {
+test('defaults to mixed standard lengths', () => {
+  assert.equal(DEFAULT_MIXED_LONG_STOCK_LENGTHS, true)
+})
+
+test('formats the purchased composition in descending order and excludes warehouse remnants', () => {
   const candidate = {
-    totalRemainderMm: 1450,
+    totalRemainderMm: 4450,
     bars: [
       { source: 'new_stock', stockLengthMm: 6000 },
-      { source: 'new_stock', stockLengthMm: 8500 },
+      { source: 'new_stock', stockLengthMm: 12000 },
+      { source: 'business_remnant', stockLengthMm: 8500 },
+      { source: 'new_stock', stockLengthMm: 6000 },
+      { source: 'new_stock', stockLengthMm: 12000 },
     ],
   } as LongStockCuttingCandidate
-  assert.equal(candidateComposition(candidate), '6 000 × 1 + 8 500 × 1')
+  assert.equal(candidatePurchaseComposition(candidate), '12 000 × 2 + 6 000 × 2')
   assert.equal(candidateWastePercent(candidate), 10)
+})
+
+test('keeps the single-length fallback in mixed mode and removes mixed candidates when disabled', () => {
+  const single = {
+    key: 'single',
+    kind: 'single_length',
+    purchasedLengthMm: 24000,
+    newBarCount: 2,
+  } as LongStockCuttingCandidate
+  const mixed = {
+    key: 'mixed',
+    kind: 'mixed_lengths',
+    purchasedLengthMm: 22000,
+    newBarCount: 3,
+  } as LongStockCuttingCandidate
+
+  assert.deepEqual(candidatesForLongStockMode([single, mixed], true).map((candidate) => candidate.key), ['mixed', 'single'])
+  assert.deepEqual(candidatesForLongStockMode([single, mixed], false).map((candidate) => candidate.key), ['single'])
 })
 
 test('sorts remainder pieces and abbreviates only lists longer than three pieces', () => {

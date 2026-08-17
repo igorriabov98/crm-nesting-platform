@@ -276,9 +276,9 @@ export async function createManualLongStockCuttingPlanVersion(
   const reason = String(input.reason ?? '').trim()
   if (!reason) throw new Error('Для ручной правки обязательна причина')
   const context = await calculateContext(input)
-  const eligiblePurchaseLengths = context.mode === 'standard'
-    ? context.purchaseLengths.filter((length) => length.kind === 'standard')
-    : context.purchaseLengths
+  const eligiblePurchaseLengths = context.mode === 'with_nonstandard'
+    ? context.purchaseLengths
+    : context.purchaseLengths.filter((length) => length.kind === 'standard')
   const manualCandidate = validateManualLongStockLayout({
     workpieces: context.workpieces,
     businessRemnants: context.businessRemnants,

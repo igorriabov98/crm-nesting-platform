@@ -93,7 +93,7 @@ export function solverModeForPlan(mode: LongStockPlanCalculationMode = 'standard
     return { mode: 'optimal' as const, allowMixedLengths: false }
   }
   if (mode === 'mixed') {
-    return { mode: 'optimal' as const, allowMixedLengths: true }
+    return { mode: 'standard_only' as const, allowMixedLengths: true }
   }
   throw new Error('Неизвестный режим расчёта раскроя')
 }

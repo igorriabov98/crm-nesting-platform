@@ -123,5 +123,5 @@ test('candidate serialization preserves source inventory and exact cut mapping',
 test('calculation modes map to solver flags explicitly', () => {
   assert.deepEqual(solverModeForPlan(), { mode: 'standard_only', allowMixedLengths: false })
   assert.deepEqual(solverModeForPlan('with_nonstandard'), { mode: 'optimal', allowMixedLengths: false })
-  assert.deepEqual(solverModeForPlan('mixed'), { mode: 'optimal', allowMixedLengths: true })
+  assert.deepEqual(solverModeForPlan('mixed'), { mode: 'standard_only', allowMixedLengths: true })
 })
