@@ -9,7 +9,8 @@ import { InlineEditCell } from './InlineEditCell'
 import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
-import { addKnife, deleteKnife, updateKnife, type WithMaterialName } from '@/lib/actions/technologist-requests'
+import { LongStockPositionDialog } from './LongStockPositionDialog'
+import { deleteKnife, updateKnife, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { KNIFE_BEVEL_OPTIONS, parseKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import type { MaterialVariant, RequestKnives } from '@/lib/types'
@@ -78,28 +79,11 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
   const router = useRouter()
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
+  const [positionDialogOpen, setPositionDialogOpen] = useState(false)
 
   useEffect(() => {
     setRows(items)
   }, [items])
-
-  const handleAdd = async () => {
-    const result = await addKnife(requestId, {
-      knife_type: null,
-      steel_grade: null,
-      length_mm: null,
-      width_mm: null,
-      height_mm: null,
-      knife_bevel_count: null,
-      remainder_meters: 0,
-    })
-    if (!result.success || !result.data) {
-      toast.error(result.error || 'Ошибка при добавлении')
-      return
-    }
-    setRows((current) => [...current, result.data as KnifeRow])
-    toast.success('Позиция добавлена')
-  }
 
   const handleUpdate = async (id: string, patch: KnifePatch) => {
     const previous = rows
@@ -228,7 +212,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
               <tr>
                 <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {canEdit && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
+                  {canEdit && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
                 </td>
               </tr>
             )}
@@ -237,12 +221,19 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
       </div>
       {canEdit && (
         <div className="flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
+          <Button type="button" variant="outline" size="sm" onClick={() => setPositionDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Добавить позицию
           </Button>
         </div>
       )}
+      <LongStockPositionDialog
+        category="knives"
+        requestId={requestId}
+        open={positionDialogOpen}
+        onOpenChange={setPositionDialogOpen}
+        onCreated={(row) => setRows((current) => [...current, row as KnifeRow])}
+      />
     </div>
   )
 }

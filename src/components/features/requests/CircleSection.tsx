@@ -8,7 +8,8 @@ import { InlineEditCell } from './InlineEditCell'
 import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
-import { addCircle, deleteCircle, updateCircle, type WithMaterialName } from '@/lib/actions/technologist-requests'
+import { LongStockPositionDialog } from './LongStockPositionDialog'
+import { deleteCircle, updateCircle, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import type { CircleInput } from '@/lib/types/request-schemas'
 import type { MaterialVariant, RequestCircle } from '@/lib/types'
@@ -41,21 +42,7 @@ function formatWeight(value: number | null | undefined) {
 export function CircleSection({ requestId, items, isEditable, steelTypes }: Props) {
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
-
-  const handleAdd = async () => {
-    const result = await addCircle(requestId, {
-      diameter_mm: null,
-      steel_grade: null,
-      is_calibrated: false,
-      remainder_mm: 0,
-    })
-    if (!result.success || !result.data) {
-      toast.error(result.error || 'Ошибка при добавлении')
-      return
-    }
-    setRows((current) => [...current, result.data as CircleRow])
-    toast.success('Позиция добавлена')
-  }
+  const [positionDialogOpen, setPositionDialogOpen] = useState(false)
 
   const handleUpdate = async (id: string, patch: CirclePatch) => {
     const previous = rows
@@ -171,7 +158,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
               <tr>
                 <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
+                  {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
                 </td>
               </tr>
             )}
@@ -180,12 +167,19 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
       </div>
       {isEditable && (
         <div className="flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
+          <Button type="button" variant="outline" size="sm" onClick={() => setPositionDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Добавить позицию
           </Button>
         </div>
       )}
+      <LongStockPositionDialog
+        category="circle"
+        requestId={requestId}
+        open={positionDialogOpen}
+        onOpenChange={setPositionDialogOpen}
+        onCreated={(row) => setRows((current) => [...current, row as CircleRow])}
+      />
     </div>
   )
 }
