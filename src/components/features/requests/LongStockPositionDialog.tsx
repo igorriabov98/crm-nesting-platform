@@ -58,11 +58,14 @@ import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import {
   candidateComposition,
   candidatePurchaseLengthLabel,
+  candidateRemainderPreview,
   candidateToManualBars,
   candidateWastePercent,
+  cutDisplayLabel,
   expandLongStockSegmentRows,
   formatKg,
   formatMm,
+  shouldShowBarSegmentLabel,
   totalLongStockSegmentLength,
   type LongStockSegmentRow,
 } from '@/lib/long-stock-position-ui'
@@ -153,6 +156,8 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
   const bestCandidateKey = visibleCandidates[0]?.key ?? null
   const wastePercent = selectedCandidate ? candidateWastePercent(selectedCandidate) : 0
   const threshold = Number(calculation?.settingsSnapshot.optimization_hint_threshold_percent ?? 0)
+  const minimumUsefulLengthMm = calculation?.settingsSnapshot.categories
+    .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0
   const showOptimizationHint = Boolean(selectedCandidate && !mixedLengths && !nonstandardLengths && wastePercent > threshold)
   const exactVariantReady = Boolean(variant?.id && variant.category === category && !(category === 'pipe' && variant.pipe_type === 'wire'))
   const canCalculate = exactVariantReady && segmentValidation.error === null && !pendingAction
@@ -523,6 +528,7 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
                   selectedKey={selectedCandidateKey}
                   bestKey={bestCandidateKey}
                   weightPerMeterKg={calculation.weightPerMeterKg}
+                  minimumUsefulLengthMm={minimumUsefulLengthMm}
                   onSelect={chooseCandidate}
                 />
               ) : (
@@ -538,7 +544,7 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
                   <Sparkles className="text-amber-700" />
                   <AlertTitle>Можно уменьшить излишек</AlertTitle>
                   <AlertDescription>
-                    излишек {formatPercent(wastePercent)}, можно подобрать длину точнее
+                    Излишек {formatPercent(wastePercent)} от закупаемой длины, можно подобрать длину точнее.
                   </AlertDescription>
                 </Alert>
               )}
@@ -613,61 +619,108 @@ function CandidateMatrix({
   selectedKey,
   bestKey,
   weightPerMeterKg,
+  minimumUsefulLengthMm,
   onSelect,
 }: {
   candidates: LongStockCuttingCandidate[]
   selectedKey: string | null
   bestKey: string | null
   weightPerMeterKg: number | null
+  minimumUsefulLengthMm: number
   onSelect: (candidate: LongStockCuttingCandidate) => void
 }) {
+  const hasShortRemainders = candidates.some((candidate) => candidate.bars.some(
+    (bar) => bar.remainderMm > 0 && bar.remainderMm < minimumUsefulLengthMm,
+  ))
   return (
-    <div className="overflow-x-auto rounded-xl border bg-white">
-      <table className="min-w-[820px] w-full text-sm">
-        <thead className="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-          <tr>
-            <th className="px-4 py-3">Длина хлыста</th>
-            <th className="px-4 py-3 text-right">Хлыстов</th>
-            <th className="px-4 py-3 text-right">Закупаемая длина</th>
-            <th className="px-4 py-3 text-right">Излишек, мм</th>
-            <th className="px-4 py-3 text-right">Излишек, кг</th>
-            <th className="w-10 px-4 py-3"><span className="sr-only">Раскрыть</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          {candidates.map((candidate) => {
-            const selected = candidate.key === selectedKey
-            const best = candidate.key === bestKey
-            return (
-              <tr
-                key={candidate.key}
-                className={cn(
-                  'cursor-pointer border-t transition-colors hover:bg-blue-50/60',
-                  best && 'bg-emerald-50/70',
-                  selected && 'bg-blue-50 ring-2 ring-inset ring-blue-500',
-                )}
-                onClick={() => onSelect(candidate)}
-              >
-                <td className="px-4 py-3">
-                  <label className="flex cursor-pointer items-center gap-3 font-medium text-slate-900">
-                    <input type="radio" name="long-stock-candidate" checked={selected} onChange={() => onSelect(candidate)} />
-                    <span>{candidatePurchaseLengthLabel(candidate)}</span>
-                    {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
-                    {candidate.usesNonstandardLength && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700"><Sparkles />Нестандартная</Badge>}
-                    {!candidate.searchComplete && <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Неполное</Badge>}
-                  </label>
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">{candidate.newBarCount}</td>
-                <td className="px-4 py-3 text-right tabular-nums">{formatMm(candidate.purchasedLengthMm)} мм</td>
-                <td className="px-4 py-3 text-right tabular-nums">{formatMm(candidate.totalRemainderMm)}</td>
-                <td className="px-4 py-3 text-right tabular-nums">{formatKg(remainderWeight(candidate, weightPerMeterKg))}</td>
-                <td className="px-4 py-3"><ChevronRight className={cn('size-4 text-slate-400', selected && 'rotate-90 text-blue-600')} /></td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+    <div>
+      <div className="overflow-x-auto rounded-xl border bg-white">
+        <table className="min-w-[980px] w-full text-sm">
+          <thead className="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-4 py-3">Длина хлыста</th>
+              <th className="px-4 py-3 text-right">Хлыстов</th>
+              <th className="px-4 py-3 text-right">Закупаемая длина</th>
+              <th className="px-4 py-3 text-right">Излишек, мм</th>
+              <th className="px-4 py-3 text-right">Остатки</th>
+              <th className="px-4 py-3 text-right">Излишек, кг</th>
+              <th className="w-10 px-4 py-3"><span className="sr-only">Раскрыть</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {candidates.map((candidate) => {
+              const selected = candidate.key === selectedKey
+              const best = candidate.key === bestKey
+              return (
+                <tr
+                  key={candidate.key}
+                  className={cn(
+                    'cursor-pointer border-t transition-colors hover:bg-blue-50/60',
+                    best && 'bg-emerald-50/70',
+                    selected && 'bg-blue-50 ring-2 ring-inset ring-blue-500',
+                  )}
+                  onClick={() => onSelect(candidate)}
+                >
+                  <td className="px-4 py-3">
+                    <label className="flex cursor-pointer items-center gap-3 font-medium text-slate-900">
+                      <input type="radio" name="long-stock-candidate" checked={selected} onChange={() => onSelect(candidate)} />
+                      <span>{candidatePurchaseLengthLabel(candidate)}</span>
+                      {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
+                      {candidate.usesNonstandardLength && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700"><Sparkles />Нестандартная</Badge>}
+                      {!candidate.searchComplete && <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Неполное</Badge>}
+                    </label>
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">{candidate.newBarCount}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">{formatMm(candidate.purchasedLengthMm)} мм</td>
+                  <td className="px-4 py-3 text-right tabular-nums">{formatMm(candidate.totalRemainderMm)}</td>
+                  <td className="px-4 py-3 text-right">
+                    <RemainderComposition candidate={candidate} minimumUsefulLengthMm={minimumUsefulLengthMm} />
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">{formatKg(remainderWeight(candidate, weightPerMeterKg))}</td>
+                  <td className="px-4 py-3"><ChevronRight className={cn('size-4 text-slate-400', selected && 'rotate-90 text-blue-600')} /></td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {hasShortRemainders && (
+        <p className="mt-2 text-xs text-slate-500">
+          Приглушены остатки короче минимальной полезной длины {formatMm(minimumUsefulLengthMm)} мм.
+        </p>
+      )}
     </div>
+  )
+}
+
+function RemainderComposition({
+  candidate,
+  minimumUsefulLengthMm,
+}: {
+  candidate: LongStockCuttingCandidate
+  minimumUsefulLengthMm: number
+}) {
+  const preview = candidateRemainderPreview(candidate)
+  if (preview.pieces.length === 0) return <span className="text-slate-400">—</span>
+  const fullList = preview.pieces.map((lengthMm) => `${formatMm(lengthMm)} мм`).join(' + ')
+  return (
+    <span className="inline-flex flex-wrap justify-end gap-x-1" aria-label={`Остатки: ${fullList}`}>
+      {preview.visiblePieces.map((lengthMm, index) => {
+        const useful = minimumUsefulLengthMm <= 0 || lengthMm >= minimumUsefulLengthMm
+        return (
+          <span key={`${lengthMm}-${index}`} className="contents">
+            {index > 0 && <span aria-hidden="true">+</span>}
+            <span
+              className={cn('tabular-nums', !useful && 'text-slate-400 line-through decoration-slate-300')}
+              title={useful ? `${formatMm(lengthMm)} мм` : `Короче минимальной полезной длины ${formatMm(minimumUsefulLengthMm)} мм`}
+            >
+              {formatMm(lengthMm)}
+            </span>
+          </span>
+        )
+      })}
+      {preview.hiddenCount > 0 && <span className="whitespace-nowrap text-slate-500">+{preview.hiddenCount} ещё</span>}
+    </span>
   )
 }
 
@@ -723,6 +776,8 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function LayoutPreview({ candidate, calculation }: { candidate: LongStockCuttingCandidate; calculation: Calculation }) {
+  const minimumUsefulLengthMm = calculation.settingsSnapshot.categories
+    .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0
   return (
     <div className="space-y-4">
       {candidate.bars.map((bar) => (
@@ -734,7 +789,10 @@ function LayoutPreview({ candidate, calculation }: { candidate: LongStockCutting
               {bar.source === 'business_remnant' && <Badge variant="secondary">Со склада</Badge>}
               {bar.purchaseLengthKind === 'nonstandard' && <Badge variant="outline" className="border-violet-200 text-violet-700">Нестандартный</Badge>}
             </div>
-            <span className="text-sm text-slate-600">Остаток: <strong>{formatMm(bar.remainderMm)} мм</strong></span>
+            <span className={cn('text-sm text-slate-600', bar.remainderMm > 0 && bar.remainderMm < minimumUsefulLengthMm && 'text-slate-400')}>
+              Остаток: <strong>{formatMm(bar.remainderMm)} мм</strong>
+              {bar.remainderMm > 0 && bar.remainderMm < minimumUsefulLengthMm && <span className="ml-1">· не в дело</span>}
+            </span>
           </div>
           <BarStrip
             stockLengthMm={bar.stockLengthMm}
@@ -745,7 +803,7 @@ function LayoutPreview({ candidate, calculation }: { candidate: LongStockCutting
           />
           <ol className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
             {bar.cuts.map((cut) => (
-              <li key={cut.workpieceId}>Рез {cut.cutNumber}: <span className="font-medium">{formatMm(cut.lengthMm)} мм</span> <span className="text-slate-400">({cut.workpieceId})</span></li>
+              <li key={cut.workpieceId}>{cutDisplayLabel(cut.cutNumber)}: <span className="font-medium">{formatMm(cut.lengthMm)} мм</span></li>
             ))}
           </ol>
         </div>
@@ -770,24 +828,24 @@ function BarStrip({
   return (
     <div className="mt-3 flex h-12 w-full overflow-hidden rounded-md border border-slate-300 bg-slate-100" aria-label={`Пропорциональная раскладка хлыста ${formatMm(stockLengthMm)} мм`}>
       {endTrimMm > 0 && <div className="bg-slate-400" style={{ width: `${endTrimMm / stockLengthMm * 100}%` }} title={`Торцовка ${formatMm(endTrimMm)} мм`} />}
-      {cuts.map((cut, index) => (
+      {cuts.map((cut) => (
         <span key={cut.workpieceId} className="contents">
           <span
-            className={cn('flex min-w-0 items-center justify-center overflow-hidden border-l border-white/70 px-1 text-[11px] font-semibold text-white', CUT_COLORS[index % CUT_COLORS.length])}
+            className="flex min-w-0 items-center justify-center overflow-hidden border-l-2 border-white bg-blue-600 px-1 text-[11px] font-semibold text-white"
             style={{ width: `${cut.lengthMm / stockLengthMm * 100}%` }}
-            title={`Рез ${cut.cutNumber}: ${formatMm(cut.lengthMm)} мм`}
+            title={`${cutDisplayLabel(cut.cutNumber)}: ${formatMm(cut.lengthMm)} мм`}
           >
-            <span className="truncate">№{cut.cutNumber} · {formatMm(cut.lengthMm)}</span>
+            {shouldShowBarSegmentLabel(cut.lengthMm, stockLengthMm) && <span className="whitespace-nowrap">№{cut.cutNumber} · {formatMm(cut.lengthMm)}</span>}
           </span>
-          {kerfMm > 0 && <span className="bg-slate-900" style={{ width: `${kerfMm / stockLengthMm * 100}%` }} title={`Пропил ${formatMm(kerfMm)} мм`} />}
+          {kerfMm > 0 && <span className="border-l border-white bg-slate-900" style={{ width: `${kerfMm / stockLengthMm * 100}%` }} title={`Пропил ${formatMm(kerfMm)} мм`} />}
         </span>
       ))}
       <span
-        className="flex min-w-0 items-center justify-center overflow-hidden border-l border-slate-300 bg-emerald-100 px-1 text-[11px] font-medium text-emerald-900"
+        className="flex min-w-0 items-center justify-center overflow-hidden border-l-2 border-white bg-emerald-200 px-1 text-[11px] font-medium text-emerald-950"
         style={{ width: `${Math.max(remainderMm, 0) / stockLengthMm * 100}%` }}
         title={`Остаток ${formatMm(remainderMm)} мм`}
       >
-        <span className="truncate">остаток {formatMm(remainderMm)}</span>
+        {shouldShowBarSegmentLabel(remainderMm, stockLengthMm) && <span className="whitespace-nowrap">остаток {formatMm(remainderMm)}</span>}
       </span>
     </div>
   )
@@ -927,9 +985,8 @@ function ManualLayoutEditor({
                   {bar.cuts.map((cut, cutIndex) => (
                     <li key={cut.workpieceId} className="flex items-center gap-2 rounded-md border bg-slate-50 p-2">
                       <span className="min-w-0 flex-1 text-sm">
-                        <span className="font-medium">Рез {cutIndex + 1}</span>
+                        <span className="font-medium">{cutDisplayLabel(cutIndex + 1)}</span>
                         <span className="ml-2 tabular-nums text-slate-600">{formatMm(segmentById.get(cut.workpieceId)?.lengthMm ?? 0)} мм</span>
-                        <span className="block truncate text-xs text-slate-400">{cut.workpieceId}</span>
                       </span>
                       <span className="grid grid-cols-2 gap-0.5">
                         <MoveButton label="Выше" disabled={cutIndex === 0} onClick={() => moveCut(barIndex, cutIndex, 'up')}><ArrowUp /></MoveButton>
@@ -982,8 +1039,6 @@ function MoveButton({ label, disabled, onClick, children }: { label: string; dis
     </button>
   )
 }
-
-const CUT_COLORS = ['bg-blue-600', 'bg-cyan-600', 'bg-indigo-600', 'bg-teal-600', 'bg-sky-600']
 
 function candidatesForMode(candidates: LongStockCuttingCandidate[], mixed: boolean) {
   return candidates
@@ -1077,8 +1132,9 @@ function parseKnifeDimensions(variant: MaterialVariant) {
 }
 
 function remainderWeight(candidate: LongStockCuttingCandidate, weightPerMeterKg: number | null) {
+  if (weightPerMeterKg === null) return null
   const weight = Number(weightPerMeterKg)
-  return Number.isFinite(weight) && weight >= 0 ? candidate.totalRemainderMm / 1000 * weight : null
+  return Number.isFinite(weight) && weight > 0 ? candidate.totalRemainderMm / 1000 * weight : null
 }
 
 function formatWeight(value: number | null) {

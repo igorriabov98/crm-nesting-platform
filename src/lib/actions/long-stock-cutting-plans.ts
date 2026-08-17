@@ -10,6 +10,10 @@ import {
   type LongStockPlanCalculationInput,
   type LongStockRequestItemRef,
 } from '@/lib/long-stock-cutting-plan'
+import {
+  calculateLongStockWeightPerMeterKg,
+  type LongStockWeightVariant,
+} from '@/lib/long-stock-material-weight'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
@@ -39,16 +43,18 @@ type RequestItemRow = {
   pipe_type: string | null
 }
 
-type MaterialVariantRow = {
+type MaterialVariantRow = LongStockWeightVariant & {
   id: string
   material_id: string
-  category: string
   material_grade: string | null
   knife_material: string | null
   steel_type_id: string | null
-  pipe_type: string | null
   knife_bevel_count: number | null
-  weight_per_m_kg: number | null
+}
+
+type SteelTypeRow = {
+  id: string
+  density_kg_mm3: number
 }
 
 type LayoutCategorySnapshot = {
@@ -209,12 +215,25 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
 
   const variant = await one<MaterialVariantRow>(
     db.from<MaterialVariantRow>('material_variants')
-      .select('id,material_id,category,material_grade,knife_material,steel_type_id,pipe_type,knife_bevel_count,weight_per_m_kg')
+      .select('id,material_id,category,material_grade,knife_material,steel_type_id,pipe_type,knife_bevel_count,weight_per_m_kg,diameter_mm,wall_thickness_mm,piece_description,knife_dimensions,width_mm,height_mm')
       .eq('id', item.material_variant_id)
       .maybeSingle(),
     'Вариант материала не найден',
   )
   validateItemIdentity(requestItem, item, variant)
+
+  let densityKgMm3: number | null = null
+  if (!(Number(variant.weight_per_m_kg) > 0) && variant.steel_type_id) {
+    const steelTypeResult = await db.from<SteelTypeRow>('steel_types')
+      .select('id,density_kg_mm3')
+      .eq('id', variant.steel_type_id)
+      .maybeSingle()
+    if (steelTypeResult.error) {
+      throw new Error(steelTypeResult.error.message || 'Не удалось прочитать плотность марки стали')
+    }
+    densityKgMm3 = steelTypeResult.data?.density_kg_mm3 ?? null
+  }
+  const weightPerMeterKg = calculateLongStockWeightPerMeterKg(variant, densityKgMm3)
 
   const request = await one<{ id: string; machine_id: string }>(
     db.from<{ id: string; machine_id: string }>('technologist_requests')
@@ -293,7 +312,7 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
     materialId: item.material_id,
     materialVariantId: item.material_variant_id,
     gradeKey: gradeKey(item, variant),
-    weightPerMeterKg: variant.weight_per_m_kg,
+    weightPerMeterKg,
     layoutCategory,
     settingsSnapshot,
     mode,
