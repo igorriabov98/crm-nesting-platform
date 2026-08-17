@@ -58,6 +58,15 @@ export function shouldShowBarSegmentLabel(lengthMm: number, stockLengthMm: numbe
   return stockLengthMm > 0 && lengthMm / stockLengthMm >= 0.08
 }
 
+export function longStockCutColorMap(lengthsMm: readonly number[]) {
+  const uniqueLengths = [...new Set(lengthsMm.filter((lengthMm) => Number.isFinite(lengthMm) && lengthMm > 0))]
+    .sort((left, right) => left - right)
+  return new Map(uniqueLengths.map((lengthMm, index) => [
+    lengthMm,
+    `hsl(${Math.round((213 + index * 137.508) % 360)} 68% 43%)`,
+  ]))
+}
+
 export function candidateComposition(candidate: LongStockCuttingCandidate) {
   const grouped = new Map<string, { label: string; count: number; lengthMm: number }>()
   for (const bar of candidate.bars) {

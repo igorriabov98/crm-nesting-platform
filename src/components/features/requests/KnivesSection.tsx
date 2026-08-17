@@ -230,6 +230,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
       <LongStockPositionDialog
         category="knives"
         requestId={requestId}
+        steelTypes={steelTypes}
         open={positionDialogOpen}
         onOpenChange={setPositionDialogOpen}
         onCreated={(row) => setRows((current) => [...current, row as KnifeRow])}

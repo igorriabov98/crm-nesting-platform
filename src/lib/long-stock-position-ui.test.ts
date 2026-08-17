@@ -6,6 +6,7 @@ import {
   candidateWastePercent,
   cutDisplayLabel,
   expandLongStockSegmentRows,
+  longStockCutColorMap,
   shouldShowBarSegmentLabel,
   totalLongStockSegmentLength,
 } from '@/lib/long-stock-position-ui'
@@ -77,4 +78,10 @@ test('uses user-facing cut labels and omits labels on short bar segments', () =>
   assert.equal(cutDisplayLabel(2).includes('segment-row'), false)
   assert.equal(shouldShowBarSegmentLabel(96, 6000), false)
   assert.equal(shouldShowBarSegmentLabel(600, 6000), true)
+})
+
+test('uses one color per cut length and a different color for another length', () => {
+  const colors = longStockCutColorMap([1200, 850, 1200])
+  assert.equal(colors.get(1200), colors.get(1200))
+  assert.notEqual(colors.get(1200), colors.get(850))
 })

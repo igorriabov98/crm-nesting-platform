@@ -38,20 +38,16 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   approveLongStockCuttingPlanVersion,
   calculateLongStockCuttingPlan,
+  createLongStockMaterialVariant,
   createLongStockCuttingPlanVersion,
   createManualLongStockCuttingPlanVersion,
+  prepareLongStockRequestItemDraft,
 } from '@/lib/actions/long-stock-cutting-plans'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import {
-  addCircle,
-  addKnife,
-  addPipe,
   deleteCircle,
   deleteKnife,
   deletePipe,
-  updateCircle,
-  updateKnife,
-  updatePipe,
   type WithMaterialName,
 } from '@/lib/actions/technologist-requests'
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
@@ -65,11 +61,17 @@ import {
   expandLongStockSegmentRows,
   formatKg,
   formatMm,
+  longStockCutColorMap,
   shouldShowBarSegmentLabel,
   totalLongStockSegmentLength,
   type LongStockSegmentRow,
 } from '@/lib/long-stock-position-ui'
-import { knifeBevelLabel, parseKnifeBevelCount } from '@/lib/materials/knife-bevel'
+import {
+  createLongStockMaterialDraft,
+  validateLongStockDialogAction,
+  type LongStockNewMaterialDraft,
+} from '@/lib/long-stock-material-draft'
+import { KNIFE_BEVEL_OPTIONS, knifeBevelLabel } from '@/lib/materials/knife-bevel'
 import { calculateLongStockBarRemainder, type LongStockCuttingCandidate } from '@/lib/long-stock-cutting-solver'
 import type {
   LongStockManualBarInput,
@@ -79,6 +81,7 @@ import type {
   LongStockRequestItemTable,
 } from '@/lib/long-stock-cutting-plan'
 import type { MaterialVariant, RequestCircle, RequestKnives, RequestPipe } from '@/lib/types'
+import type { SteelType } from '@/lib/types/database'
 import { cn } from '@/lib/utils'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 
@@ -89,6 +92,7 @@ type CreatedRow = WithMaterialName<RequestCircle> | WithMaterialName<RequestPipe
 type Props = {
   category: Category
   requestId: string
+  steelTypes: SteelType[]
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: (row: CreatedRow) => void
@@ -98,6 +102,7 @@ type DraftItem = {
   table: LongStockRequestItemTable
   id: string
   row: CreatedRow
+  materialVariantId: string
 }
 
 const CATEGORY_CONFIG: Record<Category, {
@@ -117,12 +122,13 @@ const MANUAL_REASONS = [
   { value: 'other', label: 'Другое' },
 ] as const
 
-export function LongStockPositionDialog({ category, requestId, open, onOpenChange, onCreated }: Props) {
+export function LongStockPositionDialog({ category, requestId, steelTypes, open, onOpenChange, onCreated }: Props) {
   const config = CATEGORY_CONFIG[category]
   const nextSegmentRow = useRef(2)
   const draftRef = useRef<DraftItem | null>(null)
   const [material, setMaterial] = useState<MaterialWithSupplier | null>(null)
   const [variant, setVariant] = useState<MaterialVariant | null>(null)
+  const [newMaterialDraft, setNewMaterialDraft] = useState<LongStockNewMaterialDraft | null>(null)
   const [segmentRows, setSegmentRows] = useState<LongStockSegmentRow[]>([
     { id: 'segment-row-1', lengthMm: '', quantity: 1 },
   ])
@@ -136,6 +142,7 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
   const [manualReasonText, setManualReasonText] = useState('')
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [materialError, setMaterialError] = useState<string | null>(null)
 
   const segmentValidation = useMemo(() => {
     try {
@@ -161,6 +168,11 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
   const showOptimizationHint = Boolean(selectedCandidate && !mixedLengths && !nonstandardLengths && wastePercent > threshold)
   const exactVariantReady = Boolean(variant?.id && variant.category === category && !(category === 'pipe' && variant.pipe_type === 'wire'))
   const canCalculate = exactVariantReady && segmentValidation.error === null && !pendingAction
+  const selectedSteelTypeName = variant
+    ? steelTypes.find((steelType) => steelType.id === variant.steel_type_id)?.name
+      ?? (variant as MaterialVariant & { steel_types?: { name?: string | null } | null }).steel_types?.name
+      ?? null
+    : null
 
   function invalidateCalculation() {
     setCalculation(null)
@@ -175,6 +187,8 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
     selectedVariant: MaterialVariant | undefined,
     source: MaterialSelectionSource,
   ) {
+    setNewMaterialDraft(null)
+    setMaterialError(null)
     setMaterial(selectedMaterial)
     if (category === 'pipe' && selectedVariant?.pipe_type === 'wire') {
       setVariant(null)
@@ -184,6 +198,46 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
     }
     setVariant(source === 'existing_variant' ? selectedVariant ?? null : null)
     invalidateCalculation()
+  }
+
+  function startCreateMaterial(name: string) {
+    setMaterial(null)
+    setVariant(null)
+    setNewMaterialDraft(createLongStockMaterialDraft(name, category))
+    setMaterialError(null)
+    invalidateCalculation()
+  }
+
+  function updateNewMaterialField(field: string, value: string | boolean) {
+    setNewMaterialDraft((current) => current ? {
+      ...current,
+      fields: { ...current.fields, [field]: value },
+    } : current)
+    setMaterialError(null)
+  }
+
+  async function saveNewMaterial() {
+    if (!newMaterialDraft) return
+    const validationError = validateLongStockDialogAction('create_material', { newMaterialDraft })
+    if (validationError) {
+      setMaterialError(validationError)
+      return
+    }
+    setPendingAction('material')
+    setMaterialError(null)
+    try {
+      const result = await createLongStockMaterialVariant(newMaterialDraft)
+      setMaterial(result.material as MaterialWithSupplier)
+      setVariant(result.variant as MaterialVariant)
+      setNewMaterialDraft(null)
+      toast.success('Материал и точный вариант добавлены')
+    } catch (creationError) {
+      const message = errorMessage(creationError, 'Не удалось создать материал')
+      setMaterialError(message)
+      toast.error(message)
+    } finally {
+      setPendingAction(null)
+    }
   }
 
   function updateSegmentRow(id: string, patch: Partial<LongStockSegmentRow>) {
@@ -205,34 +259,45 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
 
   async function prepareDraft(segments: LongStockPlanSegmentInput[]) {
     if (!material || !variant) throw new Error('Выберите точный вариант материала')
-    const data = requestItemData(category, material, variant, totalLongStockSegmentLength(segments), segments.length)
-    const draft = draftRef.current
-    if (draft) {
-      const result = draft.table === 'request_circle'
-        ? await updateCircle(draft.id, data)
+    let draft = draftRef.current
+    if (draft && draft.materialVariantId !== variant.id) {
+      const deletion = draft.table === 'request_circle'
+        ? await deleteCircle(draft.id)
         : draft.table === 'request_pipe'
-          ? await updatePipe(draft.id, data)
-          : await updateKnife(draft.id, data)
-      if (!result.success) throw new Error(result.error || 'Не удалось обновить черновик позиции')
-      if (result.data) draft.row = result.data as CreatedRow
-      return draft
+          ? await deletePipe(draft.id)
+          : await deleteKnife(draft.id)
+      if (!deletion.success) throw new Error(deletion.error || 'Не удалось заменить вариант черновика позиции')
+      draftRef.current = null
+      draft = null
     }
-
-    const result = config.table === 'request_circle'
-      ? await addCircle(requestId, data)
-      : config.table === 'request_pipe'
-        ? await addPipe(requestId, data)
-        : await addKnife(requestId, data)
-    if (!result.success || !result.data) throw new Error(result.error || 'Не удалось создать черновик позиции')
-    const created = { table: config.table, id: String((result.data as { id: string }).id), row: result.data as CreatedRow }
-    draftRef.current = created
-    return created
+    const result = await prepareLongStockRequestItemDraft({
+      requestId,
+      requestItem: draft ? { table: draft.table, id: draft.id } : null,
+      table: config.table,
+      materialVariantId: variant.id,
+      totalLengthMm: totalLongStockSegmentLength(segments),
+      pieceCount: segments.length,
+    })
+    const prepared: DraftItem = {
+      table: result.table,
+      id: result.id,
+      row: result.row as CreatedRow,
+      materialVariantId: result.materialVariantId,
+    }
+    draftRef.current = prepared
+    return prepared
   }
 
   async function runCalculation(mode: LongStockPlanCalculationMode) {
     setPendingAction(mode === 'with_nonstandard' ? 'optimal' : mode === 'mixed' ? 'mixed' : 'calculate')
     setError(null)
+    setMaterialError(null)
     try {
+      const prerequisiteError = validateLongStockDialogAction(mode, {
+        materialVariantId: variant?.id,
+        segmentError: segmentValidation.error,
+      })
+      if (prerequisiteError) throw new Error(prerequisiteError)
       const segments = expandLongStockSegmentRows(segmentRows)
       const draft = await prepareDraft(segments)
       const result = await calculateLongStockCuttingPlan({
@@ -251,7 +316,8 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
       if (nextCandidates.length === 0) setError('Для заданных отрезков подходящая раскладка не найдена')
     } catch (calculationError) {
       const message = errorMessage(calculationError, 'Не удалось рассчитать раскладку')
-      setError(message)
+      if (isMaterialErrorMessage(message)) setMaterialError(message)
+      else setError(message)
       toast.error(message)
     } finally {
       setPendingAction(null)
@@ -353,6 +419,7 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
     nextSegmentRow.current = 2
     setMaterial(null)
     setVariant(null)
+    setNewMaterialDraft(null)
     setSegmentRows([{ id: 'segment-row-1', lengthMm: '', quantity: 1 }])
     setCalculation(null)
     setSelectedCandidateKey(null)
@@ -363,6 +430,7 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
     setManualReason('')
     setManualReasonText('')
     setError(null)
+    setMaterialError(null)
   }
 
   return (
@@ -390,18 +458,28 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
                 selectedMaterialId={material?.id}
                 placeholder="Начните вводить материал..."
                 onSelect={selectMaterial}
+                onCreateRequest={startCreateMaterial}
                 onQueryChange={(query) => {
                   if (query === material?.name) return
+                  setMaterial(null)
                   setVariant(null)
+                  setNewMaterialDraft(null)
+                  setMaterialError(null)
                   invalidateCalculation()
                 }}
               />
-              {!exactVariantReady && (
+              {!newMaterialDraft && !exactVariantReady && (
                 <p className="flex items-start gap-2 text-xs leading-5 text-amber-700" role="status">
                   <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
                   {category === 'pipe' && variant?.pipe_type === 'wire'
                     ? 'Проволока остаётся в прежнем интерфейсе.'
                     : 'Расчёт доступен только после выбора конкретного варианта материала.'}
+                </p>
+              )}
+              {materialError && (
+                <p className="flex items-start gap-2 text-sm leading-5 text-red-700" role="alert">
+                  <CircleAlert className="mt-0.5 size-4 shrink-0" />
+                  {materialError}
                 </p>
               )}
             </div>
@@ -411,6 +489,11 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
                 <div className="mt-2">
                   <div className="font-medium text-slate-900">{material.name}</div>
                   <div className="mt-1 text-sm text-slate-600">{variantSummary(category, variant)}</div>
+                  {selectedSteelTypeName && (
+                    <div className="mt-1 text-sm text-slate-600">
+                      Тип металла: <span className="font-medium text-slate-800">{selectedSteelTypeName}</span>
+                    </div>
+                  )}
                   {category === 'knives' && (
                     <Badge variant="secondary" className="mt-2">Скос входит в вариант</Badge>
                   )}
@@ -419,6 +502,23 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
                 <p className="mt-2 text-sm text-slate-500">Вариант ещё не выбран</p>
               )}
             </div>
+            {newMaterialDraft && (
+              <NewLongStockMaterialForm
+                draft={newMaterialDraft}
+                steelTypes={steelTypes}
+                pending={pendingAction === 'material'}
+                onNameChange={(name) => {
+                  setNewMaterialDraft((current) => current ? { ...current, name } : current)
+                  setMaterialError(null)
+                }}
+                onFieldChange={updateNewMaterialField}
+                onCancel={() => {
+                  setNewMaterialDraft(null)
+                  setMaterialError(null)
+                }}
+                onSave={() => void saveNewMaterial()}
+              />
+            )}
           </section>
 
           <section aria-labelledby={`${category}-segments-title`} className="rounded-xl border bg-white p-4">
@@ -614,6 +714,143 @@ export function LongStockPositionDialog({ category, requestId, open, onOpenChang
   )
 }
 
+function NewLongStockMaterialForm({
+  draft,
+  steelTypes,
+  pending,
+  onNameChange,
+  onFieldChange,
+  onCancel,
+  onSave,
+}: {
+  draft: LongStockNewMaterialDraft
+  steelTypes: SteelType[]
+  pending: boolean
+  onNameChange: (name: string) => void
+  onFieldChange: (field: string, value: string | boolean) => void
+  onCancel: () => void
+  onSave: () => void
+}) {
+  const pipeType = String(draft.fields.pipe_type ?? 'square')
+  return (
+    <div className="rounded-lg border border-dashed border-blue-200 bg-blue-50/50 p-4 lg:col-span-2">
+      <div>
+        <h3 className="text-sm font-semibold text-[#1B3A6B]">Новый материал и точный вариант</h3>
+        <p className="mt-1 text-sm text-slate-600">
+          Заполните характеристики нового варианта. Отрезки и раскладка для этого действия не проверяются.
+        </p>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+        <DraftField label="Название" value={draft.name} onChange={onNameChange} />
+        <div className="space-y-1">
+          <Label htmlFor="long-stock-new-steel-type" className="text-sm">Тип металла</Label>
+          <select
+            id="long-stock-new-steel-type"
+            value={String(draft.fields.steel_type_id ?? '')}
+            onChange={(event) => onFieldChange('steel_type_id', event.target.value)}
+            className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+          >
+            <option value="">— выберите тип металла —</option>
+            {steelTypes.map((steelType) => (
+              <option key={steelType.id} value={steelType.id}>{steelType.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {draft.category === 'circle' && (
+          <>
+            <DraftField label="Диаметр, мм" type="number" value={draft.fields.diameter_mm} onChange={(value) => onFieldChange('diameter_mm', value)} />
+            <label className="flex min-h-9 items-center gap-2 self-end rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700">
+              <Checkbox checked={Boolean(draft.fields.is_calibrated)} onCheckedChange={(checked) => onFieldChange('is_calibrated', checked === true)} />
+              Калиброванный круг
+            </label>
+          </>
+        )}
+
+        {draft.category === 'pipe' && (
+          <>
+            <div className="space-y-1">
+              <Label htmlFor="long-stock-new-pipe-type" className="text-sm">Подтип трубы</Label>
+              <select
+                id="long-stock-new-pipe-type"
+                value={pipeType}
+                onChange={(event) => onFieldChange('pipe_type', event.target.value)}
+                className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+              >
+                {Object.entries(PIPE_SUBTYPE_LABELS)
+                  .filter(([value]) => value !== 'wire')
+                  .map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </div>
+            <DraftField
+              label={pipeType === 'round' ? 'Диаметр, мм' : 'Размер'}
+              value={draft.fields.size}
+              onChange={(value) => onFieldChange('size', value)}
+              placeholder={pipeType === 'round' ? '60' : '40×40'}
+            />
+            <DraftField label="Толщина стенки, мм" type="number" value={draft.fields.wall_thickness_mm} onChange={(value) => onFieldChange('wall_thickness_mm', value)} />
+          </>
+        )}
+
+        {draft.category === 'knives' && (
+          <>
+            <div className="space-y-1">
+              <Label htmlFor="long-stock-new-knife-bevel" className="text-sm">Скос</Label>
+              <select
+                id="long-stock-new-knife-bevel"
+                value={String(draft.fields.knife_bevel_count ?? '')}
+                onChange={(event) => onFieldChange('knife_bevel_count', event.target.value)}
+                className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+              >
+                <option value="">— выберите скос —</option>
+                {KNIFE_BEVEL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </div>
+            <DraftField label="Длина, мм" type="number" value={draft.fields.standard_length_mm} onChange={(value) => onFieldChange('standard_length_mm', value)} />
+            <DraftField label="Ширина, мм" type="number" value={draft.fields.width_mm} onChange={(value) => onFieldChange('width_mm', value)} />
+            <DraftField label="Высота, мм" type="number" value={draft.fields.height_mm} onChange={(value) => onFieldChange('height_mm', value)} />
+          </>
+        )}
+      </div>
+      <div className="mt-4 flex justify-end gap-2 border-t border-blue-100 pt-4">
+        <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>Отмена</Button>
+        <Button type="button" disabled={pending} onClick={onSave}>
+          {pending && <Loader2 className="size-4 animate-spin" />}
+          {pending ? 'Сохранение…' : 'Сохранить материал'}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function DraftField({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+}: {
+  label: string
+  value: string | boolean | undefined
+  onChange: (value: string) => void
+  type?: string
+  placeholder?: string
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-sm">{label}</Label>
+      <Input
+        type={type}
+        min={type === 'number' ? '0.001' : undefined}
+        step={type === 'number' ? 'any' : undefined}
+        value={typeof value === 'boolean' ? String(value) : String(value ?? '')}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+      />
+    </div>
+  )
+}
+
 function CandidateMatrix({
   candidates,
   selectedKey,
@@ -778,6 +1015,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 function LayoutPreview({ candidate, calculation }: { candidate: LongStockCuttingCandidate; calculation: Calculation }) {
   const minimumUsefulLengthMm = calculation.settingsSnapshot.categories
     .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0
+  const cutColors = longStockCutColorMap(candidate.bars.flatMap((bar) => bar.cuts.map((cut) => cut.lengthMm)))
   return (
     <div className="space-y-4">
       {candidate.bars.map((bar) => (
@@ -800,6 +1038,7 @@ function LayoutPreview({ candidate, calculation }: { candidate: LongStockCutting
             remainderMm={bar.remainderMm}
             kerfMm={calculation.settingsSnapshot.kerf_mm}
             endTrimMm={calculation.settingsSnapshot.end_trim_mm}
+            cutColors={cutColors}
           />
           <ol className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
             {bar.cuts.map((cut) => (
@@ -818,12 +1057,14 @@ function BarStrip({
   remainderMm,
   kerfMm,
   endTrimMm,
+  cutColors,
 }: {
   stockLengthMm: number
   cuts: Array<{ cutNumber: number; workpieceId: string; lengthMm: number }>
   remainderMm: number
   kerfMm: number
   endTrimMm: number
+  cutColors: ReadonlyMap<number, string>
 }) {
   return (
     <div className="mt-3 flex h-12 w-full overflow-hidden rounded-md border border-slate-300 bg-slate-100" aria-label={`Пропорциональная раскладка хлыста ${formatMm(stockLengthMm)} мм`}>
@@ -831,8 +1072,11 @@ function BarStrip({
       {cuts.map((cut) => (
         <span key={cut.workpieceId} className="contents">
           <span
-            className="flex min-w-0 items-center justify-center overflow-hidden border-l-2 border-white bg-blue-600 px-1 text-[11px] font-semibold text-white"
-            style={{ width: `${cut.lengthMm / stockLengthMm * 100}%` }}
+            className="flex min-w-0 items-center justify-center overflow-hidden border-l-2 border-white px-1 text-[11px] font-semibold text-white"
+            style={{
+              width: `${cut.lengthMm / stockLengthMm * 100}%`,
+              backgroundColor: cutColors.get(cut.lengthMm) ?? 'hsl(213 68% 43%)',
+            }}
             title={`${cutDisplayLabel(cut.cutNumber)}: ${formatMm(cut.lengthMm)} мм`}
           >
             {shouldShowBarSegmentLabel(cut.lengthMm, stockLengthMm) && <span className="whitespace-nowrap">№{cut.cutNumber} · {formatMm(cut.lengthMm)}</span>}
@@ -1046,57 +1290,6 @@ function candidatesForMode(candidates: LongStockCuttingCandidate[], mixed: boole
     .sort((left, right) => left.purchasedLengthMm - right.purchasedLengthMm || left.newBarCount - right.newBarCount)
 }
 
-function requestItemData(
-  category: Category,
-  material: MaterialWithSupplier,
-  variant: MaterialVariant,
-  totalLengthMm: number,
-  pieceCount: number,
-) {
-  const common = {
-    material_id: material.id,
-    material_variant_id: variant.id,
-    is_custom_material_variant: false,
-  }
-  if (category === 'circle') {
-    return {
-      ...common,
-      diameter_mm: variant.diameter_mm,
-      steel_grade: variant.material_grade ?? material.comment,
-      steel_type_id: variant.steel_type_id,
-      is_calibrated: variant.is_calibrated ?? false,
-      remainder_mm: totalLengthMm,
-    }
-  }
-  if (category === 'pipe') {
-    if (!variant.pipe_type || variant.pipe_type === 'wire') throw new Error('Выберите вариант трубы, кроме проволоки')
-    return {
-      ...common,
-      pipe_type: variant.pipe_type,
-      steel_type_id: variant.steel_type_id,
-      size: variant.piece_description ?? variant.sheet_size,
-      wall_thickness_mm: variant.wall_thickness_mm,
-      diameter_mm: null,
-      remainder_length_mm: totalLengthMm,
-      remainder_qty: pieceCount,
-      remainder_kg: 0,
-    }
-  }
-  const dimensions = parseKnifeDimensions(variant)
-  return {
-    ...common,
-    knife_type: material.name,
-    steel_grade: variant.material_grade ?? variant.knife_material,
-    steel_type_id: variant.steel_type_id,
-    length_mm: dimensions.lengthMm,
-    width_mm: dimensions.widthMm,
-    height_mm: dimensions.heightMm,
-    knife_bevel_count: parseKnifeBevelCount(variant.knife_bevel_count),
-    remainder_meters: totalLengthMm / 1000,
-    remainder_qty: pieceCount,
-  }
-}
-
 function variantSummary(category: Category, variant: MaterialVariant) {
   if (category === 'circle') {
     return [
@@ -1115,20 +1308,6 @@ function variantSummary(category: Category, variant: MaterialVariant) {
   }
   const dimensions = variant.knife_dimensions || [variant.standard_length_mm, variant.width_mm, variant.height_mm].filter(Boolean).join('×')
   return [dimensions, variant.knife_material ?? variant.material_grade, knifeBevelLabel(variant.knife_bevel_count)].filter(Boolean).join(' · ') || 'Точный вариант'
-}
-
-function parseKnifeDimensions(variant: MaterialVariant) {
-  const parsed = String(variant.knife_dimensions ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/[х×*]/g, 'x')
-    .split('x')
-    .map((part) => Number(part.trim().replace(',', '.')))
-  return {
-    lengthMm: variant.standard_length_mm ?? (Number.isFinite(parsed[0]) ? parsed[0] : null),
-    widthMm: variant.width_mm ?? (Number.isFinite(parsed[1]) ? parsed[1] : null),
-    heightMm: variant.height_mm ?? (Number.isFinite(parsed[2]) ? parsed[2] : null),
-  }
 }
 
 function remainderWeight(candidate: LongStockCuttingCandidate, weightPerMeterKg: number | null) {
@@ -1159,4 +1338,8 @@ function formatPercent(value: number) {
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function isMaterialErrorMessage(message: string) {
+  return /материал|вариант|тип металла|марка|диаметр|толщина стенки|размер трубы|скос/i.test(message)
 }

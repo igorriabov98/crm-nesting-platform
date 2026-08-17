@@ -176,6 +176,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
       <LongStockPositionDialog
         category="circle"
         requestId={requestId}
+        steelTypes={steelTypes}
         open={positionDialogOpen}
         onOpenChange={setPositionDialogOpen}
         onCreated={(row) => setRows((current) => [...current, row as CircleRow])}
