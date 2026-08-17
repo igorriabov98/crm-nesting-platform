@@ -134,14 +134,53 @@ test('does not return purchase lengths that cannot fit the longest workpiece wit
 
 test('returns a deterministic best-so-far result when the search budget is exhausted', () => {
   const input: LongStockSolverInput = {
-    ...referenceInput,
+    workpieces: Array.from({ length: 12 }, (_, index) => ({
+      id: `part-${index + 1}`,
+      lengthMm: 3000,
+    })),
+    purchaseLengths: [{ lengthMm: 6000, kind: 'standard' }],
+    kerfMm: 1,
+    endTrimMm: 0,
     searchBudget: 1,
   }
   const first = solveLongStockCutting(input)
   const second = solveLongStockCutting(input)
   assert.deepEqual(second, first)
   assert.ok(first.candidates.every((candidate) => !candidate.searchComplete))
-  assert.ok(first.candidates.every((candidate) => candidate.bars.flatMap((bar) => bar.cuts).length === 5))
+  assert.ok(first.candidates.every((candidate) => candidate.bars.flatMap((bar) => bar.cuts).length === 12))
+})
+
+test('branch-and-bound improves the first-fit-decreasing incumbent exactly', () => {
+  const result = solveLongStockCutting({
+    workpieces: [6, 5, 3, 2, 2, 2].map((lengthMm, index) => ({
+      id: `part-${index + 1}`,
+      lengthMm,
+    })),
+    purchaseLengths: [{ lengthMm: 10, kind: 'standard' }],
+    kerfMm: 0,
+    endTrimMm: 0,
+  })
+  const candidate = result.candidates[0]
+  assert.equal(candidate.searchComplete, true)
+  assert.equal(candidate.newBarCount, 2)
+  assert.equal(candidate.purchasedLengthMm, 20)
+  assert.ok(candidate.exploredVariants > 0)
+})
+
+test('proves a volume lower bound infeasible without permuting identical bars', () => {
+  const result = solveLongStockCutting({
+    workpieces: Array.from({ length: 10 }, (_, index) => ({
+      id: `part-${index + 1}`,
+      lengthMm: 3000,
+    })),
+    purchaseLengths: [{ lengthMm: 6000, kind: 'standard' }],
+    kerfMm: 1,
+    endTrimMm: 0,
+  })
+  const candidate = result.candidates[0]
+  assert.equal(candidate.searchComplete, true)
+  assert.equal(candidate.newBarCount, 10)
+  assert.ok(candidate.exploredVariants < 100)
 })
 
 test('is reproducible when exhaustive searches complete', () => {
