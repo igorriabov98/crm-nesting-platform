@@ -328,7 +328,7 @@ begin
     )),
     jsonb_build_array(jsonb_build_object(
       'candidate_number', 1,
-      'is_complete', true,
+      'is_complete', false,
       'metrics', jsonb_build_object(
         'purchased_length_mm', 0, 'net_parts_length_mm', 300,
         'kerf_loss_length_mm', 1, 'end_trim_loss_length_mm', 0,

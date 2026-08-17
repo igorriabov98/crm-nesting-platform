@@ -90,7 +90,8 @@ type UnnumberedOutputBar = Omit<LongStockCuttingBar, 'barNumber' | 'cuts'> & {
   cuts: Array<Omit<LongStockCut, 'cutNumber'>>
 }
 
-const DEFAULT_SEARCH_BUDGET = 50_000
+export const DEFAULT_LONG_STOCK_SEARCH_BUDGET = 250_000
+export const EXTENDED_LONG_STOCK_SEARCH_BUDGET = 2_000_000
 const MAX_MIXED_LENGTHS = 3
 
 export function calculateLongStockBarRemainder(
@@ -192,7 +193,7 @@ export function solveLongStockCutting(input: LongStockSolverInput): LongStockSol
 function normalizeInput(input: LongStockSolverInput) {
   assertNonNegativeFinite(input.kerfMm, 'kerfMm')
   assertNonNegativeFinite(input.endTrimMm, 'endTrimMm')
-  const searchBudget = input.searchBudget ?? DEFAULT_SEARCH_BUDGET
+  const searchBudget = input.searchBudget ?? DEFAULT_LONG_STOCK_SEARCH_BUDGET
   if (!Number.isSafeInteger(searchBudget) || searchBudget <= 0) {
     throw new Error('searchBudget must be a positive safe integer')
   }
@@ -318,12 +319,249 @@ function searchNewBarLayouts(
   searchBudget: number,
   maxDistinctLengths: number,
 ): SearchResult {
+  if (availableLengths.length === 1) {
+    return searchIdenticalBarLayouts(
+      workpieces,
+      availableLengths[0],
+      kerfMm,
+      endTrimMm,
+      searchBudget,
+    )
+  }
+
+  return searchMixedBarLayouts(
+    workpieces,
+    availableLengths,
+    kerfMm,
+    endTrimMm,
+    searchBudget,
+    maxDistinctLengths,
+  )
+}
+
+function searchIdenticalBarLayouts(
+  workpieces: IndexedWorkpiece[],
+  purchaseLength: LongStockPurchaseLength,
+  kerfMm: number,
+  endTrimMm: number,
+  searchBudget: number,
+): SearchResult {
+  const capacityMm = purchaseLength.lengthMm - endTrimMm
+  const occupiedByWorkpiece = workpieces.map((workpiece) => workpiece.lengthMm + kerfMm)
+  const remainingOccupiedMm = Array<number>(workpieces.length + 1).fill(0)
+  for (let index = workpieces.length - 1; index >= 0; index -= 1) {
+    remainingOccupiedMm[index] = remainingOccupiedMm[index + 1] + occupiedByWorkpiece[index]
+  }
+
+  let best = buildFirstFitDecreasingLayout(workpieces, purchaseLength, kerfMm, endTrimMm)
+  let exploredVariants = 0
+  let budgetExhausted = false
+  let optimumReached = best.length === Math.ceil(remainingOccupiedMm[0] / capacityMm)
+  const visitedStates = new Set<string>()
+
+  const visit = (workpieceIndex: number, bars: MutableBar[]) => {
+    if (budgetExhausted || optimumReached) return
+
+    const remainders = bars.map((bar) => mutableBarRemainder(bar, endTrimMm))
+    const stateKey = `${workpieceIndex}|${[...remainders].sort((left, right) => right - left).join(',')}`
+    if (visitedStates.has(stateKey)) return
+    visitedStates.add(stateKey)
+    if (exploredVariants >= searchBudget) {
+      budgetExhausted = true
+      return
+    }
+    exploredVariants += 1
+
+    if (workpieceIndex === workpieces.length) {
+      if (bars.length < best.length) {
+        best = cloneMutableBars(bars)
+        optimumReached = best.length === Math.ceil(remainingOccupiedMm[0] / capacityMm)
+      }
+      return
+    }
+
+    if (bars.length > best.length) return
+
+    const shortestRemainingMm = occupiedByWorkpiece[occupiedByWorkpiece.length - 1]
+    const usableExistingRemainderMm = remainders.reduce(
+      (total, remainderMm) => total + (remainderMm >= shortestRemainingMm ? remainderMm : 0),
+      0,
+    )
+    const occupiedRequiringNewBarsMm = Math.max(
+      0,
+      remainingOccupiedMm[workpieceIndex] - usableExistingRemainderMm,
+    )
+    const minimumAdditionalBars = Math.ceil(occupiedRequiringNewBarsMm / capacityMm)
+    if (bars.length + minimumAdditionalBars >= best.length) return
+
+    const workpiece = workpieces[workpieceIndex]
+    const occupiedMm = occupiedByWorkpiece[workpieceIndex]
+    const existingPlacements = bars
+      .map((bar, barIndex) => ({
+        bar,
+        barIndex,
+        remainderBefore: remainders[barIndex],
+        remainderAfter: remainders[barIndex] - occupiedMm,
+      }))
+      .filter((placement) => placement.remainderAfter >= 0)
+      .sort((left, right) =>
+        left.remainderAfter - right.remainderAfter
+        || left.barIndex - right.barIndex)
+
+    const interchangeableRemainders = new Set<number>()
+    for (const placement of existingPlacements) {
+      if (interchangeableRemainders.has(placement.remainderBefore)) continue
+      interchangeableRemainders.add(placement.remainderBefore)
+
+      placement.bar.cuts.push(workpiece)
+      placement.bar.occupiedMm += occupiedMm
+      visit(workpieceIndex + 1, bars)
+      placement.bar.occupiedMm -= occupiedMm
+      placement.bar.cuts.pop()
+      if (budgetExhausted || optimumReached) return
+    }
+
+    if (bars.length + 1 >= best.length) return
+    bars.push({
+      stockLengthMm: purchaseLength.lengthMm,
+      purchaseLengthKind: purchaseLength.kind,
+      cuts: [workpiece],
+      occupiedMm,
+    })
+    visit(workpieceIndex + 1, bars)
+    bars.pop()
+  }
+
+  if (!optimumReached) visit(0, [])
+  best = concentrateIdenticalBarRemainders(best, kerfMm, endTrimMm)
+  return {
+    bars: best,
+    exploredVariants,
+    searchComplete: !budgetExhausted,
+  }
+}
+
+function concentrateIdenticalBarRemainders(
+  initialBars: MutableBar[],
+  kerfMm: number,
+  endTrimMm: number,
+) {
+  let current = cloneMutableBars(initialBars)
+
+  while (true) {
+    let improved: MutableBar[] | null = null
+    const consider = (candidate: MutableBar[]) => {
+      if (compareLayouts(candidate, improved ?? current, kerfMm, endTrimMm) < 0) {
+        improved = candidate
+      }
+    }
+
+    for (let sourceIndex = 0; sourceIndex < current.length; sourceIndex += 1) {
+      const source = current[sourceIndex]
+      if (source.cuts.length <= 1) continue
+      for (let cutIndex = 0; cutIndex < source.cuts.length; cutIndex += 1) {
+        const cut = source.cuts[cutIndex]
+        const occupiedMm = cut.lengthMm + kerfMm
+        for (let targetIndex = 0; targetIndex < current.length; targetIndex += 1) {
+          if (sourceIndex === targetIndex) continue
+          const target = current[targetIndex]
+          if (mutableBarRemainder(target, endTrimMm) < occupiedMm) continue
+          const candidate = cloneMutableBars(current)
+          candidate[sourceIndex].cuts.splice(cutIndex, 1)
+          candidate[sourceIndex].occupiedMm -= occupiedMm
+          candidate[targetIndex].cuts.push(cut)
+          candidate[targetIndex].occupiedMm += occupiedMm
+          consider(candidate)
+        }
+      }
+    }
+
+    for (let leftBarIndex = 0; leftBarIndex < current.length; leftBarIndex += 1) {
+      for (let rightBarIndex = leftBarIndex + 1; rightBarIndex < current.length; rightBarIndex += 1) {
+        const leftBar = current[leftBarIndex]
+        const rightBar = current[rightBarIndex]
+        for (let leftCutIndex = 0; leftCutIndex < leftBar.cuts.length; leftCutIndex += 1) {
+          const leftCut = leftBar.cuts[leftCutIndex]
+          const leftOccupiedMm = leftCut.lengthMm + kerfMm
+          for (let rightCutIndex = 0; rightCutIndex < rightBar.cuts.length; rightCutIndex += 1) {
+            const rightCut = rightBar.cuts[rightCutIndex]
+            const rightOccupiedMm = rightCut.lengthMm + kerfMm
+            if (mutableBarRemainder(leftBar, endTrimMm) + leftOccupiedMm < rightOccupiedMm) continue
+            if (mutableBarRemainder(rightBar, endTrimMm) + rightOccupiedMm < leftOccupiedMm) continue
+            const candidate = cloneMutableBars(current)
+            candidate[leftBarIndex].cuts[leftCutIndex] = rightCut
+            candidate[leftBarIndex].occupiedMm += rightOccupiedMm - leftOccupiedMm
+            candidate[rightBarIndex].cuts[rightCutIndex] = leftCut
+            candidate[rightBarIndex].occupiedMm += leftOccupiedMm - rightOccupiedMm
+            consider(candidate)
+          }
+        }
+      }
+    }
+
+    for (let sourceBarIndex = 0; sourceBarIndex < current.length; sourceBarIndex += 1) {
+      const sourceBar = current[sourceBarIndex]
+      for (let targetBarIndex = 0; targetBarIndex < current.length; targetBarIndex += 1) {
+        if (sourceBarIndex === targetBarIndex) continue
+        const targetBar = current[targetBarIndex]
+        for (let sourceCutIndex = 0; sourceCutIndex < sourceBar.cuts.length; sourceCutIndex += 1) {
+          const sourceCut = sourceBar.cuts[sourceCutIndex]
+          const sourceOccupiedMm = sourceCut.lengthMm + kerfMm
+          for (let firstTargetCutIndex = 0; firstTargetCutIndex < targetBar.cuts.length; firstTargetCutIndex += 1) {
+            const firstTargetCut = targetBar.cuts[firstTargetCutIndex]
+            const firstTargetOccupiedMm = firstTargetCut.lengthMm + kerfMm
+            for (let secondTargetCutIndex = firstTargetCutIndex + 1; secondTargetCutIndex < targetBar.cuts.length; secondTargetCutIndex += 1) {
+              const secondTargetCut = targetBar.cuts[secondTargetCutIndex]
+              const targetOccupiedMm = firstTargetOccupiedMm + secondTargetCut.lengthMm + kerfMm
+              if (mutableBarRemainder(sourceBar, endTrimMm) + sourceOccupiedMm < targetOccupiedMm) continue
+              if (mutableBarRemainder(targetBar, endTrimMm) + targetOccupiedMm < sourceOccupiedMm) continue
+
+              const candidate = cloneMutableBars(current)
+              candidate[sourceBarIndex].cuts.splice(sourceCutIndex, 1, firstTargetCut, secondTargetCut)
+              candidate[sourceBarIndex].occupiedMm += targetOccupiedMm - sourceOccupiedMm
+              candidate[targetBarIndex].cuts.splice(secondTargetCutIndex, 1)
+              candidate[targetBarIndex].cuts.splice(firstTargetCutIndex, 1, sourceCut)
+              candidate[targetBarIndex].occupiedMm += sourceOccupiedMm - targetOccupiedMm
+              consider(candidate)
+            }
+          }
+        }
+      }
+    }
+
+    if (!improved) return current
+    current = improved
+  }
+}
+
+function searchMixedBarLayouts(
+  workpieces: IndexedWorkpiece[],
+  availableLengths: LongStockPurchaseLength[],
+  kerfMm: number,
+  endTrimMm: number,
+  searchBudget: number,
+  maxDistinctLengths: number,
+): SearchResult {
   let best = buildGreedyLayout(workpieces, availableLengths, kerfMm, endTrimMm, maxDistinctLengths)
   let exploredVariants = 0
   let budgetExhausted = false
+  const visitedStates = new Set<string>()
 
   const visit = (workpieceIndex: number, bars: MutableBar[]) => {
     if (budgetExhausted) return
+
+    const stateKey = `${workpieceIndex}|${bars
+      .map((bar) => `${bar.stockLengthMm}:${mutableBarRemainder(bar, endTrimMm)}`)
+      .sort()
+      .join(',')}`
+    if (visitedStates.has(stateKey)) return
+    visitedStates.add(stateKey)
+    if (exploredVariants >= searchBudget) {
+      budgetExhausted = true
+      return
+    }
+    exploredVariants += 1
+
     if (workpieceIndex === workpieces.length) {
       if (compareLayouts(bars, best, kerfMm, endTrimMm) < 0) best = cloneMutableBars(bars)
       return
@@ -353,7 +591,6 @@ function searchNewBarLayouts(
       const symmetryKey = `${placement.bar.stockLengthMm}:${placement.remainderBefore}`
       if (symmetricExistingBars.has(symmetryKey)) continue
       symmetricExistingBars.add(symmetryKey)
-      if (!consumeSearchVariant()) return
 
       placement.bar.cuts.push(workpiece)
       placement.bar.occupiedMm += workpiece.lengthMm + kerfMm
@@ -367,7 +604,6 @@ function searchNewBarLayouts(
     for (const option of availableLengths) {
       if (option.lengthMm - endTrimMm - kerfMm - workpiece.lengthMm < 0) continue
       if (!distinctLengths.has(option.lengthMm) && distinctLengths.size >= maxDistinctLengths) continue
-      if (!consumeSearchVariant()) return
 
       bars.push({
         stockLengthMm: option.lengthMm,
@@ -381,21 +617,37 @@ function searchNewBarLayouts(
     }
   }
 
-  const consumeSearchVariant = () => {
-    if (exploredVariants >= searchBudget) {
-      budgetExhausted = true
-      return false
-    }
-    exploredVariants += 1
-    return true
-  }
-
   visit(0, [])
   return {
     bars: best,
     exploredVariants,
     searchComplete: !budgetExhausted,
   }
+}
+
+function buildFirstFitDecreasingLayout(
+  workpieces: IndexedWorkpiece[],
+  purchaseLength: LongStockPurchaseLength,
+  kerfMm: number,
+  endTrimMm: number,
+): MutableBar[] {
+  const bars: MutableBar[] = []
+  for (const workpiece of workpieces) {
+    const occupiedMm = workpiece.lengthMm + kerfMm
+    const fittingBar = bars.find((bar) => mutableBarRemainder(bar, endTrimMm) >= occupiedMm)
+    if (fittingBar) {
+      fittingBar.cuts.push(workpiece)
+      fittingBar.occupiedMm += occupiedMm
+      continue
+    }
+    bars.push({
+      stockLengthMm: purchaseLength.lengthMm,
+      purchaseLengthKind: purchaseLength.kind,
+      cuts: [workpiece],
+      occupiedMm,
+    })
+  }
+  return bars
 }
 
 function buildGreedyLayout(

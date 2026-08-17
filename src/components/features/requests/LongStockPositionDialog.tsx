@@ -72,7 +72,12 @@ import {
   type LongStockNewMaterialDraft,
 } from '@/lib/long-stock-material-draft'
 import { KNIFE_BEVEL_OPTIONS, knifeBevelLabel } from '@/lib/materials/knife-bevel'
-import { calculateLongStockBarRemainder, type LongStockCuttingCandidate } from '@/lib/long-stock-cutting-solver'
+import {
+  DEFAULT_LONG_STOCK_SEARCH_BUDGET,
+  EXTENDED_LONG_STOCK_SEARCH_BUDGET,
+  calculateLongStockBarRemainder,
+  type LongStockCuttingCandidate,
+} from '@/lib/long-stock-cutting-solver'
 import type {
   LongStockManualBarInput,
   LongStockPlanCalculationInput,
@@ -288,8 +293,14 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     return prepared
   }
 
-  async function runCalculation(mode: LongStockPlanCalculationMode) {
-    setPendingAction(mode === 'with_nonstandard' ? 'optimal' : mode === 'mixed' ? 'mixed' : 'calculate')
+  async function runCalculation(
+    mode: LongStockPlanCalculationMode,
+    searchBudget = DEFAULT_LONG_STOCK_SEARCH_BUDGET,
+    action: 'calculate' | 'longer' = 'calculate',
+  ) {
+    setPendingAction(action === 'longer'
+      ? 'longer'
+      : mode === 'with_nonstandard' ? 'optimal' : mode === 'mixed' ? 'mixed' : 'calculate')
     setError(null)
     setMaterialError(null)
     try {
@@ -304,6 +315,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
         requestItem: { table: draft.table, id: draft.id },
         segments,
         mode,
+        searchBudget,
       })
       const nextMixed = mode === 'mixed'
       const nextCandidates = candidatesForMode(result.candidates, nextMixed)
@@ -330,6 +342,15 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       return
     }
     await runCalculation(checked ? 'mixed' : nonstandardLengths ? 'with_nonstandard' : 'standard')
+  }
+
+  async function searchLonger() {
+    if (!calculation) return
+    const mode = mixedLengths ? 'mixed' : nonstandardLengths ? 'with_nonstandard' : 'standard'
+    const searchBudget = calculation.searchBudget < EXTENDED_LONG_STOCK_SEARCH_BUDGET
+      ? EXTENDED_LONG_STOCK_SEARCH_BUDGET
+      : Math.min(Number.MAX_SAFE_INTEGER, calculation.searchBudget * 2)
+    await runCalculation(mode, searchBudget, 'longer')
   }
 
   function chooseCandidate(candidate: LongStockCuttingCandidate) {
@@ -359,6 +380,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
         requestItem: { table: draftRef.current.table, id: draftRef.current.id },
         segments: expandLongStockSegmentRows(segmentRows),
         mode: mixedLengths ? 'mixed' : nonstandardLengths ? 'with_nonstandard' : 'standard',
+        searchBudget: calculation.searchBudget,
       }
       let version: { id: string }
       if (manualMode) {
@@ -660,13 +682,6 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
                       <Wrench className="size-4" />{manualMode ? 'Отменить ручную правку' : 'Ручная корректировка'}
                     </Button>
                   </div>
-                  {selectedCandidate.searchComplete === false && (
-                    <Alert className="border-amber-200 bg-amber-50/70">
-                      <AlertTriangle className="text-amber-700" />
-                      <AlertTitle>Решение неполное</AlertTitle>
-                      <AlertDescription>Бюджет поиска исчерпан. Вариант можно изучить, но сервер разрешит утвердить только полное решение.</AlertDescription>
-                    </Alert>
-                  )}
                   {manualMode ? (
                     <ManualLayoutEditor
                       bars={manualBars}
@@ -681,6 +696,22 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
                     />
                   ) : (
                     <LayoutPreview candidate={selectedCandidate} calculation={calculation} />
+                  )}
+                  {!manualMode && selectedCandidate.searchComplete === false && (
+                    <div className="flex flex-wrap items-center gap-2 border-t pt-3 text-xs text-slate-500">
+                      <span>Проверены не все варианты</span>
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 text-xs"
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => void searchLonger()}
+                      >
+                        {pendingAction === 'longer' && <Loader2 className="size-3 animate-spin" />}
+                        {pendingAction === 'longer' ? 'Поиск…' : 'Искать дольше'}
+                      </Button>
+                    </div>
                   )}
                 </div>
               )}
@@ -702,7 +733,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
           </Button>
           <Button
             type="button"
-            disabled={!selectedCandidate || (!manualMode && !selectedCandidate.searchComplete) || Boolean(pendingAction) || (manualMode && !manualReasonReady(manualReason, manualReasonText))}
+            disabled={!selectedCandidate || Boolean(pendingAction) || (manualMode && !manualReasonReady(manualReason, manualReasonText))}
             onClick={() => void approve()}
           >
             {pendingAction === 'approve' ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
@@ -904,7 +935,6 @@ function CandidateMatrix({
                       <span>{candidatePurchaseLengthLabel(candidate)}</span>
                       {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
                       {candidate.usesNonstandardLength && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700"><Sparkles />Нестандартная</Badge>}
-                      {!candidate.searchComplete && <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Неполное</Badge>}
                     </label>
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">{candidate.newBarCount}</td>
@@ -995,7 +1025,6 @@ function MixedCandidateList({
                 {candidateComposition(candidate)}
                 {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
                 {candidate.usesNonstandardLength && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700"><Sparkles />Есть нестандартная</Badge>}
-                {!candidate.searchComplete && <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Решение неполное</Badge>}
               </span>
             </span>
             <Metric label="Закупка" value={`${formatMm(candidate.purchasedLengthMm)} мм`} />

@@ -1,6 +1,10 @@
 'use server'
 
-import { solveLongStockCutting, type LongStockCuttingCandidate } from '@/lib/long-stock-cutting-solver'
+import {
+  DEFAULT_LONG_STOCK_SEARCH_BUDGET,
+  solveLongStockCutting,
+  type LongStockCuttingCandidate,
+} from '@/lib/long-stock-cutting-solver'
 import {
   createLongStockMaterialDraft,
   longStockDraftDemandPatch,
@@ -331,7 +335,7 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
   const requestItem = normalizeRequestItemRef(input.requestItem)
   const workpieces = normalizeLongStockPlanSegments(input.segments)
   const mode = input.mode ?? 'standard'
-  const searchBudget = input.searchBudget ?? 50_000
+  const searchBudget = input.searchBudget ?? DEFAULT_LONG_STOCK_SEARCH_BUDGET
   if (!Number.isSafeInteger(searchBudget) || searchBudget <= 0) {
     throw new Error('Бюджет поиска должен быть положительным целым числом')
   }
@@ -556,6 +560,7 @@ function calculationResult(context: CalculationContext) {
     weightPerMeterKg: context.weightPerMeterKg,
     settingsSnapshot: context.settingsSnapshot,
     layoutCategoryKey: context.layoutCategory.key,
+    searchBudget: context.searchBudget,
     candidates: context.solverResult.candidates,
     recommendedCandidateKey: context.solverResult.recommendedCandidateKey,
   }
