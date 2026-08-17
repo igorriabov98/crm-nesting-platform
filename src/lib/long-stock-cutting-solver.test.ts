@@ -208,6 +208,7 @@ test('mixes no more than three lengths only when the mode is explicitly enabled'
 
   const disabled = solveLongStockCutting(input)
   assert.equal(disabled.candidates.some((candidate) => candidate.kind === 'mixed_lengths'), false)
+  assert.equal(disabled.candidates.every((candidate) => candidate.purchaseLengthsMm.length <= 1), true)
 
   const enabled = solveLongStockCutting({ ...input, allowMixedLengths: true })
   const mixed = enabled.candidates.find((candidate) => candidate.kind === 'mixed_lengths')

@@ -7,6 +7,8 @@ export type LongStockSegmentRow = {
   quantity: string | number
 }
 
+export const DEFAULT_MIXED_LONG_STOCK_LENGTHS = true
+
 export function expandLongStockSegmentRows(
   rows: readonly LongStockSegmentRow[],
 ): LongStockPlanSegmentInput[] {
@@ -67,30 +69,35 @@ export function longStockCutColorMap(lengthsMm: readonly number[]) {
   ]))
 }
 
-export function candidateComposition(candidate: LongStockCuttingCandidate) {
-  const grouped = new Map<string, { label: string; count: number; lengthMm: number }>()
+export function candidatePurchaseComposition(candidate: LongStockCuttingCandidate) {
+  const grouped = new Map<number, { count: number; lengthMm: number }>()
   for (const bar of candidate.bars) {
-    const label = bar.source === 'business_remnant'
-      ? `${formatMm(bar.stockLengthMm)} (со склада)`
-      : formatMm(bar.stockLengthMm)
-    const key = `${bar.source}:${bar.stockLengthMm}`
-    const existing = grouped.get(key)
-    grouped.set(key, {
-      label,
+    if (bar.source !== 'new_stock') continue
+    const existing = grouped.get(bar.stockLengthMm)
+    grouped.set(bar.stockLengthMm, {
       lengthMm: bar.stockLengthMm,
       count: (existing?.count ?? 0) + 1,
     })
   }
   return [...grouped.values()]
-    .sort((left, right) => left.lengthMm - right.lengthMm || left.label.localeCompare(right.label, 'ru'))
-    .map((group) => `${group.label} × ${group.count}`)
+    .sort((left, right) => right.lengthMm - left.lengthMm)
+    .map((group) => `${formatMm(group.lengthMm)} × ${group.count}`)
     .join(' + ')
 }
 
 export function candidatePurchaseLengthLabel(candidate: LongStockCuttingCandidate) {
   if (candidate.newBarCount === 0) return 'Только остатки со склада'
   if (candidate.purchaseLengthsMm.length === 1) return `${formatMm(candidate.purchaseLengthsMm[0])} мм`
-  return candidateComposition(candidate)
+  return candidatePurchaseComposition(candidate)
+}
+
+export function candidatesForLongStockMode(
+  candidates: readonly LongStockCuttingCandidate[],
+  mixedLengths: boolean,
+) {
+  return candidates
+    .filter((candidate) => mixedLengths || candidate.kind !== 'mixed_lengths')
+    .sort((left, right) => left.purchasedLengthMm - right.purchasedLengthMm || left.newBarCount - right.newBarCount)
 }
 
 export function candidateToManualBars(candidate: LongStockCuttingCandidate): LongStockManualBarInput[] {

@@ -52,12 +52,14 @@ import {
 } from '@/lib/actions/technologist-requests'
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import {
-  candidateComposition,
+  candidatePurchaseComposition,
   candidatePurchaseLengthLabel,
   candidateRemainderPreview,
   candidateToManualBars,
   candidateWastePercent,
+  candidatesForLongStockMode,
   cutDisplayLabel,
+  DEFAULT_MIXED_LONG_STOCK_LENGTHS,
   expandLongStockSegmentRows,
   formatKg,
   formatMm,
@@ -139,7 +141,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   ])
   const [calculation, setCalculation] = useState<Calculation | null>(null)
   const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null)
-  const [mixedLengths, setMixedLengths] = useState(false)
+  const [mixedLengths, setMixedLengths] = useState(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
   const [nonstandardLengths, setNonstandardLengths] = useState(false)
   const [manualMode, setManualMode] = useState(false)
   const [manualBars, setManualBars] = useState<LongStockManualBarInput[]>([])
@@ -161,7 +163,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   }, [segmentRows])
 
   const visibleCandidates = useMemo(
-    () => candidatesForMode(calculation?.candidates ?? [], mixedLengths),
+    () => candidatesForLongStockMode(calculation?.candidates ?? [], mixedLengths),
     [calculation, mixedLengths],
   )
   const selectedCandidate = visibleCandidates.find((candidate) => candidate.key === selectedCandidateKey) ?? null
@@ -318,9 +320,9 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
         searchBudget,
       })
       const nextMixed = mode === 'mixed'
-      const nextCandidates = candidatesForMode(result.candidates, nextMixed)
+      const nextCandidates = candidatesForLongStockMode(result.candidates, nextMixed)
       setMixedLengths(nextMixed)
-      setNonstandardLengths(mode !== 'standard')
+      setNonstandardLengths(mode === 'with_nonstandard')
       setCalculation(result)
       setSelectedCandidateKey(nextCandidates[0]?.key ?? null)
       setManualMode(false)
@@ -445,7 +447,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setSegmentRows([{ id: 'segment-row-1', lengthMm: '', quantity: 1 }])
     setCalculation(null)
     setSelectedCandidateKey(null)
-    setMixedLengths(false)
+    setMixedLengths(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
     setNonstandardLengths(false)
     setManualMode(false)
     setManualBars([])
@@ -1022,7 +1024,7 @@ function MixedCandidateList({
           >
             <span>
               <span className="flex flex-wrap items-center gap-2 font-semibold text-slate-900">
-                {candidateComposition(candidate)}
+                {candidatePurchaseComposition(candidate)}
                 {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
                 {candidate.usesNonstandardLength && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700"><Sparkles />Есть нестандартная</Badge>}
               </span>
@@ -1311,12 +1313,6 @@ function MoveButton({ label, disabled, onClick, children }: { label: string; dis
       {children}
     </button>
   )
-}
-
-function candidatesForMode(candidates: LongStockCuttingCandidate[], mixed: boolean) {
-  return candidates
-    .filter((candidate) => mixed ? candidate.kind === 'mixed_lengths' : candidate.kind !== 'mixed_lengths')
-    .sort((left, right) => left.purchasedLengthMm - right.purchasedLengthMm || left.newBarCount - right.newBarCount)
 }
 
 function variantSummary(category: Category, variant: MaterialVariant) {
