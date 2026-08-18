@@ -84,6 +84,8 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   consumable_request_shortage: 'Недопоставка расходника',
   supply_material_receipt_shortage: 'Недовес материала',
   production_cutting_rollback_review: 'Откат заготовки',
+  long_stock_cutting_recalculation: 'Пересчёт раскроя',
+  long_stock_cutting_supply_shortage: 'Дозаказ длинномера',
   production_plan_date_change_approval: 'Согласование дат',
   transport_trip_date_approval: 'Согласование дат рейса',
   production_plan_preparation: 'Подготовка плана',
@@ -264,6 +266,7 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (isConsumableTask(taskType)) return 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
   if (isSupplyReceiptTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (isCuttingRollbackTask(taskType)) return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
+  if (taskType === 'long_stock_cutting_recalculation' || taskType === 'long_stock_cutting_supply_shortage') return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (isProductionPlanDateChangeTask(taskType)) return 'border-amber-200 bg-amber-50 text-amber-800 shadow-sm'
   if (isTransportTripDateChangeTask(taskType)) return 'border-orange-200 bg-orange-50 text-orange-800 shadow-sm'
   if (isBusinessScrapCorrectionTask(taskType)) return 'border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm'
@@ -813,6 +816,32 @@ export function TaskCards({
             className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-[#1B3A6B] px-4 text-sm font-medium text-white hover:bg-[#152f59]')}
           >
             Открыть машину
+          </Link>
+        </div>
+      )
+    }
+
+    if (task.task_type === 'long_stock_cutting_recalculation' && task.machine_id) {
+      return (
+        <div className={groupClass}>
+          <Link
+            href={`${ROUTES.SALES_PLAN}/${task.machine_id}?tab=technologist`}
+            className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-amber-600 px-4 text-sm font-medium text-white hover:bg-amber-700')}
+          >
+            Открыть позицию
+          </Link>
+        </div>
+      )
+    }
+
+    if (task.task_type === 'long_stock_cutting_supply_shortage') {
+      return (
+        <div className={groupClass}>
+          <Link
+            href={ROUTES.SUPPLY_ORDERS}
+            className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-amber-600 px-4 text-sm font-medium text-white hover:bg-amber-700')}
+          >
+            Открыть снабжение
           </Link>
         </div>
       )
