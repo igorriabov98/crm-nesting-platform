@@ -48,6 +48,8 @@ jobs:
         run: npm run test:technologist-request-editability
       - name: Production cutting area request view
         run: npm run test:production-cutting-area
+      - name: Long-stock cutting-plan PDF
+        run: npm run test:long-stock-cutting-plan-pdf
       - name: Nesting STEP/PDF dimension choice
         run: npm run test:nesting-dimension-choice
       - name: Nesting AI match application policy

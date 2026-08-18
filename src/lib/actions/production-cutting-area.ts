@@ -21,6 +21,10 @@ import {
   type CuttingAreaFileCategory,
   type CuttingAreaItemFileBinding,
 } from '@/lib/production-cutting-area/files'
+import {
+  formatLongStockMaterialVariant,
+  parseLongStockCuttingPlanPdfMetadata,
+} from '@/lib/long-stock-cutting-plan-pdf'
 
 export type CuttingAreaQueueStatus = 'waiting' | 'in_progress' | 'completed'
 
@@ -78,6 +82,17 @@ export type CuttingAreaRequestDetails = {
   status: string
   completion: null | { enteredMinutes: number; addedMinutes: number; actualMinutes: number; finalizedAt: string }
   archives: CuttingAreaArchive[]
+  cuttingPlans: CuttingAreaCuttingPlanCard[]
+}
+
+export type CuttingAreaCuttingPlanCard = {
+  id: string
+  materialName: string
+  variantLabel: string
+  planNumber: number
+  versionNumber: number
+  status: 'approved' | 'invalid'
+  downloadUrl: string | null
 }
 
 export type CuttingAreaOrderFile = {
@@ -314,13 +329,49 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
     const requestIds = requests.map((request: any) => request.id)
     const productIds = Array.from(new Set(items.map((item: any) => item.product_id).filter(Boolean))) as string[]
     const projectIds = Array.from(new Set(items.map((item: any) => item.product_project_id).filter(Boolean))) as string[]
-    const [completionResult, archiveResult, currentVersionResult, projectResult] = await Promise.all([
+    const [completionResult, archiveResult, currentVersionResult, projectResult, cuttingPlanItemResult] = await Promise.all([
       requestIds.length ? db.from('technologist_request_completions').select('id,request_id,entered_plasma_minutes,added_plasma_minutes,actual_plasma_minutes,finalized_at,state').in('request_id', requestIds).eq('state', 'finalized') : { data: [], error: null },
       requestIds.length ? db.from('machine_cutting_archives').select('id,request_id,file_name,file_size,uploaded_at,uploaded_by').in('request_id', requestIds).order('uploaded_at', { ascending: false }) : { data: [], error: null },
       productIds.length ? db.from('product_versions').select('id,product_id').in('product_id', productIds).eq('status', 'current') : { data: [], error: null },
       projectIds.length ? db.from('product_projects').select('id,approved_version_id').in('id', projectIds) : { data: [], error: null },
+      requestIds.length ? db.from('long_stock_cutting_plan_items').select('plan_id,request_id').in('request_id', requestIds) : { data: [], error: null },
     ])
-    for (const result of [completionResult, archiveResult, currentVersionResult, projectResult]) if (result.error) throw new Error(result.error.message)
+    for (const result of [completionResult, archiveResult, currentVersionResult, projectResult, cuttingPlanItemResult]) if (result.error) throw new Error(result.error.message)
+
+    const cuttingPlanItems = cuttingPlanItemResult.data || []
+    const cuttingPlanIds = Array.from(new Set(cuttingPlanItems.map((item: any) => item.plan_id))) as string[]
+    const [cuttingPlanResult, cuttingPlanVersionResult] = await Promise.all([
+      cuttingPlanIds.length
+        ? db.from('long_stock_cutting_plans').select('id,plan_number,material_variant_id').in('id', cuttingPlanIds)
+        : { data: [], error: null },
+      cuttingPlanIds.length
+        ? db.from('long_stock_cutting_plan_versions').select('id,plan_id,version_number,status,pdf_metadata,created_at').in('plan_id', cuttingPlanIds).in('status', ['approved', 'invalid']).order('version_number', { ascending: false })
+        : { data: [], error: null },
+    ])
+    if (cuttingPlanResult.error) throw new Error(cuttingPlanResult.error.message)
+    if (cuttingPlanVersionResult.error) throw new Error(cuttingPlanVersionResult.error.message)
+    const cuttingPlans = cuttingPlanResult.data || []
+    const cuttingPlanVersions = cuttingPlanVersionResult.data || []
+    const variantIds = Array.from(new Set(cuttingPlans.map((plan: any) => plan.material_variant_id))) as string[]
+    const variantResult = variantIds.length
+      ? await db.from('material_variants').select('id,material_id,category,steel_type_id,material_grade,knife_material,knife_bevel_count,knife_dimensions,standard_length_mm,width_mm,height_mm,diameter_mm,is_calibrated,pipe_type,piece_description,wall_thickness_mm').in('id', variantIds)
+      : { data: [], error: null }
+    if (variantResult.error) throw new Error(variantResult.error.message)
+    const variants = variantResult.data || []
+    const materialIds = Array.from(new Set(variants.map((variant: any) => variant.material_id))) as string[]
+    const cuttingMaterialResult = materialIds.length
+      ? await db.from('materials').select('id,name').in('id', materialIds)
+      : { data: [], error: null }
+    if (cuttingMaterialResult.error) throw new Error(cuttingMaterialResult.error.message)
+    const cuttingPlanById = new Map(cuttingPlans.map((plan: any) => [plan.id, plan]))
+    const cuttingVariantById = new Map(variants.map((variant: any) => [variant.id, variant]))
+    const cuttingMaterialById = new Map((cuttingMaterialResult.data || []).map((material: any) => [material.id, material]))
+    const cuttingPlanIdsByRequest = new Map<string, Set<string>>()
+    for (const item of cuttingPlanItems) {
+      const ids = cuttingPlanIdsByRequest.get(item.request_id) || new Set<string>()
+      ids.add(item.plan_id)
+      cuttingPlanIdsByRequest.set(item.request_id, ids)
+    }
 
     const currentVersionByProduct = new Map((currentVersionResult.data || []).map((version: any) => [version.product_id, version.id]))
     const approvedVersionByProject = new Map((projectResult.data || []).map((project: any) => [project.id, project.approved_version_id]))
@@ -371,6 +422,28 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
             uploadedByName: userNames.get(archive.uploaded_by) || 'Пользователь',
             downloadUrl: `/api/production/cutting-area/archives/${archive.id}?machineId=${id}`,
           })),
+          cuttingPlans: cuttingPlanVersions.flatMap((version: any): CuttingAreaCuttingPlanCard[] => {
+            const planIds = cuttingPlanIdsByRequest.get(request.id)
+            if (!planIds?.has(version.plan_id)) return []
+            const plan = cuttingPlanById.get(version.plan_id) as any
+            const variant = cuttingVariantById.get(plan?.material_variant_id) as any
+            const material = cuttingMaterialById.get(variant?.material_id) as any
+            if (!plan || !variant || !material) return []
+            const metadata = version.status === 'approved'
+              ? parseLongStockCuttingPlanPdfMetadata(version.pdf_metadata, { planId: plan.id, versionId: version.id })
+              : null
+            return [{
+              id: version.id,
+              materialName: material.name,
+              variantLabel: formatLongStockMaterialVariant(variant),
+              planNumber: Number(plan.plan_number),
+              versionNumber: Number(version.version_number),
+              status: version.status,
+              downloadUrl: metadata
+                ? `/api/production/cutting-area/cutting-plans/${version.id}?machineId=${id}`
+                : null,
+            }]
+          }),
         }
       }),
       items: items.map((item: any) => {

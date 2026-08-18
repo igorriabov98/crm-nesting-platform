@@ -67,9 +67,11 @@ assert(!action.includes('DIRECTOR_ROLES'), 'Серверные действия 
 assert(action.includes('production_month'))
 assert(action.includes(".in('product_id', productIds)"), 'Файлы старых позиций должны находиться по product_id')
 assert(action.includes("['drawing','step','pdf']"), 'PDF изделия должен отображаться вместе с чертежами')
+assert(action.includes("db.from('long_stock_cutting_plan_items')"), 'Под заявкой должны загружаться карты раскроя')
+assert(action.includes(".in('status', ['approved', 'invalid'])"), 'Участок должен видеть утверждённые и недействительные версии')
 
 const page = read('src/components/features/production/CuttingAreaPage.tsx')
-for (const label of ['Ожидают', 'В работе', 'Выполненные', 'Все заводы', 'Все месяцы', 'Сборочный чертёж', 'Общие чертежи', 'STEP file', 'Чертежи и STEP', 'Открыть заявку', 'Взял в работу', 'Машина завершена']) {
+for (const label of ['Ожидают', 'В работе', 'Выполненные', 'Все заводы', 'Все месяцы', 'Сборочный чертёж', 'Общие чертежи', 'STEP file', 'Чертежи и STEP', 'Карты раскроя', 'Открыть PDF', 'требуется пересчёт', 'Открыть заявку', 'Взял в работу', 'Машина завершена']) {
   assert(page.includes(label), `UI не содержит ${label}`)
 }
 assert(page.includes('workspace.canViewAllFactories && <div>'), 'Фильтр заводов должен быть скрыт без полного охвата')
@@ -91,13 +93,17 @@ assert(breadcrumbs.includes('"request": "Заявка на материалы"')
 
 const archiveRoute = read('src/app/api/production/cutting-area/archives/[id]/route.ts')
 const fileRoute = read('src/app/api/production/cutting-area/files/[kind]/[id]/route.ts')
-for (const route of [archiveRoute, fileRoute]) {
+const cuttingPlanRoute = read('src/app/api/production/cutting-area/cutting-plans/[versionId]/route.ts')
+for (const route of [archiveRoute, fileRoute, cuttingPlanRoute]) {
   assert(route.includes("requirePermission('production_cutting_area', 'view')"))
   assert(route.includes('canAccessFactory'))
   assert(route.includes('resolveFileResponse'))
 }
 assert(!archiveRoute.includes('isDirector'))
 assert(!fileRoute.includes('isDirector'))
+assert(cuttingPlanRoute.includes("version.status === 'invalid'"), 'Недействительная карта не должна выдаваться')
+assert(cuttingPlanRoute.includes("disposition: 'inline'"), 'Карта должна открываться как PDF')
+assert(!cuttingPlanRoute.includes('renderToBuffer'), 'Скачивание не должно пересобирать PDF')
 
 const accessPage = read('src/components/features/settings/RolePermissionsPage.tsx')
 for (const label of ['Охват заказов', 'Свой завод', 'Все заводы']) {

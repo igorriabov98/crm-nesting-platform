@@ -37,6 +37,10 @@ import {
 } from '@/lib/actions/technologist-requests'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import {
+  prepareLongStockCuttingPlanPdf,
+  removePreparedLongStockCuttingPlanPdf,
+} from '@/lib/long-stock-cutting-plan-pdf-server'
 
 type DbError = { message: string }
 type DbResult<T> = { data: T | null; error: DbError | null }
@@ -323,12 +327,29 @@ export async function recalculateLongStockCuttingPlanVersion(input: LongStockPla
 export async function approveLongStockCuttingPlanVersion(versionId: string) {
   const { userId } = await requirePermission('technologist_requests', 'manage')
   const normalizedVersionId = requireUuid(versionId, 'Идентификатор версии')
-  const { data, error } = await database().rpc<Record<string, unknown>>(
-    'fn_approve_long_stock_cutting_plan_version_v1',
-    { p_version_id: normalizedVersionId, p_actor: userId },
-  )
-  if (error) throw new Error(error.message || 'Не удалось утвердить версию карты раскроя')
-  return data
+  const preparedPdf = await prepareLongStockCuttingPlanPdf(normalizedVersionId, userId)
+  if (preparedPdf.kind === 'stored') {
+    return {
+      version_id: normalizedVersionId,
+      status: 'approved',
+      pdf_metadata: preparedPdf.metadata,
+    }
+  }
+  try {
+    const { data, error } = await database().rpc<Record<string, unknown>>(
+      'fn_approve_long_stock_cutting_plan_version_v2',
+      {
+        p_version_id: normalizedVersionId,
+        p_actor: userId,
+        p_pdf_metadata: preparedPdf.metadata,
+      },
+    )
+    if (error) throw new Error(error.message || 'Не удалось утвердить версию карты раскроя')
+    return data
+  } catch (error) {
+    await removePreparedLongStockCuttingPlanPdf(preparedPdf.metadata)
+    throw error
+  }
 }
 
 async function calculateContext(input: LongStockPlanCalculationInput): Promise<CalculationContext> {
