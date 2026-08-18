@@ -109,6 +109,11 @@ export default async function DepartmentRequestDetailPage({
                     Расстановка
                   </span>
                 )}
+                {request.request_kind === 'long_stock_recalculation' && (
+                  <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                    Пересчёт позиции
+                  </span>
+                )}
               </div>
               <h1 className="mt-4 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{request.title}</h1>
               <p className="mt-2 text-sm text-slate-500">Создан {formatDate(request.created_at)}</p>
@@ -159,6 +164,18 @@ export default async function DepartmentRequestDetailPage({
                   {request.machine.name}
                   {request.machine.specification_number ? ` · ${request.machine.specification_number}` : ''}
                 </p>
+              </Link>
+            )}
+            {request.request_kind === 'long_stock_recalculation' && request.technologist_request_id && request.request_item_id && (
+              <Link
+                href={`${ROUTES.SALES_PLAN}/${request.machine_id}/request/${request.technologist_request_id}#request-item-${request.request_item_id}`}
+                className="rounded-2xl border border-amber-300 bg-amber-50 p-4 hover:bg-amber-100"
+              >
+                <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
+                  <Package className="size-4" aria-hidden="true" />
+                  Связанная позиция заявки
+                </div>
+                <p className="mt-2 font-semibold text-amber-950">{request.request_item_label || 'Открыть позицию технолога'}</p>
               </Link>
             )}
           </div>

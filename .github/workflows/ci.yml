@@ -42,6 +42,8 @@ jobs:
         run: npm run test:supply-reservation-scope
       - name: Supply order filters and sorting
         run: npm run test:supply-order-view
+      - name: Supply long-stock purchase plan and return contract
+        run: npm run test:supply-long-stock-plan-return
       - name: Supply request lifecycle
         run: npm run test:supply-request-flow
       - name: Technologist request editability
@@ -141,6 +143,10 @@ jobs:
       - name: All nesting-service tests
         run: npm run test:all
         working-directory: nesting-service
+      - name: Long-stock supply return database lifecycle
+        env:
+          FULL_SCHEMA_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/inventory_test
+        run: node scripts/test-long-stock-cutting-plan-server.mjs
 
   real-fixtures:
     name: real fixtures

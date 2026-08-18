@@ -2973,7 +2973,7 @@ export type Database = {
       department_requests: {
         Row: {
           id: string
-          request_kind: 'manual' | 'machine_layout'
+          request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation'
           target_department: string
           title: string
           description: string
@@ -2984,6 +2984,12 @@ export type Database = {
           completed_by: string | null
           factory_id: string | null
           machine_id: string | null
+          request_item_table: string | null
+          request_item_id: string | null
+          technologist_request_id: string | null
+          long_stock_plan_id: string | null
+          long_stock_returned_version_id: string | null
+          request_item_label: string | null
           due_date: string | null
           response: string | null
           completed_at: string | null
@@ -2994,7 +3000,7 @@ export type Database = {
         }
         Insert: {
           id?: string
-          request_kind?: 'manual' | 'machine_layout'
+          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation'
           target_department: string
           title: string
           description: string
@@ -3005,6 +3011,12 @@ export type Database = {
           completed_by?: string | null
           factory_id?: string | null
           machine_id?: string | null
+          request_item_table?: string | null
+          request_item_id?: string | null
+          technologist_request_id?: string | null
+          long_stock_plan_id?: string | null
+          long_stock_returned_version_id?: string | null
+          request_item_label?: string | null
           due_date?: string | null
           response?: string | null
           completed_at?: string | null
@@ -3015,7 +3027,7 @@ export type Database = {
         }
         Update: {
           id?: string
-          request_kind?: 'manual' | 'machine_layout'
+          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation'
           target_department?: string
           title?: string
           description?: string
@@ -3026,6 +3038,12 @@ export type Database = {
           completed_by?: string | null
           factory_id?: string | null
           machine_id?: string | null
+          request_item_table?: string | null
+          request_item_id?: string | null
+          technologist_request_id?: string | null
+          long_stock_plan_id?: string | null
+          long_stock_returned_version_id?: string | null
+          request_item_label?: string | null
           due_date?: string | null
           response?: string | null
           completed_at?: string | null

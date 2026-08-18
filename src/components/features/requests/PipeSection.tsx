@@ -214,7 +214,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               const showsDiameter = hasMaterial && row.pipe_type === 'wire'
               const displayWeight = calculatePipeWeight(row, steelTypes) ?? row.calculated_weight_kg
               return (
-                <tr key={row.id} className="border-b last:border-b-0">
+                <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                   <td className="px-3 py-2">
                     <MaterialSearch
                       category="pipe"

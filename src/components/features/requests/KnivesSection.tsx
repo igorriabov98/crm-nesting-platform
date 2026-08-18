@@ -156,7 +156,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
               const canEditCharacteristics = canEditMaterialCharacteristics(row, canEdit)
               const displayWeight = calculateKnifeWeight(row, steelTypes) ?? row.calculated_weight_kg
               return (
-              <tr key={row.id} className="border-b last:border-b-0">
+              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch category="knives" value={materialNames[row.id] ?? materialDisplayName(row)} initialValue={materialDisplayName(row)} selectedMaterialId={row.material_id} disabled={!canEdit} compact onSelect={(material, variant, source) => selectMaterial(row, material, variant, source)} />
                 </td>

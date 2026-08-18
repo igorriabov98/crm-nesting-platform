@@ -28,6 +28,7 @@
     "test:notification-bell": "tsx scripts/test-notification-bell-state.ts",
     "test:mail": "tsx scripts/test-mail-integration.ts",
     "test:supply-order-view": "tsx scripts/test-supply-order-view.ts",
+    "test:supply-long-stock-plan-return": "tsx --test src/lib/supply-orders/long-stock-purchase-plan.test.ts && node scripts/test-supply-long-stock-plan-return.mjs",
     "test:supply-request-flow": "tsx scripts/test-supply-request-flow.ts",
     "test:user-impersonation": "tsx scripts/test-user-impersonation.ts",
     "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && tsx --test src/lib/supply-orders/manual-allocation.test.ts && node scripts/test-supply-partial-receiving.mjs",

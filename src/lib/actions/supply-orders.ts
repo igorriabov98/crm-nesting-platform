@@ -15,6 +15,12 @@ import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notificat
 import { formatCompanyLocation } from '@/lib/transport/company-location'
 import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
+import {
+  isLongStockRequestItemTable,
+  summarizeLongStockPurchaseBars,
+  type LongStockPurchaseBar,
+  type LongStockPurchasePlan,
+} from '@/lib/supply-orders/long-stock-purchase-plan'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -90,6 +96,7 @@ type RawOrderItem = {
   calculated_weight_kg: number | null
   selected_piece_length_mm: number | null
   pipe_type: string | null
+  long_stock_purchase_plan: LongStockPurchasePlan | null
 }
 
 export type SupplyOrderDeliverySchedule = {
@@ -165,6 +172,7 @@ export type SupplyOrderItem = {
   reservation_id: string | null
   selected_piece_length_mm: number | null
   delivery_schedules: SupplyOrderDeliverySchedule[]
+  long_stock_purchase_plan: LongStockPurchasePlan | null
 }
 
 export type SupplyOrderStockItem = {
@@ -222,6 +230,7 @@ export type SupplyOrderAggregateSourceItem = {
   delivered_schedule_quantity: number
   unscheduled_quantity: number
   delivery_schedules: SupplyOrderDeliverySchedule[]
+  long_stock_purchase_plan: LongStockPurchasePlan | null
 }
 
 export type SupplyOrderAggregateSupplier = {
@@ -287,6 +296,12 @@ export type SupplyOrderAggregateScheduleInput = {
   supplier_id?: string | null
   piece_length_mm?: number | null
   piece_count?: number | null
+}
+
+export type ReturnLongStockPositionInput = {
+  requestItemTable: string
+  requestItemId: string
+  reason: string
 }
 
 export type MaterialReceivingFactory = {
@@ -836,15 +851,18 @@ function getAggregateIdentityKey(table: string, row: RequestItemRow, item: RawOr
     item.material_id || item.item_name,
     item.unit,
   ]
+  const cuttingState = item.long_stock_purchase_plan
+    ? `cutting:${item.long_stock_purchase_plan.cutting_status}`
+    : null
 
   if (item.material_variant_id) {
-    return [...base, `variant:${item.material_variant_id}`].join('|')
+    return [...base, `variant:${item.material_variant_id}`, cuttingState].filter(Boolean).join('|')
   }
 
   const characteristics = getCharacteristicParts(table, row)
     .map((part) => `${part.label}:${part.value}`)
 
-  return [...base, ...characteristics].join('|')
+  return [...base, ...characteristics, cuttingState].filter(Boolean).join('|')
 }
 
 function getAggregateCharacteristics(table: string, row: RequestItemRow, item: RawOrderItem): SupplyOrderAggregateCharacteristic[] {
@@ -975,6 +993,7 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
       calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
       selected_piece_length_mm: selectedPieceLength(table, row),
       pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
+      long_stock_purchase_plan: null,
     }
   }
 
@@ -998,10 +1017,11 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
   if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
   const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
 
-  return rawItems.map((item) => ({
+  const longStockPlanMap = await loadLongStockPurchasePlanMap(db, rawItems)
+  return rawItems.map((item) => applyLongStockPurchasePlan({
     ...item,
     supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
-  }))
+  }, longStockPlanMap))
 }
 
 export async function getSupplyTransportNeeds(): Promise<{
@@ -1160,7 +1180,7 @@ export async function getSupplyOrders(
     const makeItem = (table: string, category: MaterialCategory, row: RequestItemRow, name: unknown, supplierId: string | null = null): RawOrderItem => {
       const requested = requestedQuantity(table, row)
       const reserved = reservedQuantity(table, row)
-      return { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row), pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null }
+      return { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row), pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null, long_stock_purchase_plan: null }
     }
     const rawItems: RawOrderItem[] = [
       ...sheet.map((row) => makeItem('request_sheet_metal', 'sheet_metal', row, row.material_name, supplierForRow(row))),
@@ -1174,7 +1194,10 @@ export async function getSupplyOrders(
       ...meshItems.map((row) => makeItem('request_mesh', 'mesh', row, row.description, supplierForRow(row))),
       ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
     ]
-    const orderableRawItems = rawItems.filter((item) => item.to_order > 0)
+    const longStockPlanMap = await loadLongStockPurchasePlanMap(db, rawItems)
+    const orderableRawItems = rawItems
+      .map((item) => applyLongStockPurchasePlan(item, longStockPlanMap))
+      .filter((item) => item.to_order > 0)
 
     const materialIds = Array.from(new Set(orderableRawItems.map((item) => item.material_id).filter(Boolean))) as string[]
     const materialsRes = materialIds.length
@@ -1310,6 +1333,7 @@ export async function getSupplyOrders(
         calculated_weight_kg: item.calculated_weight_kg,
         reservation_id: reservationMap.get(`${item.table}:${item.id}`) || null,
         selected_piece_length_mm: item.selected_piece_length_mm,
+        long_stock_purchase_plan: item.long_stock_purchase_plan,
         delivery_schedules: deliverySchedules.map((schedule) => ({
           id: schedule.id,
           delivery_date: schedule.delivery_date,
@@ -1423,6 +1447,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
         calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
         selected_piece_length_mm: selectedPieceLength(table, row),
         pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
+        long_stock_purchase_plan: null,
         raw: row,
         machine_id: machine.id || request.machine_id,
         machine_name: machine.name || 'Машина',
@@ -1636,7 +1661,6 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
     const requested = requestedQuantity(table, row)
     const reserved = reservedQuantity(table, row)
     const toOrder = Math.max(requested - reserved, 0)
-    if (toOrder <= 0) return null
 
     return {
       table,
@@ -1659,6 +1683,7 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
       calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null,
       selected_piece_length_mm: selectedPieceLength(table, row),
       pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
+      long_stock_purchase_plan: null,
       raw: row,
       machine_id: machine.id || request.machine_id,
       machine_name: machine.name || 'Машина',
@@ -1680,14 +1705,19 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
     ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
   ].filter((item): item is SupplyOrderAggregateInputItem => Boolean(item))
 
-  const materialIds = Array.from(new Set(rawItems.map((item) => item.material_id).filter(Boolean))) as string[]
+  const longStockPlanMap = await loadLongStockPurchasePlanMap(db, rawItems)
+  const orderableItems = rawItems
+    .map((item) => applyLongStockPurchasePlan(item, longStockPlanMap))
+    .filter((item) => item.to_order > 0)
+
+  const materialIds = Array.from(new Set(orderableItems.map((item) => item.material_id).filter(Boolean))) as string[]
   const materialsRes = materialIds.length
     ? await db.from('materials').select('id, default_supplier_id').in('id', materialIds)
     : { data: [], error: null }
   if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
   const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
 
-  return rawItems.map((item) => ({
+  return orderableItems.map((item) => ({
     ...item,
     supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
   }))
@@ -1970,6 +2000,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         delivered_schedule_quantity: deliveredScheduleQuantity,
         unscheduled_quantity: unscheduledQuantity,
         delivery_schedules: itemSchedules,
+        long_stock_purchase_plan: item.long_stock_purchase_plan,
       })
 
       aggregate.factories.set(currentFactoryKey, factory)
@@ -2049,6 +2080,74 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
   }
 }
 
+export async function returnLongStockPositionToTechnologist(
+  input: ReturnLongStockPositionInput,
+) {
+  try {
+    const { userId } = await requireAccess('manage')
+    const requestItemTable = String(input?.requestItemTable ?? '')
+    const requestItemId = String(input?.requestItemId ?? '')
+    const reason = String(input?.reason ?? '').trim()
+    if (!isLongStockRequestItemTable(requestItemTable)) {
+      throw new Error('Вернуть можно только позицию круга, трубы или ножей')
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestItemId)) {
+      throw new Error('Некорректный идентификатор позиции')
+    }
+    if (reason.length < 3 || reason.length > 2000) {
+      throw new Error('Укажите причину возврата от 3 до 2000 символов')
+    }
+
+    const { data, error } = await (createAdminClient() as unknown as RpcDb).rpc(
+      'fn_return_long_stock_position_to_technologist_v1',
+      {
+        p_request_item_table: requestItemTable,
+        p_request_item_id: requestItemId,
+        p_reason: reason,
+        p_actor: userId,
+      },
+    )
+    if (error) throw new Error(error.message || 'Не удалось вернуть позицию технологу')
+    const result = (data || {}) as {
+      department_request_id?: string
+      technologist_request_id?: string
+      machine_id?: string
+      assigned_to?: string
+    }
+
+    revalidatePath(ROUTES.SUPPLY_ORDERS)
+    revalidatePath(ROUTES.REQUESTS)
+    revalidatePath(ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS)
+    revalidatePath(ROUTES.TASKS)
+    revalidatePath(ROUTES.NOTIFICATIONS)
+    if (result.machine_id) revalidatePath(`${ROUTES.SALES_PLAN}/${result.machine_id}`)
+    if (result.department_request_id) {
+      revalidatePath(`/requests/detail/${result.department_request_id}`)
+    }
+    try {
+      await dispatchPendingTelegramDeliveries({
+        userId: result.assigned_to,
+        machineId: result.machine_id,
+      })
+    } catch {
+      // CRM notification and request are committed atomically; Telegram is best-effort.
+    }
+
+    return {
+      success: true,
+      data: {
+        requestId: result.department_request_id || null,
+        technologistRequestId: result.technologist_request_id || null,
+      },
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Не удалось вернуть позицию технологу',
+    }
+  }
+}
+
 type ReceivingScheduleRow = SupplyOrderDeliverySchedule & {
   request_item_table: string
   request_item_id: string
@@ -2062,6 +2161,152 @@ function isWholeBarItem(item: { category: MaterialCategory; pipe_type?: string |
   return item.category === 'knives'
     || item.category === 'circle'
     || (item.category === 'pipe' && (item.raw?.pipe_type ?? item.pipe_type) !== 'wire')
+}
+
+type LongStockPlanItemRow = {
+  plan_id: string
+  request_item_table: string
+  request_item_id: string
+  cutting_status: 'planning' | 'plan_approved' | 'accepted' | 'requires_recalculation'
+}
+
+type LongStockPlanRow = {
+  id: string
+  plan_number: number | string
+}
+
+type LongStockPlanVersionRow = {
+  id: string
+  plan_id: string
+  version_number: number
+  status: 'approved' | 'invalid'
+  selected_candidate_number: number
+}
+
+type LongStockCandidateRow = {
+  id: string
+  version_id: string
+  candidate_number: number
+}
+
+type LongStockCandidateBarRow = LongStockPurchaseBar & {
+  candidate_id: string
+}
+
+function longStockItemKey(item: Pick<RawOrderItem, 'table' | 'id'>) {
+  return `${item.table}:${item.id}`
+}
+
+function applyLongStockPurchasePlan<T extends RawOrderItem>(
+  item: T,
+  plans: Map<string, LongStockPurchasePlan>,
+): T {
+  const plan = plans.get(longStockItemKey(item)) ?? null
+  if (!plan) return item
+  return {
+    ...item,
+    to_order: plan.total_length_mm,
+    long_stock_purchase_plan: plan,
+  }
+}
+
+async function loadLongStockPurchasePlanMap(
+  db: LooseDb,
+  items: Array<Pick<RawOrderItem, 'table' | 'id' | 'pipe_type'>>,
+) {
+  const eligibleItems = items.filter((item) => (
+    isLongStockRequestItemTable(item.table)
+    && !(item.table === 'request_pipe' && item.pipe_type === 'wire')
+  ))
+  if (eligibleItems.length === 0) return new Map<string, LongStockPurchasePlan>()
+
+  const eligibleKeys = new Set(eligibleItems.map((item) => `${item.table}:${item.id}`))
+  const { data: planItemsRaw, error: planItemsError } = await db
+    .from('long_stock_cutting_plan_items')
+    .select('plan_id, request_item_table, request_item_id, cutting_status')
+    .in('request_item_id', Array.from(new Set(eligibleItems.map((item) => item.id))))
+  if (planItemsError) throw new Error(planItemsError.message || 'Не удалось загрузить карты раскроя для снабжения')
+
+  const planItems = ((planItemsRaw || []) as LongStockPlanItemRow[]).filter((item) => (
+    eligibleKeys.has(`${item.request_item_table}:${item.request_item_id}`)
+    && item.cutting_status !== 'planning'
+  ))
+  const planIds = Array.from(new Set(planItems.map((item) => item.plan_id)))
+  if (planIds.length === 0) return new Map<string, LongStockPurchasePlan>()
+
+  const [plansResult, versionsResult] = await Promise.all([
+    db.from('long_stock_cutting_plans').select('id, plan_number').in('id', planIds),
+    db.from('long_stock_cutting_plan_versions')
+      .select('id, plan_id, version_number, status, selected_candidate_number')
+      .in('plan_id', planIds)
+      .in('status', ['approved', 'invalid'])
+      .order('version_number', { ascending: false }),
+  ])
+  if (plansResult.error) throw new Error(plansResult.error.message || 'Не удалось загрузить номера карт раскроя')
+  if (versionsResult.error) throw new Error(versionsResult.error.message || 'Не удалось загрузить версии карт раскроя')
+
+  const plans = new Map(((plansResult.data || []) as LongStockPlanRow[]).map((plan) => [plan.id, plan]))
+  const versionsByPlan = new Map<string, LongStockPlanVersionRow[]>()
+  for (const version of (versionsResult.data || []) as LongStockPlanVersionRow[]) {
+    versionsByPlan.set(version.plan_id, [...(versionsByPlan.get(version.plan_id) || []), version])
+  }
+  const selectedVersions = new Map<string, LongStockPlanVersionRow>()
+  for (const item of planItems) {
+    const versions = versionsByPlan.get(item.plan_id) || []
+    const selected = item.cutting_status === 'requires_recalculation'
+      ? versions.find((version) => version.status === 'invalid')
+      : versions.find((version) => version.status === 'approved')
+    if (selected) selectedVersions.set(item.plan_id, selected)
+  }
+
+  const versionIds = Array.from(new Set(Array.from(selectedVersions.values()).map((version) => version.id)))
+  if (versionIds.length === 0) return new Map<string, LongStockPurchasePlan>()
+  const { data: candidatesRaw, error: candidatesError } = await db
+    .from('long_stock_cutting_candidates')
+    .select('id, version_id, candidate_number')
+    .in('version_id', versionIds)
+  if (candidatesError) throw new Error(candidatesError.message || 'Не удалось загрузить выбранные варианты раскроя')
+
+  const selectedCandidateByVersion = new Map<string, LongStockCandidateRow>()
+  for (const candidate of (candidatesRaw || []) as LongStockCandidateRow[]) {
+    const version = Array.from(selectedVersions.values()).find((item) => item.id === candidate.version_id)
+    if (version?.selected_candidate_number === candidate.candidate_number) {
+      selectedCandidateByVersion.set(candidate.version_id, candidate)
+    }
+  }
+  const candidateIds = Array.from(selectedCandidateByVersion.values()).map((candidate) => candidate.id)
+  if (candidateIds.length === 0) return new Map<string, LongStockPurchasePlan>()
+  const { data: barsRaw, error: barsError } = await db
+    .from('long_stock_cutting_candidate_bars')
+    .select('candidate_id, stock_length_mm, length_group, source_type')
+    .in('candidate_id', candidateIds)
+  if (barsError) throw new Error(barsError.message || 'Не удалось загрузить закупочные хлысты карты раскроя')
+
+  const barsByCandidate = new Map<string, LongStockCandidateBarRow[]>()
+  for (const bar of (barsRaw || []) as LongStockCandidateBarRow[]) {
+    barsByCandidate.set(bar.candidate_id, [...(barsByCandidate.get(bar.candidate_id) || []), bar])
+  }
+
+  const result = new Map<string, LongStockPurchasePlan>()
+  for (const item of planItems) {
+    const plan = plans.get(item.plan_id)
+    const version = selectedVersions.get(item.plan_id)
+    const candidate = version ? selectedCandidateByVersion.get(version.id) : null
+    if (!plan || !version || !candidate) continue
+    const purchase = summarizeLongStockPurchaseBars(barsByCandidate.get(candidate.id) || [])
+    result.set(`${item.request_item_table}:${item.request_item_id}`, {
+      plan_id: item.plan_id,
+      plan_number: Number(plan.plan_number),
+      version_id: version.id,
+      version_number: version.version_number,
+      version_status: version.status,
+      cutting_status: item.cutting_status === 'requires_recalculation'
+        ? 'requires_recalculation'
+        : item.cutting_status === 'accepted' ? 'accepted' : 'plan_approved',
+      ...purchase,
+    })
+  }
+  return result
 }
 
 function parseBarReceipt(input: MaterialDeliveryInput, item: { category: MaterialCategory; pipe_type?: string | null; raw?: RequestItemRow }) {

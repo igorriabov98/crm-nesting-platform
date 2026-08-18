@@ -71,7 +71,7 @@ export type DepartmentRequestEvent = {
 
 export type DepartmentRequestRow = {
   id: string
-  request_kind: 'manual' | 'machine_layout'
+  request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation'
   target_department: DepartmentRequestTarget
   title: string
   description: string
@@ -81,6 +81,12 @@ export type DepartmentRequestRow = {
   completed_by: string | null
   factory_id: string | null
   machine_id: string | null
+  request_item_table: string | null
+  request_item_id: string | null
+  technologist_request_id: string | null
+  long_stock_plan_id: string | null
+  long_stock_returned_version_id: string | null
+  request_item_label: string | null
   due_date: string | null
   response: string | null
   completed_at: string | null
@@ -193,6 +199,12 @@ const requestListSelect = `
   completed_by,
   factory_id,
   machine_id,
+  request_item_table,
+  request_item_id,
+  technologist_request_id,
+  long_stock_plan_id,
+  long_stock_returned_version_id,
+  request_item_label,
   due_date,
   response,
   completed_at,
@@ -484,7 +496,7 @@ async function loadRequestMutationMeta(requestId: string) {
   return data as {
     target_department: DepartmentRequestTarget
     machine_id: string | null
-    request_kind: 'manual' | 'machine_layout'
+    request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation'
   } | null
 }
 

@@ -138,6 +138,11 @@ function RequestListItem({
                 Расстановка
               </span>
             )}
+            {request.request_kind === 'long_stock_recalculation' && (
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                Пересчёт позиции
+              </span>
+            )}
           </div>
           <Link
             href={detailHref}
@@ -149,6 +154,9 @@ function RequestListItem({
             <ArrowUpRight className="mt-1 size-4 shrink-0 text-slate-400 group-hover:text-[#1B3A6B]" aria-hidden="true" />
           </Link>
           <p className="mt-1 line-clamp-1 whitespace-pre-wrap text-sm text-slate-600">{request.description}</p>
+          {request.request_item_label && (
+            <p className="mt-1 truncate text-xs font-medium text-amber-800">Позиция: {request.request_item_label}</p>
+          )}
         </div>
 
         <div className="min-w-0 text-sm text-slate-600">

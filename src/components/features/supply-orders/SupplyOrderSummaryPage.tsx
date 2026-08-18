@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Search,
   SlidersHorizontal,
+  TriangleAlert,
   Trash2,
   Truck,
 } from 'lucide-react'
@@ -38,7 +39,13 @@ import {
   type SupplyOrderAggregateScheduleInput,
   type SupplyOrderAggregateSourceItem,
 } from '@/lib/actions/supply-orders'
+import {
+  formatLongStockPurchaseComposition,
+  mergeLongStockPurchasePlans,
+  type LongStockPurchasePlan,
+} from '@/lib/supply-orders/long-stock-purchase-plan'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
+import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
 import {
   filterAndSortAggregates,
   groupSupplyOrderAggregatesBySupplyDate,
@@ -286,6 +293,11 @@ function MaterialOrderCard({
     : aggregate.weight_kg !== null
       ? `${formatAmount(aggregate.weight_kg)} кг`
       : null
+  const longStockPlans = factory?.items
+    .map((item) => item.long_stock_purchase_plan)
+    .filter((plan): plan is LongStockPurchasePlan => plan !== null) ?? []
+  const longStockPurchase = mergeLongStockPurchasePlans(longStockPlans)
+  const requiresRecalculation = longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
 
   return (
     <article className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
@@ -340,6 +352,17 @@ function MaterialOrderCard({
               </div>
             ))}
           </dl>
+
+          {longStockPurchase.components.length > 0 && (
+            <PurchasePlanSummary plans={longStockPlans} className="mt-4 max-w-3xl" />
+          )}
+
+          {requiresRecalculation && (
+            <div className="mt-3 flex max-w-3xl items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-700" aria-hidden="true" />
+              <span><strong>Требуется пересчёт.</strong> График поставки и резка заблокированы до утверждения новой версии.</span>
+            </div>
+          )}
         </header>
 
         <dl className="border-t border-border bg-muted/20 p-4 lg:border-l lg:border-t-0 lg:p-5">
@@ -688,7 +711,13 @@ function FactoryDeliveryEditor({
     financeGroups.length === 0 ||
     financePayments.some((payment) => !payment.plannedDate || !Number.isFinite(payment.amount) || payment.amount <= 0)
   )
-  const isBarMaterial = aggregate.category === 'knives' || aggregate.category === 'circle'
+  const longStockPlans = factory.items
+    .map((item) => item.long_stock_purchase_plan)
+    .filter((plan): plan is LongStockPurchasePlan => plan !== null)
+  const requiresRecalculation = longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
+  const isBarMaterial = longStockPlans.length > 0
+    || aggregate.category === 'knives'
+    || aggregate.category === 'circle'
 
   useEffect(() => {
     setScheduleDrafts(makeInitialScheduleDrafts(factory))
@@ -723,6 +752,7 @@ function FactoryDeliveryEditor({
   }
 
   const saveSchedule = () => {
+    if (requiresRecalculation) return
     const schedules: SupplyOrderAggregateScheduleInput[] = scheduleDrafts.map((draft) => ({
       delivery_date: draft.delivery_date,
       quantity: parseQuantity(draft.quantity),
@@ -848,6 +878,16 @@ function FactoryDeliveryEditor({
         </div>
       )}
 
+      {requiresRecalculation && (
+        <div className="mx-3 mb-3 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-700" aria-hidden="true" />
+          <div>
+            <div className="font-semibold">Позиция возвращена технологу</div>
+            <div className="mt-0.5 text-xs leading-5 text-amber-800">До утверждения новой версии нельзя создавать график, отмечать заказ или передавать позицию в резку.</div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3 border-y border-border/60 bg-card px-3 py-3">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <PackageCheck className="h-4 w-4 text-primary" />
@@ -859,7 +899,7 @@ function FactoryDeliveryEditor({
                 : 'Весь объем распределен по графику'}
           </span>
         </div>
-        {!isClosed && <div className="flex flex-wrap gap-1.5">
+        {!isClosed && !requiresRecalculation && <div className="flex flex-wrap gap-1.5">
           <Button
             type="button"
             variant="ghost"
@@ -885,7 +925,7 @@ function FactoryDeliveryEditor({
         </div>}
       </div>
 
-      {financeOpen && (
+      {financeOpen && !requiresRecalculation && (
         <div className="mt-3 rounded-md border border-[#E8ECF0] bg-white p-3">
           <div className="mb-2 text-sm font-semibold text-[#1B3A6B]">Плановые платежи</div>
           {financeGroups.length === 0 ? (
@@ -944,7 +984,7 @@ function FactoryDeliveryEditor({
         </div>
       )}
 
-      {!isClosed && (
+      {!isClosed && !requiresRecalculation && (
         <div className="mt-3 rounded-md border border-[#E8ECF0] bg-white p-3">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -1050,62 +1090,146 @@ function FactoryDeliveryEditor({
   )
 }
 
+function PurchasePlanSummary({
+  plans,
+  className = '',
+  compact = false,
+}: {
+  plans: LongStockPurchasePlan[]
+  className?: string
+  compact?: boolean
+}) {
+  const purchase = mergeLongStockPurchasePlans(plans)
+  if (purchase.components.length === 0) return null
+
+  return (
+    <div
+      className={`${compact ? '' : 'rounded-lg border border-sky-200 bg-sky-50/70 p-3'} ${className}`.trim()}
+      aria-label={`К закупке: ${formatLongStockPurchaseComposition(purchase.components)}`}
+    >
+      {!compact && <div className="text-xs font-semibold uppercase tracking-wide text-sky-900">К закупке по утверждённой карте</div>}
+      <div className={`flex flex-wrap items-center gap-1.5 ${compact ? '' : 'mt-2'}`}>
+        {purchase.components.map((component) => (
+          <span
+            key={`${component.length_mm}:${component.is_nonstandard ? 'nonstandard' : 'standard'}`}
+            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-semibold tabular-nums ${
+              component.is_nonstandard
+                ? 'border-amber-300 bg-amber-50 text-amber-950'
+                : 'border-sky-200 bg-white text-sky-950'
+            } ${compact ? 'text-xs' : 'text-sm'}`}
+          >
+            {formatAmount(component.length_mm)} × {formatAmount(component.piece_count)}
+            {component.is_nonstandard && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-800" title="Нестандартная длина: дороже и дольше в поставке">
+                <TriangleAlert className="size-3" aria-hidden="true" /> нестандартная
+              </span>
+            )}
+          </span>
+        ))}
+      </div>
+      {!compact && (
+        <div className="mt-2 text-xs text-sky-800">
+          {purchase.total_piece_count} шт. · {formatAmount(purchase.total_length_mm)} мм. Складские остатки в закупку не включены.
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; id: string }) {
   return (
     <div id={id} className="border-t border-border/60 bg-muted/25 p-4">
-      <div className="hidden grid-cols-[minmax(200px,1fr)_120px_130px_170px_minmax(220px,1fr)_110px] gap-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground xl:grid">
+      <div className="hidden grid-cols-[minmax(150px,0.8fr)_110px_125px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] gap-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground xl:grid">
         <span>Машина</span>
         <span>Количество</span>
         <span>Статус</span>
-        <span>Остаток графика</span>
+        <span>К закупке</span>
         <span>Поставки</span>
-        <span>Заявка</span>
+        <span>Действия</span>
       </div>
       <div className="mt-2 hidden space-y-2 xl:block">
-        {factory.items.map((item) => (
-          <div key={`${item.table}:${item.id}`} className="grid grid-cols-[minmax(200px,1fr)_120px_130px_170px_minmax(220px,1fr)_110px] items-center gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm">
-            <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-medium text-primary hover:underline">
-              {item.machine_name}
-            </Link>
-            <span className="tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</span>
-            <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className={item.order_status === 'delivered' ? 'w-fit border-emerald-200 bg-emerald-50 text-emerald-700' : 'w-fit'}>
-              {ORDER_STATUS_LABELS[item.order_status]}
-            </Badge>
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {formatAmount(item.planned_schedule_quantity)} план / {formatAmount(item.delivered_schedule_quantity)} факт
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {item.delivery_schedules.length > 0
-                ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ')
-                : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}
-            </span>
-            <Link
-              href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`}
-              className="inline-flex min-h-9 w-fit items-center gap-1 rounded-lg border border-border px-2 text-xs font-medium text-primary hover:bg-muted"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Открыть
-            </Link>
-          </div>
-        ))}
+        {factory.items.map((item) => {
+          const plan = item.long_stock_purchase_plan
+          return (
+            <div key={`${item.table}:${item.id}`} className="grid grid-cols-[minmax(150px,0.8fr)_110px_125px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] items-center gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm">
+              <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-medium text-primary hover:underline">
+                {item.machine_name}
+              </Link>
+              <span className="tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</span>
+              {plan?.cutting_status === 'requires_recalculation' ? (
+                <Badge variant="outline" className="w-fit border-amber-300 bg-amber-50 text-amber-900">Требует пересчёта</Badge>
+              ) : (
+                <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className={item.order_status === 'delivered' ? 'w-fit border-emerald-200 bg-emerald-50 text-emerald-700' : 'w-fit'}>
+                  {ORDER_STATUS_LABELS[item.order_status]}
+                </Badge>
+              )}
+              <div>{plan ? <PurchasePlanSummary plans={[plan]} compact /> : <span className="text-xs text-muted-foreground">Нет утверждённой карты</span>}</div>
+              <span className="text-xs text-muted-foreground">
+                {item.delivery_schedules.length > 0
+                  ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ')
+                  : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                <Link
+                  href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`}
+                  className="inline-flex min-h-9 w-fit items-center gap-1 rounded-lg border border-border px-2 text-xs font-medium text-primary hover:bg-muted"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Заявка
+                </Link>
+                {plan?.cutting_status === 'plan_approved' && (
+                  <ReturnLongStockPositionButton
+                    requestItemTable={item.table}
+                    requestItemId={item.id}
+                    planNumber={plan.plan_number}
+                    versionNumber={plan.version_number}
+                  />
+                )}
+              </div>
+            </div>
+          )
+        })}
       </div>
       <div className="grid gap-3 xl:hidden">
-        {factory.items.map((item) => (
-          <article key={`${item.table}:${item.id}`} className="rounded-xl border border-border/70 bg-background p-3">
-            <div className="flex items-start justify-between gap-3">
-              <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}</Link>
-              <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className={item.order_status === 'delivered' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : undefined}>{ORDER_STATUS_LABELS[item.order_status]}</Badge>
-            </div>
-            <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
-              <div><dt className="text-muted-foreground">Количество</dt><dd className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</dd></div>
-              <div><dt className="text-muted-foreground">График</dt><dd className="mt-1 text-foreground">{formatAmount(item.planned_schedule_quantity)} план / {formatAmount(item.delivered_schedule_quantity)} факт</dd></div>
-              <div><dt className="text-muted-foreground">Поставки</dt><dd className="mt-1 text-foreground">{item.delivery_schedules.length > 0 ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ') : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}</dd></div>
-            </dl>
-            <Link href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`} className="mt-3 inline-flex min-h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-muted">
-              <ExternalLink className="h-3.5 w-3.5" />Открыть заявку
-            </Link>
-          </article>
-        ))}
+        {factory.items.map((item) => {
+          const plan = item.long_stock_purchase_plan
+          return (
+            <article key={`${item.table}:${item.id}`} className="rounded-xl border border-border/70 bg-background p-3">
+              <div className="flex items-start justify-between gap-3">
+                <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}</Link>
+                {plan?.cutting_status === 'requires_recalculation' ? (
+                  <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Требует пересчёта</Badge>
+                ) : (
+                  <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className={item.order_status === 'delivered' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : undefined}>{ORDER_STATUS_LABELS[item.order_status]}</Badge>
+                )}
+              </div>
+              <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
+                <div><dt className="text-muted-foreground">Количество</dt><dd className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</dd></div>
+                <div><dt className="text-muted-foreground">График</dt><dd className="mt-1 text-foreground">{formatAmount(item.planned_schedule_quantity)} план / {formatAmount(item.delivered_schedule_quantity)} факт</dd></div>
+                <div><dt className="text-muted-foreground">Поставки</dt><dd className="mt-1 text-foreground">{item.delivery_schedules.length > 0 ? item.delivery_schedules.map((schedule) => `${formatDate(schedule.delivery_date)}: ${formatAmount(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity)} ${schedule.unit}`).join('; ') : (item.supply_delivery_date ? formatDate(item.supply_delivery_date) : 'По Мат.план')}</dd></div>
+              </dl>
+              {plan && (
+                <div className="mt-3 rounded-lg bg-muted/50 p-2">
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">К закупке по карте</div>
+                  <PurchasePlanSummary plans={[plan]} compact />
+                </div>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-muted">
+                  <ExternalLink className="h-3.5 w-3.5" />Открыть заявку
+                </Link>
+                {plan?.cutting_status === 'plan_approved' && (
+                  <ReturnLongStockPositionButton
+                    requestItemTable={item.table}
+                    requestItemId={item.id}
+                    planNumber={plan.plan_number}
+                    versionNumber={plan.version_number}
+                  />
+                )}
+              </div>
+            </article>
+          )
+        })}
       </div>
     </div>
   )
@@ -1212,13 +1336,30 @@ function makeInitialScheduleDrafts(factory: SupplyOrderAggregateFactory): Schedu
 
   if (existing.length > 0) return existing
 
-  const remaining = Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
   const supplierIds = Array.from(new Set(factory.items.map((item) => item.supplier_id).filter(Boolean))) as string[]
+  const defaultSupplierId = supplierIds.length === 1 ? supplierIds[0] : ''
+  const defaultDeliveryDate = factory.supply_delivery_date || factory.production_date || todayIsoDate()
+  const purchase = mergeLongStockPurchasePlans(
+    factory.items.map((item) => item.long_stock_purchase_plan).filter((plan) => plan?.cutting_status === 'plan_approved'),
+  )
+
+  if (purchase.components.length > 0) {
+    return purchase.components.map((component) => ({
+      id: `cutting-plan:${component.length_mm}:${component.is_nonstandard ? 'nonstandard' : 'standard'}`,
+      delivery_date: defaultDeliveryDate,
+      quantity: String(roundDisplay(component.length_mm * component.piece_count)),
+      supplier_id: defaultSupplierId,
+      piece_length_mm: String(roundDisplay(component.length_mm)),
+      piece_count: String(roundDisplay(component.piece_count)),
+    }))
+  }
+
+  const remaining = Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
   return [{
     id: 'initial',
-    delivery_date: factory.supply_delivery_date || factory.production_date || todayIsoDate(),
+    delivery_date: defaultDeliveryDate,
     quantity: remaining > 0 ? String(roundDisplay(remaining)) : '',
-    supplier_id: supplierIds.length === 1 ? supplierIds[0] : '',
+    supplier_id: defaultSupplierId,
     piece_length_mm: '',
     piece_count: '',
   }]
