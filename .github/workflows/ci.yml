@@ -136,6 +136,10 @@ jobs:
         run: npm run test:inventory-transfers
       - name: Long-stock cutting fact
         run: node scripts/test-long-stock-cutting-fact.mjs
+      - name: Long-stock cutting concurrency
+        run: node scripts/test-long-stock-cutting-races.mjs
+      - name: Long-stock receipt and approval serialization
+        run: node scripts/test-long-stock-cutting-plan-receipt-recalculation.mjs
       - name: Supply partial receiving
         run: node scripts/test-supply-partial-receiving.mjs
       - name: Fixtures are stable
