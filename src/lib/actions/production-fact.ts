@@ -698,13 +698,61 @@ async function runLimited<T>(
   }
 }
 
-async function applyCuttingFactSideEffects(admin: AdminClient, factId: string, userId: string) {
-  const { error } = await (admin as unknown as RpcClient).rpc('fn_apply_production_fact_cutting', {
-    p_fact_id: factId,
-    p_performed_by: userId,
-  })
+type AtomicMachineFactPayload = {
+  factory_id: string
+  fact_date: string
+  machine_id: string
+  section_id: string
+  shift: ProductionFactShift
+  comment: string | null
+}
 
-  if (error) throw new Error(error.message || 'Не удалось применить списание по факту заготовки')
+async function saveMachineFactAtomic(
+  admin: AdminClient,
+  payload: AtomicMachineFactPayload,
+  factId: string | null,
+  userId: string,
+) {
+  const { data, error } = await (admin as unknown as RpcClient).rpc(
+    'fn_save_production_machine_fact_atomic_v1',
+    {
+      p_fact_id: factId,
+      p_factory_id: payload.factory_id,
+      p_fact_date: payload.fact_date,
+      p_machine_id: payload.machine_id,
+      p_section_id: payload.section_id,
+      p_shift: payload.shift,
+      p_comment: payload.comment,
+      p_actor: userId,
+    },
+  )
+
+  if (error) throw new Error(error.message || 'Не удалось атомарно сохранить факт заготовки')
+  if (typeof data !== 'string') throw new Error('Сервер не вернул идентификатор сохранённого факта')
+  return data
+}
+
+async function saveMachineFactsAtomic(
+  admin: AdminClient,
+  payload: AtomicMachineFactPayload[],
+  userId: string,
+) {
+  const { data, error } = await (admin as unknown as RpcClient).rpc(
+    'fn_save_production_machine_facts_atomic_v1',
+    {
+      p_facts: payload,
+      p_actor: userId,
+    },
+  )
+
+  if (error) throw new Error(error.message || 'Не удалось атомарно сохранить факты заготовки')
+  const result = data as { inserted?: unknown; skipped?: unknown } | null
+  const inserted = Number(result?.inserted)
+  const skipped = Number(result?.skipped)
+  if (!Number.isInteger(inserted) || inserted < 0 || !Number.isInteger(skipped) || skipped < 0) {
+    throw new Error('Сервер вернул некорректный результат сохранения фактов')
+  }
+  return { inserted, skipped }
 }
 
 async function getCuttingRollbackAssignee(admin: AdminClient, factoryId: string | null, fallbackUserId: string) {
@@ -1214,16 +1262,7 @@ export async function saveProductionMachineFact(input: {
     }
 
     if (existing) {
-      const { data, error } = await looseDb(admin)
-        .from('production_machine_facts')
-        .update(payload)
-        .eq('id', existing.id)
-        .select('id')
-        .single()
-
-      if (error) throw error
-      const updated = data as { id: string }
-      if (nextIsCutting) await applyCuttingFactSideEffects(admin, updated.id, userId)
+      const updatedId = await saveMachineFactAtomic(admin, payload, existing.id, userId)
       if (existingWasCutting && (!nextIsCutting || existing.machine_id !== input.machine_id)) {
         const hasCuttingFacts = await hasRemainingCuttingFacts(admin, existing.machine_id, existing.id)
         if (!hasCuttingFacts) {
@@ -1237,20 +1276,12 @@ export async function saveProductionMachineFact(input: {
       }
       revalidateProductionCuttingFlow(input.machine_id)
       if (existing.machine_id !== input.machine_id) revalidateProductionCuttingFlow(existing.machine_id)
-      return { success: true, data: { id: updated.id }, error: null }
+      return { success: true, data: { id: updatedId }, error: null }
     }
 
-    const { data, error } = await looseDb(admin)
-      .from('production_machine_facts')
-      .insert({ ...payload, created_by: userId })
-      .select('id')
-      .single()
-
-    if (error) throw error
-    const inserted = data as { id: string }
-    if (nextIsCutting) await applyCuttingFactSideEffects(admin, inserted.id, userId)
+    const insertedId = await saveMachineFactAtomic(admin, payload, null, userId)
     revalidateProductionCuttingFlow(input.machine_id)
-    return { success: true, data: { id: inserted.id }, error: null }
+    return { success: true, data: { id: insertedId }, error: null }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }
   }
@@ -1343,19 +1374,16 @@ export async function copyProductionMachineFactsFromPreviousDay(input: {
       .map((fact) => fact.machine_id)
     await assertInventoryTransfersReceived(admin, cuttingMachineIds)
 
-    const { data: insertedRaw, error } = await looseDb(admin)
-      .from('production_machine_facts')
-      .insert(payload)
-      .select('id, machine_id, section_id')
-    if (error) throw error
-    const insertedFacts = (insertedRaw || []) as Array<{ id: string; machine_id: string; section_id: string }>
-    for (const fact of insertedFacts) {
-      const section = sectionById.get(fact.section_id) || null
-      const parent = section?.parent_id ? sectionById.get(section.parent_id) || null : null
-      if (isCuttingFactSection(section, parent)) await applyCuttingFactSideEffects(admin, fact.id, userId)
-    }
+    const atomicResult = await saveMachineFactsAtomic(admin, payload, userId)
     revalidateProductionCuttingFlow()
-    return { success: true, data: { inserted: payload.length, skipped: sourceFacts.length - payload.length }, error: null }
+    return {
+      success: true,
+      data: {
+        inserted: atomicResult.inserted,
+        skipped: sourceFacts.length - atomicResult.inserted,
+      },
+      error: null,
+    }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }
   }
@@ -1502,7 +1530,7 @@ export async function saveUnifiedProductionFact(input: {
     const existingFacts = (existingRaw || []) as Array<{ id: string; machine_id: string }>
     const existingMachineIds = new Set(existingFacts.map((fact) => fact.machine_id))
     const missingMachineIds = machineIds.filter((machineId) => !existingMachineIds.has(machineId))
-    let insertedFacts: Array<{ id: string; machine_id: string }> = []
+    let inserted = 0
 
     if (missingMachineIds.length > 0) {
       const machineFactPayload = missingMachineIds.map((machineId) => ({
@@ -1516,21 +1544,28 @@ export async function saveUnifiedProductionFact(input: {
         updated_by: userId,
       }))
 
-      const { data: insertedRaw, error: insertError } = await looseDb(admin)
-        .from('production_machine_facts')
-        .insert(machineFactPayload)
-        .select('id, machine_id')
+      if (!isCuttingSection) {
+        const { data: insertedRaw, error: insertError } = await looseDb(admin)
+          .from('production_machine_facts')
+          .insert(machineFactPayload)
+          .select('id, machine_id')
 
-      if (insertError) throw insertError
-      insertedFacts = (insertedRaw || []) as Array<{ id: string; machine_id: string }>
+        if (insertError) throw insertError
+        inserted = ((insertedRaw || []) as Array<{ id: string; machine_id: string }>).length
+      }
     }
 
-    const inserted = insertedFacts.length
     if (isCuttingSection) {
-      const cuttingFactIds = [...existingFacts, ...insertedFacts].map((fact) => fact.id)
-      await runLimited(cuttingFactIds, 6, async (factId) => {
-        await applyCuttingFactSideEffects(admin, factId, userId)
-      })
+      const machineFactPayload = machineIds.map((machineId) => ({
+        factory_id: input.factory_id,
+        fact_date: factDate,
+        machine_id: machineId,
+        section_id: input.section_id,
+        shift: input.shift,
+        comment: normalizeNullableText(input.comment),
+      }))
+      const atomicResult = await saveMachineFactsAtomic(admin, machineFactPayload, userId)
+      inserted = atomicResult.inserted
 
       revalidateProductionCuttingFlow()
       for (const machineId of machineIds) {
