@@ -46,6 +46,8 @@ jobs:
         run: npm run test:supply-long-stock-plan-return
       - name: Supply request lifecycle
         run: npm run test:supply-request-flow
+      - name: Supabase migration ordering and duplicate versions
+        run: npm run test:supabase-migration-order
       - name: Technologist request editability
         run: npm run test:technologist-request-editability
       - name: Technologist completion plan facts
@@ -138,6 +140,10 @@ jobs:
         run: node scripts/test-long-stock-cutting-fact.mjs
       - name: Supply partial receiving
         run: node scripts/test-supply-partial-receiving.mjs
+      - name: Supply receiving plan/fact database lifecycle
+        run: npm run test:supply-receiving-plan-fact
+      - name: Long-stock receipt recalculation database lifecycle
+        run: npm run test:long-stock-cutting-plan-receipt-recalculation
       - name: Fixtures are stable
         run: git diff --exit-code -- nesting-service/src/lib/__tests__/fixtures/
       - name: Phase 0

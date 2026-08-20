@@ -3,6 +3,10 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import {
+  listSupabaseMigrationFiles,
+  orderSupabaseMigrationFiles,
+} from './supabase-migration-order.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const migrationsDir = path.join(root, 'supabase', 'migrations')
@@ -40,7 +44,7 @@ postgresEnv.PGSSLMODE = databaseUrl.searchParams.get('sslmode') || 'disable'
 if (databaseUrl.username) postgresEnv.PGUSER = decodeURIComponent(databaseUrl.username)
 if (databaseUrl.password) postgresEnv.PGPASSWORD = decodeURIComponent(databaseUrl.password)
 
-const migrations = migrationOrderFromGitHistory()
+const migrations = orderSupabaseMigrationFiles(listSupabaseMigrationFiles(migrationsDir))
 const prismaMigrations = readdirSync(prismaMigrationsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name)
@@ -95,55 +99,6 @@ run(process.execPath, [path.join(root, 'scripts', 'test-inventory-transfers.mjs'
   ...postgresEnv,
   INVENTORY_TRANSFER_TEST_DATABASE_URL: databaseUrl.toString(),
 })
-
-function compareMigrationNames(left, right) {
-  if (left === '001_initial_schema.sql') return -1
-  if (right === '001_initial_schema.sql') return 1
-
-  const leftVersion = BigInt(left.split('_', 1)[0])
-  const rightVersion = BigInt(right.split('_', 1)[0])
-  if (leftVersion < rightVersion) return -1
-  if (leftVersion > rightVersion) return 1
-  return left.localeCompare(right, 'en')
-}
-
-function migrationOrderFromGitHistory() {
-  const filesOnDisk = new Set(
-    readdirSync(migrationsDir).filter((file) => file.endsWith('.sql')),
-  )
-  const history = spawnSync('git', [
-    'log', '--reverse', '--diff-filter=A', '--format=format:__COMMIT__', '--name-only',
-    '--', 'supabase/migrations',
-  ], { cwd: root, encoding: 'utf8' })
-  assert.equal(history.status, 0, 'Unable to read migration order from git history')
-
-  const ordered = []
-  const seen = new Set()
-  let commitFiles = []
-  const flushCommit = () => {
-    for (const file of commitFiles.sort(compareMigrationNames)) {
-      if (filesOnDisk.has(file) && !seen.has(file)) {
-        ordered.push(file)
-        seen.add(file)
-      }
-    }
-    commitFiles = []
-  }
-
-  for (const line of history.stdout.split('\n')) {
-    if (line === '__COMMIT__') {
-      flushCommit()
-    } else if (line.startsWith('supabase/migrations/') && line.endsWith('.sql')) {
-      commitFiles.push(path.basename(line))
-    }
-  }
-  flushCommit()
-
-  for (const file of [...filesOnDisk].filter((item) => !seen.has(item)).sort(compareMigrationNames)) {
-    ordered.push(file)
-  }
-  return ordered
-}
 
 function normalizeForLocalPostgres(source) {
   return source
