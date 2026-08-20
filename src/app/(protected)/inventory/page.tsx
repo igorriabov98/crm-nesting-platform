@@ -1,5 +1,5 @@
 import { InventoryPage } from '@/components/features/inventory/InventoryPage'
-import { getInventory, getInventoryFactories } from '@/lib/actions/inventory'
+import { canManageInventory, getInventory, getInventoryFactories } from '@/lib/actions/inventory'
 import { getSteelTypes } from '@/lib/actions/steel-types'
 import { getSuppliers } from '@/lib/actions/suppliers'
 import { INVENTORY_LIST_LIMIT } from '@/lib/constants/performance-limits'
@@ -19,10 +19,11 @@ export default async function InventoryRoute({
   const activeFactory = factories.find((factory) => factory.id === resolvedSearchParams?.factory) || factories[0] || null
   const activeFactoryId = activeFactory?.id || null
 
-  const [{ data, error }, suppliersResult, steelTypes] = await Promise.all([
+  const [{ data, error }, suppliersResult, steelTypes, canManage] = await Promise.all([
     activeFactoryId ? getInventory({ factory_id: activeFactoryId }) : Promise.resolve({ data: [], error: factoriesResult.error }),
     getSuppliers({ active_only: true }),
     getSteelTypes(),
+    canManageInventory(),
   ])
   const pageError = factoriesResult.error || error
 
@@ -42,6 +43,7 @@ export default async function InventoryRoute({
           suppliers={suppliersResult.data || []}
           steelTypes={steelTypes}
           resultLimit={INVENTORY_LIST_LIMIT}
+          canManageInventory={canManage}
           initialStockMode={resolvedSearchParams?.mode === 'business_scrap' || resolvedSearchParams?.mode === 'future_business_scrap' ? resolvedSearchParams.mode : 'main'}
         />
       )}

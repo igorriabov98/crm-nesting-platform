@@ -58,7 +58,7 @@ export async function getMetalScrapPage(factoryId?: string, status = 'available'
     const client = db(); const factories = await client.from('factories').select('id,name').order('name'); const selectedFactory = factoryId || factories.data?.[0]?.id
     const safeStatus = z.enum(['future','available','review_required']).catch('available').parse(status)
     const [lots, sales] = await Promise.all([
-      client.from('metal_scrap_lots').select('id,request_id,machine_id,factory_id,material_name,material_grade,expected_weight_kg,available_weight_kg,blocked_weight_kg,sold_weight_kg,status,promoted_stage_end,machines(name)', { count: 'exact' }).eq('factory_id', selectedFactory).eq('status', safeStatus).order('created_at', { ascending: false }).range(Math.max(0, page) * 25, Math.max(0, page) * 25 + 24),
+      client.from('metal_scrap_lots').select('id,source_type,source_inventory_id,request_id,machine_id,factory_id,material_name,material_grade,expected_weight_kg,available_weight_kg,blocked_weight_kg,sold_weight_kg,status,promoted_stage_end,machines(name)', { count: 'exact' }).eq('factory_id', selectedFactory).eq('status', safeStatus).order('created_at', { ascending: false }).range(Math.max(0, page) * 25, Math.max(0, page) * 25 + 24),
       client.from('metal_scrap_sales').select('id,factory_id,sale_date,total_weight_kg,amount_uah,average_price_per_kg,buyer,document_number,comment,status,cancellation_reason,created_at').eq('factory_id', selectedFactory).order('sale_date', { ascending: false }).limit(25),
     ])
     const aggregates = await client.from('metal_scrap_lots').select('status,expected_weight_kg,available_weight_kg,blocked_weight_kg,sold_weight_kg').eq('factory_id', selectedFactory)

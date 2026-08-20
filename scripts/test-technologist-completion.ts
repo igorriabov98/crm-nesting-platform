@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { calculatePlasmaTime, calculateWaste, nextWeekday } from '../src/lib/request-completion-calculations'
 import { resolveCompletionWorkspaceNavigation } from '../src/lib/request-completion-navigation'
 import { ROUTES } from '../src/lib/constants/routes'
+import { classifyBusinessScrapLength } from '../src/lib/inventory/business-scrap-size'
 
 assert.deepEqual(calculateWaste(1000, 15.5), { scrapKg: 155, usefulKg: 845 })
 assert.deepEqual(calculateWaste(123.456, 15.5), { scrapKg: 19.136, usefulKg: 104.32 })
@@ -49,5 +50,46 @@ assert.ok(completionWizard.includes("item.accountingMode === 'manual_percent'"))
 assert.ok(completionWizard.includes("item.accountingMode === 'plan_fact'"))
 assert.ok(completionWizard.includes('wasteItems: manualWasteItems.map'))
 assert.ok(!completionWizard.includes('wasteItems: workspace.wasteItems.map'))
+
+assert.equal(classifyBusinessScrapLength(499, 500), 'small')
+assert.equal(classifyBusinessScrapLength(499, 100), 'useful')
+
+const businessScrapConversionMigration = readFileSync('supabase/migrations/20260820160000_inventory_business_scrap_to_metal.sql', 'utf8')
+for (const required of [
+  "source_type in ('request_completion', 'inventory_conversion')",
+  'metal_scrap_lots_source_links_check',
+  'source_inventory_id uuid references public.inventory',
+  'fn_convert_business_scrap_to_metal_v1',
+  'for update',
+  'Перевод делового остатка со склада',
+  "'write_off'",
+  "replace(v_definition, v_old_condition, 'if v_remainder > 0 then')",
+]) assert.ok(businessScrapConversionMigration.toLowerCase().includes(required.toLowerCase()), `business-scrap conversion migration is missing ${required}`)
+assert.ok(!businessScrapConversionMigration.includes('fn_restore_business_scrap_from_metal'))
+
+const inventoryAction = readFileSync('src/lib/actions/inventory.ts', 'utf8')
+assert.ok(inventoryAction.includes("requireAccess('manage')"))
+assert.ok(inventoryAction.includes("adminDb.rpc('fn_convert_business_scrap_to_metal_v1'"))
+assert.ok(inventoryAction.includes("from('long_stock_layout_categories')"))
+
+const inventoryPage = readFileSync('src/components/features/inventory/InventoryPage.tsx', 'utf8')
+for (const required of [
+  'Перевести в металлолом',
+  'Перевести выбранные',
+  'Только полезные',
+  'Только мелочь',
+  'мелочь',
+  'Обратной операции нет',
+  'Нельзя перевести: на остатке есть бронь',
+]) assert.ok(inventoryPage.includes(required), `inventory conversion UI is missing ${required}`)
+assert.ok(!inventoryPage.includes('Вернуть из металлолома'))
+
+const metalScrapPage = readFileSync('src/components/features/inventory/MetalScrapPage.tsx', 'utf8')
+assert.ok(metalScrapPage.includes("lot.source_type==='inventory_conversion'"))
+assert.ok(metalScrapPage.includes('lot.request_id?.slice'))
+
+const longStockPositionDialog = readFileSync('src/components/features/requests/LongStockPositionDialog.tsx', 'utf8')
+assert.ok(longStockPositionDialog.includes('помечены как «мелочь»; на складской учёт это не влияет'))
+assert.ok(!longStockPositionDialog.includes('· не в дело'))
 
 console.log('Technologist completion regression passed')

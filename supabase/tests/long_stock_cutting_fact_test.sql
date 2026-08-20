@@ -846,6 +846,188 @@ begin
 end;
 $$;
 
+do $$
+declare
+  v_actor uuid;
+  v_factory uuid;
+  v_material uuid;
+  v_variant uuid := gen_random_uuid();
+  v_machine uuid := gen_random_uuid();
+  v_single uuid := gen_random_uuid();
+  v_reserved uuid := gen_random_uuid();
+  v_batch_good uuid := gen_random_uuid();
+  v_batch_reserved uuid := gen_random_uuid();
+  v_lot uuid;
+  v_result jsonb;
+  v_plan_data jsonb;
+  v_short_inventory uuid;
+  v_short_length numeric;
+  v_source_request uuid;
+  v_blocked boolean := false;
+  v_batch_blocked boolean := false;
+  v_repeat_blocked boolean := false;
+  v_constraint_blocked boolean := false;
+begin
+  select id, factory_id into v_actor, v_factory
+  from public.users
+  where email = 'long-stock-cutting-fact@example.test';
+  select id into v_material
+  from public.materials
+  where name = 'Тестовый круг факта длинномера';
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
+
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, v_factory, 'BUSINESS-SCRAP-TO-METAL-TEST', v_actor);
+  insert into public.material_variants(
+    id, material_id, category, diameter_mm, material_grade,
+    standard_length_mm, weight_per_m_kg, default_unit
+  ) values (
+    v_variant, v_material, 'circle', 46, 'S355', 6000, 2, 'мм'
+  );
+
+  insert into public.inventory(
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit,
+    total_secondary_quantity, reserved_secondary_quantity, secondary_unit,
+    calculated_weight_kg, is_business_scrap, business_scrap_state, last_updated_by
+  ) values
+    (v_single, v_factory, v_material, v_variant, 400, 400, 0, 'мм', 1, 0, 'шт', 0.8, true, 'available', v_actor),
+    (v_reserved, v_factory, v_material, v_variant, 500, 500, 100, 'мм', 1, 0, 'шт', 1.0, true, 'available', v_actor),
+    (v_batch_good, v_factory, v_material, v_variant, 600, 600, 0, 'мм', 1, 0, 'шт', 1.2, true, 'available', v_actor),
+    (v_batch_reserved, v_factory, v_material, v_variant, 700, 700, 100, 'мм', 1, 0, 'шт', 1.4, true, 'available', v_actor);
+
+  v_result := public.fn_convert_business_scrap_to_metal_v1(array[v_single], v_actor);
+  select id into v_lot
+  from public.metal_scrap_lots
+  where source_inventory_id = v_single;
+  if (v_result->>'count')::integer <> 1
+    or abs((v_result->>'total_weight_kg')::numeric - 0.8) > 0.001
+    or (select deleted_at from public.inventory where id = v_single) is null
+    or (select total_quantity from public.inventory where id = v_single) <> 0
+    or not exists (
+      select 1 from public.metal_scrap_lots lot
+      where lot.id = v_lot
+        and lot.source_type = 'inventory_conversion'
+        and lot.request_id is null
+        and lot.waste_item_id is null
+        and lot.machine_id is null
+        and lot.status = 'available'
+        and abs(lot.expected_weight_kg - 0.8) <= 0.001
+        and abs(lot.available_weight_kg - 0.8) <= 0.001
+    ) then
+    raise exception 'Перевод делового остатка не списал строку или создал неверный лот: %', v_result;
+  end if;
+  if not exists (
+    select 1 from public.metal_scrap_movements movement
+    where movement.lot_id = v_lot
+      and movement.movement_type = 'inventory_conversion'
+      and abs(movement.weight_delta_kg - 0.8) <= 0.001
+  ) or not exists (
+    select 1 from public.inventory_transactions transaction
+    where transaction.inventory_id = v_single
+      and transaction.transaction_type = 'write_off'
+      and transaction.quantity = -400
+      and transaction.secondary_quantity = -1
+  ) then
+    raise exception 'Перевод делового остатка не записал движения и аудит';
+  end if;
+
+  begin
+    perform public.fn_convert_business_scrap_to_metal_v1(array[v_reserved], v_actor);
+  exception when others then
+    if position('забронирован' in sqlerrm) = 0 then
+      raise exception 'Бронь заблокировала перевод неверной ошибкой: %', sqlerrm;
+    end if;
+    v_blocked := true;
+  end;
+  if not v_blocked
+    or (select deleted_at from public.inventory where id = v_reserved) is not null
+    or exists (select 1 from public.metal_scrap_lots where source_inventory_id = v_reserved) then
+    raise exception 'Забронированный деловой остаток был переведён';
+  end if;
+
+  begin
+    perform public.fn_convert_business_scrap_to_metal_v1(
+      array[v_batch_good, v_batch_reserved], v_actor
+    );
+  exception when others then
+    if position('забронирован' in sqlerrm) = 0 then
+      raise exception 'Пакет заблокирован неверной ошибкой: %', sqlerrm;
+    end if;
+    v_batch_blocked := true;
+  end;
+  if not v_batch_blocked
+    or (select deleted_at from public.inventory where id = v_batch_good) is not null
+    or exists (
+      select 1 from public.metal_scrap_lots
+      where source_inventory_id in (v_batch_good, v_batch_reserved)
+    ) then
+    raise exception 'Пакетный перевод оставил частичный результат';
+  end if;
+
+  begin
+    perform public.fn_convert_business_scrap_to_metal_v1(array[v_single], v_actor);
+  exception when others then
+    v_repeat_blocked := true;
+  end;
+  if not v_repeat_blocked
+    or (select count(*) from public.metal_scrap_lots where source_inventory_id = v_single) <> 1
+    or to_regprocedure('public.fn_restore_business_scrap_from_metal_v1(uuid,uuid)') is not null then
+    raise exception 'Обратная или повторная операция неожиданно доступна';
+  end if;
+
+  select id into v_source_request from public.technologist_requests order by created_at limit 1;
+  begin
+    insert into public.metal_scrap_lots(
+      source_type, source_inventory_id, request_id,
+      factory_id, created_by, material_id, material_variant_id,
+      material_name, material_grade, expected_weight_kg, available_weight_kg, status
+    ) values (
+      'inventory_conversion', v_batch_good, v_source_request,
+      v_factory, v_actor, v_material, v_variant,
+      'Неверный тестовый источник', 'S355', 1.2, 1.2, 'available'
+    );
+  exception when check_violation then
+    v_constraint_blocked := true;
+  end;
+  if not v_constraint_blocked then
+    raise exception 'Условное ограничение источника лота не сработало';
+  end if;
+
+  -- Raising the display threshold must not suppress a positive remainder.
+  update public.long_stock_layout_categories
+  set minimum_useful_length_mm = 1000
+  where key = 'circle';
+  v_plan_data := pg_temp.create_new_stock_plan(
+    v_actor, v_machine, v_material, v_variant,
+    array[6000], array[5500::numeric]
+  );
+  v_short_inventory := (v_plan_data#>>'{scrap_ids,0}')::uuid;
+  select piece_length_mm into v_short_length
+  from public.inventory
+  where id = v_short_inventory;
+  if v_short_inventory is null or v_short_length is null
+    or v_short_length <= 0 or v_short_length >= 1000 then
+    raise exception 'Остаток короче визуального порога не был создан: %', v_plan_data;
+  end if;
+
+  update public.long_stock_layout_categories
+  set minimum_useful_length_mm = 100
+  where key = 'circle';
+  if not exists (
+    select 1 from public.inventory inventory
+    where inventory.id = v_short_inventory
+      and inventory.piece_length_mm = v_short_length
+      and inventory.total_quantity = v_short_length
+      and inventory.is_business_scrap
+      and inventory.business_scrap_state = 'future'
+      and inventory.deleted_at is null
+  ) then
+    raise exception 'Изменение визуального порога изменило существующий складской остаток';
+  end if;
+end;
+$$;
+
 rollback;
 
 \echo '[long-stock-cutting-fact] all assertions passed'

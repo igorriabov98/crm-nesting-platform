@@ -5,8 +5,21 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Factory, History, PackagePlus, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { Factory, History, Loader2, PackagePlus, Recycle, SlidersHorizontal, Trash2, TriangleAlert } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import {
   ACTIVE_MATERIAL_CATEGORIES,
@@ -19,7 +32,7 @@ import {
 } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
 import { KNIFE_BEVEL_OPTIONS, knifeBevelLabel } from '@/lib/materials/knife-bevel'
-import { addReceipt, adjustInventory, deleteInventoryItem, type InventoryFactory, type InventoryWithMaterial } from '@/lib/actions/inventory'
+import { addReceipt, adjustInventory, convertBusinessScrapToMetal, deleteInventoryItem, type InventoryFactory, type InventoryWithMaterial } from '@/lib/actions/inventory'
 import { createMaterial, recordMaterialUsage, type MaterialWithSupplier } from '@/lib/actions/materials'
 import type { MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
 import type { SteelType } from '@/lib/types/database'
@@ -35,6 +48,7 @@ type Props = {
   suppliers: Supplier[]
   steelTypes: SteelType[]
   resultLimit?: number
+  canManageInventory: boolean
   initialStockMode?: 'main' | 'business_scrap' | 'future_business_scrap'
 }
 
@@ -69,13 +83,16 @@ function formatInventoryDateTime(value: string) {
   }).format(new Date(value))
 }
 
-export function InventoryPage({ items, factories, activeFactoryId, suppliers, steelTypes, resultLimit, initialStockMode = 'main' }: Props) {
+export function InventoryPage({ items, factories, activeFactoryId, suppliers, steelTypes, resultLimit, canManageInventory, initialStockMode = 'main' }: Props) {
   const router = useRouter()
   const rows = items
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string>('all')
   const [onlyAvailable, setOnlyAvailable] = useState(false)
   const [stockMode, setStockMode] = useState<'main' | 'business_scrap' | 'future_business_scrap'>(initialStockMode)
+  const [businessScrapSizeFilter, setBusinessScrapSizeFilter] = useState<'all' | 'useful' | 'small'>('all')
+  const [selectedBusinessScrapIds, setSelectedBusinessScrapIds] = useState<string[]>([])
+  const [conversionDialogOpen, setConversionDialogOpen] = useState(false)
   const [receiptCategory, setReceiptCategory] = useState<MaterialCategory>('sheet_metal')
   const [receiptMaterial, setReceiptMaterial] = useState<{ id: string; name: string; category: MaterialCategory } | null>(null)
   const [receiptVariant, setReceiptVariant] = useState<MaterialVariant | null>(null)
@@ -114,12 +131,20 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
     if (stockMode === 'main' && row.is_business_scrap) return false
     if (stockMode === 'business_scrap' && (!row.is_business_scrap || state === 'future')) return false
     if (stockMode === 'future_business_scrap' && (!row.is_business_scrap || state !== 'future')) return false
+    if (stockMode === 'business_scrap' && businessScrapSizeFilter !== 'all' && row.business_scrap_size_class !== businessScrapSizeFilter) return false
     if (search && !inventoryMatchesSearch(row, search)) return false
     if (category !== 'all' && row.material?.category !== category) return false
     if (onlyAvailable && row.available_quantity <= 0) return false
     return true
-  }), [category, onlyAvailable, rows, search, stockMode])
+  }), [businessScrapSizeFilter, category, onlyAvailable, rows, search, stockMode])
   const showPieceLengthColumn = filteredHasPieceLength(filtered)
+  const selectedBusinessScrapRows = useMemo(() => {
+    const selectedIds = new Set(selectedBusinessScrapIds)
+    return rows.filter((row) => selectedIds.has(row.id))
+  }, [rows, selectedBusinessScrapIds])
+  const convertibleFilteredRows = useMemo(() => filtered.filter(isBusinessScrapConvertible), [filtered])
+  const allConvertibleFilteredSelected = convertibleFilteredRows.length > 0
+    && convertibleFilteredRows.every((row) => selectedBusinessScrapIds.includes(row.id))
 
   const resetReceiptForm = (keepCategory = true) => {
     setReceiptMaterial(null)
@@ -360,6 +385,39 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
     })
   }
 
+  const toggleBusinessScrapSelection = (rowId: string, checked: boolean) => {
+    setSelectedBusinessScrapIds((current) => checked
+      ? Array.from(new Set([...current, rowId]))
+      : current.filter((id) => id !== rowId))
+  }
+
+  const toggleAllConvertibleFiltered = (checked: boolean) => {
+    const filteredIds = new Set(convertibleFilteredRows.map((row) => row.id))
+    setSelectedBusinessScrapIds((current) => checked
+      ? Array.from(new Set([...current, ...filteredIds]))
+      : current.filter((id) => !filteredIds.has(id)))
+  }
+
+  const openSingleConversion = (row: InventoryWithMaterial) => {
+    setSelectedBusinessScrapIds([row.id])
+    setConversionDialogOpen(true)
+  }
+
+  const submitBusinessScrapConversion = () => {
+    if (selectedBusinessScrapIds.length === 0) return
+    startTransition(async () => {
+      const result = await convertBusinessScrapToMetal(selectedBusinessScrapIds)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось перевести деловой остаток в металлолом')
+        return
+      }
+      toast.success(`Переведено: ${result.data?.count || selectedBusinessScrapIds.length} · ${formatWeight(result.data?.total_weight_kg || 0)}`)
+      setConversionDialogOpen(false)
+      setSelectedBusinessScrapIds([])
+      router.refresh()
+    })
+  }
+
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-[#E8ECF0] bg-white p-4">
@@ -421,11 +479,48 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
               {ACTIVE_MATERIAL_CATEGORIES.map((item) => <option key={item} value={item}>{MATERIAL_CATEGORY_LABELS[item]}</option>)}
             </select>
           </div>
+          {stockMode === 'business_scrap' && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[#374151]" htmlFor="business-scrap-size-filter">Полезность</label>
+              <select
+                id="business-scrap-size-filter"
+                value={businessScrapSizeFilter}
+                onChange={(event) => setBusinessScrapSizeFilter(event.target.value as 'all' | 'useful' | 'small')}
+                className="h-10 rounded-md border border-[#E8ECF0] bg-white px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/40"
+              >
+                <option value="all">Все остатки</option>
+                <option value="useful">Только полезные</option>
+                <option value="small">Только мелочь</option>
+              </select>
+            </div>
+          )}
           <label className="flex h-10 items-center gap-2 text-sm text-[#374151]">
             <input type="checkbox" checked={onlyAvailable} onChange={(event) => setOnlyAvailable(event.target.checked)} />
             Только с остатком
           </label>
         </div>
+        {stockMode === 'business_scrap' && canManageInventory && (
+          <div className="mt-4 flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-amber-950">
+              <Checkbox
+                checked={allConvertibleFilteredSelected}
+                disabled={convertibleFilteredRows.length === 0 || isPending}
+                onCheckedChange={(checked) => toggleAllConvertibleFiltered(checked === true)}
+                aria-label="Выбрать все доступные деловые остатки в текущем фильтре"
+              />
+              Выбрать доступные ({convertibleFilteredRows.length})
+            </label>
+            <Button
+              type="button"
+              className="min-h-11 bg-amber-700 hover:bg-amber-800 sm:min-w-64"
+              disabled={selectedBusinessScrapIds.length === 0 || isPending}
+              onClick={() => setConversionDialogOpen(true)}
+            >
+              <Recycle className="mr-2 h-4 w-4" />
+              Перевести выбранные ({selectedBusinessScrapIds.length})
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl border border-[#E8ECF0] bg-white p-4">
@@ -617,9 +712,22 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                     : row.available_quantity <= 0
                       ? 'bg-red-50/60'
                       : 'bg-white'}
-                >
+                  >
                   <td className="px-4 py-3 font-medium text-[#1B3A6B]">
-                    <div>{row.material?.name || 'Материал'}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{row.material?.name || 'Материал'}</span>
+                      {row.is_business_scrap && row.business_scrap_size_class === 'small' && (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-300 bg-amber-50 text-amber-800"
+                          title={row.minimum_useful_length_mm === null || row.minimum_useful_length_mm === undefined
+                            ? undefined
+                            : `Короче минимальной полезной длины ${formatPieceLength(row.minimum_useful_length_mm)}`}
+                        >
+                          мелочь
+                        </Badge>
+                      )}
+                    </div>
                     {row.is_business_scrap && (
                       <div className="mt-1 text-xs font-normal text-amber-700">
                         Деловой остаток после раскроя{row.source_piece_length_mm ? ` из ${formatPieceLength(row.source_piece_length_mm)}` : ''}{row.source_machine_name ? ` для машины ${row.source_machine_name}` : ''}
@@ -696,6 +804,29 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                   <td className="px-4 py-3 text-[#6B7280]">{formatInventoryDateTime(row.updated_at)}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-2">
+                      {stockMode === 'business_scrap' && row.is_business_scrap && canManageInventory && (
+                        <>
+                          <Checkbox
+                            checked={selectedBusinessScrapIds.includes(row.id)}
+                            disabled={!isBusinessScrapConvertible(row) || isPending}
+                            onCheckedChange={(checked) => toggleBusinessScrapSelection(row.id, checked === true)}
+                            aria-label={`Выбрать деловой остаток ${row.material?.name || row.id} для перевода в металлолом`}
+                            title={businessScrapConversionBlockReason(row) || 'Выбрать для пакетного перевода'}
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="border-amber-300 text-amber-800 hover:bg-amber-50 hover:text-amber-900"
+                            onClick={() => openSingleConversion(row)}
+                            disabled={!isBusinessScrapConvertible(row) || isPending}
+                            title={businessScrapConversionBlockReason(row) || 'Операция необратима'}
+                          >
+                            <Recycle className="mr-1 h-4 w-4" />
+                            Перевести в металлолом
+                          </Button>
+                        </>
+                      )}
                       <Button type="button" size="sm" variant="outline" onClick={() => openAdjust(row)}>
                         <SlidersHorizontal className="mr-1 h-4 w-4" />
                         Корректировка
@@ -727,6 +858,48 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
         </div>
       </div>
 
+      <AlertDialog open={conversionDialogOpen} onOpenChange={(open) => {
+        if (!isPending) setConversionDialogOpen(open)
+      }}>
+        <AlertDialogContent className="max-h-[85vh] sm:max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogMedia className="bg-amber-100 text-amber-800">
+              <TriangleAlert />
+            </AlertDialogMedia>
+            <AlertDialogTitle>Перевести деловые остатки в металлолом?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Складские строки будут списаны полностью, а рассчитанный вес станет доступным металлоломом. Обратной операции нет.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="max-h-64 space-y-2 overflow-y-auto rounded-lg border bg-slate-50 p-3" aria-live="polite">
+            {selectedBusinessScrapRows.map((row) => (
+              <div key={row.id} className="flex items-start justify-between gap-3 text-sm">
+                <div>
+                  <p className="font-medium text-slate-900">{row.material?.name || 'Материал'}</p>
+                  <p className="text-slate-600">{formatPieceLength(row.piece_length_mm)} · {row.variant?.material_grade || 'вариант материала'}</p>
+                </div>
+                <span className="shrink-0 font-mono font-semibold text-slate-900">{formatWeight(businessScrapCalculatedWeight(row))}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-sm font-semibold text-slate-900">
+            Итого: {selectedBusinessScrapRows.length} · {formatWeight(selectedBusinessScrapRows.reduce((sum, row) => sum + businessScrapCalculatedWeight(row), 0))}
+          </p>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              type="button"
+              className="bg-amber-700 hover:bg-amber-800"
+              disabled={isPending || selectedBusinessScrapRows.length === 0}
+              onClick={submitBusinessScrapConversion}
+            >
+              {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Recycle className="mr-2 h-4 w-4" />}
+              {isPending ? 'Переводим…' : 'Подтвердить перевод'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {adjustRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
@@ -754,6 +927,38 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
       )}
     </div>
   )
+}
+
+function businessScrapHasReservation(row: InventoryWithMaterial) {
+  return Number(row.reserved_quantity || 0) > 0
+    || Number(row.reserved_secondary_quantity || 0) > 0
+    || row.active_cut_reservations.length > 0
+    || row.active_whole_bar_reservations.length > 0
+}
+
+function businessScrapConversionBlockReason(row: InventoryWithMaterial) {
+  if (!row.is_business_scrap) return 'Строка не является деловым остатком'
+  if ((row.business_scrap_state || 'available') !== 'available') return 'Остаток ещё не доступен'
+  if (businessScrapHasReservation(row)) return 'Нельзя перевести: на остатке есть бронь'
+  if (Number(row.total_quantity || 0) <= 0 || Number(row.available_quantity || 0) <= 0) return 'Остаток уже израсходован'
+  if (!row.piece_length_mm || Number(row.piece_length_mm) <= 0) return 'Не указана фактическая длина'
+  if (!row.variant || !row.material_variant_id) return 'Не указан точный вариант материала'
+  if (!row.variant.weight_per_m_kg || Number(row.variant.weight_per_m_kg) <= 0) return 'Не настроен вес погонного метра'
+  const pieceCount = Number(row.total_secondary_quantity ?? 1)
+  if (!Number.isInteger(pieceCount) || pieceCount <= 0) return 'Некорректное количество кусков'
+  if (Math.abs(Number(row.total_quantity) - Number(row.piece_length_mm) * pieceCount) > 0.001) {
+    return 'Длина не согласована с количеством кусков'
+  }
+  return null
+}
+
+function isBusinessScrapConvertible(row: InventoryWithMaterial) {
+  return businessScrapConversionBlockReason(row) === null
+}
+
+function businessScrapCalculatedWeight(row: InventoryWithMaterial) {
+  if (!isBusinessScrapConvertible(row)) return 0
+  return Number(row.piece_length_mm) * Number(row.total_secondary_quantity ?? 1) * Number(row.variant?.weight_per_m_kg) / 1000
 }
 
 function NewMaterialForm({
