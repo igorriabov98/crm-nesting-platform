@@ -59,7 +59,7 @@ declare
   v_old_condition constant text := 'if v_remainder > 0 and v_remainder >= v_minimum_useful_length then';
 begin
   v_definition := pg_get_functiondef(
-    'public.fn_approve_long_stock_cutting_plan_version_v1(uuid,uuid)'::regprocedure
+    'public.fn_approve_long_stock_cutting_plan_before_recalculation(uuid,uuid)'::regprocedure
   );
   if position(v_old_condition in v_definition) = 0 then
     raise exception 'Не найдено условие порога делового остатка в функции утверждения карты';
