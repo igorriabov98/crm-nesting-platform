@@ -70,6 +70,10 @@ export function MaterialReceivingAllocationDialog({
     exceedsReceipt,
     canConfirm,
   } = calculation
+  const hasLengthMismatch = isBar
+    && preview.planned_piece_length_mm !== null
+    && preview.piece_length_mm !== null
+    && preview.planned_piece_length_mm !== preview.piece_length_mm
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && !disabled && onClose()}>
@@ -90,10 +94,26 @@ export function MaterialReceivingAllocationDialog({
           <DialogDescription>
             {itemName}. Данные потребности взяты из заявок технологов. Предложение можно изменить перед приёмкой.
           </DialogDescription>
+          {hasLengthMismatch && (
+            <div role="alert" className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-950">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <span>
+                Длина отличается: заказано{' '}
+                <strong className="tabular-nums">{formatAmount(preview.planned_piece_length_mm!)} мм</strong>, принято{' '}
+                <strong className="tabular-nums">{formatAmount(preview.piece_length_mm!)} мм</strong>.
+              </span>
+            </div>
+          )}
         </DialogHeader>
 
         <div className="grid grid-cols-2 gap-2 border-b bg-muted/25 p-3 sm:grid-cols-5 sm:px-6">
           <Summary label="План поставки" value={`${formatAmount(preview.planned_quantity)} ${preview.unit}`} />
+          {isBar && preview.planned_piece_length_mm !== null && preview.planned_piece_count !== null && (
+            <Summary
+              label="Заказано хлыстов"
+              value={`${formatAmount(preview.planned_piece_count)} шт × ${formatAmount(preview.planned_piece_length_mm)} мм`}
+            />
+          )}
           <Summary
             label="Фактически приехало"
             value={isBar

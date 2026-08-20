@@ -1183,7 +1183,7 @@ function makeInitialScheduleDrafts(factory: SupplyOrderAggregateFactory): Schedu
   for (const item of factory.items) {
     for (const schedule of item.delivery_schedules) {
       if (schedule.status !== 'planned') continue
-      const key = `${schedule.delivery_date}:${schedule.supplier_id || 'none'}:${schedule.received_piece_length_mm || 'bulk'}`
+      const key = `${schedule.delivery_date}:${schedule.supplier_id || 'none'}:${schedule.planned_piece_length_mm || 'bulk'}`
       const current = plannedGroups.get(key) || {
         key,
         delivery_date: schedule.delivery_date,
@@ -1191,8 +1191,8 @@ function makeInitialScheduleDrafts(factory: SupplyOrderAggregateFactory): Schedu
         supplier_name: schedule.supplier_name,
         quantity: 0,
         received_quantity: 0,
-        piece_length_mm: schedule.received_piece_length_mm,
-        piece_count: schedule.received_piece_count,
+        piece_length_mm: schedule.planned_piece_length_mm,
+        piece_count: schedule.planned_piece_count,
       }
       current.quantity += Number(schedule.quantity || 0)
       plannedGroups.set(key, current)
