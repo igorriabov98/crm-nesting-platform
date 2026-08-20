@@ -10,6 +10,7 @@ import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import { LongStockPositionDialog } from './LongStockPositionDialog'
+import { LongStockCuttingPlanStatusControl } from './LongStockCuttingPlanStatusControl'
 import { deleteKnife, updateKnife, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { KNIFE_BEVEL_OPTIONS, parseKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
@@ -156,7 +157,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
               const canEditCharacteristics = canEditMaterialCharacteristics(row, canEdit)
               const displayWeight = calculateKnifeWeight(row, steelTypes) ?? row.calculated_weight_kg
               return (
-              <tr key={row.id} className="border-b last:border-b-0">
+              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch category="knives" value={materialNames[row.id] ?? materialDisplayName(row)} initialValue={materialDisplayName(row)} selectedMaterialId={row.material_id} disabled={!canEdit} compact onSelect={(material, variant, source) => selectMaterial(row, material, variant, source)} />
                 </td>
@@ -197,7 +198,10 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
                 <td className="px-3 py-2"><InlineEditCell value={row.height_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { height_mm: toNumber(value) })} /></td>
                 <td className="px-3 py-2"><InlineEditCell value={neededLengthMm(row)} type="number" step="1" disabled={!canEdit} onSave={(value) => handleUpdate(row.id, { remainder_meters: mmToMeters(value) })} /></td>
                 <td className="px-3 py-2 text-slate-700">{formatWeight(displayWeight)}</td>
-                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_knives" item={row} /></td>
+                <td className="px-3 py-2">
+                  <RequestItemOrderStatus status={row.order_status} itemTable="request_knives" item={row} />
+                  <LongStockCuttingPlanStatusControl table="request_knives" itemId={row.id} />
+                </td>
                 <td className="px-3 py-2 text-right">
                   {canEdit && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>

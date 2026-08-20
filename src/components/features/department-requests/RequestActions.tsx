@@ -48,7 +48,7 @@ export function RequestActions({
   requestId: string
   status: DepartmentRequestStatus
   mode: 'mine' | 'inbox'
-  requestKind: 'manual' | 'machine_layout'
+  requestKind: 'manual' | 'machine_layout' | 'long_stock_recalculation'
   machineId: string | null
   canClaimMachineLayout: boolean
 }) {
@@ -131,6 +131,8 @@ export function RequestActions({
       }
     })
   }
+
+  if (requestKind === 'long_stock_recalculation') return null
 
   if (mode === 'mine') {
     if (!['new', 'in_progress'].includes(status)) return null

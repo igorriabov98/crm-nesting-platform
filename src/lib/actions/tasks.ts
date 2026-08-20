@@ -1079,6 +1079,9 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
     if (taskRow.task_type === 'inventory_transfer' && (status === 'completed' || status === 'cancelled')) {
       throw new Error('Задача перемещения материалов закрывается автоматически после полной приёмки или отмены перевозки')
     }
+    if (taskRow.task_type === 'long_stock_cutting_recalculation' && (status === 'completed' || status === 'cancelled')) {
+      throw new Error('Задача пересчёта закрывается автоматически после утверждения новой версии карты')
+    }
     if (taskRow.task_type === 'department_request') {
       throw new Error('Задача рабочего запроса меняется автоматически на странице запроса')
     }

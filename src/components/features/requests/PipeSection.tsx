@@ -12,6 +12,7 @@ import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import { LongStockPositionDialog } from './LongStockPositionDialog'
+import { LongStockCuttingPlanStatusControl } from './LongStockCuttingPlanStatusControl'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import type { PipeInput } from '@/lib/types/request-schemas'
 import type { MaterialVariant, RequestPipe } from '@/lib/types'
@@ -214,7 +215,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               const showsDiameter = hasMaterial && row.pipe_type === 'wire'
               const displayWeight = calculatePipeWeight(row, steelTypes) ?? row.calculated_weight_kg
               return (
-                <tr key={row.id} className="border-b last:border-b-0">
+                <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                   <td className="px-3 py-2">
                     <MaterialSearch
                       category="pipe"
@@ -262,7 +263,12 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
                   <td className="px-3 py-2">{isRegularPipe ? <InlineEditCell value={row.remainder_length_mm} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_length_mm: Number(value || 0) })} /> : <span className="text-gray-400">—</span>}</td>
                   <td className="px-3 py-2">{isWire ? <InlineEditCell value={row.remainder_kg} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_kg: Number(value || 0) })} /> : <span className="text-gray-400">—</span>}</td>
                   <td className="px-3 py-2 text-slate-700">{formatWeight(displayWeight)}</td>
-                  <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_pipe" item={row} /></td>
+                  <td className="px-3 py-2">
+                    <RequestItemOrderStatus status={row.order_status} itemTable="request_pipe" item={row} />
+                    {row.pipe_type !== 'wire' && (
+                      <LongStockCuttingPlanStatusControl table="request_pipe" itemId={row.id} />
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right">
                     {isEditable && (
                       <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>

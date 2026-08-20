@@ -9,6 +9,7 @@ import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import { LongStockPositionDialog } from './LongStockPositionDialog'
+import { LongStockCuttingPlanStatusControl } from './LongStockCuttingPlanStatusControl'
 import { deleteCircle, updateCircle, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import type { CircleInput } from '@/lib/types/request-schemas'
@@ -106,7 +107,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
             {rows.map((row) => {
               const canEditCharacteristics = canEditMaterialCharacteristics(row, isEditable)
               return (
-              <tr key={row.id} className="border-b last:border-b-0">
+              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch
                     category="circle"
@@ -143,7 +144,10 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
                 </td>
                 <td className="px-3 py-2"><InlineEditCell value={row.remainder_mm} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_mm: Number(value || 0) })} /></td>
                 <td className="px-3 py-2 text-slate-700">{formatWeight(row.calculated_weight_kg)}</td>
-                <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_circle" item={row} /></td>
+                <td className="px-3 py-2">
+                  <RequestItemOrderStatus status={row.order_status} itemTable="request_circle" item={row} />
+                  <LongStockCuttingPlanStatusControl table="request_circle" itemId={row.id} />
+                </td>
                 <td className="px-3 py-2 text-right">
                   {isEditable && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>

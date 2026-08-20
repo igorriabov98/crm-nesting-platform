@@ -2973,7 +2973,7 @@ export type Database = {
       department_requests: {
         Row: {
           id: string
-          request_kind: 'manual' | 'machine_layout'
+          request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation'
           target_department: string
           title: string
           description: string
@@ -2984,6 +2984,12 @@ export type Database = {
           completed_by: string | null
           factory_id: string | null
           machine_id: string | null
+          request_item_table: string | null
+          request_item_id: string | null
+          technologist_request_id: string | null
+          long_stock_plan_id: string | null
+          long_stock_returned_version_id: string | null
+          request_item_label: string | null
           due_date: string | null
           response: string | null
           completed_at: string | null
@@ -2994,7 +3000,7 @@ export type Database = {
         }
         Insert: {
           id?: string
-          request_kind?: 'manual' | 'machine_layout'
+          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation'
           target_department: string
           title: string
           description: string
@@ -3005,6 +3011,12 @@ export type Database = {
           completed_by?: string | null
           factory_id?: string | null
           machine_id?: string | null
+          request_item_table?: string | null
+          request_item_id?: string | null
+          technologist_request_id?: string | null
+          long_stock_plan_id?: string | null
+          long_stock_returned_version_id?: string | null
+          request_item_label?: string | null
           due_date?: string | null
           response?: string | null
           completed_at?: string | null
@@ -3015,7 +3027,7 @@ export type Database = {
         }
         Update: {
           id?: string
-          request_kind?: 'manual' | 'machine_layout'
+          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation'
           target_department?: string
           title?: string
           description?: string
@@ -3026,6 +3038,12 @@ export type Database = {
           completed_by?: string | null
           factory_id?: string | null
           machine_id?: string | null
+          request_item_table?: string | null
+          request_item_id?: string | null
+          technologist_request_id?: string | null
+          long_stock_plan_id?: string | null
+          long_stock_returned_version_id?: string | null
+          request_item_label?: string | null
           due_date?: string | null
           response?: string | null
           completed_at?: string | null
@@ -4059,6 +4077,8 @@ export type Database = {
           supply_order_schedule_id: string | null
           detailing_transfer_id: string | null
           inventory_transfer_id: string | null
+          long_stock_cutting_plan_id: string | null
+          long_stock_cutting_plan_version_id: string | null
           department_request_id: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
@@ -4083,6 +4103,8 @@ export type Database = {
           supply_order_schedule_id?: string | null
           detailing_transfer_id?: string | null
           inventory_transfer_id?: string | null
+          long_stock_cutting_plan_id?: string | null
+          long_stock_cutting_plan_version_id?: string | null
           department_request_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
@@ -4107,6 +4129,8 @@ export type Database = {
           supply_order_schedule_id?: string | null
           detailing_transfer_id?: string | null
           inventory_transfer_id?: string | null
+          long_stock_cutting_plan_id?: string | null
+          long_stock_cutting_plan_version_id?: string | null
           department_request_id?: string | null
           assigned_to?: string
           task_type?: Database['public']['Enums']['task_type']
@@ -4965,7 +4989,7 @@ export type Database = {
       inventory_transfer_status: InventoryTransferStatus
       detailing_movement_type: DetailingMovementType
       employee_assignment_status: EmployeeAssignmentStatus
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'long_stock_cutting_recalculation' | 'long_stock_cutting_supply_shortage' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'

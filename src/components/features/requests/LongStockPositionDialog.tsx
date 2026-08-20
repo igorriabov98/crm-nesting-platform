@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowDown,
@@ -14,6 +14,7 @@ import {
   CircleAlert,
   Loader2,
   Plus,
+  RotateCcw,
   Ruler,
   Sparkles,
   Trash2,
@@ -41,7 +42,10 @@ import {
   createLongStockMaterialVariant,
   createLongStockCuttingPlanVersion,
   createManualLongStockCuttingPlanVersion,
+  loadLongStockRecalculationDraft,
   prepareLongStockRequestItemDraft,
+  recalculateLongStockCuttingPlanVersion,
+  type LongStockRecalculationDraft,
 } from '@/lib/actions/long-stock-cutting-plans'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import {
@@ -103,6 +107,13 @@ type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: (row: CreatedRow) => void
+}
+
+type RecalculationDialogProps = {
+  requestItem: { table: LongStockRequestItemTable; id: string }
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onApproved?: () => void
 }
 
 type DraftItem = {
@@ -740,6 +751,254 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
           >
             {pendingAction === 'approve' ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
             {pendingAction === 'approve' ? 'Утверждение…' : 'Утвердить'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export function LongStockRecalculationDialog({
+  requestItem,
+  open,
+  onOpenChange,
+  onApproved,
+}: RecalculationDialogProps) {
+  const [draft, setDraft] = useState<LongStockRecalculationDraft | null>(null)
+  const [calculation, setCalculation] = useState<Calculation | null>(null)
+  const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null)
+  const [mixedLengths, setMixedLengths] = useState(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const visibleCandidates = useMemo(
+    () => candidatesForLongStockMode(calculation?.candidates ?? [], mixedLengths),
+    [calculation, mixedLengths],
+  )
+  const selectedCandidate = visibleCandidates.find((candidate) => candidate.key === selectedCandidateKey) ?? null
+  const bestCandidateKey = visibleCandidates[0]?.key ?? null
+  const minimumUsefulLengthMm = calculation?.settingsSnapshot.categories
+    .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    setPendingAction('load')
+    setError(null)
+    setDraft(null)
+    setCalculation(null)
+    setSelectedCandidateKey(null)
+    setMixedLengths(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
+
+    void (async () => {
+      try {
+        const requestItemRef = { id: requestItem.id, table: requestItem.table }
+        const nextDraft = await loadLongStockRecalculationDraft(requestItemRef)
+        const nextCalculation = await calculateLongStockCuttingPlan({
+          requestItem: requestItemRef,
+          segments: nextDraft.remainingSegments,
+          mode: DEFAULT_MIXED_LONG_STOCK_LENGTHS ? 'mixed' : 'standard',
+        })
+        if (!active) return
+        const candidates = candidatesForLongStockMode(
+          nextCalculation.candidates,
+          DEFAULT_MIXED_LONG_STOCK_LENGTHS,
+        )
+        setDraft(nextDraft)
+        setCalculation(nextCalculation)
+        setSelectedCandidateKey(candidates[0]?.key ?? null)
+        if (candidates.length === 0) setError('Для фактически принятых длин раскладка не найдена')
+      } catch (loadError) {
+        if (!active) return
+        setError(errorMessage(loadError, 'Не удалось подготовить пересчёт'))
+      } finally {
+        if (active) setPendingAction(null)
+      }
+    })()
+    return () => { active = false }
+  }, [open, requestItem.id, requestItem.table])
+
+  async function calculate(mode: 'mixed' | 'standard', searchBudget = DEFAULT_LONG_STOCK_SEARCH_BUDGET) {
+    if (!draft) return
+    setPendingAction(searchBudget > DEFAULT_LONG_STOCK_SEARCH_BUDGET ? 'longer' : 'calculate')
+    setError(null)
+    try {
+      const nextCalculation = await calculateLongStockCuttingPlan({
+        requestItem,
+        segments: draft.remainingSegments,
+        mode,
+        searchBudget,
+      })
+      const nextMixed = mode === 'mixed'
+      const candidates = candidatesForLongStockMode(nextCalculation.candidates, nextMixed)
+      setMixedLengths(nextMixed)
+      setCalculation(nextCalculation)
+      setSelectedCandidateKey(candidates[0]?.key ?? null)
+      if (candidates.length === 0) setError('Для фактически принятых длин раскладка не найдена')
+    } catch (calculationError) {
+      setError(errorMessage(calculationError, 'Не удалось пересчитать раскладку'))
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function approveRecalculation() {
+    if (!draft || !calculation || !selectedCandidate) return
+    setPendingAction('approve')
+    setError(null)
+    try {
+      const version = await recalculateLongStockCuttingPlanVersion({
+        requestItem,
+        segments: draft.remainingSegments,
+        mode: mixedLengths ? 'mixed' : 'standard',
+        searchBudget: calculation.searchBudget,
+        selectedCandidateKey: selectedCandidate.key,
+      })
+      await approveLongStockCuttingPlanVersion(version.id)
+      toast.success(`Версия ${version.version_number} карты раскроя утверждена`)
+      onApproved?.()
+      onOpenChange(false)
+    } catch (approvalError) {
+      const message = errorMessage(approvalError, 'Не удалось утвердить пересчёт')
+      setError(message)
+      toast.error(message)
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const searchBudget = calculation?.searchBudget ?? DEFAULT_LONG_STOCK_SEARCH_BUDGET
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!pendingAction || pendingAction === 'load') onOpenChange(nextOpen)
+    }}>
+      <DialogContent className="flex max-h-[94vh] w-[min(1180px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
+        <DialogHeader className="border-b bg-amber-50/70 px-5 py-4 pr-16">
+          <DialogTitle className="flex items-center gap-2 text-lg text-amber-950">
+            <RotateCcw className="size-5" />Пересчёт карты раскроя
+          </DialogTitle>
+          <DialogDescription>
+            Раскладка строится только для непорезанных заготовок на фактически принятых длинах.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
+          {pendingAction === 'load' && (
+            <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-slate-600" role="status">
+              <Loader2 className="size-4 animate-spin" />Подготавливаем фактические длины и непорезанные заготовки…
+            </div>
+          )}
+
+          {draft && (
+            <>
+              <Alert className="border-amber-300 bg-amber-50">
+                <AlertTriangle className="text-amber-700" />
+                <AlertTitle>Версия {draft.invalidVersionNumber} недействительна</AlertTitle>
+                <AlertDescription>{draft.invalidationReason}</AlertDescription>
+              </Alert>
+
+              <section className="grid gap-3 rounded-xl border bg-white p-4 md:grid-cols-3">
+                <Metric label="Материал" value={draft.materialName} />
+                <Metric label="Вариант" value={draft.variantDescription || 'Точный вариант из каталога'} />
+                <Metric label="Принятые длины" value={draft.acceptedLengthsMm.map(formatMm).join(' + ')} />
+              </section>
+
+              <section className="rounded-xl border bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Осталось раскроить</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {draft.remainingSegments.length} шт. · {formatMm(totalLongStockSegmentLength(draft.remainingSegments))} мм
+                    </p>
+                  </div>
+                  <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm">
+                    <Checkbox
+                      checked={mixedLengths}
+                      disabled={Boolean(pendingAction)}
+                      onCheckedChange={(checked) => void calculate(checked === true ? 'mixed' : 'standard')}
+                    />
+                    Смешивать принятые длины
+                  </label>
+                </div>
+              </section>
+
+              {calculation && visibleCandidates.length > 0 && (
+                <section className="space-y-4">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Варианты по фактической приёмке</h3>
+                    <p className="mt-1 text-sm text-slate-500">Сначала показана минимальная требуемая длина.</p>
+                  </div>
+                  {mixedLengths ? (
+                    <MixedCandidateList
+                      candidates={visibleCandidates}
+                      selectedKey={selectedCandidateKey}
+                      bestKey={bestCandidateKey}
+                      weightPerMeterKg={calculation.weightPerMeterKg}
+                      onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
+                    />
+                  ) : (
+                    <CandidateMatrix
+                      candidates={visibleCandidates}
+                      selectedKey={selectedCandidateKey}
+                      bestKey={bestCandidateKey}
+                      weightPerMeterKg={calculation.weightPerMeterKg}
+                      minimumUsefulLengthMm={minimumUsefulLengthMm}
+                      onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
+                    />
+                  )}
+                  {selectedCandidate && (
+                    <div className="space-y-3 rounded-xl border bg-white p-4">
+                      <h4 className="font-semibold text-slate-900">Новая раскладка</h4>
+                      <LayoutPreview candidate={selectedCandidate} calculation={calculation} />
+                      {selectedCandidate.searchComplete === false && (
+                        <div className="flex items-center gap-2 border-t pt-3 text-xs text-slate-500">
+                          <span>Проверены не все варианты</span>
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="h-auto p-0 text-xs"
+                            disabled={Boolean(pendingAction)}
+                            onClick={() => void calculate(
+                              mixedLengths ? 'mixed' : 'standard',
+                              searchBudget < EXTENDED_LONG_STOCK_SEARCH_BUDGET
+                                ? EXTENDED_LONG_STOCK_SEARCH_BUDGET
+                                : Math.min(Number.MAX_SAFE_INTEGER, searchBudget * 2),
+                            )}
+                          >
+                            {pendingAction === 'longer' && <Loader2 className="size-3 animate-spin" />}
+                            Искать дольше
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )}
+            </>
+          )}
+
+          {error && (
+            <Alert variant="destructive" role="alert">
+              <CircleAlert />
+              <AlertTitle>Пересчёт недоступен</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+
+        <DialogFooter className="mx-0 mb-0 shrink-0 rounded-none px-5 py-4">
+          <Button type="button" variant="outline" disabled={pendingAction === 'approve'} onClick={() => onOpenChange(false)}>
+            Закрыть
+          </Button>
+          <Button
+            type="button"
+            disabled={!selectedCandidate || Boolean(pendingAction)}
+            onClick={() => void approveRecalculation()}
+          >
+            {pendingAction === 'approve' ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
+            {pendingAction === 'approve' ? 'Утверждение…' : 'Утвердить новую версию'}
           </Button>
         </DialogFooter>
       </DialogContent>
