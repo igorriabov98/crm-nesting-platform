@@ -362,6 +362,7 @@ function makeItem(patch: Partial<SupplyOrderItem>): SupplyOrderItem {
     selected_piece_length_mm: null,
     delivery_schedules: [],
     ...patch,
+    long_stock_purchase_plan: patch.long_stock_purchase_plan ?? null,
   }
 }
 
@@ -413,6 +414,7 @@ function makeAggregate(): SupplyOrderAggregate {
         quantity: 8, unit: 'шт.', supplier_id: 'supplier-a', supplier_name: 'Металл А', weight_kg: 100,
         order_status: 'ordered', supply_delivery_date: '2026-07-18', planned_schedule_quantity: 8,
         delivered_schedule_quantity: 0, unscheduled_quantity: 0, delivery_schedules: [],
+        long_stock_purchase_plan: null,
       }],
     }],
   }
@@ -591,6 +593,7 @@ function makeAggregateSourceItem(
     unscheduled_quantity: 1,
     delivery_schedules: [],
     ...patch,
+    long_stock_purchase_plan: patch.long_stock_purchase_plan ?? null,
   }
 }
 

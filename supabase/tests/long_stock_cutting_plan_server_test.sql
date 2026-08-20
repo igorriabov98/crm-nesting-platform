@@ -486,6 +486,269 @@ begin
 end;
 $$;
 
+do $$
+declare
+  v_technologist uuid := gen_random_uuid();
+  v_supply uuid := gen_random_uuid();
+  v_factory uuid;
+  v_machine uuid := gen_random_uuid();
+  v_request uuid := gen_random_uuid();
+  v_material uuid := gen_random_uuid();
+  v_variant uuid := gen_random_uuid();
+  v_request_item uuid := gen_random_uuid();
+  v_plan uuid;
+  v_plan_item uuid;
+  v_version_1 uuid;
+  v_version_2 uuid;
+  v_department_request uuid;
+  v_settings jsonb;
+  v_segments jsonb;
+  v_candidate jsonb;
+  v_pdf_metadata_1 jsonb;
+  v_pdf_metadata_2 jsonb;
+  v_result jsonb;
+  v_status text;
+  v_count integer;
+begin
+  select id into v_factory from public.factories order by created_at nulls last limit 1;
+
+  insert into public.users(id, email, full_name, role, factory_id, is_active)
+  values
+    (v_technologist, 'long-stock-return-technologist@example.test', 'Технолог возврата', 'technologist', v_factory, true),
+    (v_supply, 'long-stock-return-supply@example.test', 'Снабжение возврата', 'supply_manager', v_factory, true);
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, v_factory, 'LONG-STOCK-SUPPLY-RETURN', v_technologist);
+  insert into public.technologist_requests(id, machine_id, created_by)
+  values (v_request, v_machine, v_technologist);
+  insert into public.materials(id, name, category, created_by)
+  values (v_material, 'Круг для возврата снабжением', 'circle', v_technologist);
+  insert into public.material_variants(
+    id, material_id, category, diameter_mm, material_grade,
+    standard_length_mm, weight_per_m_kg, default_unit
+  ) values (v_variant, v_material, 'circle', 32, 'S355', 6000, 2, 'мм');
+  insert into public.request_circle(
+    id, request_id, diameter_mm, steel_grade, remainder_mm,
+    material_id, material_variant_id
+  ) values (
+    v_request_item, v_request, 32, 'S355', 1200,
+    v_material, v_variant
+  );
+
+  v_plan := public.fn_create_long_stock_cutting_plan(
+    v_variant,
+    jsonb_build_array(jsonb_build_object(
+      'request_item_table', 'request_circle',
+      'request_item_id', v_request_item
+    )),
+    v_technologist
+  );
+  select id into v_plan_item
+  from public.long_stock_cutting_plan_items
+  where plan_id = v_plan;
+
+  v_settings := public.fn_get_long_stock_layout_settings_snapshot();
+  v_segments := jsonb_build_array(jsonb_build_object(
+    'plan_item_id', v_plan_item,
+    'segment_number', 1,
+    'required_length_mm', 1200,
+    'required_weight_kg', 2.4
+  ));
+  v_candidate := jsonb_build_array(jsonb_build_object(
+    'candidate_number', 1,
+    'is_complete', true,
+    'metrics', jsonb_build_object(
+      'purchased_length_mm', 6000,
+      'net_parts_length_mm', 1200,
+      'kerf_loss_length_mm', 1,
+      'end_trim_loss_length_mm', 0,
+      'business_scrap_length_mm', 4799,
+      'purchased_weight_kg', 12,
+      'net_parts_weight_kg', 2.4,
+      'kerf_loss_weight_kg', 0.002,
+      'end_trim_loss_weight_kg', 0,
+      'business_scrap_weight_kg', 9.598
+    ),
+    'bars', jsonb_build_array(jsonb_build_object(
+      'bar_number', 1,
+      'stock_length_mm', 6000,
+      'length_group', 'standard',
+      'source_type', 'new_stock',
+      'source_inventory_id', null,
+      'cuts', jsonb_build_array(jsonb_build_object(
+        'cut_number', 1,
+        'segment_number', 1,
+        'cut_length_mm', 1200
+      ))
+    ))
+  ));
+
+  v_version_1 := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
+    v_plan,
+    jsonb_build_object('case', 'supply-return-v1'),
+    v_settings,
+    v_segments,
+    v_candidate,
+    1,
+    v_technologist,
+    null,
+    '{}'::jsonb
+  );
+  v_pdf_metadata_1 := jsonb_build_object(
+    'schema_version', 1,
+    'bucket_id', 'product-files',
+    'object_path', format('long-stock-cutting-plans/%s/%s/%s.pdf', v_plan, v_version_1, gen_random_uuid()),
+    'file_name', 'cutting-plan-' || (select plan_number from public.long_stock_cutting_plans where id = v_plan) || '-v1.pdf',
+    'mime_type', 'application/pdf',
+    'size_bytes', 1024,
+    'sha256', repeat('d', 64),
+    'generated_by', v_technologist,
+    'generated_at', now()
+  );
+  perform public.fn_approve_long_stock_cutting_plan_version_v2(
+    v_version_1,
+    v_technologist,
+    v_pdf_metadata_1
+  );
+
+  v_result := public.fn_return_long_stock_position_to_technologist_v1(
+    'request_circle',
+    v_request_item,
+    '6000 мм недоступен у выбранного поставщика',
+    v_supply
+  );
+  v_department_request := (v_result->>'department_request_id')::uuid;
+
+  if v_department_request is null then
+    raise exception 'Возврат снабжения не создал запрос технологу';
+  end if;
+  if not exists (
+    select 1 from public.department_requests request
+    where request.id = v_department_request
+      and request.request_kind = 'long_stock_recalculation'
+      and request.request_item_table = 'request_circle'
+      and request.request_item_id = v_request_item
+      and request.technologist_request_id = v_request
+      and request.long_stock_plan_id = v_plan
+      and request.long_stock_returned_version_id = v_version_1
+      and request.created_by = v_supply
+      and request.assigned_to = v_technologist
+      and request.status = 'in_progress'
+  ) then
+    raise exception 'Запрос не сохранил точную ссылку на возвращённую позицию';
+  end if;
+  if not exists (
+    select 1 from public.tasks task
+    where task.department_request_id = v_department_request
+      and task.assigned_to = v_technologist
+      and task.status = 'in_progress'
+  ) then
+    raise exception 'Технологу не создана задача на пересчёт';
+  end if;
+  if not exists (
+    select 1 from public.notifications notification
+    where notification.related_department_request_id = v_department_request
+      and notification.user_id = v_technologist
+  ) then
+    raise exception 'Технолог не получил уведомление о возврате';
+  end if;
+  if (select status from public.long_stock_cutting_plan_versions where id = v_version_1) <> 'invalid'
+    or (select invalidation_department_request_id from public.long_stock_cutting_plan_versions where id = v_version_1)
+      is distinct from v_department_request then
+    raise exception 'Возвращённая версия не стала недействительной со ссылкой на запрос';
+  end if;
+  if (select cutting_status from public.long_stock_cutting_plan_items where id = v_plan_item)
+    <> 'requires_recalculation' then
+    raise exception 'Позиция не получила статус requires_recalculation';
+  end if;
+
+  begin
+    perform public.fn_assert_long_stock_cutting_ready(v_machine);
+    raise exception 'Резка позиции, требующей пересчёта, осталась доступна';
+  exception when raise_exception then
+    if sqlerrm = 'Резка позиции, требующей пересчёта, осталась доступна'
+      or sqlerrm not like '%требует пересчёта%' then
+      raise;
+    end if;
+  end;
+
+  select count(*) into v_count
+  from public.inventory inventory_row
+  join public.long_stock_cutting_business_scraps scrap_link
+    on scrap_link.inventory_id = inventory_row.id
+  where scrap_link.version_id = v_version_1
+    and inventory_row.deleted_at is null;
+  if v_count <> 0 then
+    raise exception 'Будущие остатки недействительной версии остались активными';
+  end if;
+
+  v_version_2 := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
+    v_plan,
+    jsonb_build_object(
+      'case', 'supply-return-v2',
+      'recalculation', jsonb_build_object(
+        'source_version_id', v_version_1,
+        'source_version_number', 1,
+        'accepted_lengths_mm', jsonb_build_array(6000)
+      )
+    ),
+    v_settings,
+    v_segments,
+    v_candidate,
+    1,
+    v_technologist,
+    null,
+    '{}'::jsonb
+  );
+  v_pdf_metadata_2 := jsonb_build_object(
+    'schema_version', 1,
+    'bucket_id', 'product-files',
+    'object_path', format('long-stock-cutting-plans/%s/%s/%s.pdf', v_plan, v_version_2, gen_random_uuid()),
+    'file_name', 'cutting-plan-' || (select plan_number from public.long_stock_cutting_plans where id = v_plan) || '-v2.pdf',
+    'mime_type', 'application/pdf',
+    'size_bytes', 1024,
+    'sha256', repeat('e', 64),
+    'generated_by', v_technologist,
+    'generated_at', now()
+  );
+  v_result := public.fn_approve_long_stock_cutting_plan_version_v2(
+    v_version_2,
+    v_technologist,
+    v_pdf_metadata_2
+  );
+
+  if (select status from public.long_stock_cutting_plan_versions where id = v_version_1) <> 'invalid'
+    or (select status from public.long_stock_cutting_plan_versions where id = v_version_2) <> 'approved'
+    or (select version_number from public.long_stock_cutting_plan_versions where id = v_version_2) <> 2 then
+    raise exception 'Новое утверждение нарушило историю версий';
+  end if;
+  if (select cutting_status from public.long_stock_cutting_plan_items where id = v_plan_item)
+    <> 'plan_approved' then
+    raise exception 'После версии 2 позиция не вернулась в plan_approved';
+  end if;
+  select status into v_status
+  from public.department_requests where id = v_department_request;
+  if v_status <> 'done' then
+    raise exception 'Новое утверждение не закрыло запрос снабжения: %', v_status;
+  end if;
+  if not exists (
+    select 1 from public.tasks task
+    where task.department_request_id = v_department_request
+      and task.status = 'completed'
+  ) then
+    raise exception 'Новое утверждение не закрыло задачу пересчёта';
+  end if;
+  if not exists (
+    select 1 from public.notifications notification
+    where notification.related_department_request_id = v_department_request
+      and notification.user_id = v_supply
+      and notification.type = 'department_request_status_technologist'
+  ) then
+    raise exception 'Снабжение не получило уведомление об утверждении новой версии';
+  end if;
+  perform public.fn_assert_long_stock_cutting_ready(v_machine);
+end;
+$$;
+
 rollback;
 
 \echo '[long-stock-cutting-plan-server] all assertions passed'

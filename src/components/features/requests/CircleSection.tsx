@@ -107,7 +107,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
             {rows.map((row) => {
               const canEditCharacteristics = canEditMaterialCharacteristics(row, isEditable)
               return (
-              <tr key={row.id} className="border-b last:border-b-0">
+              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch
                     category="circle"
