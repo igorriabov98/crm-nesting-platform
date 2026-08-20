@@ -504,6 +504,8 @@ declare
   v_settings jsonb;
   v_segments jsonb;
   v_candidate jsonb;
+  v_pdf_metadata_1 jsonb;
+  v_pdf_metadata_2 jsonb;
   v_result jsonb;
   v_status text;
   v_count integer;
@@ -591,7 +593,22 @@ begin
     null,
     '{}'::jsonb
   );
-  perform public.fn_approve_long_stock_cutting_plan_version_v1(v_version_1, v_technologist);
+  v_pdf_metadata_1 := jsonb_build_object(
+    'schema_version', 1,
+    'bucket_id', 'product-files',
+    'object_path', format('long-stock-cutting-plans/%s/%s/%s.pdf', v_plan, v_version_1, gen_random_uuid()),
+    'file_name', 'cutting-plan-' || (select plan_number from public.long_stock_cutting_plans where id = v_plan) || '-v1.pdf',
+    'mime_type', 'application/pdf',
+    'size_bytes', 1024,
+    'sha256', repeat('d', 64),
+    'generated_by', v_technologist,
+    'generated_at', now()
+  );
+  perform public.fn_approve_long_stock_cutting_plan_version_v2(
+    v_version_1,
+    v_technologist,
+    v_pdf_metadata_1
+  );
 
   v_result := public.fn_return_long_stock_position_to_technologist_v1(
     'request_circle',
@@ -666,7 +683,14 @@ begin
 
   v_version_2 := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
     v_plan,
-    jsonb_build_object('case', 'supply-return-v2'),
+    jsonb_build_object(
+      'case', 'supply-return-v2',
+      'recalculation', jsonb_build_object(
+        'source_version_id', v_version_1,
+        'source_version_number', 1,
+        'accepted_lengths_mm', jsonb_build_array(6000)
+      )
+    ),
     v_settings,
     v_segments,
     v_candidate,
@@ -675,7 +699,22 @@ begin
     null,
     '{}'::jsonb
   );
-  v_result := public.fn_approve_long_stock_cutting_plan_version_v1(v_version_2, v_technologist);
+  v_pdf_metadata_2 := jsonb_build_object(
+    'schema_version', 1,
+    'bucket_id', 'product-files',
+    'object_path', format('long-stock-cutting-plans/%s/%s/%s.pdf', v_plan, v_version_2, gen_random_uuid()),
+    'file_name', 'cutting-plan-' || (select plan_number from public.long_stock_cutting_plans where id = v_plan) || '-v2.pdf',
+    'mime_type', 'application/pdf',
+    'size_bytes', 1024,
+    'sha256', repeat('e', 64),
+    'generated_by', v_technologist,
+    'generated_at', now()
+  );
+  v_result := public.fn_approve_long_stock_cutting_plan_version_v2(
+    v_version_2,
+    v_technologist,
+    v_pdf_metadata_2
+  );
 
   if (select status from public.long_stock_cutting_plan_versions where id = v_version_1) <> 'invalid'
     or (select status from public.long_stock_cutting_plan_versions where id = v_version_2) <> 'approved'

@@ -643,13 +643,31 @@ revoke all on function public.fn_return_long_stock_position_to_technologist_v1(t
 grant execute on function public.fn_return_long_stock_position_to_technologist_v1(text, uuid, text, uuid)
   to service_role;
 
-alter function public.fn_approve_long_stock_cutting_plan_version_v1(uuid, uuid)
+alter function public.fn_approve_long_stock_cutting_plan_version_core_v1(uuid, uuid)
   rename to fn_approve_long_stock_cutting_plan_version_before_supply_return;
 
 revoke all on function public.fn_approve_long_stock_cutting_plan_version_before_supply_return(uuid, uuid)
   from public, anon, authenticated, service_role;
 
-create or replace function public.fn_approve_long_stock_cutting_plan_version_v1(
+do $migration$
+declare
+  v_definition text;
+  v_anchor text := E'    if exists (\n      select 1\n      from public.long_stock_cutting_plan_versions version\n      join public.long_stock_cutting_candidates candidate';
+  v_replacement text := E'    if (\n      select invalidation_receipt_schedule_id\n      from public.long_stock_cutting_plan_versions\n      where id = v_invalid_version_id\n    ) is not null and exists (\n      select 1\n      from public.long_stock_cutting_plan_versions version\n      join public.long_stock_cutting_candidates candidate';
+begin
+  v_definition := pg_get_functiondef(
+    'public.fn_approve_long_stock_cutting_plan_version_before_supply_return(uuid,uuid)'::regprocedure
+  );
+
+  if position(v_anchor in v_definition) = 0 then
+    raise exception 'Не удалось ограничить проверку фактической приёмки причиной пересчёта';
+  end if;
+
+  execute replace(v_definition, v_anchor, v_replacement);
+end;
+$migration$;
+
+create or replace function public.fn_approve_long_stock_cutting_plan_version_core_v1(
   p_version_id uuid,
   p_actor uuid
 )
@@ -729,10 +747,29 @@ begin
 end;
 $$;
 
+revoke all on function public.fn_approve_long_stock_cutting_plan_version_core_v1(uuid, uuid)
+  from public, anon, authenticated, service_role;
+
+-- SQL integration fixtures created before immutable plan PDFs still exercise
+-- the v1 signature directly. Keep it closed to every API role so production
+-- approval cannot bypass fn_approve_long_stock_cutting_plan_version_v2.
+create or replace function public.fn_approve_long_stock_cutting_plan_version_v1(
+  p_version_id uuid,
+  p_actor uuid
+)
+returns jsonb
+language sql
+security definer
+set search_path = public, pg_temp
+as $$
+  select public.fn_approve_long_stock_cutting_plan_version_core_v1(
+    p_version_id,
+    p_actor
+  );
+$$;
+
 revoke all on function public.fn_approve_long_stock_cutting_plan_version_v1(uuid, uuid)
-  from public, anon, authenticated;
-grant execute on function public.fn_approve_long_stock_cutting_plan_version_v1(uuid, uuid)
-  to service_role;
+  from public, anon, authenticated, service_role;
 
 create or replace function public.fn_assert_long_stock_cutting_ready(p_machine_id uuid)
 returns void
