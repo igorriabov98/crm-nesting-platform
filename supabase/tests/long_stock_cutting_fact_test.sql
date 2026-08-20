@@ -223,6 +223,232 @@ declare
   v_factory uuid;
   v_section uuid := gen_random_uuid();
   v_material uuid := gen_random_uuid();
+  v_machine_zero uuid := gen_random_uuid();
+  v_machine_partial uuid := gen_random_uuid();
+  v_machine_draft uuid := gen_random_uuid();
+  v_variant_zero uuid := gen_random_uuid();
+  v_variant_partial uuid := gen_random_uuid();
+  v_variant_draft uuid := gen_random_uuid();
+  v_plan_data jsonb;
+  v_plan uuid;
+  v_version uuid;
+  v_request uuid;
+  v_request_item uuid;
+  v_source_first uuid;
+  v_source_second uuid;
+  v_reservation_first uuid;
+  v_reservation_second uuid;
+  v_fact uuid;
+  v_scrap uuid;
+  v_blocked boolean;
+  v_error text;
+begin
+  select id into v_factory from public.factories order by created_at nulls last limit 1;
+  if v_factory is null then
+    raise exception 'Для теста строгого сопоставления не найден завод';
+  end if;
+  insert into public.users(id, email, full_name, role, factory_id, is_active)
+  values (v_actor, 'long-stock-cutting-match@example.test', 'Тест строгого сопоставления', 'technologist', v_factory, true);
+  insert into public.production_fact_sections(
+    id, factory_id, name, production_stage_type, created_by, updated_by
+  ) values (
+    v_section, v_factory, 'Заготовка · тест строгого сопоставления', 'cutting', v_actor, v_actor
+  );
+  insert into public.materials(id, name, category, created_by)
+  values (v_material, 'Тестовый круг строгого сопоставления', 'circle', v_actor);
+
+  insert into public.machines(id, factory_id, name, created_by) values
+    (v_machine_zero, v_factory, 'LONG-STOCK-FACT-ZERO-MATCH', v_actor),
+    (v_machine_partial, v_factory, 'LONG-STOCK-FACT-PARTIAL-MATCH', v_actor),
+    (v_machine_draft, v_factory, 'LONG-STOCK-FACT-NO-APPROVED', v_actor);
+  insert into public.material_variants(
+    id, material_id, category, diameter_mm, material_grade,
+    standard_length_mm, weight_per_m_kg, default_unit
+  ) values
+    (v_variant_zero, v_material, 'circle', 51, 'S355', 6000, 2, 'мм'),
+    (v_variant_partial, v_material, 'circle', 52, 'S355', 6000, 2, 'мм'),
+    (v_variant_draft, v_material, 'circle', 53, 'S355', 6000, 2, 'мм');
+
+  -- A physical 8000 mm bar cannot silently pass against a 6000 mm plan.
+  v_plan_data := pg_temp.create_new_stock_plan(
+    v_actor, v_machine_zero, v_material, v_variant_zero,
+    array[6000], array[1000::numeric]
+  );
+  v_plan := (v_plan_data->>'plan_id')::uuid;
+  v_version := (v_plan_data->>'version_id')::uuid;
+  v_request_item := (v_plan_data->>'request_item_id')::uuid;
+  v_scrap := (v_plan_data#>>'{scrap_ids,0}')::uuid;
+  insert into public.inventory(
+    factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit,
+    total_secondary_quantity, reserved_secondary_quantity, secondary_unit,
+    last_updated_by
+  ) values (
+    v_factory, v_material, v_variant_zero, 8000,
+    8000, 0, 'мм', 1, 0, 'шт', v_actor
+  ) returning id into v_source_first;
+  v_reservation_first := pg_temp.add_reserved_bar(
+    v_actor, v_machine_zero, v_material, v_variant_zero,
+    v_request_item, v_source_first, 8000, 1001
+  );
+  v_fact := gen_random_uuid();
+  insert into public.production_machine_facts(
+    id, factory_id, fact_date, shift, machine_id, section_id, created_by, updated_by
+  ) values (
+    v_fact, v_factory, current_date, 'day', v_machine_zero, v_section, v_actor, v_actor
+  );
+  v_blocked := false;
+  begin
+    perform public.fn_apply_production_fact_cutting(v_fact, v_actor);
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%физических: 1, сопоставлено: 0%' then raise; end if;
+    v_blocked := true;
+  end;
+  if not v_blocked
+    or exists (select 1 from public.production_fact_cutting_events where fact_id = v_fact)
+    or (select total_quantity from public.inventory where id = v_source_first) <> 8000
+    or (select reserved_quantity from public.inventory where id = v_source_first) <> 8000
+    or (select consumed_at from public.inventory_reservations where id = v_reservation_first) is not null
+    or (select business_scrap_state from public.inventory where id = v_scrap) <> 'future'
+    or exists (
+      select 1
+      from public.long_stock_cutting_candidate_bars bar
+      join public.long_stock_cutting_candidates candidate on candidate.id = bar.candidate_id
+      where candidate.version_id = v_version and bar.status <> 'planned'
+    ) then
+    raise exception 'Нулевое сопоставление изменило склад или карту';
+  end if;
+
+  -- One matching and one non-matching physical bar must reject the whole fact.
+  v_plan_data := pg_temp.create_new_stock_plan(
+    v_actor, v_machine_partial, v_material, v_variant_partial,
+    array[6000, 6000], array[1000::numeric, 1000::numeric]
+  );
+  v_version := (v_plan_data->>'version_id')::uuid;
+  v_request_item := (v_plan_data->>'request_item_id')::uuid;
+  insert into public.inventory(
+    factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit,
+    total_secondary_quantity, reserved_secondary_quantity, secondary_unit,
+    last_updated_by
+  ) values (
+    v_factory, v_material, v_variant_partial, 6000,
+    6000, 0, 'мм', 1, 0, 'шт', v_actor
+  ) returning id into v_source_first;
+  insert into public.inventory(
+    factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit,
+    total_secondary_quantity, reserved_secondary_quantity, secondary_unit,
+    last_updated_by
+  ) values (
+    v_factory, v_material, v_variant_partial, 8000,
+    8000, 0, 'мм', 1, 0, 'шт', v_actor
+  ) returning id into v_source_second;
+  v_reservation_first := pg_temp.add_reserved_bar(
+    v_actor, v_machine_partial, v_material, v_variant_partial,
+    v_request_item, v_source_first, 6000, 1001
+  );
+  v_reservation_second := pg_temp.add_reserved_bar(
+    v_actor, v_machine_partial, v_material, v_variant_partial,
+    v_request_item, v_source_second, 8000, 1001
+  );
+  v_fact := gen_random_uuid();
+  insert into public.production_machine_facts(
+    id, factory_id, fact_date, shift, machine_id, section_id, created_by, updated_by
+  ) values (
+    v_fact, v_factory, current_date, 'day', v_machine_partial, v_section, v_actor, v_actor
+  );
+  v_blocked := false;
+  begin
+    perform public.fn_apply_production_fact_cutting(v_fact, v_actor);
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%физических: 2, сопоставлено: 1%' then raise; end if;
+    v_blocked := true;
+  end;
+  if not v_blocked
+    or exists (select 1 from public.production_fact_cutting_events where fact_id = v_fact)
+    or (select total_quantity from public.inventory where id = v_source_first) <> 6000
+    or (select reserved_quantity from public.inventory where id = v_source_first) <> 6000
+    or (select total_quantity from public.inventory where id = v_source_second) <> 8000
+    or (select reserved_quantity from public.inventory where id = v_source_second) <> 8000
+    or (select consumed_at from public.inventory_reservations where id = v_reservation_first) is not null
+    or (select consumed_at from public.inventory_reservations where id = v_reservation_second) is not null
+    or (select count(*) from public.long_stock_cutting_fact_bars where version_id = v_version) <> 0
+    or (select count(*) from public.long_stock_cutting_business_scraps link
+        join public.inventory inventory on inventory.id = link.inventory_id
+        where link.version_id = v_version and inventory.business_scrap_state = 'future') <> 2 then
+    raise exception 'Частичное сопоставление изменило склад или карту';
+  end if;
+
+  -- A linked planning position without an approved version cannot be cut.
+  v_request := gen_random_uuid();
+  v_request_item := gen_random_uuid();
+  insert into public.technologist_requests(id, machine_id, created_by)
+  values (v_request, v_machine_draft, v_actor);
+  insert into public.request_circle(
+    id, request_id, diameter_mm, steel_grade, remainder_mm,
+    material_id, material_variant_id
+  ) values (
+    v_request_item, v_request, 53, 'S355', 1000,
+    v_material, v_variant_draft
+  );
+  v_plan := public.fn_create_long_stock_cutting_plan(
+    v_variant_draft,
+    jsonb_build_array(jsonb_build_object(
+      'request_item_table', 'request_circle',
+      'request_item_id', v_request_item
+    )),
+    v_actor
+  );
+  insert into public.inventory(
+    factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit,
+    total_secondary_quantity, reserved_secondary_quantity, secondary_unit,
+    last_updated_by
+  ) values (
+    v_factory, v_material, v_variant_draft, 6000,
+    6000, 0, 'мм', 1, 0, 'шт', v_actor
+  ) returning id into v_source_first;
+  v_reservation_first := pg_temp.add_reserved_bar(
+    v_actor, v_machine_draft, v_material, v_variant_draft,
+    v_request_item, v_source_first, 6000, 1001
+  );
+  v_fact := gen_random_uuid();
+  insert into public.production_machine_facts(
+    id, factory_id, fact_date, shift, machine_id, section_id, created_by, updated_by
+  ) values (
+    v_fact, v_factory, current_date, 'day', v_machine_draft, v_section, v_actor, v_actor
+  );
+  v_blocked := false;
+  begin
+    perform public.fn_apply_production_fact_cutting(v_fact, v_actor);
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%нет утверждённой версии карты раскроя%' then raise; end if;
+    v_blocked := true;
+  end;
+  if not v_blocked
+    or exists (select 1 from public.production_fact_cutting_events where fact_id = v_fact)
+    or (select total_quantity from public.inventory where id = v_source_first) <> 6000
+    or (select reserved_quantity from public.inventory where id = v_source_first) <> 6000
+    or (select consumed_at from public.inventory_reservations where id = v_reservation_first) is not null
+    or not exists (
+      select 1 from public.long_stock_cutting_plan_items
+      where plan_id = v_plan and cutting_status = 'planning'
+    ) then
+    raise exception 'Резка без утверждённой версии изменила склад или позицию карты';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  v_actor uuid := gen_random_uuid();
+  v_factory uuid;
+  v_section uuid := gen_random_uuid();
+  v_material uuid := gen_random_uuid();
   v_machine_two uuid := gen_random_uuid();
   v_machine_sequence uuid := gen_random_uuid();
   v_machine_lengths uuid := gen_random_uuid();
