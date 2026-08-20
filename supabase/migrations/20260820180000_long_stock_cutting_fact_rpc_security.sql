@@ -8,9 +8,19 @@ revoke all on function public.fn_apply_production_fact_cutting(uuid, uuid)
 grant execute on function public.fn_apply_production_fact_cutting(uuid, uuid)
   to service_role;
 
+revoke all on function public.fn_get_production_cutting_rollback_preview(uuid)
+  from public, anon, authenticated;
+grant execute on function public.fn_get_production_cutting_rollback_preview(uuid)
+  to service_role;
+
 revoke all on function public.fn_apply_production_cutting_rollback(uuid, uuid, uuid, text)
   from public, anon, authenticated;
 grant execute on function public.fn_apply_production_cutting_rollback(uuid, uuid, uuid, text)
+  to service_role;
+
+revoke all on function public.fn_keep_production_cutting_rollback(uuid, uuid, uuid, text)
+  from public, anon, authenticated;
+grant execute on function public.fn_keep_production_cutting_rollback(uuid, uuid, uuid, text)
   to service_role;
 
 notify pgrst, 'reload schema';

@@ -45,10 +45,20 @@ const saveProductionMachineFact = sourceSection(
   'export async function saveProductionMachineFact',
   'export async function deleteProductionMachineFact',
 )
+const getProductionCuttingRollbackPreview = sourceSection(
+  taskActions,
+  'export async function getProductionCuttingRollbackPreview',
+  'export async function applyProductionCuttingRollbackTask',
+)
 const applyProductionCuttingRollbackTask = sourceSection(
   taskActions,
   'export async function applyProductionCuttingRollbackTask',
   'export async function keepProductionCuttingRollbackTask',
+)
+const keepProductionCuttingRollbackTask = sourceSection(
+  taskActions,
+  'export async function keepProductionCuttingRollbackTask',
+  'export async function completeTechnologistTaskWithoutRequest',
 )
 
 assert.match(
@@ -62,6 +72,16 @@ assert.match(
   'the cutting-fact RPC actor must come from the authorized server context',
 )
 assert.match(
+  getProductionCuttingRollbackPreview,
+  /getCurrentUser\('manage'\)[\s\S]*getCuttingRollbackTaskForUser[\s\S]*getAdminTaskDb\(\)[\s\S]*previewRpcDb\.rpc\('fn_get_production_cutting_rollback_preview'/u,
+  'the application must authorize rollback preview and use the service-role RPC path',
+)
+assert.doesNotMatch(
+  getProductionCuttingRollbackPreview,
+  /\bdb\.rpc\('fn_get_production_cutting_rollback_preview'/u,
+  'the authenticated task client must not invoke the rollback preview RPC',
+)
+assert.match(
   applyProductionCuttingRollbackTask,
   /getCurrentUser\('manage'\)[\s\S]*getCuttingRollbackTaskForUser[\s\S]*getAdminTaskDb\(\)[\s\S]*rollbackRpcDb\.rpc\('fn_apply_production_cutting_rollback',[\s\S]*p_performed_by: userId/u,
   'the application must authorize rollback and use the server user in the service-role RPC call',
@@ -70,6 +90,16 @@ assert.doesNotMatch(
   applyProductionCuttingRollbackTask,
   /\bdb\.rpc\('fn_apply_production_cutting_rollback'/u,
   'the authenticated task client must not invoke the rollback mutation RPC',
+)
+assert.match(
+  keepProductionCuttingRollbackTask,
+  /getCurrentUser\('manage'\)[\s\S]*getCuttingRollbackTaskForUser[\s\S]*getAdminTaskDb\(\)[\s\S]*keepRpcDb\.rpc\('fn_keep_production_cutting_rollback',[\s\S]*p_performed_by: userId/u,
+  'the application must authorize keeping a rollback and use the server user in the service-role RPC call',
+)
+assert.doesNotMatch(
+  keepProductionCuttingRollbackTask,
+  /\bdb\.rpc\('fn_keep_production_cutting_rollback'/u,
+  'the authenticated task client must not invoke the keep-rollback mutation RPC',
 )
 
 assertRpcDeniedForAuthenticated(
@@ -80,8 +110,23 @@ assertRpcDeniedForAuthenticated(
   );`,
 )
 assertRpcDeniedForAuthenticated(
+  'fn_get_production_cutting_rollback_preview',
+  `select public.fn_get_production_cutting_rollback_preview(
+    '00000000-0000-0000-0000-000000000001'::uuid
+  );`,
+)
+assertRpcDeniedForAuthenticated(
   'fn_apply_production_cutting_rollback',
   `select public.fn_apply_production_cutting_rollback(
+    '00000000-0000-0000-0000-000000000001'::uuid,
+    '00000000-0000-0000-0000-000000000002'::uuid,
+    '00000000-0000-0000-0000-000000000099'::uuid,
+    'spoofed actor'
+  );`,
+)
+assertRpcDeniedForAuthenticated(
+  'fn_keep_production_cutting_rollback',
+  `select public.fn_keep_production_cutting_rollback(
     '00000000-0000-0000-0000-000000000001'::uuid,
     '00000000-0000-0000-0000-000000000002'::uuid,
     '00000000-0000-0000-0000-000000000099'::uuid,
@@ -162,11 +207,21 @@ function assertServiceRoleCanExecute() {
         )
         and has_function_privilege(
           'service_role',
+          'public.fn_get_production_cutting_rollback_preview(uuid)',
+          'EXECUTE'
+        )
+        and has_function_privilege(
+          'service_role',
           'public.fn_apply_production_cutting_rollback(uuid, uuid, uuid, text)',
+          'EXECUTE'
+        )
+        and has_function_privilege(
+          'service_role',
+          'public.fn_keep_production_cutting_rollback(uuid, uuid, uuid, text)',
           'EXECUTE'
         );\n`,
     },
   )
   assert.equal(result.status, 0, 'Unable to inspect service-role RPC privileges')
-  assert.equal(result.stdout.trim(), 't', 'the application service role must retain both mutation RPCs')
+  assert.equal(result.stdout.trim(), 't', 'the application service role must retain all cutting RPCs')
 }
