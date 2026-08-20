@@ -58,8 +58,6 @@ jobs:
         run: npm run test:long-stock-cutting-plan-pdf
       - name: Long-stock cutting solver
         run: npm run test:long-stock-cutting-solver
-      - name: Long-stock layout settings
-        run: npm run test:long-stock-layout-settings
       - name: Long-stock position UI
         run: npm run test:long-stock-position-ui
       - name: Material request stock coverage
@@ -148,6 +146,8 @@ jobs:
         run: node scripts/test-inventory-stock-lifecycle.mjs
       - name: Inventory factory transfers
         run: npm run test:inventory-transfers
+      - name: Long-stock layout settings
+        run: npm run test:long-stock-layout-settings
       - name: Long-stock cutting fact
         run: npm run test:long-stock-cutting-fact
       - name: Long-stock cutting-plan schema
