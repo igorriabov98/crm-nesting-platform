@@ -45,6 +45,8 @@ function productLabel(product: ProductOption) {
 export function RequestCompletionWizard({ workspace }: { workspace: CompletionWorkspace }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+  const manualWasteItems = useMemo(() => workspace.wasteItems.filter((item) => item.accountingMode === 'manual_percent'), [workspace.wasteItems])
+  const planFactItems = useMemo(() => workspace.wasteItems.filter((item) => item.accountingMode === 'plan_fact'), [workspace.wasteItems])
   const [step, setStep] = useState<1 | 2>(1)
   const [decision, setDecision] = useState<'has_items' | 'none'>('has_items')
   const [rows, setRows] = useState<FutureRow[]>([])
@@ -57,7 +59,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   const [productQuery, setProductQuery] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [newRow, setNewRow] = useState<FutureRow>({ key: 'new', name: '', drawingNumber: '', unitWeightKg: 0, quantity: 1 })
-  const [percentages, setPercentages] = useState<Record<string, string>>(() => Object.fromEntries(workspace.wasteItems.map((item) => [item.sourceId, '0'])))
+  const [percentages, setPercentages] = useState<Record<string, string>>(() => Object.fromEntries(manualWasteItems.map((item) => [item.sourceId, '0'])))
   const [hours, setHours] = useState('0')
   const [minutes, setMinutes] = useState('0')
   const [archiveFiles, setArchiveFiles] = useState<File[]>([])
@@ -97,12 +99,12 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   }, [productQuery, showNew])
 
   const selectedProduct = products.find((product) => product.id === newRow.productId)
-  const totals = useMemo(() => workspace.wasteItems.reduce((acc, item) => {
+  const totals = useMemo(() => manualWasteItems.reduce((acc, item) => {
     const weight = item.weightKg || 0
     const pct = Number(percentages[item.sourceId] || 0)
     const scrap = calculateWaste(weight, pct).scrapKg
     return { weight: acc.weight + weight, scrap: acc.scrap + scrap, useful: acc.useful + weight - scrap }
-  }, { weight: 0, scrap: 0, useful: 0 }), [workspace.wasteItems, percentages])
+  }, { weight: 0, scrap: 0, useful: 0 }), [manualWasteItems, percentages])
   const plasmaTime = calculatePlasmaTime(Number(hours) || 0, Number(minutes) || 0)
   const enteredMinutes = plasmaTime.enteredMinutes
   const finalMinutes = plasmaTime.actualMinutes
@@ -131,7 +133,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   function completionPayload(archives: DirectMachineCuttingUpload[]) {
     return {
       requestId: workspace.requestId, decision, hours: Number(hours), minutes: Number(minutes),
-      wasteItems: workspace.wasteItems.map((item) => ({ ...item, wastePercent: Number(percentages[item.sourceId]) })),
+      wasteItems: manualWasteItems.map((item) => ({ ...item, wastePercent: Number(percentages[item.sourceId]) })),
       futureItems: decision === 'none' ? [] : rows.map((row) => ({
         partId: row.partId || null, quantity: row.quantity, name: row.name, drawingNumber: row.drawingNumber, unitWeightKg: row.unitWeightKg,
         compatibilities: row.partId ? [] : [{ productId: row.productId!, allVersions: false, versionIds: [row.versionId!] }],
@@ -160,8 +162,13 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   }
 
   function submit() {
-    const missing = workspace.wasteItems.find((item) => item.weightKg == null || item.weightKg <= 0)
+    const missing = manualWasteItems.find((item) => item.weightKg == null || item.weightKg <= 0)
     if (missing) return toast.error(`CRM не рассчитала вес: ${missing.itemName}`)
+    const incompletePlan = planFactItems.find((item) => !item.planFact?.ready)
+    if (incompletePlan?.planFact && Math.abs(incompletePlan.planFact.reconciliationDeltaKg) > 0.001) {
+      return toast.error(`Сверка веса не сошлась: ${incompletePlan.itemName}`)
+    }
+    if (incompletePlan) return toast.error(`Не все хлысты закрыты фактами: ${incompletePlan.itemName}`)
     const invalid = Object.values(percentages).some((value) => value === '' || Number(value) < 0 || Number(value) > 100 || Math.round(Number(value) * 10) !== Number(value) * 10)
     if (invalid || Number(minutes) > 59) return toast.error('Проверьте проценты отходности и время')
     startTransition(async () => {
@@ -205,7 +212,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
         <ol className="grid gap-3 sm:grid-cols-2" aria-label="Этапы завершения заявки">
           {[
             { number: 1, title: 'Будущая деталировка', description: 'Остаток для следующих заказов' },
-            { number: 2, title: 'Отходность и время', description: 'Факт порезки и плазмы' },
+            { number: 2, title: 'Факты, отходность и время', description: 'Раскрой, обычные позиции и плазма' },
           ].map((item) => {
             const active = step === item.number
             const complete = step > item.number
@@ -341,16 +348,40 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
         </div>}
 
         <div className="flex justify-end border-t border-slate-100 pt-5">
-          <Button type="button" onClick={goNext} className="h-12 w-full rounded-xl bg-blue-700 px-6 text-base shadow-sm hover:bg-blue-800 sm:w-auto">К отходности и времени <ArrowRight className="ml-2 h-4 w-4" /></Button>
+          <Button type="button" onClick={goNext} className="h-12 w-full rounded-xl bg-blue-700 px-6 text-base shadow-sm hover:bg-blue-800 sm:w-auto">К фактам и времени <ArrowRight className="ml-2 h-4 w-4" /></Button>
         </div>
       </CardContent>
     </Card> : <div className="space-y-5">
-      <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
+      {planFactItems.length > 0 && <Card className="overflow-hidden rounded-2xl border-blue-200 shadow-sm">
+        <CardHeader className="border-b border-blue-100 bg-blue-50/70 px-5 py-5 sm:px-7">
+          <CardTitle className="text-xl text-slate-950">Факты утверждённого плана раскроя</CardTitle>
+          <CardDescription className="leading-6">Ручной процент для этих позиций не применяется. Чистый вес, технологические потери и деловые остатки зафиксированы фактами карты.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 p-5 sm:p-7">{planFactItems.map((item) => {
+          const fact = item.planFact
+          if (!fact) return null
+          const losses = fact.kerfLossWeightKg + fact.endTrimLossWeightKg
+          return <div key={item.sourceId} className="space-y-4 rounded-xl border border-blue-200 bg-white p-4 shadow-xs">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><p className="font-semibold text-slate-900">{item.itemName}</p><p className="mt-1 text-sm text-slate-500">Закрыто хлыстов: {fact.factBarCount} из {fact.plannedBarCount}</p></div>
+              <Badge className={fact.ready ? 'border-0 bg-emerald-100 text-emerald-800 hover:bg-emerald-100' : 'border-0 bg-red-100 text-red-800 hover:bg-red-100'}>{fact.ready ? 'Сверка пройдена' : 'Закрытие заблокировано'}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="rounded-lg bg-slate-100 px-3 py-2"><p className="text-xs font-medium text-slate-600">Списано материала</p><p className="mt-1 font-mono font-semibold text-slate-950">{fact.purchasedWeightKg.toFixed(3)} кг</p></div>
+              <div className="rounded-lg bg-emerald-50 px-3 py-2"><p className="text-xs font-medium text-emerald-700">Чистый вес</p><p className="mt-1 font-mono font-semibold text-emerald-950">{fact.netWeightKg.toFixed(3)} кг</p></div>
+              <div className="rounded-lg bg-amber-50 px-3 py-2"><p className="text-xs font-medium text-amber-700">Пропил и торцовка</p><p className="mt-1 font-mono font-semibold text-amber-950">{losses.toFixed(3)} кг</p></div>
+              <div className="rounded-lg bg-blue-50 px-3 py-2"><p className="text-xs font-medium text-blue-700">Деловые остатки</p><p className="mt-1 font-mono font-semibold text-blue-950">{fact.businessScrapWeightKg.toFixed(3)} кг</p></div>
+              <div className={cn('rounded-lg px-3 py-2', Math.abs(fact.reconciliationDeltaKg) <= 0.001 ? 'bg-emerald-50' : 'bg-red-50')}><p className={cn('text-xs font-medium', Math.abs(fact.reconciliationDeltaKg) <= 0.001 ? 'text-emerald-700' : 'text-red-700')}>Расхождение</p><p className={cn('mt-1 font-mono font-semibold', Math.abs(fact.reconciliationDeltaKg) <= 0.001 ? 'text-emerald-950' : 'text-red-950')}>{fact.reconciliationDeltaKg.toFixed(3)} кг</p></div>
+            </div>
+          </div>
+        })}</CardContent>
+      </Card>}
+      {manualWasteItems.length > 0 && <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
         <CardHeader className="border-b border-slate-100 bg-slate-50/70 px-5 py-5 sm:px-7">
           <CardTitle className="text-xl text-slate-950">Отходность по позициям</CardTitle>
           <CardDescription className="leading-6">Укажите фактический процент металлолома. Полезный остаток и итоговый вес пересчитаются автоматически.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3 p-5 sm:p-7">{workspace.wasteItems.map((item) => {
+        <CardContent className="space-y-3 p-5 sm:p-7">{manualWasteItems.map((item) => {
         const pct = Number(percentages[item.sourceId] || 0); const weight = item.weightKg || 0; const scrap = calculateWaste(weight, pct).scrapKg
         return <div key={item.sourceId} className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-xs md:grid-cols-[minmax(220px,1fr)_120px_140px_140px] md:items-center">
           <div><p className="font-semibold text-slate-900">{item.itemName}</p><p className="mt-1 text-sm text-slate-500">{item.quantityLabel} · полный вес {item.weightKg == null ? 'не рассчитан' : `${weight.toFixed(3)} кг`}</p></div>
@@ -365,7 +396,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
             <div className="rounded-lg bg-emerald-400/10 px-3 py-2 text-sm text-emerald-200">Полезный вес <strong className="mt-1 block font-mono text-lg text-emerald-100">{totals.useful.toFixed(3)} кг</strong></div>
           </div>
         </CardContent>
-      </Card>
+      </Card>}
       <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
         <CardHeader className="border-b border-slate-100 bg-slate-50/70 px-5 py-5 sm:px-7">
           <CardTitle className="flex items-center gap-2 text-xl text-slate-950"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700"><FileArchive className="h-5 w-5" /></span>Программа порезки</CardTitle>

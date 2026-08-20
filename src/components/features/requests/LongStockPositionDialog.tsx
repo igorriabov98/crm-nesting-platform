@@ -1214,7 +1214,7 @@ function CandidateMatrix({
       </div>
       {hasShortRemainders && (
         <p className="mt-2 text-xs text-slate-500">
-          Приглушены остатки короче минимальной полезной длины {formatMm(minimumUsefulLengthMm)} мм.
+          Остатки короче минимальной полезной длины {formatMm(minimumUsefulLengthMm)} мм помечены как «мелочь»; на складской учёт это не влияет.
         </p>
       )}
     </div>
@@ -1239,8 +1239,8 @@ function RemainderComposition({
           <span key={`${lengthMm}-${index}`} className="contents">
             {index > 0 && <span aria-hidden="true">+</span>}
             <span
-              className={cn('tabular-nums', !useful && 'text-slate-400 line-through decoration-slate-300')}
-              title={useful ? `${formatMm(lengthMm)} мм` : `Короче минимальной полезной длины ${formatMm(minimumUsefulLengthMm)} мм`}
+              className={cn('tabular-nums', !useful && 'font-medium text-amber-700')}
+              title={useful ? `${formatMm(lengthMm)} мм` : `Мелочь: короче минимальной полезной длины ${formatMm(minimumUsefulLengthMm)} мм`}
             >
               {formatMm(lengthMm)}
             </span>
@@ -1317,9 +1317,9 @@ function LayoutPreview({ candidate, calculation }: { candidate: LongStockCutting
               {bar.source === 'business_remnant' && <Badge variant="secondary">Со склада</Badge>}
               {bar.purchaseLengthKind === 'nonstandard' && <Badge variant="outline" className="border-violet-200 text-violet-700">Нестандартный</Badge>}
             </div>
-            <span className={cn('text-sm text-slate-600', bar.remainderMm > 0 && bar.remainderMm < minimumUsefulLengthMm && 'text-slate-400')}>
+            <span className={cn('text-sm text-slate-600', bar.remainderMm > 0 && bar.remainderMm < minimumUsefulLengthMm && 'text-amber-700')}>
               Остаток: <strong>{formatMm(bar.remainderMm)} мм</strong>
-              {bar.remainderMm > 0 && bar.remainderMm < minimumUsefulLengthMm && <span className="ml-1">· не в дело</span>}
+              {bar.remainderMm > 0 && bar.remainderMm < minimumUsefulLengthMm && <span className="ml-1">· мелочь</span>}
             </span>
           </div>
           <BarStrip

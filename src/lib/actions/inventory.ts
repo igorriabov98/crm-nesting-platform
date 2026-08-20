@@ -1,8 +1,10 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { z } from 'zod'
 import { INVENTORY_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ROUTES } from '@/lib/constants/routes'
+import { classifyBusinessScrapLength, getLongStockLayoutCategoryKey, type BusinessScrapSizeClass } from '@/lib/inventory/business-scrap-size'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { PermissionOperation } from '@/lib/permissions/resources'
@@ -146,6 +148,8 @@ export type InventoryWithMaterial = Inventory & {
   display_total_secondary_quantity: number | null
   display_reserved_secondary_quantity: number | null
   display_calculated_weight_kg: number | null
+  minimum_useful_length_mm?: number | null
+  business_scrap_size_class?: BusinessScrapSizeClass | null
   active_cut_reservations: Array<{
     id: string
     machine_id: string
@@ -221,6 +225,18 @@ export type InventoryWarehouseHistoryOverview = {
 async function requireAccess(operation: PermissionOperation = 'view') {
   const { supabase, userId, role } = await requirePermission('inventory', operation)
   return { db: supabase as unknown as LooseDb, userId, role }
+}
+
+async function getBusinessScrapMinimumLengths() {
+  const adminDb = createAdminClient() as unknown as LooseDb
+  const { data, error } = await adminDb
+    .from('long_stock_layout_categories')
+    .select('key, minimum_useful_length_mm')
+  if (error) throw new Error(error.message || 'Не удалось загрузить пороги полезной длины')
+  return new Map(((data || []) as unknown[]).map((row) => {
+    const category = row as { key: string; minimum_useful_length_mm: number }
+    return [category.key, Number(category.minimum_useful_length_mm)] as const
+  }))
 }
 
 async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<InventoryWithMaterial[]> {
@@ -458,6 +474,31 @@ export async function getInventory(filters: { factory_id?: string | null; catego
     if (error) throw new Error(error.message || 'Не удалось загрузить склад')
 
     let rows = await hydrateInventory(db, (data || []) as Inventory[])
+    let minimumLengthByCategory = new Map<string, number>()
+    try {
+      minimumLengthByCategory = await getBusinessScrapMinimumLengths()
+    } catch {
+      // The stock page remains usable if display-only settings are temporarily unavailable.
+    }
+    rows = rows.map((row) => {
+      const layoutCategoryKey = row.is_business_scrap
+        ? getLongStockLayoutCategoryKey({
+            category: row.material?.category,
+            pipeType: row.variant?.pipe_type,
+            knifeBevelCount: row.variant?.knife_bevel_count,
+          })
+        : null
+      const minimumUsefulLengthMm = layoutCategoryKey
+        ? minimumLengthByCategory.get(layoutCategoryKey) ?? null
+        : null
+      return {
+        ...row,
+        minimum_useful_length_mm: minimumUsefulLengthMm,
+        business_scrap_size_class: row.is_business_scrap
+          ? classifyBusinessScrapLength(row.piece_length_mm, minimumUsefulLengthMm)
+          : null,
+      }
+    })
     rows = rows.filter((row) => !row.deleted_at)
     if (filters.category) rows = rows.filter((row) => row.material?.category === filters.category)
     if (filters.search?.trim()) {
@@ -468,6 +509,52 @@ export async function getInventory(filters: { factory_id?: string | null; catego
     return { data: rows, error: null }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить склад' }
+  }
+}
+
+export async function canManageInventory() {
+  try {
+    await requireAccess('manage')
+    return true
+  } catch {
+    return false
+  }
+}
+
+const businessScrapConversionSchema = z.array(z.string().uuid())
+  .min(1, 'Выберите хотя бы один деловой остаток')
+  .max(100, 'За один раз можно перевести не более 100 остатков')
+  .refine((ids) => new Set(ids).size === ids.length, 'Один деловой остаток выбран несколько раз')
+
+export async function convertBusinessScrapToMetal(inventoryIds: string[]): Promise<ActionResult<{
+  count: number
+  total_weight_kg: number
+}>> {
+  try {
+    const parsedIds = businessScrapConversionSchema.parse(inventoryIds)
+    const { userId } = await requireAccess('manage')
+    const adminDb = createAdminClient() as unknown as LooseDb
+    const { data, error } = await adminDb.rpc('fn_convert_business_scrap_to_metal_v1', {
+      p_inventory_ids: parsedIds,
+      p_actor: userId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось перевести деловой остаток в металлолом')
+    const result = data as { count?: number; total_weight_kg?: number } | null
+    revalidatePath(ROUTES.INVENTORY)
+    revalidatePath(ROUTES.INVENTORY_HISTORY)
+    revalidatePath(ROUTES.INVENTORY_METAL_SCRAP)
+    return {
+      success: true,
+      data: {
+        count: Number(result?.count || parsedIds.length),
+        total_weight_kg: Number(result?.total_weight_kg || 0),
+      },
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Не удалось перевести деловой остаток в металлолом',
+    }
   }
 }
 

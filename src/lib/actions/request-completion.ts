@@ -60,12 +60,30 @@ const finalizeSchema = z.object({
   decision: z.enum(['has_items', 'none']),
   hours: z.coerce.number().int().min(0).max(999),
   minutes: z.coerce.number().int().min(0).max(59),
-  wasteItems: z.array(wasteSchema).min(1),
+  wasteItems: z.array(wasteSchema),
   futureItems: z.array(futureItemSchema),
   archives: z.array(stagedArchiveSchema).max(20).default([]),
 }).refine((value) => value.decision === 'none' ? value.futureItems.length === 0 : value.futureItems.length > 0, 'Добавьте деталировку или выберите «нет»')
 
 type RawWasteRow = Record<string, unknown>
+type RawPlanFactRow = Record<string, unknown>
+
+export type CompletionPlanFact = {
+  planId: string
+  versionId: string | null
+  planStatus: string
+  plannedBarCount: number
+  factBarCount: number
+  actualLossBarCount: number
+  purchasedWeightKg: number
+  netWeightKg: number
+  kerfLossWeightKg: number
+  endTrimLossWeightKg: number
+  businessScrapWeightKg: number
+  reconciliationDeltaKg: number
+  ready: boolean
+}
+
 export type CompletionWasteItem = {
   sourceTable: z.infer<typeof wasteSchema>['sourceTable']
   sourceId: string
@@ -76,6 +94,8 @@ export type CompletionWasteItem = {
   materialGrade: string | null
   quantityLabel: string
   weightKg: number | null
+  accountingMode: 'manual_percent' | 'plan_fact'
+  planFact: CompletionPlanFact | null
 }
 
 export type CompletionWorkspace = {
@@ -89,6 +109,41 @@ export type CompletionWorkspace = {
 
 function db() { return createAdminClient() as any }
 function num(value: unknown) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : null }
+
+function planFactKey(sourceTable: string, sourceId: string) {
+  return `${sourceTable}:${sourceId}`
+}
+
+function mapPlanFact(row: RawPlanFactRow): CompletionPlanFact {
+  const planStatus = String(row.plan_status || '')
+  const plannedBarCount = Number(row.planned_bar_count || 0)
+  const factBarCount = Number(row.fact_bar_count || 0)
+  const actualLossBarCount = Number(row.actual_loss_bar_count || 0)
+  const versionId = row.version_id ? String(row.version_id) : null
+  const reconciliationDeltaKg = Number(row.reconciliation_delta_kg || 0)
+  return {
+    planId: String(row.plan_id),
+    versionId,
+    planStatus,
+    plannedBarCount,
+    factBarCount,
+    actualLossBarCount,
+    purchasedWeightKg: Number(row.purchased_weight_kg || 0),
+    netWeightKg: Number(row.net_weight_kg || 0),
+    kerfLossWeightKg: Number(row.kerf_loss_weight_kg || 0),
+    endTrimLossWeightKg: Number(row.end_trim_loss_weight_kg || 0),
+    businessScrapWeightKg: Number(row.business_scrap_weight_kg || 0),
+    reconciliationDeltaKg,
+    ready: Boolean(
+      versionId
+      && planStatus === 'closed'
+      && plannedBarCount > 0
+      && factBarCount === plannedBarCount
+      && actualLossBarCount === factBarCount
+      && Math.abs(reconciliationDeltaKg) <= 0.001
+    ),
+  }
+}
 
 function mapWaste(sourceTable: CompletionWasteItem['sourceTable'], row: RawWasteRow): CompletionWasteItem {
   const fallbackName = sourceTable === 'request_circle' ? `Круг Ø${row.diameter_mm || '—'} мм` : 'Металл'
@@ -111,6 +166,8 @@ function mapWaste(sourceTable: CompletionWasteItem['sourceTable'], row: RawWaste
     materialGrade: grade ? String(grade) : null,
     quantityLabel: quantity,
     weightKg: num(row.calculated_weight_kg),
+    accountingMode: 'manual_percent',
+    planFact: null,
   }
 }
 
@@ -131,22 +188,31 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
     const navigation = resolveCompletionWorkspaceNavigation(requestResult.data.status as RequestStatus)
     if (navigation.kind === 'redirect') return { data: null, error: null, redirectTo: navigation.href }
     if (navigation.kind === 'unavailable') throw new Error('Заявка не находится на этапе бронирования')
-    const [machineResult, sheet, pipe, circle, knives] = await Promise.all([
+    const [machineResult, sheet, pipe, circle, knives, planFactsResult] = await Promise.all([
       client.from('machines').select('id,name,factory_id,factories(id,name)').eq('id', requestResult.data.machine_id).single(),
       client.from('request_sheet_metal').select('id,material_id,material_variant_id,material_name,material_grade,sheet_size,quantity_sheets,calculated_weight_kg').eq('request_id', id).order('sort_order'),
       client.from('request_pipe').select('id,material_id,material_variant_id,pipe_type,size,remainder_qty,calculated_weight_kg').eq('request_id', id).order('sort_order'),
       client.from('request_circle').select('id,material_id,material_variant_id,steel_grade,diameter_mm,remainder_mm,calculated_weight_kg').eq('request_id', id).order('sort_order'),
       client.from('request_knives').select('id,material_id,material_variant_id,knife_type,steel_grade,remainder_qty,calculated_weight_kg').eq('request_id', id).order('sort_order'),
+      client.rpc('fn_get_long_stock_completion_plan_facts_v1', { p_request_id: id }),
     ])
     if (machineResult.error || !machineResult.data) throw new Error('Не удалось определить завод машины')
     const factory = Array.isArray(machineResult.data.factories) ? machineResult.data.factories[0] : machineResult.data.factories
     if (!machineResult.data.factory_id || !factory) throw new Error('У машины не указан завод')
+    if (planFactsResult.error) throw new Error(planFactsResult.error.message || 'Не удалось загрузить факты карт раскроя')
+    const planFacts = new Map<string, CompletionPlanFact>((planFactsResult.data || []).map((row: RawPlanFactRow) => [
+      planFactKey(String(row.request_item_table), String(row.request_item_id)),
+      mapPlanFact(row),
+    ]))
     const wasteItems = [
       ...(sheet.data || []).map((row: RawWasteRow) => mapWaste('request_sheet_metal', row)),
       ...(pipe.data || []).map((row: RawWasteRow) => mapWaste('request_pipe', row)),
       ...(circle.data || []).map((row: RawWasteRow) => mapWaste('request_circle', row)),
       ...(knives.data || []).map((row: RawWasteRow) => mapWaste('request_knives', row)),
-    ]
+    ].map((item) => {
+      const planFact = planFacts.get(planFactKey(item.sourceTable, item.sourceId)) || null
+      return planFact ? { ...item, accountingMode: 'plan_fact' as const, planFact } : item
+    })
     return { data: { requestId: id, machineId: machineResult.data.id, machineName: machineResult.data.name, factoryId: machineResult.data.factory_id, factoryName: factory.name, wasteItems }, error: null, redirectTo: null }
   } catch (error) { return { data: null, error: getErrorMessage(error), redirectTo: null } }
 }
@@ -246,7 +312,7 @@ export async function getCompletionCorrectionWorkspace(requestId: string) {
 
 export async function correctTechnologistCompletion(input: { requestId: string; hours: number; minutes: number; reason: string; wasteItems: Array<{ wasteItemId: string; wastePercent: number }> }) {
   try {
-    const parsed = z.object({ requestId: z.string().uuid(), hours: z.coerce.number().int().nonnegative(), minutes: z.coerce.number().int().min(0).max(59), reason: z.string().trim().min(1), wasteItems: z.array(z.object({ wasteItemId: z.string().uuid(), wastePercent: z.coerce.number().min(0).max(100) })).min(1) }).parse(input)
+    const parsed = z.object({ requestId: z.string().uuid(), hours: z.coerce.number().int().nonnegative(), minutes: z.coerce.number().int().min(0).max(59), reason: z.string().trim().min(1), wasteItems: z.array(z.object({ wasteItemId: z.string().uuid(), wastePercent: z.coerce.number().min(0).max(100) })) }).parse(input)
     const { supabase, userId } = await requirePermission('technologist_requests', 'manage')
     const { error } = await (supabase as any).rpc('fn_correct_technologist_completion', { p_request_id: parsed.requestId, p_entered_plasma_minutes: parsed.hours * 60 + parsed.minutes, p_waste_items: parsed.wasteItems, p_reason: parsed.reason, p_actor: userId })
     if (error) throw error
