@@ -124,11 +124,11 @@ begin
 
   v_version := public.fn_get_or_create_long_stock_cutting_plan_version(
     v_plan, v_input, v_segments, v_candidates, 1, v_actor,
-    null, jsonb_build_object('storage_bucket', 'long-stock-plans', 'object_path', 'test/plan-v1.pdf')
+    null, '{}'::jsonb
   );
   v_repeated_version := public.fn_get_or_create_long_stock_cutting_plan_version(
     v_plan, v_input, v_segments, v_candidates, 1, v_actor,
-    null, jsonb_build_object('storage_bucket', 'long-stock-plans', 'object_path', 'ignored.pdf')
+    null, '{}'::jsonb
   );
   if v_repeated_version is distinct from v_version then
     raise exception 'Повторный расчёт создал новую версию';

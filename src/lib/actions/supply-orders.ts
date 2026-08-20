@@ -111,6 +111,8 @@ export type SupplyOrderDeliverySchedule = {
   received_quantity: number | null
   allocated_quantity: number | null
   allocated_physical_quantity: number | null
+  planned_piece_length_mm: number | null
+  planned_piece_count: number | null
   received_piece_length_mm: number | null
   received_piece_count: number | null
   allocated_piece_count: number | null
@@ -332,8 +334,8 @@ export type MaterialReceivingItem = {
   characteristics: SupplyOrderAggregateCharacteristic[]
   weight_kg: number | null
   is_virtual_schedule: boolean
-  piece_length_mm: number | null
-  piece_count: number | null
+  planned_piece_length_mm: number | null
+  planned_piece_count: number | null
 }
 
 export type MaterialReceivingDateGroup = {
@@ -388,6 +390,8 @@ export type MaterialDeliveryAllocationPreview = {
   category: MaterialCategory
   unit: string
   planned_quantity: number
+  planned_piece_length_mm: number | null
+  planned_piece_count: number | null
   received_quantity: number
   total_outstanding_quantity: number
   allocations: MaterialDeliveryAllocationPreviewRow[]
@@ -1214,7 +1218,7 @@ export async function getSupplyOrders(
     const [inventoryRes, reservationsRes, schedulesRes] = await Promise.all([
       materialIds.length && stockFactoryIds.length ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm').in('material_id', materialIds).in('factory_id', stockFactoryIds) : Promise.resolve({ data: [], error: null } as DbResult),
       orderableRawItems.length ? db.from('inventory_reservations').select('id, request_item_table, request_item_id, consumed_at').in('request_item_id', orderableRawItems.map((item) => item.id)) : Promise.resolve({ data: [], error: null } as DbResult),
-      orderableRawItems.length ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', orderableRawItems.map((item) => item.id)).order('delivery_date', { ascending: true }) : Promise.resolve({ data: [], error: null } as DbResult),
+      orderableRawItems.length ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', orderableRawItems.map((item) => item.id)).order('delivery_date', { ascending: true }) : Promise.resolve({ data: [], error: null } as DbResult),
     ])
     if (inventoryRes.error) throw new Error(inventoryRes.error.message || 'Не удалось загрузить остатки склада')
     if (reservationsRes.error) throw new Error(reservationsRes.error.message || 'Не удалось загрузить бронирования')
@@ -1346,6 +1350,8 @@ export async function getSupplyOrders(
           received_quantity: schedule.received_quantity === null || schedule.received_quantity === undefined ? null : Number(schedule.received_quantity),
           allocated_quantity: schedule.allocated_quantity === null || schedule.allocated_quantity === undefined ? null : Number(schedule.allocated_quantity),
           allocated_physical_quantity: schedule.allocated_physical_quantity === null || schedule.allocated_physical_quantity === undefined ? null : Number(schedule.allocated_physical_quantity),
+          planned_piece_length_mm: schedule.planned_piece_length_mm === null || schedule.planned_piece_length_mm === undefined ? null : Number(schedule.planned_piece_length_mm),
+          planned_piece_count: schedule.planned_piece_count === null || schedule.planned_piece_count === undefined ? null : Number(schedule.planned_piece_count),
           received_piece_length_mm: schedule.received_piece_length_mm === null || schedule.received_piece_length_mm === undefined ? null : Number(schedule.received_piece_length_mm),
           received_piece_count: schedule.received_piece_count === null || schedule.received_piece_count === undefined ? null : Number(schedule.received_piece_count),
           allocated_piece_count: schedule.allocated_piece_count === null || schedule.allocated_piece_count === undefined ? null : Number(schedule.allocated_piece_count),
@@ -1474,7 +1480,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
         ? db.from('materials').select('id, default_supplier_id').in('id', materialIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       rawItems.length
-        ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', rawItems.map((item) => item.id)).order('delivery_date', { ascending: false })
+        ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', rawItems.map((item) => item.id)).order('delivery_date', { ascending: false })
         : Promise.resolve({ data: [], error: null } as DbResult),
     ])
     if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
@@ -1782,6 +1788,8 @@ function toScheduleDto(
     received_quantity: schedule.received_quantity === null || schedule.received_quantity === undefined ? null : Number(schedule.received_quantity),
     allocated_quantity: schedule.allocated_quantity === null || schedule.allocated_quantity === undefined ? null : Number(schedule.allocated_quantity),
     allocated_physical_quantity: schedule.allocated_physical_quantity === null || schedule.allocated_physical_quantity === undefined ? null : Number(schedule.allocated_physical_quantity),
+    planned_piece_length_mm: schedule.planned_piece_length_mm === null || schedule.planned_piece_length_mm === undefined ? null : Number(schedule.planned_piece_length_mm),
+    planned_piece_count: schedule.planned_piece_count === null || schedule.planned_piece_count === undefined ? null : Number(schedule.planned_piece_count),
     received_piece_length_mm: schedule.received_piece_length_mm === null || schedule.received_piece_length_mm === undefined ? null : Number(schedule.received_piece_length_mm),
     received_piece_count: schedule.received_piece_count === null || schedule.received_piece_count === undefined ? null : Number(schedule.received_piece_count),
     allocated_piece_count: schedule.allocated_piece_count === null || schedule.allocated_piece_count === undefined ? null : Number(schedule.allocated_piece_count),
@@ -2363,11 +2371,13 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
   let sourceId = input.id || ''
   const scheduleId = input.schedule_id || null
   let scheduleQuantity: number | null = null
+  let plannedPieceLengthMm: number | null = null
+  let plannedPieceCount: number | null = null
 
   if (scheduleId) {
     const { data, error } = await db
       .from('supply_order_delivery_schedules')
-      .select('request_item_table, request_item_id, status, quantity')
+      .select('request_item_table, request_item_id, status, quantity, planned_piece_length_mm, planned_piece_count')
       .eq('id', scheduleId)
       .maybeSingle()
     if (error) throw new Error(error.message || 'Не удалось загрузить поставку')
@@ -2376,6 +2386,8 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
       request_item_id?: string
       status?: string
       quantity?: number
+      planned_piece_length_mm?: number | null
+      planned_piece_count?: number | null
     } | null
     if (!schedule?.request_item_table || !schedule.request_item_id) throw new Error('Поставка не найдена')
     if (schedule.status === 'delivered') throw new Error('Поставка уже принята')
@@ -2383,6 +2395,12 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
     sourceTable = schedule.request_item_table
     sourceId = schedule.request_item_id
     scheduleQuantity = Number(schedule.quantity || 0)
+    plannedPieceLengthMm = schedule.planned_piece_length_mm === null || schedule.planned_piece_length_mm === undefined
+      ? null
+      : Number(schedule.planned_piece_length_mm)
+    plannedPieceCount = schedule.planned_piece_count === null || schedule.planned_piece_count === undefined
+      ? null
+      : Number(schedule.planned_piece_count)
   }
 
   assertOrderTable(sourceTable)
@@ -2393,7 +2411,14 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
   if (!Number.isFinite(plannedQuantity) || plannedQuantity <= 0) {
     throw new Error('Плановое количество поставки должно быть больше 0')
   }
-  return { scheduleId, sourceItem, allOpenItems, plannedQuantity }
+  return {
+    scheduleId,
+    sourceItem,
+    allOpenItems,
+    plannedQuantity,
+    plannedPieceLengthMm,
+    plannedPieceCount,
+  }
 }
 
 async function buildMaterialAllocationPreview(
@@ -2403,6 +2428,8 @@ async function buildMaterialAllocationPreview(
   sourceItem: SupplyOrderAggregateInputItem,
   allOpenItems: SupplyOrderAggregateInputItem[],
   plannedQuantity: number,
+  plannedPieceLengthMm: number | null,
+  plannedPieceCount: number | null,
 ): Promise<MaterialDeliveryAllocationPreview> {
   const isBar = isWholeBarItem(sourceItem)
   const { pieceLengthMm, pieceCount, receivedQuantity } = parseBarReceipt(input, sourceItem)
@@ -2524,6 +2551,8 @@ async function buildMaterialAllocationPreview(
     category: sourceItem.category,
     unit: sourceItem.unit,
     planned_quantity: plannedQuantity,
+    planned_piece_length_mm: plannedPieceLengthMm,
+    planned_piece_count: plannedPieceCount,
     received_quantity: receivedQuantity,
     total_outstanding_quantity: totalOutstandingQuantity,
     allocations: rows,
@@ -2558,7 +2587,7 @@ async function loadReceivingSchedules(db: LooseDb, items: Array<Pick<RawOrderIte
 
   const { data, error } = await db
     .from('supply_order_delivery_schedules')
-    .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at')
+    .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at')
     .in('request_item_id', itemIds)
     .neq('status', 'cancelled')
     .order('delivery_date', { ascending: true })
@@ -2602,8 +2631,8 @@ function makeReceivingItem(
     characteristics: getAggregateCharacteristics(item.table, item.raw, item),
     weight_kg: proportionalWeight(item.calculated_weight_kg, item.to_order, plannedQuantity),
     is_virtual_schedule: !schedule,
-    piece_length_mm: schedule?.received_piece_length_mm ?? null,
-    piece_count: schedule?.received_piece_count ?? null,
+    planned_piece_length_mm: schedule?.planned_piece_length_mm ?? null,
+    planned_piece_count: schedule?.planned_piece_count ?? null,
   }
 }
 
@@ -2814,7 +2843,14 @@ export async function previewMaterialDeliveryAllocation(input: MaterialDeliveryI
     if (!Number.isFinite(receivedQuantity) || receivedQuantity <= 0) {
       throw new Error('Введите фактическое количество прихода')
     }
-    const { scheduleId, sourceItem, allOpenItems, plannedQuantity } = await resolveReceivingSource(db, input)
+    const {
+      scheduleId,
+      sourceItem,
+      allOpenItems,
+      plannedQuantity,
+      plannedPieceLengthMm,
+      plannedPieceCount,
+    } = await resolveReceivingSource(db, input)
     if (!sourceItem.material_id) throw new Error(`Позиция «${sourceItem.item_name}» не привязана к материалу`)
     if (!sourceItem.factory_id) throw new Error('Для приёмки не определён завод машины')
     const data = await buildMaterialAllocationPreview(
@@ -2824,6 +2860,8 @@ export async function previewMaterialDeliveryAllocation(input: MaterialDeliveryI
       sourceItem,
       allOpenItems,
       plannedQuantity,
+      plannedPieceLengthMm,
+      plannedPieceCount,
     )
     if (!data.allocations.some((row) => row.is_eligible && row.outstanding_quantity > 0)) {
       throw new Error('Не найдено открытых потребностей для распределения поставки')
@@ -2850,6 +2888,8 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
       resolved.sourceItem,
       resolved.allOpenItems,
       resolved.plannedQuantity,
+      resolved.plannedPieceLengthMm,
+      resolved.plannedPieceCount,
     )
     const requiresConfirmation = preview.mode === 'whole_bar' || preview.has_shortage
     if (requiresConfirmation && !Array.isArray(input.confirmed_allocations)) {
@@ -2903,8 +2943,6 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
           quantity: plannedQuantity,
           unit: orderItem.unit,
           supplier_id: orderItem.supplier_id,
-          received_piece_length_mm: input.piece_length_mm || null,
-          received_piece_count: input.piece_count || null,
           created_by: userId,
           updated_by: userId,
         })
@@ -3177,8 +3215,8 @@ export async function saveAggregateDeliverySchedule(
         quantity: roundScheduleQuantity(schedule.quantity),
         unit: anchor.unit,
         supplier_id: resolvedSupplierId,
-        received_piece_length_mm: schedule.piece_length_mm,
-        received_piece_count: schedule.piece_count,
+        planned_piece_length_mm: schedule.piece_length_mm,
+        planned_piece_count: schedule.piece_count,
         created_by: userId,
         updated_by: userId,
       })
@@ -3491,47 +3529,6 @@ export async function updateOrderDeliverySchedule(
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось обновить дату поставки' }
-  }
-}
-
-export async function receiveOrderDeliverySchedule(scheduleId: string, receivedQuantity?: number) {
-  try {
-    const { db, userId } = await requireAccess('manage')
-    const affectedItems = await getScheduleAffectedItems(db, [scheduleId])
-    const machineIds = await getAffectedMachineIds(db, affectedItems)
-    const affectedOrderItems = await loadSelectedOrderItems(db, affectedItems)
-    let actualQuantity = Number(receivedQuantity || 0)
-    if (!Number.isFinite(actualQuantity) || actualQuantity <= 0) {
-      const { data: scheduleData, error: scheduleError } = await db
-        .from('supply_order_delivery_schedules')
-        .select('quantity')
-        .eq('id', scheduleId)
-        .maybeSingle()
-      if (scheduleError) throw new Error(scheduleError.message || 'Не удалось загрузить поставку')
-      actualQuantity = Number((scheduleData as { quantity?: number } | null)?.quantity || 0)
-    }
-    if (!Number.isFinite(actualQuantity) || actualQuantity <= 0) throw new Error('Введите фактическое количество прихода')
-
-    const { error } = await db.rpc('fn_receive_supply_order_schedule', {
-      p_schedule_id: scheduleId,
-      p_performed_by: userId,
-      p_received_quantity: actualQuantity,
-    })
-    if (error) throw new Error(error.message || 'Не удалось принять поставку на склад')
-    await syncActualMaterialDatesForMachines(machineIds)
-    try {
-      await dispatchPendingTelegramDeliveries({ limit: 100 })
-    } catch {
-      // Telegram delivery is best-effort; CRM notifications and tasks are already persisted.
-    }
-    revalidateSupplyOrderPaths(machineIds)
-    revalidateInventoryHistoryPaths(affectedOrderItems)
-    revalidatePath(ROUTES.TASKS)
-    revalidatePath(ROUTES.NOTIFICATIONS)
-    revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
-    return { success: true }
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : 'Не удалось принять поставку на склад' }
   }
 }
 

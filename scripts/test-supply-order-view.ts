@@ -610,6 +610,8 @@ function makeDeliverySchedule(patch: Partial<SupplyOrderDeliverySchedule>): Supp
     received_quantity: 1,
     allocated_quantity: 1,
     allocated_physical_quantity: 1,
+    planned_piece_length_mm: null,
+    planned_piece_count: null,
     received_piece_length_mm: null,
     received_piece_count: null,
     allocated_piece_count: null,

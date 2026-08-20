@@ -6,13 +6,12 @@ import { useMemo, useState, useTransition } from 'react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { CalendarDays, FileText, PackageCheck, Plus, Save, Trash2, Warehouse } from 'lucide-react'
+import { CalendarDays, FileText, Plus, Save, Trash2, Warehouse } from 'lucide-react'
 import { MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
 import {
  addOrderDeliverySchedule,
  deleteOrderDeliverySchedule,
- receiveOrderDeliverySchedule,
  updateOrderCustomDeliveryDate,
  updateOrderDeliverySchedule,
  updateOrderSupplier,
@@ -118,18 +117,6 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
     return
    }
    toast.success('Дата поставки обновлена')
-   router.refresh()
-  })
- }
-
- const receiveSchedule = (schedule: SupplyOrderDeliverySchedule) => {
-  startTransition(async () => {
-   const result = await receiveOrderDeliverySchedule(schedule.id)
-   if (!result.success) {
-    toast.error(result.error || 'Не удалось принять поставку')
-    return
-   }
-   toast.success('Поставка принята на склад')
    router.refresh()
   })
  }
@@ -317,10 +304,9 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
         {schedule.status === 'delivered' ? (
          <div className="text-[#64748B]">{schedule.delivered_at ? `Приход: ${new Date(schedule.delivered_at).toLocaleDateString('ru-RU')}` : 'Принято'}</div>
         ) : (
-         <div className="grid grid-cols-3 gap-1">
+         <div className="grid grid-cols-2 gap-1">
           <Button type="button" variant="outline" size="sm" className="min-h-10 px-2" disabled={isPending || readOnly || (dateChanged && !draft.change_reason.trim())} onClick={() => updateSchedule(schedule)}><Save className="h-3.5 w-3.5" /><span className="sr-only sm:not-sr-only">Сохранить</span></Button>
           <Button type="button" variant="outline" size="sm" className="min-h-10 border-destructive/30 px-2 text-destructive" disabled={isPending || readOnly} onClick={() => deleteSchedule(schedule)}><Trash2 className="h-3.5 w-3.5" /><span className="sr-only sm:not-sr-only">Удалить</span></Button>
-          <Button type="button" size="sm" className="min-h-10 bg-emerald-700 px-2 text-white hover:bg-emerald-800" disabled={isPending || readOnly || item.order_status !== 'ordered'} onClick={() => receiveSchedule(schedule)}><PackageCheck className="h-3.5 w-3.5" /><span className="sr-only sm:not-sr-only">Принять</span></Button>
          </div>
         )}
        </div>

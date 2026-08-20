@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { Archive, CalendarRange, CheckCircle2, ChevronDown, ClipboardList, Download, Factory, FileStack, Loader2, Play, RotateCcw, Search } from 'lucide-react'
+import { Archive, CalendarRange, CheckCircle2, ChevronDown, ClipboardList, Download, ExternalLink, Factory, FileStack, FileText, Loader2, Play, RotateCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -246,6 +246,35 @@ export function CuttingAreaPage({ workspace }: { workspace: CuttingAreaWorkspace
                         ))}
                         {request.archives.length === 0 && <p className="mt-1 text-sm text-slate-500">Программа не добавлена</p>}
                       </div>
+                      <section className="mt-4 border-t border-slate-200 pt-3" aria-label={`Карты раскроя заявки №${request.number}`}>
+                        <p className="flex items-center gap-2 text-sm font-medium text-slate-800"><FileText className="h-4 w-4" />Карты раскроя: {request.cuttingPlans.length}</p>
+                        {request.cuttingPlans.length === 0 ? (
+                          <p className="mt-1 text-sm text-slate-500">Карты раскроя не утверждены</p>
+                        ) : (
+                          <ul className="mt-2 space-y-2">
+                            {request.cuttingPlans.map((plan) => (
+                              <li key={plan.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                  <div className="min-w-0">
+                                    <p className="break-words text-sm font-medium text-slate-950">{plan.materialName}</p>
+                                    <p className="mt-0.5 break-words text-xs text-slate-600">{plan.variantLabel}</p>
+                                    <p className="mt-1 text-xs font-medium tabular-nums text-slate-500">Карта №{plan.planNumber} · версия {plan.versionNumber}</p>
+                                  </div>
+                                  {plan.status === 'invalid' ? (
+                                    <span className="shrink-0 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">требуется пересчёт</span>
+                                  ) : plan.downloadUrl ? (
+                                    <a href={plan.downloadUrl} target="_blank" rel="noreferrer" className={cn(buttonVariants({ variant: 'outline' }), 'min-h-10 shrink-0 border-blue-200 bg-white text-blue-950 hover:bg-blue-50')}>
+                                      Открыть PDF <ExternalLink className="ml-2 h-4 w-4" />
+                                    </a>
+                                  ) : (
+                                    <span className="shrink-0 text-sm text-slate-500">PDF не сформирован</span>
+                                  )}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </section>
                       <Link
                         href={`${ROUTES.PRODUCTION_CUTTING_AREA}/${order.machineId}/request/${request.id}`}
                         className={cn(buttonVariants({ variant: 'outline' }), 'mt-4 min-h-11 w-full border-blue-200 text-blue-950 hover:bg-blue-50')}
