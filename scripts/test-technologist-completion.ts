@@ -29,4 +29,25 @@ assert.ok(!supplyPage.includes("toast.success('Бронь завершена. З
 const completionPage = readFileSync('src/app/(protected)/technologist/requests/[requestId]/complete/page.tsx', 'utf8')
 assert.ok(completionPage.includes('if (result.redirectTo) redirect(result.redirectTo)'))
 
+const planFactsMigration = readFileSync('supabase/migrations/20260820120000_technologist_completion_plan_facts.sql', 'utf8')
+for (const required of [
+  'technologist_request_plan_fact_items',
+  'fn_get_long_stock_completion_plan_facts_v1',
+  'Сверка веса не сошлась для позиции',
+  'Укажите отходность только для обычных металлических позиций без карты раскроя',
+  "v_payload_count = 0 and v_plan_count = 0",
+]) assert.ok(planFactsMigration.includes(required), `plan-fact completion migration is missing ${required}`)
+
+const completionAction = readFileSync('src/lib/actions/request-completion.ts', 'utf8')
+assert.ok(completionAction.includes("accountingMode: 'manual_percent' | 'plan_fact'"))
+assert.ok(completionAction.includes("client.rpc('fn_get_long_stock_completion_plan_facts_v1'"))
+assert.ok(completionAction.includes('wasteItems: z.array(wasteSchema)'))
+assert.ok(!completionAction.includes('wasteItems: z.array(wasteSchema).min(1)'))
+
+const completionWizard = readFileSync('src/components/features/technologist/RequestCompletionWizard.tsx', 'utf8')
+assert.ok(completionWizard.includes("item.accountingMode === 'manual_percent'"))
+assert.ok(completionWizard.includes("item.accountingMode === 'plan_fact'"))
+assert.ok(completionWizard.includes('wasteItems: manualWasteItems.map'))
+assert.ok(!completionWizard.includes('wasteItems: workspace.wasteItems.map'))
+
 console.log('Technologist completion regression passed')

@@ -46,6 +46,8 @@ jobs:
         run: npm run test:supply-request-flow
       - name: Technologist request editability
         run: npm run test:technologist-request-editability
+      - name: Technologist completion plan facts
+        run: npm run test:technologist-completion
       - name: Production cutting area request view
         run: npm run test:production-cutting-area
       - name: Nesting STEP/PDF dimension choice

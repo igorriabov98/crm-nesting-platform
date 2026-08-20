@@ -146,6 +146,7 @@ begin
     and candidate.candidate_number = 1;
 
   return jsonb_build_object(
+    'request_id', v_request,
     'plan_id', v_plan,
     'version_id', v_version,
     'request_item_id', v_request_item,
@@ -622,6 +623,225 @@ begin
       and end_trim_loss_length_mm = 0
   ) then
     raise exception 'Потеря складского остатка не записана аналитически';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  v_actor uuid;
+  v_factory uuid;
+  v_section uuid;
+  v_material uuid;
+  v_all_plan_request uuid;
+  v_completion uuid;
+  v_snapshot public.technologist_request_plan_fact_items%rowtype;
+  v_count integer;
+  v_machine uuid := gen_random_uuid();
+  v_variant uuid := gen_random_uuid();
+  v_plan_data jsonb;
+  v_mixed_request uuid;
+  v_request_item uuid;
+  v_version uuid;
+  v_source uuid;
+  v_result_inventory uuid;
+  v_fact uuid := gen_random_uuid();
+  v_sheet_item uuid := gen_random_uuid();
+  v_steel_type uuid;
+  v_steel_grade text;
+  v_sheet_weight numeric;
+  v_original_kerf_weight numeric;
+  v_mismatch_blocked boolean := false;
+  v_payload jsonb;
+begin
+  select id, factory_id into v_actor, v_factory
+  from public.users
+  where email = 'long-stock-cutting-fact@example.test';
+  select id into v_section
+  from public.production_fact_sections
+  where name = 'Заготовка · тест факта длинномера';
+  select id into v_material
+  from public.materials
+  where name = 'Тестовый круг факта длинномера';
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
+
+  -- A request consisting only of planned long-stock positions finalizes with
+  -- an empty percentage-waste list. Its immutable snapshot reconciles exactly.
+  select request.id into v_all_plan_request
+  from public.technologist_requests request
+  join public.machines machine on machine.id = request.machine_id
+  where machine.name = 'LONG-STOCK-FACT-SEQUENCE';
+  update public.technologist_requests
+  set status = 'pending_stock_check'
+  where id = v_all_plan_request;
+
+  v_completion := public.fn_finalize_technologist_request(
+    v_all_plan_request, v_actor, 'none', 0, '[]'::jsonb, '[]'::jsonb
+  );
+  if v_completion is null then
+    raise exception 'Заявка только с раскроем не закрылась без процента';
+  end if;
+  select * into v_snapshot
+  from public.technologist_request_plan_fact_items
+  where completion_id = v_completion;
+  if not found
+    or abs(v_snapshot.reconciliation_delta_kg) > 0.001
+    or abs(
+      v_snapshot.purchased_weight_kg
+      - v_snapshot.net_weight_kg
+      - v_snapshot.kerf_loss_weight_kg
+      - v_snapshot.end_trim_loss_weight_kg
+      - v_snapshot.business_scrap_weight_kg
+    ) > 0.001 then
+    raise exception 'Сверка весов фактов плана не сохранилась: %', row_to_json(v_snapshot);
+  end if;
+  select count(*) into v_count
+  from public.technologist_request_waste_items
+  where request_id = v_all_plan_request;
+  if v_count <> 0 or exists (
+    select 1 from public.metal_scrap_lots where request_id = v_all_plan_request
+  ) then
+    raise exception 'Плановая позиция создала процентный металлолом';
+  end if;
+
+  -- Mixed request: one circle is accounted by the closed plan facts and one
+  -- sheet keeps the existing manual percentage behavior.
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, v_factory, 'LONG-STOCK-FACT-COMPLETION-MIXED', v_actor);
+  insert into public.material_variants(
+    id, material_id, category, diameter_mm, material_grade,
+    standard_length_mm, weight_per_m_kg, default_unit
+  ) values (
+    v_variant, v_material, 'circle', 45, 'S355', 6000, 2, 'мм'
+  );
+  v_plan_data := pg_temp.create_new_stock_plan(
+    v_actor, v_machine, v_material, v_variant,
+    array[6000], array[1000::numeric]
+  );
+  v_mixed_request := (v_plan_data->>'request_id')::uuid;
+  v_request_item := (v_plan_data->>'request_item_id')::uuid;
+  v_version := (v_plan_data->>'version_id')::uuid;
+  v_result_inventory := (v_plan_data#>>'{scrap_ids,0}')::uuid;
+
+  insert into public.inventory(
+    factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit,
+    total_secondary_quantity, reserved_secondary_quantity, secondary_unit,
+    last_updated_by
+  ) values (
+    v_factory, v_material, v_variant, 6000,
+    6000, 0, 'мм', 1, 0, 'шт', v_actor
+  ) returning id into v_source;
+  perform pg_temp.add_reserved_bar(
+    v_actor, v_machine, v_material, v_variant, v_request_item, v_source, 6000,
+    1000 + (v_plan_data->>'kerf_mm')::numeric + (v_plan_data->>'end_trim_mm')::numeric
+  );
+  insert into public.production_machine_facts(
+    id, factory_id, fact_date, shift, machine_id, section_id, created_by, updated_by
+  ) values (
+    v_fact, v_factory, current_date, 'day', v_machine, v_section, v_actor, v_actor
+  );
+  perform public.fn_apply_production_fact_cutting(v_fact, v_actor);
+  if (select status from public.long_stock_cutting_plans where id = (v_plan_data->>'plan_id')::uuid) <> 'closed' then
+    raise exception 'План смешанной заявки не закрыт фактом';
+  end if;
+
+  select id, name into v_steel_type, v_steel_grade
+  from public.steel_types
+  where density_kg_mm3 is not null
+  order by name
+  limit 1;
+  insert into public.request_sheet_metal(
+    id, request_id, material_name, material_grade,
+    thickness_mm, sheet_size, quantity_sheets, remainder_qty,
+    weight_order_kg, steel_type_id
+  ) values (
+    v_sheet_item, v_mixed_request, 'Лист тестовый', v_steel_grade,
+    10, '100x100', 1, 1, 0, v_steel_type
+  ) returning calculated_weight_kg into v_sheet_weight;
+  if v_sheet_weight is null or v_sheet_weight <= 0 then
+    raise exception 'Не рассчитан вес обычной позиции смешанной заявки';
+  end if;
+  update public.technologist_requests
+  set status = 'pending_stock_check'
+  where id = v_mixed_request;
+
+  v_payload := jsonb_build_array(jsonb_build_object(
+    'sourceTable', 'request_sheet_metal',
+    'sourceId', v_sheet_item,
+    'itemName', 'Лист тестовый · ' || v_steel_grade,
+    'materialId', null,
+    'materialVariantId', null,
+    'materialName', 'Лист тестовый',
+    'materialGrade', v_steel_grade,
+    'wastePercent', 10
+  ));
+
+  -- An artificial one-kilogram distortion of an immutable analytical loss
+  -- must block finalization and name the concrete plan position.
+  select kerf_loss_weight_kg into v_original_kerf_weight
+  from public.long_stock_cutting_actual_losses
+  where version_id = v_version;
+  execute 'alter table public.long_stock_cutting_actual_losses disable trigger long_stock_cutting_actual_loss_guard_trigger';
+  update public.long_stock_cutting_actual_losses
+  set kerf_loss_weight_kg = kerf_loss_weight_kg + 1
+  where version_id = v_version;
+  execute 'alter table public.long_stock_cutting_actual_losses enable trigger long_stock_cutting_actual_loss_guard_trigger';
+  begin
+    perform public.fn_finalize_technologist_request(
+      v_mixed_request, v_actor, 'none', 0, v_payload, '[]'::jsonb
+    );
+  exception when others then
+    if position('Сверка веса не сошлась' in sqlerrm) = 0
+      or position('Круг Ø45 мм' in sqlerrm) = 0 then
+      raise exception 'Расхождение заблокировало закрытие неверной ошибкой: %', sqlerrm;
+    end if;
+    v_mismatch_blocked := true;
+  end;
+  if not v_mismatch_blocked then
+    raise exception 'Искусственное расхождение веса не заблокировало закрытие';
+  end if;
+  if exists (
+    select 1 from public.technologist_request_completions where request_id = v_mixed_request
+  ) then
+    raise exception 'Заблокированное закрытие оставило частичный completion';
+  end if;
+  execute 'alter table public.long_stock_cutting_actual_losses disable trigger long_stock_cutting_actual_loss_guard_trigger';
+  update public.long_stock_cutting_actual_losses
+  set kerf_loss_weight_kg = v_original_kerf_weight
+  where version_id = v_version;
+  execute 'alter table public.long_stock_cutting_actual_losses enable trigger long_stock_cutting_actual_loss_guard_trigger';
+
+  v_completion := public.fn_finalize_technologist_request(
+    v_mixed_request, v_actor, 'none', 0, v_payload, '[]'::jsonb
+  );
+  if (select count(*) from public.technologist_request_plan_fact_items where completion_id = v_completion) <> 1
+    or (select count(*) from public.technologist_request_waste_items where completion_id = v_completion) <> 1
+    or exists (
+      select 1 from public.technologist_request_waste_items
+      where completion_id = v_completion
+        and source_table = 'request_circle'
+    ) then
+    raise exception 'Смешанная заявка неверно разделила факты плана и процент';
+  end if;
+  if not exists (
+    select 1
+    from public.technologist_request_waste_items waste
+    join public.metal_scrap_lots lot on lot.waste_item_id = waste.id
+    where waste.completion_id = v_completion
+      and waste.source_table = 'request_sheet_metal'
+      and waste.waste_percent = 10
+      and abs(waste.scrap_weight_kg - round(v_sheet_weight * 0.1, 3)) <= 0.001
+      and abs(lot.expected_weight_kg - waste.scrap_weight_kg) <= 0.001
+  ) then
+    raise exception 'Процент смешанной заявки не применён к обычной позиции';
+  end if;
+  if abs((
+    select reconciliation_delta_kg
+    from public.technologist_request_plan_fact_items
+    where completion_id = v_completion
+  )) > 0.001 then
+    raise exception 'После восстановления данных смешанная заявка не прошла сверку';
   end if;
 end;
 $$;
