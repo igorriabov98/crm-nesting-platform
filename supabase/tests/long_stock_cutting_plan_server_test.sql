@@ -28,6 +28,8 @@ declare
   v_input_v1 jsonb;
   v_input_v2 jsonb;
   v_approval jsonb;
+  v_pdf_metadata_1 jsonb;
+  v_stock_pdf_metadata jsonb;
   v_snapshot_before jsonb;
   v_count integer;
   v_lengths numeric[];
@@ -169,6 +171,19 @@ begin
     'grade_key', 's355'
   );
 
+  begin
+    perform public.fn_get_or_create_long_stock_cutting_plan_version_v2(
+      v_plan, v_input_v1, v_settings, v_segments, v_candidate_v1,
+      1, v_actor, null, jsonb_build_object('object_path', 'premature.pdf')
+    );
+    raise exception 'PDF был записан до утверждения версии';
+  exception when raise_exception then
+    if sqlerrm = 'PDF был записан до утверждения версии'
+      or sqlerrm not like '%PDF добавляется только при утверждении версии карты раскроя%' then
+      raise;
+    end if;
+  end;
+
   v_version_1 := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
     v_plan, v_input_v1, v_settings, v_segments, v_candidate_v1,
     1, v_actor, null, '{}'::jsonb
@@ -183,7 +198,18 @@ begin
   select input_snapshot into v_snapshot_before
   from public.long_stock_cutting_plan_versions where id = v_version_1;
 
-  v_approval := public.fn_approve_long_stock_cutting_plan_version_v1(v_version_1, v_actor);
+  v_pdf_metadata_1 := jsonb_build_object(
+    'schema_version', 1,
+    'bucket_id', 'product-files',
+    'object_path', format('long-stock-cutting-plans/%s/%s/%s.pdf', v_plan, v_version_1, gen_random_uuid()),
+    'file_name', 'cutting-plan-' || (select plan_number from public.long_stock_cutting_plans where id = v_plan) || '-v1.pdf',
+    'mime_type', 'application/pdf',
+    'size_bytes', 2048,
+    'sha256', repeat('a', 64),
+    'generated_by', v_actor,
+    'generated_at', now()
+  );
+  v_approval := public.fn_approve_long_stock_cutting_plan_version_v2(v_version_1, v_actor, v_pdf_metadata_1);
   if v_approval->>'status' <> 'approved'
     or v_approval->>'position_status' <> 'plan_approved'
     or (v_approval->>'purchase_required')::boolean is not true then
@@ -209,12 +235,25 @@ begin
     raise exception 'Позиция не получила статус plan_approved: %', v_status;
   end if;
 
-  perform public.fn_approve_long_stock_cutting_plan_version_v1(v_version_1, v_actor);
+  perform public.fn_approve_long_stock_cutting_plan_version_v2(v_version_1, v_actor, v_pdf_metadata_1);
   select count(*) into v_count
   from public.long_stock_cutting_business_scraps where version_id = v_version_1;
   if v_count <> 2 then
     raise exception 'Повторное утверждение размножило остатки: %', v_count;
   end if;
+  begin
+    perform public.fn_approve_long_stock_cutting_plan_version_v2(
+      v_version_1,
+      v_actor,
+      jsonb_set(v_pdf_metadata_1, '{sha256}', to_jsonb(repeat('b', 64)))
+    );
+    raise exception 'Повторное утверждение заменило сохранённый PDF';
+  exception when raise_exception then
+    if sqlerrm = 'Повторное утверждение заменило сохранённый PDF'
+      or sqlerrm not like '%уже сформирован и не может быть заменён%' then
+      raise;
+    end if;
+  end;
   select bar.id, link.inventory_id
   into v_cut_bar, v_cut_scrap
   from public.long_stock_cutting_candidate_bars bar
@@ -348,7 +387,18 @@ begin
     )),
     1, v_actor, null, '{}'::jsonb
   );
-  v_approval := public.fn_approve_long_stock_cutting_plan_version_v1(v_stock_only_version, v_actor);
+  v_stock_pdf_metadata := jsonb_build_object(
+    'schema_version', 1,
+    'bucket_id', 'product-files',
+    'object_path', format('long-stock-cutting-plans/%s/%s/%s.pdf', v_stock_only_plan, v_stock_only_version, gen_random_uuid()),
+    'file_name', 'cutting-plan-' || (select plan_number from public.long_stock_cutting_plans where id = v_stock_only_plan) || '-v1.pdf',
+    'mime_type', 'application/pdf',
+    'size_bytes', 1024,
+    'sha256', repeat('c', 64),
+    'generated_by', v_actor,
+    'generated_at', now()
+  );
+  v_approval := public.fn_approve_long_stock_cutting_plan_version_v2(v_stock_only_version, v_actor, v_stock_pdf_metadata);
   if v_approval->>'position_status' <> 'accepted'
     or (v_approval->>'purchase_required')::boolean is not false then
     raise exception 'Складской вариант не перевёл позицию в accepted: %', v_approval;
