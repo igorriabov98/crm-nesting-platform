@@ -1248,7 +1248,8 @@ export async function applyProductionCuttingRollbackTask(taskId: string, comment
     const db = supabase as unknown as LooseSupabaseClient
     const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
 
-    const { error } = await db.rpc('fn_apply_production_cutting_rollback', {
+    const rollbackRpcDb = getAdminTaskDb()
+    const { error } = await rollbackRpcDb.rpc('fn_apply_production_cutting_rollback', {
       p_machine_id: task.machine_id,
       p_task_id: task.id,
       p_performed_by: userId,
