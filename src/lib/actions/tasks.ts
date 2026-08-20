@@ -1223,11 +1223,12 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
 
 export async function getProductionCuttingRollbackPreview(taskId: string) {
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser()
+    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
     const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
 
-    const { data, error } = await db.rpc('fn_get_production_cutting_rollback_preview', {
+    const previewRpcDb = getAdminTaskDb()
+    const { data, error } = await previewRpcDb.rpc('fn_get_production_cutting_rollback_preview', {
       p_machine_id: task.machine_id,
     })
 
@@ -1248,7 +1249,8 @@ export async function applyProductionCuttingRollbackTask(taskId: string, comment
     const db = supabase as unknown as LooseSupabaseClient
     const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
 
-    const { error } = await db.rpc('fn_apply_production_cutting_rollback', {
+    const rollbackRpcDb = getAdminTaskDb()
+    const { error } = await rollbackRpcDb.rpc('fn_apply_production_cutting_rollback', {
       p_machine_id: task.machine_id,
       p_task_id: task.id,
       p_performed_by: userId,
@@ -1272,7 +1274,8 @@ export async function keepProductionCuttingRollbackTask(taskId: string, comment?
     const db = supabase as unknown as LooseSupabaseClient
     const task = await getCuttingRollbackTaskForUser(db, taskId, userId, role, factoryId)
 
-    const { error } = await db.rpc('fn_keep_production_cutting_rollback', {
+    const keepRpcDb = getAdminTaskDb()
+    const { error } = await keepRpcDb.rpc('fn_keep_production_cutting_rollback', {
       p_machine_id: task.machine_id,
       p_task_id: task.id,
       p_performed_by: userId,
