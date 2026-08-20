@@ -25,6 +25,10 @@ const manualAllocationMigration = await readFile(
   new URL('../supabase/migrations/20260803130000_supply_receipt_manual_allocation_guard.sql', import.meta.url),
   'utf8',
 )
+const planFactMigration = await readFile(
+  new URL('../supabase/migrations/20260818120000_supply_receiving_plan_fact_piece_fields.sql', import.meta.url),
+  'utf8',
+)
 const inventoryPage = await readFile(
   new URL('../src/components/features/inventory/InventoryPage.tsx', import.meta.url),
   'utf8',
@@ -35,6 +39,10 @@ const receivingPage = await readFile(
 )
 const receivingAllocationDialog = await readFile(
   new URL('../src/components/features/inventory/MaterialReceivingAllocationDialog.tsx', import.meta.url),
+  'utf8',
+)
+const orderItemRow = await readFile(
+  new URL('../src/components/features/supply-orders/OrderItemRow.tsx', import.meta.url),
   'utf8',
 )
 const circleTable = await readFile(
@@ -216,6 +224,56 @@ assert.match(
   manualAllocationMigration,
   /REVOKE ALL ON FUNCTION public\.fn_receive_supply_order_schedule_v2\([^)]+\) FROM anon, authenticated;[\s\S]*GRANT EXECUTE ON FUNCTION public\.fn_receive_supply_order_schedule_v2\([^)]+\) TO service_role;/,
   'the hardened RPC must remain service-role-only',
+)
+assert.match(
+  supplyOrderActions,
+  /planned_piece_length_mm: schedule\.piece_length_mm[\s\S]*planned_piece_count: schedule\.piece_count/,
+  'delivery planning must write the ordered bar composition to planned fields',
+)
+assert.doesNotMatch(
+  supplyOrderActions,
+  /received_piece_length_mm: schedule\.piece_length_mm[\s\S]*received_piece_count: schedule\.piece_count/,
+  'delivery planning must never populate receiving fact fields',
+)
+assert.match(
+  planFactMigration,
+  /create table public\.supply_order_delivery_length_discrepancies[\s\S]*planned_piece_length_mm[\s\S]*received_piece_length_mm[\s\S]*received_by[\s\S]*received_at/,
+  'length differences must be stored as a standalone record with plan, fact, actor, and timestamp',
+)
+assert.match(
+  planFactMigration,
+  /before update or delete on public\.supply_order_delivery_length_discrepancies/,
+  'length discrepancy records must be immutable at database level',
+)
+assert.match(
+  planFactMigration,
+  /received_piece_length_mm <> new\.planned_piece_length_mm[\s\S]*insert into public\.supply_order_delivery_length_discrepancies/,
+  'a database trigger must create a discrepancy only when bar lengths differ',
+)
+assert.match(
+  planFactMigration,
+  /deferrable initially deferred[\s\S]*fn_assert_supply_order_delivery_piece_fact/,
+  'database validation must reject a completed planned bar receipt without actual bar fields',
+)
+assert.doesNotMatch(
+  supplyOrderActions,
+  /export async function receiveOrderDeliverySchedule|rpc\('fn_receive_supply_order_schedule'/,
+  'the legacy receiving action and RPC call must be removed',
+)
+assert.doesNotMatch(
+  orderItemRow,
+  /receiveOrderDeliverySchedule|>Принять<|Принять<\/span>/,
+  'OrderItemRow must not offer direct receiving without actual values',
+)
+assert.match(
+  receivingPage,
+  /Длина отличается:[\s\S]*заказано[\s\S]*принято/,
+  'the receiving row must highlight the ordered and accepted lengths',
+)
+assert.match(
+  receivingAllocationDialog,
+  /role="alert"[\s\S]*Длина отличается:[\s\S]*заказано[\s\S]*принято/,
+  'the final receiving confirmation must repeat both differing lengths',
 )
 
 assert.equal(outstandingReceivingQuantity(10, []), 10)

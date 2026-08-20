@@ -59,13 +59,13 @@ export function MaterialReceivingPage({ data }: Props) {
   )
   const [openDates, setOpenDates] = useState<Set<string>>(initialOpenDates)
   const draftKey = useMemo(() => data.groups.flatMap((group) => group.items.map((item) => (
-    `${item.key}:${item.planned_quantity}:${item.piece_length_mm || ''}:${item.piece_count || ''}`
+    `${item.key}:${item.planned_quantity}:${item.planned_piece_length_mm || ''}:${item.planned_piece_count || ''}`
   ))).join('|'), [data.groups])
   const defaultDrafts = useMemo<DraftMap>(() => Object.fromEntries(
     data.groups.flatMap((group) => group.items.map((item) => [item.key, {
       quantity: String(item.planned_quantity),
-      pieceLength: item.piece_length_mm ? String(item.piece_length_mm) : '',
-      pieceCount: item.piece_count ? String(item.piece_count) : '',
+      pieceLength: item.planned_piece_length_mm ? String(item.planned_piece_length_mm) : '',
+      pieceCount: item.planned_piece_count ? String(item.planned_piece_count) : '',
     }])),
   ), [data.groups])
   const [draftState, setDraftState] = useState(() => ({ key: draftKey, drafts: defaultDrafts }))
@@ -295,6 +295,12 @@ export function MaterialReceivingPage({ data }: Props) {
                         const actualQuantity = isBar
                           ? pieceLength * pieceCount
                           : Number((draft?.quantity || '').replace(',', '.'))
+                        const hasLengthMismatch = isBar
+                          && item.planned_piece_length_mm !== null
+                          && Number.isFinite(pieceLength)
+                          && pieceLength > 0
+                          && pieceLength !== item.planned_piece_length_mm
+                        const lengthConfirmationId = `length-confirmation-${item.key}`
                         const variance = getVariance(item.planned_quantity, actualQuantity)
                         const actualWeight = weightForQuantity(item, actualQuantity)
                         return (
@@ -330,6 +336,11 @@ export function MaterialReceivingPage({ data }: Props) {
                             <td className="px-4 py-3 text-[#374151]">{item.supplier_name || 'Не назначен'}</td>
                             <td className="px-4 py-3 font-medium text-[#111827] tabular-nums">
                               {formatAmount(item.planned_quantity)} {item.unit}
+                              {isBar && item.planned_piece_length_mm !== null && item.planned_piece_count !== null && (
+                                <div className="text-xs font-normal text-[#64748B]">
+                                  Заказано: {formatAmount(item.planned_piece_length_mm)} мм × {formatAmount(item.planned_piece_count)} шт
+                                </div>
+                              )}
                               {item.weight_kg !== null && <div className="text-xs font-normal text-[#64748B]">Вес план: {formatAmount(item.weight_kg)} кг</div>}
                             </td>
                             <td className="px-4 py-3">
@@ -344,7 +355,13 @@ export function MaterialReceivingPage({ data }: Props) {
                                       value={draft?.pieceLength || ''}
                                       onChange={(event) => setDraft(item.key, { pieceLength: event.target.value })}
                                       disabled={isPending && pendingKey === item.key}
-                                      className="h-10 rounded-md border border-[#CBD5E1] bg-white px-3 text-sm tabular-nums outline-none focus-visible:border-[#1B3A6B] focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                      aria-describedby={hasLengthMismatch ? lengthConfirmationId : undefined}
+                                      className={cn(
+                                        'h-10 rounded-md border bg-white px-3 text-sm tabular-nums outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50',
+                                        hasLengthMismatch
+                                          ? 'border-amber-500 bg-amber-50 text-amber-950 focus-visible:border-amber-600 focus-visible:ring-amber-500/20'
+                                          : 'border-[#CBD5E1] focus-visible:border-[#1B3A6B] focus-visible:ring-[#1B3A6B]/20',
+                                      )}
                                     />
                                   </label>
                                   <label className="grid gap-1 text-xs text-[#64748B]">
@@ -362,6 +379,17 @@ export function MaterialReceivingPage({ data }: Props) {
                                   <div className="col-span-2 rounded-md bg-[#F8F9FA] px-3 py-2 text-xs text-[#475569]">
                                     Общая длина: <strong className="tabular-nums text-[#111827]">{Number.isFinite(actualQuantity) ? formatAmount(actualQuantity) : '0'} мм</strong>
                                   </div>
+                                  {hasLengthMismatch && (
+                                    <div
+                                      id={lengthConfirmationId}
+                                      role="alert"
+                                      className="col-span-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-950"
+                                    >
+                                      Длина отличается: заказано{' '}
+                                      <strong className="tabular-nums">{formatAmount(item.planned_piece_length_mm!)} мм</strong>, принято{' '}
+                                      <strong className="tabular-nums">{formatAmount(pieceLength)} мм</strong>.
+                                    </div>
+                                  )}
                                 </div>
                               ) : (
                                 <>
