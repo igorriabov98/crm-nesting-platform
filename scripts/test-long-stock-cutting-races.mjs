@@ -36,6 +36,11 @@ assert.doesNotMatch(
   /async function applyCuttingFactSideEffects/,
   'Application must not retain the old post-commit cutting side-effect call',
 )
+assert.match(
+  productionFactAction,
+  /Проведённый факт заготовки нельзя перенести на другую машину или участок; сначала выполните откат/,
+  'Server action must reject a structural move before calling the atomic RPC',
+)
 
 run(process.execPath, [path.join(root, 'scripts', 'test-inventory-transfers-full-schema.mjs')])
 
@@ -133,6 +138,47 @@ assert.deepEqual(invalidationState, {
   active_scrap_count: 0,
   source_total: 6000,
   source_reserved: 6000,
+})
+
+// An existing fact event is immutable with respect to machine and section.
+// The failed update must leave both the fact row and its event on the source.
+const movedFact = spawnPsql(`
+select public.fn_save_production_machine_fact_atomic_v1(
+  '${fixture.move_fact}'::uuid,
+  '${fixture.factory}'::uuid,
+  current_date,
+  '${fixture.move_target_machine}'::uuid,
+  '${fixture.section}'::uuid,
+  'day'::public.production_fact_shift,
+  'Запрещённый перенос проведённого факта',
+  '${fixture.actor}'::uuid
+);
+`)
+const movedFactResult = await movedFact.done
+assert.notEqual(movedFactResult.status, 0, 'Applied fact move must be rejected')
+assert.match(
+  movedFactResult.stderr,
+  /нельзя перенести на другую машину или участок; сначала выполните откат/,
+  'Applied fact move must fail with the operator-facing rollback instruction',
+)
+
+const moveState = JSON.parse(runPsql(`
+select jsonb_build_object(
+  'fact_machine', (
+    select machine_id from public.production_machine_facts where id = '${fixture.move_fact}'
+  ),
+  'event_machine', (
+    select machine_id from public.production_fact_cutting_events where id = '${fixture.move_event}'
+  ),
+  'event_count', (
+    select count(*) from public.production_fact_cutting_events where fact_id = '${fixture.move_fact}'
+  )
+);
+`).trim())
+assert.deepEqual(moveState, {
+  fact_machine: fixture.move_source_machine,
+  event_machine: fixture.move_source_machine,
+  event_count: 1,
 })
 
 // Rollback takes the machine lock before its single event snapshot. A new fact
