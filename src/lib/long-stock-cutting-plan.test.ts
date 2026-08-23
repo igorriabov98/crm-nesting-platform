@@ -2,11 +2,24 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  assertLongStockCuttingPlanApprovalSucceeded,
   normalizeLongStockPlanSegments,
   serializeLongStockCandidates,
   solverModeForPlan,
   validateManualLongStockLayout,
 } from './long-stock-cutting-plan'
+
+test('approval self-invalidation is reported as an error', () => {
+  assert.throws(
+    () => assertLongStockCuttingPlanApprovalSucceeded({
+      status: 'invalid',
+      position_status: 'requires_recalculation',
+    }),
+    /Утверждение не состоялось.*Требуется пересчёт/u,
+  )
+  const approved = { status: 'approved', position_status: 'plan_approved' }
+  assert.equal(assertLongStockCuttingPlanApprovalSucceeded(approved), approved)
+})
 
 const workpieces = normalizeLongStockPlanSegments([
   { id: 'part-b', lengthMm: 1200 },

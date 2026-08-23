@@ -1251,6 +1251,13 @@ export async function saveProductionMachineFact(input: {
     const nextIsCutting = isCuttingFactSection(nextSectionContext.section, nextSectionContext.parent)
     if (nextIsCutting) await assertInventoryTransfersReceived(admin, [input.machine_id])
 
+    if (existingWasCutting && existing
+      && (existing.machine_id !== input.machine_id || existing.section_id !== input.section_id)) {
+      throw new Error(
+        'Проведённый факт заготовки нельзя перенести на другую машину или участок; сначала выполните откат',
+      )
+    }
+
     const payload = {
       factory_id: input.factory_id,
       fact_date: factDate,
@@ -1263,17 +1270,6 @@ export async function saveProductionMachineFact(input: {
 
     if (existing) {
       const updatedId = await saveMachineFactAtomic(admin, payload, existing.id, userId)
-      if (existingWasCutting && (!nextIsCutting || existing.machine_id !== input.machine_id)) {
-        const hasCuttingFacts = await hasRemainingCuttingFacts(admin, existing.machine_id, existing.id)
-        if (!hasCuttingFacts) {
-          await ensureCuttingRollbackTask(admin, {
-            machineId: existing.machine_id,
-            factoryId: existing.factory_id,
-            userId,
-            reason: 'Факт заготовки перенесен',
-          })
-        }
-      }
       revalidateProductionCuttingFlow(input.machine_id)
       if (existing.machine_id !== input.machine_id) revalidateProductionCuttingFlow(existing.machine_id)
       return { success: true, data: { id: updatedId }, error: null }

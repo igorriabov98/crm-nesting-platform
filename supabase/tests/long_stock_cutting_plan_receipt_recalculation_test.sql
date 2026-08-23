@@ -145,6 +145,15 @@ declare
   v_approval_race_version uuid;
   v_approval_race_schedule uuid := gen_random_uuid();
   v_approval_race_result jsonb;
+  v_child_approval_machine uuid := gen_random_uuid();
+  v_child_approval_request uuid := gen_random_uuid();
+  v_child_approval_item uuid := gen_random_uuid();
+  v_child_approval_plan uuid;
+  v_child_approval_plan_item uuid;
+  v_child_approval_version uuid;
+  v_child_approval_parent_schedule uuid := gen_random_uuid();
+  v_child_approval_schedule uuid := gen_random_uuid();
+  v_child_approval_result jsonb;
 begin
   select id into v_factory from public.factories order by created_at nulls last limit 1;
   if v_factory is null then raise exception 'Для теста пересчёта не найден завод'; end if;
@@ -314,6 +323,124 @@ begin
         and invalidation_receipt_schedule_id = v_approval_race_schedule
     ) then
     raise exception 'Утверждение не инвалидировало уже расходящуюся приёмку: %', v_approval_race_result;
+  end if;
+
+  -- Distribution children store their physical count in allocated_piece_count
+  -- while received_piece_count stays null. Approval must still re-read them.
+  insert into public.machines(id, factory_id, name, created_by)
+  values (
+    v_child_approval_machine,
+    v_factory,
+    'RECALC-CHILD-BEFORE-APPROVAL',
+    v_technologist
+  );
+  insert into public.technologist_requests(id, machine_id, created_by)
+  values (v_child_approval_request, v_child_approval_machine, v_technologist);
+  insert into public.request_circle(
+    id, request_id, diameter_mm, steel_grade, remainder_mm,
+    material_id, material_variant_id
+  ) values (
+    v_child_approval_item, v_child_approval_request, 40, 'S355', 2400,
+    v_material, v_variant
+  );
+
+  v_child_approval_plan := public.fn_create_long_stock_cutting_plan(
+    v_variant,
+    jsonb_build_array(jsonb_build_object(
+      'request_item_table', 'request_circle',
+      'request_item_id', v_child_approval_item
+    )),
+    v_technologist
+  );
+  select id into strict v_child_approval_plan_item
+  from public.long_stock_cutting_plan_items
+  where plan_id = v_child_approval_plan;
+
+  v_child_approval_version := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
+    v_child_approval_plan,
+    jsonb_build_object('case', 'child-receipt-before-approval'),
+    v_settings,
+    jsonb_build_array(
+      jsonb_build_object(
+        'plan_item_id', v_child_approval_plan_item,
+        'segment_number', 1,
+        'required_length_mm', 1200
+      ),
+      jsonb_build_object(
+        'plan_item_id', v_child_approval_plan_item,
+        'segment_number', 2,
+        'required_length_mm', 1200
+      )
+    ),
+    v_candidate,
+    1,
+    v_technologist,
+    null,
+    '{}'::jsonb
+  );
+
+  insert into public.supply_order_delivery_schedules(
+    id, request_item_table, request_item_id, delivery_date, quantity, unit,
+    status, created_by, updated_by
+  ) values (
+    v_child_approval_parent_schedule,
+    'request_circle',
+    v_child_approval_item,
+    current_date,
+    16000,
+    'мм',
+    'planned',
+    v_receiver,
+    v_receiver
+  );
+  insert into public.supply_order_delivery_schedules(
+    id, request_item_table, request_item_id, delivery_date, quantity, unit,
+    status, received_quantity, allocated_quantity, allocated_physical_quantity,
+    received_piece_length_mm, allocated_piece_count,
+    delivered_at, received_by, created_by, updated_by,
+    receipt_parent_schedule_id
+  ) values (
+    v_child_approval_schedule,
+    'request_circle',
+    v_child_approval_item,
+    current_date,
+    2400,
+    'мм',
+    'delivered',
+    0,
+    2400,
+    16000,
+    8000,
+    2,
+    now(),
+    v_receiver,
+    v_receiver,
+    v_receiver,
+    v_child_approval_parent_schedule
+  );
+  set constraints supply_order_delivery_piece_fact_constraint_trigger immediate;
+
+  if (select status from public.long_stock_cutting_plan_versions where id = v_child_approval_version)
+    <> 'draft' then
+    raise exception 'Дочерняя приёмка до утверждения преждевременно изменила черновик карты';
+  end if;
+
+  v_child_approval_result := public.fn_approve_long_stock_cutting_plan_version_v1(
+    v_child_approval_version,
+    v_technologist
+  );
+  if (select status from public.long_stock_cutting_plan_versions where id = v_child_approval_version)
+      <> 'invalid'
+    or v_child_approval_result->>'status' <> 'invalid'
+    or not exists (
+      select 1
+      from public.long_stock_cutting_plan_versions
+      where id = v_child_approval_version
+        and invalidation_receipt_schedule_id = v_child_approval_schedule
+    ) then
+    raise exception
+      'Утверждение пропустило расходящуюся дочернюю приёмку: %',
+      v_child_approval_result;
   end if;
 
   v_version_1 := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
