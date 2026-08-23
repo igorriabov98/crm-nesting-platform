@@ -11,6 +11,7 @@ import { STAGES } from '@/lib/constants/stages'
 import { isDirector } from '@/lib/utils/permissions'
 import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { promoteDueFutureBusinessScrap } from '@/lib/inventory/secure-rpc'
 import { getStageIntervalSequenceError, intervalPayloadEquals, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
 import { createSystemMachineChatMessage } from '@/lib/actions/machine-activity'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
@@ -1084,7 +1085,7 @@ export async function decideProductionPlanDateChangeRequest(input: {
       item.target_type === 'stage_interval' || item.field_name === 'date_start'
     ))) {
       try {
-        await db.rpc('fn_promote_due_future_business_scrap', {})
+        await promoteDueFutureBusinessScrap()
       } catch {
         // Applying an approved calendar request remains authoritative if best-effort promotion is temporarily unavailable.
       }

@@ -12,6 +12,7 @@ import { syncZincOutsourcingFromStage } from '@/lib/actions/outsourcing'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
 import { isMachineInConfirmedProductionPlan, notifyProductionPlanShippingDateChanged } from '@/lib/actions/production-plan'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { promoteDueFutureBusinessScrap } from '@/lib/inventory/secure-rpc'
 import { normalizeNightShiftDates, primaryNightShiftDate } from '@/lib/utils/night-shift-dates'
 import type { CurrentUser } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
@@ -329,8 +330,7 @@ export async function updateProductionStage(stageId: string, data: ProductionSta
     await reconcileMachineStatus(supabase, stageObj.machine_id)
     if (stageObj.stage_type === 'cutting' && ('date_start' in data || 'is_skipped' in data)) {
       try {
-        await (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<unknown> })
-          .rpc('fn_promote_due_future_business_scrap', {})
+        await promoteDueFutureBusinessScrap()
       } catch {
         // Stage updates should remain available if best-effort promotion fails.
       }
@@ -442,8 +442,7 @@ export async function mutateProductionStageInterval(
 
     if (selectedStage.stage_type === 'cutting') {
       try {
-        await (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<unknown> })
-          .rpc('fn_promote_due_future_business_scrap', {})
+        await promoteDueFutureBusinessScrap()
       } catch {
         // Calendar editing must not fail if best-effort scrap promotion is temporarily unavailable.
       }
