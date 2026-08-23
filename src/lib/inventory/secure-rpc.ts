@@ -38,6 +38,28 @@ export async function reserveWholeBarInventoryForMachine(input: {
   if (error) throw new Error(error.message || 'Не удалось забронировать целые хлысты')
 }
 
+export async function reserveWholeBarInventoryForMachineTransfer(input: {
+  inventoryId: string
+  machineId: string
+  logicalQuantity: number
+  requestItemTable: string
+  requestItemId: string
+}) {
+  const { userId: actorId } = await getCurrentUserContext()
+  const { error } = await secureRpcClient().rpc(
+    'fn_reserve_whole_bar_inventory_row_for_machine_transfer',
+    {
+      p_inventory_id: input.inventoryId,
+      p_machine_id: input.machineId,
+      p_logical_quantity: input.logicalQuantity,
+      p_request_item_table: input.requestItemTable,
+      p_request_item_id: input.requestItemId,
+      p_reserved_by: actorId,
+    },
+  )
+  if (error) throw new Error(error.message || 'Не удалось забронировать хлысты для перемещения')
+}
+
 export async function reserveInventoryRowForMachine(input: {
   inventoryId: string
   machineId: string
@@ -59,6 +81,32 @@ export async function reserveInventoryRowForMachine(input: {
     p_is_cut_reservation: input.isCutReservation ?? null,
   })
   if (error) throw new Error(error.message || 'Не удалось забронировать складскую строку')
+}
+
+export async function reserveInventoryRowForMachineTransfer(input: {
+  inventoryId: string
+  machineId: string
+  quantity: number
+  requestItemTable: string
+  requestItemId: string
+  secondaryQuantity?: number | null
+  isCutReservation?: boolean | null
+}) {
+  const { userId: actorId } = await getCurrentUserContext()
+  const { error } = await secureRpcClient().rpc(
+    'fn_reserve_inventory_row_for_machine_transfer',
+    {
+      p_inventory_id: input.inventoryId,
+      p_machine_id: input.machineId,
+      p_quantity: input.quantity,
+      p_request_item_table: input.requestItemTable,
+      p_request_item_id: input.requestItemId,
+      p_reserved_by: actorId,
+      p_secondary_quantity: input.secondaryQuantity ?? null,
+      p_is_cut_reservation: input.isCutReservation ?? null,
+    },
+  )
+  if (error) throw new Error(error.message || 'Не удалось забронировать материал для перемещения')
 }
 
 export async function reserveInventoryForMachine(input: {

@@ -11,7 +11,9 @@ import {
   promoteDueFutureBusinessScrap,
   reserveInventoryForMachine,
   reserveInventoryRowForMachine,
+  reserveInventoryRowForMachineTransfer,
   reserveWholeBarInventoryForMachine,
+  reserveWholeBarInventoryForMachineTransfer,
   unreserveInventoryReservation,
 } from '@/lib/inventory/secure-rpc'
 import { requirePermission } from '@/lib/permissions/server'
@@ -261,6 +263,9 @@ async function assertInventoryReservationAccess(
   permission: FactoryScopedPermissionContext,
   input: {
     inventoryId?: string | null
+    materialId: string
+    materialVariantId?: string | null
+    pieceLengthMm?: number | null
     machineId: string
     requestItemTable: string
     requestItemId: string
@@ -274,7 +279,7 @@ async function assertInventoryReservationAccess(
 
   const [machineResult, requestItemResult] = await Promise.all([
     db.from('machines').select('id, factory_id').eq('id', input.machineId).maybeSingle(),
-    db.from(input.requestItemTable).select('id, request_id').eq('id', input.requestItemId).maybeSingle(),
+    db.from(input.requestItemTable).select('*').eq('id', input.requestItemId).maybeSingle(),
   ])
   if (machineResult.error || !machineResult.data) {
     throw new Error('Машина не найдена или доступ запрещён')
@@ -284,19 +289,46 @@ async function assertInventoryReservationAccess(
   }
 
   const machine = machineResult.data as { factory_id: string | null }
-  const requestItem = requestItemResult.data as { request_id: string }
+  const requestItem = requestItemResult.data as Record<string, unknown> & { request_id: string }
+  if (requestItem.material_id !== input.materialId) {
+    throw new Error('Материал резервирования не соответствует позиции заявки')
+  }
+  if (
+    requestItem.material_variant_id
+    && requestItem.material_variant_id !== (input.materialVariantId ?? null)
+  ) {
+    throw new Error('Характеристика резервирования не соответствует позиции заявки')
+  }
   assertFactoryAccess(permission, 'inventory', 'manage', machine.factory_id)
 
   if (input.inventoryId) {
     const { data: inventoryData, error: inventoryError } = await db
       .from('inventory')
-      .select('id, factory_id')
+      .select('id, factory_id, material_id, material_variant_id, piece_length_mm, business_scrap_state, deleted_at')
       .eq('id', input.inventoryId)
       .maybeSingle()
     if (inventoryError || !inventoryData) {
       throw new Error('Складской остаток не найден или доступ запрещён')
     }
-    const inventory = inventoryData as { factory_id: string | null }
+    const inventory = inventoryData as {
+      factory_id: string | null
+      material_id: string
+      material_variant_id: string | null
+      piece_length_mm: number | null
+      business_scrap_state: string | null
+      deleted_at: string | null
+    }
+    if (inventory.deleted_at) throw new Error('Складской остаток удалён')
+    if (inventory.business_scrap_state === 'future') throw new Error('Будущий деловой остаток ещё недоступен')
+    if (inventory.material_id !== input.materialId) {
+      throw new Error('Материал складской строки не соответствует позиции заявки')
+    }
+    if (inventory.material_variant_id !== (input.materialVariantId ?? null)) {
+      throw new Error('Характеристика складской строки не соответствует выбранной')
+    }
+    if (Number(inventory.piece_length_mm ?? 0) !== Number(input.pieceLengthMm ?? 0)) {
+      throw new Error('Длина складской строки не соответствует выбранной')
+    }
     if (!machine.factory_id) throw new Error('Для машины не определён завод')
     if (input.useInventoryTransfer) {
       if (!inventory.factory_id || inventory.factory_id === machine.factory_id) {
@@ -815,9 +847,12 @@ export async function reserveForMachine(data: {
 }): Promise<ActionResult> {
   try {
     const access = await requireAccess('manage')
-    const { db, userId } = access
+    const { db } = access
     await assertInventoryReservationAccess(db, access, {
       inventoryId: data.inventory_id,
+      materialId: data.material_id,
+      materialVariantId: data.material_variant_id,
+      pieceLengthMm: data.piece_length_mm,
       machineId: data.machine_id,
       requestItemTable: data.request_item_table,
       requestItemId: data.request_item_id,
@@ -834,27 +869,23 @@ export async function reserveForMachine(data: {
         requestItemId: data.request_item_id,
       })
     } else if (data.inventory_id && data.use_whole_bar_reservation && data.use_inventory_transfer) {
-      const { error } = await db.rpc('fn_reserve_whole_bar_inventory_row_for_machine_transfer', {
-        p_inventory_id: data.inventory_id,
-        p_machine_id: data.machine_id,
-        p_logical_quantity: Number(data.quantity),
-        p_request_item_table: data.request_item_table,
-        p_request_item_id: data.request_item_id,
-        p_reserved_by: userId,
+      await reserveWholeBarInventoryForMachineTransfer({
+        inventoryId: data.inventory_id,
+        machineId: data.machine_id,
+        logicalQuantity: Number(data.quantity),
+        requestItemTable: data.request_item_table,
+        requestItemId: data.request_item_id,
       })
-      if (error) throw new Error(error.message || 'Не удалось забронировать хлысты для перемещения')
     } else if (data.inventory_id && data.use_inventory_transfer) {
-      const { error } = await db.rpc('fn_reserve_inventory_row_for_machine_transfer', {
-        p_inventory_id: data.inventory_id,
-        p_machine_id: data.machine_id,
-        p_quantity: Number(data.quantity),
-        p_request_item_table: data.request_item_table,
-        p_request_item_id: data.request_item_id,
-        p_reserved_by: userId,
-        p_secondary_quantity: data.secondary_quantity ?? null,
-        p_is_cut_reservation: data.use_cut_reservation ?? null,
+      await reserveInventoryRowForMachineTransfer({
+        inventoryId: data.inventory_id,
+        machineId: data.machine_id,
+        quantity: Number(data.quantity),
+        requestItemTable: data.request_item_table,
+        requestItemId: data.request_item_id,
+        secondaryQuantity: data.secondary_quantity,
+        isCutReservation: data.use_cut_reservation,
       })
-      if (error) throw new Error(error.message || 'Не удалось забронировать материал для перемещения')
     } else if (data.inventory_id) {
       await reserveInventoryRowForMachine({
         inventoryId: data.inventory_id,

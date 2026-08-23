@@ -22,10 +22,12 @@ assert.ok(
 const read = (relativePath) => readFileSync(path.join(root, relativePath), 'utf8')
 const inventoryAction = read('src/lib/actions/inventory.ts')
 const supplyAction = read('src/lib/actions/supply-request.ts')
+const supplyOrderAction = read('src/lib/actions/supply-orders.ts')
 const productionFactAction = read('src/lib/actions/production-fact.ts')
 const secureRpc = read('src/lib/inventory/secure-rpc.ts')
 const inventoryPage = read('src/components/features/inventory/InventoryPage.tsx')
 const supplyOrderItem = read('src/components/features/supply-orders/OrderItemRow.tsx')
+const reservationIntegrityMigration = read('supabase/migrations/20260823150000_long_stock_reservation_integrity.sql')
 
 assert.match(
   supplyAction,
@@ -34,8 +36,13 @@ assert.match(
 )
 assert.match(
   supplyOrderItem,
-  /selectedStockItem[\s\S]*inventory_id: selectedStockItem\?\.id[\s\S]*use_whole_bar_reservation: selectedStockItem !== null/u,
-  'Supply-order reservation must pass the exact measured inventory row to whole-bar routing',
+  /lengthStockItems\.find\(\(row\) => row\.id === inventoryRowId\)[\s\S]*inventory_id: selectedStockItem\?\.id[\s\S]*use_whole_bar_reservation: selectedStockItem !== null/u,
+  'Supply-order reservation must preserve the exact inventory-row identity',
+)
+assert.match(
+  supplyOrderAction,
+  /\.is\('deleted_at', null\)[\s\S]*\.eq\('business_scrap_state', 'available'\)[\s\S]*\.eq\('is_business_scrap', false\)/u,
+  'Supply-order stock choices must exclude deleted, future and business-scrap rows',
 )
 const reserveAction = inventoryAction.slice(inventoryAction.indexOf('export async function reserveForMachine'))
 assert.ok(
@@ -45,12 +52,14 @@ assert.ok(
 )
 assert.doesNotMatch(
   inventoryAction,
-  /\.rpc\(\s*['"](?:fn_reserve_inventory_for_machine|fn_reserve_inventory_row_for_machine|fn_adjust_inventory_record|fn_archive_inventory_item)['"]/u,
+  /\.rpc\(\s*['"](?:fn_reserve_inventory_for_machine|fn_reserve_inventory_row_for_machine|fn_reserve_inventory_row_for_machine_transfer|fn_reserve_whole_bar_inventory_row_for_machine_transfer|fn_adjust_inventory_record|fn_archive_inventory_item)['"]/u,
   'Closed inventory RPCs must not be called through the authenticated action client',
 )
 for (const functionName of [
   'reserveInventoryForMachine',
   'reserveInventoryRowForMachine',
+  'reserveInventoryRowForMachineTransfer',
+  'reserveWholeBarInventoryForMachineTransfer',
   'adjustInventoryRecord',
   'archiveInventoryItem',
 ]) {
@@ -70,6 +79,16 @@ assert.match(
   inventoryPage,
   /disabled=\{adjustRow\.piece_length_mm !== null\}[\s\S]*Рассчитывается автоматически/u,
   'Measured-row total input must be locked and described as calculated',
+)
+assert.match(
+  reservationIntegrityMigration,
+  /fn_reserve_long_stock_plan_inventory_v1[\s\S]*bar\.stock_length_mm = v_anchor\.piece_length_mm[\s\S]*v_remaining_piece_count/u,
+  'Approved-plan reservations must use exact bar lengths and physical counts',
+)
+assert.match(
+  reservationIntegrityMigration,
+  /fn_apply_long_stock_cutting_fact_v1[\s\S]*v_matched_piece_count is distinct from v_event_piece_count/u,
+  'Cutting facts must reject a physical composition that does not match the approved map',
 )
 
 run(process.execPath, [path.join(root, 'scripts', 'test-inventory-transfers-full-schema.mjs')])
@@ -103,6 +122,20 @@ for (const [functionName, statement] of [
       gen_random_uuid(), gen_random_uuid(), 'unauthorized'
     );`,
   ],
+  [
+    'fn_reserve_inventory_row_for_machine_transfer',
+    `select public.fn_reserve_inventory_row_for_machine_transfer(
+      gen_random_uuid(), gen_random_uuid(), 1, 'request_components',
+      gen_random_uuid(), gen_random_uuid(), null, false
+    );`,
+  ],
+  [
+    'fn_reserve_whole_bar_inventory_row_for_machine_transfer',
+    `select public.fn_reserve_whole_bar_inventory_row_for_machine_transfer(
+      gen_random_uuid(), gen_random_uuid(), 1, 'request_knives',
+      gen_random_uuid(), gen_random_uuid()
+    );`,
+  ],
 ]) {
   assertAuthenticatedDenied(functionName, statement)
 }
@@ -119,21 +152,44 @@ select jsonb_build_object(
     where namespace.nspname = 'public'
       and procedure.proname = any(array[
         'fn_reserve_inventory_for_machine',
+        'fn_reserve_inventory_for_machine_before_long_stock_map_v1',
         'fn_reserve_inventory_row_for_machine',
+        'fn_reserve_inventory_row_for_machine_before_long_stock_map_v1',
+        'fn_reserve_inventory_row_for_machine_transfer',
+        'fn_reserve_inventory_row_transfer_pre_map_v1',
         'fn_adjust_inventory_record',
         'fn_archive_inventory_item',
         'fn_reserve_whole_bar_inventory_row_for_machine',
+        'fn_reserve_whole_bar_inventory_row_before_plan_integrity_v1',
+        'fn_reserve_whole_bar_inventory_row_for_machine_transfer',
+        'fn_reserve_whole_bar_row_transfer_pre_plan_v1',
         'fn_unreserve_inventory_reservation',
         'fn_unreserve_inventory_reservation_before_whole_bar',
         'fn_promote_due_future_business_scrap'
       ])
       and has_function_privilege('authenticated', procedure.oid, 'execute')
+  ), '[]'::jsonb),
+  'service_role_internal_functions', coalesce((
+    select jsonb_agg(procedure.proname order by procedure.proname)
+    from pg_proc procedure
+    join pg_namespace namespace on namespace.oid = procedure.pronamespace
+    where namespace.nspname = 'public'
+      and procedure.proname = any(array[
+        'fn_reserve_inventory_for_machine_before_long_stock_map_v1',
+        'fn_reserve_inventory_row_for_machine_before_long_stock_map_v1',
+        'fn_reserve_inventory_row_transfer_pre_map_v1',
+        'fn_reserve_whole_bar_inventory_row_before_plan_integrity_v1',
+        'fn_reserve_whole_bar_row_transfer_pre_plan_v1',
+        'fn_apply_long_stock_fact_pre_reservation_guard_v1'
+      ])
+      and has_function_privilege('service_role', procedure.oid, 'execute')
   ), '[]'::jsonb)
 );
 `)
 assert.deepEqual(JSON.parse(overloadAudit.trim()), {
   old_seven_arg_exists: false,
   authenticated_overloads: [],
+  service_role_internal_functions: [],
 })
 
 console.log('[long-stock-third-review-fixes] all assertions passed')

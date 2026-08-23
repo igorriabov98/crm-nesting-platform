@@ -51,7 +51,7 @@ const wholeBarCirclePipeMigration = read('supabase/migrations/20260731120000_who
 const permissionIntegrityMigration = read('supabase/migrations/20260823130000_long_stock_permission_integrity.sql')
 const archiveScrapMigration = read('supabase/migrations/92_archive_empty_business_scrap_on_unreserve.sql')
 
-const closedRpcCallPattern = /\.rpc\(\s*['"](?:fn_reserve_whole_bar_inventory_row_for_machine|fn_reserve_inventory_for_machine|fn_reserve_inventory_row_for_machine|fn_adjust_inventory_record|fn_archive_inventory_item|fn_unreserve_inventory_reservation|fn_promote_due_future_business_scrap)['"]/u
+const closedRpcCallPattern = /\.rpc\(\s*['"](?:fn_reserve_whole_bar_inventory_row_for_machine|fn_reserve_whole_bar_inventory_row_for_machine_transfer|fn_reserve_inventory_for_machine|fn_reserve_inventory_row_for_machine|fn_reserve_inventory_row_for_machine_transfer|fn_adjust_inventory_record|fn_archive_inventory_item|fn_unreserve_inventory_reservation|fn_promote_due_future_business_scrap)['"]/u
 const secureRpcSource = read('src/lib/inventory/secure-rpc.ts')
 assert.match(secureRpcSource, /import 'server-only'/u)
 assert.match(secureRpcSource, /createAdminClient\(\)/u)

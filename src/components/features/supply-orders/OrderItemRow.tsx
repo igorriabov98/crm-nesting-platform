@@ -18,7 +18,8 @@ import {
  type SupplyOrderDeliverySchedule,
  type SupplyOrderItem,
 } from '@/lib/actions/supply-orders'
-import { reserveForMachine, unreserveFromMachine } from '@/lib/actions/inventory'
+import { reserveForMachine } from '@/lib/actions/inventory'
+import { unreserveItem } from '@/lib/actions/supply-request'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 
 type OrderItemRowProps = {
@@ -40,17 +41,23 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
  const [isPending, startTransition] = useTransition()
  const canSelect = !readOnly && item.to_order > 0
  const isCoveredByStock = item.to_order <= 0 && item.reserved_quantity > 0
- const lengthStockItems = useMemo(() => item.stock_items.filter((row) => row.piece_length_mm !== null), [item.stock_items])
- const lengthStockKey = useMemo(() => lengthStockItems.map((row) => `${row.id}:${row.piece_length_mm}`).join('|'), [lengthStockItems])
- const defaultPieceLength = useMemo(() => {
+ const plannedLengths = useMemo(() => new Set(
+  item.long_stock_purchase_plan?.components.map((component) => component.length_mm) || [],
+ ), [item.long_stock_purchase_plan])
+ const lengthStockItems = useMemo(() => item.stock_items.filter((row) => (
+  row.piece_length_mm !== null
+  && (plannedLengths.size === 0 || plannedLengths.has(Number(row.piece_length_mm)))
+ )), [item.stock_items, plannedLengths])
+ const lengthStockKey = useMemo(() => lengthStockItems.map((row) => `${row.id}:${row.piece_length_mm}:${row.available_quantity}`).join('|'), [lengthStockItems])
+ const defaultInventoryRowId = useMemo(() => {
   if (lengthStockItems.length !== 1) return ''
-  const only = lengthStockItems[0]?.piece_length_mm
-  return only === null || only === undefined ? '' : String(only)
+  return lengthStockItems[0]?.id || ''
  }, [lengthStockItems])
- const [pieceLengthState, setPieceLengthState] = useState(() => ({ key: lengthStockKey, value: defaultPieceLength }))
- const pieceLength = pieceLengthState.key === lengthStockKey ? pieceLengthState.value : defaultPieceLength
- const setPieceLength = (value: string) => setPieceLengthState({ key: lengthStockKey, value })
+ const [inventoryRowState, setInventoryRowState] = useState(() => ({ key: lengthStockKey, value: defaultInventoryRowId }))
+ const inventoryRowId = inventoryRowState.key === lengthStockKey ? inventoryRowState.value : defaultInventoryRowId
+ const setInventoryRowId = (value: string) => setInventoryRowState({ key: lengthStockKey, value })
  const lengthRequiresChoice = lengthStockItems.length > 1
+ const requiresMeasuredStockRow = item.long_stock_purchase_plan?.version_status === 'approved'
  const [newSchedule, setNewSchedule] = useState({
   delivery_date: item.target_delivery_date || '',
   quantity: '',
@@ -138,19 +145,19 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
    toast.error('Материал не привязан к справочнику')
    return
   }
-  if (lengthRequiresChoice && !pieceLength) {
-   toast.error('Выберите длину складской позиции')
+  if ((lengthRequiresChoice || requiresMeasuredStockRow) && !inventoryRowId) {
+   toast.error('Выберите точную складскую позицию')
    return
   }
   startTransition(async () => {
-   const selectedStockItem = pieceLength
-    ? lengthStockItems.find((row) => Number(row.piece_length_mm) === Number(pieceLength)) || null
+   const selectedStockItem = inventoryRowId
+    ? lengthStockItems.find((row) => row.id === inventoryRowId) || null
     : null
    const result = await reserveForMachine({
     inventory_id: selectedStockItem?.id || null,
     material_id: item.material_id!,
     material_variant_id: item.material_variant_id,
-    piece_length_mm: pieceLength ? Number(pieceLength) : null,
+    piece_length_mm: selectedStockItem?.piece_length_mm ?? null,
     machine_id: item.machine_id,
     quantity: item.to_order,
     secondary_quantity: item.secondary_requested_quantity !== null
@@ -169,7 +176,10 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
  const unreserve = () => {
   if (!item.reservation_id) return
   startTransition(async () => {
-   const result = await unreserveFromMachine(item.reservation_id!)
+   const result = await unreserveItem({
+    request_item_table: item.table as Parameters<typeof unreserveItem>[0]['request_item_table'],
+    request_item_id: item.id,
+   })
    if (!result.success) toast.error(result.error || 'Не удалось снять бронь')
    else toast.success('Бронь снята')
   })
@@ -250,16 +260,16 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
       {stockBreakdown(item) || <div className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.stock_available)} {item.stock_unit || item.unit}</div>}
       {lengthRequiresChoice && !item.reservation_id && (
        <select
-        value={pieceLength}
+        value={inventoryRowId}
         disabled={isPending || readOnly}
-        onChange={(event) => setPieceLength(event.target.value)}
-        aria-label={`Длина складской позиции для ${item.item_name}`}
+        onChange={(event) => setInventoryRowId(event.target.value)}
+        aria-label={`Складская позиция для ${item.item_name}`}
         className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-2 text-xs text-foreground"
        >
         <option value="">Выберите длину</option>
         {lengthStockItems.map((row) => (
-         <option key={row.id} value={String(row.piece_length_mm)}>
-          {formatAmount(row.piece_length_mm ?? 0)} мм
+         <option key={row.id} value={row.id}>
+          {formatAmount(row.piece_length_mm ?? 0)} мм · {formatAmount(row.available_secondary_quantity ?? 0)} шт
          </option>
         ))}
        </select>
@@ -271,7 +281,7 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
     {item.reservation_id ? (
      <button type="button" disabled={isPending || readOnly} onClick={unreserve} className="mt-2 min-h-8 font-medium text-orange-700 hover:underline disabled:text-muted-foreground">Снять бронь</button>
     ) : (
-     <button type="button" disabled={isPending || readOnly || !item.material_id || item.to_order <= 0 || (lengthRequiresChoice && !pieceLength)} onClick={reserve} className="mt-2 min-h-8 font-medium text-primary hover:underline disabled:text-muted-foreground">Забронировать</button>
+     <button type="button" disabled={isPending || readOnly || !item.material_id || item.to_order <= 0 || ((lengthRequiresChoice || requiresMeasuredStockRow) && !inventoryRowId)} onClick={reserve} className="mt-2 min-h-8 font-medium text-primary hover:underline disabled:text-muted-foreground">Забронировать</button>
     )}
    </div>
    {isCoveredByStock ? (
