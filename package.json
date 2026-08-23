@@ -43,6 +43,7 @@
     "test:long-stock-cutting-plan-server": "tsx --test src/lib/long-stock-cutting-plan.test.ts && node scripts/test-long-stock-cutting-plan-server.mjs",
     "test:long-stock-cutting-fact": "node scripts/test-long-stock-cutting-fact.mjs",
     "test:long-stock-cutting-races": "node scripts/test-long-stock-cutting-races.mjs",
+    "test:long-stock-third-review-fixes": "node scripts/test-long-stock-third-review-fixes.mjs",
     "test:long-stock-cutting-plan-receipt-recalculation": "node scripts/test-long-stock-cutting-plan-receipt-recalculation.mjs",
     "test:long-stock-position-ui": "tsx --test src/lib/long-stock-position-ui.test.ts src/lib/long-stock-material-draft.test.ts src/lib/long-stock-material-weight.test.ts",
     "test:long-stock-cutting-plan-pdf": "tsx --test src/lib/long-stock-cutting-plan-pdf.test.tsx",

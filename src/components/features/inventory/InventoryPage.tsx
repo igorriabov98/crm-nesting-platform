@@ -908,12 +908,34 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
             <div className="mt-4 space-y-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-[#374151]">Новое количество ({adjustRow.unit})</label>
-                <Input type="number" step="0.01" value={adjustTotal} onChange={(event) => setAdjustTotal(event.target.value)} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={adjustTotal}
+                  disabled={adjustRow.piece_length_mm !== null}
+                  onChange={(event) => setAdjustTotal(event.target.value)}
+                />
+                {adjustRow.piece_length_mm !== null && (
+                  <p className="mt-1 text-xs text-[#6B7280]">
+                    Рассчитывается автоматически: {adjustRow.piece_length_mm} мм × количество штук
+                  </p>
+                )}
               </div>
               {adjustRow.secondary_unit && (
                 <div>
                   <label className="mb-1 block text-sm font-medium text-[#374151]">Новое количество ({adjustRow.secondary_unit})</label>
-                  <Input type="number" step="0.01" value={adjustSecondaryTotal} onChange={(event) => setAdjustSecondaryTotal(event.target.value)} />
+                  <Input
+                    type="number"
+                    step={adjustRow.piece_length_mm !== null ? '1' : '0.01'}
+                    value={adjustSecondaryTotal}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setAdjustSecondaryTotal(value)
+                      if (adjustRow.piece_length_mm !== null) {
+                        setAdjustTotal(value === '' ? '' : String(Number(adjustRow.piece_length_mm) * Number(value)))
+                      }
+                    }}
+                  />
                 </div>
               )}
               <Input value={adjustComment} onChange={(event) => setAdjustComment(event.target.value)} placeholder="Причина корректировки" />

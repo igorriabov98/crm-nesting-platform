@@ -143,7 +143,11 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
    return
   }
   startTransition(async () => {
+   const selectedStockItem = pieceLength
+    ? lengthStockItems.find((row) => Number(row.piece_length_mm) === Number(pieceLength)) || null
+    : null
    const result = await reserveForMachine({
+    inventory_id: selectedStockItem?.id || null,
     material_id: item.material_id!,
     material_variant_id: item.material_variant_id,
     piece_length_mm: pieceLength ? Number(pieceLength) : null,
@@ -154,6 +158,8 @@ export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = fa
      : null,
     request_item_table: item.table,
     request_item_id: item.id,
+    use_cut_reservation: false,
+    use_whole_bar_reservation: selectedStockItem !== null,
    })
    if (!result.success) toast.error(result.error || 'Не удалось забронировать материал')
    else toast.success('Материал забронирован')
