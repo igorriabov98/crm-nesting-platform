@@ -46,6 +46,8 @@ jobs:
         run: npm run test:supply-long-stock-plan-return
       - name: Supply request lifecycle
         run: npm run test:supply-request-flow
+      - name: Supabase migration ordering and duplicate versions
+        run: npm run test:supabase-migration-order
       - name: Technologist request editability
         run: npm run test:technologist-request-editability
       - name: Technologist completion plan facts
@@ -54,6 +56,12 @@ jobs:
         run: npm run test:production-cutting-area
       - name: Long-stock cutting-plan PDF
         run: npm run test:long-stock-cutting-plan-pdf
+      - name: Long-stock cutting solver
+        run: npm run test:long-stock-cutting-solver
+      - name: Long-stock position UI
+        run: npm run test:long-stock-position-ui
+      - name: Material request stock coverage
+        run: npm run test:material-request-stock-coverage
       - name: Nesting STEP/PDF dimension choice
         run: npm run test:nesting-dimension-choice
       - name: Nesting AI match application policy
@@ -119,7 +127,11 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: nesting-service/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            nesting-service/package-lock.json
+      - name: Install root dependencies
+        run: npm ci
       - name: Install nesting-service dependencies
         run: npm ci
         working-directory: nesting-service
@@ -134,14 +146,20 @@ jobs:
         run: node scripts/test-inventory-stock-lifecycle.mjs
       - name: Inventory factory transfers
         run: npm run test:inventory-transfers
+      - name: Long-stock layout settings
+        run: npm run test:long-stock-layout-settings
       - name: Long-stock cutting fact
-        run: node scripts/test-long-stock-cutting-fact.mjs
+        run: npm run test:long-stock-cutting-fact
       - name: Long-stock cutting concurrency
-        run: node scripts/test-long-stock-cutting-races.mjs
-      - name: Long-stock receipt and approval serialization
-        run: node scripts/test-long-stock-cutting-plan-receipt-recalculation.mjs
+        run: npm run test:long-stock-cutting-races
+      - name: Long-stock cutting-plan schema
+        run: npm run test:long-stock-cutting-plan-schema
       - name: Supply partial receiving
         run: node scripts/test-supply-partial-receiving.mjs
+      - name: Supply receiving plan/fact database lifecycle
+        run: npm run test:supply-receiving-plan-fact
+      - name: Long-stock receipt recalculation database lifecycle
+        run: npm run test:long-stock-cutting-plan-receipt-recalculation
       - name: Fixtures are stable
         run: git diff --exit-code -- nesting-service/src/lib/__tests__/fixtures/
       - name: Phase 0
@@ -156,10 +174,10 @@ jobs:
       - name: All nesting-service tests
         run: npm run test:all
         working-directory: nesting-service
-      - name: Long-stock supply return database lifecycle
+      - name: Long-stock cutting-plan server
         env:
           FULL_SCHEMA_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/inventory_test
-        run: node scripts/test-long-stock-cutting-plan-server.mjs
+        run: npm run test:long-stock-cutting-plan-server
 
   real-fixtures:
     name: real fixtures

@@ -1,7 +1,12 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import {
+  classifySupabaseMigrations,
+  listSupabaseMigrationFiles,
+  orderSupabaseMigrationFiles,
+} from './supabase-migration-order.mjs';
 
 const repoRoot = path.resolve(__dirname, '..');
 const migrationsDir = path.join(repoRoot, 'supabase', 'migrations');
@@ -9,9 +14,7 @@ const databaseUrl = requiredEnv('SUPABASE_DB_URL');
 const ledgerTable = 'public._repo_supabase_migrations';
 
 function main() {
-  const files = readdirSync(migrationsDir)
-    .filter((file) => file.endsWith('.sql'))
-    .sort();
+  const files = orderSupabaseMigrationFiles(listSupabaseMigrationFiles(migrationsDir));
 
   if (files.length === 0) {
     console.log('[supabase:migrate] no SQL migrations found');
@@ -34,22 +37,33 @@ function main() {
     );
   }
 
-  const applied = new Set(
-    psqlAt(`SELECT name FROM ${ledgerTable} ORDER BY name;`)
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-  );
-  const pending = files.filter((file) => !applied.has(file));
+  const applied = psqlAt(`SELECT name || chr(9) || checksum FROM ${ledgerTable} ORDER BY name;`)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [file, checksum] = line.split('\t');
+      if (!file || !checksum) throw new Error(`Invalid migration ledger row: ${line}`);
+      return { file, checksum };
+    });
+  const localMigrations = files.map((file) => ({
+    file,
+    checksum: sha256(readFileSync(path.join(migrationsDir, file), 'utf8')),
+  }));
+  const { pending, renamed } = classifySupabaseMigrations(localMigrations, applied);
+
+  for (const migration of renamed) {
+    console.log(`[supabase:migrate] ${migration.file} already tracked under its previous name`);
+  }
 
   if (pending.length === 0) {
     console.log(`[supabase:migrate] ${files.length} migrations tracked, pending 0`);
     return;
   }
 
-  for (const file of pending) {
+  for (const migration of pending) {
+    const { file, checksum } = migration;
     const fullPath = path.join(migrationsDir, file);
-    const checksum = sha256(readFileSync(fullPath, 'utf8'));
     runMigration(fullPath, file, checksum);
     console.log(`[supabase:migrate] applied ${file}`);
   }
