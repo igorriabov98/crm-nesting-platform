@@ -264,7 +264,8 @@ function isWholeBarRequest(table: RequestItemTable, row: Record<string, unknown>
 }
 
 function usesWholeBarStock(table: RequestItemTable, row: Record<string, unknown>, item: InventoryRow) {
-  return isWholeBarRequest(table, row) && Number(item.piece_length_mm || 0) > 0
+  const isActiveKnife = table === 'request_knives' && Boolean(row.material_variant_id)
+  return (isWholeBarRequest(table, row) || isActiveKnife) && Number(item.piece_length_mm || 0) > 0
 }
 
 function normalizeText(value: unknown) {
