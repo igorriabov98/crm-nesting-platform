@@ -89,7 +89,16 @@ begin
     for update;
 
     if v_version_id is null then
-      raise exception 'Факт заготовки отклонён: утверждённая версия карты уже недействительна';
+      if exists (
+        select 1
+        from public.long_stock_cutting_plan_items item
+        where item.plan_id = v_plan_id
+          and item.cutting_status = 'requires_recalculation'
+      ) then
+        raise exception 'Факт заготовки отклонён: утверждённая версия карты уже недействительна';
+      end if;
+
+      raise exception 'Резка заблокирована: для позиции длинномера нет утверждённой версии карты раскроя';
     end if;
   end loop;
 end;
