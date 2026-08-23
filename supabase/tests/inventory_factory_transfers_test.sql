@@ -438,18 +438,18 @@ BEGIN
   );
   SELECT id INTO v_knife_transfer FROM public.inventory_transfers
   WHERE machine_id = v_knife_machine AND status IN ('needs_date', 'scheduled');
-  IF (SELECT count(*) FROM public.inventory_transfer_items WHERE transfer_id = v_knife_transfer) <> 2 THEN
-    RAISE EXCEPTION 'Мерная бронь не разделилась на целый и отрезанный кусок';
+  IF (SELECT count(*) FROM public.inventory_transfer_items WHERE transfer_id = v_knife_transfer) <> 1 THEN
+    RAISE EXCEPTION 'Мерная бронь не сохранилась одним набором целых хлыстов';
   END IF;
-  IF NOT EXISTS (
+  IF EXISTS (
     SELECT 1 FROM public.inventory
     WHERE source_inventory_id = v_knife_inventory AND is_business_scrap = true
-      AND factory_id = v_uzhgorod AND total_quantity = 5000
-  ) THEN RAISE EXCEPTION 'Отрезанный остаток не остался деловым отходом в источнике'; END IF;
+      AND factory_id = v_uzhgorod
+  ) THEN RAISE EXCEPTION 'Межзаводская бронь создала остаток без раскладки карты'; END IF;
 
   SELECT * INTO v_knife_transfer_item
   FROM public.inventory_transfer_items
-  WHERE transfer_id = v_knife_transfer AND requested_quantity = 6000;
+  WHERE transfer_id = v_knife_transfer AND requested_quantity = 12000;
   BEGIN
     PERFORM public.fn_receive_inventory_transfer(
       v_knife_transfer,
@@ -466,7 +466,7 @@ BEGIN
     COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
         'item_id', id,
-        'quantity', CASE WHEN requested_quantity = 6000 THEN 12000 ELSE requested_quantity END
+        'quantity', CASE WHEN requested_quantity = 12000 THEN 18000 ELSE requested_quantity END
       ))
       FROM public.inventory_transfer_items WHERE transfer_id = v_knife_transfer
     ), '[]'::jsonb),
@@ -486,27 +486,33 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM public.inventory
     WHERE id = v_knife_inventory
-      AND total_quantity = 0 AND total_secondary_quantity = 0
-  ) THEN RAISE EXCEPTION 'Сверхплановый мерный кусок не списан целиком из источника'; END IF;
+      AND total_quantity = 6000 AND total_secondary_quantity = 1
+  ) THEN
+    SELECT total_quantity, total_secondary_quantity
+    INTO v_value, v_count
+    FROM public.inventory
+    WHERE id = v_knife_inventory;
+    RAISE EXCEPTION 'Незаявленный мерный хлыст не остался в источнике: % мм / % шт', v_value, v_count;
+  END IF;
   SELECT COALESCE(sum(total_quantity), 0), COALESCE(sum(total_secondary_quantity), 0)
   INTO v_value, v_count
   FROM public.inventory
   WHERE factory_id = v_beregovo AND material_id = v_knife_material AND deleted_at IS NULL;
-  IF v_value <> 13000 OR v_count <> 3 THEN
+  IF v_value <> 12000 OR v_count <> 2 THEN
     RAISE EXCEPTION 'Инвариант мерных кусков в назначении нарушен: % мм / % шт', v_value, v_count;
   END IF;
   SELECT COALESCE(sum(quantity), 0), COALESCE(sum(secondary_quantity), 0)
   INTO v_value, v_count
   FROM public.inventory_transactions
   WHERE machine_id = v_knife_machine AND transaction_type = 'transfer_out';
-  IF v_value <> -13000 OR v_count <> -3 THEN
+  IF v_value <> -12000 OR v_count <> -2 THEN
     RAISE EXCEPTION 'transfer_out мерных кусков неверен: % мм / % шт', v_value, v_count;
   END IF;
   SELECT COALESCE(sum(quantity), 0), COALESCE(sum(secondary_quantity), 0)
   INTO v_value, v_count
   FROM public.inventory_transactions
   WHERE machine_id = v_knife_machine AND transaction_type = 'transfer_in';
-  IF v_value <> 13000 OR v_count <> 3 THEN
+  IF v_value <> 12000 OR v_count <> 2 THEN
     RAISE EXCEPTION 'transfer_in мерных кусков неверен: % мм / % шт', v_value, v_count;
   END IF;
 END;

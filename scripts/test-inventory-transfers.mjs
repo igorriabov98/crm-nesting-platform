@@ -8,11 +8,12 @@ import path from 'node:path'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (relativePath) => readFile(path.join(root, relativePath), 'utf8')
 
-const [enumMigration, migration, inventoryActions, transferActions, reserveButton, transportPanel,
+const [enumMigration, migration, inventoryActions, secureInventoryRpc, transferActions, reserveButton, transportPanel,
   receivingPanel, supplyRequestActions, taskActions, taskCards, productionFactActions, databaseTypes] = await Promise.all([
   read('supabase/migrations/20260721124444_inventory_factory_transfers.sql'),
   read('supabase/migrations/20260721124456_inventory_factory_transfer_module.sql'),
   read('src/lib/actions/inventory.ts'),
+  read('src/lib/inventory/secure-rpc.ts'),
   read('src/lib/actions/inventory-transfers.ts'),
   read('src/components/features/supply-request/ReserveButton.tsx'),
   read('src/components/features/supply/InventoryTransferPanel.tsx'),
@@ -53,7 +54,8 @@ assert.match(migration, /CREATE TRIGGER protect_inventory_transfer_task/)
 assert.match(migration, /SET search_path = ''/)
 assert.match(migration, /REVOKE ALL ON FUNCTION public\.fn_receive_inventory_transfer/)
 
-assert.match(inventoryActions, /fn_reserve_inventory_row_for_machine_transfer/)
+assert.match(inventoryActions, /reserveInventoryRowForMachineTransfer/)
+assert.match(secureInventoryRpc, /fn_reserve_inventory_row_for_machine_transfer/)
 assert.match(transferActions, /fn_set_inventory_transfer_date/)
 assert.match(transferActions, /fn_receive_inventory_transfer/)
 assert.match(reserveButton, /Остатки других заводов/)

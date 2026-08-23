@@ -1324,16 +1324,25 @@ begin
   update public.long_stock_layout_categories
   set minimum_useful_length_mm = 1000
   where key = 'circle';
+  if (
+    select category->>'business_scrap_threshold_mm'
+    from jsonb_array_elements(
+      public.fn_get_long_stock_layout_settings_snapshot()->'categories'
+    ) category
+    where category->>'key' = 'circle'
+  ) is distinct from '0' then
+    raise exception 'Порог классификации делового остатка не отключён';
+  end if;
   v_plan_data := pg_temp.create_new_stock_plan(
     v_actor, v_machine, v_material, v_variant,
-    array[6000], array[5500::numeric]
+    array[6000], array[5903::numeric]
   );
   v_short_inventory := (v_plan_data#>>'{scrap_ids,0}')::uuid;
   select piece_length_mm into v_short_length
   from public.inventory
   where id = v_short_inventory;
   if v_short_inventory is null or v_short_length is null
-    or v_short_length <= 0 or v_short_length >= 1000 then
+    or v_short_length is distinct from 96 then
     raise exception 'Остаток короче визуального порога не был создан: %', v_plan_data;
   end if;
 

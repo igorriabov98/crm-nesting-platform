@@ -27,6 +27,7 @@ type LooseQuery = PromiseLike<DbResult> & {
   select: (columns?: string, options?: { count?: 'exact' | 'planned' | 'estimated'; head?: boolean }) => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
   neq: (column: string, value: unknown) => LooseQuery
+  is: (column: string, value: unknown) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   gt: (column: string, value: unknown) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
@@ -180,6 +181,8 @@ export type SupplyOrderItem = {
 export type SupplyOrderStockItem = {
   id: string
   factory_id: string
+  is_business_scrap: boolean
+  business_scrap_state: 'available' | 'future'
   piece_length_mm: number | null
   total_quantity: number
   available_quantity: number
@@ -1216,14 +1219,37 @@ export async function getSupplyOrders(
     }))
     const stockFactoryIds = Array.from(new Set(orderableRawItems.map((item) => requestMap.get(item.request_id)?.machines?.factory_id).filter(Boolean))) as string[]
     const [inventoryRes, reservationsRes, schedulesRes] = await Promise.all([
-      materialIds.length && stockFactoryIds.length ? db.from('inventory').select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm').in('material_id', materialIds).in('factory_id', stockFactoryIds) : Promise.resolve({ data: [], error: null } as DbResult),
+      materialIds.length && stockFactoryIds.length
+        ? db.from('inventory')
+          .select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at')
+          .in('material_id', materialIds)
+          .in('factory_id', stockFactoryIds)
+          .is('deleted_at', null)
+          .eq('business_scrap_state', 'available')
+          .eq('is_business_scrap', false)
+        : Promise.resolve({ data: [], error: null } as DbResult),
       orderableRawItems.length ? db.from('inventory_reservations').select('id, request_item_table, request_item_id, consumed_at').in('request_item_id', orderableRawItems.map((item) => item.id)) : Promise.resolve({ data: [], error: null } as DbResult),
       orderableRawItems.length ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', orderableRawItems.map((item) => item.id)).order('delivery_date', { ascending: true }) : Promise.resolve({ data: [], error: null } as DbResult),
     ])
     if (inventoryRes.error) throw new Error(inventoryRes.error.message || 'Не удалось загрузить остатки склада')
     if (reservationsRes.error) throw new Error(reservationsRes.error.message || 'Не удалось загрузить бронирования')
     if (schedulesRes.error) throw new Error(schedulesRes.error.message || 'Не удалось загрузить график поставок')
-    const stockRows = (inventoryRes.data || []) as { id: string; factory_id: string; material_id: string; material_variant_id: string | null; total_quantity: number; available_quantity: number; unit: string; total_secondary_quantity: number | null; available_secondary_quantity: number | null; secondary_unit: string | null; piece_length_mm: number | null }[]
+    const stockRows = (inventoryRes.data || []) as {
+      id: string
+      factory_id: string
+      material_id: string
+      material_variant_id: string | null
+      total_quantity: number
+      available_quantity: number
+      unit: string
+      total_secondary_quantity: number | null
+      available_secondary_quantity: number | null
+      secondary_unit: string | null
+      piece_length_mm: number | null
+      is_business_scrap: boolean
+      business_scrap_state: 'available' | 'future'
+      deleted_at: string | null
+    }[]
     const stockMap = new Map(stockRows.map((item) => [`${factoryKey(item.factory_id)}:${item.material_id}:${item.material_variant_id || 'legacy'}:${item.piece_length_mm ?? 'null'}`, item]))
     const stockGroupMap = new Map<string, typeof stockRows>()
     const materialStockMap = new Map<string, typeof stockRows>()
@@ -1326,6 +1352,8 @@ export async function getSupplyOrders(
         stock_items: stockItems.map((row) => ({
           id: row.id,
           factory_id: row.factory_id,
+          is_business_scrap: row.is_business_scrap,
+          business_scrap_state: row.business_scrap_state,
           piece_length_mm: row.piece_length_mm,
           total_quantity: row.total_quantity,
           available_quantity: row.available_quantity,

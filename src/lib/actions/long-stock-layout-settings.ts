@@ -45,12 +45,20 @@ function mapSnapshot(value: unknown): LongStockLayoutSettingsSnapshot {
   const rawCategories = Array.isArray(row.categories) ? row.categories : []
   const categories = rawCategories.map((rawCategory): LongStockLayoutCategorySettings => {
     const category = asRecord(rawCategory)
+    const businessScrapThresholdMm = asNumber(
+      category.business_scrap_threshold_mm ?? 0,
+      'business_scrap_threshold_mm',
+    )
+    if (businessScrapThresholdMm !== 0) {
+      throw new Error('Порог классификации делового остатка должен быть отключён')
+    }
     return {
       key: category.key,
       materialCategory: category.material_category,
       knifeBevelCount: category.knife_bevel_count === null
         ? null
         : asNumber(category.knife_bevel_count, 'knife_bevel_count') as 1 | 2,
+      businessScrapThresholdMm: 0,
       minimumUsefulLengthMm: asNumber(category.minimum_useful_length_mm, 'minimum_useful_length_mm'),
       standardLengths: Array.isArray(category.standard_lengths)
         ? category.standard_lengths.map((item: unknown) => asNumber(item, 'standard_lengths'))
@@ -78,6 +86,7 @@ function mapSnapshot(value: unknown): LongStockLayoutSettingsSnapshot {
       ...category,
       materialCategory: categoryMetadata.get(category.key)!.materialCategory,
       knifeBevelCount: categoryMetadata.get(category.key)!.knifeBevelCount,
+      businessScrapThresholdMm: categoryMetadata.get(category.key)!.businessScrapThresholdMm,
     })),
   }
 }

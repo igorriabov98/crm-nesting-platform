@@ -126,7 +126,6 @@ const DIRECTORS: UserRole[] = ['financial_director', 'commercial_director', 'pla
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const CHISINAU_TIME_ZONE = 'Europe/Chisinau'
 const CUTTING_STAGE_TYPE = 'cutting' as const
-const CUTTING_ROLLBACK_TASK_TYPE = 'production_cutting_rollback_review' as const
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message
@@ -514,51 +513,6 @@ async function isCuttingFact(admin: AdminClient, fact: Pick<ProductionMachineFac
   return isCuttingFactSection(section, parent)
 }
 
-async function hasRemainingCuttingFacts(admin: AdminClient, machineId: string, excludeFactId?: string | null) {
-  let query = looseDb(admin)
-    .from('production_machine_facts')
-    .select('id, section_id')
-    .eq('machine_id', machineId)
-
-  if (excludeFactId) query = query.neq('id', excludeFactId)
-
-  const { data, error } = await query
-  if (error) throw error
-
-  const facts = (data || []) as Pick<ProductionMachineFact, 'id' | 'section_id'>[]
-  if (facts.length === 0) return false
-
-  const sectionIds = Array.from(new Set(facts.map((fact) => fact.section_id)))
-  const { data: sectionsRaw, error: sectionsError } = await looseDb(admin)
-    .from('production_fact_sections')
-    .select('*')
-    .in('id', sectionIds)
-
-  if (sectionsError) throw sectionsError
-  const sectionMap = new Map(((sectionsRaw || []) as ProductionFactSection[]).map((section) => [section.id, section]))
-  const parentIds = Array.from(new Set(
-    Array.from(sectionMap.values())
-      .map((section) => section.parent_id)
-      .filter(Boolean),
-  )) as string[]
-
-  const parentMap = new Map<string, ProductionFactSection>()
-  if (parentIds.length > 0) {
-    const { data: parentsRaw, error: parentsError } = await looseDb(admin)
-      .from('production_fact_sections')
-      .select('*')
-      .in('id', parentIds)
-    if (parentsError) throw parentsError
-    for (const parent of (parentsRaw || []) as ProductionFactSection[]) parentMap.set(parent.id, parent)
-  }
-
-  return facts.some((fact) => {
-    const section = sectionMap.get(fact.section_id) || null
-    const parent = section?.parent_id ? parentMap.get(section.parent_id) || null : null
-    return isCuttingFactSection(section, parent)
-  })
-}
-
 async function assertActiveFactSection(
   admin: AdminClient,
   factoryId: string,
@@ -753,138 +707,6 @@ async function saveMachineFactsAtomic(
     throw new Error('Сервер вернул некорректный результат сохранения фактов')
   }
   return { inserted, skipped }
-}
-
-async function getCuttingRollbackAssignee(admin: AdminClient, factoryId: string | null, fallbackUserId: string) {
-  const [settingsResult, technologistsResult] = await Promise.all([
-    looseDb(admin)
-      .from('company_settings')
-      .select('auto_task_technologist_user_id')
-      .limit(1),
-    looseDb(admin)
-      .from('users')
-      .select('id, factory_id')
-      .eq('role', 'technologist')
-      .eq('is_active', true)
-      .order('full_name', { ascending: true }),
-  ])
-
-  const settingsRaw = settingsResult.data
-  const technologists = (technologistsResult.data || []) as Array<{ id: string; factory_id: string | null }>
-  if (settingsResult.error) throw settingsResult.error
-  if (technologistsResult.error) throw technologistsResult.error
-
-  const configuredId = ((settingsRaw || []) as Array<{ auto_task_technologist_user_id?: string | null }>)[0]
-    ?.auto_task_technologist_user_id || null
-
-  if (configuredId && technologists.some((user) => user.id === configuredId)) return configuredId
-  return technologists.find((user) => factoryId && user.factory_id === factoryId)?.id
-    || technologists[0]?.id
-    || fallbackUserId
-}
-
-async function ensureCuttingRollbackTask(admin: AdminClient, input: {
-  machineId: string
-  factoryId: string | null
-  userId: string
-  reason: string
-}) {
-  const [machineResult, existingResult] = await Promise.all([
-    looseDb(admin)
-      .from('machines')
-      .select('id, name, factory_id')
-      .eq('id', input.machineId)
-      .maybeSingle(),
-    looseDb(admin)
-      .from('tasks')
-      .select('id, status')
-      .eq('machine_id', input.machineId)
-      .eq('task_type', CUTTING_ROLLBACK_TASK_TYPE)
-      .in('status', ['pending', 'in_progress'])
-      .limit(1),
-  ])
-  const machineRaw = machineResult.data
-  const machine = machineRaw as { id: string; name: string | null; factory_id: string | null } | null
-  const machineName = machine?.name || 'машина'
-  const factoryId = machine?.factory_id || input.factoryId
-  const assignedTo = await getCuttingRollbackAssignee(admin, factoryId, input.userId)
-  const today = chisinauDateOnly()
-  const title = `Проверить откат заготовки: ${machineName}`
-  const description = [
-    'Последний факт заготовки по машине удален или перенесен.',
-    'Склад автоматически не откатывался.',
-    'Откройте задачу, чтобы посмотреть preview и выбрать автоматический откат или оставить списание как есть.',
-    `Причина: ${input.reason}`,
-  ].join('\n')
-
-  const existingRaw = existingResult.data
-  if (existingResult.error) throw existingResult.error
-
-  const existing = ((existingRaw || []) as Array<{ id: string; status: string }>)[0] || null
-  let taskId = existing?.id || null
-
-  if (taskId) {
-    const { error } = await looseDb(admin)
-      .from('tasks')
-      .update({
-        assigned_to: assignedTo,
-        title,
-        description,
-        status: 'pending',
-        start_date: today,
-        deadline: today,
-        completed_at: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', taskId)
-    if (error) throw error
-  } else {
-    const { data: insertedRaw, error } = await looseDb(admin)
-      .from('tasks')
-      .insert({
-        machine_id: input.machineId,
-        assigned_to: assignedTo,
-        task_type: CUTTING_ROLLBACK_TASK_TYPE,
-        title,
-        description,
-        status: 'pending',
-        start_date: today,
-        deadline: today,
-      })
-      .select('id')
-      .single()
-    if (error) throw error
-    taskId = (insertedRaw as { id: string }).id
-  }
-
-  const [eventsResult, notificationResult] = await Promise.all([
-    looseDb(admin)
-      .from('production_fact_cutting_events')
-      .update({ rollback_task_id: taskId })
-      .eq('machine_id', input.machineId)
-      .eq('status', 'applied'),
-    looseDb(admin)
-      .from('notifications')
-      .insert({
-        user_id: assignedTo,
-        type: 'task_created',
-        title: 'Нужен review отката заготовки',
-        message: `По машине "${machineName}" удален или перенесен последний факт заготовки. Откройте задачу для preview автоматического отката.`,
-        related_machine_id: input.machineId,
-      }),
-  ])
-  if (eventsResult.error) throw eventsResult.error
-  const notificationError = notificationResult.error
-  if (notificationError) throw notificationError
-
-  after(async () => {
-    try {
-      await dispatchPendingTelegramDeliveries({ userId: assignedTo })
-    } catch {
-      // CRM notification is already persisted; Telegram retries on the next delivery run.
-    }
-  })
-  return taskId
 }
 
 export async function getProductionFactWorkspaceData(input: {
@@ -1251,6 +1073,13 @@ export async function saveProductionMachineFact(input: {
     const nextIsCutting = isCuttingFactSection(nextSectionContext.section, nextSectionContext.parent)
     if (nextIsCutting) await assertInventoryTransfersReceived(admin, [input.machine_id])
 
+    if (existingWasCutting && existing
+      && (existing.machine_id !== input.machine_id || existing.section_id !== input.section_id)) {
+      throw new Error(
+        'Проведённый факт заготовки нельзя перенести на другую машину или участок; сначала выполните откат',
+      )
+    }
+
     const payload = {
       factory_id: input.factory_id,
       fact_date: factDate,
@@ -1263,17 +1092,6 @@ export async function saveProductionMachineFact(input: {
 
     if (existing) {
       const updatedId = await saveMachineFactAtomic(admin, payload, existing.id, userId)
-      if (existingWasCutting && (!nextIsCutting || existing.machine_id !== input.machine_id)) {
-        const hasCuttingFacts = await hasRemainingCuttingFacts(admin, existing.machine_id, existing.id)
-        if (!hasCuttingFacts) {
-          await ensureCuttingRollbackTask(admin, {
-            machineId: existing.machine_id,
-            factoryId: existing.factory_id,
-            userId,
-            reason: 'Факт заготовки перенесен',
-          })
-        }
-      }
       revalidateProductionCuttingFlow(input.machine_id)
       if (existing.machine_id !== input.machine_id) revalidateProductionCuttingFlow(existing.machine_id)
       return { success: true, data: { id: updatedId }, error: null }
@@ -1300,24 +1118,20 @@ export async function deleteProductionMachineFact(id: string): Promise<Productio
     if (factError || !fact) throw new Error(factError?.message || 'Запись факта не найдена')
     assertFactoryAccess(role, userFactoryId, fact.factory_id)
     assertCanEditFactDate(role, fact.fact_date)
-    const [wasCutting, deleteResult] = await Promise.all([
-      isCuttingFact(admin, fact),
-      looseDb(admin).from('production_machine_facts').delete().eq('id', id),
-    ])
-
-    const { error } = deleteResult
-    if (error) throw error
-
-    if (wasCutting) {
-      const hasCuttingFacts = await hasRemainingCuttingFacts(admin, fact.machine_id)
-      if (!hasCuttingFacts) {
-        await ensureCuttingRollbackTask(admin, {
-          machineId: fact.machine_id,
-          factoryId: fact.factory_id,
-          userId,
-          reason: 'Факт заготовки удален',
-        })
-      }
+    const { data, error } = await (admin as unknown as RpcClient).rpc(
+      'fn_delete_production_machine_fact_atomic_v1',
+      { p_fact_id: id, p_actor: userId },
+    )
+    if (error) throw new Error(error.message || 'Не удалось атомарно удалить факт заготовки')
+    const result = data as { assigned_to?: string | null } | null
+    if (result?.assigned_to) {
+      after(async () => {
+        try {
+          await dispatchPendingTelegramDeliveries({ userId: result.assigned_to! })
+        } catch {
+          // CRM notification is already persisted; Telegram retries on the next delivery run.
+        }
+      })
     }
 
     revalidateProductionCuttingFlow(fact.machine_id)

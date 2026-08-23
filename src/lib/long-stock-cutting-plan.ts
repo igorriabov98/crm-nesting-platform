@@ -65,6 +65,18 @@ export type StoredLongStockCandidate = {
   }>
 }
 
+export function assertLongStockCuttingPlanApprovalSucceeded<T>(result: T): T {
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    const approval = result as Record<string, unknown>
+    if (approval.status === 'invalid' || approval.position_status === 'requires_recalculation') {
+      throw new Error(
+        'Утверждение не состоялось: фактический состав принятого материала расходится с картой. Требуется пересчёт.',
+      )
+    }
+  }
+  return result
+}
+
 export function normalizeLongStockPlanSegments(
   segments: readonly LongStockPlanSegmentInput[],
 ): LongStockWorkpiece[] {

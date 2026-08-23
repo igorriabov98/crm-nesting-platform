@@ -152,6 +152,18 @@ begin
   if (v_stored_snapshot->>'kerf_mm')::numeric <> 1 then
     raise exception 'Изменение настроек изменило snapshot существующей версии';
   end if;
+  begin
+    perform public.fn_approve_long_stock_cutting_plan_version_v1(v_version, v_actor);
+    raise exception 'Устаревший черновик был утверждён';
+  exception when raise_exception then
+    if sqlerrm = 'Устаревший черновик был утверждён'
+      or sqlerrm not like '%черновик рассчитан по ревизии 1, текущая ревизия 2%Пересчитайте карту%' then
+      raise;
+    end if;
+  end;
+  if (select status from public.long_stock_cutting_plan_versions where id = v_version) <> 'draft' then
+    raise exception 'Отказ устаревшей ревизии изменил статус версии';
+  end if;
 
   begin
     perform public.fn_get_or_create_long_stock_cutting_plan_version(
@@ -235,6 +247,11 @@ begin
     if sqlerrm not like '%максимум три%' then raise; end if;
   end;
 
+  -- Restore the fixture revision before the older lifecycle/immutability
+  -- assertions intentionally approve this same version.
+  update public.long_stock_layout_settings
+  set kerf_mm = 1, revision = 1, updated_by = v_actor, updated_at = now()
+  where id = true;
   perform public.fn_set_long_stock_cutting_plan_version_status(
     v_version, 'approved', v_actor
   );
@@ -299,11 +316,15 @@ begin
     set piece_length_mm = 1249
     where id = v_inventory;
     raise exception 'Длина уже привязанного делового остатка была изменена';
-  exception when check_violation then
-    if sqlerrm not like '%Длина делового остатка%не совпадает с расчётной%' then
+  exception when raise_exception then
+    if sqlerrm = 'Длина уже привязанного делового остатка была изменена'
+      or sqlerrm not like '%Длину складского хлыста нельзя изменить%' then
       raise;
     end if;
   end;
+  if (select piece_length_mm from public.inventory where id = v_inventory) <> 1250 then
+    raise exception 'Запрещённое изменение длины сохранилось в складской строке';
+  end if;
   insert into public.long_stock_cutting_actual_losses(
     version_id, bar_id,
     kerf_loss_length_mm, end_trim_loss_length_mm,

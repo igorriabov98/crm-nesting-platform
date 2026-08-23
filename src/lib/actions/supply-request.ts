@@ -255,12 +255,10 @@ function requiresExactVariant(table: RequestItemTable, row: Record<string, unkno
     || (table === 'request_pipe' && row.pipe_type !== 'wire')
 }
 
-function isImmediateCutReservationTable(table: RequestItemTable) {
-  return table === 'request_knives'
-}
-
 function isWholeBarRequest(table: RequestItemTable, row: Record<string, unknown>) {
-  return table === 'request_circle' || (table === 'request_pipe' && row.pipe_type !== 'wire')
+  return table === 'request_knives'
+    || table === 'request_circle'
+    || (table === 'request_pipe' && row.pipe_type !== 'wire')
 }
 
 function usesWholeBarStock(table: RequestItemTable, row: Record<string, unknown>, item: InventoryRow) {
@@ -367,7 +365,7 @@ function variantMatchesRequest(table: RequestItemTable, row: Record<string, unkn
 }
 
 function getReservableQuantity(table: RequestItemTable, row: Record<string, unknown>, item: InventoryRow) {
-  if (isImmediateCutReservationTable(table) || usesWholeBarStock(table, row, item)) {
+  if (usesWholeBarStock(table, row, item)) {
     const pieceLength = Number(item.piece_length_mm || 0)
     const pieces = Math.floor(Number(item.available_secondary_quantity || 0))
     return pieceLength > 0 && pieces > 0 ? pieceLength * pieces : 0
@@ -973,7 +971,7 @@ export async function reserveItemFromStock(data: {
       machine_id: request.machine_id,
       quantity,
       secondary_quantity: secondaryQuantity,
-      use_cut_reservation: isImmediateCutReservationTable(data.request_item_table),
+      use_cut_reservation: false,
       use_whole_bar_reservation: usesWholeBarStock(data.request_item_table, row, selectedInventory),
       use_inventory_transfer: requiresInventoryTransfer,
       request_item_table: data.request_item_table,

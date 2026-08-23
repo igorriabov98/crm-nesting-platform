@@ -14,6 +14,7 @@ import {
   type LongStockNewMaterialDraft,
 } from '@/lib/long-stock-material-draft'
 import {
+  assertLongStockCuttingPlanApprovalSucceeded,
   normalizeLongStockPlanSegments,
   serializeLongStockCandidates,
   solverModeForPlan,
@@ -96,6 +97,7 @@ type LayoutCategorySnapshot = {
   key: string
   material_category: string
   knife_bevel_count: number | null
+  business_scrap_threshold_mm: number
   minimum_useful_length_mm: number
   standard_lengths: number[]
   nonstandard_lengths: number[]
@@ -423,7 +425,7 @@ export async function approveLongStockCuttingPlanVersion(versionId: string) {
       },
     )
     if (error) throw new Error(error.message || 'Не удалось утвердить версию карты раскроя')
-    return data
+    return assertLongStockCuttingPlanApprovalSucceeded(data)
   } catch (error) {
     await removePreparedLongStockCuttingPlanPdf(preparedPdf.metadata)
     throw error
@@ -1008,11 +1010,22 @@ function normalizeSettingsSnapshot(value: LayoutSettingsSnapshot): LayoutSetting
     optimization_hint_threshold_percent: threshold,
     categories: value.categories.map((category) => ({
       ...category,
+      business_scrap_threshold_mm: normalizeDisabledBusinessScrapThreshold(
+        category.business_scrap_threshold_mm,
+      ),
       minimum_useful_length_mm: Number(category.minimum_useful_length_mm),
       standard_lengths: category.standard_lengths.map(Number),
       nonstandard_lengths: category.nonstandard_lengths.map(Number),
     })),
   }
+}
+
+function normalizeDisabledBusinessScrapThreshold(value: unknown) {
+  const threshold = Number(value ?? 0)
+  if (threshold !== 0) {
+    throw new Error('Порог классификации делового остатка должен быть отключён')
+  }
+  return threshold
 }
 
 function normalizeRequestItemRef(value: LongStockRequestItemRef) {
