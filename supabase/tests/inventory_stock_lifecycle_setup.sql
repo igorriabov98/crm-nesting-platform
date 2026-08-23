@@ -23,6 +23,8 @@ EXCEPTION WHEN duplicate_object THEN
 END;
 $$;
 
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
 CREATE TYPE public.material_category AS ENUM ('sheet_metal', 'chain_cord', 'knives', 'circle', 'pipe', 'components', 'other');
 CREATE TYPE public.inventory_transaction_type AS ENUM ('receipt', 'reserve', 'unreserve', 'write_off', 'adjustment');
 CREATE TYPE public.stage_type AS ENUM ('cutting', 'welding', 'painting', 'assembly', 'shipping');
@@ -42,7 +44,12 @@ CREATE TABLE public.material_variants (
   is_calibrated boolean,
   pipe_type public.pipe_subtype,
   piece_description text,
-  wall_thickness_mm numeric
+  wall_thickness_mm numeric,
+  knife_bevel_count smallint
+);
+CREATE TABLE public.long_stock_cutting_plans (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  material_variant_id uuid REFERENCES public.material_variants(id)
 );
 CREATE TABLE public.machines (
   id uuid PRIMARY KEY,

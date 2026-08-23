@@ -9,7 +9,9 @@ import { recordMaterialUsage } from '@/lib/actions/materials'
 import { repairImportedSheetMetalMaterials } from '@/lib/actions/request-sheet-metal-materials'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { requirePermission } from '@/lib/permissions/server'
+import { assertFactoryAccess } from '@/lib/permissions/factory-scope'
 import { assertMachineCanUseTechnologistRequest } from '@/lib/actions/machine-progress'
+import { unreserveInventoryReservation } from '@/lib/inventory/secure-rpc'
 import {
   assertTechnologistRequestEditable,
 } from '@/lib/technologist-request-editability'
@@ -151,14 +153,14 @@ const RESERVED_ROW_PROTECTED_FIELDS: Record<RequestSectionTable, Set<string>> = 
 }
 
 async function requireRequestPermission(operation: PermissionOperation = 'view') {
-  const { supabase, userId, role } = await requirePermission('technologist_requests', operation)
-  return { supabase, db: supabase as unknown as LooseDb, userId, role }
+  const permission = await requirePermission('technologist_requests', operation)
+  return { ...permission, db: permission.supabase as unknown as LooseDb }
 }
 
 async function assertMachineNotArchived(db: LooseDb, machineId: string) {
   const { data, error } = await db
     .from('machines')
-    .select('is_archived')
+    .select('is_archived, factory_id')
     .eq('id', machineId)
     .single()
 
@@ -166,6 +168,7 @@ async function assertMachineNotArchived(db: LooseDb, machineId: string) {
   if ((data as { is_archived?: boolean }).is_archived) {
     throw new Error('Машина архивирована. Действия с ней остановлены.')
   }
+  return data as { factory_id: string | null }
 }
 
 function isDirector(role: UserRole) {
@@ -900,7 +903,8 @@ function isRequestMaterialVariantComplete(table: RequestSectionTable, row: Recor
 
 async function deleteSectionRow(id: string, table: RequestSectionTable): Promise<ActionResult> {
   try {
-    const { db, userId } = await requireRequestPermission('manage')
+    const access = await requireRequestPermission('manage')
+    const { db } = access
     let meta: Awaited<ReturnType<typeof getRequestIdAndMachineByItem>>
     try {
       meta = await getRequestIdAndMachineByItem(db, table, id)
@@ -910,7 +914,8 @@ async function deleteSectionRow(id: string, table: RequestSectionTable): Promise
       }
       throw error
     }
-    await assertMachineNotArchived(db, meta.machineId)
+    const machine = await assertMachineNotArchived(db, meta.machineId)
+    assertFactoryAccess(access, 'technologist_requests', 'manage', machine.factory_id)
     assertTechnologistRequestEditable(meta.status)
     const { data: reservationsData, error: reservationsError } = await db
       .from('inventory_reservations')
@@ -919,12 +924,10 @@ async function deleteSectionRow(id: string, table: RequestSectionTable): Promise
       .eq('request_item_id', id)
     if (reservationsError) throw new Error(reservationsError.message || 'Не удалось проверить бронирование позиции')
     for (const reservation of (reservationsData || []) as { id: string }[]) {
-      const { error: unreserveError } = await db.rpc('fn_unreserve_inventory_reservation', {
-        p_reservation_id: reservation.id,
-        p_performed_by: userId,
-        p_comment: 'Позиция заявки удалена',
+      await unreserveInventoryReservation({
+        reservationId: reservation.id,
+        comment: 'Позиция заявки удалена',
       })
-      if (unreserveError) throw new Error(unreserveError.message || 'Не удалось снять бронь позиции')
     }
     const adminDb = createAdminClient() as unknown as LooseDb
     const { data: deletedRow, error } = await adminDb.from(table).delete().eq('id', id).select('id').maybeSingle()
