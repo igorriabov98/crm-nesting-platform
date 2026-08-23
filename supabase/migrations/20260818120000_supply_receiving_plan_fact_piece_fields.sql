@@ -9,6 +9,9 @@ alter table public.supply_order_delivery_schedules
 alter table public.supply_order_delivery_schedules
   drop constraint if exists supply_order_delivery_schedules_piece_values_check;
 
+-- Existing schedules were written while the previous constraint only checked
+-- positivity. Their physical composition cannot be reconstructed safely, so
+-- preserve those facts while enforcing the stronger invariant on new writes.
 alter table public.supply_order_delivery_schedules
   add constraint supply_order_delivery_schedules_piece_values_check
   check (
@@ -35,7 +38,7 @@ alter table public.supply_order_delivery_schedules
     )
     and (allocated_piece_count is null or allocated_piece_count >= 0)
     and (excess_quantity is null or excess_quantity >= 0)
-  );
+  ) not valid;
 
 create table public.supply_order_delivery_length_discrepancies (
   id uuid primary key default gen_random_uuid(),

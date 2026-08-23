@@ -255,6 +255,11 @@ assert.match(
   /deferrable initially deferred[\s\S]*fn_assert_supply_order_delivery_piece_fact/,
   'database validation must reject a completed planned bar receipt without actual bar fields',
 )
+assert.match(
+  planFactMigration,
+  /add constraint supply_order_delivery_schedules_piece_values_check[\s\S]*\) not valid;/,
+  'the stronger piece-value constraint must preserve legacy rows while enforcing new writes',
+)
 assert.doesNotMatch(
   supplyOrderActions,
   /export async function receiveOrderDeliverySchedule|rpc\('fn_receive_supply_order_schedule'/,
