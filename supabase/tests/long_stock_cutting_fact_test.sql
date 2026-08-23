@@ -223,6 +223,106 @@ declare
   v_factory uuid;
   v_section uuid := gen_random_uuid();
   v_material uuid := gen_random_uuid();
+  v_variant uuid := gen_random_uuid();
+  v_machine uuid := gen_random_uuid();
+  v_plan_data jsonb;
+  v_plan uuid;
+  v_blocked boolean := false;
+begin
+  select id into strict v_factory
+  from public.factories
+  order by created_at nulls last
+  limit 1;
+
+  insert into public.users(id, email, full_name, role, factory_id, is_active)
+  values (
+    v_actor,
+    'long-stock-cutting-atomic-failure@example.test',
+    'Тест атомарного отказа факта',
+    'technologist',
+    v_factory,
+    true
+  );
+  insert into public.production_fact_sections(
+    id, factory_id, name, production_stage_type, created_by, updated_by
+  ) values (
+    v_section,
+    v_factory,
+    'Заготовка · атомарный отказ',
+    'cutting',
+    v_actor,
+    v_actor
+  );
+  insert into public.materials(id, name, category, created_by)
+  values (v_material, 'Круг атомарного отказа', 'circle', v_actor);
+  insert into public.material_variants(
+    id, material_id, category, diameter_mm, material_grade,
+    standard_length_mm, weight_per_m_kg, default_unit
+  ) values (
+    v_variant, v_material, 'circle', 45, 'S355', 6000, 2, 'мм'
+  );
+
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, v_factory, 'LONG-STOCK-FACT-ATOMIC-FAILURE', v_actor);
+
+  v_plan_data := pg_temp.create_new_stock_plan(
+    v_actor,
+    v_machine,
+    v_material,
+    v_variant,
+    array[6000],
+    array[1000::numeric]
+  );
+  v_plan := (v_plan_data->>'plan_id')::uuid;
+
+  perform set_config('app.long_stock_cutting_item_status', '1', true);
+  update public.long_stock_cutting_plan_items
+  set cutting_status = 'requires_recalculation'
+  where plan_id = v_plan;
+  perform set_config('app.long_stock_cutting_item_status', '', true);
+
+  begin
+    perform public.fn_save_production_machine_fact_atomic_v1(
+      null,
+      v_factory,
+      current_date,
+      v_machine,
+      v_section,
+      'day',
+      'Тест атомарного отказа',
+      v_actor
+    );
+  exception when others then
+    if position('требует пересчёта' in sqlerrm) = 0 then
+      raise exception 'Складские последствия завершились неожиданной ошибкой: %', sqlerrm;
+    end if;
+    v_blocked := true;
+  end;
+
+  if not v_blocked
+    or exists (
+      select 1
+      from public.production_machine_facts
+      where machine_id = v_machine
+        and fact_date = current_date
+        and section_id = v_section
+    )
+    or exists (
+      select 1
+      from public.production_fact_cutting_events
+      where machine_id = v_machine
+    ) then
+    raise exception 'Ошибка складских последствий оставила строку факта или событие';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  v_actor uuid := gen_random_uuid();
+  v_factory uuid;
+  v_section uuid := gen_random_uuid();
+  v_material uuid := gen_random_uuid();
   v_machine_zero uuid := gen_random_uuid();
   v_machine_partial uuid := gen_random_uuid();
   v_machine_draft uuid := gen_random_uuid();

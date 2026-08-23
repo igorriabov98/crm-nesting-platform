@@ -137,6 +137,14 @@ declare
   v_version_1_definition jsonb;
   v_task public.tasks%rowtype;
   v_error text;
+  v_approval_race_machine uuid := gen_random_uuid();
+  v_approval_race_request uuid := gen_random_uuid();
+  v_approval_race_item uuid := gen_random_uuid();
+  v_approval_race_plan uuid;
+  v_approval_race_plan_item uuid;
+  v_approval_race_version uuid;
+  v_approval_race_schedule uuid := gen_random_uuid();
+  v_approval_race_result jsonb;
 begin
   select id into v_factory from public.factories order by created_at nulls last limit 1;
   if v_factory is null then raise exception 'Для теста пересчёта не найден завод'; end if;
@@ -209,6 +217,105 @@ begin
       )
     )
   ));
+
+  -- A divergent receipt can commit before approval and therefore cannot see an
+  -- approved version in the receipt trigger. Approval must re-read it while it
+  -- owns the common plan lock and invalidate the version it just approved.
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_approval_race_machine, v_factory, 'RECALC-APPROVAL-RACE', v_technologist);
+  insert into public.technologist_requests(id, machine_id, created_by)
+  values (v_approval_race_request, v_approval_race_machine, v_technologist);
+  insert into public.request_circle(
+    id, request_id, diameter_mm, steel_grade, remainder_mm,
+    material_id, material_variant_id
+  ) values (
+    v_approval_race_item, v_approval_race_request, 40, 'S355', 2400,
+    v_material, v_variant
+  );
+
+  v_approval_race_plan := public.fn_create_long_stock_cutting_plan(
+    v_variant,
+    jsonb_build_array(jsonb_build_object(
+      'request_item_table', 'request_circle',
+      'request_item_id', v_approval_race_item
+    )),
+    v_technologist
+  );
+  select id into strict v_approval_race_plan_item
+  from public.long_stock_cutting_plan_items
+  where plan_id = v_approval_race_plan;
+
+  v_approval_race_version := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
+    v_approval_race_plan,
+    jsonb_build_object('case', 'receipt-before-approval-race'),
+    v_settings,
+    jsonb_build_array(
+      jsonb_build_object(
+        'plan_item_id', v_approval_race_plan_item,
+        'segment_number', 1,
+        'required_length_mm', 1200
+      ),
+      jsonb_build_object(
+        'plan_item_id', v_approval_race_plan_item,
+        'segment_number', 2,
+        'required_length_mm', 1200
+      )
+    ),
+    v_candidate,
+    1,
+    v_technologist,
+    null,
+    '{}'::jsonb
+  );
+
+  insert into public.supply_order_delivery_schedules(
+    id, request_item_table, request_item_id, delivery_date, quantity, unit,
+    status, planned_piece_length_mm, planned_piece_count,
+    received_quantity, received_piece_length_mm, received_piece_count,
+    delivered_at, received_by, created_by, updated_by
+  ) values (
+    v_approval_race_schedule,
+    'request_circle',
+    v_approval_race_item,
+    current_date,
+    12000,
+    'мм',
+    'delivered',
+    6000,
+    2,
+    16000,
+    8000,
+    2,
+    now(),
+    v_receiver,
+    v_receiver,
+    v_receiver
+  );
+  set constraints supply_order_delivery_piece_fact_constraint_trigger immediate;
+
+  if (select status from public.long_stock_cutting_plan_versions where id = v_approval_race_version)
+    <> 'draft' then
+    raise exception 'Приёмка до утверждения преждевременно изменила черновик карты';
+  end if;
+
+  v_approval_race_result := public.fn_approve_long_stock_cutting_plan_version_v1(
+    v_approval_race_version,
+    v_technologist
+  );
+  if (select status from public.long_stock_cutting_plan_versions where id = v_approval_race_version)
+      <> 'invalid'
+    or v_approval_race_result->>'status' <> 'invalid'
+    or (select cutting_status from public.long_stock_cutting_plan_items where id = v_approval_race_plan_item)
+      <> 'requires_recalculation'
+    or not exists (
+      select 1
+      from public.long_stock_cutting_plan_versions
+      where id = v_approval_race_version
+        and invalidation_receipt_schedule_id = v_approval_race_schedule
+    ) then
+    raise exception 'Утверждение не инвалидировало уже расходящуюся приёмку: %', v_approval_race_result;
+  end if;
+
   v_version_1 := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
     v_plan,
     jsonb_build_object('case', 'receipt-recalculation-v1'),

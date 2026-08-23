@@ -150,6 +150,8 @@ jobs:
         run: npm run test:long-stock-layout-settings
       - name: Long-stock cutting fact
         run: npm run test:long-stock-cutting-fact
+      - name: Long-stock cutting concurrency
+        run: npm run test:long-stock-cutting-races
       - name: Long-stock cutting-plan schema
         run: npm run test:long-stock-cutting-plan-schema
       - name: Supply partial receiving

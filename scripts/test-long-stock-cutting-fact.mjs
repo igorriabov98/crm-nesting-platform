@@ -35,10 +35,10 @@ postgresEnv.PGSSLMODE = databaseUrl.searchParams.get('sslmode') || 'disable'
 if (databaseUrl.username) postgresEnv.PGUSER = decodeURIComponent(databaseUrl.username)
 if (databaseUrl.password) postgresEnv.PGPASSWORD = decodeURIComponent(databaseUrl.password)
 
-const applyCuttingFactSideEffects = sourceSection(
+const saveMachineFactAtomic = sourceSection(
   productionFactActions,
-  'async function applyCuttingFactSideEffects',
-  'async function getCuttingRollbackAssignee',
+  'async function saveMachineFactAtomic',
+  'async function saveMachineFactsAtomic',
 )
 const saveProductionMachineFact = sourceSection(
   productionFactActions,
@@ -63,12 +63,12 @@ const keepProductionCuttingRollbackTask = sourceSection(
 
 assert.match(
   saveProductionMachineFact,
-  /getContext\('production_fact', 'manage'\)[\s\S]*assertFactoryAccess[\s\S]*assertFactoryMachine[\s\S]*applyCuttingFactSideEffects\(admin, [^,]+, userId\)/u,
+  /getContext\('production_fact', 'manage'\)[\s\S]*assertFactoryAccess[\s\S]*assertFactoryMachine[\s\S]*saveMachineFactAtomic\(admin,[\s\S]*userId\)/u,
   'the application must authorize cutting facts and pass the server user to the admin RPC path',
 )
 assert.match(
-  applyCuttingFactSideEffects,
-  /\.rpc\('fn_apply_production_fact_cutting',[\s\S]*p_performed_by: userId/u,
+  saveMachineFactAtomic,
+  /\.rpc\([\s\S]*'fn_save_production_machine_fact_atomic_v1',[\s\S]*p_actor: userId/u,
   'the cutting-fact RPC actor must come from the authorized server context',
 )
 assert.match(
