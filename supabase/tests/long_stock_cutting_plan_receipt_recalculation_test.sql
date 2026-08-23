@@ -2,6 +2,105 @@
 
 begin;
 
+create or replace function pg_temp.create_receipt_guard_plan(
+  p_actor uuid,
+  p_factory uuid,
+  p_material uuid,
+  p_variant uuid,
+  p_machine_name text
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+  v_machine uuid := gen_random_uuid();
+  v_request uuid := gen_random_uuid();
+  v_item uuid := gen_random_uuid();
+  v_plan uuid;
+  v_plan_item uuid;
+  v_version uuid;
+  v_settings jsonb;
+begin
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, p_factory, p_machine_name, p_actor);
+  insert into public.technologist_requests(id, machine_id, created_by)
+  values (v_request, v_machine, p_actor);
+  insert into public.request_circle(
+    id, request_id, diameter_mm, steel_grade, remainder_mm,
+    material_id, material_variant_id
+  )
+  select
+    v_item, v_request, variant.diameter_mm,
+    coalesce(variant.material_grade, 'S355'), 1000,
+    p_material, p_variant
+  from public.material_variants variant
+  where variant.id = p_variant;
+
+  v_plan := public.fn_create_long_stock_cutting_plan(
+    p_variant,
+    jsonb_build_array(jsonb_build_object(
+      'request_item_table', 'request_circle',
+      'request_item_id', v_item
+    )),
+    p_actor
+  );
+  select id into strict v_plan_item
+  from public.long_stock_cutting_plan_items
+  where plan_id = v_plan and request_item_id = v_item;
+  v_settings := public.fn_get_long_stock_layout_settings_snapshot();
+  v_version := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
+    v_plan,
+    jsonb_build_object('case', p_machine_name, 'material_variant_id', p_variant),
+    v_settings,
+    jsonb_build_array(jsonb_build_object(
+      'plan_item_id', v_plan_item,
+      'segment_number', 1,
+      'required_length_mm', 1000
+    )),
+    jsonb_build_array(jsonb_build_object(
+      'candidate_number', 1,
+      'is_complete', true,
+      'metrics', jsonb_build_object(
+        'purchased_length_mm', 6000,
+        'net_parts_length_mm', 1000,
+        'kerf_loss_length_mm', 1,
+        'end_trim_loss_length_mm', 0,
+        'business_scrap_length_mm', 4999,
+        'purchased_weight_kg', 12,
+        'net_parts_weight_kg', 2,
+        'kerf_loss_weight_kg', 0.002,
+        'end_trim_loss_weight_kg', 0,
+        'business_scrap_weight_kg', 9.998
+      ),
+      'bars', jsonb_build_array(jsonb_build_object(
+        'bar_number', 1,
+        'stock_length_mm', 6000,
+        'length_group', 'standard',
+        'source_type', 'new_stock',
+        'source_inventory_id', null,
+        'cuts', jsonb_build_array(jsonb_build_object(
+          'cut_number', 1,
+          'segment_number', 1,
+          'cut_length_mm', 1000
+        ))
+      ))
+    )),
+    1,
+    p_actor,
+    null,
+    '{}'::jsonb
+  );
+  perform public.fn_approve_long_stock_cutting_plan_version_v1(v_version, p_actor);
+  return jsonb_build_object(
+    'machine_id', v_machine,
+    'request_id', v_request,
+    'request_item_id', v_item,
+    'plan_id', v_plan,
+    'version_id', v_version
+  );
+end;
+$$;
+
 do $$
 declare
   v_technologist uuid := gen_random_uuid();
@@ -507,6 +606,135 @@ begin
       and related_machine_id = v_matching_machine
   ) then
     raise exception 'Снабжение не получило уведомление о дозаказе';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  v_actor uuid := gen_random_uuid();
+  v_factory uuid;
+  v_material uuid := gen_random_uuid();
+  v_variant uuid := gen_random_uuid();
+  v_no_schedule jsonb;
+  v_child jsonb;
+  v_no_schedule_id uuid := gen_random_uuid();
+  v_parent_schedule_id uuid := gen_random_uuid();
+  v_child_schedule_id uuid := gen_random_uuid();
+begin
+  select id into v_factory from public.factories order by created_at nulls last limit 1;
+  if v_factory is null then
+    raise exception 'Для теста fallback-инвалидации не найден завод';
+  end if;
+  insert into public.users(id, email, full_name, role, factory_id, is_active)
+  values (
+    v_actor,
+    'cutting-recalculation-fallback@example.test',
+    'Тест fallback-инвалидации',
+    'technologist',
+    v_factory,
+    true
+  );
+  insert into public.materials(id, name, category, created_by)
+  values (v_material, 'Круг fallback-инвалидации', 'circle', v_actor);
+  insert into public.material_variants(
+    id, material_id, category, diameter_mm, material_grade,
+    standard_length_mm, weight_per_m_kg, default_unit
+  ) values (
+    v_variant, v_material, 'circle', 55, 'S355', 6000, 2, 'мм'
+  );
+
+  -- Receiving without a pre-created schedule has no planned piece fields. The
+  -- approved candidate is therefore the source of the expected composition.
+  v_no_schedule := pg_temp.create_receipt_guard_plan(
+    v_actor, v_factory, v_material, v_variant, 'RECALC-NO-SCHEDULE'
+  );
+  insert into public.supply_order_delivery_schedules(
+    id, request_item_table, request_item_id, delivery_date, quantity, unit,
+    status, received_quantity, received_piece_length_mm, received_piece_count,
+    delivered_at, received_by, created_by, updated_by
+  ) values (
+    v_no_schedule_id,
+    'request_circle',
+    (v_no_schedule->>'request_item_id')::uuid,
+    current_date,
+    1000,
+    'мм',
+    'delivered',
+    8000,
+    8000,
+    1,
+    now(),
+    v_actor,
+    v_actor,
+    v_actor
+  );
+  set constraints supply_order_delivery_piece_fact_constraint_trigger immediate;
+  if not exists (
+    select 1
+    from public.long_stock_cutting_plan_versions
+    where id = (v_no_schedule->>'version_id')::uuid
+      and status = 'invalid'
+      and invalidation_receipt_schedule_id = v_no_schedule_id
+      and invalidation_reason like '%утверждённой карте 6000 мм × 1, принято 8000 мм × 1%'
+  ) then
+    raise exception 'Приёмка без графика не инвалидировала карту по утверждённому составу';
+  end if;
+
+  -- A child schedule created while one receipt is distributed to another
+  -- machine carries only actual length and allocated_piece_count.
+  v_child := pg_temp.create_receipt_guard_plan(
+    v_actor, v_factory, v_material, v_variant, 'RECALC-CHILD-SCHEDULE'
+  );
+  insert into public.supply_order_delivery_schedules(
+    id, request_item_table, request_item_id, delivery_date, quantity, unit,
+    status, created_by, updated_by
+  ) values (
+    v_parent_schedule_id,
+    'request_circle',
+    (v_no_schedule->>'request_item_id')::uuid,
+    current_date,
+    8000,
+    'мм',
+    'planned',
+    v_actor,
+    v_actor
+  );
+  insert into public.supply_order_delivery_schedules(
+    id, request_item_table, request_item_id, delivery_date, quantity, unit,
+    status, received_quantity, allocated_quantity, allocated_physical_quantity,
+    received_piece_length_mm, allocated_piece_count,
+    delivered_at, received_by, created_by, updated_by,
+    receipt_parent_schedule_id
+  ) values (
+    v_child_schedule_id,
+    'request_circle',
+    (v_child->>'request_item_id')::uuid,
+    current_date,
+    1000,
+    'мм',
+    'delivered',
+    0,
+    1000,
+    8000,
+    8000,
+    1,
+    now(),
+    v_actor,
+    v_actor,
+    v_actor,
+    v_parent_schedule_id
+  );
+  set constraints supply_order_delivery_piece_fact_constraint_trigger immediate;
+  if not exists (
+    select 1
+    from public.long_stock_cutting_plan_versions
+    where id = (v_child->>'version_id')::uuid
+      and status = 'invalid'
+      and invalidation_receipt_schedule_id = v_child_schedule_id
+      and invalidation_reason like '%утверждённой карте 6000 мм × 1, принято 8000 мм × 1%'
+  ) then
+    raise exception 'Дочерняя строка распределения не инвалидировала карту целевой машины';
   end if;
 end;
 $$;
