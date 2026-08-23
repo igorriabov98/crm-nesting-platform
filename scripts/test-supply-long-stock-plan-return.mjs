@@ -11,7 +11,7 @@ const summarySource = read('src/components/features/supply-orders/SupplyOrderSum
 const returnButtonSource = read('src/components/features/supply-orders/ReturnLongStockPositionButton.tsx')
 const requestListSource = read('src/components/features/department-requests/DepartmentRequestsPage.tsx')
 const requestDetailSource = read('src/app/(protected)/requests/detail/[id]/page.tsx')
-const migrationSource = read('supabase/migrations/20260818150000_supply_long_stock_plan_return.sql')
+const migrationSource = read('supabase/migrations/20260818170000_supply_long_stock_plan_return.sql')
 
 assert.match(
   actionSource,

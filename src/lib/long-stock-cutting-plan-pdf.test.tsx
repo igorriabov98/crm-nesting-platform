@@ -119,7 +119,7 @@ test('download route only resolves the stored object and cutting-area UI blocks 
   const route = readFileSync('src/app/api/production/cutting-area/cutting-plans/[versionId]/route.ts', 'utf8')
   const action = readFileSync('src/lib/actions/long-stock-cutting-plans.ts', 'utf8')
   const page = readFileSync('src/components/features/production/CuttingAreaPage.tsx', 'utf8')
-  const migration = readFileSync('supabase/migrations/20260818120000_long_stock_cutting_plan_pdf.sql', 'utf8')
+  const migration = readFileSync('supabase/migrations/20260818160000_long_stock_cutting_plan_pdf.sql', 'utf8')
   const bucketMigration = readFileSync('supabase/migrations/103_product_catalog_and_projects.sql', 'utf8')
   assert(route.includes('resolveFileResponse'))
   assert(!route.includes('renderToBuffer'))
