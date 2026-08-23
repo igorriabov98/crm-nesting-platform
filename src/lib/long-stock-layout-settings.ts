@@ -66,6 +66,7 @@ export type LongStockLayoutSettingsInput = z.infer<typeof longStockLayoutSetting
 export type LongStockLayoutCategorySettings = LongStockLayoutSettingsInput['categories'][number] & {
   materialCategory: 'circle' | 'pipe' | 'knives'
   knifeBevelCount: 1 | 2 | null
+  businessScrapThresholdMm: 0
 }
 
 export type LongStockLayoutSettingsSnapshot = Omit<LongStockLayoutSettingsInput, 'categories'> & {

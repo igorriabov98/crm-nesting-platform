@@ -28,6 +28,10 @@ declare
   v_rollback_stage uuid;
   v_rollback_fact uuid := '20000000-0000-4000-8000-000000000003';
   v_rollback_event uuid := '20000000-0000-4000-8000-000000000004';
+  v_move_source_machine uuid := '30000000-0000-4000-8000-000000000001';
+  v_move_target_machine uuid := '30000000-0000-4000-8000-000000000002';
+  v_move_fact uuid := '30000000-0000-4000-8000-000000000003';
+  v_move_event uuid := '30000000-0000-4000-8000-000000000004';
 begin
   select id into strict v_factory
   from public.factories
@@ -63,7 +67,9 @@ begin
   );
   insert into public.machines(id, factory_id, name, created_by) values
     (v_machine, v_factory, 'LONG-STOCK-RACE-INVALIDATION', v_actor),
-    (v_rollback_machine, v_factory, 'LONG-STOCK-RACE-ROLLBACK', v_actor);
+    (v_rollback_machine, v_factory, 'LONG-STOCK-RACE-ROLLBACK', v_actor),
+    (v_move_source_machine, v_factory, 'LONG-STOCK-FACT-MOVE-SOURCE', v_actor),
+    (v_move_target_machine, v_factory, 'LONG-STOCK-FACT-MOVE-TARGET', v_actor);
   insert into public.technologist_requests(id, machine_id, created_by)
   values (v_request, v_machine, v_actor);
   insert into public.request_circle(
@@ -221,6 +227,32 @@ begin
   );
   delete from public.production_machine_facts where id = v_rollback_fact;
 
+  -- Minimal historical cutting event: the move guard must reject before the
+  -- idempotent fact application can return this old event for another machine.
+  insert into public.production_machine_facts(
+    id, factory_id, fact_date, shift, machine_id, section_id, created_by, updated_by
+  ) values (
+    v_move_fact,
+    v_factory,
+    current_date,
+    'day',
+    v_move_source_machine,
+    v_section,
+    v_actor,
+    v_actor
+  );
+  insert into public.production_fact_cutting_events(
+    id, machine_id, factory_id, fact_id, section_id, fact_date, created_by
+  ) values (
+    v_move_event,
+    v_move_source_machine,
+    v_factory,
+    v_move_fact,
+    v_section,
+    current_date,
+    v_actor
+  );
+
   insert into public.test_long_stock_cutting_race_fixture(key, id) values
     ('actor', v_actor),
     ('factory', v_factory),
@@ -233,7 +265,11 @@ begin
     ('source_inventory', v_source_inventory),
     ('reservation', v_reservation),
     ('rollback_machine', v_rollback_machine),
-    ('rollback_event', v_rollback_event);
+    ('rollback_event', v_rollback_event),
+    ('move_source_machine', v_move_source_machine),
+    ('move_target_machine', v_move_target_machine),
+    ('move_fact', v_move_fact),
+    ('move_event', v_move_event);
 end;
 $$;
 
