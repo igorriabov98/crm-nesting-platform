@@ -36,6 +36,7 @@
     "test:detailing": "node scripts/test-detailing-module.mjs",
     "test:inventory-transfers": "node scripts/test-inventory-transfers.mjs",
     "test:inventory-transfers:full-schema": "node scripts/test-inventory-transfers-full-schema.mjs",
+    "test:supabase-migration-order": "node scripts/test-supabase-migration-order.mjs",
     "test:long-stock-layout-settings": "tsx --test src/lib/long-stock-layout-settings.test.ts src/lib/materials/knife-bevel.test.ts && node scripts/test-long-stock-layout-settings.mjs",
     "test:long-stock-cutting-plan-schema": "node scripts/test-long-stock-cutting-plan-schema.mjs",
     "test:long-stock-cutting-solver": "tsx --test src/lib/long-stock-cutting-solver.test.ts",
