@@ -9,6 +9,7 @@ declare
   v_mismatch_schedule uuid := gen_random_uuid();
   v_matching_schedule uuid := gen_random_uuid();
   v_missing_fact_schedule uuid := gen_random_uuid();
+  v_invalid_schedule uuid := gen_random_uuid();
   v_discrepancy public.supply_order_delivery_length_discrepancies%rowtype;
   v_schedule public.supply_order_delivery_schedules%rowtype;
   v_error text;
@@ -27,6 +28,30 @@ begin
     v_factory,
     true
   );
+
+  if (
+    select constraint_record.convalidated
+    from pg_constraint as constraint_record
+    where constraint_record.conrelid = 'public.supply_order_delivery_schedules'::regclass
+      and constraint_record.conname = 'supply_order_delivery_schedules_piece_values_check'
+  ) is distinct from false then
+    raise exception 'Усиленный constraint должен сохранять legacy-строки как NOT VALID';
+  end if;
+
+  begin
+    insert into public.supply_order_delivery_schedules (
+      id, request_item_table, request_item_id, delivery_date, quantity, unit,
+      status, received_quantity, received_piece_length_mm, received_piece_count,
+      delivered_at, received_by, updated_by
+    ) values (
+      v_invalid_schedule, 'request_circle', gen_random_uuid(), current_date, 6000, 'мм',
+      'delivered', 6000, 6000, null, now(), v_actor, v_actor
+    );
+    raise exception 'Новая строка с неполным физическим составом прошла constraint';
+  exception
+    when check_violation then
+      null;
+  end;
 
   insert into public.supply_order_delivery_schedules (
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
