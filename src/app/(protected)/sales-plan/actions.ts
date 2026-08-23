@@ -20,6 +20,8 @@ import { loadMachineProgressContexts, resolveMachineProgressWithContext } from '
 import { loadClientProductPriceLookup, resolveClientProductPrice, type ClientPriceDb, type ClientProductPriceLookup } from '@/lib/client-prices/server'
 import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { unreserveInventoryReservation } from '@/lib/inventory/secure-rpc'
+import { assertFactoryAccess, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
 import type { CreateMachineInput, MachinePackingSettingsInput, UpdateMachineInput } from '@/lib/types/schemas'
 import type { CoatingType, CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, MaterialType, Product } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
@@ -152,8 +154,8 @@ function applySalesPlanFactoryScope<T>(query: T, user: CurrentUser, factoryFilte
 }
 
 async function requireSalesPlanPermission(operation: 'view' | 'manage') {
-  const { supabase, user } = await requirePermission('sales_plan', operation)
-  return { supabase, db: supabase as unknown as LooseDb, user }
+  const permission = await requirePermission('sales_plan', operation)
+  return { ...permission, db: permission.supabase as unknown as LooseDb }
 }
 
 function requireMachineMutationAccess(user: CurrentUser) {
@@ -556,7 +558,22 @@ function isMissingDeleteCleanupRpc(error: { message?: string; code?: string } | 
     || message.includes('Could not find the function')
 }
 
-async function unreserveMachineInventory(db: LooseDb, rpc: RpcClient, machineId: string, userId: string) {
+async function assertSalesPlanMachineAccess(
+  db: LooseDb,
+  permission: FactoryScopedPermissionContext,
+  machineId: string,
+) {
+  const { data: machine, error: machineError } = await db
+    .from('machines')
+    .select('id, factory_id')
+    .eq('id', machineId)
+    .single()
+  if (machineError || !machine) throw new Error('Машина не найдена или доступ запрещён')
+  const factoryId = (machine as { factory_id: string | null }).factory_id
+  if (factoryId) assertFactoryAccess(permission, 'sales_plan', 'manage', factoryId)
+}
+
+async function unreserveMachineInventory(db: LooseDb, machineId: string) {
   const { data, error } = await db
     .from('inventory_reservations')
     .select('id')
@@ -566,15 +583,10 @@ async function unreserveMachineInventory(db: LooseDb, rpc: RpcClient, machineId:
 
   const reservations = (data || []) as Pick<InventoryReservation, 'id'>[]
   for (const reservation of reservations) {
-    const { error: unreserveError } = await rpc.rpc('fn_unreserve_inventory_reservation', {
-      p_reservation_id: reservation.id,
-      p_performed_by: userId,
-      p_comment: 'Снятие брони при удалении машины',
+    await unreserveInventoryReservation({
+      reservationId: reservation.id,
+      comment: 'Снятие брони при удалении машины',
     })
-
-    if (unreserveError) {
-      throw new Error(unreserveError.message || 'Не удалось снять складскую бронь перед удалением машины')
-    }
   }
 }
 
@@ -600,7 +612,12 @@ async function deleteMachineRow(db: LooseDb, machineId: string) {
   if (!data) throw new Error('Машина не найдена или уже удалена')
 }
 
-async function deleteMachineWithInventoryCleanup(supabase: RpcClient, db: LooseDb, machineId: string, userId: string) {
+async function deleteMachineWithInventoryCleanup(
+  supabase: RpcClient,
+  db: LooseDb,
+  machineId: string,
+  userId: string,
+) {
   const { error } = await supabase.rpc('fn_delete_machine_with_inventory_cleanup', {
     p_machine_id: machineId,
     p_performed_by: userId,
@@ -609,7 +626,7 @@ async function deleteMachineWithInventoryCleanup(supabase: RpcClient, db: LooseD
   if (!error) return
   if (!isMissingDeleteCleanupRpc(error)) throw error
 
-  await unreserveMachineInventory(db, supabase, machineId, userId)
+  await unreserveMachineInventory(db, machineId)
   await detachMachineInventoryTransactions(machineId)
   await deleteMachineRow(db, machineId)
 }
@@ -1889,8 +1906,10 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
 // === Удаление ===
 export async function deleteMachine(id: string) {
   try {
-    const { supabase, db, user } = await requireSalesPlanPermission('manage')
+    const permission = await requireSalesPlanPermission('manage')
+    const { supabase, db, user } = permission
 
+    await assertSalesPlanMachineAccess(db, permission, id)
     await cleanupMachineAgendaReferences(supabase as unknown as RpcClient, id)
     await deleteMachineWithInventoryCleanup(supabase as unknown as RpcClient, db, id, user.id)
 

@@ -1163,4 +1163,101 @@ BEGIN
 END;
 $$;
 
+DO $$
+DECLARE
+  v_user uuid := '75000000-0000-0000-0000-000000000001';
+  v_factory uuid := '75000000-0000-0000-0000-000000000002';
+  v_material uuid := '75000000-0000-0000-0000-000000000003';
+  v_machine uuid := '75000000-0000-0000-0000-000000000004';
+  v_inventory_variant uuid := '75000000-0000-0000-0000-000000000005';
+  v_reservation_variant uuid := '75000000-0000-0000-0000-000000000006';
+  v_plan_variant uuid := '75000000-0000-0000-0000-000000000007';
+  v_unused_variant uuid := '75000000-0000-0000-0000-000000000008';
+  v_inventory uuid := '75000000-0000-0000-0000-000000000009';
+  v_reservation_source uuid := '75000000-0000-0000-0000-00000000000a';
+  v_length_blocked boolean := false;
+  v_inventory_bevel_blocked boolean := false;
+  v_reservation_bevel_blocked boolean := false;
+  v_plan_bevel_blocked boolean := false;
+BEGIN
+  INSERT INTO public.factories(id, name) VALUES (v_factory, 'Identity guard factory');
+  INSERT INTO public.users(id) VALUES (v_user);
+  INSERT INTO public.materials(id, category) VALUES (v_material, 'knives');
+  INSERT INTO public.machines(id, factory_id) VALUES (v_machine, v_factory);
+  INSERT INTO public.material_variants(id, material_id, category, knife_bevel_count) VALUES
+    (v_inventory_variant, v_material, 'knives', 1),
+    (v_reservation_variant, v_material, 'knives', 1),
+    (v_plan_variant, v_material, 'knives', 1),
+    (v_unused_variant, v_material, 'knives', 1);
+
+  INSERT INTO public.inventory(
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, unit, total_secondary_quantity, secondary_unit, last_updated_by
+  ) VALUES (
+    v_inventory, v_factory, v_material, v_inventory_variant, 6000,
+    6000, 'мм', 1, 'шт', v_user
+  );
+  INSERT INTO public.inventory(
+    id, factory_id, material_id, piece_length_mm,
+    total_quantity, unit, total_secondary_quantity, secondary_unit, last_updated_by
+  ) VALUES (
+    v_reservation_source, v_factory, v_material, 7000,
+    7000, 'мм', 1, 'шт', v_user
+  );
+
+  BEGIN
+    UPDATE public.inventory SET piece_length_mm = 8000 WHERE id = v_inventory;
+  EXCEPTION WHEN raise_exception THEN
+    IF position('Длину складского хлыста нельзя изменить' in sqlerrm) = 0 THEN
+      RAISE;
+    END IF;
+    v_length_blocked := true;
+  END;
+  IF NOT v_length_blocked
+    OR (SELECT piece_length_mm FROM public.inventory WHERE id = v_inventory) <> 6000 THEN
+    RAISE EXCEPTION 'Длина существующей складской строки оказалась изменяемой';
+  END IF;
+
+  INSERT INTO public.inventory_reservations(
+    inventory_id, material_id, material_variant_id, machine_id,
+    request_item_table, request_item_id, reserved_quantity, reserved_by
+  ) VALUES (
+    v_reservation_source, v_material, v_reservation_variant, v_machine,
+    'request_knives', gen_random_uuid(), 1000, v_user
+  );
+  INSERT INTO public.long_stock_cutting_plans(material_variant_id)
+  VALUES (v_plan_variant);
+
+  BEGIN
+    UPDATE public.material_variants SET knife_bevel_count = 2 WHERE id = v_inventory_variant;
+  EXCEPTION WHEN raise_exception THEN
+    IF position('Скос варианта ножа нельзя изменить' in sqlerrm) = 0 THEN RAISE; END IF;
+    v_inventory_bevel_blocked := true;
+  END;
+  BEGIN
+    UPDATE public.material_variants SET knife_bevel_count = 2 WHERE id = v_reservation_variant;
+  EXCEPTION WHEN raise_exception THEN
+    IF position('Скос варианта ножа нельзя изменить' in sqlerrm) = 0 THEN RAISE; END IF;
+    v_reservation_bevel_blocked := true;
+  END;
+  BEGIN
+    UPDATE public.material_variants SET knife_bevel_count = 2 WHERE id = v_plan_variant;
+  EXCEPTION WHEN raise_exception THEN
+    IF position('Скос варианта ножа нельзя изменить' in sqlerrm) = 0 THEN RAISE; END IF;
+    v_plan_bevel_blocked := true;
+  END;
+
+  IF NOT v_inventory_bevel_blocked
+    OR NOT v_reservation_bevel_blocked
+    OR NOT v_plan_bevel_blocked THEN
+    RAISE EXCEPTION 'Скос используемого варианта ножа оказался изменяемым';
+  END IF;
+
+  UPDATE public.material_variants SET knife_bevel_count = 2 WHERE id = v_unused_variant;
+  IF (SELECT knife_bevel_count FROM public.material_variants WHERE id = v_unused_variant) <> 2 THEN
+    RAISE EXCEPTION 'Неиспользуемый вариант ножа нельзя исправить до первого использования';
+  END IF;
+END;
+$$;
+
 SELECT 'inventory_stock_lifecycle_ok' AS result;
