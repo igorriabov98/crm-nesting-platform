@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { ROUTES } from '@/lib/constants/routes'
+import { ACTIVE_TRANSFER_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { requireAnyPermission, requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { Database } from '@/lib/types/database'
@@ -538,7 +539,7 @@ async function loadTransferCards(db: DetailingDb, activeOnly: boolean): Promise<
   ])))
   const [itemsResult, machinesResult, factoriesResult, tasksResult] = await Promise.all([
     db.from('detailing_transfer_items').select('id, transfer_id, reservation_id, part_id, requested_quantity, received_quantity').in('transfer_id', transferIds),
-    db.from('machines').select('id, name').in('id', machineIds),
+    db.from('machines').select('id, name, is_archived').in('id', machineIds),
     db.from('factories').select('id, name, city, address').in('id', factoryIds),
     db.from('tasks').select('id, detailing_transfer_id, status, deadline').eq('task_type', 'detailing_transfer').in('detailing_transfer_id', transferIds).order('created_at', { ascending: false }),
   ])
@@ -551,7 +552,7 @@ async function loadTransferCards(db: DetailingDb, activeOnly: boolean): Promise<
   if (partsResult.error) throw new Error(partsResult.error.message || 'Не удалось загрузить детали перевозки')
 
   const parts = new Map(((partsResult.data || []) as RawPart[]).map((part) => [part.id, part]))
-  const machines = new Map(((machinesResult.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row.name]))
+  const machines = new Map(((machinesResult.data || []) as Array<{ id: string; name: string; is_archived: boolean | null }>).map((row) => [row.id, row]))
   const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>).map((row) => [row.id, row]))
   const tasks = (tasksResult.data || []) as Array<{ id: string; detailing_transfer_id: string; status: string; deadline: string | null }>
   const itemsByTransfer = new Map<string, Array<Record<string, unknown>>>()
@@ -571,7 +572,9 @@ async function loadTransferCards(db: DetailingDb, activeOnly: boolean): Promise<
       taskByTransfer.set(task.detailing_transfer_id, task)
     }
   }
-  return transferRows.map((row) => {
+  return transferRows.flatMap((row): DetailingTransferCard[] => {
+    const machine = machines.get(String(row.machine_id))
+    if (!isMachineWorkVisible(machine?.is_archived, String(row.status), ACTIVE_TRANSFER_STATUSES)) return []
     const items = (itemsByTransfer.get(String(row.id)) || []).map((item): DetailingTransferItem => {
       const part = parts.get(String(item.part_id))
       const requested = numberValue(item.requested_quantity)
@@ -587,8 +590,8 @@ async function loadTransferCards(db: DetailingDb, activeOnly: boolean): Promise<
     const task = taskByTransfer.get(String(row.id))
     const expected = row.expected_arrival_date ? String(row.expected_arrival_date) : null
     const deadline = task?.deadline || null
-    return {
-      id: String(row.id), machineId: String(row.machine_id), machineName: machines.get(String(row.machine_id)) || 'Заказ',
+    return [{
+      id: String(row.id), machineId: String(row.machine_id), machineName: machine?.name || 'Заказ',
       sourceFactoryId: String(row.source_factory_id), sourceFactoryName: factories.get(String(row.source_factory_id))?.name || 'Неизвестный завод',
       sourceFactoryCity: factories.get(String(row.source_factory_id))?.city || null,
       sourceFactoryAddress: factories.get(String(row.source_factory_id))?.address || null,
@@ -601,7 +604,7 @@ async function loadTransferCards(db: DetailingDb, activeOnly: boolean): Promise<
       totalQuantity: items.reduce((sum, item) => sum + item.requestedQuantity, 0),
       totalWeightKg: items.reduce((sum, item) => sum + item.requestedWeightKg, 0),
       receivedQuantity: items.reduce((sum, item) => sum + item.receivedQuantity, 0),
-    }
+    }]
   })
 }
 

@@ -30,6 +30,7 @@ type PendingTaskRow = {
     id?: string | null
     name?: string | null
     factory_id?: string | null
+    is_archived?: boolean | null
   } | null
 }
 
@@ -98,7 +99,7 @@ async function dispatchPendingNotificationMessages(db: LooseDb, options: Dispatc
       title,
       message,
       related_machine_id,
-      machine:machines(id, name, factory_id)
+      machine:machines(id, name, factory_id, is_archived)
     `)
     .is('telegram_notified_at', null)
     .order('created_at', { ascending: true })
@@ -182,6 +183,7 @@ async function dispatchPendingTaskMessages(db: LooseDb, options: DispatchOptions
   const usersById = await loadTelegramUsers(db, tasks.map((task) => task.assigned_to))
 
   for (const task of tasks) {
+    if (task.machine_id && task.machine?.is_archived === true) continue
     const user = usersById.get(task.assigned_to)
     if (!user?.telegram_chat_id) continue
     if (

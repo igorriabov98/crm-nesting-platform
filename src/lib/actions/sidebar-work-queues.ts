@@ -3,6 +3,7 @@
 import { canManageDepartmentRequestTarget, type DepartmentRequestTarget } from '@/lib/department-requests'
 import { getMaterialRequestQueue } from '@/lib/actions/material-request-queue'
 import { getTransportWorkspace } from '@/lib/actions/transport-trips'
+import { buildNonArchivedOrUnscopedMachineFilter } from '@/lib/machine-work-visibility'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
@@ -42,6 +43,14 @@ async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof re
 
   const counts = { ...EMPTY_COUNTS.departmentRequests }
   const admin = createAdminClient()
+  const { data: archivedMachines, error: archivedMachinesError } = await admin
+    .from('machines')
+    .select('id')
+    .eq('is_archived', true)
+  if (archivedMachinesError) throw new Error(archivedMachinesError.message || 'Не удалось проверить архивные машины')
+  const activeMachineFilter = buildNonArchivedOrUnscopedMachineFilter(
+    ((archivedMachines || []) as Array<{ id: string }>).map((machine) => machine.id),
+  )
   const unreadResultQuery = admin
     .from('department_requests')
     .select('id', { count: 'exact', head: true })
@@ -61,6 +70,7 @@ async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof re
       if (target === 'production' && !DIRECTORS.includes(context.role) && context.factoryId) {
         query = query.eq('factory_id', context.factoryId)
       }
+      if (activeMachineFilter) query = query.or(activeMachineFilter)
 
       const { count, error } = await query
       if (!error) counts[target] = count || 0
@@ -87,9 +97,10 @@ async function loadMaterialRequestCount() {
 async function loadOutsourcingApprovalCount() {
   const { count, error } = await createAdminClient()
     .from('machine_outsourcing_operations')
-    .select('id', { count: 'exact', head: true })
+    .select('id, machine:machines!inner(id)', { count: 'exact', head: true })
     .eq('executor_type', 'supplier')
     .eq('responsible', 'supply')
+    .eq('machines.is_archived', false)
     .is('archived_at', null)
     .is('actual_returned_at', null)
     .is('supply_terms_confirmed_at', null)

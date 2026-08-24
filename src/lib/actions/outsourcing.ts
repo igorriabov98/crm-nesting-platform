@@ -5,6 +5,7 @@ import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { ACTIVE_OUTSOURCING_NEED_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { requirePermission } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
@@ -1059,9 +1060,10 @@ async function reconcileConfirmedSupplierTransportNeeds(db: LooseDb) {
   const [{ data: operationData, error: operationError }, { data: needData, error: needError }] = await Promise.all([
     db
       .from('machine_outsourcing_operations')
-      .select('id, planned_send_date, planned_return_date')
+      .select('id, planned_send_date, planned_return_date, machine:machines!inner(id)')
       .eq('executor_type', 'supplier')
       .eq('responsible', 'supply')
+      .eq('machines.is_archived', false)
       .not('supply_terms_confirmed_at', 'is', null)
       .is('archived_at', null)
       .is('actual_returned_at', null),
@@ -1553,8 +1555,9 @@ export async function getProductionOutsourcingSummary(factoryId: string): Promis
     if (incomingMachineIds.length > 0) {
       const { data: machinesData, error: machinesError } = await db
         .from('machines')
-        .select('id, name, factory_id')
+        .select('id, name, factory_id, is_archived')
         .in('id', incomingMachineIds)
+        .eq('is_archived', false)
       if (machinesError) throw new Error(machinesError.message || 'Не удалось загрузить машины входящего аутсорсинга')
       machineRows = (machinesData || []) as Array<{ id: string; name: string; factory_id: string | null }>
     }
@@ -1567,15 +1570,16 @@ export async function getProductionOutsourcingSummary(factoryId: string): Promis
     }
     const machineById = new Map(machineRows.map((machine) => [machine.id, machine]))
     const factoryById = new Map(sourceFactories.map((factory) => [factory.id, factory]))
-    const incoming = incomingOperations.map((operation) => {
+    const incoming = incomingOperations.flatMap((operation): ProductionOutsourcingSummaryOperation[] => {
       const machine = machineById.get(operation.machine_id)
+      if (!machine) return []
       const factory = machine?.factory_id ? factoryById.get(machine.factory_id) : null
-      return {
+      return [{
         ...operation,
         machine_name: machine?.name || 'Машина',
         source_factory_id: machine?.factory_id || null,
         source_factory_name: factory?.name || null,
-      }
+      }]
     })
 
     return { data: { outgoing, incoming }, error: null }
@@ -1631,10 +1635,11 @@ export async function getIncomingOutsourcingPlanBlockers(factoryId: string, prod
   const db = dbFrom(createAdminClient())
   const { data, error } = await db
     .from('machine_outsourcing_operations')
-    .select('id, incoming_date_start, incoming_date_end, machine_id')
+    .select('id, incoming_date_start, incoming_date_end, machine_id, machine:machines!inner(id)')
     .eq('executor_type', 'factory')
     .eq('executor_factory_id', factoryId)
     .eq('incoming_production_month', productionMonth)
+    .eq('machines.is_archived', false)
     .is('archived_at', null)
   if (error) throw new Error(error.message || 'Не удалось проверить входящий аутсорсинг')
   const operations = (data || []) as Array<{ id: string; incoming_date_start: string | null; incoming_date_end: string | null; machine_id: string }>
@@ -1702,12 +1707,12 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
 
   const machineIds = Array.from(new Set(operations.map((operation) => operation.machine_id)))
   const [machinesRes, workTypes] = await Promise.all([
-    machineIds.length > 0 ? db.from('machines').select('id, name, factory_id').in('id', machineIds) : Promise.resolve({ data: [], error: null }),
+    machineIds.length > 0 ? db.from('machines').select('id, name, factory_id, is_archived').in('id', machineIds) : Promise.resolve({ data: [], error: null }),
     loadWorkTypes(db),
   ])
   if (machinesRes.error) throw new Error(machinesRes.error.message || 'Не удалось загрузить машины')
 
-  const machines = (machinesRes.data || []) as Array<{ id: string; name: string; factory_id: string | null }>
+  const machines = (machinesRes.data || []) as Array<{ id: string; name: string; factory_id: string | null; is_archived: boolean | null }>
   const factoryIds = Array.from(new Set(machines.map((machine) => machine.factory_id).filter((id): id is string => Boolean(id))))
   let factories: Array<{ id: string; name: string; city: string | null; address: string | null }> = []
   if (factoryIds.length > 0) {
@@ -1720,9 +1725,11 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
   const operationById = new Map(operations.map((operation) => [operation.id, operation]))
   const workTypeById = new Map(workTypes.map((workType) => [workType.id, workType.name]))
 
-  return needs.map((need) => {
+  return needs.flatMap((need): TransportWorkspaceNeed[] => {
     const operation = operationById.get(need.operation_id)
     const machine = operation ? machineById.get(operation.machine_id) : null
+    if ((!operation || !machine) && ACTIVE_OUTSOURCING_NEED_STATUSES.some((status) => status === need.status)) return []
+    if (!isMachineWorkVisible(machine?.is_archived, need.status, ACTIVE_OUTSOURCING_NEED_STATUSES)) return []
     const factory = machine?.factory_id ? factoryById.get(machine.factory_id) : null
     const factoryPointKey = machine?.factory_id
       ? `factory:${machine.factory_id}`
@@ -1749,7 +1756,7 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
     const executorAddress = operation?.executor_type === 'factory'
       ? operation.executor_factory_address
       : operation?.supplier_address
-    return {
+    return [{
       ...need,
       machine_id: operation?.machine_id || '',
       machine_name: machine?.name || 'Машина',
@@ -1766,7 +1773,7 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
       destination_point_city: isOutbound ? executorCity || null : factory?.city || null,
       destination_point_address: isOutbound ? executorAddress || null : factory?.address || null,
       item_labels: (operation?.items || []).map((item) => `${item.product_name} (${item.quantity} шт.)`),
-    }
+    }]
   })
 }
 
@@ -1803,7 +1810,7 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
   const workTypeIds = Array.from(new Set(operations.map((operation) => operation.work_type_id)))
   const supplierIds = Array.from(new Set(operations.map((operation) => operation.supplier_id).filter((id): id is string => Boolean(id))))
   const [machinesRes, workTypesRes, suppliersRes, itemLinksRes] = await Promise.all([
-    db.from('machines').select('id, name, factory_id').in('id', machineIds),
+    db.from('machines').select('id, name, factory_id, is_archived').in('id', machineIds),
     db.from('outsourcing_work_types').select('id, name').in('id', workTypeIds),
     loadSuppliersByIds(db, supplierIds),
     db.from('machine_outsourcing_operation_items').select('operation_id, machine_item_id').in('operation_id', operations.map((operation) => operation.id)),
@@ -1862,7 +1869,7 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
     itemIdsByOperation.set(link.operation_id, [...(itemIdsByOperation.get(link.operation_id) || []), link.machine_item_id])
   }
 
-  const machines = (machinesRes.data || []) as Array<{ id: string; name: string; factory_id: string | null }>
+  const machines = (machinesRes.data || []) as Array<{ id: string; name: string; factory_id: string | null; is_archived: boolean | null }>
   const factoryIds = Array.from(new Set(machines.map((machine) => machine.factory_id).filter((id): id is string => Boolean(id))))
   const factoriesRes = factoryIds.length > 0
     ? await db.from('factories').select('id, name').in('id', factoryIds)
@@ -1874,9 +1881,10 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
   const supplierById = new Map(((suppliersRes.data || []) as Array<{ id: string; name: string }>).map((supplier) => [supplier.id, supplier.name]))
   const factoryById = new Map(((factoriesRes.data || []) as Array<{ id: string; name: string }>).map((factory) => [factory.id, factory.name]))
 
-  return operations.map((operation) => {
+  return operations.flatMap((operation): SupplyOutsourcingAgreement[] => {
     const machine = machineById.get(operation.machine_id)
-    return {
+    if (!machine || machine.is_archived) return []
+    return [{
       operation_id: operation.id,
       created_at: operation.created_at,
       machine_id: operation.machine_id,
@@ -1914,7 +1922,7 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
               : null,
           }
         }),
-    } satisfies SupplyOutsourcingAgreement
+    } satisfies SupplyOutsourcingAgreement]
   })
 }
 

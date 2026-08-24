@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { buildNonArchivedOrUnscopedMachineFilter } from '@/lib/machine-work-visibility'
 import { requirePermission } from '@/lib/permissions/server'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
@@ -154,6 +155,7 @@ type RequestFilterQuery = PromiseLike<RequestQueryResult> & {
   in: (column: string, values: unknown[]) => RequestFilterQuery
   not: (column: string, operator: string, value: unknown) => RequestFilterQuery
   is: (column: string, value: unknown) => RequestFilterQuery
+  or: (filters: string) => RequestFilterQuery
 }
 
 type RpcClient = {
@@ -320,6 +322,7 @@ async function loadFilterOptions(
     role: string
     factoryId: string | null
   },
+  archivedMachineIds: string[],
 ) {
   let optionQuery = admin
     .from('department_requests')
@@ -332,6 +335,8 @@ async function loadFilterOptions(
     .order('created_at', { ascending: false })
     .limit(300) as unknown as RequestFilterQuery
   optionQuery = applyScope(optionQuery, scope)
+  const activeMachineFilter = buildNonArchivedOrUnscopedMachineFilter(archivedMachineIds)
+  if (activeMachineFilter) optionQuery = optionQuery.or(activeMachineFilter)
   const { data } = await optionQuery
 
   const orders = new Map<string, string>()
@@ -377,6 +382,15 @@ async function loadWorkspace(input: {
     factoryId: context.factoryId,
   } as const
   const admin = createAdminClient()
+  let archivedMachineIds: string[] = []
+  if (input.filters.tab === 'active') {
+    const { data: archivedMachines, error: archivedMachinesError } = await admin
+      .from('machines')
+      .select('id')
+      .eq('is_archived', true)
+    if (archivedMachinesError) throw new Error(archivedMachinesError.message || 'Не удалось проверить архивные машины')
+    archivedMachineIds = ((archivedMachines || []) as Array<{ id: string }>).map((machine) => machine.id)
+  }
   const from = input.filters.page * PAGE_SIZE
   const to = from + PAGE_SIZE - 1
   let listQuery = admin
@@ -386,10 +400,12 @@ async function loadWorkspace(input: {
     .range(from, to) as unknown as RequestFilterQuery
   listQuery = applyScope(listQuery, scope)
   listQuery = applyFilters(listQuery, input.filters, context.userId, input.mode === 'mine')
+  const activeMachineFilter = buildNonArchivedOrUnscopedMachineFilter(archivedMachineIds)
+  if (activeMachineFilter) listQuery = listQuery.or(activeMachineFilter)
 
   const [{ data, error, count }, options] = await Promise.all([
     listQuery,
-    loadFilterOptions(admin, scope),
+    loadFilterOptions(admin, scope, archivedMachineIds),
   ])
   if (error) throw new Error(error.message || 'Не удалось загрузить запросы')
 
