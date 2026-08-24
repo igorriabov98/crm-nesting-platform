@@ -9,6 +9,15 @@ export type LongStockSegmentRow = {
 
 export const DEFAULT_MIXED_LONG_STOCK_LENGTHS = true
 
+export function upsertLongStockRequestRow<T extends { id: string }>(
+  rows: readonly T[],
+  row: T,
+): T[] {
+  const existingIndex = rows.findIndex((existing) => existing.id === row.id)
+  if (existingIndex < 0) return [...rows, row]
+  return rows.map((existing, index) => index === existingIndex ? { ...existing, ...row } : existing)
+}
+
 export function expandLongStockSegmentRows(
   rows: readonly LongStockSegmentRow[],
 ): LongStockPlanSegmentInput[] {

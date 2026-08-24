@@ -131,6 +131,14 @@ assert.equal(formatSupplyOrderCharacteristicValue('request_pipe', 'pipe_type', '
 assert.equal(formatSupplyOrderCharacteristicValue('request_pipe', 'pipe_type', 'wire'), 'Проволока')
 assert.equal(formatSupplyOrderCharacteristicValue('request_pipe', 'pipe_type', 'legacy-value'), 'Не указан')
 assert.equal(formatSupplyOrderCharacteristicValue('request_knives', 'knife_type', 'standard'), null)
+assert.equal(formatSupplyOrderCharacteristicValue('request_knives', 'knife_bevel_count', 1), '1 скос')
+assert.equal(formatSupplyOrderCharacteristicValue('request_knives', 'knife_bevel_count', 2), '2 скоса')
+assert.equal(formatSupplyOrderCharacteristicValue('request_knives', 'knife_bevel_count', null), 'не указан')
+assert.match(
+  supplyOrdersAction,
+  /request_knives:\s*\[[\s\S]*\['Скос', 'knife_bevel_count'\]/u,
+  'knife bevel must be part of supply aggregation and visible characteristics',
+)
 
 const baseFilters: OrderFiltersState = {
   query: '',

@@ -6,6 +6,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
+import { upsertLongStockRequestRow } from '@/lib/long-stock-position-ui'
 import { addPipe, deletePipe, updatePipe, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { InlineEditCell } from './InlineEditCell'
 import { RequestItemOrderStatus } from './RequestItemOrderStatus'
@@ -308,7 +309,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
         steelTypes={steelTypes}
         open={positionDialogOpen}
         onOpenChange={setPositionDialogOpen}
-        onCreated={(row) => applyRows([...rows, row as PipeRow])}
+        onCreated={(row) => applyRows(upsertLongStockRequestRow(rows, row as PipeRow))}
       />
     </div>
   )

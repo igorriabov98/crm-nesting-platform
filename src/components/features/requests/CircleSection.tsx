@@ -11,6 +11,7 @@ import { canEditMaterialCharacteristics, isCustomVariantSource } from './materia
 import { LongStockPositionDialog } from './LongStockPositionDialog'
 import { LongStockCuttingPlanStatusControl } from './LongStockCuttingPlanStatusControl'
 import { deleteCircle, updateCircle, type WithMaterialName } from '@/lib/actions/technologist-requests'
+import { upsertLongStockRequestRow } from '@/lib/long-stock-position-ui'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import type { CircleInput } from '@/lib/types/request-schemas'
 import type { MaterialVariant, RequestCircle } from '@/lib/types'
@@ -183,7 +184,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
         steelTypes={steelTypes}
         open={positionDialogOpen}
         onOpenChange={setPositionDialogOpen}
-        onCreated={(row) => setRows((current) => [...current, row as CircleRow])}
+        onCreated={(row) => setRows((current) => upsertLongStockRequestRow(current, row as CircleRow))}
       />
     </div>
   )

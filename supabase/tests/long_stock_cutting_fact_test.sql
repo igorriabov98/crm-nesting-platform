@@ -378,6 +378,14 @@ begin
   v_version := (v_plan_data->>'version_id')::uuid;
   v_request_item := (v_plan_data->>'request_item_id')::uuid;
   v_scrap := (v_plan_data#>>'{scrap_ids,0}')::uuid;
+  update public.production_stages
+  set date_start = current_date
+  where machine_id = v_machine_zero
+    and stage_type = 'cutting'::public.stage_type;
+  perform public.fn_promote_due_future_business_scrap(current_date);
+  if (select business_scrap_state from public.inventory where id = v_scrap) <> 'future' then
+    raise exception 'Расчётный остаток карты стал доступен до факта заготовки';
+  end if;
   insert into public.inventory(
     factory_id, material_id, material_variant_id, piece_length_mm,
     total_quantity, reserved_quantity, unit,

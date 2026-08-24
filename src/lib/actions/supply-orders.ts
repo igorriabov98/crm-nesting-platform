@@ -806,6 +806,7 @@ const IDENTITY_FIELDS: Record<string, Array<[label: string, field: string]>> = {
     ['Тип ножа', 'knife_type'],
     ['Марка', 'steel_grade'],
     ['Тип стали', 'steel_type_id'],
+    ['Скос', 'knife_bevel_count'],
     ['Длина', 'length_mm'],
     ['Ширина', 'width_mm'],
     ['Высота', 'height_mm'],

@@ -13,6 +13,7 @@ import { LongStockPositionDialog } from './LongStockPositionDialog'
 import { LongStockCuttingPlanStatusControl } from './LongStockCuttingPlanStatusControl'
 import { deleteKnife, updateKnife, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { KNIFE_BEVEL_OPTIONS, parseKnifeBevelCount } from '@/lib/materials/knife-bevel'
+import { upsertLongStockRequestRow } from '@/lib/long-stock-position-ui'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import type { MaterialVariant, RequestKnives } from '@/lib/types'
 import type { SteelType } from '@/lib/types/database'
@@ -237,7 +238,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
         steelTypes={steelTypes}
         open={positionDialogOpen}
         onOpenChange={setPositionDialogOpen}
-        onCreated={(row) => setRows((current) => [...current, row as KnifeRow])}
+        onCreated={(row) => setRows((current) => upsertLongStockRequestRow(current, row as KnifeRow))}
       />
     </div>
   )
