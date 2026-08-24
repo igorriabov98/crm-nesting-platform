@@ -7,6 +7,7 @@ import { getCurrentUserPermissions, requirePermission } from '@/lib/permissions/
 import { hasResourcePermission } from '@/lib/permissions/resources'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
+import { METAL_SCRAP_PAGE_SIZE, normalizeMetalScrapPage } from '@/lib/metal-scrap'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 
 function db() { return createAdminClient() as any }
@@ -57,12 +58,13 @@ export async function getMetalScrapPage(factoryId?: string, status = 'available'
     const canManageSales = hasResourcePermission(null, permissions.permissions, 'metal_scrap_sales', 'manage')
     const client = db(); const factories = await client.from('factories').select('id,name').order('name'); const selectedFactory = factoryId || factories.data?.[0]?.id
     const safeStatus = z.enum(['future','available','review_required']).catch('available').parse(status)
+    const safePage = normalizeMetalScrapPage(page)
     const [lots, sales] = await Promise.all([
-      client.from('metal_scrap_lots').select('id,source_type,source_inventory_id,request_id,machine_id,factory_id,material_name,material_grade,expected_weight_kg,available_weight_kg,blocked_weight_kg,sold_weight_kg,status,promoted_stage_end,machines(name)', { count: 'exact' }).eq('factory_id', selectedFactory).eq('status', safeStatus).order('created_at', { ascending: false }).range(Math.max(0, page) * 25, Math.max(0, page) * 25 + 24),
+      client.from('metal_scrap_lots').select('id,source_type,source_inventory_id,request_id,machine_id,factory_id,created_by,material_name,material_grade,expected_weight_kg,available_weight_kg,blocked_weight_kg,sold_weight_kg,status,promoted_stage_end,machines(name)', { count: 'exact' }).eq('factory_id', selectedFactory).eq('status', safeStatus).order('created_at', { ascending: false }).range(safePage * METAL_SCRAP_PAGE_SIZE, safePage * METAL_SCRAP_PAGE_SIZE + METAL_SCRAP_PAGE_SIZE - 1),
       client.from('metal_scrap_sales').select('id,factory_id,sale_date,total_weight_kg,amount_uah,average_price_per_kg,buyer,document_number,comment,status,cancellation_reason,created_at').eq('factory_id', selectedFactory).order('sale_date', { ascending: false }).limit(25),
     ])
     const aggregates = await client.from('metal_scrap_lots').select('status,expected_weight_kg,available_weight_kg,blocked_weight_kg,sold_weight_kg').eq('factory_id', selectedFactory)
-    return { data: { factories: factories.data || [], selectedFactory, status: safeStatus, canManageScrap, canManageSales, lots: lots.data || [], total: lots.count || 0, sales: sales.data || [], aggregates: (aggregates.data || []).reduce((acc: any, row: any) => { acc.future += row.status === 'future' ? Number(row.expected_weight_kg) : 0; acc.available += Number(row.available_weight_kg); acc.blocked += Number(row.blocked_weight_kg); acc.sold += Number(row.sold_weight_kg); return acc }, { future: 0, available: 0, blocked: 0, sold: 0 }) }, error: null }
+    return { data: { factories: factories.data || [], selectedFactory, status: safeStatus, canManageScrap, canManageSales, lots: (lots.data || []).map((lot: any) => ({ ...lot, can_review: canManageScrap && lot.created_by === userId })), total: lots.count || 0, page: safePage, pageSize: METAL_SCRAP_PAGE_SIZE, sales: sales.data || [], aggregates: (aggregates.data || []).reduce((acc: any, row: any) => { acc.future += row.status === 'future' ? Number(row.expected_weight_kg) : 0; acc.available += Number(row.available_weight_kg); acc.blocked += Number(row.blocked_weight_kg); acc.sold += Number(row.sold_weight_kg); return acc }, { future: 0, available: 0, blocked: 0, sold: 0 }) }, error: null }
   } catch (error) { return { data: null, error: getErrorMessage(error) } }
 }
 

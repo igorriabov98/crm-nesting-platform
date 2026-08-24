@@ -85,8 +85,23 @@ for (const required of [
 assert.ok(!inventoryPage.includes('Вернуть из металлолома'))
 
 const metalScrapPage = readFileSync('src/components/features/inventory/MetalScrapPage.tsx', 'utf8')
-assert.ok(metalScrapPage.includes("lot.source_type==='inventory_conversion'"))
-assert.ok(metalScrapPage.includes('lot.request_id?.slice'))
+for (const required of [
+  "lot.source_type === 'inventory_conversion'",
+  'Оформление сдачи',
+  'Весь доступный вес',
+  'isMetalScrapSaleWeightValid',
+  'Перепроверку выполняет ответственный сотрудник',
+  '<Dialog open={Boolean(cancellationSale)}',
+]) assert.ok(metalScrapPage.includes(required), `metal-scrap UI is missing ${required}`)
+assert.ok(!metalScrapPage.includes('window.prompt'))
+
+const futureInventoryAction = readFileSync('src/lib/actions/future-inventory.ts', 'utf8')
+for (const required of [
+  'normalizeMetalScrapPage(page)',
+  'METAL_SCRAP_PAGE_SIZE',
+  'created_by,material_name',
+  'can_review: canManageScrap && lot.created_by === userId',
+]) assert.ok(futureInventoryAction.includes(required), `metal-scrap page action is missing ${required}`)
 
 const longStockPositionDialog = readFileSync('src/components/features/requests/LongStockPositionDialog.tsx', 'utf8')
 assert.ok(longStockPositionDialog.includes('помечены как «мелочь»; на складской учёт это не влияет'))
