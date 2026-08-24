@@ -13,6 +13,7 @@ import {
   getSupplyOrderRedeliveryDates,
   groupSupplyOrderAggregatesBySupplyDate,
   groupSupplyOrderItems,
+  isSupplyOrderBarMaterial,
   isSupplyOrderRedeliveryItem,
   partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderMachineRoutes,
@@ -318,6 +319,89 @@ assert.deepEqual(
   'an unscheduled material without production date must stay visible in the no-date group',
 )
 
+const aggregateBatchSchedule = makeAggregate()
+const aggregateBatchDelivery = makeDeliverySchedule({
+  id: 'aggregate-batch-delivery',
+  delivery_date: '2026-08-24',
+  quantity: 16_000,
+  status: 'planned',
+  received_quantity: null,
+  allocated_quantity: null,
+  allocated_physical_quantity: null,
+  planned_piece_length_mm: 8_000,
+  planned_piece_count: 2,
+  delivered_at: null,
+})
+aggregateBatchSchedule.planned_material_date = '2026-08-27'
+aggregateBatchSchedule.category = 'circle'
+aggregateBatchSchedule.quantity = 16_000
+aggregateBatchSchedule.requested_quantity = 16_000
+aggregateBatchSchedule.weight_kg = 160
+aggregateBatchSchedule.item_count = 2
+aggregateBatchSchedule.machine_count = 2
+aggregateBatchSchedule.planned_schedule_quantity = 16_000
+aggregateBatchSchedule.unscheduled_quantity = 0
+aggregateBatchSchedule.factories = [{
+  ...aggregateBatchSchedule.factories[0],
+  quantity: 16_000,
+  requested_quantity: 16_000,
+  weight_kg: 160,
+  item_count: 2,
+  machine_count: 2,
+  planned_schedule_quantity: 16_000,
+  unscheduled_quantity: 0,
+  production_date: '2026-08-27',
+  supply_delivery_date: '2026-08-24',
+  delivery_schedule_count: 1,
+  has_delivery_schedules: true,
+  items: [
+    makeAggregateSourceItem({
+      id: 'aggregate-anchor',
+      machine_id: 'machine-a',
+      machine_name: 'Машина А',
+      quantity: 8_000,
+      weight_kg: 80,
+      order_status: 'ordered',
+      supply_delivery_date: '2026-08-24',
+      planned_schedule_quantity: 16_000,
+      unscheduled_quantity: 0,
+      delivery_schedules: [aggregateBatchDelivery],
+    }),
+    makeAggregateSourceItem({
+      id: 'aggregate-follower',
+      machine_id: 'machine-b',
+      machine_name: 'Машина Б',
+      quantity: 8_000,
+      weight_kg: 80,
+      order_status: 'ordered',
+      supply_delivery_date: '2026-08-27',
+      planned_schedule_quantity: 0,
+      unscheduled_quantity: 8_000,
+      delivery_schedules: [],
+    }),
+  ],
+}]
+const aggregateBatchGroups = groupSupplyOrderAggregatesBySupplyDate([aggregateBatchSchedule], 'date_asc')
+assert.deepEqual(
+  aggregateBatchGroups.map((group) => group.dateKey),
+  ['2026-08-24'],
+  'a fully covered aggregate schedule must not repeat an anchor follower as unscheduled on production date',
+)
+assert.deepEqual(
+  aggregateBatchGroups.map((group) => ({
+    quantity: group.rows[0].quantity,
+    planned: group.rows[0].plannedQuantity,
+    unscheduled: group.rows[0].unscheduledQuantity,
+  })),
+  [{ quantity: 16_000, planned: 16_000, unscheduled: 0 }],
+  'the aggregate schedule date must remain fully covered when one anchor row represents several requests',
+)
+
+assert.equal(isSupplyOrderBarMaterial({ category: 'knives', unit: 'мм' }), true)
+assert.equal(isSupplyOrderBarMaterial({ category: 'circle', unit: 'мм' }), true)
+assert.equal(isSupplyOrderBarMaterial({ category: 'pipe', unit: 'мм' }), true)
+assert.equal(isSupplyOrderBarMaterial({ category: 'pipe', unit: 'кг' }), false)
+
 const partialItem = partiallyAccepted.factories[0].items[0]
 assert.equal(isSupplyOrderRedeliveryItem(partialItem), true, 'partial receipt must be recognized from actual schedule quantities')
 assert.deepEqual(getSupplyOrderRedeliveryDates(partialItem), ['2026-07-21'], 'the original promised date must be preserved')
@@ -388,6 +472,35 @@ assert.deepEqual(unscheduledMachineRoutes, [
   { machineId: 'machine-a', machineName: 'Машина А', quantity: 9, weightKg: 90, itemCount: 1, pendingCount: 0, orderedCount: 1 },
   { machineId: 'machine-c', machineName: 'Машина В', quantity: 2, weightKg: 20, itemCount: 1, pendingCount: 1, orderedCount: 0 },
 ], 'no-schedule section must preserve the uncovered quantity and proportional weight for each destination machine')
+
+assert.deepEqual(
+  summarizeSupplyOrderUnscheduledMachineRoutes([
+    makeAggregateSourceItem({
+      id: 'aggregate-follower',
+      machine_id: 'machine-b',
+      machine_name: 'Машина Б',
+      quantity: 8_000,
+      unscheduled_quantity: 8_000,
+      weight_kg: 80,
+      order_status: 'ordered',
+    }),
+  ], 4_000),
+  [{
+    machineId: 'machine-b',
+    machineName: 'Машина Б',
+    quantity: 4_000,
+    weightKg: 40,
+    itemCount: 1,
+    pendingCount: 0,
+    orderedCount: 1,
+  }],
+  'machine hints must be capped by the authoritative aggregate remainder',
+)
+assert.deepEqual(
+  summarizeSupplyOrderUnscheduledMachineRoutes(aggregateBatchSchedule.factories[0].items, 0),
+  [],
+  'fully covered aggregate bar schedules must not leave a false machine remainder',
+)
 
 const history = [
   makeHistory({ id: 'old', accepted_at: '2026-07-12T10:00:00Z', supplier_name: 'Металл А', quantity: 2 }),
