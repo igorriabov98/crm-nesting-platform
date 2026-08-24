@@ -77,7 +77,7 @@ import {
   validateLongStockDialogAction,
   type LongStockNewMaterialDraft,
 } from '@/lib/long-stock-material-draft'
-import { KNIFE_BEVEL_OPTIONS, knifeBevelLabel } from '@/lib/materials/knife-bevel'
+import { KNIFE_BEVEL_OPTIONS, knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import {
   DEFAULT_LONG_STOCK_SEARCH_BUDGET,
   EXTENDED_LONG_STOCK_SEARCH_BUDGET,
@@ -1591,7 +1591,7 @@ function variantSummary(category: Category, variant: MaterialVariant) {
     ].filter(Boolean).join(' · ') || 'Точный вариант'
   }
   const dimensions = variant.knife_dimensions || [variant.standard_length_mm, variant.width_mm, variant.height_mm].filter(Boolean).join('×')
-  return [dimensions, variant.knife_material ?? variant.material_grade, knifeBevelLabel(variant.knife_bevel_count)].filter(Boolean).join(' · ') || 'Точный вариант'
+  return [dimensions, variant.knife_material ?? variant.material_grade, `Скос: ${knifeBevelCharacteristicLabel(variant.knife_bevel_count)}`].filter(Boolean).join(' · ') || 'Точный вариант'
 }
 
 function remainderWeight(candidate: LongStockCuttingCandidate, weightPerMeterKg: number | null) {

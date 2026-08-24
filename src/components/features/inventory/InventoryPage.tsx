@@ -31,7 +31,7 @@ import {
   defaultMaterialNameForCategory,
 } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
-import { KNIFE_BEVEL_OPTIONS, knifeBevelLabel } from '@/lib/materials/knife-bevel'
+import { KNIFE_BEVEL_OPTIONS, knifeBevelCharacteristicLabel, knifeBevelLabel } from '@/lib/materials/knife-bevel'
 import { addReceipt, adjustInventory, convertBusinessScrapToMetal, deleteInventoryItem, type InventoryFactory, type InventoryWithMaterial } from '@/lib/actions/inventory'
 import { createMaterial, recordMaterialUsage, type MaterialWithSupplier } from '@/lib/actions/materials'
 import type { MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
@@ -1220,7 +1220,7 @@ function characteristicFields(category: MaterialCategory, variant: MaterialVaria
     if (variant.pipe_type === 'wire') push('Диаметр, мм', variant.diameter_mm)
   } else if (category === 'knives') {
     push('Тип стали', steelTypeName(variant, steelTypes) ?? variant.material_grade ?? variant.knife_material)
-    push('Скос', knifeBevelLabel(variant.knife_bevel_count))
+    push('Скос', knifeBevelCharacteristicLabel(variant.knife_bevel_count))
     push('Размер (ДxШxВ)', variant.knife_dimensions)
     push('Длина, мм', variant.knife_dimensions ? null : variant.standard_length_mm)
     push('Ширина, мм', variant.knife_dimensions ? null : variant.width_mm)
@@ -1375,7 +1375,9 @@ function inventoryCharacteristicsSummary(row: InventoryWithMaterial, steelTypes:
   const variant = row.variant
   if (!category) return '—'
   if (!variant) return legacyCharacteristicsText(row)
-  const values = characteristicFields(category, variant, steelTypes).map((field) => String(field.value))
+  const values = characteristicFields(category, variant, steelTypes).map((field) => (
+    field.label === 'Скос' ? `Скос: ${field.value}` : String(field.value)
+  ))
   if ((category === 'pipe' || category === 'knives' || category === 'circle') && row.piece_length_mm !== null && row.piece_length_mm !== undefined) {
     values.push(`Длина куска: ${formatAmount(row.piece_length_mm)} мм`)
   }

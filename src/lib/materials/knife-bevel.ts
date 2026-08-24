@@ -20,3 +20,7 @@ export function knifeBevelLabel(value: unknown) {
   const parsed = parseKnifeBevelCount(value)
   return KNIFE_BEVEL_OPTIONS.find((option) => option.value === parsed)?.label ?? null
 }
+
+export function knifeBevelCharacteristicLabel(value: unknown) {
+  return knifeBevelLabel(value) ?? 'не указан'
+}

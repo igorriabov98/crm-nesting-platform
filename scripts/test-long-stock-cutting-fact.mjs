@@ -110,6 +110,10 @@ assertRpcDeniedForAuthenticated(
   );`,
 )
 assertRpcDeniedForAuthenticated(
+  'fn_promote_due_future_business_scrap',
+  `select public.fn_promote_due_future_business_scrap(current_date);`,
+)
+assertRpcDeniedForAuthenticated(
   'fn_get_production_cutting_rollback_preview',
   `select public.fn_get_production_cutting_rollback_preview(
     '00000000-0000-0000-0000-000000000001'::uuid
@@ -218,6 +222,11 @@ function assertServiceRoleCanExecute() {
         and has_function_privilege(
           'service_role',
           'public.fn_keep_production_cutting_rollback(uuid, uuid, uuid, text)',
+          'EXECUTE'
+        )
+        and has_function_privilege(
+          'service_role',
+          'public.fn_promote_due_future_business_scrap(date)',
           'EXECUTE'
         );\n`,
     },

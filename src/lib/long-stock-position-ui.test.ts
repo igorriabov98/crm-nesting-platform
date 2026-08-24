@@ -11,6 +11,7 @@ import {
   longStockCutColorMap,
   shouldShowBarSegmentLabel,
   totalLongStockSegmentLength,
+  upsertLongStockRequestRow,
 } from '@/lib/long-stock-position-ui'
 import type { LongStockCuttingCandidate } from '@/lib/long-stock-cutting-solver'
 
@@ -36,6 +37,15 @@ test('rejects a non-integer quantity and points to the row', () => {
 
 test('defaults to mixed standard lengths', () => {
   assert.equal(DEFAULT_MIXED_LONG_STOCK_LENGTHS, true)
+})
+
+test('keeps one request row when server revalidation already returned the approved draft', () => {
+  const approved = { id: 'request-row', value: 'approved' }
+  assert.deepEqual(upsertLongStockRequestRow([], approved), [approved])
+  assert.deepEqual(
+    upsertLongStockRequestRow([{ id: 'request-row', value: 'server' }], approved),
+    [approved],
+  )
 })
 
 test('formats the purchased composition in descending order and excludes warehouse remnants', () => {

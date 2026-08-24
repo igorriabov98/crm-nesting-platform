@@ -18,7 +18,7 @@ import {
   MATERIAL_CATEGORY_LABELS,
   PIPE_SUBTYPE_LABELS,
 } from '@/lib/constants/procurement'
-import { knifeBevelLabel } from '@/lib/materials/knife-bevel'
+import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { ROUTES } from '@/lib/constants/routes'
 import type {
   InventoryFactory,
@@ -484,7 +484,7 @@ function variantSummary(row: InventoryTransactionWithRelations) {
     values.push(variant.pipe_type ? PIPE_SUBTYPE_LABELS[variant.pipe_type] ?? variant.pipe_type : null)
     if (variant.pipe_type === 'wire') values.push(variant.diameter_mm ? `Ø${variant.diameter_mm}` : null)
     else values.push(variant.piece_description, variant.wall_thickness_mm ? `${variant.wall_thickness_mm} мм` : null)
-  } else if (row.material_category === 'knives') values.push(variant.knife_dimensions, variant.knife_material, knifeBevelLabel(variant.knife_bevel_count))
+  } else if (row.material_category === 'knives') values.push(variant.knife_dimensions, variant.knife_material, `Скос: ${knifeBevelCharacteristicLabel(variant.knife_bevel_count)}`)
   else if (row.material_category === 'paint') values.push(variant.ral_code, variant.finish)
   else if (row.material_category === 'components') values.push(variant.specification, variant.diameter_mm ? `Ø${variant.diameter_mm}` : null)
   else if (row.material_category === 'mesh') values.push(variant.mesh_description, variant.mesh_length_mm ? `${variant.mesh_length_mm} мм` : null, variant.mesh_width_mm ? `${variant.mesh_width_mm} мм` : null)
