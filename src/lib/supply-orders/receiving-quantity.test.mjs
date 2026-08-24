@@ -4,6 +4,7 @@ import {
   allocateReceiptByPriority,
   committedScheduleQuantity,
   outstandingReceivingQuantity,
+  projectAggregateVirtualReceivingQuantities,
 } from './receiving-quantity.mjs'
 
 test('delivered schedules count logical allocation instead of warehouse excess', () => {
@@ -15,6 +16,53 @@ test('delivered schedules count logical allocation instead of warehouse excess',
   }
   assert.equal(committedScheduleQuantity(schedule), 6_000)
   assert.equal(outstandingReceivingQuantity(10_000, [schedule]), 4_000)
+})
+
+test('one aggregate schedule does not repeat its follower on the receiving page', () => {
+  const projected = projectAggregateVirtualReceivingQuantities([
+    receivingItem('anchor', 'pipe', 8_000, [{ status: 'planned', quantity: 16_000 }]),
+    receivingItem('follower', 'pipe', 8_000),
+  ])
+
+  assert.deepEqual([...projected.entries()], [])
+})
+
+test('an aggregate schedule keeps only the genuine uncovered follower quantity', () => {
+  const projected = projectAggregateVirtualReceivingQuantities([
+    receivingItem('anchor', 'circle', 8_000, [{ status: 'planned', quantity: 8_000 }]),
+    receivingItem('follower', 'circle', 8_000),
+  ])
+
+  assert.deepEqual([...projected.entries()], [['follower', 8_000]])
+})
+
+test('unrelated aggregates keep their own virtual receiving quantities', () => {
+  const projected = projectAggregateVirtualReceivingQuantities([
+    receivingItem('pipe-anchor', 'pipe', 8_000, [{ status: 'planned', quantity: 16_000 }]),
+    receivingItem('pipe-follower', 'pipe', 8_000),
+    receivingItem('knife', 'knives', 8_000),
+  ])
+
+  assert.deepEqual([...projected.entries()], [['knife', 8_000]])
+})
+
+test('delivered parent and follower allocations close the aggregate exactly once', () => {
+  const projected = projectAggregateVirtualReceivingQuantities([
+    receivingItem('anchor', 'knives', 8_000, [{
+      status: 'delivered',
+      quantity: 16_000,
+      received_quantity: 16_000,
+      allocated_quantity: 8_000,
+    }]),
+    receivingItem('follower', 'knives', 8_000, [{
+      status: 'delivered',
+      quantity: 8_000,
+      received_quantity: 0,
+      allocated_quantity: 8_000,
+    }]),
+  ])
+
+  assert.deepEqual([...projected.entries()], [])
 })
 
 test('normal receipt closes the earliest preparation demands and leaves excess free', () => {
@@ -235,4 +283,8 @@ function candidate(key, priorityDate, outstandingQuantity, overrides = {}) {
     outstandingQuantity,
     ...overrides,
   }
+}
+
+function receivingItem(key, aggregateKey, requiredQuantity, schedules = []) {
+  return { key, aggregateKey, requiredQuantity, schedules }
 }

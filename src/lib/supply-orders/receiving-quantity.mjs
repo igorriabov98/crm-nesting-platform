@@ -154,3 +154,67 @@ export function outstandingReceivingQuantity(requiredQuantity, schedules) {
   )
   return Math.max(Number(requiredQuantity || 0) - committed, 0)
 }
+
+/**
+ * Project virtual receiving rows from the authoritative aggregate remainder.
+ * One supply schedule may intentionally be stored on a single anchor request
+ * while covering several matching request items. Per-item projection would
+ * repeat every follower as an unscheduled delivery even when the aggregate is
+ * already fully covered.
+ *
+ * Items with an active schedule keep their real schedule row and do not get a
+ * second virtual row. Any genuine aggregate remainder is assigned to uncovered
+ * followers in input order and capped by the aggregate total.
+ *
+ * @param {Array<{
+ *   key: string,
+ *   aggregateKey: string,
+ *   requiredQuantity: number,
+ *   schedules: DeliveryScheduleQuantity[],
+ * }>} items
+ * @returns {Map<string, number>}
+ */
+export function projectAggregateVirtualReceivingQuantities(items) {
+  const groups = new Map()
+
+  for (const item of items) {
+    const requiredQuantity = positiveNumber(item.requiredQuantity)
+    const schedules = Array.isArray(item.schedules) ? item.schedules : []
+    const group = groups.get(item.aggregateKey) || {
+      requiredQuantity: 0,
+      committedQuantity: 0,
+      items: [],
+    }
+    group.requiredQuantity += requiredQuantity
+    group.committedQuantity += schedules.reduce(
+      (sum, schedule) => sum + committedScheduleQuantity(schedule),
+      0,
+    )
+    group.items.push({
+      key: item.key,
+      outstandingQuantity: outstandingReceivingQuantity(requiredQuantity, schedules),
+      hasActiveSchedule: schedules.some((schedule) => (
+        schedule.status !== 'delivered' && schedule.status !== 'cancelled'
+      )),
+    })
+    groups.set(item.aggregateKey, group)
+  }
+
+  const projected = new Map()
+  for (const group of groups.values()) {
+    let aggregateOutstanding = Math.max(
+      group.requiredQuantity - group.committedQuantity,
+      0,
+    )
+
+    for (const item of group.items) {
+      if (aggregateOutstanding <= 0.000001) break
+      if (item.hasActiveSchedule || item.outstandingQuantity <= 0.000001) continue
+      const quantity = Math.min(item.outstandingQuantity, aggregateOutstanding)
+      projected.set(item.key, quantity)
+      aggregateOutstanding -= quantity
+    }
+  }
+
+  return projected
+}

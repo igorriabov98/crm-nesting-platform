@@ -230,6 +230,11 @@ assert.match(
   /planned_piece_length_mm: schedule\.piece_length_mm[\s\S]*planned_piece_count: schedule\.piece_count/,
   'delivery planning must write the ordered bar composition to planned fields',
 )
+assert.match(
+  supplyOrderActions,
+  /projectAggregateVirtualReceivingQuantities\(items\.map[\s\S]*virtualReceivingQuantities\.get\(itemKey\(item\)\)/,
+  'receiving must project unscheduled rows from the aggregate remainder instead of repeating anchor followers',
+)
 assert.doesNotMatch(
   supplyOrderActions,
   /received_piece_length_mm: schedule\.piece_length_mm[\s\S]*received_piece_count: schedule\.piece_count/,
