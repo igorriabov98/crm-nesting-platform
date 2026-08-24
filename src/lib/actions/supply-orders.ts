@@ -5,7 +5,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import {
   allocateReceiptByPriority,
   committedScheduleQuantity,
-  outstandingReceivingQuantity,
+  projectAggregateVirtualReceivingQuantities,
 } from '@/lib/supply-orders/receiving-quantity.mjs'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -2718,6 +2718,12 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
     ] as string[]
     const supplierNameMap = await loadSupplierNameMap(db, supplierIds)
     const receivingItems: MaterialReceivingItem[] = []
+    const virtualReceivingQuantities = projectAggregateVirtualReceivingQuantities(items.map((item) => ({
+      key: itemKey(item),
+      aggregateKey: `${factoryKey(item.factory_id)}|${plannedDateKey(item.planned_material_date)}|${getAggregateIdentityKey(item.table, item.raw, item)}`,
+      requiredQuantity: item.to_order,
+      schedules: schedulesByItem.get(itemKey(item)) || [],
+    })))
 
     for (const item of items) {
       const factoryName = item.factory_id ? factoryNameMap.get(item.factory_id) || 'Завод' : 'Без завода'
@@ -2740,7 +2746,7 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
 
       const deliveryDate = effectiveSupplyDeliveryDate(item, item.planned_material_date)
       if (!deliveryDate) continue
-      const outstandingQuantity = outstandingReceivingQuantity(item.to_order, allItemSchedules)
+      const outstandingQuantity = virtualReceivingQuantities.get(itemKey(item)) || 0
       if (outstandingQuantity <= 0) continue
       receivingItems.push(makeReceivingItem(
         item,
