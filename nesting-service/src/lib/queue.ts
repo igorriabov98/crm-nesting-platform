@@ -1,5 +1,6 @@
 import PgBoss from 'pg-boss';
 import { config } from '../config';
+import { toPgBossConnectionString } from './database-connection';
 
 let boss: PgBoss | null = null;
 let startingBoss: Promise<PgBoss> | null = null;
@@ -38,17 +39,6 @@ export interface NestingCalculationJobData {
   projectId: string;
 }
 
-function getPgBossConnectionString(): string {
-  const url = new URL(config.DATABASE_URL);
-
-  if (url.searchParams.get('sslaccept') === 'accept_invalid_certs') {
-    url.searchParams.delete('sslaccept');
-    url.searchParams.set('sslmode', 'no-verify');
-  }
-
-  return url.toString();
-}
-
 function isDuplicateQueueError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
@@ -70,7 +60,8 @@ async function ensureQueue(instance: PgBoss, queueName: string): Promise<void> {
 
 async function startBoss(): Promise<PgBoss> {
   const instance = new PgBoss({
-    connectionString: getPgBossConnectionString(),
+    connectionString: toPgBossConnectionString(config.DATABASE_URL),
+    max: config.NESTING_QUEUE_POOL_MAX,
     pollingIntervalSeconds: 2,
     archiveCompletedAfterSeconds: 86400,
     archiveFailedAfterSeconds: 604800,
