@@ -965,6 +965,115 @@ do $$
 declare
   v_actor uuid;
   v_factory uuid;
+  v_material uuid;
+  v_machine uuid := gen_random_uuid();
+  v_variant uuid := gen_random_uuid();
+  v_plan_data jsonb;
+  v_request uuid;
+  v_completion uuid;
+  v_planned_bars integer;
+  v_fact_bars integer;
+  v_plan_status text;
+  v_plasma_blocked boolean := false;
+  v_archive_blocked boolean := false;
+begin
+  select id, factory_id into v_actor, v_factory
+  from public.users
+  where email = 'long-stock-cutting-fact@example.test';
+  select id into v_material
+  from public.materials
+  where name = 'Тестовый круг факта длинномера';
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
+
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, v_factory, 'LONG-STOCK-COMPLETION-BEFORE-CUTTING', v_actor);
+  insert into public.material_variants(
+    id, material_id, category, diameter_mm, material_grade,
+    standard_length_mm, weight_per_m_kg, default_unit
+  ) values (
+    v_variant, v_material, 'circle', 52, 'S355', 6000, 2, 'мм'
+  );
+
+  v_plan_data := pg_temp.create_new_stock_plan(
+    v_actor, v_machine, v_material, v_variant,
+    array[6000, 6000], array[1000::numeric, 1200::numeric]
+  );
+  v_request := (v_plan_data->>'request_id')::uuid;
+  update public.technologist_requests
+  set status = 'pending_stock_check'
+  where id = v_request;
+
+  select planned_bar_count, fact_bar_count, plan_status
+  into v_planned_bars, v_fact_bars, v_plan_status
+  from public.fn_get_long_stock_completion_plan_facts_v1(v_request);
+  if v_planned_bars <> 2 or v_fact_bars <> 0 or v_plan_status <> 'open' then
+    raise exception 'Тест не создал утверждённую карту до производственной резки: planned %, facts %, status %',
+      v_planned_bars, v_fact_bars, v_plan_status;
+  end if;
+
+  begin
+    perform public.fn_finalize_technologist_request(
+      v_request, v_actor, 'none', 1, '[]'::jsonb, '[]'::jsonb
+    );
+  exception when others then
+    if position('Время плазмы доступно только для заявок с листовым металлом' in sqlerrm) = 0 then
+      raise exception 'Время плазмы без листа заблокировано неверной ошибкой: %', sqlerrm;
+    end if;
+    v_plasma_blocked := true;
+  end;
+  if not v_plasma_blocked then
+    raise exception 'Время плазмы сохранилось для заявки без листового металла';
+  end if;
+
+  begin
+    perform public.fn_finalize_technologist_request_with_archives(
+      v_request,
+      v_actor,
+      'none',
+      0,
+      '[]'::jsonb,
+      '[]'::jsonb,
+      jsonb_build_array(jsonb_build_object(
+        'requestId', v_request,
+        'completionId', null,
+        'objectPath', 'machine-cutting/' || v_machine || '/' || v_request || '/1-' || gen_random_uuid() || '.zip',
+        'fileName', 'program.zip',
+        'mimeType', 'application/zip',
+        'fileSize', 1
+      ))
+    );
+  exception when others then
+    if position('Программа порезки доступна только для заявок с листовым металлом' in sqlerrm) = 0 then
+      raise exception 'Архив без листа заблокирован неверной ошибкой: %', sqlerrm;
+    end if;
+    v_archive_blocked := true;
+  end;
+  if not v_archive_blocked then
+    raise exception 'Архив программы сохранился для заявки без листового металла';
+  end if;
+
+  v_completion := public.fn_finalize_technologist_request(
+    v_request, v_actor, 'none', 0, '[]'::jsonb, '[]'::jsonb
+  );
+  if v_completion is null
+    or (select status from public.technologist_requests where id = v_request) <> 'submitted_to_supply'
+    or exists (
+      select 1 from public.technologist_request_plan_fact_items
+      where completion_id = v_completion
+    )
+    or exists (
+      select 1 from public.long_stock_cutting_fact_bars fact_bar
+      where fact_bar.version_id = (v_plan_data->>'version_id')::uuid
+    ) then
+    raise exception 'Утверждённая карта без будущих производственных фактов не передалась снабжению';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  v_actor uuid;
+  v_factory uuid;
   v_section uuid;
   v_material uuid;
   v_all_plan_request uuid;

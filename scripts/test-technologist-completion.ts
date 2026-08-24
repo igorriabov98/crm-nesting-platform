@@ -4,6 +4,7 @@ import { calculatePlasmaTime, calculateWaste, nextWeekday } from '../src/lib/req
 import { resolveCompletionWorkspaceNavigation } from '../src/lib/request-completion-navigation'
 import { ROUTES } from '../src/lib/constants/routes'
 import { classifyBusinessScrapLength } from '../src/lib/inventory/business-scrap-size'
+import { hasSheetMetalForCompletion, isLongStockPlanReadyForSupply } from '../src/lib/request-completion-material-scope'
 
 assert.deepEqual(calculateWaste(1000, 15.5), { scrapKg: 155, usefulKg: 845 })
 assert.deepEqual(calculateWaste(123.456, 15.5), { scrapKg: 19.136, usefulKg: 104.32 })
@@ -14,6 +15,12 @@ assert.deepEqual(resolveCompletionWorkspaceNavigation('stock_checked'), { kind: 
 assert.deepEqual(resolveCompletionWorkspaceNavigation('submitted_to_supply'), { kind: 'redirect', href: ROUTES.MATERIAL_REQUESTS })
 assert.deepEqual(resolveCompletionWorkspaceNavigation('completed'), { kind: 'redirect', href: ROUTES.MATERIAL_REQUESTS })
 assert.deepEqual(resolveCompletionWorkspaceNavigation('draft'), { kind: 'unavailable' })
+assert.equal(hasSheetMetalForCompletion([{ sourceTable: 'request_knives' }]), false)
+assert.equal(hasSheetMetalForCompletion([{ sourceTable: 'request_knives' }, { sourceTable: 'request_sheet_metal' }]), true)
+assert.equal(isLongStockPlanReadyForSupply({ versionId: 'approved', planStatus: 'open', plannedBarCount: 2 }), true)
+assert.equal(isLongStockPlanReadyForSupply({ versionId: 'approved', planStatus: 'closed', plannedBarCount: 2 }), true)
+assert.equal(isLongStockPlanReadyForSupply({ versionId: null, planStatus: 'open', plannedBarCount: 2 }), false)
+assert.equal(isLongStockPlanReadyForSupply({ versionId: 'approved', planStatus: 'invalid', plannedBarCount: 2 }), false)
 
 const migration = readFileSync('supabase/migrations/20260729120000_technologist_completion_future_detailing_scrap.sql', 'utf8')
 for (const required of [
@@ -40,16 +47,28 @@ for (const required of [
 ]) assert.ok(planFactsMigration.includes(required), `plan-fact completion migration is missing ${required}`)
 
 const completionAction = readFileSync('src/lib/actions/request-completion.ts', 'utf8')
-assert.ok(completionAction.includes("accountingMode: 'manual_percent' | 'plan_fact'"))
+assert.ok(completionAction.includes("accountingMode: 'manual_percent' | 'approved_plan'"))
 assert.ok(completionAction.includes("client.rpc('fn_get_long_stock_completion_plan_facts_v1'"))
 assert.ok(completionAction.includes('wasteItems: z.array(wasteSchema)'))
 assert.ok(!completionAction.includes('wasteItems: z.array(wasteSchema).min(1)'))
 
 const completionWizard = readFileSync('src/components/features/technologist/RequestCompletionWizard.tsx', 'utf8')
 assert.ok(completionWizard.includes("item.accountingMode === 'manual_percent'"))
-assert.ok(completionWizard.includes("item.accountingMode === 'plan_fact'"))
+assert.ok(completionWizard.includes("item.accountingMode === 'approved_plan'"))
 assert.ok(completionWizard.includes('wasteItems: manualWasteItems.map'))
 assert.ok(!completionWizard.includes('wasteItems: workspace.wasteItems.map'))
+assert.ok(completionWizard.includes('{hasSheetMetal && <>'))
+assert.ok(completionWizard.includes('Производственные факты не требуются для передачи заявки снабжению.'))
+assert.ok(!completionWizard.includes('Не все хлысты закрыты фактами'))
+
+const completionStageFix = readFileSync('supabase/migrations/20260824193000_technologist_completion_approved_plan_stage.sql', 'utf8')
+for (const required of [
+  "v_plan_fact.plan_status not in ('open', 'closed')",
+  'v_plan_fact.fact_bar_count > 0',
+  'where fact.fact_bar_count > 0',
+  'Программа порезки доступна только для заявок с листовым металлом',
+  'Время плазмы доступно только для заявок с листовым металлом',
+]) assert.ok(completionStageFix.includes(required), `completion-stage fix migration is missing ${required}`)
 
 assert.equal(classifyBusinessScrapLength(499, 500), 'small')
 assert.equal(classifyBusinessScrapLength(499, 100), 'useful')
