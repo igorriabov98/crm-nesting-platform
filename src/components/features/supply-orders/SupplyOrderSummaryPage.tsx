@@ -50,6 +50,7 @@ import {
   filterAndSortAggregates,
   groupSupplyOrderAggregatesBySupplyDate,
   hasSupplyOrderRedelivery,
+  isSupplyOrderBarMaterial,
   isSupplyOrderAggregateClosed,
   partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderMachineRoutes,
@@ -272,7 +273,9 @@ function MaterialOrderCard({
 }) {
   const [deliveryOpen, setDeliveryOpen] = useState(false)
   const routes = factory ? summarizeSupplyOrderMachineRoutes(factory.items) : []
-  const unscheduledRoutes = factory ? summarizeSupplyOrderUnscheduledMachineRoutes(factory.items) : []
+  const unscheduledRoutes = factory
+    ? summarizeSupplyOrderUnscheduledMachineRoutes(factory.items, factory.unscheduled_quantity)
+    : []
   const redeliveryRoutes = attentionKind === 'redelivery' && factory
     ? summarizeSupplyOrderRedeliveryMachineRoutes(factory.items)
     : []
@@ -715,9 +718,7 @@ function FactoryDeliveryEditor({
     .map((item) => item.long_stock_purchase_plan)
     .filter((plan): plan is LongStockPurchasePlan => plan !== null)
   const requiresRecalculation = longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
-  const isBarMaterial = longStockPlans.length > 0
-    || aggregate.category === 'knives'
-    || aggregate.category === 'circle'
+  const isBarMaterial = isSupplyOrderBarMaterial(aggregate) || longStockPlans.length > 0
 
   useEffect(() => {
     setScheduleDrafts(makeInitialScheduleDrafts(factory))
@@ -1023,11 +1024,11 @@ function FactoryDeliveryEditor({
                   {isBarMaterial ? (
                     <>
                       <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
-                        Длина бруска, мм
+                        Длина хлыста, мм
                         <input value={draft.piece_length_mm} disabled={isPending} inputMode="decimal" onChange={(event) => updateDraft(index, { piece_length_mm: event.target.value })} className="h-9 w-full rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:opacity-50" />
                       </label>
                       <label className="grid min-w-0 gap-1 text-xs font-medium text-[#475569]">
-                        Брусков, шт
+                        Хлыстов, шт
                         <input value={draft.piece_count} disabled={isPending} inputMode="numeric" onChange={(event) => updateDraft(index, { piece_count: event.target.value })} className="h-9 w-full rounded-md border border-[#CBD5E1] bg-white px-2 text-sm text-[#111827] disabled:opacity-50" />
                       </label>
                       <div className="grid gap-1 text-xs font-medium text-[#475569]">
