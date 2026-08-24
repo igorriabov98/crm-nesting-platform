@@ -286,14 +286,18 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
           slice.deliveredScheduleCount += 1
         }
       }
+    }
 
-      const unscheduledQuantity = Math.max(Number(item.unscheduled_quantity || 0), 0)
-      if (unscheduledQuantity > 0) {
-        const dateKey = factory.production_date || aggregate.planned_material_date || 'no_supply_date'
-        const slice = getSlice(dateKey)
-        slice.quantity += unscheduledQuantity
-        slice.unscheduledQuantity += unscheduledQuantity
-      }
+    // Aggregate schedules are intentionally stored on one anchor request item so
+    // one physical delivery can be allocated between machines during receiving.
+    // The factory total is therefore authoritative: summing per-item remainders
+    // here would count covered follower items again.
+    const unscheduledQuantity = Math.max(Number(factory.unscheduled_quantity || 0), 0)
+    if (unscheduledQuantity > 0) {
+      const dateKey = factory.production_date || aggregate.planned_material_date || 'no_supply_date'
+      const slice = getSlice(dateKey)
+      slice.quantity += unscheduledQuantity
+      slice.unscheduledQuantity += unscheduledQuantity
     }
   }
 
@@ -360,9 +364,31 @@ export function summarizeSupplyOrderMachineRoutes(items: SupplyOrderAggregateSou
 }
 
 export function summarizeSupplyOrderUnscheduledMachineRoutes(
-  items: SupplyOrderAggregateSourceItem[]
+  items: SupplyOrderAggregateSourceItem[],
+  totalUnscheduledQuantity?: number,
 ): SupplyOrderMachineRoute[] {
-  return summarizeMachineRoutes(items, (item) => item.unscheduled_quantity)
+  const routes = summarizeMachineRoutes(items, (item) => item.unscheduled_quantity)
+  if (totalUnscheduledQuantity === undefined) return routes
+
+  const authoritativeTotal = Math.max(Number(totalUnscheduledQuantity || 0), 0)
+  const itemTotal = routes.reduce((sum, route) => sum + route.quantity, 0)
+  if (authoritativeTotal <= 0 || itemTotal <= 0) return []
+  if (itemTotal <= authoritativeTotal + 0.000001) return routes
+
+  const ratio = authoritativeTotal / itemTotal
+  return routes.map((route) => ({
+    ...route,
+    quantity: route.quantity * ratio,
+    weightKg: route.weightKg === null ? null : route.weightKg * ratio,
+  }))
+}
+
+export function isSupplyOrderBarMaterial(
+  aggregate: Pick<SupplyOrderAggregate, 'category' | 'unit'>,
+) {
+  return aggregate.category === 'knives'
+    || aggregate.category === 'circle'
+    || (aggregate.category === 'pipe' && aggregate.unit === 'мм')
 }
 
 export function summarizeSupplyOrderRedeliveryMachineRoutes(
