@@ -115,12 +115,46 @@ test('two downloads of one stored version return identical PDF bytes', async () 
   assert.equal(createHash('sha256').update(first).digest('hex'), createHash('sha256').update(second).digest('hex'))
 })
 
+test('circle, pipe and knife cutting plans render with the bundled PDF font', async () => {
+  const variants: Array<Pick<LongStockCuttingPlanPdfData,
+    'materialName' | 'materialVariantLabel' | 'metalType' | 'knifeBevel'
+  >> = [
+    {
+      materialName: 'Круг калиброванный',
+      materialVariantLabel: 'Ø 40 мм · калиброванный',
+      metalType: '40Х',
+      knifeBevel: null,
+    },
+    {
+      materialName: 'Труба профильная',
+      materialVariantLabel: '80×40 мм · стенка 3 мм',
+      metalType: '09Г2С',
+      knifeBevel: null,
+    },
+    {
+      materialName: 'Нож Hardox',
+      materialVariantLabel: '300×300×20 мм',
+      metalType: 'Hardox',
+      knifeBevel: '1 скос',
+    },
+  ]
+
+  for (const variant of variants) {
+    const element = createElement(LongStockCuttingPlanDocument, {
+      data: { ...sampleData, ...variant },
+    }) as Parameters<typeof renderToBuffer>[0]
+    const bytes = await renderToBuffer(element)
+    assert.equal(bytes.subarray(0, 4).toString(), '%PDF')
+  }
+})
+
 test('download route only resolves the stored object and cutting-area UI blocks invalid versions', () => {
   const route = readFileSync('src/app/api/production/cutting-area/cutting-plans/[versionId]/route.ts', 'utf8')
   const action = readFileSync('src/lib/actions/long-stock-cutting-plans.ts', 'utf8')
   const page = readFileSync('src/components/features/production/CuttingAreaPage.tsx', 'utf8')
   const migration = readFileSync('supabase/migrations/20260818160000_long_stock_cutting_plan_pdf.sql', 'utf8')
   const bucketMigration = readFileSync('supabase/migrations/103_product_catalog_and_projects.sql', 'utf8')
+  const nextConfig = readFileSync('next.config.ts', 'utf8')
   assert(route.includes('resolveFileResponse'))
   assert(!route.includes('renderToBuffer'))
   assert(route.includes("version.status === 'invalid'"))
@@ -130,4 +164,5 @@ test('download route only resolves the stored object and cutting-area UI blocks 
   assert(page.includes('требуется пересчёт'))
   assert(migration.includes("old.pdf_metadata <> '{}'::jsonb"))
   assert(bucketMigration.includes("VALUES ('product-files', 'product-files', false"))
+  assert(nextConfig.includes("'/*': ['./public/fonts/**/*']"))
 })
