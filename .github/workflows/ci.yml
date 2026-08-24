@@ -46,6 +46,8 @@ jobs:
         run: npm run test:supply-long-stock-plan-return
       - name: Supply request lifecycle
         run: npm run test:supply-request-flow
+      - name: Archived machine active work visibility
+        run: npm run test:machine-archive-work-visibility
       - name: Supabase migration ordering and duplicate versions
         run: npm run test:supabase-migration-order
       - name: Technologist request editability

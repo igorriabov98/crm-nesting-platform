@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { ROUTES } from '@/lib/constants/routes'
+import { ACTIVE_TRANSFER_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
@@ -113,7 +114,7 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
       .select('id, transfer_id, material_id, material_variant_id, request_item_table, request_item_id, requested_quantity, received_quantity, requested_secondary_quantity, received_secondary_quantity, unit, secondary_unit, piece_length_mm, is_business_scrap')
       .in('transfer_id', transferIds)
       .order('created_at', { ascending: true }),
-    db.from('machines').select('id, name').in('id', machineIds),
+    db.from('machines').select('id, name, is_archived').in('id', machineIds),
     db.from('factories').select('id, name, city, address').in('id', factoryIds),
     db
       .from('tasks')
@@ -137,7 +138,7 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
   }
 
   const materials = new Map(((materialsResult.data || []) as Array<{ id: string; name: string; category: string | null }>).map((row) => [row.id, row]))
-  const machines = new Map(((machinesResult.data || []) as Array<{ id: string; name: string }>).map((row) => [row.id, row.name]))
+  const machines = new Map(((machinesResult.data || []) as Array<{ id: string; name: string; is_archived: boolean | null }>).map((row) => [row.id, row]))
   const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>).map((row) => [row.id, row]))
   const tasks = (tasksResult.data || []) as Array<{ id: string; inventory_transfer_id: string; status: string; deadline: string | null }>
   const itemsByTransfer = new Map<string, Array<Record<string, unknown>>>()
@@ -158,7 +159,9 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
     }
   }
 
-  return transferRows.map((row) => {
+  return transferRows.flatMap((row): InventoryTransferCard[] => {
+    const machine = machines.get(String(row.machine_id))
+    if (!isMachineWorkVisible(machine?.is_archived, String(row.status), ACTIVE_TRANSFER_STATUSES)) return []
     const items = (itemsByTransfer.get(String(row.id)) || [])
       .map((item): InventoryTransferItemCard => {
         const requested = numberValue(item.requested_quantity)
@@ -192,10 +195,10 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
     const expectedArrivalDate = row.expected_arrival_date ? String(row.expected_arrival_date) : null
     const deadline = task?.deadline || null
 
-    return {
+    return [{
       id: String(row.id),
       machineId: String(row.machine_id),
-      machineName: machines.get(String(row.machine_id)) || 'Заказ',
+      machineName: machine?.name || 'Заказ',
       sourceFactoryId: String(row.source_factory_id),
       sourceFactoryName: factories.get(String(row.source_factory_id))?.name || 'Неизвестный завод',
       sourceFactoryCity: factories.get(String(row.source_factory_id))?.city || null,
@@ -211,7 +214,7 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
       taskStatus: task?.status || null,
       deliveryRisk: Boolean(expectedArrivalDate && deadline && expectedArrivalDate > deadline),
       items,
-    }
+    }]
   })
 }
 

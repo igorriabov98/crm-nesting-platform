@@ -1976,6 +1976,12 @@ export async function archiveMachine(id: string, reason?: string) {
     revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
     revalidatePath(ROUTES.SUPPLY)
     revalidatePath(ROUTES.SUPPLY_ORDERS)
+    revalidatePath(ROUTES.SUPPLY_TRANSPORT)
+    revalidatePath(ROUTES.SUPPLY_OUTSOURCING_REQUESTS)
+    revalidatePath(ROUTES.INVENTORY_RECEIVING)
+    revalidatePath(ROUTES.DASHBOARD)
+    revalidatePath(ROUTES.REQUESTS)
+    revalidatePath(ROUTES.NOTIFICATIONS)
     return { success: true, error: null }
   } catch (error: unknown) {
     return { success: false, error: getErrorMessage(error) }
