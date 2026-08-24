@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import type {
   SupplyOrderAggregate,
   SupplyOrderDeliverySchedule,
@@ -22,6 +23,77 @@ import {
 } from '@/components/features/supply-orders/supply-order-view'
 import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
+
+const supplyOrdersAction = readFileSync(new URL('../src/lib/actions/supply-orders.ts', import.meta.url), 'utf8')
+const getSupplyOrdersSource = supplyOrdersAction.slice(
+  supplyOrdersAction.indexOf('export async function getSupplyOrders('),
+  supplyOrdersAction.indexOf('export async function getSupplyOrderHistory('),
+)
+const scopedAccessIndex = getSupplyOrdersSource.indexOf('const { db } = await requireAccess()')
+const scopedRequestsIndex = getSupplyOrdersSource.indexOf(".from('technologist_requests')")
+const scopedItemsIndex = getSupplyOrdersSource.indexOf('const rawItems: RawOrderItem[] =')
+const trustedReadIndex = getSupplyOrdersSource.indexOf('loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems)')
+
+assert.ok(scopedAccessIndex >= 0, 'Supply-order reads must authorize supply_orders:view before database access')
+assert.ok(
+  scopedAccessIndex < scopedRequestsIndex && scopedRequestsIndex < scopedItemsIndex && scopedItemsIndex < trustedReadIndex,
+  'The service-role cutting-plan read must happen only after RLS scopes the accessible requests and items',
+)
+assert.match(
+  getSupplyOrdersSource,
+  /loadLongStockPurchasePlanMap\(createTrustedLongStockReadDb\(\), rawItems\)/u,
+  'Closed cutting-plan tables must be read through the trusted server client',
+)
+
+assert.equal(
+  supplyOrdersAction.match(/loadLongStockPurchasePlanMap\(createTrustedLongStockReadDb\(\), rawItems\)/gu)?.length,
+  3,
+  'Every supply-order cutting-plan read must use the trusted server client',
+)
+assert.doesNotMatch(
+  supplyOrdersAction,
+  /loadLongStockPurchasePlanMap\(db, rawItems\)/u,
+  'Authenticated supply-order clients must never read closed cutting-plan tables directly',
+)
+
+const aggregateOrdersSource = supplyOrdersAction.slice(
+  supplyOrdersAction.indexOf('export async function getSupplyOrderAggregates('),
+  supplyOrdersAction.indexOf('type LongStockPlanItemRow ='),
+)
+assert.match(
+  aggregateOrdersSource,
+  /const \{ db \} = await requireAccess\(\)[\s\S]*await loadAggregateInputItems\(db, factoryId\)/u,
+  'The aggregate supply-order view must authorize supply_orders:view before loading scoped items',
+)
+
+const longStockPlanReaderSource = supplyOrdersAction.slice(
+  supplyOrdersAction.indexOf('async function loadLongStockPurchasePlanMap('),
+)
+assert.match(
+  longStockPlanReaderSource,
+  /\.in\('request_item_id', Array\.from\(new Set\(eligibleItems\.map\(\(item\) => item\.id\)\)\)\)/u,
+  'The trusted cutting-plan query must remain constrained to already-authorized request-item ids',
+)
+assert.match(
+  longStockPlanReaderSource,
+  /eligibleKeys\.has\(`\$\{item\.request_item_table\}:\$\{item\.request_item_id\}`\)/u,
+  'The trusted cutting-plan result must be filtered by table and item id',
+)
+
+const longStockSchemaMigration = readFileSync(
+  new URL('../supabase/migrations/20260816160000_long_stock_cutting_plan_schema.sql', import.meta.url),
+  'utf8',
+)
+assert.match(
+  longStockSchemaMigration,
+  /revoke all on table public\.long_stock_cutting_plan_items from public, anon, authenticated;/u,
+  'The fix must not expose cutting-plan items directly to authenticated users',
+)
+assert.doesNotMatch(
+  longStockSchemaMigration,
+  /grant select on table public\.long_stock_cutting_plan_items to authenticated;/u,
+  'Authenticated users must not receive a direct cutting-plan table grant',
+)
 
 assert.equal(
   getRequestItemSelect('request_pipe'),
