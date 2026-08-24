@@ -15,6 +15,7 @@ import {
   validateMachineCuttingRegistration,
   type DirectMachineCuttingUpload,
 } from '@/lib/machine-cutting/files'
+import { isLongStockPlanReadyForSupply } from '@/lib/request-completion-material-scope'
 
 const stagedArchiveSchema = z.object({
   requestId: z.string().uuid(),
@@ -68,20 +69,12 @@ const finalizeSchema = z.object({
 type RawWasteRow = Record<string, unknown>
 type RawPlanFactRow = Record<string, unknown>
 
-export type CompletionPlanFact = {
+export type CompletionPlanSummary = {
   planId: string
   versionId: string | null
   planStatus: string
   plannedBarCount: number
-  factBarCount: number
-  actualLossBarCount: number
-  purchasedWeightKg: number
-  netWeightKg: number
-  kerfLossWeightKg: number
-  endTrimLossWeightKg: number
-  businessScrapWeightKg: number
-  reconciliationDeltaKg: number
-  ready: boolean
+  readyForSupply: boolean
 }
 
 export type CompletionWasteItem = {
@@ -94,8 +87,8 @@ export type CompletionWasteItem = {
   materialGrade: string | null
   quantityLabel: string
   weightKg: number | null
-  accountingMode: 'manual_percent' | 'plan_fact'
-  planFact: CompletionPlanFact | null
+  accountingMode: 'manual_percent' | 'approved_plan'
+  planSummary: CompletionPlanSummary | null
 }
 
 export type CompletionWorkspace = {
@@ -114,34 +107,16 @@ function planFactKey(sourceTable: string, sourceId: string) {
   return `${sourceTable}:${sourceId}`
 }
 
-function mapPlanFact(row: RawPlanFactRow): CompletionPlanFact {
+function mapPlanSummary(row: RawPlanFactRow): CompletionPlanSummary {
   const planStatus = String(row.plan_status || '')
   const plannedBarCount = Number(row.planned_bar_count || 0)
-  const factBarCount = Number(row.fact_bar_count || 0)
-  const actualLossBarCount = Number(row.actual_loss_bar_count || 0)
   const versionId = row.version_id ? String(row.version_id) : null
-  const reconciliationDeltaKg = Number(row.reconciliation_delta_kg || 0)
   return {
     planId: String(row.plan_id),
     versionId,
     planStatus,
     plannedBarCount,
-    factBarCount,
-    actualLossBarCount,
-    purchasedWeightKg: Number(row.purchased_weight_kg || 0),
-    netWeightKg: Number(row.net_weight_kg || 0),
-    kerfLossWeightKg: Number(row.kerf_loss_weight_kg || 0),
-    endTrimLossWeightKg: Number(row.end_trim_loss_weight_kg || 0),
-    businessScrapWeightKg: Number(row.business_scrap_weight_kg || 0),
-    reconciliationDeltaKg,
-    ready: Boolean(
-      versionId
-      && planStatus === 'closed'
-      && plannedBarCount > 0
-      && factBarCount === plannedBarCount
-      && actualLossBarCount === factBarCount
-      && Math.abs(reconciliationDeltaKg) <= 0.001
-    ),
+    readyForSupply: isLongStockPlanReadyForSupply({ versionId, planStatus, plannedBarCount }),
   }
 }
 
@@ -167,7 +142,7 @@ function mapWaste(sourceTable: CompletionWasteItem['sourceTable'], row: RawWaste
     quantityLabel: quantity,
     weightKg: num(row.calculated_weight_kg),
     accountingMode: 'manual_percent',
-    planFact: null,
+    planSummary: null,
   }
 }
 
@@ -200,9 +175,9 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
     const factory = Array.isArray(machineResult.data.factories) ? machineResult.data.factories[0] : machineResult.data.factories
     if (!machineResult.data.factory_id || !factory) throw new Error('У машины не указан завод')
     if (planFactsResult.error) throw new Error(planFactsResult.error.message || 'Не удалось загрузить факты карт раскроя')
-    const planFacts = new Map<string, CompletionPlanFact>((planFactsResult.data || []).map((row: RawPlanFactRow) => [
+    const planSummaries = new Map<string, CompletionPlanSummary>((planFactsResult.data || []).map((row: RawPlanFactRow) => [
       planFactKey(String(row.request_item_table), String(row.request_item_id)),
-      mapPlanFact(row),
+      mapPlanSummary(row),
     ]))
     const wasteItems = [
       ...(sheet.data || []).map((row: RawWasteRow) => mapWaste('request_sheet_metal', row)),
@@ -210,8 +185,8 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
       ...(circle.data || []).map((row: RawWasteRow) => mapWaste('request_circle', row)),
       ...(knives.data || []).map((row: RawWasteRow) => mapWaste('request_knives', row)),
     ].map((item) => {
-      const planFact = planFacts.get(planFactKey(item.sourceTable, item.sourceId)) || null
-      return planFact ? { ...item, accountingMode: 'plan_fact' as const, planFact } : item
+      const planSummary = planSummaries.get(planFactKey(item.sourceTable, item.sourceId)) || null
+      return planSummary ? { ...item, accountingMode: 'approved_plan' as const, planSummary } : item
     })
     return { data: { requestId: id, machineId: machineResult.data.id, machineName: machineResult.data.name, factoryId: machineResult.data.factory_id, factoryName: factory.name, wasteItems }, error: null, redirectTo: null }
   } catch (error) { return { data: null, error: getErrorMessage(error), redirectTo: null } }
@@ -246,11 +221,19 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
   let stagedArchives: DirectMachineCuttingUpload[] = []
   try {
     const parsed = finalizeSchema.parse(input)
-    const { supabase, userId } = await requirePermission('technologist_requests', 'manage')
-    const machineResult = await db().from('technologist_requests').select('machine_id,created_by').eq('id', parsed.requestId).single()
-    if (machineResult.error || !machineResult.data) throw new Error('Заявка не найдена')
-    if (machineResult.data.created_by !== userId) throw new Error('Завершить заявку может только её автор')
     stagedArchives = parsed.archives
+    const { supabase, userId } = await requirePermission('technologist_requests', 'manage')
+    const client = db()
+    const [machineResult, sheetResult] = await Promise.all([
+      client.from('technologist_requests').select('machine_id,created_by').eq('id', parsed.requestId).single(),
+      client.from('request_sheet_metal').select('id', { count: 'exact', head: true }).eq('request_id', parsed.requestId),
+    ])
+    if (machineResult.error || !machineResult.data) throw new Error('Заявка не найдена')
+    if (sheetResult.error) throw new Error('Не удалось проверить состав заявки')
+    if (machineResult.data.created_by !== userId) throw new Error('Завершить заявку может только её автор')
+    const hasSheetMetal = (sheetResult.count || 0) > 0
+    if (!hasSheetMetal && stagedArchives.length > 0) throw new Error('Программа порезки доступна только для листового металла')
+    if (!hasSheetMetal && (parsed.hours > 0 || parsed.minutes > 0)) throw new Error('Время плазмы доступно только для листового металла')
     for (const archive of stagedArchives) {
       if (archive.requestId !== parsed.requestId) throw new Error('Архив относится к другой заявке')
       if (archive.completionId !== null) throw new Error('Архив уже относится к завершённой заявке')
