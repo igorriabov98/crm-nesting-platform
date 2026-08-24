@@ -92,13 +92,19 @@ for (const required of [
   'isMetalScrapSaleWeightValid',
   'Перепроверку выполняет ответственный сотрудник',
   '<Dialog open={Boolean(cancellationSale)}',
+  "window.history.pushState(null, '', href(data.selectedFactory, status))",
+  'formatMetalScrapMaterialName(lot.material_name)',
+  'Источник: заявка технолога по машине',
 ]) assert.ok(metalScrapPage.includes(required), `metal-scrap UI is missing ${required}`)
 assert.ok(!metalScrapPage.includes('window.prompt'))
+assert.ok(!metalScrapPage.includes('заявка ${shortId'))
 
 const futureInventoryAction = readFileSync('src/lib/actions/future-inventory.ts', 'utf8')
 for (const required of [
   'normalizeMetalScrapPage(page)',
   'METAL_SCRAP_PAGE_SIZE',
+  'METAL_SCRAP_STATUSES.map',
+  'statusPages',
   'created_by,material_name',
   'can_review: canManageScrap && lot.created_by === userId',
 ]) assert.ok(futureInventoryAction.includes(required), `metal-scrap page action is missing ${required}`)

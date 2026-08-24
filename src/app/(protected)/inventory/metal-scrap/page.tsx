@@ -22,7 +22,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ f
 
   return (
     <MetalScrapPage
-      key={`${result.data.selectedFactory}:${result.data.status}:${result.data.page}`}
+      key={`${result.data.selectedFactory}:${result.data.status}:${result.data.statusPages[result.data.status].page}`}
       data={result.data}
     />
   )

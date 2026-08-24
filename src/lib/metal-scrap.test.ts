@@ -1,11 +1,25 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  formatMetalScrapMaterialName,
   formatFactoryDateInput,
   isMetalScrapSaleWeightValid,
   metalScrapReviewNeedsReason,
   normalizeMetalScrapPage,
+  normalizeMetalScrapStatus,
 } from './metal-scrap'
+
+test('normalizes metal scrap status from the URL', () => {
+  assert.equal(normalizeMetalScrapStatus('future'), 'future')
+  assert.equal(normalizeMetalScrapStatus('unknown'), 'available')
+  assert.equal(normalizeMetalScrapStatus(null, 'review_required'), 'review_required')
+})
+
+test('replaces technical material enum values with operator labels', () => {
+  assert.equal(formatMetalScrapMaterialName('square'), 'Труба квадратная')
+  assert.equal(formatMetalScrapMaterialName('RECTANGULAR'), 'Труба прямоугольная')
+  assert.equal(formatMetalScrapMaterialName('ножи'), 'ножи')
+})
 
 test('normalizes invalid lot pages to the first page', () => {
   assert.equal(normalizeMetalScrapPage(-1), 0)
