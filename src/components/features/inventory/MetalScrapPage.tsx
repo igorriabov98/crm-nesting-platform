@@ -1,7 +1,7 @@
 'use client'
 
 import { type FormEvent, useMemo, useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -44,13 +44,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { cancelMetalScrapSale, reviewMetalScrapLot, sellMetalScrap } from '@/lib/actions/future-inventory'
 import { ROUTES } from '@/lib/constants/routes'
 import {
+  formatMetalScrapMaterialName,
   formatFactoryDateInput,
   isMetalScrapSaleWeightValid,
   metalScrapReviewNeedsReason,
+  type MetalScrapStatus,
+  normalizeMetalScrapStatus,
 } from '@/lib/metal-scrap'
 import { cn } from '@/lib/utils'
-
-type MetalScrapStatus = 'future' | 'available' | 'review_required'
 
 type FactoryOption = {
   id: string
@@ -96,9 +97,11 @@ type MetalScrapPageData = {
   status: MetalScrapStatus
   canManageScrap: boolean
   canManageSales: boolean
-  lots: MetalScrapLot[]
-  total: number
-  page: number
+  statusPages: Record<MetalScrapStatus, {
+    lots: MetalScrapLot[]
+    total: number
+    page: number
+  }>
   pageSize: number
   sales: MetalScrapSale[]
   aggregates: {
@@ -138,15 +141,13 @@ function formatDate(value: string) {
   return year && month && day ? `${day}.${month}.${year}` : value
 }
 
-function shortId(value: string | null) {
-  return value ? value.slice(0, 8) : '—'
-}
-
 function lotSource(lot: MetalScrapLot) {
   if (lot.source_type === 'inventory_conversion') {
-    return `Переведено со склада · строка ${shortId(lot.source_inventory_id)}`
+    return 'Источник: складской деловой остаток'
   }
-  return `${lot.machines?.name || 'Машина не указана'} · заявка ${shortId(lot.request_id)}`
+  return lot.machines?.name
+    ? `Источник: заявка технолога по машине «${lot.machines.name}»`
+    : 'Источник: заявка технолога (машина не указана)'
 }
 
 function MetricCard({
@@ -218,6 +219,7 @@ function EmptyState({ status }: { status: MetalScrapStatus }) {
 
 export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [pending, startTransition] = useTransition()
   const [weights, setWeights] = useState<Record<string, string>>({})
   const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({})
@@ -228,16 +230,21 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
   const [comment, setComment] = useState('')
   const [cancellationSale, setCancellationSale] = useState<MetalScrapSale | null>(null)
   const [cancellationReason, setCancellationReason] = useState('')
+  const activeStatus = normalizeMetalScrapStatus(searchParams.get('status'), data.status)
+  const activePage = data.statusPages[activeStatus]
+  const lots = activePage.lots
+  const total = activePage.total
+  const page = activePage.page
 
   const invalidSaleWeightIds = useMemo(() => new Set(
-    data.lots
+    lots
       .filter((lot) => !isMetalScrapSaleWeightValid(weights[lot.id] || '', Number(lot.available_weight_kg)))
       .map((lot) => lot.id),
-  ), [data.lots, weights])
+  ), [lots, weights])
 
-  const selected = useMemo(() => data.lots
+  const selected = useMemo(() => lots
     .map((lot) => ({ lotId: lot.id, weightKg: Number(weights[lot.id] || 0) }))
-    .filter((item) => Number.isFinite(item.weightKg) && item.weightKg > 0), [data.lots, weights])
+    .filter((item) => Number.isFinite(item.weightKg) && item.weightKg > 0), [lots, weights])
 
   const totalWeight = selected.reduce((sum, item) => sum + item.weightKg, 0)
   const amountValue = Number(amount)
@@ -249,13 +256,13 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
     && amountValue >= 0
   const averagePrice = totalWeight > 0 && Number.isFinite(amountValue) ? amountValue / totalWeight : 0
   const activeFactory = data.factories.find((factory) => factory.id === data.selectedFactory)
-  const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
-  const rangeStart = data.total === 0 ? 0 : data.page * data.pageSize + 1
-  const rangeEnd = Math.min(data.total, (data.page + 1) * data.pageSize)
+  const totalPages = Math.max(1, Math.ceil(total / data.pageSize))
+  const rangeStart = total === 0 ? 0 : page * data.pageSize + 1
+  const rangeEnd = Math.min(total, (page + 1) * data.pageSize)
 
-  function href(factory = data.selectedFactory, status = data.status, page = 0) {
+  function href(factory = data.selectedFactory, status = activeStatus, nextPage = 0) {
     const params = new URLSearchParams({ factory, status })
-    if (page > 0) params.set('page', String(page))
+    if (nextPage > 0) params.set('page', String(nextPage))
     return `${ROUTES.INVENTORY_METAL_SCRAP}?${params.toString()}`
   }
 
@@ -263,12 +270,24 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
     startTransition(() => router.push(href(factory, status, page)))
   }
 
+  function selectStatus(status: MetalScrapStatus) {
+    if (status === activeStatus) return
+    setWeights({})
+    setReviewReasons({})
+    setAmount('')
+    setDate(formatFactoryDateInput())
+    setBuyer('')
+    setDocument('')
+    setComment('')
+    window.history.pushState(null, '', href(data.selectedFactory, status))
+  }
+
   function setLotWeight(lotId: string, value: string) {
     setWeights((current) => ({ ...current, [lotId]: value }))
   }
 
   function selectAllAvailable() {
-    setWeights(Object.fromEntries(data.lots
+    setWeights(Object.fromEntries(lots
       .filter((lot) => Number(lot.available_weight_kg) > 0)
       .map((lot) => [lot.id, Number(lot.available_weight_kg).toFixed(3)])))
   }
@@ -374,7 +393,7 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
               <Factory className="size-4" aria-hidden="true" />
               Завод
             </Label>
-            <Select value={data.selectedFactory} onValueChange={(value) => value && navigate(value, data.status)}>
+            <Select value={data.selectedFactory} onValueChange={(value) => value && navigate(value, activeStatus)}>
               <SelectTrigger id="metal-scrap-factory" className="min-h-11 w-full border-white/20 bg-white text-slate-950" aria-label="Выберите завод металлолома">
                 <SelectValue>{activeFactory?.name || 'Выберите завод'}</SelectValue>
               </SelectTrigger>
@@ -404,7 +423,7 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
             <h2 id="scrap-workspace-title" className="font-heading text-lg font-semibold text-slate-950">Работа с партиями</h2>
             <p className="text-sm text-slate-600">Выберите состояние, чтобы увидеть соответствующие партии.</p>
           </div>
-          <Tabs value={data.status} onValueChange={(value) => navigate(data.selectedFactory, value as MetalScrapStatus)} className="w-full lg:w-auto">
+          <Tabs value={activeStatus} onValueChange={(value) => selectStatus(value as MetalScrapStatus)} className="w-full lg:w-auto">
             <TabsList className="grid h-auto w-full grid-cols-3 bg-slate-100 p-1 lg:w-[480px]">
               {statusTabs.map((tab) => (
                 <TabsTrigger key={tab.value} value={tab.value} className="min-h-11 flex-col gap-0 px-2 text-xs sm:text-sm">
@@ -416,27 +435,27 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
           </Tabs>
         </div>
 
-        <div className={cn('grid items-start gap-5', data.status === 'available' && data.canManageSales && 'xl:grid-cols-[minmax(0,1fr)_390px]')}>
+        <div className={cn('grid items-start gap-5', activeStatus === 'available' && data.canManageSales && 'xl:grid-cols-[minmax(0,1fr)_390px]')}>
           <Card className="border border-slate-200 py-0 shadow-sm ring-0">
             <CardHeader className="border-b border-slate-200 px-5 py-5 sm:px-6">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <CardTitle className="text-lg text-slate-950">
-                    {data.status === 'future' && 'Ожидаемые партии'}
-                    {data.status === 'available' && 'Партии для сдачи'}
-                    {data.status === 'review_required' && 'Партии на перепроверке'}
+                    {activeStatus === 'future' && 'Ожидаемые партии'}
+                    {activeStatus === 'available' && 'Партии для сдачи'}
+                    {activeStatus === 'review_required' && 'Партии на перепроверке'}
                   </CardTitle>
                   <CardDescription className="mt-1">
-                    {data.status === 'future' && 'Расчётный вес до завершения производственного этапа.'}
-                    {data.status === 'available' && 'Укажите вес сдачи для одной или нескольких партий.'}
-                    {data.status === 'review_required' && 'Подтвердите фактический вес или укажите причину корректировки.'}
+                    {activeStatus === 'future' && 'Расчётный вес до завершения производственного этапа.'}
+                    {activeStatus === 'available' && 'Укажите вес сдачи для одной или нескольких партий.'}
+                    {activeStatus === 'review_required' && 'Подтвердите фактический вес или укажите причину корректировки.'}
                   </CardDescription>
                 </div>
                 <Badge variant="outline" className="h-7 border-slate-200 bg-slate-50 px-3 text-slate-700">
-                  {data.total} {data.total === 1 ? 'партия' : 'партий'}
+                  {total} {total === 1 ? 'партия' : 'партий'}
                 </Badge>
               </div>
-              {data.status === 'available' && data.canManageSales && data.lots.length > 0 && (
+              {activeStatus === 'available' && data.canManageSales && lots.length > 0 && (
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button type="button" variant="outline" className="min-h-11" onClick={selectAllAvailable} disabled={pending}>
                     <ArrowDownToLine className="size-4" aria-hidden="true" />
@@ -452,7 +471,7 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
             </CardHeader>
 
             <CardContent className="space-y-3 px-4 py-4 sm:px-6 sm:py-5">
-              {data.lots.map((lot) => {
+              {lots.map((lot) => {
                 const availableWeight = Number(lot.available_weight_kg)
                 const soldWeight = Number(lot.sold_weight_kg)
                 const expectedWeight = Number(lot.expected_weight_kg)
@@ -473,7 +492,7 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
                             </Badge>
                             {lot.material_grade && <Badge variant="secondary">{lot.material_grade}</Badge>}
                           </div>
-                          <h3 className="text-base font-semibold text-slate-950">{lot.material_name}</h3>
+                          <h3 className="text-base font-semibold text-slate-950">{formatMetalScrapMaterialName(lot.material_name)}</h3>
                           <p className="mt-1 text-sm leading-6 text-slate-600">{lotSource(lot)}</p>
                         </div>
                         <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-5">
@@ -488,14 +507,14 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
                         </div>
                       </div>
 
-                      {data.status === 'future' && (
+                      {activeStatus === 'future' && (
                         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg bg-blue-50 px-3 py-3 text-sm text-blue-900">
                           <span className="flex items-center gap-2"><Clock3 className="size-4" aria-hidden="true" />Ожидается: <strong className="font-mono tabular-nums">{formatWeight(lot.expected_weight_kg)}</strong></span>
                           {lot.promoted_stage_end && <span>Плановая дата: {formatDate(lot.promoted_stage_end)}</span>}
                         </div>
                       )}
 
-                      {data.status === 'available' && (
+                      {activeStatus === 'available' && (
                         <div className="grid gap-4 rounded-xl bg-emerald-50/70 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,280px)] sm:items-end sm:p-4">
                           <div>
                             <p className="text-xs font-medium uppercase tracking-wide text-emerald-800">Доступно к сдаче</p>
@@ -534,7 +553,7 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
                         </div>
                       )}
 
-                      {data.status === 'review_required' && (
+                      {activeStatus === 'review_required' && (
                         lot.can_review ? (
                           <form className="grid gap-4 rounded-xl bg-amber-50/80 p-3 sm:grid-cols-2 sm:p-4" onSubmit={(event) => submitReview(event, lot)}>
                             <div>
@@ -583,18 +602,18 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
                 )
               })}
 
-              {data.lots.length === 0 && <EmptyState status={data.status} />}
+              {lots.length === 0 && <EmptyState status={activeStatus} />}
             </CardContent>
 
             {totalPages > 1 && (
               <CardFooter className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 sm:flex-row sm:justify-between sm:px-6">
-                <p className="text-sm text-slate-600">Показано {rangeStart}–{rangeEnd} из {data.total}</p>
+                <p className="text-sm text-slate-600">Показано {rangeStart}–{rangeEnd} из {total}</p>
                 <div className="flex w-full gap-2 sm:w-auto">
-                  <Button type="button" variant="outline" className="min-h-11 flex-1 bg-white sm:flex-none" disabled={pending || data.page === 0} onClick={() => navigate(data.selectedFactory, data.status, data.page - 1)}>
+                  <Button type="button" variant="outline" className="min-h-11 flex-1 bg-white sm:flex-none" disabled={pending || page === 0} onClick={() => navigate(data.selectedFactory, activeStatus, page - 1)}>
                     <ChevronLeft className="size-4" aria-hidden="true" />
                     Назад
                   </Button>
-                  <Button type="button" variant="outline" className="min-h-11 flex-1 bg-white sm:flex-none" disabled={pending || data.page >= totalPages - 1} onClick={() => navigate(data.selectedFactory, data.status, data.page + 1)}>
+                  <Button type="button" variant="outline" className="min-h-11 flex-1 bg-white sm:flex-none" disabled={pending || page >= totalPages - 1} onClick={() => navigate(data.selectedFactory, activeStatus, page + 1)}>
                     Далее
                     <ChevronRight className="size-4" aria-hidden="true" />
                   </Button>
@@ -603,7 +622,7 @@ export function MetalScrapPage({ data }: { data: MetalScrapPageData }) {
             )}
           </Card>
 
-          {data.status === 'available' && data.canManageSales && (
+          {activeStatus === 'available' && data.canManageSales && (
             <Card className="border border-slate-200 py-0 shadow-sm ring-0 xl:sticky xl:top-6">
               <CardHeader className="border-b border-slate-200 px-5 py-5">
                 <CardTitle className="flex items-center gap-2 text-lg text-slate-950">
