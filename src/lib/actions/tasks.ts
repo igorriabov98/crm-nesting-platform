@@ -7,6 +7,7 @@ import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import { ROUTES } from '@/lib/constants/routes'
 import { TASKS_LIST_LIMIT } from '@/lib/constants/performance-limits'
+import { ACTIVE_TASK_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import type { ProductProject, ProductProjectFile, ProductProjectVersion, Task, TaskDelegation, TaskDelegationStatus, TaskStatus, TaskType, UserRole } from '@/lib/types'
 
@@ -140,7 +141,7 @@ function relationOne<T>(value: T | T[] | null | undefined): T | null {
 }
 
 function isActiveTaskStatus(status: TaskStatus) {
-  return status === 'pending' || status === 'in_progress'
+  return ACTIVE_TASK_STATUSES.some((activeStatus) => activeStatus === status)
 }
 
 function isOpenDelegationStatus(status: TaskDelegationStatus) {
@@ -148,11 +149,14 @@ function isOpenDelegationStatus(status: TaskDelegationStatus) {
 }
 
 function filterVisibleMachineTasks(tasks: TaskWithRelations[], role: UserRole, factoryId: string | null) {
-  if (role !== 'production_manager') return tasks
-
   return tasks.filter((task) => {
     if (!task.machine_id) return true
     if (!task.machine) return false
+    // Archiving cancels open tasks, but keep this read-side guard so stale or
+    // concurrently-created work can never return to an active queue. Terminal
+    // tasks remain visible as history.
+    if (!isMachineWorkVisible(task.machine.is_archived, task.status, ACTIVE_TASK_STATUSES)) return false
+    if (role !== 'production_manager') return true
     return task.machine.factory_id === null || task.machine.factory_id === factoryId
   })
 }
@@ -847,7 +851,10 @@ export async function getTaskDelegationOverview(): Promise<{
 
     return {
       data: {
-        incoming: ((incomingResult.data || []) as DelegationQueryRow[]).map(normalizeDelegationWithTask).filter(isVisible),
+        incoming: ((incomingResult.data || []) as DelegationQueryRow[])
+          .map(normalizeDelegationWithTask)
+          .filter((item) => Boolean(item.task && isActiveTaskStatus(item.task.status)))
+          .filter(isVisible),
         outgoing: ((outgoingResult.data || []) as DelegationQueryRow[]).map(normalizeDelegationWithTask).filter(isVisible),
       },
       error: null,

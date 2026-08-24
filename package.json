@@ -52,6 +52,7 @@
     "test:transport-date-approval": "node scripts/test-transport-date-approval.mjs",
     "test:department-requests": "tsx scripts/test-department-requests.ts",
     "test:machine-layout-queue": "tsx scripts/test-machine-layout-queue.ts",
+    "test:machine-archive-work-visibility": "tsx scripts/test-machine-archive-work-visibility.ts",
     "test:technologist-request-readiness": "tsx scripts/test-technologist-request-readiness.ts",
     "test:technologist-request-editability": "tsx scripts/test-technologist-request-editability.ts",
     "test:material-request-queue": "tsx scripts/test-material-request-queue.ts",

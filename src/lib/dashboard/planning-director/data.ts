@@ -107,12 +107,12 @@ export async function getPlanningPersonalItems(context: DashboardContext, today 
   const admin = db()
   const [tasksResult, requestsResult] = await Promise.all([
     admin.from('tasks')
-      .select('id, title, status, deadline, department_request_id, machine:machines(id, name)')
+      .select('id, title, status, deadline, department_request_id, machine:machines(id, name, is_archived)')
       .eq('assigned_to', context.userId)
       .in('status', ['pending', 'in_progress'])
       .limit(250),
     admin.from('department_requests')
-      .select('id, title, status, due_date, machine:machines(id, name)')
+      .select('id, title, status, due_date, machine:machines(id, name, is_archived)')
       .eq('assigned_to', context.userId)
       .in('status', ['new', 'in_progress'])
       .limit(250),
@@ -120,7 +120,7 @@ export async function getPlanningPersonalItems(context: DashboardContext, today 
   throwOnError(tasksResult, 'Не удалось загрузить задачи')
   throwOnError(requestsResult, 'Не удалось загрузить запросы')
 
-  type Relation = { id: string; name: string } | Array<{ id: string; name: string }> | null
+  type Relation = { id: string; name: string; is_archived: boolean | null } | Array<{ id: string; name: string; is_archived: boolean | null }> | null
   type TaskRow = {
     id: string
     title: string
@@ -137,10 +137,14 @@ export async function getPlanningPersonalItems(context: DashboardContext, today 
     machine: Relation
   }
   const relationOne = (value: Relation) => Array.isArray(value) ? value[0] || null : value
+  const visibleTasks = ((tasksResult.data || []) as TaskRow[])
+    .filter((task) => relationOne(task.machine)?.is_archived !== true)
+  const visibleRequests = ((requestsResult.data || []) as RequestRow[])
+    .filter((request) => relationOne(request.machine)?.is_archived !== true)
   const linkedRequestIds = new Set(
-    ((tasksResult.data || []) as TaskRow[]).map((task) => task.department_request_id).filter(Boolean),
+    visibleTasks.map((task) => task.department_request_id).filter(Boolean),
   )
-  const taskItems: PlanningPersonalItem[] = ((tasksResult.data || []) as TaskRow[]).map((task) => ({
+  const taskItems: PlanningPersonalItem[] = visibleTasks.map((task) => ({
     id: task.id,
     kind: task.department_request_id ? 'request' : 'task',
     title: task.title,
@@ -151,7 +155,7 @@ export async function getPlanningPersonalItems(context: DashboardContext, today 
       ? `${ROUTES.REQUESTS}/detail/${task.department_request_id}`
       : `${ROUTES.TASKS}?task=${task.id}`,
   }))
-  const requestItems: PlanningPersonalItem[] = ((requestsResult.data || []) as RequestRow[])
+  const requestItems: PlanningPersonalItem[] = visibleRequests
     .filter((request) => !linkedRequestIds.has(request.id))
     .map((request) => ({
       id: request.id,
@@ -384,22 +388,26 @@ export async function getPlanningSupplyRisks(
       .eq('factory_id', factoryId)
       .in('status', ['new', 'invoice_taken', 'delivery', 'received_partial']),
     admin.from('detailing_transfers')
-      .select('id, machine_id, expected_arrival_date, status, machine:machines(id, name)')
+      .select('id, machine_id, expected_arrival_date, status, machine:machines!inner(id, name, is_archived)')
       .eq('destination_factory_id', factoryId)
+      .eq('machines.is_archived', false)
       .in('status', ['needs_date', 'scheduled', 'partially_received']),
     admin.from('inventory_transfers')
-      .select('id, machine_id, expected_arrival_date, status, machine:machines(id, name)')
+      .select('id, machine_id, expected_arrival_date, status, machine:machines!inner(id, name, is_archived)')
       .eq('destination_factory_id', factoryId)
+      .eq('machines.is_archived', false)
       .in('status', ['needs_date', 'scheduled', 'partially_received']),
     admin.from('machine_outsourcing_operations')
-      .select('id, planned_return_date, actual_returned_at, machine:machines!inner(id, name, factory_id), work_type:outsourcing_work_types(name)')
+      .select('id, planned_return_date, actual_returned_at, machine:machines!inner(id, name, factory_id, is_archived), work_type:outsourcing_work_types(name)')
       .is('archived_at', null)
       .is('actual_returned_at', null)
-      .eq('machines.factory_id', factoryId),
+      .eq('machines.factory_id', factoryId)
+      .eq('machines.is_archived', false),
     admin.from('machine_outsourcing_transport_needs')
-      .select('id, needed_date, direction, status, operation:machine_outsourcing_operations!inner(machine:machines!inner(id, name, factory_id))')
+      .select('id, needed_date, direction, status, operation:machine_outsourcing_operations!inner(machine:machines!inner(id, name, factory_id, is_archived))')
       .in('status', ['open', 'linked'])
-      .eq('operation.machine.factory_id', factoryId),
+      .eq('operation.machine.factory_id', factoryId)
+      .eq('operation.machine.is_archived', false),
   ])
   for (const [result, message] of [
     [legacySupplyResult, 'Не удалось загрузить legacy-риски снабжения'],

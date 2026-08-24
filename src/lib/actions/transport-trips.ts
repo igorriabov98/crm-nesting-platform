@@ -638,8 +638,30 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       .filter((id): id is string => Boolean(id)),
   )
 
+  const activeTripIds = new Set(
+    outsourcingResult.data.orders
+      .filter((order) => isActiveTransfer(order.status))
+      .map((order) => order.id),
+  )
+  const visibleActiveNeedKeys = new Set<string>([
+    ...outsourcingResult.data.needs.map((need) => needKey('outsourcing', need.id)),
+    ...outsourcingResult.data.orders.flatMap((order) => order.needs
+      .filter((need) => isActiveTransfer(need.status))
+      .map((need) => needKey('outsourcing', need.id))),
+    ...(detailingResult.data || [])
+      .filter((card) => isActiveTransfer(card.status))
+      .map((card) => needKey('detailing_transfer', card.id)),
+    ...(materialsResult.data || [])
+      .filter((card) => isActiveTransfer(card.status))
+      .map((card) => needKey('inventory_transfer', card.id)),
+    ...supplyResult.data.map((need) => needKey('supply_schedule', need.id)),
+  ])
+  const visibleLinks = links.filter((link) => (
+    !activeTripIds.has(link.transport_order_id)
+    || visibleActiveNeedKeys.has(needKey(link.need_source, link.need_id))
+  ))
   const activeLinkedNeeds = new Set(
-    links
+    visibleLinks
       .filter((link) => !link.released_at)
       .map((link) => needKey(link.need_source, link.need_id)),
   )
@@ -661,7 +683,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
     })
 
   const linksByTrip = new Map<string, TripLinkRow[]>()
-  for (const link of links) {
+  for (const link of visibleLinks) {
     linksByTrip.set(link.transport_order_id, [
       ...(linksByTrip.get(link.transport_order_id) || []),
       link,
@@ -695,15 +717,16 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
     dateRequestsByTrip.set(request.transport_order_id, [...(dateRequestsByTrip.get(request.transport_order_id) || []), mapped])
   }
 
-  const trips = outsourcingResult.data.orders.map((order): TransportTrip => {
+  const trips = outsourcingResult.data.orders.flatMap((order): TransportTrip[] => {
     const linkedNeeds = linksByTrip.get(order.id) || []
     const tripNeeds = linkedNeeds?.length
       ? linkedNeeds.map(mapLink)
       : order.needs.map(mapLegacyOutsourcingNeed)
+    if (isActiveTransfer(order.status) && tripNeeds.length === 0) return []
     const firstNeed = tripNeeds[0]
     const destinationLabels = Array.from(new Set(tripNeeds.map((need) => need.destinationPointLabel)))
     const routeStart = order.route_start || firstNeed?.sourcePointLabel || null
-    return {
+    return [{
       id: order.id,
       direction: order.direction,
       status: order.status,
@@ -730,7 +753,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       dateChangeRequests: dateRequestsByTrip.get(order.id) || [],
       needs: tripNeeds,
       stops: (stopsByTrip.get(order.id) || []).map(mapStop),
-    }
+    }]
   })
 
   const errors: TransportWorkspace['errors'] = {}
