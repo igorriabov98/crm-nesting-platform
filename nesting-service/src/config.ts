@@ -23,6 +23,8 @@ const envSchema = z.object({
       required_error: 'DATABASE_URL is required. Set it in .env, for example postgresql://user:pass@host:5432/crm_db?schema=nesting',
     })
     .min(1, 'DATABASE_URL is required. Set it in .env.'),
+  NESTING_PRISMA_POOL_MAX: z.coerce.number().int().min(1).max(20).default(2),
+  NESTING_QUEUE_POOL_MAX: z.coerce.number().int().min(1).max(20).default(1),
   UPLOAD_DIR: z.string().min(1).default('./uploads'),
   OUTPUT_DIR: z.string().min(1).default('./output'),
   MAX_FILE_SIZE_MB: z.coerce.number().positive().default(500),

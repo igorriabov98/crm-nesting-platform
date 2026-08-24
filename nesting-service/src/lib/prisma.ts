@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { config } from '../config';
+import { withPrismaConnectionLimit } from './database-connection';
 
 const logOptions =
   config.NODE_ENV === 'development'
@@ -11,6 +12,7 @@ const logOptions =
 
 function createPrismaClient() {
   return new PrismaClient({
+    datasourceUrl: withPrismaConnectionLimit(config.DATABASE_URL, config.NESTING_PRISMA_POOL_MAX),
     log: logOptions,
   });
 }
