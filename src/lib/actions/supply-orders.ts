@@ -450,6 +450,12 @@ async function requireReceivingAccess(operation: PermissionOperation = 'view') {
   return { db: supabase as unknown as RpcDb, userId }
 }
 
+function createTrustedLongStockReadDb() {
+  // Callers must first derive request-item ids through their permission-scoped
+  // client. This client is only for the closed cutting-plan detail tables.
+  return createAdminClient() as unknown as LooseDb
+}
+
 function getTargetDeliveryDate(plannedMaterialDate: Date, deliveryDays: number[], deliveryLeadDays: number, customDeliveryDate?: string | null): Date | null {
   if (customDeliveryDate) return new Date(`${customDeliveryDate}T00:00:00`)
   const latestShipDate = new Date(plannedMaterialDate)
@@ -1024,7 +1030,7 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
   if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
   const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
 
-  const longStockPlanMap = await loadLongStockPurchasePlanMap(db, rawItems)
+  const longStockPlanMap = await loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems)
   return rawItems.map((item) => applyLongStockPurchasePlan({
     ...item,
     supplier_id: item.supplier_id || (item.material_id ? materialSupplierMap.get(item.material_id) || null : null),
@@ -1201,7 +1207,11 @@ export async function getSupplyOrders(
       ...meshItems.map((row) => makeItem('request_mesh', 'mesh', row, row.description, supplierForRow(row))),
       ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
     ]
-    const longStockPlanMap = await loadLongStockPurchasePlanMap(db, rawItems)
+    // Base requests and request items above are selected through the caller's
+    // authenticated client and RLS. Only the matching cutting-plan details are
+    // read with service_role because these internal tables intentionally revoke
+    // direct SELECT from authenticated users.
+    const longStockPlanMap = await loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems)
     const orderableRawItems = rawItems
       .map((item) => applyLongStockPurchasePlan(item, longStockPlanMap))
       .filter((item) => item.to_order > 0)
@@ -1739,7 +1749,7 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
     ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
   ].filter((item): item is SupplyOrderAggregateInputItem => Boolean(item))
 
-  const longStockPlanMap = await loadLongStockPurchasePlanMap(db, rawItems)
+  const longStockPlanMap = await loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems)
   const orderableItems = rawItems
     .map((item) => applyLongStockPurchasePlan(item, longStockPlanMap))
     .filter((item) => item.to_order > 0)
