@@ -49,6 +49,62 @@ where (
   )
   and default_unit is distinct from 'мм';
 
+-- Keep a narrow, durable rollback snapshot of every row this data repair will
+-- mutate. The table is intentionally service-role-only and records one stable
+-- statement timestamp for the operator report.
+create table if not exists public._migration_backup_inventory_units_20260825 (
+  inventory_id uuid primary key,
+  original_unit text not null,
+  original_secondary_unit text,
+  original_calculated_weight_kg numeric,
+  original_updated_at timestamptz,
+  captured_at timestamptz not null
+);
+
+revoke all on table public._migration_backup_inventory_units_20260825
+  from public, anon, authenticated;
+grant select on table public._migration_backup_inventory_units_20260825
+  to service_role;
+
+insert into public._migration_backup_inventory_units_20260825 (
+  inventory_id,
+  original_unit,
+  original_secondary_unit,
+  original_calculated_weight_kg,
+  original_updated_at,
+  captured_at
+)
+select
+  id,
+  unit,
+  secondary_unit,
+  calculated_weight_kg,
+  updated_at,
+  statement_timestamp()
+from public.inventory
+where piece_length_mm is not null
+  and (
+    unit is distinct from 'мм'
+    or secondary_unit is distinct from 'шт'
+  )
+on conflict (inventory_id) do nothing;
+
+do $$
+declare
+  v_rows bigint;
+  v_captured_at timestamptz;
+begin
+  select count(*), min(captured_at)
+  into v_rows, v_captured_at
+  from public._migration_backup_inventory_units_20260825;
+
+  raise notice
+    'inventory unit rollback snapshot: table=public._migration_backup_inventory_units_20260825 rows=% captured_at=%',
+    v_rows,
+    v_captured_at;
+end;
+$$;
+
 -- Repair already-created measured rows. Including unit in the SET list also
 -- invokes trg_inventory_weight after this alphabetically earlier normalization
 -- trigger, recalculating weights that were multiplied as piece quantities.
