@@ -45,7 +45,8 @@ CREATE TABLE public.material_variants (
   pipe_type public.pipe_subtype,
   piece_description text,
   wall_thickness_mm numeric,
-  knife_bevel_count smallint
+  knife_bevel_count smallint,
+  default_unit text
 );
 CREATE TABLE public.long_stock_cutting_plans (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

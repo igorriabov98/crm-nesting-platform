@@ -175,6 +175,12 @@ function dimensionText(...values: unknown[]) {
   return numbers.every((value) => value !== null && value > 0) ? numbers.join('x') : null
 }
 
+function defaultUnitForVariantUsage(category: MaterialCategory, characteristics: Record<string, unknown>) {
+  if (category === 'circle' || category === 'knives') return 'мм'
+  if (category === 'pipe') return text(characteristics.pipe_type) === 'wire' ? 'кг' : 'мм'
+  return text(characteristics.default_unit) || 'шт'
+}
+
 function usageToVariant(data: MaterialUsageInput) {
   const c = data.characteristics
   return {
@@ -193,7 +199,7 @@ function usageToVariant(data: MaterialUsageInput) {
     knife_material: text(c.knife_material),
     standard_length_mm: num(c.standard_length_mm),
     specification: text(c.specification),
-    default_unit: text(c.default_unit) || 'шт',
+    default_unit: defaultUnitForVariantUsage(data.category, c),
     ral_code: text(c.ral_code),
     finish: text(c.finish),
     default_waste_percent: num(c.default_waste_percent),
