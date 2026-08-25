@@ -763,6 +763,75 @@ begin
 end;
 $$;
 
+do $$
+declare
+  v_actor uuid := '78000000-0000-0000-0000-000000000001';
+  v_factory uuid := '78000000-0000-0000-0000-000000000002';
+  v_material uuid := '78000000-0000-0000-0000-000000000003';
+  v_variant uuid := '78000000-0000-0000-0000-000000000004';
+  v_inventory uuid := '78000000-0000-0000-0000-000000000005';
+  v_steel_type uuid;
+  v_density numeric;
+  v_weight numeric;
+  v_expected numeric;
+begin
+  select id, density_kg_mm3
+  into v_steel_type, v_density
+  from public.steel_types
+  where density_kg_mm3 > 0
+  order by name
+  limit 1;
+
+  if v_steel_type is null then
+    raise exception 'Для теста веса ножа не найдена плотность стали';
+  end if;
+
+  insert into public.factories(id, name)
+  values (v_factory, 'Measured knife weight factory');
+  insert into public.users(id, email, full_name, role, factory_id, is_active)
+  values (v_actor, 'measured-knife-weight@example.test', 'Тест веса ножа', 'technologist', v_factory, true);
+  insert into public.materials(id, name, category, created_by)
+  values (v_material, 'Тестовый мерный нож', 'knives', v_actor);
+  insert into public.material_variants(
+    id, material_id, category, steel_type_id, knife_bevel_count,
+    standard_length_mm, width_mm, height_mm, default_unit
+  ) values (
+    v_variant, v_material, 'knives', v_steel_type, 1,
+    300, 300, 20, 'мм'
+  );
+
+  insert into public.inventory(
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, reserved_quantity, unit,
+    total_secondary_quantity, reserved_secondary_quantity, secondary_unit,
+    calculated_weight_kg, is_business_scrap, business_scrap_state,
+    last_updated_by
+  ) values (
+    v_inventory, v_factory, v_material, v_variant, 95,
+    95, 0, 'мм', 1, 0, 'шт',
+    1333.8, true, 'future', v_actor
+  );
+
+  select calculated_weight_kg into v_weight
+  from public.inventory
+  where id = v_inventory;
+  v_expected := round((95 * 300 * 20 * v_density)::numeric, 2);
+  if v_weight is distinct from v_expected then
+    raise exception 'Вес остатка 95 мм рассчитан неверно: expected=%, actual=%',
+      v_expected, v_weight;
+  end if;
+
+  v_weight := public.calc_inventory_weight_kg(
+    v_material, v_variant, 2497, 'мм', 2497, 1
+  );
+  v_expected := round((2497 * 300 * 20 * v_density)::numeric, 2);
+  if v_weight is distinct from v_expected then
+    raise exception 'Вес остатка 2497 мм рассчитан неверно: expected=%, actual=%',
+      v_expected, v_weight;
+  end if;
+end;
+$$;
+
 rollback;
 
 \echo '[long-stock-cutting-plan-server] all assertions passed'
