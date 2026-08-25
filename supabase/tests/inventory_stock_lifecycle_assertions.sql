@@ -19,23 +19,6 @@ BEGIN
     RAISE EXCEPTION 'Миграция затронула legacy-вариант ножа без скоса';
   END IF;
 
-  INSERT INTO public.inventory (
-    id, factory_id, material_id, material_variant_id, piece_length_mm,
-    total_quantity, unit, total_secondary_quantity, secondary_unit,
-    last_updated_by
-  ) VALUES (
-    v_inventory,
-    '00000000-0000-0000-0000-000000000001',
-    '76000000-0000-0000-0000-000000000001',
-    '76000000-0000-0000-0000-000000000002',
-    95,
-    95,
-    'шт',
-    1,
-    'шт',
-    '00000000-0000-0000-0000-000000000002'
-  );
-
   IF EXISTS (
     SELECT 1
     FROM public.inventory
@@ -43,6 +26,17 @@ BEGIN
       AND (unit IS DISTINCT FROM 'мм' OR secondary_unit IS DISTINCT FROM 'шт')
   ) THEN
     RAISE EXCEPTION 'Legacy-вариант ножа обошёл нормализацию мерного остатка';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public._migration_backup_inventory_units_20260825
+    WHERE inventory_id = v_inventory
+      AND original_unit = 'шт'
+      AND original_secondary_unit = 'шт'
+      AND captured_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'Rollback-снимок не сохранил исходные единицы legacy-остатка';
   END IF;
 END;
 $$;

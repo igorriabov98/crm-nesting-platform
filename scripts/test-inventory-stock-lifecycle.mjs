@@ -70,6 +70,22 @@ ALTER TABLE public.material_variants
     (category = 'knives' AND knife_bevel_count IS NOT NULL AND knife_bevel_count IN (1, 2))
     OR (category <> 'knives' AND knife_bevel_count IS NULL)
   ) NOT VALID;
+INSERT INTO public.inventory (
+  id, factory_id, material_id, material_variant_id, piece_length_mm,
+  total_quantity, unit, total_secondary_quantity, secondary_unit,
+  last_updated_by
+) VALUES (
+  '76000000-0000-0000-0000-000000000003',
+  '00000000-0000-0000-0000-000000000001',
+  '76000000-0000-0000-0000-000000000001',
+  '76000000-0000-0000-0000-000000000002',
+  95,
+  95,
+  'шт',
+  1,
+  'шт',
+  '00000000-0000-0000-0000-000000000002'
+);
 `
 
 const closedRpcCallPattern = /\.rpc\(\s*['"](?:fn_reserve_whole_bar_inventory_row_for_machine|fn_reserve_whole_bar_inventory_row_for_machine_transfer|fn_reserve_inventory_for_machine|fn_reserve_inventory_row_for_machine|fn_reserve_inventory_row_for_machine_transfer|fn_adjust_inventory_record|fn_archive_inventory_item|fn_unreserve_inventory_reservation|fn_promote_due_future_business_scrap)['"]/u
