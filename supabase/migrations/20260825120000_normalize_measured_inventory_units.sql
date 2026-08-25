@@ -38,6 +38,15 @@ where (
     category in ('knives', 'circle')
     or (category = 'pipe' and pipe_type is distinct from 'wire')
   )
+  -- The bevel constraint was introduced NOT VALID, so production may still
+  -- contain legacy knife variants without a bevel. Updating any column on
+  -- such a row would re-check that constraint and abort the whole migration.
+  -- Leave those rows untouched: the inventory trigger above remains the
+  -- authoritative unit boundary for their existing and future stock rows.
+  and (
+    (category = 'knives' and knife_bevel_count in (1, 2))
+    or (category in ('circle', 'pipe') and knife_bevel_count is null)
+  )
   and default_unit is distinct from 'мм';
 
 -- Repair already-created measured rows. Including unit in the SET list also

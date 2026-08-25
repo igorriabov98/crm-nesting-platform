@@ -52,6 +52,26 @@ const measuredInventoryUnitsMigration = read('supabase/migrations/20260825120000
 const permissionIntegrityMigration = read('supabase/migrations/20260823130000_long_stock_permission_integrity.sql')
 const archiveScrapMigration = read('supabase/migrations/92_archive_empty_business_scrap_on_unreserve.sql')
 
+const legacyInvalidKnifeVariantFixture = `
+INSERT INTO public.materials (id, category)
+VALUES ('76000000-0000-0000-0000-000000000001', 'knives');
+INSERT INTO public.material_variants (
+  id, material_id, category, knife_bevel_count, default_unit
+) VALUES (
+  '76000000-0000-0000-0000-000000000002',
+  '76000000-0000-0000-0000-000000000001',
+  'knives',
+  NULL,
+  'шт'
+);
+ALTER TABLE public.material_variants
+  ADD CONSTRAINT material_variants_knife_bevel_count_check
+  CHECK (
+    (category = 'knives' AND knife_bevel_count IS NOT NULL AND knife_bevel_count IN (1, 2))
+    OR (category <> 'knives' AND knife_bevel_count IS NULL)
+  ) NOT VALID;
+`
+
 const closedRpcCallPattern = /\.rpc\(\s*['"](?:fn_reserve_whole_bar_inventory_row_for_machine|fn_reserve_whole_bar_inventory_row_for_machine_transfer|fn_reserve_inventory_for_machine|fn_reserve_inventory_row_for_machine|fn_reserve_inventory_row_for_machine_transfer|fn_adjust_inventory_record|fn_archive_inventory_item|fn_unreserve_inventory_reservation|fn_promote_due_future_business_scrap)['"]/u
 const secureRpcSource = read('src/lib/inventory/secure-rpc.ts')
 assert.match(secureRpcSource, /import 'server-only'/u)
@@ -113,6 +133,7 @@ const sql = [
   barReceivingLifecycleMigration,
   wholeBarCirclePipeMigration,
   permissionIntegrityMigration,
+  legacyInvalidKnifeVariantFixture,
   measuredInventoryUnitsMigration,
   read('supabase/tests/inventory_stock_lifecycle_assertions.sql'),
 ].join('\n\n')
