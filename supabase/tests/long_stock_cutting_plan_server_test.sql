@@ -57,7 +57,7 @@ begin
   insert into public.material_variants(
     id, material_id, category, diameter_mm, material_grade,
     standard_length_mm, weight_per_m_kg, default_unit
-  ) values (v_variant, v_material, 'circle', 40, 'S355', 6000, 2, 'мм');
+  ) values (v_variant, v_material, 'circle', 40, 'S355', 6000, 2, 'шт');
   insert into public.request_circle(
     id, request_id, diameter_mm, steel_grade, remainder_mm,
     material_id, material_variant_id
@@ -223,6 +223,20 @@ begin
     and inventory.business_scrap_state = 'future';
   if v_count <> 2 or v_lengths is distinct from array[99::numeric, 4799::numeric] then
     raise exception 'Созданы неверные будущие остатки: count=%, lengths=%', v_count, v_lengths;
+  end if;
+  if exists (
+    select 1
+    from public.long_stock_cutting_business_scraps link
+    join public.inventory inventory on inventory.id = link.inventory_id
+    where link.version_id = v_version_1
+      and (
+        inventory.unit is distinct from 'мм'
+        or inventory.secondary_unit is distinct from 'шт'
+        or inventory.total_quantity is distinct from inventory.piece_length_mm
+        or inventory.total_secondary_quantity is distinct from 1::numeric
+      )
+  ) then
+    raise exception 'Будущий мерный остаток сохранился не как мм / шт';
   end if;
   select reserved_quantity into v_reserved
   from public.inventory where id = v_source_inventory;

@@ -1202,8 +1202,17 @@ BEGIN
     total_quantity, unit, total_secondary_quantity, secondary_unit, last_updated_by
   ) VALUES (
     v_reservation_source, v_factory, v_material, 7000,
-    7000, 'мм', 1, 'шт', v_user
+    7000, 'шт', 1, 'шт', v_user
   );
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.inventory
+    WHERE id IN (v_inventory, v_reservation_source)
+      AND (unit IS DISTINCT FROM 'мм' OR secondary_unit IS DISTINCT FROM 'шт')
+  ) THEN
+    RAISE EXCEPTION 'Мерный складской остаток сохранился не как мм / шт';
+  END IF;
 
   BEGIN
     UPDATE public.inventory SET piece_length_mm = 8000 WHERE id = v_inventory;

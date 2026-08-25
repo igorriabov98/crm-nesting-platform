@@ -48,6 +48,7 @@ const supplyReceiptPriorityMigration = read('supabase/migrations/20260714101554_
 const knifeSupplyFutureScrapMigration = read('supabase/migrations/20260714120049_knife_supply_future_scrap.sql')
 const barReceivingLifecycleMigration = read('supabase/migrations/20260730133000_bar_receiving_lifecycle.sql')
 const wholeBarCirclePipeMigration = read('supabase/migrations/20260731120000_whole_bar_circle_pipe_lifecycle.sql')
+const measuredInventoryUnitsMigration = read('supabase/migrations/20260825120000_normalize_measured_inventory_units.sql')
 const permissionIntegrityMigration = read('supabase/migrations/20260823130000_long_stock_permission_integrity.sql')
 const archiveScrapMigration = read('supabase/migrations/92_archive_empty_business_scrap_on_unreserve.sql')
 
@@ -112,6 +113,7 @@ const sql = [
   barReceivingLifecycleMigration,
   wholeBarCirclePipeMigration,
   permissionIntegrityMigration,
+  measuredInventoryUnitsMigration,
   read('supabase/tests/inventory_stock_lifecycle_assertions.sql'),
 ].join('\n\n')
 
