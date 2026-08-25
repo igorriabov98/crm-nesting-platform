@@ -9,6 +9,46 @@ $$;
 
 DO $$
 DECLARE
+  v_inventory uuid := '76000000-0000-0000-0000-000000000003';
+BEGIN
+  IF (
+    SELECT default_unit
+    FROM public.material_variants
+    WHERE id = '76000000-0000-0000-0000-000000000002'
+  ) IS DISTINCT FROM 'шт' THEN
+    RAISE EXCEPTION 'Миграция затронула legacy-вариант ножа без скоса';
+  END IF;
+
+  INSERT INTO public.inventory (
+    id, factory_id, material_id, material_variant_id, piece_length_mm,
+    total_quantity, unit, total_secondary_quantity, secondary_unit,
+    last_updated_by
+  ) VALUES (
+    v_inventory,
+    '00000000-0000-0000-0000-000000000001',
+    '76000000-0000-0000-0000-000000000001',
+    '76000000-0000-0000-0000-000000000002',
+    95,
+    95,
+    'шт',
+    1,
+    'шт',
+    '00000000-0000-0000-0000-000000000002'
+  );
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.inventory
+    WHERE id = v_inventory
+      AND (unit IS DISTINCT FROM 'мм' OR secondary_unit IS DISTINCT FROM 'шт')
+  ) THEN
+    RAISE EXCEPTION 'Legacy-вариант ножа обошёл нормализацию мерного остатка';
+  END IF;
+END;
+$$;
+
+DO $$
+DECLARE
   v_value numeric;
   v_unit text;
 BEGIN
