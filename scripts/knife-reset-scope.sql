@@ -353,6 +353,8 @@ where variant.category = 'knives'::public.material_category
 alter table _knife_reset_variants add primary key (id);
 
 do $material_integrity$
+declare
+  has_non_knife_canonical_variant boolean := false;
 begin
   if exists (
     select 1 from public.material_variants variant
@@ -363,11 +365,24 @@ begin
     raise exception 'Knife reset aborted: a knife variant belongs to a non-knife material';
   end if;
   if exists (
-    select 1 from public.material_variants variant
-    where variant.id not in (select id from _knife_reset_variants)
-      and variant.canonical_variant_id in (select id from _knife_reset_variants)
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'material_variants'
+      and column_name = 'canonical_variant_id'
   ) then
-    raise exception 'Knife reset aborted: a non-knife variant points to a knife canonical variant';
+    execute $canonical_check$
+      select exists (
+        select 1 from public.material_variants variant
+        where variant.id not in (select id from _knife_reset_variants)
+          and variant.canonical_variant_id in (select id from _knife_reset_variants)
+      )
+    $canonical_check$
+    into has_non_knife_canonical_variant;
+
+    if has_non_knife_canonical_variant then
+      raise exception 'Knife reset aborted: a non-knife variant points to a knife canonical variant';
+    end if;
   end if;
   if exists (
     select 1
