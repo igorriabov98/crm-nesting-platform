@@ -9,6 +9,7 @@ import { differenceInDays, isPast, format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { PackagePlus, Trash2, Truck } from 'lucide-react'
 import { CHAIN_CORD_SUBTYPE_LABELS, ORDER_STATUS_LABELS, PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
+import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import {
   updateSupplyItem,
   deleteSupplyItem
@@ -133,24 +134,30 @@ function buildRequestMaterialRows(requestData?: TechnologistRequestPayload | nul
       deliveredAt: row.delivered_at,
       customDeliveryDate: row.custom_delivery_date,
     })),
-    ...requestData.pipes.map((row) => ({
-      id: row.id,
-      section: 'Труба',
-      name: materialName(row, PIPE_SUBTYPE_LABELS[row.pipe_type] || row.pipe_type, 'Труба'),
-      details: compactDetails([
-        row.size,
-        row.wall_thickness_mm ? `стенка ${formatAmountValue(row.wall_thickness_mm)} мм` : null,
-        row.diameter_mm ? `Ø ${formatAmountValue(row.diameter_mm)} мм` : null,
-      ]),
-      quantity: row.pipe_type === 'wire'
-        ? formatQuantity(row.remainder_kg, 'кг')
-        : formatQuantity(row.remainder_length_mm, 'мм'),
-      secondaryQuantity: row.remainder_qty ? formatQuantity(row.remainder_qty, 'шт') : undefined,
-      orderStatus: row.order_status,
-      orderedAt: row.ordered_at,
-      deliveredAt: row.delivered_at,
-      customDeliveryDate: row.custom_delivery_date,
-    })),
+    ...requestData.pipes.map((row) => {
+      const roundDiameter = row.pipe_type === 'round' ? roundPipeOuterDiameterMm(row) : null
+      const displayDiameter = roundDiameter ?? (row.pipe_type === 'wire' ? row.diameter_mm : null)
+      return {
+        id: row.id,
+        section: 'Труба',
+        name: materialName(row, PIPE_SUBTYPE_LABELS[row.pipe_type] || row.pipe_type, 'Труба'),
+        details: compactDetails([
+          row.pipe_type === 'round' ? null : row.size,
+          row.wall_thickness_mm ? `стенка ${formatAmountValue(row.wall_thickness_mm)} мм` : null,
+          displayDiameter
+            ? `Ø ${formatAmountValue(displayDiameter)} мм`
+            : null,
+        ]),
+        quantity: row.pipe_type === 'wire'
+          ? formatQuantity(row.remainder_kg, 'кг')
+          : formatQuantity(row.remainder_length_mm, 'мм'),
+        secondaryQuantity: row.remainder_qty ? formatQuantity(row.remainder_qty, 'шт') : undefined,
+        orderStatus: row.order_status,
+        orderedAt: row.ordered_at,
+        deliveredAt: row.delivered_at,
+        customDeliveryDate: row.custom_delivery_date,
+      }
+    }),
     ...requestData.knives.map((row) => ({
       id: row.id,
       section: 'Ножи',

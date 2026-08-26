@@ -16,6 +16,7 @@ import {
   type DirectMachineCuttingUpload,
 } from '@/lib/machine-cutting/files'
 import { isLongStockPlanReadyForSupply } from '@/lib/request-completion-material-scope'
+import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 
 const stagedArchiveSchema = z.object({
   requestId: z.string().uuid(),
@@ -124,6 +125,9 @@ function mapWaste(sourceTable: CompletionWasteItem['sourceTable'], row: RawWaste
   const fallbackName = sourceTable === 'request_circle' ? `Круг Ø${row.diameter_mm || '—'} мм` : 'Металл'
   const materialName = String(row.material_name || row.pipe_type || row.knife_type || fallbackName)
   const grade = row.material_grade || row.steel_grade || null
+  const pipeProfile = sourceTable === 'request_pipe' && row.pipe_type === 'round'
+    ? `Ø${roundPipeOuterDiameterMm(row) ?? '—'} мм`
+    : row.size
   const quantity = sourceTable === 'request_sheet_metal'
     ? `${row.quantity_sheets || 0} лист.`
     : sourceTable === 'request_circle'
@@ -134,7 +138,7 @@ function mapWaste(sourceTable: CompletionWasteItem['sourceTable'], row: RawWaste
   return {
     sourceTable,
     sourceId: String(row.id),
-    itemName: [materialName, grade, row.sheet_size || row.size].filter(Boolean).join(' · '),
+    itemName: [materialName, grade, row.sheet_size || pipeProfile].filter(Boolean).join(' · '),
     materialId: row.material_id ? String(row.material_id) : null,
     materialVariantId: row.material_variant_id ? String(row.material_variant_id) : null,
     materialName,

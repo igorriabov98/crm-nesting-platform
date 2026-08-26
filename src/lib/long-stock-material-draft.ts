@@ -1,3 +1,8 @@
+import {
+  requireCanonicalPipeProfile,
+  validatePipeProfileGeometry,
+} from '@/lib/materials/pipe-profile'
+
 export type LongStockMaterialCategory = 'circle' | 'pipe' | 'knives'
 
 export type LongStockNewMaterialDraft = {
@@ -54,7 +59,7 @@ export function createLongStockMaterialDraft(
   if (category === 'circle') {
     fields = { steel_type_id: '', diameter_mm: '', is_calibrated: false }
   } else if (category === 'pipe') {
-    fields = { pipe_type: 'square', steel_type_id: '', size: '', wall_thickness_mm: '' }
+    fields = { pipe_type: 'square', steel_type_id: '', size: '', diameter_mm: '', wall_thickness_mm: '' }
   } else {
     fields = { steel_type_id: '', knife_bevel_count: '', width_mm: '', height_mm: '' }
   }
@@ -74,26 +79,7 @@ export function validateLongStockMaterialDraft(draft: LongStockNewMaterialDraft)
     const pipeType = stringValue(draft.fields.pipe_type)
     if (!pipeType) return 'Выберите подтип трубы'
     if (pipeType === 'wire') return 'Проволока остаётся в прежнем интерфейсе'
-    const size = stringValue(draft.fields.size)
-    if (!size) return pipeType === 'round' ? 'Введите диаметр трубы' : 'Введите размер трубы'
-    const wall = positiveNumber(draft.fields.wall_thickness_mm)
-    if (wall === null) return 'Введите толщину стенки трубы'
-
-    if (pipeType === 'round') {
-      const diameter = positiveNumber(size)
-      if (diameter === null) return 'Диаметр трубы должен быть положительным числом'
-      if (wall * 2 >= diameter) {
-        return 'Толщина стенки трубы не может быть больше или равна половине диаметра.'
-      }
-      return null
-    }
-
-    const dimensions = parseDimensions(size)
-    if (!dimensions) return 'Размер трубы укажите как ширина × высота'
-    if (wall * 2 >= Math.min(dimensions[0], dimensions[1])) {
-      return 'Толщина стенки трубы не может быть больше или равна половине меньшей стороны размера.'
-    }
-    return null
+    return validatePipeProfileGeometry(draft.fields)
   }
 
   if (!stringValue(draft.fields.knife_bevel_count)) return 'Выберите скос ножа'
@@ -116,12 +102,14 @@ export function longStockMaterialCharacteristics(
     }
   }
   if (draft.category === 'pipe') {
+    const pipeProfile = requireCanonicalPipeProfile(draft.fields)
     return {
-      pipe_type: draft.fields.pipe_type,
+      pipe_type: pipeProfile.pipeType,
       steel_type_id: steelTypeId,
       material_grade: steelTypeName,
-      size: draft.fields.size,
-      wall_thickness_mm: draft.fields.wall_thickness_mm,
+      size: pipeProfile.pieceDescription,
+      diameter_mm: pipeProfile.diameterMm,
+      wall_thickness_mm: pipeProfile.wallThicknessMm,
     }
   }
   return {
@@ -134,16 +122,6 @@ export function longStockMaterialCharacteristics(
     width_mm: draft.fields.width_mm,
     height_mm: draft.fields.height_mm,
   }
-}
-
-function parseDimensions(value: string) {
-  const dimensions = value
-    .replace(/[хХ×*]/g, 'x')
-    .split('x')
-    .map((part) => positiveNumber(part.trim()))
-  return dimensions.length >= 2 && dimensions.every((part) => part !== null)
-    ? dimensions as number[]
-    : null
 }
 
 function stringValue(value: unknown) {

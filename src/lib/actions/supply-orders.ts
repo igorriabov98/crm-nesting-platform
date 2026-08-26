@@ -17,6 +17,7 @@ import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pi
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
 import { normalizeSingleLengthReceipt } from '@/lib/supply-orders/single-length-receipt'
 import { calculateLongStockWeightForLength } from '@/lib/long-stock-material-weight'
+import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import {
   isLongStockRequestItemTable,
   summarizeLongStockPurchaseBars,
@@ -523,6 +524,14 @@ async function convertPaymentToUah(amount: number, currency: 'UAH' | 'EUR') {
 
 function itemName(row: RequestItemRow, fallback: unknown) {
   return row.materials?.name || String(fallback || '')
+}
+
+function pipeItemFallback(row: RequestItemRow) {
+  if (row.pipe_type === 'round') {
+    const diameter = roundPipeOuterDiameterMm({ diameter_mm: row.diameter_mm, size: row.size })
+    return diameter ? `Ø${diameter} мм` : 'Труба круглая'
+  }
+  return row.size
 }
 
 function requestedQuantity(table: string, row: RequestItemRow) {
@@ -1035,7 +1044,7 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
     if (table === 'request_sheet_metal') return rows.map((row) => makeItem(table, 'sheet_metal', row, row.material_name, supplierForRow(row)))
     if (table === 'request_round_tube') return rows.map((row) => makeItem(table, 'round_tube', row, row.material_name, supplierForRow(row)))
     if (table === 'request_circle') return rows.map((row) => makeItem(table, 'circle', row, row.steel_grade, supplierForRow(row)))
-    if (table === 'request_pipe') return rows.map((row) => makeItem(table, 'pipe', row, row.size, supplierForRow(row)))
+    if (table === 'request_pipe') return rows.map((row) => makeItem(table, 'pipe', row, pipeItemFallback(row), supplierForRow(row)))
     if (table === 'request_knives') return rows.map((row) => makeItem(table, 'knives', row, row.knife_type, supplierForRow(row)))
     if (table === 'request_components') return rows.map((row) => makeItem(table, 'components', row, row.component_name, supplierForRow(row)))
     if (table === 'request_paint') return rows.map((row) => makeItem(table, 'paint', row, row.paint_type || row.ral_code, supplierForRow(row)))
@@ -1221,7 +1230,7 @@ export async function getSupplyOrders(
       // @deprecated — round_tube excluded from new UI
       ...round.map((row) => makeItem('request_round_tube', 'round_tube', row, row.material_name, supplierForRow(row))),
       ...circles.map((row) => makeItem('request_circle', 'circle', row, row.steel_grade, supplierForRow(row))),
-      ...pipes.map((row) => makeItem('request_pipe', 'pipe', row, row.size, supplierForRow(row))),
+      ...pipes.map((row) => makeItem('request_pipe', 'pipe', row, pipeItemFallback(row), supplierForRow(row))),
       ...knives.map((row) => makeItem('request_knives', 'knives', row, row.knife_type, supplierForRow(row))),
       ...components.map((row) => makeItem('request_components', 'components', row, row.component_name, supplierForRow(row))),
       ...paint.map((row) => makeItem('request_paint', 'paint', row, row.paint_type || row.ral_code, supplierForRow(row))),
@@ -1526,7 +1535,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
       // @deprecated — round_tube excluded from new UI
       ...round.map((row) => makeItem('request_round_tube', 'round_tube', row, row.material_name, supplierForRow(row))),
       ...circles.map((row) => makeItem('request_circle', 'circle', row, row.steel_grade, supplierForRow(row))),
-      ...pipes.map((row) => makeItem('request_pipe', 'pipe', row, row.size, supplierForRow(row))),
+      ...pipes.map((row) => makeItem('request_pipe', 'pipe', row, pipeItemFallback(row), supplierForRow(row))),
       ...knives.map((row) => makeItem('request_knives', 'knives', row, row.knife_type, supplierForRow(row))),
       ...components.map((row) => makeItem('request_components', 'components', row, row.component_name, supplierForRow(row))),
       ...paint.map((row) => makeItem('request_paint', 'paint', row, row.paint_type || row.ral_code, supplierForRow(row))),
@@ -1763,7 +1772,7 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
     // @deprecated — round_tube excluded from new UI
     ...round.map((row) => makeItem('request_round_tube', 'round_tube', row, row.material_name, supplierForRow(row))),
     ...circles.map((row) => makeItem('request_circle', 'circle', row, row.steel_grade, supplierForRow(row))),
-    ...pipes.map((row) => makeItem('request_pipe', 'pipe', row, row.size, supplierForRow(row))),
+    ...pipes.map((row) => makeItem('request_pipe', 'pipe', row, pipeItemFallback(row), supplierForRow(row))),
     ...knives.map((row) => makeItem('request_knives', 'knives', row, row.knife_type, supplierForRow(row))),
     ...components.map((row) => makeItem('request_components', 'components', row, row.component_name, supplierForRow(row))),
     ...paint.map((row) => makeItem('request_paint', 'paint', row, row.paint_type || row.ral_code, supplierForRow(row))),

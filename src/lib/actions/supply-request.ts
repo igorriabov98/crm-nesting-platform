@@ -11,6 +11,7 @@ import { requirePermission } from '@/lib/permissions/server'
 import { DIRECTOR_ACCESS_ROLES, type PermissionOperation } from '@/lib/permissions/resources'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import type {
   Machine,
   RequestChainCord,
@@ -289,12 +290,6 @@ function exactTextMatches(left: unknown, right: unknown) {
   return normalizeText(left) === normalizeText(right)
 }
 
-function singleDimension(value: unknown) {
-  if (typeof value !== 'string') return null
-  const number = Number(value.trim().replace(',', '.'))
-  return Number.isFinite(number) && number > 0 ? number : null
-}
-
 function dimensionParts(value: unknown) {
   const parts = normalizeText(value)
     .replace(/\s+/g, '')
@@ -305,7 +300,11 @@ function dimensionParts(value: unknown) {
 
 function pipeDiameterMatches(row: Record<string, unknown>, variant: MaterialVariant) {
   if (row.pipe_type === 'wire') return numbersMatch(row.diameter_mm, variant.diameter_mm)
-  if (row.pipe_type === 'round') return numbersMatch(singleDimension(row.size) ?? row.diameter_mm, variant.diameter_mm)
+  if (row.pipe_type === 'round') {
+    const requestDiameter = roundPipeOuterDiameterMm(row)
+    const variantDiameter = roundPipeOuterDiameterMm(variant)
+    return requestDiameter !== null && variantDiameter !== null && numbersMatch(requestDiameter, variantDiameter)
+  }
   return true
 }
 
@@ -320,11 +319,13 @@ function knifeDimensionMatches(row: Record<string, unknown>, variant: MaterialVa
 function variantMatchesRequest(table: RequestItemTable, row: Record<string, unknown>, variant?: MaterialVariant | null) {
   if (!variant) return false
   if (table === 'request_pipe') {
-    return exactTextMatches(row.pipe_type, variant.pipe_type)
-      && exactTextMatches(row.size, variant.piece_description)
+    const sameBaseProfile = exactTextMatches(row.pipe_type, variant.pipe_type)
       && numbersMatch(row.wall_thickness_mm, variant.wall_thickness_mm)
-      && pipeDiameterMatches(row, variant)
       && exactTextMatches(row.steel_type_id, variant.steel_type_id)
+    if (row.pipe_type === 'round') return sameBaseProfile && pipeDiameterMatches(row, variant)
+    return sameBaseProfile
+      && exactTextMatches(row.size, variant.piece_description)
+      && pipeDiameterMatches(row, variant)
   }
   if (table === 'request_knives') {
     return knifeDimensionMatches(row, variant)

@@ -1,5 +1,6 @@
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 
 export const LONG_STOCK_CUTTING_PLAN_PDF_BUCKET = 'product-files'
 export const LONG_STOCK_CUTTING_PLAN_PDF_SCHEMA_VERSION = 1
@@ -164,9 +165,10 @@ export function formatLongStockMaterialVariant(
     ].filter(Boolean).join(' · ') || 'Точный вариант'
   }
   if (variant.category === 'pipe') {
+    const roundDiameter = variant.pipe_type === 'round' ? roundPipeOuterDiameterMm(variant) : null
     return [
       variant.pipe_type ? PIPE_SUBTYPE_LABELS[variant.pipe_type] ?? variant.pipe_type : null,
-      variant.piece_description,
+      roundDiameter ? `Ø${formatPdfNumber(roundDiameter)} мм` : variant.piece_description,
       variant.wall_thickness_mm && `стенка ${formatPdfNumber(variant.wall_thickness_mm)} мм`,
     ].filter(Boolean).join(' · ') || 'Точный вариант'
   }

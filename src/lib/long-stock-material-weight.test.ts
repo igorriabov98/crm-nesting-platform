@@ -64,12 +64,21 @@ test('calculates round and rectangular pipe weight per meter from section and de
     ...baseVariant,
     category: 'pipe',
     pipe_type: 'round',
-    piece_description: '50',
+    diameter_mm: 50,
     wall_thickness_mm: 2,
   }, density)
   const expectedRoundSection = Math.PI * (25 ** 2 - 23 ** 2)
   assert.ok(round !== null)
   assert.ok(Math.abs(round - expectedRoundSection * 1000 * density) < 1e-10)
+
+  const legacyRound = calculateLongStockWeightPerMeterKg({
+    ...baseVariant,
+    category: 'pipe',
+    pipe_type: 'round',
+    piece_description: '50',
+    wall_thickness_mm: 2,
+  }, density)
+  assert.equal(legacyRound, round)
 
   const rectangular = calculateLongStockWeightPerMeterKg({
     ...baseVariant,

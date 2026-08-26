@@ -9,6 +9,7 @@ import { createMaterial, getMaterialVariants, searchMaterials, type MaterialVari
 import { CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGORY_LABELS, PIPE_SUBTYPE_LABELS, defaultMaterialNameForCategory } from '@/lib/constants/procurement'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { cn } from '@/lib/utils'
 import type { Material, MaterialCategory, MaterialVariant } from '@/lib/types'
 
@@ -355,6 +356,10 @@ function variantLabel(variant: MaterialVariantWithSteelType) {
   if (String(variant.category) === 'pipe') {
     const subtype = variant.pipe_type && PIPE_SUBTYPE_LABELS[variant.pipe_type]
     if (variant.pipe_type === 'wire') return [subtype, variant.diameter_mm && `Ø${variant.diameter_mm}`].filter(Boolean).join(' • ') || 'вариант'
+    if (variant.pipe_type === 'round') {
+      const diameter = roundPipeOuterDiameterMm(variant)
+      return [subtype, steelLabel(variant), diameter && `Ø${diameter} мм`, variant.wall_thickness_mm && `${variant.wall_thickness_mm} мм`].filter(Boolean).join(' • ') || 'вариант'
+    }
     return [subtype, steelLabel(variant), variant.piece_description, variant.wall_thickness_mm && `${variant.wall_thickness_mm} мм`].filter(Boolean).join(' • ') || 'вариант'
   }
   if (String(variant.category) === 'knives') {
@@ -367,6 +372,10 @@ function variantLabel(variant: MaterialVariantWithSteelType) {
   if (variant.category === 'pipe') {
     const subtype = variant.pipe_type && PIPE_SUBTYPE_LABELS[variant.pipe_type]
     if (variant.pipe_type === 'wire') return [subtype, variant.diameter_mm && `Ø${variant.diameter_mm}`].filter(Boolean).join(' • ') || 'вариант'
+    if (variant.pipe_type === 'round') {
+      const diameter = roundPipeOuterDiameterMm(variant)
+      return [subtype, diameter && `Ø${diameter} мм`, variant.wall_thickness_mm && `${variant.wall_thickness_mm} мм`].filter(Boolean).join(' • ') || 'вариант'
+    }
     return [subtype, variant.piece_description, variant.wall_thickness_mm && `${variant.wall_thickness_mm} мм`].filter(Boolean).join(' • ') || 'вариант'
   }
   if (variant.category === 'knives') {

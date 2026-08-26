@@ -20,6 +20,7 @@ import {
 } from '@/lib/constants/procurement'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { ROUTES } from '@/lib/constants/routes'
 import type {
   InventoryFactory,
@@ -484,6 +485,7 @@ function variantSummary(row: InventoryTransactionWithRelations) {
   else if (row.material_category === 'pipe') {
     values.push(variant.pipe_type ? PIPE_SUBTYPE_LABELS[variant.pipe_type] ?? variant.pipe_type : null)
     if (variant.pipe_type === 'wire') values.push(variant.diameter_mm ? `Ø${variant.diameter_mm}` : null)
+    else if (variant.pipe_type === 'round') values.push(roundPipeOuterDiameterMm(variant) ? `Ø${roundPipeOuterDiameterMm(variant)}` : null, variant.wall_thickness_mm ? `${variant.wall_thickness_mm} мм` : null)
     else values.push(variant.piece_description, variant.wall_thickness_mm ? `${variant.wall_thickness_mm} мм` : null)
   } else if (row.material_category === 'knives') values.push(formatKnifeProfileDimensions(variant), variant.knife_material, `Скос: ${knifeBevelCharacteristicLabel(variant.knife_bevel_count)}`)
   else if (row.material_category === 'paint') values.push(variant.ral_code, variant.finish)

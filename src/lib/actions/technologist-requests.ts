@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { DIRECTOR_ROLES } from '@/lib/constants/roles'
 import { ROUTES } from '@/lib/constants/routes'
 import { parseKnifeBevelCount } from '@/lib/materials/knife-bevel'
+import { roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { recordMaterialUsage } from '@/lib/actions/materials'
 import { repairImportedSheetMetalMaterials } from '@/lib/actions/request-sheet-metal-materials'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
@@ -280,28 +281,6 @@ function requiredNumber(value: unknown) {
   return Number.isFinite(number) ? number : 0
 }
 
-function optionalPositiveNumber(value: unknown) {
-  if (value === null || value === undefined || value === '') return null
-  const number = Number(value)
-  return Number.isFinite(number) && number > 0 ? number : null
-}
-
-function parseDimensions(value: unknown) {
-  if (typeof value !== 'string') return null
-  const numbers = value
-    .replace(/[хХ×*]/g, 'x')
-    .split('x')
-    .map((part) => Number(part.trim().replace(',', '.')))
-    .filter((number) => Number.isFinite(number) && number > 0)
-  return numbers.length >= 2 ? numbers : null
-}
-
-function parseSingleDimension(value: unknown) {
-  if (typeof value !== 'string') return null
-  const number = Number(value.trim().replace(',', '.'))
-  return Number.isFinite(number) && number > 0 ? number : null
-}
-
 function objectKeys(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return []
   return Object.keys(value as Record<string, unknown>)
@@ -317,26 +296,8 @@ function hasSelectedMaterial(row: Record<string, unknown>) {
 }
 
 function validatePipeGeometry(row: Record<string, unknown>) {
-  if (row.pipe_type === 'wire') return
-  const wall = optionalPositiveNumber(row.wall_thickness_mm)
-  if (wall === null) return
-
-  if (row.pipe_type === 'round') {
-    const diameter = parseSingleDimension(row.size) ?? optionalPositiveNumber(row.diameter_mm)
-    if (diameter !== null && wall * 2 >= diameter) {
-      throw new Error('Толщина стенки трубы не может быть больше или равна половине диаметра.')
-    }
-    return
-  }
-
-  if (row.pipe_type === 'square' || row.pipe_type === 'rectangular') {
-    const dimensions = parseDimensions(row.size)
-    if (!dimensions) return
-    const minSide = Math.min(dimensions[0], dimensions[1])
-    if (wall * 2 >= minSide) {
-      throw new Error('Толщина стенки трубы не может быть больше или равна половине меньшей стороны размера.')
-    }
-  }
+  const validationError = validatePipeProfileGeometry(row, { requireComplete: false })
+  if (validationError) throw new Error(validationError)
 }
 
 function validateRequiredRequestRows(input: {
@@ -883,8 +844,17 @@ function isRequestMaterialVariantComplete(table: RequestSectionTable, row: Recor
   if (table === 'request_circle') return hasSteel() && hasValue(row.diameter_mm)
   if (table === 'request_pipe') {
     if (!hasValue(row.pipe_type)) return false
-    if (row.pipe_type === 'wire') return hasValue(row.diameter_mm)
-    return hasSteel() && hasValue(row.size) && hasValue(row.wall_thickness_mm)
+    if (row.pipe_type === 'wire') return hasValue(row.diameter_mm) && validatePipeProfileGeometry(row) === null
+    if (row.pipe_type === 'round') {
+      return hasSteel()
+        && roundPipeOuterDiameterMm(row) !== null
+        && hasValue(row.wall_thickness_mm)
+        && validatePipeProfileGeometry(row) === null
+    }
+    return hasSteel()
+      && hasValue(row.size)
+      && hasValue(row.wall_thickness_mm)
+      && validatePipeProfileGeometry(row) === null
   }
   if (table === 'request_knives') {
     return hasSteel()

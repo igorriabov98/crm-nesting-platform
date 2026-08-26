@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { ACTIVE_MATERIAL_CATEGORIES, CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGORY_LABELS, PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
 import { requireKnifeBevelCount } from '@/lib/materials/knife-bevel'
+import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { Material, MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
@@ -176,6 +177,7 @@ function defaultUnitForVariantUsage(category: MaterialCategory, characteristics:
 
 function usageToVariant(data: MaterialUsageInput) {
   const c = data.characteristics
+  const pipeProfile = data.category === 'pipe' ? requireCanonicalPipeProfile(c) : null
   return {
     material_id: data.material_id,
     category: data.category,
@@ -187,7 +189,7 @@ function usageToVariant(data: MaterialUsageInput) {
     unit_weight_kg: num(c.unit_weight_kg) ?? num(c.weight_per_unit_kg),
     length_m: num(c.length_m),
     weight_per_m_kg: num(c.weight_per_m_kg),
-    piece_description: text(c.piece_description) || text(c.size),
+    piece_description: pipeProfile?.pieceDescription ?? (data.category === 'pipe' ? null : text(c.piece_description) || text(c.size)),
     knife_dimensions: data.category === 'knives' ? null : text(c.knife_dimensions),
     knife_material: text(c.knife_material),
     standard_length_mm: data.category === 'knives' ? null : num(c.standard_length_mm),
@@ -196,10 +198,10 @@ function usageToVariant(data: MaterialUsageInput) {
     ral_code: text(c.ral_code),
     finish: text(c.finish),
     default_waste_percent: num(c.default_waste_percent),
-    diameter_mm: num(c.diameter_mm),
+    diameter_mm: pipeProfile?.diameterMm ?? (data.category === 'pipe' ? null : num(c.diameter_mm)),
     is_calibrated: bool(c.is_calibrated),
-    pipe_type: text(c.pipe_type),
-    wall_thickness_mm: num(c.wall_thickness_mm),
+    pipe_type: pipeProfile?.pipeType ?? text(c.pipe_type),
+    wall_thickness_mm: pipeProfile?.wallThicknessMm ?? (data.category === 'pipe' ? null : num(c.wall_thickness_mm)),
     width_mm: num(c.width_mm),
     height_mm: num(c.height_mm),
     knife_bevel_count: data.category === 'knives' ? requireKnifeBevelCount(c.knife_bevel_count) : null,
@@ -235,10 +237,15 @@ function isSameVariant(row: MaterialVariant, input: ReturnType<typeof usageToVar
   if (input.category === 'round_tube') return same(row.length_m, input.length_m) && sameText(row.piece_description, input.piece_description)
   if (input.category === 'circle') return same(row.diameter_mm, input.diameter_mm) && same(row.steel_type_id, input.steel_type_id) && sameText(row.material_grade, input.material_grade) && same(row.is_calibrated, input.is_calibrated)
   if (input.category === 'pipe') {
-    const sameGeometry = sameText(row.pipe_type, input.pipe_type)
-      && sameText(row.piece_description, input.piece_description)
-      && same(row.wall_thickness_mm, input.wall_thickness_mm)
-      && same(row.diameter_mm, input.diameter_mm)
+    const sameSubtype = sameText(row.pipe_type, input.pipe_type)
+    const sameGeometry = input.pipe_type === 'round'
+      ? sameSubtype
+        && same(roundPipeOuterDiameterMm(row), input.diameter_mm)
+        && same(row.wall_thickness_mm, input.wall_thickness_mm)
+      : sameSubtype
+        && sameText(row.piece_description, input.piece_description)
+        && same(row.wall_thickness_mm, input.wall_thickness_mm)
+        && same(row.diameter_mm, input.diameter_mm)
     if (input.pipe_type === 'wire') return sameGeometry
     return sameGeometry
       && same(row.steel_type_id, input.steel_type_id)

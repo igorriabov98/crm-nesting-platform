@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import { upsertLongStockRequestRow } from '@/lib/long-stock-position-ui'
 import { addPipe, deletePipe, updatePipe, type WithMaterialName } from '@/lib/actions/technologist-requests'
+import { pipeSectionDimensions, roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { InlineEditCell } from './InlineEditCell'
 import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
@@ -44,22 +45,6 @@ function formatWeight(value: number | null | undefined) {
   return value === null || value === undefined || value < 0 ? '—' : `${value} кг`
 }
 
-function parsePipeDimensions(value: string | null | undefined) {
-  if (!value) return null
-  const dimensions = value
-    .replace(/[хХ×*]/g, 'x')
-    .split('x')
-    .map((part) => Number(part.trim().replace(',', '.')))
-    .filter((number) => Number.isFinite(number) && number > 0)
-  return dimensions.length >= 2 ? dimensions : null
-}
-
-function parseRoundPipeDiameter(value: string | null | undefined) {
-  if (!value) return null
-  const diameter = Number(value.trim().replace(',', '.'))
-  return Number.isFinite(diameter) && diameter > 0 ? diameter : null
-}
-
 export function calculatePipeWeight(row: PipeRow, steelTypes: SteelType[]) {
   if (row.pipe_type === 'wire') return row.remainder_kg ?? null
   const density = steelTypes.find((steelType) => steelType.id === row.steel_type_id)?.density_kg_mm3
@@ -69,11 +54,11 @@ export function calculatePipeWeight(row: PipeRow, steelTypes: SteelType[]) {
 
   let crossSection: number | null = null
   if (row.pipe_type === 'round') {
-    const diameter = parseRoundPipeDiameter(row.size) ?? Number(row.diameter_mm || 0)
+    const diameter = roundPipeOuterDiameterMm(row) ?? 0
     if (diameter <= 0 || wall * 2 >= diameter) return null
     crossSection = Math.PI * ((diameter / 2) ** 2 - ((diameter - 2 * wall) / 2) ** 2)
   } else {
-    const dimensions = parsePipeDimensions(row.size)
+    const dimensions = pipeSectionDimensions(row.size)
     if (!dimensions) return null
     const a = dimensions[0]
     const b = row.pipe_type === 'square' ? dimensions[0] : dimensions[1]
@@ -143,16 +128,15 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
   }
 
   const handlePipeTypeChange = (row: PipeRow, pipeType: PipeInput['pipe_type']) => {
-    const patch: PipePatch = { pipe_type: pipeType }
+    if (pipeType === row.pipe_type) return
+    const patch: PipePatch = { pipe_type: pipeType, size: null, diameter_mm: null }
     if (pipeType === 'wire') {
-      patch.size = null
       patch.wall_thickness_mm = null
       patch.steel_type_id = null
       patch.remainder_length_mm = 0
       patch.remainder_qty = 0
     } else {
       patch.remainder_kg = 0
-      patch.diameter_mm = null
     }
     void handleUpdate(row.id, patch)
   }
@@ -180,9 +164,14 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
       if (variant?.diameter_mm) updates.diameter_mm = variant.diameter_mm
     } else {
       updates.remainder_kg = 0
-      updates.diameter_mm = null
       if (variant?.steel_type_id) updates.steel_type_id = variant.steel_type_id
-      if (variant?.piece_description ?? variant?.sheet_size) updates.size = variant?.piece_description ?? variant?.sheet_size
+      if (variant?.pipe_type === 'round') {
+        updates.size = null
+        updates.diameter_mm = roundPipeOuterDiameterMm(variant)
+      } else {
+        updates.diameter_mm = null
+        if (variant?.piece_description ?? variant?.sheet_size) updates.size = variant?.piece_description ?? variant?.sheet_size
+      }
       if (variant?.wall_thickness_mm) updates.wall_thickness_mm = variant.wall_thickness_mm
     }
     void handleUpdate(row.id, updates)
@@ -197,9 +186,9 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               <th className="min-w-[200px] px-3 py-2 text-left">Материал</th>
               <th className="min-w-[150px] px-3 py-2 text-left">Подтип</th>
               <th className="min-w-[120px] px-3 py-2 text-left">Тип стали</th>
-              <th className="min-w-[140px] px-3 py-2 text-left">Размер</th>
+              <th className="min-w-[140px] px-3 py-2 text-left">Сечение, мм</th>
               <th className="min-w-[140px] px-3 py-2 text-left">Толщина стенки, мм</th>
-              <th className="min-w-[150px] px-3 py-2 text-left">Диаметр проволоки, мм</th>
+              <th className="min-w-[150px] px-3 py-2 text-left">Диаметр, мм</th>
               <th className="min-w-[140px] px-3 py-2 text-left">Необходимо длина, мм</th>
               <th className="min-w-[110px] px-3 py-2 text-left">Необходимо, кг</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Вес, кг</th>
@@ -213,7 +202,9 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               const canEditCharacteristics = canEditMaterialCharacteristics(row, isEditable)
               const isWire = hasMaterial && row.pipe_type === 'wire'
               const isRegularPipe = hasMaterial && !isWire
-              const showsDiameter = hasMaterial && row.pipe_type === 'wire'
+              const isRound = isRegularPipe && row.pipe_type === 'round'
+              const showsSection = isRegularPipe && !isRound
+              const showsDiameter = hasMaterial && (row.pipe_type === 'wire' || row.pipe_type === 'round')
               const displayWeight = calculatePipeWeight(row, steelTypes) ?? row.calculated_weight_kg
               return (
                 <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
@@ -258,7 +249,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
                       </select>
                     )}
                   </td>
-                  <td className="px-3 py-2">{isRegularPipe ? <InlineEditCell value={row.size} disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { size: value === null ? null : String(value) })} /> : <span className="text-gray-400">—</span>}</td>
+                  <td className="px-3 py-2">{showsSection ? <InlineEditCell value={row.size} disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { size: value === null ? null : String(value) })} /> : <span className="text-gray-400">—</span>}</td>
                   <td className="px-3 py-2">{isRegularPipe ? <InlineEditCell value={row.wall_thickness_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { wall_thickness_mm: toNumber(value) })} /> : <span className="text-gray-400">—</span>}</td>
                   <td className="px-3 py-2">{showsDiameter ? <InlineEditCell value={row.diameter_mm} type="number" step="0.01" disabled={!canEditCharacteristics} onSave={(value) => handleUpdate(row.id, { diameter_mm: toNumber(value) })} /> : <span className="text-gray-400">—</span>}</td>
                   <td className="px-3 py-2">{isRegularPipe ? <InlineEditCell value={row.remainder_length_mm} type="number" step="0.01" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_length_mm: Number(value || 0) })} /> : <span className="text-gray-400">—</span>}</td>
