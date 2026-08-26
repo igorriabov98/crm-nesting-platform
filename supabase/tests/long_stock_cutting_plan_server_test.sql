@@ -794,10 +794,10 @@ begin
   values (v_material, 'Тестовый мерный нож', 'knives', v_actor);
   insert into public.material_variants(
     id, material_id, category, steel_type_id, knife_bevel_count,
-    standard_length_mm, width_mm, height_mm, default_unit
+    width_mm, height_mm, default_unit
   ) values (
     v_variant, v_material, 'knives', v_steel_type, 1,
-    300, 300, 20, 'мм'
+    300, 20, 'мм'
   );
 
   insert into public.inventory(

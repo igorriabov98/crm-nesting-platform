@@ -76,7 +76,7 @@ async function loadLongStockCuttingPlanPdfData(
       .eq('candidate_number', version.selected_candidate_number)
       .maybeSingle(),
     db.from('material_variants')
-      .select('id,material_id,category,steel_type_id,material_grade,knife_material,knife_bevel_count,knife_dimensions,standard_length_mm,width_mm,height_mm,diameter_mm,is_calibrated,pipe_type,piece_description,wall_thickness_mm')
+      .select('id,material_id,category,steel_type_id,material_grade,knife_material,knife_bevel_count,knife_dimensions,width_mm,height_mm,diameter_mm,is_calibrated,pipe_type,piece_description,wall_thickness_mm')
       .eq('id', plan.material_variant_id)
       .maybeSingle(),
   ])

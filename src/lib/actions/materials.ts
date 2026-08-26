@@ -122,7 +122,7 @@ function variantTextColumnsForSearch(category?: MaterialCategory | null, matched
     round_tube: ['piece_description'],
     circle: ['material_grade'],
     pipe: ['material_grade', 'piece_description'],
-    knives: ['material_grade', 'knife_dimensions', 'knife_material'],
+    knives: ['material_grade', 'knife_material'],
     components: ['specification', 'default_unit'],
     paint: ['ral_code', 'finish'],
     mesh: ['mesh_description'],
@@ -133,7 +133,6 @@ function variantTextColumnsForSearch(category?: MaterialCategory | null, matched
     'material_grade',
     'sheet_size',
     'piece_description',
-    'knife_dimensions',
     'knife_material',
     'specification',
     'default_unit',
@@ -151,7 +150,7 @@ function variantNumericColumnsForSearch(category?: MaterialCategory | null, matc
     round_tube: ['length_m'],
     circle: ['diameter_mm'],
     pipe: ['diameter_mm', 'wall_thickness_mm'],
-    knives: ['standard_length_mm', 'width_mm', 'height_mm', 'knife_bevel_count'],
+    knives: ['width_mm', 'height_mm', 'knife_bevel_count'],
     components: ['diameter_mm'],
     mesh: ['mesh_length_mm', 'mesh_width_mm'],
   }
@@ -159,7 +158,6 @@ function variantNumericColumnsForSearch(category?: MaterialCategory | null, matc
   return [
     'thickness_mm',
     'length_m',
-    'standard_length_mm',
     'diameter_mm',
     'wall_thickness_mm',
     'width_mm',
@@ -168,11 +166,6 @@ function variantNumericColumnsForSearch(category?: MaterialCategory | null, matc
     'mesh_length_mm',
     'mesh_width_mm',
   ]
-}
-
-function dimensionText(...values: unknown[]) {
-  const numbers = values.map((value) => num(value))
-  return numbers.every((value) => value !== null && value > 0) ? numbers.join('x') : null
 }
 
 function defaultUnitForVariantUsage(category: MaterialCategory, characteristics: Record<string, unknown>) {
@@ -195,9 +188,9 @@ function usageToVariant(data: MaterialUsageInput) {
     length_m: num(c.length_m),
     weight_per_m_kg: num(c.weight_per_m_kg),
     piece_description: text(c.piece_description) || text(c.size),
-    knife_dimensions: text(c.knife_dimensions) || dimensionText(c.standard_length_mm, c.width_mm, c.height_mm),
+    knife_dimensions: data.category === 'knives' ? null : text(c.knife_dimensions),
     knife_material: text(c.knife_material),
-    standard_length_mm: num(c.standard_length_mm),
+    standard_length_mm: data.category === 'knives' ? null : num(c.standard_length_mm),
     specification: text(c.specification),
     default_unit: defaultUnitForVariantUsage(data.category, c),
     ral_code: text(c.ral_code),
@@ -224,19 +217,14 @@ function isSameVariant(row: MaterialVariant, input: ReturnType<typeof usageToVar
   const sameKnifeDimensions = () => {
     const rowTextDimensions = dimensionParts(row.knife_dimensions)
     const inputTextDimensions = dimensionParts(input.knife_dimensions)
-    const rowDimensions = [
-      row.standard_length_mm ?? rowTextDimensions[0],
-      row.width_mm ?? rowTextDimensions[1],
-      row.height_mm ?? rowTextDimensions[2],
-    ]
-    const inputDimensions = [
-      input.standard_length_mm ?? inputTextDimensions[0],
-      input.width_mm ?? inputTextDimensions[1],
-      input.height_mm ?? inputTextDimensions[2],
-    ]
-    return same(rowDimensions[0], inputDimensions[0])
-      && same(rowDimensions[1], inputDimensions[1])
-      && same(rowDimensions[2], inputDimensions[2])
+    const profileDimensions = (explicitWidth: unknown, explicitHeight: unknown, parsed: number[]) => ({
+      width: explicitWidth ?? (parsed.length >= 3 ? parsed[1] : parsed[0]),
+      height: explicitHeight ?? (parsed.length >= 3 ? parsed[2] : parsed[1]),
+    })
+    const rowDimensions = profileDimensions(row.width_mm, row.height_mm, rowTextDimensions)
+    const inputDimensions = profileDimensions(input.width_mm, input.height_mm, inputTextDimensions)
+    return same(rowDimensions.width, inputDimensions.width)
+      && same(rowDimensions.height, inputDimensions.height)
   }
   const sameKnifeSteel = () => {
     const rowSteel = row.material_grade || row.knife_material
@@ -382,14 +370,14 @@ export async function searchMaterials(query: string, category?: MaterialCategory
       && (!category || category === 'knives')
       && (!matchedCategory || matchedCategory === 'knives')
     if (canSearchKnifeDimensions) {
-      let dimensionQuery = db
+      const [widthMm, heightMm] = dimensionValues.slice(-2)
+      const dimensionQuery = db
         .from('material_variants')
         .select('material_id')
         .eq('category', 'knives')
-        .eq('standard_length_mm', dimensionValues[0])
-        .eq('width_mm', dimensionValues[1])
+        .eq('width_mm', widthMm)
+        .eq('height_mm', heightMm)
         .limit(100)
-      if (dimensionValues[2]) dimensionQuery = dimensionQuery.eq('height_mm', dimensionValues[2])
       const { data: dimensionData, error: dimensionError } = await dimensionQuery
       if (dimensionError) throw new Error(dimensionError.message || 'Не удалось найти размеры ножей')
       for (const variant of (dimensionData || []) as Pick<MaterialVariant, 'material_id'>[]) {

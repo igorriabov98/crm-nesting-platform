@@ -4,6 +4,8 @@ import { requirePermission } from '@/lib/permissions/server'
 import { STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
 import { differenceInCalendarDays, isPast, addDays } from 'date-fns'
 import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
+import { knifeBevelLabel } from '@/lib/materials/knife-bevel'
+import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import type { StageType } from '@/lib/types'
 
 export type GanttStageStatus = 'not_planned' | 'active' | 'completed' | 'overdue'
@@ -333,10 +335,16 @@ function ganttItemName(
   }
 
   if (table === 'request_knives') {
+    const profile = formatKnifeProfileDimensions({
+      width_mm: Number(row.width_mm),
+      height_mm: Number(row.height_mm),
+      knife_dimensions: valueText(row.knife_dimensions),
+    })
     return compactParts([
       row.knife_type || row.materials?.name || 'Ножи',
       steel,
-      dimensionText(row.length_mm, row.width_mm, row.height_mm),
+      profile ? `${profile} мм` : null,
+      knifeBevelLabel(row.knife_bevel_count),
     ]).join(' · ')
   }
 

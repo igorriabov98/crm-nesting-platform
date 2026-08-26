@@ -1,11 +1,13 @@
 'use client'
 
-import { useTransition } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
 import { markOrderDelivered, markOrderPlaced } from '@/lib/actions/supply-orders'
+import { LongStockReceivingDialog } from '@/components/features/inventory/LongStockReceivingDialog'
+import type { LongStockRequestItemTable } from '@/lib/supply-orders/long-stock-purchase-plan'
 import type { OrderItemStatus } from '@/lib/types'
 
 export type RequestItemTable =
@@ -46,14 +48,19 @@ export function OrderStatusCell({
   id,
   status,
   canEdit = true,
+  receivingTable,
+  itemName,
 }: {
   table: RequestItemTable
   id: string
   status: OrderItemStatus
   canEdit?: boolean
+  receivingTable?: LongStockRequestItemTable
+  itemName?: string
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
+  const [receivingOpen, setReceivingOpen] = useState(false)
 
   const update = (mode: 'ordered' | 'delivered') => {
     startTransition(async () => {
@@ -78,9 +85,18 @@ export function OrderStatusCell({
         </button>
       )}
       {canEdit && status === 'ordered' && (
-        <button type="button" disabled={isPending} onClick={() => update('delivered')} className="text-xs font-medium text-emerald-700 hover:underline">
+        <button type="button" disabled={isPending} onClick={() => receivingTable ? setReceivingOpen(true) : update('delivered')} className="text-xs font-medium text-emerald-700 hover:underline">
           Принять на склад
         </button>
+      )}
+      {receivingTable && (
+        <LongStockReceivingDialog
+          open={receivingOpen}
+          requestItemTable={receivingTable}
+          requestItemId={id}
+          itemName={itemName}
+          onOpenChange={setReceivingOpen}
+        />
       )}
     </div>
   )

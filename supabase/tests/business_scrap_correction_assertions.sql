@@ -35,9 +35,9 @@ BEGIN
   INSERT INTO public.technologist_requests(id, machine_id, status)
   VALUES (v_request, v_machine, 'submitted_to_supply');
   INSERT INTO public.request_knives(
-    id, request_id, material_id, material_variant_id, length_mm,
+    id, request_id, material_id, material_variant_id,
     remainder_meters, to_order_mm, order_status
-  ) VALUES (v_item, v_request, v_material, v_variant, 6000, 6, 6000, 'ordered');
+  ) VALUES (v_item, v_request, v_material, v_variant, 6, 6000, 'ordered');
 
   INSERT INTO public.inventory(
     id, factory_id, material_id, material_variant_id, piece_length_mm,

@@ -88,22 +88,22 @@ begin
   values (v_material, 'Тестовый нож со скосом', 'knives', v_actor);
 
   begin
-    insert into public.material_variants(material_id, category, knife_dimensions)
-    values (v_material, 'knives', '6000x100x10');
+    insert into public.material_variants(material_id, category, width_mm, height_mm)
+    values (v_material, 'knives', 100, 10);
     raise exception 'Вариант ножа без явно выбранного скоса был сохранён';
   exception when check_violation then
     null;
   end;
 
-  insert into public.material_variants(material_id, category, knife_dimensions, knife_bevel_count)
-  values (v_material, 'knives', '6000x100x10', 1)
+  insert into public.material_variants(material_id, category, width_mm, height_mm, knife_bevel_count)
+  values (v_material, 'knives', 100, 10, 1)
   returning id, knife_bevel_count into v_bevel_one_variant, v_bevel;
   if v_bevel <> 1 then
     raise exception 'Вариант ножа со скосом 1 не сохранён';
   end if;
 
-  insert into public.material_variants(material_id, category, knife_dimensions, knife_bevel_count)
-  values (v_material, 'knives', '6000x100x10', 2)
+  insert into public.material_variants(material_id, category, width_mm, height_mm, knife_bevel_count)
+  values (v_material, 'knives', 100, 10, 2)
   returning knife_bevel_count into v_bevel;
   if v_bevel <> 2 then
     raise exception 'Вариант ножа со скосом 2 не сохранён';
@@ -121,7 +121,8 @@ begin
   select count(*) into v_count
   from public.material_variants
   where material_id = v_material
-    and knife_dimensions = '6000x100x10'
+    and width_mm = 100
+    and height_mm = 10
     and knife_bevel_count in (1, 2);
   if v_count <> 2 then
     raise exception 'Скос не разделяет идентичные по размерам варианты ножа';

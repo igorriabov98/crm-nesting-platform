@@ -94,8 +94,9 @@ BEGIN
     (v_material, 'Тестовая комплектация перевозки', 'components', v_actor),
     (v_scrap_material, 'Тестовый деловой отход перевозки', 'components', v_actor),
     (v_knife_material, 'Тестовый мерный нож перевозки', 'knives', v_actor);
-  INSERT INTO public.material_variants(id, material_id, category, knife_dimensions, knife_bevel_count, default_unit)
-  VALUES (v_knife_variant, v_knife_material, 'knives', 'тест 40×10', 1, 'мм');
+  INSERT INTO public.material_variants(
+    id, material_id, category, width_mm, height_mm, knife_bevel_count, default_unit
+  ) VALUES (v_knife_variant, v_knife_material, 'knives', 40, 10, 1, 'мм');
 
   INSERT INTO public.machines(id, factory_id, name, created_by)
   VALUES (v_machine, v_beregovo, 'INV-TRANSFER-MAIN', v_actor);
@@ -418,10 +419,10 @@ BEGIN
   VALUES (v_knife_request, v_knife_machine, v_actor);
   INSERT INTO public.request_knives(
     id, request_id, knife_type, order_mm, will_be_used_mm,
-    material_id, material_variant_id, length_mm
+    material_id, material_variant_id, width_mm, height_mm, knife_bevel_count
   ) VALUES (
     v_knife_item, v_knife_request, 'Тестовый нож', 7000, 7000,
-    v_knife_material, v_knife_variant, 7000
+    v_knife_material, v_knife_variant, 40, 10, 1
   );
   INSERT INTO public.inventory(
     id, factory_id, material_id, material_variant_id, piece_length_mm,

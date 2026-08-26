@@ -12,6 +12,8 @@ import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { OrderActions } from './OrderActions'
 import { OrderDateGroup } from './OrderDateGroup'
 import { OrderFilters } from './OrderFilters'
+import { LongStockReceivingDialog } from '@/components/features/inventory/LongStockReceivingDialog'
+import type { LongStockRequestItemTable } from '@/lib/supply-orders/long-stock-purchase-plan'
 import {
   filterSupplyOrderItems,
   groupSupplyOrderItems,
@@ -46,6 +48,7 @@ export function SupplyOrdersPage({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [isPending, startTransition] = useTransition()
   const [showFinanceStep, setShowFinanceStep] = useState(false)
+  const [receivingItem, setReceivingItem] = useState<SupplyOrderItem | null>(null)
   const [financeDrafts, setFinanceDrafts] = useState<Record<string, { amount: string; currency: 'UAH' | 'EUR'; plannedDate: string }>>({})
   const defaultFilters = useMemo<OrderFiltersState>(() => ({
     query: '',
@@ -126,6 +129,17 @@ export function SupplyOrdersPage({
   }
 
   const runAction = (mode: 'ordered' | 'delivered') => {
+    if (mode === 'delivered') {
+      const measuredItems = selectedOrderItems.filter((item) => measuredReceivingTable(item) !== null)
+      if (measuredItems.length > 0) {
+        if (selectedOrderItems.length !== 1) {
+          toast.error('Длинномер принимайте по одной позиции и одной фактической длине за операцию')
+          return
+        }
+        setReceivingItem(measuredItems[0])
+        return
+      }
+    }
     startTransition(async () => {
       const payload = selectedOrderItems.map((item) => ({ table: item.table, id: item.id }))
       const result = mode === 'ordered'
@@ -182,6 +196,20 @@ export function SupplyOrdersPage({
           isPending={isPending}
           onMarkOrdered={openFinanceStep}
           onMarkDelivered={() => runAction('delivered')}
+        />
+      )}
+
+      {receivingItem && measuredReceivingTable(receivingItem) && (
+        <LongStockReceivingDialog
+          open
+          requestItemTable={measuredReceivingTable(receivingItem)!}
+          requestItemId={receivingItem.id}
+          itemName={receivingItem.item_name}
+          onOpenChange={(nextOpen) => !nextOpen && setReceivingItem(null)}
+          onReceived={() => {
+            setSelected(new Set())
+            setReceivingItem(null)
+          }}
         />
       )}
 
@@ -317,4 +345,11 @@ function countChangedFilters(current: OrderFiltersState, defaults: OrderFiltersS
   return (Object.keys(current) as Array<keyof OrderFiltersState>)
     .filter((key) => current[key] !== defaults[key])
     .length
+}
+
+function measuredReceivingTable(item: SupplyOrderItem): LongStockRequestItemTable | null {
+  if (item.category === 'knives') return 'request_knives'
+  if (item.category === 'circle') return 'request_circle'
+  if (item.category === 'pipe' && item.pipe_type !== 'wire') return 'request_pipe'
+  return null
 }

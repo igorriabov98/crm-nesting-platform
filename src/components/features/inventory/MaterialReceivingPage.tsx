@@ -11,12 +11,15 @@ import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
 import {
   previewMaterialDeliveryAllocation,
+  previewSingleLengthLongStockReceipt,
   receiveMaterialDelivery,
+  receiveSingleLengthLongStockDelivery,
   type MaterialDeliveryAllocationInput,
   type MaterialDeliveryAllocationPreview,
   type MaterialReceivingPageData,
   type MaterialReceivingItem,
 } from '@/lib/actions/supply-orders'
+import { isLongStockRequestItemTable } from '@/lib/supply-orders/long-stock-purchase-plan'
 import { cn } from '@/lib/utils'
 import { MaterialReceivingAllocationDialog } from './MaterialReceivingAllocationDialog'
 
@@ -140,10 +143,23 @@ export function MaterialReceivingPage({ data }: Props) {
     values: ReceiptValues,
     confirmedAllocations?: MaterialDeliveryAllocationInput[],
   ) {
-    const result = await receiveMaterialDelivery({
-      ...receiptInput(item, values),
-      confirmed_allocations: confirmedAllocations,
-    })
+    if (values.isBar && !isLongStockRequestItemTable(item.table)) {
+      toast.error('Некорректная категория длинномера')
+      return false
+    }
+    const result = values.isBar && isLongStockRequestItemTable(item.table)
+      ? await receiveSingleLengthLongStockDelivery({
+        requestItemTable: item.table,
+        requestItemId: item.id,
+        scheduleId: item.schedule_id || undefined,
+        receivedPieceLengthMm: values.pieceLength,
+        receivedPieceCount: values.pieceCount,
+        confirmedAllocations,
+      })
+      : await receiveMaterialDelivery({
+        ...receiptInput(item, values),
+        confirmed_allocations: confirmedAllocations,
+      })
     if (!result.success) {
       toast.error(result.error || 'Не удалось принять поставку')
       return false
@@ -161,7 +177,26 @@ export function MaterialReceivingPage({ data }: Props) {
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setPendingKey(item.key)
     startTransition(async () => {
-      const result = await previewMaterialDeliveryAllocation(receiptInput(item, values))
+      if (values.isBar && !isLongStockRequestItemTable(item.table)) {
+        setPendingKey(null)
+        toast.error('Некорректная категория длинномера')
+        return
+      }
+      let preparedScheduleId: string | null = null
+      let result: { success: boolean; data?: MaterialDeliveryAllocationPreview; error?: string }
+      if (values.isBar && isLongStockRequestItemTable(item.table)) {
+        const longStockResult = await previewSingleLengthLongStockReceipt({
+          requestItemTable: item.table,
+          requestItemId: item.id,
+          scheduleId: item.schedule_id || undefined,
+          receivedPieceLengthMm: values.pieceLength,
+          receivedPieceCount: values.pieceCount,
+        })
+        preparedScheduleId = longStockResult.scheduleId || null
+        result = longStockResult
+      } else {
+        result = await previewMaterialDeliveryAllocation(receiptInput(item, values))
+      }
       if (!result.success || !result.data) {
         setPendingKey(null)
         toast.error(result.error || 'Не удалось рассчитать распределение')
@@ -177,7 +212,9 @@ export function MaterialReceivingPage({ data }: Props) {
 
       setAllocationState({
         itemKey: item.key,
-        item,
+        item: preparedScheduleId
+          ? { ...item, schedule_id: preparedScheduleId }
+          : item,
         receipt: values,
         data: preview,
         returnFocus,

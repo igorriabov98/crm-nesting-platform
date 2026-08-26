@@ -354,7 +354,7 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
     const cuttingPlanVersions = cuttingPlanVersionResult.data || []
     const variantIds = Array.from(new Set(cuttingPlans.map((plan: any) => plan.material_variant_id))) as string[]
     const variantResult = variantIds.length
-      ? await db.from('material_variants').select('id,material_id,category,steel_type_id,material_grade,knife_material,knife_bevel_count,knife_dimensions,standard_length_mm,width_mm,height_mm,diameter_mm,is_calibrated,pipe_type,piece_description,wall_thickness_mm').in('id', variantIds)
+      ? await db.from('material_variants').select('id,material_id,category,steel_type_id,material_grade,knife_material,knife_bevel_count,knife_dimensions,width_mm,height_mm,diameter_mm,is_calibrated,pipe_type,piece_description,wall_thickness_mm').in('id', variantIds)
       : { data: [], error: null }
     if (variantResult.error) throw new Error(variantResult.error.message)
     const variants = variantResult.data || []

@@ -18,13 +18,13 @@ export function SupplyKnivesTable({ rows, machineId, canManageOrders = true }: P
       <table className={tableClass}>
         <thead className="border-b border-[#E8ECF0] bg-[#F8F9FA]">
           <tr>
-            {['Нож', 'Тип стали', 'Скос', 'Длина, мм', 'Ширина, мм', 'Высота, мм', 'Необходимо, мм', 'Вес, кг', 'На складе', 'Забронировано', 'Статус', 'Действия'].map((header, index) => (
+            {['Нож', 'Тип стали', 'Скос', 'Ширина, мм', 'Высота, мм', 'Необходимо, мм', 'Вес, кг', 'На складе', 'Забронировано', 'Статус', 'Действия'].map((header, index) => (
               <th key={header} className={`${thClass} ${index === 0 ? stickyCellClass : ''}`}>{header}</th>
             ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-[#F1F5F9]">
-          {rows.length === 0 ? <EmptyRows colSpan={12} /> : rows.map((row) => {
+          {rows.length === 0 ? <EmptyRows colSpan={11} /> : rows.map((row) => {
             const needed = Number(row.remainder_meters || 0) > 0 ? Number(row.remainder_meters || 0) * 1000 : Number(row.to_order_mm || 0)
             const reserved = Number(row.reserved_quantity || 0)
             const unit = row.stock_unit || 'мм'
@@ -33,7 +33,6 @@ export function SupplyKnivesTable({ rows, machineId, canManageOrders = true }: P
                 <td className={`${tdClass} min-w-[220px] font-medium text-[#1B3A6B] ${stickyCellClass}`}>{row.materials?.name || row.knife_type || '—'}</td>
                 <td className={tdClass}>{row.steel_grade || '—'}</td>
                 <td className={tdClass}>{knifeBevelCharacteristicLabel(row.knife_bevel_count)}</td>
-                <td className={tdClass}>{formatAmount(row.length_mm)}</td>
                 <td className={tdClass}>{formatAmount(row.width_mm)}</td>
                 <td className={tdClass}>{formatAmount(row.height_mm)}</td>
                 <td className={tdClass}>{formatAmount(needed)}</td>
@@ -47,7 +46,7 @@ export function SupplyKnivesTable({ rows, machineId, canManageOrders = true }: P
                   )}
                 </td>
                 <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
-                <td className={tdClass}><OrderStatusCell table="request_knives" id={row.id} status={row.order_status} canEdit={canManageOrders} /></td>
+                <td className={tdClass}><OrderStatusCell table="request_knives" id={row.id} status={row.order_status} canEdit={canManageOrders} receivingTable="request_knives" itemName={row.materials?.name || row.knife_type || 'Нож'} /></td>
                 <td className={tdClass}>
                   <div className="flex items-center gap-2">
                     <ReserveButton table="request_knives" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />

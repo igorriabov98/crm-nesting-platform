@@ -1,3 +1,5 @@
+import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
+
 export type LongStockWeightVariant = {
   category: string
   weight_per_m_kg: number | null
@@ -24,6 +26,18 @@ export function calculateLongStockWeightPerMeterKg(
   return crossSectionMm2 === null ? null : crossSectionMm2 * 1000 * density
 }
 
+export function calculateLongStockWeightForLength(
+  requiredWeightKg: number | null,
+  requiredLengthMm: number,
+  targetLengthMm: number,
+) {
+  if (requiredWeightKg === null) return null
+  if (!Number.isFinite(requiredWeightKg) || requiredWeightKg < 0) return null
+  if (!Number.isFinite(requiredLengthMm) || requiredLengthMm <= 0) return null
+  if (!Number.isFinite(targetLengthMm) || targetLengthMm < 0) return null
+  return requiredWeightKg * targetLengthMm / requiredLengthMm
+}
+
 function longStockCrossSectionMm2(variant: LongStockWeightVariant) {
   if (variant.category === 'circle') {
     const diameter = positiveNumber(variant.diameter_mm)
@@ -31,9 +45,7 @@ function longStockCrossSectionMm2(variant: LongStockWeightVariant) {
   }
 
   if (variant.category === 'knives') {
-    const dimensions = parseDimensions(variant.knife_dimensions)
-    const width = positiveNumber(variant.width_mm) ?? dimensions?.[1] ?? null
-    const height = positiveNumber(variant.height_mm) ?? dimensions?.[2] ?? null
+    const { widthMm: width, heightMm: height } = knifeProfileDimensions(variant)
     return width === null || height === null ? null : width * height
   }
 

@@ -56,7 +56,7 @@ export function createLongStockMaterialDraft(
   } else if (category === 'pipe') {
     fields = { pipe_type: 'square', steel_type_id: '', size: '', wall_thickness_mm: '' }
   } else {
-    fields = { steel_type_id: '', knife_bevel_count: '', standard_length_mm: '', width_mm: '', height_mm: '' }
+    fields = { steel_type_id: '', knife_bevel_count: '', width_mm: '', height_mm: '' }
   }
   return { name, category, fields }
 }
@@ -97,7 +97,6 @@ export function validateLongStockMaterialDraft(draft: LongStockNewMaterialDraft)
   }
 
   if (!stringValue(draft.fields.knife_bevel_count)) return 'Выберите скос ножа'
-  if (!positiveNumber(draft.fields.standard_length_mm)) return 'Введите длину ножа'
   if (!positiveNumber(draft.fields.width_mm)) return 'Введите ширину ножа'
   if (!positiveNumber(draft.fields.height_mm)) return 'Введите высоту ножа'
   return null
@@ -130,7 +129,8 @@ export function longStockMaterialCharacteristics(
     material_grade: steelTypeName,
     knife_material: steelTypeName,
     knife_bevel_count: draft.fields.knife_bevel_count,
-    standard_length_mm: draft.fields.standard_length_mm,
+    standard_length_mm: null,
+    knife_dimensions: null,
     width_mm: draft.fields.width_mm,
     height_mm: draft.fields.height_mm,
   }
