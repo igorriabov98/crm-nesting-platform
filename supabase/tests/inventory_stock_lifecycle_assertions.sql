@@ -549,9 +549,9 @@ BEGIN
   INSERT INTO public.machines (id, factory_id) VALUES (v_machine, v_factory);
   INSERT INTO public.technologist_requests (id, machine_id) VALUES (v_request, v_machine);
   INSERT INTO public.request_knives (
-    id, request_id, material_id, material_variant_id, length_mm
+    id, request_id, material_id, material_variant_id
   ) VALUES (
-    v_item, v_request, v_material, v_variant, 12000
+    v_item, v_request, v_material, v_variant
   );
   INSERT INTO public.inventory (
     id, factory_id, material_id, material_variant_id, piece_length_mm,

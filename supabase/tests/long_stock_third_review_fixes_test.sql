@@ -143,19 +143,19 @@ begin
   insert into public.materials(id, name, category, created_by)
   values (v_material, 'Нож теста пропила 1 мм', 'knives', v_actor);
   insert into public.material_variants(
-    id, material_id, category, knife_dimensions, knife_bevel_count,
-    standard_length_mm, weight_per_m_kg, default_unit
+    id, material_id, category, width_mm, height_mm, knife_bevel_count,
+    weight_per_m_kg, default_unit
   ) values (
-    v_variant, v_material, 'knives', '6000×40×10', 1,
-    6000, 2, 'мм'
+    v_variant, v_material, 'knives', 40, 10, 1,
+    2, 'мм'
   );
   insert into public.request_knives(
     id, request_id, knife_type, order_mm, will_be_used_mm,
-    material_id, material_variant_id, length_mm, width_mm, height_mm,
+    material_id, material_variant_id, width_mm, height_mm,
     knife_bevel_count
   ) values (
     v_request_item, v_request, 'Нож с четырьмя резами', 5900, 5900,
-    v_material, v_variant, 6000, 40, 10, 1
+    v_material, v_variant, 40, 10, 1
   );
   insert into public.inventory(
     id, factory_id, material_id, material_variant_id, piece_length_mm,
