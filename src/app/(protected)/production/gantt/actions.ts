@@ -6,6 +6,7 @@ import { differenceInCalendarDays, isPast, addDays } from 'date-fns'
 import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
 import { knifeBevelLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import type { StageType } from '@/lib/types'
 
 export type GanttStageStatus = 'not_planned' | 'active' | 'completed' | 'overdue'
@@ -324,12 +325,14 @@ function ganttItemName(
   }
 
   if (table === 'request_pipe') {
-    const diameter = formatGanttNumber(row.diameter_mm)
+    const diameter = formatGanttNumber(row.pipe_type === 'round'
+      ? roundPipeOuterDiameterMm({ diameter_mm: row.diameter_mm, size: row.size })
+      : row.diameter_mm)
     const wall = formatGanttNumber(row.wall_thickness_mm)
     return compactParts([
       pipeTypeLabel(row.pipe_type),
       steel,
-      row.size || (diameter ? `Ø${diameter} мм` : null),
+      row.pipe_type === 'round' ? (diameter ? `Ø${diameter} мм` : null) : row.size || (diameter ? `Ø${diameter} мм` : null),
       wall ? `стенка ${wall} мм` : null,
     ]).join(' · ')
   }
@@ -425,7 +428,13 @@ function ganttNameFallback(table: string, row: GanttRequestItemRow) {
   if (table === 'request_sheet_metal') return row.material_name
   if (table === 'request_round_tube') return row.material_name
   if (table === 'request_circle') return row.steel_grade
-  if (table === 'request_pipe') return row.size
+  if (table === 'request_pipe') {
+    if (row.pipe_type === 'round') {
+      const diameter = roundPipeOuterDiameterMm({ diameter_mm: row.diameter_mm, size: row.size })
+      return diameter ? `Ø${diameter} мм` : 'Труба круглая'
+    }
+    return row.size
+  }
   if (table === 'request_knives') return row.knife_type
   if (table === 'request_components') return row.component_name
   if (table === 'request_paint') return row.paint_type || row.ral_code

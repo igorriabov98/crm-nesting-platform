@@ -1,4 +1,5 @@
 import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { pipeSectionDimensions, roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 
 export type LongStockWeightVariant = {
   category: string
@@ -54,35 +55,18 @@ function longStockCrossSectionMm2(variant: LongStockWeightVariant) {
   if (wall === null) return null
 
   if (variant.pipe_type === 'round') {
-    const diameter = positiveNumber(variant.diameter_mm) ?? positiveNumber(variant.piece_description)
+    const diameter = roundPipeOuterDiameterMm(variant)
     if (diameter === null || wall * 2 >= diameter) return null
     return Math.PI * ((diameter / 2) ** 2 - ((diameter - 2 * wall) / 2) ** 2)
   }
 
-  const dimensions = parsePipeDimensions(variant.piece_description)
+  const dimensions = pipeSectionDimensions(variant.piece_description)
   if (!dimensions) return null
   const [first, second] = dimensions
   const width = first
   const height = variant.pipe_type === 'square' ? first : second
   if (wall * 2 >= Math.min(width, height)) return null
   return width * height - (width - 2 * wall) * (height - 2 * wall)
-}
-
-function parsePipeDimensions(value: string | null) {
-  const dimensions = parseDimensions(value)
-  return dimensions && dimensions.length >= 2
-    ? [dimensions[0], dimensions[1]] as [number, number]
-    : null
-}
-
-function parseDimensions(value: string | null) {
-  const dimensions = String(value ?? '')
-    .replace(/[хХ×*]/g, 'x')
-    .split('x')
-    .map((part) => positiveNumber(part.trim().replace(',', '.')))
-  return dimensions.length > 0 && dimensions.every((part) => part !== null)
-    ? dimensions as number[]
-    : null
 }
 
 function positiveNumber(value: unknown) {

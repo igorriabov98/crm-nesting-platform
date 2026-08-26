@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   createLongStockMaterialDraft,
   longStockDraftDemandPatch,
+  longStockMaterialCharacteristics,
   validateLongStockDialogAction,
   validateLongStockMaterialDraft,
 } from '@/lib/long-stock-material-draft'
@@ -56,6 +57,43 @@ test('new pipe variant keeps characteristic validation scoped to material creati
   assert.equal(
     validateLongStockMaterialDraft(draft),
     'Толщина стенки трубы не может быть больше или равна половине меньшей стороны размера.',
+  )
+})
+
+test('new round pipe stores the outer diameter separately from section size', () => {
+  const draft = createLongStockMaterialDraft('Труба круглая Hardox', 'pipe')
+  draft.fields = {
+    ...draft.fields,
+    pipe_type: 'round',
+    steel_type_id: 'hardox-id',
+    diameter_mm: '60',
+    wall_thickness_mm: '4',
+  }
+
+  assert.equal(validateLongStockMaterialDraft(draft), null)
+  assert.deepEqual(longStockMaterialCharacteristics(draft, 'Hardox'), {
+    pipe_type: 'round',
+    steel_type_id: 'hardox-id',
+    material_grade: 'Hardox',
+    size: null,
+    diameter_mm: 60,
+    wall_thickness_mm: 4,
+  })
+})
+
+test('new round pipe rejects a square section value', () => {
+  const draft = createLongStockMaterialDraft('Труба круглая Hardox', 'pipe')
+  draft.fields = {
+    ...draft.fields,
+    pipe_type: 'round',
+    steel_type_id: 'hardox-id',
+    size: '40×40',
+    wall_thickness_mm: '4',
+  }
+
+  assert.equal(
+    validateLongStockMaterialDraft(draft),
+    'Для круглой трубы укажите один наружный диаметр, а не размер вида 40×40.',
   )
 })
 

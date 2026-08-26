@@ -79,6 +79,7 @@ import {
 } from '@/lib/long-stock-material-draft'
 import { KNIFE_BEVEL_OPTIONS, knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import {
   DEFAULT_LONG_STOCK_SEARCH_BUDGET,
   EXTENDED_LONG_STOCK_SEARCH_BUDGET,
@@ -230,7 +231,14 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   function updateNewMaterialField(field: string, value: string | boolean) {
     setNewMaterialDraft((current) => current ? {
       ...current,
-      fields: { ...current.fields, [field]: value },
+      fields: field === 'pipe_type' && current.category === 'pipe' && current.fields.pipe_type !== value
+        ? {
+          ...current.fields,
+          pipe_type: value,
+          size: '',
+          diameter_mm: '',
+        }
+        : { ...current.fields, [field]: value },
     } : current)
     setMaterialError(null)
   }
@@ -1075,12 +1083,22 @@ function NewLongStockMaterialForm({
                   .map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </div>
-            <DraftField
-              label={pipeType === 'round' ? 'Диаметр, мм' : 'Размер'}
-              value={draft.fields.size}
-              onChange={(value) => onFieldChange('size', value)}
-              placeholder={pipeType === 'round' ? '60' : '40×40'}
-            />
+            {pipeType === 'round' ? (
+              <DraftField
+                label="Наружный диаметр, мм"
+                type="number"
+                value={draft.fields.diameter_mm}
+                onChange={(value) => onFieldChange('diameter_mm', value)}
+                placeholder="60"
+              />
+            ) : (
+              <DraftField
+                label="Сечение, мм"
+                value={draft.fields.size}
+                onChange={(value) => onFieldChange('size', value)}
+                placeholder="40×40"
+              />
+            )}
             <DraftField label="Толщина стенки, мм" type="number" value={draft.fields.wall_thickness_mm} onChange={(value) => onFieldChange('wall_thickness_mm', value)} />
           </>
         )}
@@ -1583,9 +1601,10 @@ function variantSummary(category: Category, variant: MaterialVariant) {
     ].filter(Boolean).join(' · ') || 'Точный вариант'
   }
   if (category === 'pipe') {
+    const roundDiameter = variant.pipe_type === 'round' ? roundPipeOuterDiameterMm(variant) : null
     return [
       variant.pipe_type && PIPE_SUBTYPE_LABELS[variant.pipe_type],
-      variant.piece_description,
+      roundDiameter ? `Ø${formatMm(roundDiameter)} мм` : variant.piece_description,
       variant.wall_thickness_mm && `стенка ${formatMm(variant.wall_thickness_mm)} мм`,
       variant.material_grade,
     ].filter(Boolean).join(' · ') || 'Точный вариант'

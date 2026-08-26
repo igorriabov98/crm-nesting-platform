@@ -33,6 +33,7 @@ import {
 import { ROUTES } from '@/lib/constants/routes'
 import { KNIFE_BEVEL_OPTIONS, knifeBevelCharacteristicLabel, knifeBevelLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions, knifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { addReceipt, adjustInventory, convertBusinessScrapToMetal, deleteInventoryItem, type InventoryFactory, type InventoryWithMaterial } from '@/lib/actions/inventory'
 import { createMaterial, recordMaterialUsage, type MaterialWithSupplier } from '@/lib/actions/materials'
 import type { MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
@@ -177,7 +178,15 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
   const updateDraftField = (field: string, value: string | boolean) => {
     setNewMaterialDraft((current) => current ? {
       ...current,
-      fields: { ...current.fields, [field]: value },
+      fields: field === 'pipe_type' && current.category === 'pipe' && current.fields.pipe_type !== value
+        ? {
+          ...current.fields,
+          pipe_type: value,
+          size: '',
+          diameter_mm: '',
+          ...(value === 'wire' ? { wall_thickness_mm: '', steel_type_id: '' } : {}),
+        }
+        : { ...current.fields, [field]: value },
     } : current)
   }
 
@@ -232,6 +241,13 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
     if (receiptCategory === 'pipe' && !receiptVariant?.pipe_type) {
       toast.error('Для трубы выберите вариант материала с подтипом')
       return
+    }
+    if (receiptCategory === 'pipe' && receiptVariant) {
+      const profileError = validatePipeProfileGeometry(receiptVariant)
+      if (profileError) {
+        toast.error(profileError)
+        return
+      }
     }
     if (receiptNeedsSteelType && !receiptSteelTypeId) {
       toast.error('Выберите марку стали для расчета веса трубы')
@@ -686,9 +702,9 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                 ) : showPipeColumns ? (
                   <>
                     <th className="min-w-[140px] px-4 py-3">Подтип</th>
-                    <th className="min-w-[140px] px-4 py-3">Размер</th>
-                    <th className="min-w-[140px] px-4 py-3">Толщина</th>
-                    <th className="min-w-[120px] px-4 py-3">Диаметр</th>
+                    <th className="min-w-[140px] px-4 py-3">Сечение, мм</th>
+                    <th className="min-w-[140px] px-4 py-3">Стенка, мм</th>
+                    <th className="min-w-[120px] px-4 py-3">Диаметр, мм</th>
                   </>
                 ) : (
                   <th className="min-w-[220px] px-4 py-3">Характеристики</th>
@@ -789,9 +805,9 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                   ) : showPipeColumns ? (
                     <>
                       <td className="px-4 py-3 text-[#6B7280]">{row.variant?.pipe_type ? PIPE_SUBTYPE_LABELS[row.variant.pipe_type] ?? row.variant.pipe_type : legacyCharacteristicsText(row)}</td>
-                      <td className="px-4 py-3 text-[#6B7280]">{row.variant?.pipe_type === 'wire' ? '—' : characteristicCell(row, row.variant?.piece_description)}</td>
+                      <td className="px-4 py-3 text-[#6B7280]">{row.variant?.pipe_type === 'wire' || row.variant?.pipe_type === 'round' ? '—' : characteristicCell(row, row.variant?.piece_description)}</td>
                       <td className="px-4 py-3 text-[#6B7280]">{row.variant?.pipe_type === 'wire' ? '—' : characteristicCell(row, row.variant?.wall_thickness_mm)}</td>
-                      <td className="px-4 py-3 text-[#6B7280]">{row.variant?.pipe_type === 'wire' ? characteristicCell(row, row.variant?.diameter_mm) : '—'}</td>
+                      <td className="px-4 py-3 text-[#6B7280]">{row.variant?.pipe_type === 'wire' || row.variant?.pipe_type === 'round' ? characteristicCell(row, roundPipeOuterDiameterMm(row.variant)) : '—'}</td>
                     </>
                   ) : (
                     <td className="px-4 py-3 text-[#6B7280]">{inventoryCharacteristicsSummary(row, steelTypes)}</td>
@@ -1002,6 +1018,7 @@ function NewMaterialForm({
   steelTypes: SteelType[]
 }) {
   const isPipeWire = draft.category === 'pipe' && draft.fields.pipe_type === 'wire'
+  const isPipeRound = draft.category === 'pipe' && draft.fields.pipe_type === 'round'
 
   return (
     <div className="mt-4 rounded-lg border border-dashed border-[#BFD0E8] bg-[#F8FBFF] p-4">
@@ -1050,7 +1067,8 @@ function NewMaterialForm({
               </select>
             </div>
             {!isPipeWire && <SteelTypeSelect value={draft.fields.steel_type_id} steelTypes={steelTypes} onChange={(value) => onFieldChange('steel_type_id', value)} />}
-            {!isPipeWire && <DraftInput label="Размер" value={draft.fields.size} onChange={(value) => onFieldChange('size', value)} placeholder="40x40" />}
+            {!isPipeWire && !isPipeRound && <DraftInput label="Сечение, мм" value={draft.fields.size} onChange={(value) => onFieldChange('size', value)} placeholder="40x40" />}
+            {isPipeRound && <DraftInput label="Наружный диаметр, мм" type="number" value={draft.fields.diameter_mm} onChange={(value) => onFieldChange('diameter_mm', value)} />}
             {!isPipeWire && <DraftInput label="Толщина стенки, мм" type="number" value={draft.fields.wall_thickness_mm} onChange={(value) => onFieldChange('wall_thickness_mm', value)} />}
             {isPipeWire && <DraftInput label="Диаметр, мм" type="number" value={draft.fields.diameter_mm} onChange={(value) => onFieldChange('diameter_mm', value)} />}
           </>
@@ -1212,9 +1230,13 @@ function characteristicFields(category: MaterialCategory, variant: MaterialVaria
     push('Калибровка', variant.is_calibrated ? 'Да' : 'Нет')
   } else if (category === 'pipe') {
     push('Подтип', variant.pipe_type ? PIPE_SUBTYPE_LABELS[variant.pipe_type] ?? variant.pipe_type : null)
-    if (variant.pipe_type !== 'wire') {
+    if (variant.pipe_type === 'round') {
       push('Тип стали', steelTypeName(variant, steelTypes) ?? variant.material_grade)
-      push('Размер', variant.piece_description)
+      push('Наружный диаметр, мм', roundPipeOuterDiameterMm(variant))
+      push('Толщина стенки, мм', variant.wall_thickness_mm)
+    } else if (variant.pipe_type !== 'wire') {
+      push('Тип стали', steelTypeName(variant, steelTypes) ?? variant.material_grade)
+      push('Сечение, мм', variant.piece_description)
       push('Толщина стенки, мм', variant.wall_thickness_mm)
     }
     if (variant.pipe_type === 'wire') push('Диаметр, мм', variant.diameter_mm)
@@ -1377,7 +1399,8 @@ function inventoryCharacteristicsSummary(row: InventoryWithMaterial, steelTypes:
     if (field.label === 'Скос') return `Скос: ${field.value}`
     if (category === 'circle' && field.label === 'Диаметр, мм') return `Диаметр: ${formatMillimeters(field.value)}`
     if (category === 'circle' && field.label === 'Калибровка') return `Калибровка: ${field.value}`
-    if (category === 'pipe' && field.label === 'Размер') return `Сечение: ${formatMillimeters(field.value)}`
+    if (category === 'pipe' && field.label === 'Сечение, мм') return `Сечение: ${formatMillimeters(field.value)}`
+    if (category === 'pipe' && field.label === 'Наружный диаметр, мм') return `Наружный диаметр: ${formatMillimeters(field.value)}`
     if (category === 'pipe' && field.label === 'Толщина стенки, мм') return `Стенка: ${formatMillimeters(field.value)}`
     if (category === 'pipe' && field.label === 'Диаметр, мм') return `Диаметр: ${formatMillimeters(field.value)}`
     if (category === 'knives' && field.label === 'Ширина, мм') return `Ширина: ${formatMillimeters(field.value)}`
@@ -1429,13 +1452,9 @@ function validateDraft(draft: NewMaterialDraft) {
   if (draft.category === 'pipe') {
     const pipeType = String(draft.fields.pipe_type || '').trim()
     if (!pipeType) return 'Выберите подтип трубы'
-    if (pipeType === 'wire') {
-      if (!positiveNumber(draft.fields.diameter_mm)) return 'Введите диаметр проволоки'
-    } else {
-      if (!String(draft.fields.steel_type_id || '').trim()) return 'Выберите тип стали'
-      if (!String(draft.fields.size || '').trim()) return 'Введите размер трубы'
-      if (!positiveNumber(draft.fields.wall_thickness_mm)) return 'Введите толщину стенки трубы'
-    }
+    if (pipeType !== 'wire' && !String(draft.fields.steel_type_id || '').trim()) return 'Выберите тип стали'
+    const profileError = validatePipeProfileGeometry(draft.fields)
+    if (profileError) return profileError
   }
   if (draft.category === 'knives') {
     if (!String(draft.fields.steel_type_id || '').trim()) return 'Выберите тип стали'
@@ -1470,18 +1489,14 @@ function draftToCharacteristics(draft: NewMaterialDraft, steelTypes: SteelType[]
     }
   }
   if (draft.category === 'pipe') {
-    if (fields.pipe_type === 'wire') {
-      return {
-        pipe_type: fields.pipe_type,
-        diameter_mm: fields.diameter_mm,
-      }
-    }
+    const pipeProfile = requireCanonicalPipeProfile(fields)
     return {
-      pipe_type: fields.pipe_type,
-      steel_type_id: steelTypeId || null,
-      material_grade: steelName,
-      size: fields.size,
-      wall_thickness_mm: fields.wall_thickness_mm,
+      pipe_type: pipeProfile.pipeType,
+      steel_type_id: pipeProfile.pipeType === 'wire' ? null : steelTypeId || null,
+      material_grade: pipeProfile.pipeType === 'wire' ? null : steelName,
+      size: pipeProfile.pieceDescription,
+      diameter_mm: pipeProfile.diameterMm,
+      wall_thickness_mm: pipeProfile.wallThicknessMm,
     }
   }
   if (draft.category === 'knives') {

@@ -39,6 +39,7 @@ import {
 } from '@/lib/actions/technologist-requests'
 import { requirePermission } from '@/lib/permissions/server'
 import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
+import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   prepareLongStockCuttingPlanPdf,
@@ -894,7 +895,8 @@ function recalculationVariantDescription(variant: MaterialVariantRow) {
       .filter(Boolean).join(' · ')
   }
   if (variant.category === 'pipe') {
-    return [grade, variant.piece_description, variant.wall_thickness_mm ? `стенка ${variant.wall_thickness_mm} мм` : null]
+    const roundDiameter = variant.pipe_type === 'round' ? roundPipeOuterDiameterMm(variant) : null
+    return [grade, roundDiameter ? `Ø ${roundDiameter} мм` : variant.piece_description, variant.wall_thickness_mm ? `стенка ${variant.wall_thickness_mm} мм` : null]
       .filter(Boolean).join(' · ')
   }
   const profile = knifeProfileDimensions(variant)
@@ -925,6 +927,10 @@ function validateDraftVariant(
   if (table === 'request_pipe' && variant.pipe_type === 'wire') {
     throw new Error('Проволока остаётся в прежнем интерфейсе')
   }
+  if (table === 'request_pipe') {
+    const validationError = validatePipeProfileGeometry(variant)
+    if (validationError) throw new Error(validationError)
+  }
 }
 
 function newDraftData(
@@ -950,13 +956,14 @@ function newDraftData(
     }
   }
   if (table === 'request_pipe') {
+    const pipeProfile = requireCanonicalPipeProfile(variant)
     return {
       ...common,
-      pipe_type: variant.pipe_type,
+      pipe_type: pipeProfile.pipeType,
       steel_type_id: variant.steel_type_id,
-      size: variant.piece_description,
-      wall_thickness_mm: variant.wall_thickness_mm,
-      diameter_mm: variant.diameter_mm,
+      size: pipeProfile.pieceDescription,
+      wall_thickness_mm: pipeProfile.wallThicknessMm,
+      diameter_mm: pipeProfile.diameterMm,
       remainder_length_mm: totalLengthMm,
       remainder_qty: pieceCount,
       remainder_kg: 0,

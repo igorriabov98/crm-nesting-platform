@@ -18,7 +18,7 @@ export function SupplyPipeTable({ rows, machineId, canManageOrders = true }: Pro
       <table className={tableClass}>
         <thead className="border-b border-[#E8ECF0] bg-[#F8F9FA]">
           <tr>
-            {['Материал', 'Подтип', 'Тип стали', 'Размер', 'Толщина стенки, мм', 'Диаметр, мм', 'Необходимо длина, мм', 'Необходимо, кг', 'Вес, кг', 'На складе', 'Забронировано', 'Статус', 'Действия'].map((header, index) => (
+            {['Материал', 'Подтип', 'Тип стали', 'Сечение, мм', 'Толщина стенки, мм', 'Диаметр, мм', 'Необходимо длина, мм', 'Необходимо, кг', 'Вес, кг', 'На складе', 'Забронировано', 'Статус', 'Действия'].map((header, index) => (
               <th key={header} className={`${thClass} ${index === 0 ? stickyCellClass : ''}`}>{header}</th>
             ))}
           </tr>
@@ -34,7 +34,7 @@ export function SupplyPipeTable({ rows, machineId, canManageOrders = true }: Pro
                 <td className={`${tdClass} min-w-[220px] font-medium text-[#1B3A6B] ${stickyCellClass}`}>{row.materials?.name || '—'}</td>
                 <td className={tdClass}>{PIPE_SUBTYPE_LABELS[row.pipe_type]}</td>
                 <td className={tdClass}>{isWire ? '—' : row.steel_type_name || '—'}</td>
-                <td className={tdClass}>{isWire ? '—' : row.size || '—'}</td>
+                <td className={tdClass}>{isWire || row.pipe_type === 'round' ? '—' : row.size || '—'}</td>
                 <td className={tdClass}>{isWire ? '—' : formatAmount(row.wall_thickness_mm)}</td>
                 <td className={tdClass}>{row.pipe_type === 'wire' || row.pipe_type === 'round' ? formatAmount(row.diameter_mm) : '—'}</td>
                 <td className={tdClass}>{isWire ? '—' : formatAmount(row.remainder_length_mm)}</td>
