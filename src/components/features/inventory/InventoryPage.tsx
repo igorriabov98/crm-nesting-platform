@@ -32,6 +32,7 @@ import {
 } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
 import { KNIFE_BEVEL_OPTIONS, knifeBevelCharacteristicLabel, knifeBevelLabel } from '@/lib/materials/knife-bevel'
+import { formatKnifeProfileDimensions, knifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { addReceipt, adjustInventory, convertBusinessScrapToMetal, deleteInventoryItem, type InventoryFactory, type InventoryWithMaterial } from '@/lib/actions/inventory'
 import { createMaterial, recordMaterialUsage, type MaterialWithSupplier } from '@/lib/actions/materials'
 import type { MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
@@ -1077,7 +1078,6 @@ function NewMaterialForm({
                 ))}
               </select>
             </div>
-            <DraftInput label="Длина, мм" type="number" value={draft.fields.standard_length_mm} onChange={(value) => onFieldChange('standard_length_mm', value)} />
             <DraftInput label="Ширина, мм" type="number" value={draft.fields.width_mm} onChange={(value) => onFieldChange('width_mm', value)} />
             <DraftInput label="Высота, мм" type="number" value={draft.fields.height_mm} onChange={(value) => onFieldChange('height_mm', value)} />
           </>
@@ -1219,12 +1219,11 @@ function characteristicFields(category: MaterialCategory, variant: MaterialVaria
     }
     if (variant.pipe_type === 'wire') push('Диаметр, мм', variant.diameter_mm)
   } else if (category === 'knives') {
+    const profile = knifeProfileDimensions(variant)
     push('Тип стали', steelTypeName(variant, steelTypes) ?? variant.material_grade ?? variant.knife_material)
     push('Скос', knifeBevelCharacteristicLabel(variant.knife_bevel_count))
-    push('Размер (ДxШxВ)', variant.knife_dimensions)
-    push('Длина, мм', variant.knife_dimensions ? null : variant.standard_length_mm)
-    push('Ширина, мм', variant.knife_dimensions ? null : variant.width_mm)
-    push('Высота, мм', variant.knife_dimensions ? null : variant.height_mm)
+    push('Ширина, мм', profile.widthMm)
+    push('Высота, мм', profile.heightMm)
   } else if (category === 'paint') {
     push('RAL', variant.ral_code)
     push('Покрытие', variant.finish)
@@ -1343,8 +1342,7 @@ function inventorySearchText(row: InventoryWithMaterial) {
 function inventoryVariantSearchAliases(variant: MaterialVariant) {
   const values: string[] = []
   if (variant.category === 'knives') {
-    const dimensions = variant.knife_dimensions
-      || [variant.standard_length_mm, variant.width_mm, variant.height_mm].filter(Boolean).join('x')
+    const dimensions = formatKnifeProfileDimensions(variant, 'x')
     if (dimensions) values.push(dimensions)
     const bevel = knifeBevelLabel(variant.knife_bevel_count)
     if (bevel) values.push(bevel)
@@ -1378,9 +1376,6 @@ function inventoryCharacteristicsSummary(row: InventoryWithMaterial, steelTypes:
   const values = characteristicFields(category, variant, steelTypes).map((field) => (
     field.label === 'Скос' ? `Скос: ${field.value}` : String(field.value)
   ))
-  if ((category === 'pipe' || category === 'knives' || category === 'circle') && row.piece_length_mm !== null && row.piece_length_mm !== undefined) {
-    values.push(`Длина куска: ${formatAmount(row.piece_length_mm)} мм`)
-  }
   if (values.length) return values.join(', ')
   return legacyCharacteristicsText(row)
 }
@@ -1399,7 +1394,7 @@ function formatAmount(value: number | null | undefined) {
 function defaultDraftFields(category: MaterialCategory): Record<string, string | boolean> {
   if (category === 'circle') return { diameter_mm: '', steel_type_id: '', is_calibrated: false }
   if (category === 'pipe') return { pipe_type: 'square', steel_type_id: '', size: '', wall_thickness_mm: '', diameter_mm: '' }
-  if (category === 'knives') return { steel_type_id: '', knife_bevel_count: '', standard_length_mm: '', width_mm: '', height_mm: '' }
+  if (category === 'knives') return { steel_type_id: '', knife_bevel_count: '', width_mm: '', height_mm: '' }
   if (category === 'paint') return { ral_code: '', finish: '' }
   if (category === 'components') return { diameter_mm: '', specification: '', unit_weight_kg: '' }
   if (category === 'mesh') return { mesh_description: '', mesh_length_mm: '', mesh_width_mm: '' }
@@ -1432,7 +1427,6 @@ function validateDraft(draft: NewMaterialDraft) {
   if (draft.category === 'knives') {
     if (!String(draft.fields.steel_type_id || '').trim()) return 'Выберите тип стали'
     if (!String(draft.fields.knife_bevel_count || '').trim()) return 'Выберите скос ножа'
-    if (!positiveNumber(draft.fields.standard_length_mm)) return 'Введите длину ножа'
     if (!positiveNumber(draft.fields.width_mm)) return 'Введите ширину ножа'
     if (!positiveNumber(draft.fields.height_mm)) return 'Введите высоту ножа'
   }
@@ -1482,7 +1476,8 @@ function draftToCharacteristics(draft: NewMaterialDraft, steelTypes: SteelType[]
       steel_type_id: steelTypeId || null,
       steel_grade: steelName,
       knife_bevel_count: fields.knife_bevel_count,
-      standard_length_mm: fields.standard_length_mm,
+      standard_length_mm: null,
+      knife_dimensions: null,
       width_mm: fields.width_mm,
       height_mm: fields.height_mm,
     }

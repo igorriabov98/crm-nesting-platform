@@ -78,6 +78,7 @@ import {
   type LongStockNewMaterialDraft,
 } from '@/lib/long-stock-material-draft'
 import { KNIFE_BEVEL_OPTIONS, knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
+import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import {
   DEFAULT_LONG_STOCK_SEARCH_BUDGET,
   EXTENDED_LONG_STOCK_SEARCH_BUDGET,
@@ -1098,7 +1099,6 @@ function NewLongStockMaterialForm({
                 {KNIFE_BEVEL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </div>
-            <DraftField label="Длина, мм" type="number" value={draft.fields.standard_length_mm} onChange={(value) => onFieldChange('standard_length_mm', value)} />
             <DraftField label="Ширина, мм" type="number" value={draft.fields.width_mm} onChange={(value) => onFieldChange('width_mm', value)} />
             <DraftField label="Высота, мм" type="number" value={draft.fields.height_mm} onChange={(value) => onFieldChange('height_mm', value)} />
           </>
@@ -1590,7 +1590,7 @@ function variantSummary(category: Category, variant: MaterialVariant) {
       variant.material_grade,
     ].filter(Boolean).join(' · ') || 'Точный вариант'
   }
-  const dimensions = variant.knife_dimensions || [variant.standard_length_mm, variant.width_mm, variant.height_mm].filter(Boolean).join('×')
+  const dimensions = formatKnifeProfileDimensions(variant)
   return [dimensions, variant.knife_material ?? variant.material_grade, `Скос: ${knifeBevelCharacteristicLabel(variant.knife_bevel_count)}`].filter(Boolean).join(' · ') || 'Точный вариант'
 }
 

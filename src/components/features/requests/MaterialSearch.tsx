@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { createMaterial, getMaterialVariants, searchMaterials, type MaterialVariantWithSteelType, type MaterialWithSupplier } from '@/lib/actions/materials'
 import { CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGORY_LABELS, PIPE_SUBTYPE_LABELS, defaultMaterialNameForCategory } from '@/lib/constants/procurement'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
+import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { cn } from '@/lib/utils'
 import type { Material, MaterialCategory, MaterialVariant } from '@/lib/types'
 
@@ -357,8 +358,7 @@ function variantLabel(variant: MaterialVariantWithSteelType) {
     return [subtype, steelLabel(variant), variant.piece_description, variant.wall_thickness_mm && `${variant.wall_thickness_mm} мм`].filter(Boolean).join(' • ') || 'вариант'
   }
   if (String(variant.category) === 'knives') {
-    const dimensions = variant.knife_dimensions
-      || [variant.standard_length_mm, variant.width_mm, variant.height_mm].filter(Boolean).join('x')
+    const dimensions = formatKnifeProfileDimensions(variant)
     return [dimensions, variant.knife_material ?? steelLabel(variant), `Скос: ${knifeBevelCharacteristicLabel(variant.knife_bevel_count)}`].filter(Boolean).join(' • ') || 'вариант'
   }
   if (variant.category === 'sheet_metal') return [variant.material_grade, variant.thickness_mm && `${variant.thickness_mm} мм`, variant.sheet_size].filter(Boolean).join(' • ') || 'вариант'
@@ -370,8 +370,7 @@ function variantLabel(variant: MaterialVariantWithSteelType) {
     return [subtype, variant.piece_description, variant.wall_thickness_mm && `${variant.wall_thickness_mm} мм`].filter(Boolean).join(' • ') || 'вариант'
   }
   if (variant.category === 'knives') {
-    const dimensions = variant.knife_dimensions
-      || [variant.standard_length_mm, variant.width_mm, variant.height_mm].filter(Boolean).join('x')
+    const dimensions = formatKnifeProfileDimensions(variant)
     return [dimensions, variant.knife_material ?? variant.material_grade, `Скос: ${knifeBevelCharacteristicLabel(variant.knife_bevel_count)}`].filter(Boolean).join(' • ') || 'вариант'
   }
   if (variant.category === 'components') {

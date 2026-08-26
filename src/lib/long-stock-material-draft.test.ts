@@ -58,3 +58,16 @@ test('new pipe variant keeps characteristic validation scoped to material creati
     'Толщина стенки трубы не может быть больше или равна половине меньшей стороны размера.',
   )
 })
+
+test('new knife profile requires section and bevel but never asks for a standard length', () => {
+  const draft = createLongStockMaterialDraft('Нож Hardox', 'knives')
+  assert.equal('standard_length_mm' in draft.fields, false)
+  draft.fields = {
+    ...draft.fields,
+    steel_type_id: 'hardox-id',
+    knife_bevel_count: '2',
+    width_mm: '200',
+    height_mm: '20',
+  }
+  assert.equal(validateLongStockMaterialDraft(draft), null)
+})

@@ -1,4 +1,5 @@
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
+import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
 
 export const LONG_STOCK_CUTTING_PLAN_PDF_BUCKET = 'product-files'
 export const LONG_STOCK_CUTTING_PLAN_PDF_SCHEMA_VERSION = 1
@@ -53,7 +54,6 @@ export type LongStockMaterialVariantDescriptor = {
   knife_material: string | null
   knife_bevel_count: number | null
   knife_dimensions: string | null
-  standard_length_mm: number | null
   width_mm: number | null
   height_mm: number | null
   diameter_mm: number | null
@@ -171,8 +171,8 @@ export function formatLongStockMaterialVariant(
     ].filter(Boolean).join(' · ') || 'Точный вариант'
   }
   if (variant.category === 'knives') {
-    const dimensions = variant.knife_dimensions
-      || [variant.standard_length_mm, variant.width_mm, variant.height_mm]
+    const profile = knifeProfileDimensions(variant)
+    const dimensions = [profile.widthMm, profile.heightMm]
         .filter((value) => Number(value) > 0)
         .map((value) => formatPdfNumber(Number(value)))
         .join('×')

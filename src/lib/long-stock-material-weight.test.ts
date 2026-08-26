@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  calculateLongStockWeightForLength,
   calculateLongStockWeightPerMeterKg,
   type LongStockWeightVariant,
 } from '@/lib/long-stock-material-weight'
@@ -34,6 +35,28 @@ test('calculates circle and knife weight per meter from section and density', ()
   }, density)
   assert.ok(knife !== null)
   assert.ok(Math.abs(knife - 7.85) < 1e-10)
+
+  const knifeWithoutLegacyLength = calculateLongStockWeightPerMeterKg({
+    ...baseVariant,
+    category: 'knives',
+    width_mm: 100,
+    height_mm: 10,
+  }, density)
+  assert.equal(knifeWithoutLegacyLength, knife)
+
+  const knifeWithProfileOnly = calculateLongStockWeightPerMeterKg({
+    ...baseVariant,
+    category: 'knives',
+    knife_dimensions: '100×10',
+  }, density)
+  assert.equal(knifeWithProfileOnly, knife)
+})
+
+test('keeps demand and purchasing weights independent', () => {
+  assert.equal(calculateLongStockWeightForLength(78.5, 10_000, 12_000), 94.2)
+  assert.equal(calculateLongStockWeightForLength(78.5, 10_000, 6_000), 47.1)
+  assert.equal(calculateLongStockWeightForLength(null, 10_000, 12_000), null)
+  assert.equal(calculateLongStockWeightForLength(78.5, 0, 12_000), null)
 })
 
 test('calculates round and rectangular pipe weight per meter from section and density', () => {

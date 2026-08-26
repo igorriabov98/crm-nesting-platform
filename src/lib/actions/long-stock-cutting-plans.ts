@@ -38,6 +38,7 @@ import {
   updatePipe,
 } from '@/lib/actions/technologist-requests'
 import { requirePermission } from '@/lib/permissions/server'
+import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   prepareLongStockCuttingPlanPdf,
@@ -77,7 +78,6 @@ type MaterialVariantRow = LongStockWeightVariant & {
   knife_material: string | null
   steel_type_id: string | null
   knife_bevel_count: number | null
-  standard_length_mm: number | null
   is_calibrated: boolean | null
 }
 
@@ -221,7 +221,7 @@ export async function prepareLongStockRequestItemDraft(input: PrepareLongStockRe
   const db = database()
   const variant = await one<MaterialVariantRow>(
     db.from<MaterialVariantRow>('material_variants')
-      .select('id,material_id,category,material_grade,knife_material,steel_type_id,pipe_type,knife_bevel_count,weight_per_m_kg,diameter_mm,wall_thickness_mm,piece_description,knife_dimensions,standard_length_mm,width_mm,height_mm,is_calibrated')
+      .select('id,material_id,category,material_grade,knife_material,steel_type_id,pipe_type,knife_bevel_count,weight_per_m_kg,diameter_mm,wall_thickness_mm,piece_description,knife_dimensions,width_mm,height_mm,is_calibrated')
       .eq('id', materialVariantId)
       .maybeSingle(),
     'Вариант материала не найден',
@@ -291,6 +291,64 @@ export async function getLongStockCuttingPlanItemStatuses(
     return [`${requestItem.table}:${requestItem.id}`, status] as const
   }))
   return Object.fromEntries(entries) as Record<string, LongStockCuttingPlanItemStatus>
+}
+
+export type LongStockCuttingPlanItemOverview = {
+  status: LongStockCuttingPlanItemStatus
+  segments: Array<{ length_mm: number; piece_count: number }>
+  total_length_mm: number
+  piece_count: number
+}
+
+export async function getLongStockCuttingPlanItemOverview(
+  requestItemInput: LongStockRequestItemRef,
+): Promise<LongStockCuttingPlanItemOverview> {
+  await requirePermission('technologist_requests', 'view')
+  const requestItem = normalizeRequestItemRef(requestItemInput)
+  const db = database()
+  const itemResult = await db.from<{ id: string; plan_id: string; cutting_status: string }>('long_stock_cutting_plan_items')
+    .select('id,plan_id,cutting_status')
+    .eq('request_item_table', requestItem.table)
+    .eq('request_item_id', requestItem.id)
+    .order('linked_at', { ascending: false })
+  if (itemResult.error) throw new Error(itemResult.error.message || 'Не удалось прочитать карту раскроя')
+  const planItem = itemResult.data?.[0]
+  if (!planItem) return { status: 'none', segments: [], total_length_mm: 0, piece_count: 0 }
+
+  const status: LongStockCuttingPlanItemStatus = planItem.cutting_status === 'requires_recalculation'
+    ? 'requires_recalculation'
+    : 'active'
+  const expectedVersionStatus = status === 'requires_recalculation'
+    ? 'invalid'
+    : planItem.cutting_status === 'planning' ? 'draft' : 'approved'
+  const versionResult = await db.from<{ id: string; status: string }>('long_stock_cutting_plan_versions')
+    .select('id,status')
+    .eq('plan_id', planItem.plan_id)
+    .eq('status', expectedVersionStatus)
+    .order('version_number', { ascending: false })
+  if (versionResult.error) throw new Error(versionResult.error.message || 'Не удалось прочитать версию карты раскроя')
+  const versionId = versionResult.data?.[0]?.id
+  if (!versionId) return { status, segments: [], total_length_mm: 0, piece_count: 0 }
+
+  const segmentsResult = await db.from<{ required_length_mm: number | string }>('long_stock_cutting_segments')
+    .select('required_length_mm')
+    .eq('version_id', versionId)
+    .eq('plan_item_id', planItem.id)
+  if (segmentsResult.error) throw new Error(segmentsResult.error.message || 'Не удалось прочитать отрезки карты раскроя')
+  const grouped = new Map<number, number>()
+  for (const row of segmentsResult.data ?? []) {
+    const lengthMm = Number(row.required_length_mm)
+    if (!Number.isFinite(lengthMm) || lengthMm <= 0) continue
+    grouped.set(lengthMm, (grouped.get(lengthMm) ?? 0) + 1)
+  }
+  const segments = Array.from(grouped, ([length_mm, piece_count]) => ({ length_mm, piece_count }))
+    .sort((left, right) => right.length_mm - left.length_mm)
+  return {
+    status,
+    segments,
+    total_length_mm: segments.reduce((sum, segment) => sum + segment.length_mm * segment.piece_count, 0),
+    piece_count: segments.reduce((sum, segment) => sum + segment.piece_count, 0),
+  }
 }
 
 export async function loadLongStockRecalculationDraft(
@@ -839,7 +897,9 @@ function recalculationVariantDescription(variant: MaterialVariantRow) {
     return [grade, variant.piece_description, variant.wall_thickness_mm ? `стенка ${variant.wall_thickness_mm} мм` : null]
       .filter(Boolean).join(' · ')
   }
-  return [grade, variant.knife_dimensions, variant.knife_bevel_count ? `скос ${variant.knife_bevel_count}` : null]
+  const profile = knifeProfileDimensions(variant)
+  const dimensions = profile.widthMm && profile.heightMm ? `${profile.widthMm}×${profile.heightMm} мм` : null
+  return [grade, dimensions, variant.knife_bevel_count ? `скос ${variant.knife_bevel_count}` : null]
     .filter(Boolean).join(' · ')
 }
 
@@ -902,32 +962,18 @@ function newDraftData(
       remainder_kg: 0,
     }
   }
-  const dimensions = knifeVariantDimensions(variant)
+  const dimensions = knifeProfileDimensions(variant)
   return {
     ...common,
     knife_type: material.name,
     steel_grade: variant.material_grade ?? variant.knife_material,
     steel_type_id: variant.steel_type_id,
-    length_mm: dimensions.lengthMm,
+    length_mm: null,
     width_mm: dimensions.widthMm,
     height_mm: dimensions.heightMm,
     knife_bevel_count: variant.knife_bevel_count,
     remainder_meters: totalLengthMm / 1000,
     remainder_qty: pieceCount,
-  }
-}
-
-function knifeVariantDimensions(variant: MaterialVariantRow) {
-  const parsed = String(variant.knife_dimensions ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/[х×*]/g, 'x')
-    .split('x')
-    .map((part) => Number(part.trim().replace(',', '.')))
-  return {
-    lengthMm: variant.standard_length_mm ?? (Number.isFinite(parsed[0]) ? parsed[0] : null),
-    widthMm: variant.width_mm ?? (Number.isFinite(parsed[1]) ? parsed[1] : null),
-    heightMm: variant.height_mm ?? (Number.isFinite(parsed[2]) ? parsed[2] : null),
   }
 }
 

@@ -19,6 +19,7 @@ import {
 import { requirePermission } from '@/lib/permissions/server'
 import { assertFactoryAccess, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { Factory, Inventory, InventoryReservation, InventoryTransaction, InventoryTransactionType, Material, MaterialCategory, MaterialVariant } from '@/lib/types'
 
@@ -98,13 +99,12 @@ function normalizeInventorySearch(value: string) {
 function inventoryVariantSearchText(variant: MaterialVariant | null | undefined) {
   if (!variant) return ''
   const knifeDimensions = variant.category === 'knives'
-    ? variant.knife_dimensions || [variant.standard_length_mm, variant.width_mm, variant.height_mm].filter(Boolean).join('x')
+    ? formatKnifeProfileDimensions(variant, 'x')
     : null
   return [
     variant.material_grade,
     variant.sheet_size,
     variant.piece_description,
-    variant.knife_dimensions,
     knifeDimensions,
     variant.knife_material,
     variant.specification,
@@ -117,7 +117,7 @@ function inventoryVariantSearchText(variant: MaterialVariant | null | undefined)
     variant.chain_cord_type,
     variant.thickness_mm,
     variant.length_m,
-    variant.standard_length_mm,
+    variant.category === 'knives' ? null : variant.standard_length_mm,
     variant.diameter_mm,
     variant.wall_thickness_mm,
     variant.width_mm,

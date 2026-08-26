@@ -9,6 +9,8 @@ import {
 } from '@/lib/inventory/reservation-stock-scope'
 import { requirePermission } from '@/lib/permissions/server'
 import { DIRECTOR_ACCESS_ROLES, type PermissionOperation } from '@/lib/permissions/resources'
+import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
+import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import type {
   Machine,
   RequestChainCord,
@@ -308,20 +310,11 @@ function pipeDiameterMatches(row: Record<string, unknown>, variant: MaterialVari
 }
 
 function knifeDimensionMatches(row: Record<string, unknown>, variant: MaterialVariant) {
-  const rowDimensions = [
-    row.length_mm,
-    row.width_mm,
-    row.height_mm,
-  ]
   const variantTextDimensions = dimensionParts(variant.knife_dimensions)
-  const variantDimensions = [
-    variant.standard_length_mm ?? variantTextDimensions[0],
-    variant.width_mm ?? variantTextDimensions[1],
-    variant.height_mm ?? variantTextDimensions[2],
-  ]
-  return numbersMatch(rowDimensions[0], variantDimensions[0])
-    && numbersMatch(rowDimensions[1], variantDimensions[1])
-    && numbersMatch(rowDimensions[2], variantDimensions[2])
+  const legacyWidth = variantTextDimensions.length >= 3 ? variantTextDimensions[1] : variantTextDimensions[0]
+  const legacyHeight = variantTextDimensions.length >= 3 ? variantTextDimensions[2] : variantTextDimensions[1]
+  return numbersMatch(row.width_mm, variant.width_mm ?? legacyWidth)
+    && numbersMatch(row.height_mm, variant.height_mm ?? legacyHeight)
 }
 
 function variantMatchesRequest(table: RequestItemTable, row: Record<string, unknown>, variant?: MaterialVariant | null) {
@@ -337,6 +330,7 @@ function variantMatchesRequest(table: RequestItemTable, row: Record<string, unkn
     return knifeDimensionMatches(row, variant)
       && optionalTextMatches(row.steel_type_id, variant.steel_type_id)
       && optionalTextMatches(row.steel_grade, variant.material_grade ?? variant.knife_material)
+      && numbersMatch(row.knife_bevel_count, variant.knife_bevel_count)
   }
   if (table === 'request_circle') {
     return numbersMatch(row.diameter_mm, variant.diameter_mm)
@@ -424,9 +418,10 @@ function describeStockItem(table: RequestItemTable, variant?: MaterialVariant | 
     if (variant.wall_thickness_mm) parts.push(`стенка ${variant.wall_thickness_mm} мм`)
     if (variant.diameter_mm) parts.push(`диаметр ${variant.diameter_mm} мм`)
   } else if (table === 'request_knives') {
-    if (variant.standard_length_mm) parts.push(`${variant.standard_length_mm} мм`)
-    if (variant.width_mm || variant.height_mm) parts.push(`${variant.width_mm || 0}x${variant.height_mm || 0}`)
+    const profile = formatKnifeProfileDimensions(variant, 'x')
+    if (profile) parts.push(profile)
     if (variant.material_grade) parts.push(String(variant.material_grade))
+    parts.push(`скос: ${knifeBevelCharacteristicLabel(variant.knife_bevel_count)}`)
   } else if (table === 'request_paint') {
     if (variant.ral_code) parts.push(String(variant.ral_code))
     if (variant.finish) parts.push(String(variant.finish))

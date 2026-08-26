@@ -132,7 +132,7 @@ const MATERIAL_CHARACTERISTIC_FIELDS: Record<RequestSectionTable, Set<string>> =
   request_sheet_metal: new Set(['material_name', 'material_grade', 'steel_type_id', 'sheet_size', 'thickness_mm']),
   request_circle: new Set(['diameter_mm', 'steel_grade', 'steel_type_id', 'is_calibrated']),
   request_pipe: new Set(['pipe_type', 'steel_type_id', 'size', 'wall_thickness_mm', 'diameter_mm']),
-  request_knives: new Set(['knife_type', 'steel_grade', 'steel_type_id', 'length_mm', 'width_mm', 'height_mm', 'knife_bevel_count']),
+  request_knives: new Set(['knife_type', 'steel_grade', 'steel_type_id', 'width_mm', 'height_mm', 'knife_bevel_count']),
   request_components: new Set(['component_name', 'diameter_mm', 'unit']),
   request_paint: new Set(['paint_type', 'ral_code', 'finish']),
   request_mesh: new Set(['description', 'length_mm', 'width_mm']),
@@ -144,7 +144,7 @@ const RESERVED_ROW_PROTECTED_FIELDS: Record<RequestSectionTable, Set<string>> = 
   request_sheet_metal: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'material_name', 'material_grade', 'steel_type_id', 'sheet_size', 'thickness_mm', 'remainder_qty']),
   request_circle: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'diameter_mm', 'steel_grade', 'steel_type_id', 'is_calibrated', 'remainder_mm']),
   request_pipe: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'pipe_type', 'steel_type_id', 'size', 'wall_thickness_mm', 'diameter_mm', 'remainder_length_mm', 'remainder_qty', 'remainder_kg']),
-  request_knives: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'knife_type', 'steel_grade', 'steel_type_id', 'length_mm', 'width_mm', 'height_mm', 'knife_bevel_count', 'remainder_meters', 'remainder_qty']),
+  request_knives: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'knife_type', 'steel_grade', 'steel_type_id', 'width_mm', 'height_mm', 'knife_bevel_count', 'remainder_meters', 'remainder_qty']),
   request_components: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'component_name', 'diameter_mm', 'quantity_needed', 'stock_remainder', 'unit']),
   request_paint: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'paint_type', 'ral_code', 'finish', 'remainder_kg']),
   request_mesh: new Set(['material_id', 'material_variant_id', 'is_custom_material_variant', 'description', 'length_mm', 'width_mm', 'remainder_qty']),
@@ -856,7 +856,7 @@ async function recordUsageFromRow(table: RequestSectionTable, row: Record<string
       wall_thickness_mm: row.wall_thickness_mm,
       knife_dimensions: null,
       knife_material: row.steel_grade || row.knife_type,
-      standard_length_mm: row.length_mm || row.order_mm,
+      standard_length_mm: null,
       width_mm: row.width_mm,
       height_mm: row.height_mm,
       knife_bevel_count: row.knife_bevel_count,
@@ -888,7 +888,6 @@ function isRequestMaterialVariantComplete(table: RequestSectionTable, row: Recor
   }
   if (table === 'request_knives') {
     return hasSteel()
-      && hasValue(row.length_mm)
       && hasValue(row.width_mm)
       && hasValue(row.height_mm)
       && parseKnifeBevelCount(row.knife_bevel_count) !== null
@@ -1029,7 +1028,7 @@ export async function addKnife(requestId: string, data: unknown): Promise<Action
     knife_type: parsed.knife_type ?? 'Нож',
     steel_grade: parsed.steel_grade ?? null,
     steel_type_id: parsed.steel_type_id ?? null,
-    length_mm: parsed.length_mm ?? null,
+    length_mm: null,
     width_mm: parsed.width_mm ?? null,
     height_mm: parsed.height_mm ?? null,
     knife_bevel_count: parsed.knife_bevel_count ?? null,
@@ -1043,7 +1042,10 @@ export async function addKnife(requestId: string, data: unknown): Promise<Action
   })
 }
 export async function updateKnife(id: string, data: unknown): Promise<ActionResult> {
-  return updateSectionRow(id, 'request_knives', knifeUpdateSchema, data)
+  const patch = data && typeof data === 'object' && !Array.isArray(data)
+    ? { ...(data as Record<string, unknown>), length_mm: null }
+    : { length_mm: null }
+  return updateSectionRow(id, 'request_knives', knifeUpdateSchema, patch)
 }
 export async function deleteKnife(id: string): Promise<ActionResult> {
   return deleteSectionRow(id, 'request_knives')

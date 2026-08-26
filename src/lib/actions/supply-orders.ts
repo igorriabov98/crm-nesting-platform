@@ -15,11 +15,14 @@ import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notificat
 import { formatCompanyLocation } from '@/lib/transport/company-location'
 import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
+import { normalizeSingleLengthReceipt } from '@/lib/supply-orders/single-length-receipt'
+import { calculateLongStockWeightForLength } from '@/lib/long-stock-material-weight'
 import {
   isLongStockRequestItemTable,
   summarizeLongStockPurchaseBars,
   type LongStockPurchaseBar,
   type LongStockPurchasePlan,
+  type LongStockRequestItemTable,
 } from '@/lib/supply-orders/long-stock-purchase-plan'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
@@ -174,6 +177,7 @@ export type SupplyOrderItem = {
   calculated_weight_kg: number | null
   reservation_id: string | null
   selected_piece_length_mm: number | null
+  pipe_type?: string | null
   delivery_schedules: SupplyOrderDeliverySchedule[]
   long_stock_purchase_plan: LongStockPurchasePlan | null
 }
@@ -339,6 +343,7 @@ export type MaterialReceivingItem = {
   is_virtual_schedule: boolean
   planned_piece_length_mm: number | null
   planned_piece_count: number | null
+  purchase_components: LongStockPurchasePlan['components']
 }
 
 export type MaterialReceivingDateGroup = {
@@ -416,6 +421,22 @@ type MaterialDeliveryInput = {
   piece_length_mm?: number | null
   piece_count?: number | null
   confirmed_allocations?: MaterialDeliveryAllocationInput[]
+}
+
+export type SingleLengthLongStockReceiptInput = {
+  requestItemTable: LongStockRequestItemTable
+  requestItemId: string
+  scheduleId?: string | null
+  receivedPieceLengthMm: number
+  receivedPieceCount: number
+  confirmedAllocations?: MaterialDeliveryAllocationInput[]
+}
+
+export type SingleLengthLongStockReceiptPreviewResult = {
+  success: boolean
+  data?: MaterialDeliveryAllocationPreview
+  error?: string
+  scheduleId?: string
 }
 
 type SupplyOrderAggregateInputItem = RawOrderItem & {
@@ -736,10 +757,8 @@ function assertOrderTable(table: string) {
 }
 
 function selectedPieceLength(table: string, row: RequestItemRow) {
-  if (table === 'request_knives') {
-    const value = Number(row.length_mm || 0)
-    return Number.isFinite(value) && value > 0 ? value : null
-  }
+  void table
+  void row
   return null
 }
 
@@ -807,7 +826,6 @@ const IDENTITY_FIELDS: Record<string, Array<[label: string, field: string]>> = {
     ['Марка', 'steel_grade'],
     ['Тип стали', 'steel_type_id'],
     ['Скос', 'knife_bevel_count'],
-    ['Длина', 'length_mm'],
     ['Ширина', 'width_mm'],
     ['Высота', 'height_mm'],
   ],
@@ -915,9 +933,11 @@ function normalizeOrderPlacement(input?: SupplyOrderPlacementInput) {
   return { supplierId, supplyDeliveryDate }
 }
 
-function validateReceiptFields(item: RawOrderItem) {
-  if (item.category === 'knives') {
-    if (!item.selected_piece_length_mm) throw new Error(`Для ножа "${item.item_name}" не указана длина складской позиции`)
+function assertApprovedLongStockPurchasePlan(item: RawOrderItem) {
+  if (!isWholeBarItem(item)) return
+  if (item.long_stock_purchase_plan?.version_status !== 'approved'
+    || item.long_stock_purchase_plan.cutting_status === 'requires_recalculation') {
+    throw new Error(`Для длинномера «${item.item_name}» сначала утвердите актуальную карту раскроя`)
   }
 }
 
@@ -1376,6 +1396,7 @@ export async function getSupplyOrders(
         calculated_weight_kg: item.calculated_weight_kg,
         reservation_id: reservationMap.get(`${item.table}:${item.id}`) || null,
         selected_piece_length_mm: item.selected_piece_length_mm,
+        pipe_type: item.pipe_type,
         long_stock_purchase_plan: item.long_stock_purchase_plan,
         delivery_schedules: deliverySchedules.map((schedule) => ({
           id: schedule.id,
@@ -2250,9 +2271,15 @@ function applyLongStockPurchasePlan<T extends RawOrderItem>(
 ): T {
   const plan = plans.get(longStockItemKey(item)) ?? null
   if (!plan) return item
+  const purchasedWeightKg = calculateLongStockWeightForLength(
+    item.calculated_weight_kg,
+    item.requested_quantity,
+    plan.total_length_mm,
+  )
   return {
     ...item,
     to_order: plan.total_length_mm,
+    calculated_weight_kg: purchasedWeightKg,
     long_stock_purchase_plan: plan,
   }
 }
@@ -2429,6 +2456,10 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
       planned_piece_count?: number | null
     } | null
     if (!schedule?.request_item_table || !schedule.request_item_id) throw new Error('Поставка не найдена')
+    if ((input.table && input.table !== schedule.request_item_table)
+      || (input.id && input.id !== schedule.request_item_id)) {
+      throw new Error('Строка графика не относится к указанной позиции закупки')
+    }
     if (schedule.status === 'delivered') throw new Error('Поставка уже принята')
     if (schedule.status === 'cancelled') throw new Error('Поставка отменена')
     sourceTable = schedule.request_item_table
@@ -2446,7 +2477,17 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
   const allOpenItems = await loadAggregateInputItems(db)
   const sourceItem = allOpenItems.find((item) => item.table === sourceTable && item.id === sourceId)
   if (!sourceItem) throw new Error('Не удалось определить исходную позицию поставки')
-  const plannedQuantity = scheduleQuantity ?? Number(sourceItem.to_order)
+  assertApprovedLongStockPurchasePlan(sourceItem)
+  let plannedQuantity = scheduleQuantity
+  if (plannedQuantity === null) {
+    const schedules = await loadReceivingSchedules(db, [sourceItem])
+    plannedQuantity = projectAggregateVirtualReceivingQuantities([{
+      key: itemKey(sourceItem),
+      aggregateKey: itemKey(sourceItem),
+      requiredQuantity: sourceItem.to_order,
+      schedules,
+    }]).get(itemKey(sourceItem)) || 0
+  }
   if (!Number.isFinite(plannedQuantity) || plannedQuantity <= 0) {
     throw new Error('Плановое количество поставки должно быть больше 0')
   }
@@ -2672,6 +2713,60 @@ function makeReceivingItem(
     is_virtual_schedule: !schedule,
     planned_piece_length_mm: schedule?.planned_piece_length_mm ?? null,
     planned_piece_count: schedule?.planned_piece_count ?? null,
+    purchase_components: item.long_stock_purchase_plan?.components ?? [],
+  }
+}
+
+export async function getLongStockReceivingOptions(input: {
+  requestItemTable: LongStockRequestItemTable
+  requestItemId: string
+}): Promise<{ success: boolean; data?: MaterialReceivingItem[]; error?: string }> {
+  try {
+    const { db } = await requireReceivingAccess('manage')
+    if (!isLongStockRequestItemTable(input.requestItemTable)) throw new Error('Некорректная категория длинномера')
+    const items = await loadAggregateInputItems(db)
+    const item = items.find((row) => row.table === input.requestItemTable && row.id === input.requestItemId)
+    if (!item || !isWholeBarItem(item)) throw new Error('Позиция длинномера не найдена')
+    if (item.order_status !== 'ordered') throw new Error('Поставку можно принять только после отметки позиции «Заказано»')
+    if (!item.factory_id) throw new Error('Для приёмки не определён завод машины')
+    assertApprovedLongStockPurchasePlan(item)
+
+    const [factoryNameMap, schedules] = await Promise.all([
+      loadFactoryNameMap(db, [item.factory_id]),
+      loadReceivingSchedules(db, [item]),
+    ])
+    const openSchedules = schedules.filter((schedule) => schedule.status === 'planned')
+    const supplierIds = [item.supplier_id, ...openSchedules.map((schedule) => schedule.supplier_id)]
+      .filter((id): id is string => Boolean(id))
+    const supplierNameMap = await loadSupplierNameMap(db, supplierIds)
+    const factoryName = factoryNameMap.get(item.factory_id) || 'Завод'
+    const outstandingQuantity = projectAggregateVirtualReceivingQuantities([{
+      key: itemKey(item),
+      aggregateKey: itemKey(item),
+      requiredQuantity: item.to_order,
+      schedules,
+    }]).get(itemKey(item)) || 0
+    const options = openSchedules.length > 0
+      ? openSchedules.map((schedule) => makeReceivingItem(
+        item,
+        factoryName,
+        supplierNameMap,
+        schedule,
+        schedule.delivery_date,
+        Number(schedule.quantity || 0),
+      ))
+      : [makeReceivingItem(
+        item,
+        factoryName,
+        supplierNameMap,
+        null,
+        effectiveSupplyDeliveryDate(item, item.planned_material_date) || todayDateOnly(),
+        outstandingQuantity,
+      )].filter((option) => option.planned_quantity > 0)
+    if (options.length === 0) throw new Error('По этой позиции не осталось непринятого метража')
+    return { success: true, data: options }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Не удалось подготовить фактическую приёмку' }
   }
 }
 
@@ -2917,6 +3012,82 @@ export async function previewMaterialDeliveryAllocation(input: MaterialDeliveryI
   }
 }
 
+export async function previewSingleLengthLongStockReceipt(
+  input: SingleLengthLongStockReceiptInput,
+): Promise<SingleLengthLongStockReceiptPreviewResult> {
+  let receipt
+  try {
+    if (!isLongStockRequestItemTable(input.requestItemTable)) {
+      throw new Error('Некорректная категория длинномера')
+    }
+    receipt = normalizeSingleLengthReceipt(input)
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Некорректные параметры хлыста' }
+  }
+  let scheduleId = input.scheduleId || null
+  if (!scheduleId) {
+    try {
+      const { db, userId } = await requireReceivingAccess('manage')
+      const items = await loadAggregateInputItems(db)
+      const item = items.find((row) => (
+        row.table === input.requestItemTable && row.id === input.requestItemId
+      ))
+      if (!item || !isWholeBarItem(item)) throw new Error('Позиция длинномера не найдена')
+      if (item.order_status !== 'ordered') {
+        throw new Error('Поставку можно принять только после отметки позиции «Заказано»')
+      }
+      if (!item.factory_id) throw new Error('Для приёмки не определён завод машины')
+      assertApprovedLongStockPurchasePlan(item)
+
+      const schedules = await loadReceivingSchedules(db, [item])
+      const existingSchedule = schedules.find((schedule) => schedule.status === 'planned')
+      const outstandingQuantity = projectAggregateVirtualReceivingQuantities([{
+        key: itemKey(item),
+        aggregateKey: itemKey(item),
+        requiredQuantity: item.to_order,
+        schedules,
+      }]).get(itemKey(item)) || 0
+      if (!existingSchedule && outstandingQuantity <= 0) {
+        throw new Error('По этой позиции не осталось непринятого метража')
+      }
+
+      if (existingSchedule) {
+        scheduleId = existingSchedule.id
+      } else {
+        const deliveryDate = assertDateOrNull(
+          effectiveSupplyDeliveryDate(item, item.planned_material_date),
+        )
+        if (!deliveryDate) throw new Error('Не указана дата поставки')
+        const { data, error } = await (createAdminClient() as unknown as RpcDb).rpc(
+          'fn_ensure_long_stock_receiving_schedule_v1',
+          {
+            p_request_item_table: input.requestItemTable,
+            p_request_item_id: input.requestItemId,
+            p_delivery_date: deliveryDate,
+            p_quantity: outstandingQuantity,
+            p_actor: userId,
+          },
+        )
+        if (error) throw new Error(error.message || 'Не удалось подготовить строку поставки')
+        scheduleId = typeof data === 'string' ? data : null
+        if (!scheduleId) throw new Error('Не удалось определить строку поставки')
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Не удалось подготовить поставку' }
+    }
+  }
+
+  const result = await previewMaterialDeliveryAllocation({
+    schedule_id: scheduleId,
+    table: input.requestItemTable,
+    id: input.requestItemId,
+    received_quantity: receipt.receivedQuantity,
+    piece_length_mm: receipt.pieceLengthMm,
+    piece_count: receipt.pieceCount,
+  })
+  return { ...result, scheduleId }
+}
+
 export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
   try {
     const { db, userId } = await requireReceivingAccess('manage')
@@ -2926,6 +3097,9 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
     }
 
     const resolved = await resolveReceivingSource(db, input)
+    if (isWholeBarItem(resolved.sourceItem) && !resolved.scheduleId) {
+      throw new Error('Сначала проверьте распределение длинномера в форме фактической приёмки')
+    }
     const preview = await buildMaterialAllocationPreview(
       db,
       input,
@@ -2964,7 +3138,10 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
       const table = input.table || ''
       const id = input.id || ''
       assertOrderTable(table)
-      const deliveryDate = assertDateOrNull(input.delivery_date || null)
+      const deliveryDate = assertDateOrNull(
+        input.delivery_date
+          || effectiveSupplyDeliveryDate(resolved.sourceItem, resolved.sourceItem.planned_material_date),
+      )
       if (!deliveryDate) throw new Error('Не указана дата поставки')
 
       const orderItem = await loadOneOrderItem(db, table, id)
@@ -2973,8 +3150,6 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
       }
       if (!orderItem.material_id) throw new Error(`Позиция "${orderItem.item_name}" не привязана к материалу`)
       if (!orderItem.supplier_id) throw new Error(`Назначьте поставщика для позиции "${orderItem.item_name}"`)
-      validateReceiptFields(orderItem)
-
       const plannedQuantity = resolved.plannedQuantity
       if (!Number.isFinite(plannedQuantity) || plannedQuantity <= 0) {
         throw new Error('Плановое количество поставки должно быть больше 0')
@@ -3048,6 +3223,27 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось принять поставку на склад' }
   }
+}
+
+export async function receiveSingleLengthLongStockDelivery(input: SingleLengthLongStockReceiptInput) {
+  let receipt
+  try {
+    if (!isLongStockRequestItemTable(input.requestItemTable)) {
+      throw new Error('Некорректная категория длинномера')
+    }
+    receipt = normalizeSingleLengthReceipt(input)
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Некорректные параметры хлыста' }
+  }
+  return receiveMaterialDelivery({
+    schedule_id: input.scheduleId || null,
+    table: input.requestItemTable,
+    id: input.requestItemId,
+    received_quantity: receipt.receivedQuantity,
+    piece_length_mm: receipt.pieceLengthMm,
+    piece_count: receipt.pieceCount,
+    confirmed_allocations: input.confirmedAllocations,
+  })
 }
 
 export async function updateAggregateSupplyDeliveryDate(
@@ -3206,6 +3402,7 @@ export async function saveAggregateDeliverySchedule(
     for (const item of openItems) {
       if (!item.material_id) throw new Error(`Позиция "${item.item_name}" не привязана к материалу`)
       if (item.to_order <= 0) throw new Error(`Позиция "${item.item_name}" полностью закрыта складом и не требует закупки`)
+      assertApprovedLongStockPurchasePlan(item)
     }
     const isBarSchedule = openItems.every(isWholeBarItem)
     if (isBarSchedule && normalizedSchedules.some((schedule) => !schedule.piece_length_mm || !schedule.piece_count)) {
@@ -3439,8 +3636,11 @@ export async function markOrderStatus(
       if (status === 'delivered' && item.order_status !== 'ordered') {
         throw new Error(`Позицию "${item.item_name}" можно принять только после отметки "Заказано"`)
       }
+      if (status === 'ordered') assertApprovedLongStockPurchasePlan(item)
       if (status === 'delivered') {
-        validateReceiptFields(item)
+        if (isWholeBarItem(item)) {
+          throw new Error(`Для длинномера «${item.item_name}» используйте форму фактической приёмки с длиной и количеством хлыстов`)
+        }
         const hasSchedule = await getPlannedScheduleTotal(db, item.table, item.id) > 0
         if (hasSchedule) throw new Error(`Позиция "${item.item_name}" разделена по датам. Принимайте поставки в графике позиции.`)
       }
@@ -3533,6 +3733,7 @@ export async function addOrderDeliverySchedule(
     validateScheduleInput(data)
     const orderItem = await loadOneOrderItem(db, item.table, item.id)
     if (orderItem.order_status === 'delivered') throw new Error('Нельзя менять график уже принятой позиции')
+    assertApprovedLongStockPurchasePlan(orderItem)
     const { error } = await db.from('supply_order_delivery_schedules').insert({
       request_item_table: item.table,
       request_item_id: item.id,
