@@ -640,9 +640,9 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
               )}
               {receiptNeedsPieceLength(receiptCategory, receiptVariant) && (
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#374151]">Длина куска, мм</label>
+                  <label className="mb-1 block text-sm font-medium text-[#374151]">Длина хлыста, мм</label>
                   <Input type="number" min="0" step="0.01" value={receiptPieceLength} onChange={(event) => setReceiptPieceLength(event.target.value)} placeholder="Например: 6000" />
-                  <span className="mt-1 block text-sm text-gray-500">Количество штук считается автоматически по приходу и длине куска.</span>
+                  <span className="mt-1 block text-sm text-gray-500">Количество штук считается автоматически по приходу и длине хлыста.</span>
                 </div>
               )}
               <div>
@@ -697,7 +697,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                 <th className="px-4 py-3">Забронировано</th>
                 <th className="px-4 py-3">Доступно</th>
                 <th className="px-4 py-3">Вес, кг</th>
-                {showPieceLengthColumn && <th className="min-w-[130px] px-4 py-3">Длина куска</th>}
+                {showPieceLengthColumn && <th className="min-w-[130px] px-4 py-3">Длина хлыста</th>}
                 <th className="px-4 py-3">Ед.</th>
                 <th className="min-w-[180px] px-4 py-3">Обновлено</th>
                 <th className="px-4 py-3 text-right">Действия</th>
@@ -1373,11 +1373,24 @@ function inventoryCharacteristicsSummary(row: InventoryWithMaterial, steelTypes:
   const variant = row.variant
   if (!category) return '—'
   if (!variant) return legacyCharacteristicsText(row)
-  const values = characteristicFields(category, variant, steelTypes).map((field) => (
-    field.label === 'Скос' ? `Скос: ${field.value}` : String(field.value)
-  ))
+  const values = characteristicFields(category, variant, steelTypes).map((field) => {
+    if (field.label === 'Скос') return `Скос: ${field.value}`
+    if (category === 'circle' && field.label === 'Диаметр, мм') return `Диаметр: ${formatMillimeters(field.value)}`
+    if (category === 'circle' && field.label === 'Калибровка') return `Калибровка: ${field.value}`
+    if (category === 'pipe' && field.label === 'Размер') return `Сечение: ${formatMillimeters(field.value)}`
+    if (category === 'pipe' && field.label === 'Толщина стенки, мм') return `Стенка: ${formatMillimeters(field.value)}`
+    if (category === 'pipe' && field.label === 'Диаметр, мм') return `Диаметр: ${formatMillimeters(field.value)}`
+    if (category === 'knives' && field.label === 'Ширина, мм') return `Ширина: ${formatMillimeters(field.value)}`
+    if (category === 'knives' && field.label === 'Высота, мм') return `Высота: ${formatMillimeters(field.value)}`
+    return String(field.value)
+  })
   if (values.length) return values.join(', ')
   return legacyCharacteristicsText(row)
+}
+
+function formatMillimeters(value: CharacteristicField['value']) {
+  const text = String(value)
+  return /мм/i.test(text) ? text : `${text} мм`
 }
 
 function buildReceiptComment(values: { category: MaterialCategory; variant: MaterialVariant | null; comment: string }) {

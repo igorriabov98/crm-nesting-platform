@@ -47,7 +47,13 @@ assert.match(supplyOrders, /Сначала проверьте распредел
 assert.match(receivingPage, /previewSingleLengthLongStockReceipt/)
 assert.match(receivingPage, /receiveSingleLengthLongStockDelivery/)
 assert.match(inventoryPage, /piece_length_mm/)
+assert.match(inventoryPage, /Длина хлыста, мм/)
+assert.match(inventoryPage, />Длина хлыста<\/th>/)
+assert.doesNotMatch(inventoryPage, /длин\w* куска/iu)
 assert.doesNotMatch(inventoryPage, /`Длина куска:/)
+assert.match(inventoryPage, /category === 'circle'[\s\S]*`Диаметр: \$\{formatMillimeters\(field\.value\)\}`/)
+assert.match(inventoryPage, /category === 'pipe'[\s\S]*`Сечение: \$\{formatMillimeters\(field\.value\)\}`/)
+assert.match(inventoryPage, /category === 'pipe'[\s\S]*`Стенка: \$\{formatMillimeters\(field\.value\)\}`/)
 assert.match(productionGantt, /formatKnifeProfileDimensions\(\{/)
 assert.doesNotMatch(productionGantt, /dimensionText\(row\.length_mm, row\.width_mm, row\.height_mm\)/)
 
