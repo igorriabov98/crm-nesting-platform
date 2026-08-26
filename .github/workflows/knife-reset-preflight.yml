@@ -1,0 +1,62 @@
+name: Knife Reset Preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type report-knife-reset-production to build the read-only report.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: knife-reset-preflight-production
+  cancel-in-progress: false
+
+jobs:
+  validate-ref:
+    name: validate main ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm production preflight
+        run: test "${{ inputs.confirm }}" = "report-knife-reset-production"
+      - name: Run only from main
+        run: |
+          test "${GITHUB_REF_NAME}" = "main"
+          echo "preflight SHA=${GITHUB_SHA}"
+
+  report:
+    name: read-only knife reset report
+    needs: validate-ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Verify read-only preflight guard
+        run: |
+          node scripts/test-knife-reset-safety.mjs
+          grep -Eiq '^rollback;' scripts/knife-reset-preflight.sql
+      - name: Build production report and roll back
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_DB_URL}"
+          psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 \
+            -f scripts/knife-reset-preflight.sql \
+            | tee "${RUNNER_TEMP}/knife-reset-preflight.txt"
+          grep -q 'expected_fingerprint' "${RUNNER_TEMP}/knife-reset-preflight.txt"
+      - name: Upload preflight report
+        uses: actions/upload-artifact@v4
+        with:
+          name: knife-reset-preflight-${{ github.sha }}
+          path: ${{ runner.temp }}/knife-reset-preflight.txt
+          if-no-files-found: error
+          retention-days: 1
