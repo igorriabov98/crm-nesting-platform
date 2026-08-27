@@ -13,6 +13,7 @@ declare
   v_count integer;
   v_bevel smallint;
   v_bevel_one_variant uuid;
+  v_update_function_definition text;
 begin
   if not exists (
     select 1
@@ -205,6 +206,21 @@ begin
   );
   if (v_updated->>'revision')::integer <> 2 or (v_updated->>'kerf_mm')::numeric <> 2 then
     raise exception 'Настройки не обновились: %', v_updated;
+  end if;
+
+  select pg_get_functiondef(
+    'public.fn_update_long_stock_layout_settings(jsonb,bigint,uuid)'::regprocedure
+  )
+  into v_update_function_definition;
+  if v_update_function_definition ~* 'delete\s+from\s+public\.long_stock_layout_lengths\s*;' then
+    raise exception 'Функция настроек содержит DELETE без WHERE';
+  end if;
+  if v_update_function_definition !~* (
+    'delete\s+from\s+public\.long_stock_layout_lengths\s+'
+    || 'where\s+category_key\s+in\s*\('
+    || '\s*''circle''\s*,\s*''pipe''\s*,\s*''knife_bevel_1''\s*,\s*''knife_bevel_2''\s*\)'
+  ) then
+    raise exception 'DELETE настроек не ограничен управляемыми категориями';
   end if;
 
   select count(*)

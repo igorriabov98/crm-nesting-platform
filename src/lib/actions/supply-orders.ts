@@ -5,6 +5,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import {
   allocateReceiptByPriority,
   committedScheduleQuantity,
+  outstandingAllocationQuantity,
   projectAggregateVirtualReceivingQuantities,
 } from '@/lib/supply-orders/receiving-quantity.mjs'
 import { requirePermission } from '@/lib/permissions/server'
@@ -2561,7 +2562,13 @@ async function buildMaterialAllocationPreview(
     const delivered = itemSchedules
       .filter((schedule) => schedule.status === 'delivered')
       .reduce((sum, schedule) => sum + scheduleDeliveredQuantity(schedule), 0)
-    const outstandingQuantity = Math.max(item.to_order - delivered, 0)
+    const outstandingQuantity = outstandingAllocationQuantity({
+      isWholeBar: isWholeBarItem(item),
+      requestedQuantity: item.requested_quantity,
+      reservedQuantity: item.reserved_quantity,
+      purchaseQuantity: item.to_order,
+      deliveredQuantity: delivered,
+    })
     const hasOtherPlannedSchedule = itemSchedules.some((schedule) => (
       schedule.status === 'planned' && schedule.id !== scheduleId
     ))
