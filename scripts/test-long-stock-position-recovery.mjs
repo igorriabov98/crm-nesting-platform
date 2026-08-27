@@ -16,6 +16,10 @@ for (const required of [
   'filterLongStockCandidatesByReservedStock',
   'assertLongStockRecoverySegmentTotal',
   'planning_recovery:',
+  'planId: string | null',
+  'planItemId: string | null',
+  "if (!planItem && reservedStock.length === 0) return null",
+  "? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0 }",
 ]) {
   assert.ok(actions.includes(required), `planning recovery action is missing ${required}`)
 }
