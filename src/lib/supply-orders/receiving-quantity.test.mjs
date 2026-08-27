@@ -3,9 +3,47 @@ import test from 'node:test'
 import {
   allocateReceiptByPriority,
   committedScheduleQuantity,
+  outstandingAllocationQuantity,
   outstandingReceivingQuantity,
   projectAggregateVirtualReceivingQuantities,
 } from './receiving-quantity.mjs'
+
+test('rounded whole-bar purchase closes only the logical machine need', () => {
+  const outstanding = outstandingAllocationQuantity({
+    isWholeBar: true,
+    requestedQuantity: 10_300,
+    reservedQuantity: 0,
+    purchaseQuantity: 12_000,
+    deliveredQuantity: 0,
+  })
+  assert.equal(outstanding, 10_300)
+
+  const result = allocateReceiptByPriority({
+    receivedQuantity: 12_000,
+    pieceLengthMm: 6_000,
+    pieceCount: 2,
+    candidates: [candidate('knife-10300', '2026-08-24', outstanding, { isSource: true })],
+  })
+  assert.deepEqual(result.allocations, [{
+    table: 'request_knives',
+    id: 'knife-10300',
+    key: 'knife-10300',
+    quantity: 10_300,
+    physical_quantity: 12_000,
+    piece_count: 2,
+  }])
+  assert.equal(result.allocations[0].physical_quantity - result.allocations[0].quantity, 1_700)
+})
+
+test('ordinary material allocation still follows the purchase remainder', () => {
+  assert.equal(outstandingAllocationQuantity({
+    isWholeBar: false,
+    requestedQuantity: 8,
+    reservedQuantity: 3,
+    purchaseQuantity: 7,
+    deliveredQuantity: 2,
+  }), 5)
+})
 
 test('delivered schedules count logical allocation instead of warehouse excess', () => {
   const schedule = {

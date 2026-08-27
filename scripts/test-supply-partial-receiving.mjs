@@ -102,8 +102,8 @@ assert.doesNotMatch(
 )
 assert.match(
   supplyOrderActions,
-  /const outstandingQuantity = Math\.max\(item\.to_order - delivered, 0\)[\s\S]*isEligible: outstandingQuantity > 0 && unavailableReason === null/,
-  'allocation eligibility must use the current need after stock reservation and accepted deliveries',
+  /outstandingAllocationQuantity\(\{[\s\S]*requestedQuantity: item\.requested_quantity,[\s\S]*reservedQuantity: item\.reserved_quantity,[\s\S]*purchaseQuantity: item\.to_order,[\s\S]*deliveredQuantity: delivered,[\s\S]*isEligible: outstandingQuantity > 0 && unavailableReason === null/,
+  'whole-bar allocation eligibility must keep logical demand separate from its rounded purchase plan',
 )
 assert.match(
   supplyOrderActions,

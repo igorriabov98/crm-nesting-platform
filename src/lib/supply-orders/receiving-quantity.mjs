@@ -156,6 +156,27 @@ export function outstandingReceivingQuantity(requiredQuantity, schedules) {
 }
 
 /**
+ * Keep the logical machine need separate from the rounded physical purchase
+ * plan used for whole bars. A 10 300 mm knife need may legitimately be bought
+ * as two 6 000 mm bars, but receiving must close only 10 300 mm and preserve
+ * the remaining 1 700 mm as future scrap linked to the cutting reservation.
+ *
+ * @param {{
+ *   isWholeBar: boolean,
+ *   requestedQuantity: number,
+ *   reservedQuantity: number,
+ *   purchaseQuantity: number,
+ *   deliveredQuantity: number,
+ * }} input
+ */
+export function outstandingAllocationQuantity(input) {
+  const logicalRequired = input.isWholeBar
+    ? Math.max(positiveNumber(input.requestedQuantity) - positiveNumber(input.reservedQuantity), 0)
+    : positiveNumber(input.purchaseQuantity)
+  return Math.max(logicalRequired - positiveNumber(input.deliveredQuantity), 0)
+}
+
+/**
  * Project virtual receiving rows from the authoritative aggregate remainder.
  * One supply schedule may intentionally be stored on a single anchor request
  * while covering several matching request items. Per-item projection would
