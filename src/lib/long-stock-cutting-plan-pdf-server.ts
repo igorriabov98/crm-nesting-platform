@@ -30,6 +30,7 @@ type VersionRow = {
   status: string
   selected_candidate_number: number
   settings_snapshot: Record<string, unknown>
+  input_snapshot: Record<string, unknown>
   pdf_metadata: unknown
   definition_sealed: boolean
 }
@@ -83,7 +84,12 @@ async function loadLongStockCuttingPlanPdfData(
   if (planItemsResult.error) throw new Error(planItemsResult.error.message)
   const planItems = planItemsResult.data || []
   if (planItems.length === 0) throw new Error('В карте раскроя нет позиции заявки')
-  const requestIds = Array.from(new Set(planItems.map((item: any) => item.request_id))) as string[]
+  const replacementRequestId = String(
+    ((version.input_snapshot.recalculation as Record<string, unknown> | null)?.replacement_request_id) ?? '',
+  ).trim()
+  const requestIds = replacementRequestId
+    ? [replacementRequestId]
+    : Array.from(new Set(planItems.map((item: any) => item.request_id))) as string[]
   if (requestIds.length !== 1) throw new Error('PDF текущей версии поддерживает одну заявку технолога')
   const candidate = rowData(candidateResult, 'Выбранный вариант раскроя не найден') as { id: string }
   const variant = rowData(variantResult, 'Вариант материала карты раскроя не найден') as LongStockMaterialVariantDescriptor & {
@@ -184,7 +190,7 @@ async function loadLongStockCuttingPlanPdfData(
 
 async function loadVersionAndPlan(db: any, versionId: string) {
   const version = rowData(await db.from('long_stock_cutting_plan_versions')
-    .select('id,plan_id,version_number,status,selected_candidate_number,settings_snapshot,pdf_metadata,definition_sealed')
+    .select('id,plan_id,version_number,status,selected_candidate_number,settings_snapshot,input_snapshot,pdf_metadata,definition_sealed')
     .eq('id', versionId)
     .maybeSingle(), 'Версия карты раскроя не найдена') as VersionRow
   const plan = rowData(await db.from('long_stock_cutting_plans')

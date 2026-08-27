@@ -39,15 +39,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  approveLongStockRecalculationSafe,
   approveLongStockCuttingPlanVersion,
+  calculateLongStockRecalculationSafe,
   calculateLongStockCuttingPlan,
   createLongStockMaterialVariant,
   createLongStockCuttingPlanVersion,
   createManualLongStockCuttingPlanVersion,
   loadLongStockPlanningRecoveryDraft,
-  loadLongStockRecalculationDraft,
+  loadLongStockRecalculationSafe,
   prepareLongStockRequestItemDraft,
-  recalculateLongStockCuttingPlanVersion,
   type LongStockPlanningRecoveryDraft,
   type LongStockRecalculationDraft,
 } from '@/lib/actions/long-stock-cutting-plans'
@@ -1235,6 +1236,7 @@ export function LongStockRecalculationDialog({
   const [showCuttingMatrix, setShowCuttingMatrix] = useState(false)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [createdRequestHref, setCreatedRequestHref] = useState<string | null>(null)
 
   const visibleCandidates = useMemo(
     () => candidatesForLongStockMode(calculation?.candidates ?? [], mixedLengths),
@@ -1248,90 +1250,101 @@ export function LongStockRecalculationDialog({
   useEffect(() => {
     if (!open) return
     let active = true
-    setPendingAction('load')
-    setError(null)
-    setDraft(null)
-    setCalculation(null)
-    setSelectedCandidateKey(null)
-    setMixedLengths(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
-    setShowCuttingMatrix(false)
 
     void (async () => {
-      try {
-        const requestItemRef = { id: requestItem.id, table: requestItem.table }
-        const nextDraft = await loadLongStockRecalculationDraft(requestItemRef)
-        const nextCalculation = await calculateLongStockCuttingPlan({
-          requestItem: requestItemRef,
-          segments: nextDraft.remainingSegments,
-          mode: DEFAULT_MIXED_LONG_STOCK_LENGTHS ? 'mixed' : 'standard',
-        })
-        if (!active) return
-        const candidates = candidatesForLongStockMode(
-          nextCalculation.candidates,
-          DEFAULT_MIXED_LONG_STOCK_LENGTHS,
-        )
-        setDraft(nextDraft)
-        setCalculation(nextCalculation)
-        setSelectedCandidateKey(candidates[0]?.key ?? null)
-        if (candidates.length === 0) setError('Для фактически принятых длин раскладка не найдена')
-      } catch (loadError) {
-        if (!active) return
-        setError(errorMessage(loadError, 'Не удалось подготовить пересчёт'))
-      } finally {
-        if (active) setPendingAction(null)
+      await Promise.resolve()
+      if (!active) return
+      setPendingAction('load')
+      setError(null)
+      setDraft(null)
+      setCalculation(null)
+      setSelectedCandidateKey(null)
+      setMixedLengths(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
+      setShowCuttingMatrix(false)
+      setCreatedRequestHref(null)
+      const result = await loadLongStockRecalculationSafe({
+        requestItem: { id: requestItem.id, table: requestItem.table },
+      })
+      if (!active) return
+      if (!result.success) {
+        setError(result.error)
+        setPendingAction(null)
+        return
       }
+      const nextMixed = result.data.draft.sourceKind === 'supply_return'
+        ? true
+        : DEFAULT_MIXED_LONG_STOCK_LENGTHS
+      const candidates = candidatesForLongStockMode(result.data.calculation.candidates, nextMixed)
+      setDraft(result.data.draft)
+      setCalculation(result.data.calculation)
+      setMixedLengths(nextMixed)
+      setSelectedCandidateKey(candidates[0]?.key ?? null)
+      if (candidates.length === 0) {
+        setError(result.data.draft.sourceKind === 'supply_return'
+          ? 'Для актуальных стандартных и нестандартных длин раскладка не найдена'
+          : 'Для фактически принятых длин раскладка не найдена')
+      }
+      setPendingAction(null)
     })()
     return () => { active = false }
   }, [open, requestItem.id, requestItem.table])
 
-  async function calculate(mode: 'mixed' | 'standard', searchBudget = DEFAULT_LONG_STOCK_SEARCH_BUDGET) {
+  function recalculationMode(useAlternativeLengths: boolean): LongStockPlanCalculationMode {
+    if (draft?.sourceKind === 'supply_return') {
+      return useAlternativeLengths ? 'with_nonstandard' : 'standard'
+    }
+    return useAlternativeLengths ? 'mixed' : 'standard'
+  }
+
+  async function calculate(mode: LongStockPlanCalculationMode, searchBudget = DEFAULT_LONG_STOCK_SEARCH_BUDGET) {
     if (!draft) return
     setPendingAction(searchBudget > DEFAULT_LONG_STOCK_SEARCH_BUDGET ? 'longer' : 'calculate')
     setError(null)
-    try {
-      const nextCalculation = await calculateLongStockCuttingPlan({
-        requestItem,
-        segments: draft.remainingSegments,
-        mode,
-        searchBudget,
-      })
-      const nextMixed = mode === 'mixed'
-      const candidates = candidatesForLongStockMode(nextCalculation.candidates, nextMixed)
-      setMixedLengths(nextMixed)
-      setCalculation(nextCalculation)
-      setSelectedCandidateKey(candidates[0]?.key ?? null)
-      setShowCuttingMatrix(false)
-      if (candidates.length === 0) setError('Для фактически принятых длин раскладка не найдена')
-    } catch (calculationError) {
-      setError(errorMessage(calculationError, 'Не удалось пересчитать раскладку'))
-    } finally {
+    const result = await calculateLongStockRecalculationSafe({
+      requestItem,
+      segments: draft.remainingSegments,
+      mode,
+      searchBudget,
+    })
+    if (!result.success) {
+      setError(result.error)
       setPendingAction(null)
+      return
     }
+    const nextMixed = mode === 'mixed' || mode === 'with_nonstandard'
+    const candidates = candidatesForLongStockMode(result.data.candidates, nextMixed)
+    setMixedLengths(nextMixed)
+    setCalculation(result.data)
+    setSelectedCandidateKey(candidates[0]?.key ?? null)
+    setShowCuttingMatrix(false)
+    if (candidates.length === 0) setError(draft.sourceKind === 'supply_return'
+      ? 'Для выбранных актуальных длин раскладка не найдена'
+      : 'Для фактически принятых длин раскладка не найдена')
+    setPendingAction(null)
   }
 
   async function approveRecalculation() {
     if (!draft || !calculation || !selectedCandidate) return
     setPendingAction('approve')
     setError(null)
-    try {
-      const version = await recalculateLongStockCuttingPlanVersion({
-        requestItem,
-        segments: draft.remainingSegments,
-        mode: mixedLengths ? 'mixed' : 'standard',
-        searchBudget: calculation.searchBudget,
-        selectedCandidateKey: selectedCandidate.key,
-      })
-      await approveLongStockCuttingPlanVersion(version.id)
-      toast.success(`Версия ${version.version_number} карты раскроя утверждена`)
-      onApproved?.()
-      onOpenChange(false)
-    } catch (approvalError) {
-      const message = errorMessage(approvalError, 'Не удалось утвердить пересчёт')
-      setError(message)
-      toast.error(message)
-    } finally {
+    const result = await approveLongStockRecalculationSafe({
+      requestItem,
+      segments: draft.remainingSegments,
+      mode: recalculationMode(mixedLengths),
+      searchBudget: calculation.searchBudget,
+      selectedCandidateKey: selectedCandidate.key,
+    })
+    if (!result.success) {
+      setError(result.error)
+      toast.error(result.error)
       setPendingAction(null)
+      return
     }
+    const href = `/sales-plan/${result.data.approval.machine_id}/request/${result.data.approval.replacement_request_id}`
+    setCreatedRequestHref(href)
+    toast.success(`Версия ${result.data.version.version_number} утверждена, новая заявка создана`)
+    onApproved?.()
+    setPendingAction(null)
   }
 
   const searchBudget = calculation?.searchBudget ?? DEFAULT_LONG_STOCK_SEARCH_BUDGET
@@ -1346,14 +1359,16 @@ export function LongStockRecalculationDialog({
             <RotateCcw className="size-5" />Пересчёт карты раскроя
           </DialogTitle>
           <DialogDescription>
-            Раскладка строится только для непорезанных заготовок на фактически принятых длинах.
+            {draft?.sourceKind === 'supply_return'
+              ? 'Непорезанная потребность пересчитывается по актуальным стандартным и нестандартным длинам.'
+              : 'Непорезанная потребность пересчитывается по фактически принятым длинам.'}
           </DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
           {pendingAction === 'load' && (
             <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-slate-600" role="status">
-              <Loader2 className="size-4 animate-spin" />Подготавливаем фактические длины и непорезанные заготовки…
+              <Loader2 className="size-4 animate-spin" />Определяем источник длин и непорезанные заготовки…
             </div>
           )}
 
@@ -1365,10 +1380,18 @@ export function LongStockRecalculationDialog({
                 <AlertDescription>{draft.invalidationReason}</AlertDescription>
               </Alert>
 
-              <section className="grid gap-3 rounded-xl border bg-white p-4 md:grid-cols-3">
+              <section className="grid gap-3 rounded-xl border bg-white p-4 md:grid-cols-4">
                 <Metric label="Материал" value={draft.materialName} />
                 <Metric label="Вариант" value={draft.variantDescription || 'Точный вариант из каталога'} />
-                <Metric label="Принятые длины" value={draft.acceptedLengthsMm.map(formatMm).join(' + ')} />
+                <Metric
+                  label="Источник длин"
+                  value={draft.sourceKind === 'supply_return'
+                    ? 'Актуальные настройки раскроя'
+                    : draft.sourceKind === 'supply_receipt'
+                      ? 'Фактическая приёмка'
+                      : 'Межзаводское перемещение'}
+                />
+                <Metric label="Допустимые длины" value={draft.acceptedLengthsMm.map(formatMm).join(' + ')} />
               </section>
 
               <section className="rounded-xl border bg-white p-4">
@@ -1383,9 +1406,11 @@ export function LongStockRecalculationDialog({
                     <Checkbox
                       checked={mixedLengths}
                       disabled={Boolean(pendingAction)}
-                      onCheckedChange={(checked) => void calculate(checked === true ? 'mixed' : 'standard')}
+                      onCheckedChange={(checked) => void calculate(recalculationMode(checked === true))}
                     />
-                    Смешивать принятые длины
+                    {draft.sourceKind === 'supply_return'
+                      ? 'Разрешить нестандартные длины'
+                      : 'Смешивать принятые длины'}
                   </label>
                 </div>
               </section>
@@ -1394,7 +1419,11 @@ export function LongStockRecalculationDialog({
                 <section className="space-y-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-semibold text-slate-900">Варианты по фактической приёмке</h3>
+                      <h3 className="font-semibold text-slate-900">
+                        {draft.sourceKind === 'supply_return'
+                          ? 'Варианты по актуальным настройкам'
+                          : 'Варианты по фактическому материалу'}
+                      </h3>
                       <p className="mt-1 text-sm text-slate-500">Сначала показана минимальная требуемая длина.</p>
                     </div>
                     <Button
@@ -1449,7 +1478,7 @@ export function LongStockRecalculationDialog({
                             className="h-auto p-0 text-xs"
                             disabled={Boolean(pendingAction)}
                             onClick={() => void calculate(
-                              mixedLengths ? 'mixed' : 'standard',
+                              recalculationMode(mixedLengths),
                               searchBudget < EXTENDED_LONG_STOCK_SEARCH_BUDGET
                                 ? EXTENDED_LONG_STOCK_SEARCH_BUDGET
                                 : Math.min(Number.MAX_SAFE_INTEGER, searchBudget * 2),
@@ -1474,6 +1503,18 @@ export function LongStockRecalculationDialog({
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
+          {createdRequestHref && (
+            <Alert className="border-emerald-300 bg-emerald-50" role="status">
+              <BadgeCheck className="text-emerald-700" />
+              <AlertTitle>Новая заявка создана</AlertTitle>
+              <AlertDescription className="space-y-3">
+                <p>Исходная позиция отменена по причине «Пересчёт». Новая позиция ожидает проверку склада.</p>
+                <Button type="button" size="sm" onClick={() => window.location.assign(createdRequestHref)}>
+                  Открыть новую заявку
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
         </div>
 
         <DialogFooter className="mx-0 mb-0 shrink-0 rounded-none px-5 py-4">
@@ -1482,11 +1523,11 @@ export function LongStockRecalculationDialog({
           </Button>
           <Button
             type="button"
-            disabled={!selectedCandidate || Boolean(pendingAction)}
+            disabled={!selectedCandidate || Boolean(pendingAction) || Boolean(createdRequestHref)}
             onClick={() => void approveRecalculation()}
           >
             {pendingAction === 'approve' ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
-            {pendingAction === 'approve' ? 'Утверждение…' : 'Утвердить новую версию'}
+            {pendingAction === 'approve' ? 'Утверждение…' : 'Утвердить и создать новую заявку'}
           </Button>
         </DialogFooter>
       </DialogContent>

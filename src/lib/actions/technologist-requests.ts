@@ -243,6 +243,7 @@ async function loadMachineRequests(db: LooseDb, machineId: string, role: UserRol
     .from('technologist_requests')
     .select('*')
     .eq('machine_id', machineId)
+    .eq('is_recalculation_staging', false)
     .order('created_at', { ascending: false })
     .order('updated_at', { ascending: false })
 
@@ -266,7 +267,7 @@ async function loadRequestOrderStatuses(db: LooseDb, requestIds: string[]) {
   for (const result of results) {
     if (result.error) throw new Error(result.error.message || 'Не удалось загрузить статусы закупки')
     for (const row of (result.data || []) as RequestOrderStatusRow[]) {
-      if (!row.request_id || !row.order_status) continue
+      if (!row.request_id || !row.order_status || row.order_status === 'cancelled') continue
       const list = statuses.get(row.request_id) || []
       list.push(row.order_status)
       statuses.set(row.request_id, list)
@@ -492,6 +493,7 @@ export async function getRequestById(machineId: string, requestId: string) {
     if (!requestData) return { data: null, error: null }
 
     const request = requestData as TechnologistRequest
+    if (request.is_recalculation_staging) return { data: null, error: 'Заявка ещё не утверждена' }
     if (request.machine_id !== machineId) return { data: null, error: 'Заявка не относится к этой машине' }
     if (!isRequestVisibleForRequestRole(request, role) && !isDirector(role)) {
       return { data: null, error: 'Заявка ещё не отправлена в снабжение' }

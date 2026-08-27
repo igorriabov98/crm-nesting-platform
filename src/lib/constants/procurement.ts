@@ -80,6 +80,7 @@ export const ORDER_STATUS_LABELS: Record<OrderItemStatus, string> = {
   pending: 'Не заказано',
   ordered: 'Заказано',
   delivered: 'Получено',
+  cancelled: 'Отменено',
 }
 
 export const INVENTORY_TRANSACTION_LABELS: Record<InventoryTransactionType, string> = {

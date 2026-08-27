@@ -34,6 +34,7 @@ const statusVariant = {
  pending: 'secondary',
  ordered: 'default',
  delivered: 'outline',
+ cancelled: 'outline',
 } as const
 
 export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = false }: OrderItemRowProps) {

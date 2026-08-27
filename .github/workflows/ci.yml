@@ -162,6 +162,8 @@ jobs:
         run: npm run test:supply-receiving-plan-fact
       - name: Long-stock receipt recalculation database lifecycle
         run: npm run test:long-stock-cutting-plan-receipt-recalculation
+      - name: Long-stock recalculation replacement matrix
+        run: npm run test:long-stock-recalculation-replacement
       - name: Fixtures are stable
         run: git diff --exit-code -- nesting-service/src/lib/__tests__/fixtures/
       - name: Phase 0
