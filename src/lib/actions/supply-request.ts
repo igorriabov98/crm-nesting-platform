@@ -236,7 +236,7 @@ function getReservedForRow(table: RequestItemTable, row: Record<string, unknown>
 }
 
 function isActiveSupplyRow(table: RequestItemTable, row: Record<string, unknown>) {
-  if (row.order_status === 'delivered') return false
+  if (row.order_status === 'delivered' || row.order_status === 'cancelled') return false
   return toOrder(getNeededForRow(table, row), getReservedForRow(table, row)) > 0
 }
 
@@ -805,9 +805,9 @@ async function loadRequestForStockSource(
       sheetMetal: withStock('request_sheet_metal', sheetMetal, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
       // @deprecated — round_tube excluded from new UI
       roundTube: withStock('request_round_tube', roundTube, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      circles: withStock('request_circle', circles, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      pipes: withStock('request_pipe', pipes, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
-      knives: withStock('request_knives', knives, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      circles: withStock('request_circle', circles.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      pipes: withStock('request_pipe', pipes.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
+      knives: withStock('request_knives', knives.filter((row) => row.order_status !== 'cancelled'), inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
       components: withStock('request_components', components, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
       paint: withStock('request_paint', paint, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
       meshItems: withStock('request_mesh', meshItems, inventoryMap, inventoryGroupMap, materialInventoryMap, reservationMap, steelTypeMap, reservationSource),
@@ -903,6 +903,9 @@ export async function reserveItemFromStock(data: {
     if (error || !rowData) throw new Error(error?.message || 'ÐŸÐ¾Ð·Ð¸Ñ†Ð¸Ñ Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
 
     const row = rowData as Record<string, unknown>
+    if (row.order_status === 'cancelled') {
+      throw new Error('Отменённую позицию нельзя резервировать')
+    }
     const { data: selectedInventoryData, error: selectedInventoryError } = await db
       .from('inventory')
       .select('id, factory_id, material_id, material_variant_id, total_quantity, available_quantity, unit, total_secondary_quantity, available_secondary_quantity, secondary_unit, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at')

@@ -4156,6 +4156,7 @@ export type Database = {
           submitted_at: string | null
           created_at: string
           updated_at: string
+          is_recalculation_staging: boolean
         }
         Insert: {
           id?: string
@@ -4166,6 +4167,7 @@ export type Database = {
           submitted_at?: string | null
           created_at?: string
           updated_at?: string
+          is_recalculation_staging?: boolean
         }
         Update: {
           id?: string
@@ -4176,6 +4178,7 @@ export type Database = {
           submitted_at?: string | null
           created_at?: string
           updated_at?: string
+          is_recalculation_staging?: boolean
         }
       }
       request_sheet_metal: {
@@ -4385,6 +4388,9 @@ export type Database = {
           is_custom_material_variant: boolean
           remainder_meters: number
           remainder_qty: number
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancellation_reason: string | null
         }
         Insert: {
           id?: string
@@ -4412,6 +4418,9 @@ export type Database = {
           is_custom_material_variant?: boolean
           remainder_meters?: number
           remainder_qty?: number
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
         Update: {
           id?: string
@@ -4439,6 +4448,9 @@ export type Database = {
           is_custom_material_variant?: boolean
           remainder_meters?: number
           remainder_qty?: number
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
       }
       request_components: {
@@ -4594,6 +4606,9 @@ export type Database = {
           is_custom_material_variant: boolean
           sort_order: number
           created_at: string
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancellation_reason: string | null
         }
         Insert: {
           id?: string
@@ -4614,6 +4629,9 @@ export type Database = {
           is_custom_material_variant?: boolean
           sort_order?: number
           created_at?: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
         Update: {
           id?: string
@@ -4634,6 +4652,9 @@ export type Database = {
           is_custom_material_variant?: boolean
           sort_order?: number
           created_at?: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
       }
       request_pipe: {
@@ -4661,6 +4682,9 @@ export type Database = {
           is_custom_material_variant: boolean
           sort_order: number
           created_at: string
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancellation_reason: string | null
         }
         Insert: {
           id?: string
@@ -4686,6 +4710,9 @@ export type Database = {
           is_custom_material_variant?: boolean
           sort_order?: number
           created_at?: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
         Update: {
           id?: string
@@ -4711,6 +4738,9 @@ export type Database = {
           is_custom_material_variant?: boolean
           sort_order?: number
           created_at?: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
       }
       request_mesh: {
@@ -4996,7 +5026,7 @@ export type Database = {
       consumable_delivery_method: 'nova_poshta' | 'other'
       consumable_movement_type: 'initial' | 'manual_receipt' | 'request_receipt' | 'consumption' | 'adjustment'
       request_status: 'draft' | 'pending_stock_check' | 'stock_checked' | 'submitted_to_supply' | 'completed'
-      order_item_status: 'pending' | 'ordered' | 'delivered'
+      order_item_status: 'pending' | 'ordered' | 'delivered' | 'cancelled'
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {

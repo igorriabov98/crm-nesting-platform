@@ -12,6 +12,7 @@ const STATUS_CLASS_NAMES: Record<OrderItemStatus, string> = {
   pending: 'border-amber-200 bg-amber-50 text-amber-800',
   ordered: 'border-blue-200 bg-blue-50 text-blue-800',
   delivered: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  cancelled: 'border-slate-300 bg-slate-100 text-slate-700',
 }
 
 type Props = {
@@ -22,6 +23,19 @@ type Props = {
 
 export function RequestItemOrderStatus({ status, itemTable, item }: Props) {
   const resolvedStatus = status || 'pending'
+  if (resolvedStatus === 'cancelled') {
+    const reason = item && typeof item === 'object' && 'cancellation_reason' in item
+      ? String((item as { cancellation_reason?: unknown }).cancellation_reason ?? '').trim()
+      : ''
+    return (
+      <div className="space-y-1">
+        <Badge variant="outline" className={STATUS_CLASS_NAMES.cancelled}>
+          {ORDER_STATUS_LABELS.cancelled}
+        </Badge>
+        {reason && <p className="text-xs text-slate-600">Причина: {reason}</p>}
+      </div>
+    )
+  }
   const coverage = getMaterialRequestStockCoverage(itemTable, item)
   if (isMaterialRequestItemReservedFromStock(resolvedStatus, itemTable, item)) {
     return (

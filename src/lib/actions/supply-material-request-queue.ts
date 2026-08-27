@@ -46,7 +46,7 @@ type QueueMachine = {
 type QueuePosition = Record<string, unknown> & {
   id: string
   request_id: string
-  order_status?: 'pending' | 'ordered' | 'delivered'
+  order_status?: 'pending' | 'ordered' | 'delivered' | 'cancelled'
 }
 
 const REQUEST_TABLES: RequestItemTable[] = [
@@ -174,6 +174,7 @@ export async function getSupplyMaterialRequestQueue(): Promise<{
 
     REQUEST_TABLES.forEach((table, index) => {
       for (const row of (positionResults[index].data || []) as QueuePosition[]) {
+        if (row.order_status === 'cancelled') continue
         const current = positionsByRequest.get(row.request_id) || []
         current.push({ table, row })
         positionsByRequest.set(row.request_id, current)

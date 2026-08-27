@@ -1248,7 +1248,7 @@ export async function getSupplyOrders(
     const longStockPlanMap = await loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems)
     const orderableRawItems = rawItems
       .map((item) => applyLongStockPurchasePlan(item, longStockPlanMap))
-      .filter((item) => item.to_order > 0)
+      .filter((item) => item.order_status !== 'cancelled' && item.to_order > 0)
 
     const materialIds = Array.from(new Set(orderableRawItems.map((item) => item.material_id).filter(Boolean))) as string[]
     const materialsRes = materialIds.length
@@ -3411,7 +3411,9 @@ export async function saveAggregateDeliverySchedule(
     const normalizedSchedules = normalizeScheduleInputs(schedules)
     const selectedItems = await loadSelectedOrderItems(db, groupedItems)
     if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
-    const openItems = selectedItems.filter((item) => item.order_status !== 'delivered')
+    const openItems = selectedItems.filter((item) => (
+      item.order_status !== 'delivered' && item.order_status !== 'cancelled'
+    ))
     if (openItems.length === 0) throw new Error('Вся поставка уже принята и закрыта')
     for (const item of openItems) {
       if (!item.material_id) throw new Error(`Позиция "${item.item_name}" не привязана к материалу`)
@@ -3730,6 +3732,8 @@ export async function updateOrderSupplier(item: { table: string; id: string; mat
   try {
     const { db } = await requireAccess('manage')
     if (!ORDER_TABLES.includes(item.table)) throw new Error('Некорректная таблица позиции')
+    const orderItem = await loadOneOrderItem(db, item.table, item.id)
+    if (orderItem.order_status === 'cancelled') throw new Error('Нельзя менять поставщика отменённой позиции')
     const { error } = await db.from(item.table).update({ supplier_id: supplierId || null }).eq('id', item.id)
     if (error) throw new Error(error.message || 'Не удалось назначить поставщика')
     revalidatePath(ROUTES.SUPPLY_ORDERS)
@@ -3743,6 +3747,8 @@ export async function updateOrderCustomDeliveryDate(item: { table: string; id: s
   try {
     const { db } = await requireAccess('manage')
     if (!ORDER_TABLES.includes(item.table)) throw new Error('Некорректная таблица позиции')
+    const orderItem = await loadOneOrderItem(db, item.table, item.id)
+    if (orderItem.order_status === 'cancelled') throw new Error('Нельзя менять дату отменённой позиции')
     const { error } = await db.from(item.table).update({ custom_delivery_date: date || null }).eq('id', item.id)
     if (error) throw new Error(error.message || 'Не удалось обновить дату доставки')
     revalidatePath(ROUTES.SUPPLY_ORDERS)
@@ -3762,6 +3768,7 @@ export async function addOrderDeliverySchedule(
     validateScheduleInput(data)
     const orderItem = await loadOneOrderItem(db, item.table, item.id)
     if (orderItem.order_status === 'delivered') throw new Error('Нельзя менять график уже принятой позиции')
+    if (orderItem.order_status === 'cancelled') throw new Error('Нельзя добавлять график отменённой позиции')
     assertApprovedLongStockPurchasePlan(orderItem)
     const { error } = await db.from('supply_order_delivery_schedules').insert({
       request_item_table: item.table,

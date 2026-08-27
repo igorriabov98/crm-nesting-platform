@@ -149,12 +149,49 @@ type CalculationContext = {
 type LongStockRecalculationState = {
   planId: string
   planItemId: string
+  sourceRequestId: string
   invalidVersionId: string
   invalidVersionNumber: number
   invalidationReason: string
+  sourceKind: LongStockRecalculationSourceKind
   remainingSegments: LongStockPlanSegmentInput[]
   acceptedLengthsMm: number[]
+  allowedPurchaseLengths: Array<{ lengthMm: number; kind: 'standard' | 'nonstandard' }>
 }
+
+export type LongStockRecalculationSourceKind =
+  | 'supply_return'
+  | 'supply_receipt'
+  | 'inventory_transfer'
+
+export type LongStockRecalculationReplacement = {
+  replacement_id: string
+  plan_id: string
+  plan_item_id: string
+  source_request_id: string
+  source_request_item_table: LongStockRequestItemRef['table']
+  source_request_item_id: string
+  replacement_request_id: string
+  replacement_request_item_table: LongStockRequestItemRef['table']
+  replacement_request_item_id: string
+  source_kind: LongStockRecalculationSourceKind
+  status: 'replacement_staging' | 'superseded'
+}
+
+export type LongStockRecalculationApproval = {
+  version_id: string
+  status: string
+  position_status?: string
+  source_request_id: string
+  source_request_item_id: string
+  replacement_request_id: string
+  replacement_request_item_id: string
+  machine_id: string
+}
+
+export type LongStockSafeResult<T> =
+  | { success: true; data: T; error: null }
+  | { success: false; data: null; error: string }
 
 type LongStockPlanningRecoveryState = {
   planId: string | null
@@ -412,6 +449,126 @@ export async function loadLongStockRecalculationDraft(
   }
 }
 
+export async function loadLongStockRecalculationSafe(input: {
+  requestItem: LongStockRequestItemRef
+  mode?: LongStockPlanCalculationInput['mode']
+  searchBudget?: number
+}): Promise<LongStockSafeResult<{
+  draft: LongStockRecalculationDraft
+  calculation: Awaited<ReturnType<typeof calculateLongStockCuttingPlan>>
+}>> {
+  try {
+    const draft = await loadLongStockRecalculationDraft(input.requestItem)
+    const calculation = await calculateLongStockCuttingPlan({
+      requestItem: input.requestItem,
+      segments: draft.remainingSegments,
+      mode: input.mode ?? (draft.sourceKind === 'supply_return' ? 'with_nonstandard' : 'mixed'),
+      searchBudget: input.searchBudget,
+    })
+    return { success: true, data: { draft, calculation }, error: null }
+  } catch (error) {
+    return {
+      success: false,
+      data: null,
+      error: actionErrorMessage(error, 'Не удалось подготовить пересчёт карты раскроя'),
+    }
+  }
+}
+
+export async function calculateLongStockRecalculationSafe(
+  input: LongStockPlanCalculationInput,
+): Promise<LongStockSafeResult<Awaited<ReturnType<typeof calculateLongStockCuttingPlan>>>> {
+  try {
+    const calculation = await calculateLongStockCuttingPlan(input)
+    return { success: true, data: calculation, error: null }
+  } catch (error) {
+    return {
+      success: false,
+      data: null,
+      error: actionErrorMessage(error, 'Не удалось пересчитать карту раскроя'),
+    }
+  }
+}
+
+export async function approveLongStockRecalculationSafe(
+  input: LongStockPlanCalculationInput & { selectedCandidateKey: string },
+): Promise<LongStockSafeResult<{
+  version: { id: string; plan_id: string; version_number: number; status: string }
+  approval: LongStockRecalculationApproval
+}>> {
+  try {
+    await requirePermission('technologist_requests', 'manage')
+    const version = await recalculateLongStockCuttingPlanVersion(input)
+    const approval = await approveLongStockCuttingPlanVersion(version.id) as LongStockRecalculationApproval
+    if (!approval.replacement_request_id || !approval.machine_id) {
+      throw new Error('Утверждение не вернуло созданную заменяющую заявку')
+    }
+    return { success: true, data: { version, approval }, error: null }
+  } catch (error) {
+    const completed = await loadCompletedRecalculationReplacement(input.requestItem).catch(() => null)
+    if (completed) return { success: true, data: completed, error: null }
+    return {
+      success: false,
+      data: null,
+      error: actionErrorMessage(error, 'Не удалось утвердить пересчёт и создать новую заявку'),
+    }
+  }
+}
+
+async function loadCompletedRecalculationReplacement(
+  requestItemInput: LongStockRequestItemRef,
+): Promise<{
+  version: { id: string; plan_id: string; version_number: number; status: string }
+  approval: LongStockRecalculationApproval
+} | null> {
+  const requestItem = normalizeRequestItemRef(requestItemInput)
+  const db = database()
+  const replacementResult = await db.from<{
+    source_request_id: string
+    source_request_item_id: string
+    replacement_request_id: string
+    replacement_request_item_id: string
+    replacement_version_id: string | null
+  }>('long_stock_recalculation_replacements')
+    .select('source_request_id,source_request_item_id,replacement_request_id,replacement_request_item_id,replacement_version_id')
+    .eq('source_request_item_table', requestItem.table)
+    .eq('source_request_item_id', requestItem.id)
+    .eq('status', 'superseded')
+    .order('approved_at', { ascending: false })
+  if (replacementResult.error) throw new Error(replacementResult.error.message)
+  const replacement = replacementResult.data?.[0]
+  if (!replacement?.replacement_version_id) return null
+
+  const [version, request] = await Promise.all([
+    one<{ id: string; plan_id: string; version_number: number; status: string }>(
+      db.from<{ id: string; plan_id: string; version_number: number; status: string }>('long_stock_cutting_plan_versions')
+        .select('id,plan_id,version_number,status')
+        .eq('id', replacement.replacement_version_id)
+        .maybeSingle(),
+      'Утверждённая версия замены не найдена',
+    ),
+    one<{ machine_id: string }>(
+      db.from<{ machine_id: string }>('technologist_requests')
+        .select('machine_id')
+        .eq('id', replacement.replacement_request_id)
+        .maybeSingle(),
+      'Созданная заявка замены не найдена',
+    ),
+  ])
+  return {
+    version,
+    approval: {
+      version_id: version.id,
+      status: version.status,
+      source_request_id: replacement.source_request_id,
+      source_request_item_id: replacement.source_request_item_id,
+      replacement_request_id: replacement.replacement_request_id,
+      replacement_request_item_id: replacement.replacement_request_item_id,
+      machine_id: request.machine_id,
+    },
+  }
+}
+
 export async function loadLongStockPlanningRecoveryDraft(
   requestItemInput: LongStockRequestItemRef,
 ): Promise<LongStockPlanningRecoveryDraft> {
@@ -526,8 +683,19 @@ export async function recalculateLongStockCuttingPlanVersion(input: LongStockPla
 export async function approveLongStockCuttingPlanVersion(versionId: string) {
   const { userId } = await requirePermission('technologist_requests', 'manage')
   const normalizedVersionId = requireUuid(versionId, 'Идентификатор версии')
+  const version = await one<{ input_snapshot: Record<string, unknown> }>(
+    database().from<{ input_snapshot: Record<string, unknown> }>('long_stock_cutting_plan_versions')
+      .select('input_snapshot')
+      .eq('id', normalizedVersionId)
+      .maybeSingle(),
+    'Версия карты раскроя не найдена',
+  )
+  const recalculation = version.input_snapshot.recalculation
+  const replacementId = recalculation && typeof recalculation === 'object'
+    ? String((recalculation as Record<string, unknown>).replacement_id ?? '')
+    : ''
   const preparedPdf = await prepareLongStockCuttingPlanPdf(normalizedVersionId, userId)
-  if (preparedPdf.kind === 'stored') {
+  if (preparedPdf.kind === 'stored' && !replacementId) {
     return {
       version_id: normalizedVersionId,
       status: 'approved',
@@ -536,7 +704,9 @@ export async function approveLongStockCuttingPlanVersion(versionId: string) {
   }
   try {
     const { data, error } = await database().rpc<Record<string, unknown>>(
-      'fn_approve_long_stock_cutting_plan_version_v2',
+      replacementId
+        ? 'fn_approve_long_stock_recalculation_replacement_v1'
+        : 'fn_approve_long_stock_cutting_plan_version_v2',
       {
         p_version_id: normalizedVersionId,
         p_actor: userId,
@@ -546,7 +716,9 @@ export async function approveLongStockCuttingPlanVersion(versionId: string) {
     if (error) throw new Error(error.message || 'Не удалось утвердить версию карты раскроя')
     return assertLongStockCuttingPlanApprovalSucceeded(data)
   } catch (error) {
-    await removePreparedLongStockCuttingPlanPdf(preparedPdf.metadata)
+    if (preparedPdf.kind === 'generated') {
+      await removePreparedLongStockCuttingPlanPdf(preparedPdf.metadata)
+    }
     throw error
   }
 }
@@ -652,10 +824,7 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
   const usesReservedStock = Boolean(planningRecovery?.reservedStock.length)
   const businessRemnants = usesReservedStock ? [] : availableBusinessRemnants
   const purchaseLengths = recalculation
-    ? recalculation.acceptedLengthsMm.map((lengthMm) => ({
-        lengthMm,
-        kind: 'standard' as const,
-      }))
+    ? recalculation.allowedPurchaseLengths
     : usesReservedStock && planningRecovery
       ? planningRecovery.reservedStock.map((stock) => ({
           lengthMm: stock.lengthMm,
@@ -726,31 +895,66 @@ async function persistVersion(input: {
   manualLayout: LongStockManualBarInput[] | null
 }) {
   const db = database()
-  const requestItems = [{
-    request_item_table: input.context.requestItem.table,
-    request_item_id: input.context.requestItem.id,
-  }]
-  const planResult = await db.rpc<string>('fn_create_long_stock_cutting_plan', {
-    p_material_variant_id: input.context.materialVariantId,
-    p_request_items: requestItems,
-    p_created_by: input.actorId,
-  })
-  if (planResult.error || !planResult.data) {
-    throw new Error(planResult.error?.message || 'Не удалось создать карту раскроя')
-  }
+  const eligibleAllowedLengths = input.context.purchaseLengths
+    .filter((length) => input.context.mode === 'with_nonstandard' || length.kind === 'standard')
+    .map((length) => length.lengthMm)
+  let replacement: LongStockRecalculationReplacement | null = null
+  let planId: string
+  let planItemId: string
+  let versionRequestItem = input.context.requestItem
+  let versionRequestId = input.context.requestId
 
-  const planItem = await one<{ id: string }>(
-    db.from<{ id: string }>('long_stock_cutting_plan_items')
-      .select('id')
-      .eq('plan_id', planResult.data)
-      .eq('request_item_table', input.context.requestItem.table)
-      .eq('request_item_id', input.context.requestItem.id)
-      .maybeSingle(),
-    'Позиция не связана с картой раскроя',
-  )
+  if (input.context.recalculation) {
+    const replacementResult = await db.rpc<LongStockRecalculationReplacement>(
+      'fn_prepare_long_stock_recalculation_replacement_v1',
+      {
+        p_source_request_item_table: input.context.requestItem.table,
+        p_source_request_item_id: input.context.requestItem.id,
+        p_source_version_id: input.context.recalculation.invalidVersionId,
+        p_source_kind: input.context.recalculation.sourceKind,
+        p_allowed_lengths_mm: eligibleAllowedLengths,
+        p_actor: input.actorId,
+      },
+    )
+    if (replacementResult.error || !replacementResult.data) {
+      throw new Error(replacementResult.error?.message || 'Не удалось подготовить заменяющую заявку')
+    }
+    replacement = replacementResult.data
+    planId = replacement.plan_id
+    planItemId = replacement.plan_item_id
+    versionRequestItem = {
+      table: replacement.replacement_request_item_table,
+      id: replacement.replacement_request_item_id,
+    }
+    versionRequestId = replacement.replacement_request_id
+  } else {
+    const requestItems = [{
+      request_item_table: input.context.requestItem.table,
+      request_item_id: input.context.requestItem.id,
+    }]
+    const planResult = await db.rpc<string>('fn_create_long_stock_cutting_plan', {
+      p_material_variant_id: input.context.materialVariantId,
+      p_request_items: requestItems,
+      p_created_by: input.actorId,
+    })
+    if (planResult.error || !planResult.data) {
+      throw new Error(planResult.error?.message || 'Не удалось создать карту раскроя')
+    }
+    planId = planResult.data
+    const planItem = await one<{ id: string }>(
+      db.from<{ id: string }>('long_stock_cutting_plan_items')
+        .select('id')
+        .eq('plan_id', planId)
+        .eq('request_item_table', input.context.requestItem.table)
+        .eq('request_item_id', input.context.requestItem.id)
+        .maybeSingle(),
+      'Позиция не связана с картой раскроя',
+    )
+    planItemId = planItem.id
+  }
   const weightPerMm = Math.max(Number(input.context.weightPerMeterKg) || 0, 0) / 1000
   const segments = input.context.workpieces.map((workpiece, index) => ({
-    plan_item_id: planItem.id,
+    plan_item_id: planItemId,
     segment_number: index + 1,
     required_length_mm: workpiece.lengthMm,
     required_weight_kg: workpiece.lengthMm * weightPerMm,
@@ -763,8 +967,8 @@ async function persistVersion(input: {
   const inputSnapshot = {
     schema_version: 1,
     solver_contract_version: 1,
-    request_item: input.context.requestItem,
-    request_id: input.context.requestId,
+    request_item: versionRequestItem,
+    request_id: versionRequestId,
     machine_id: input.context.machineId,
     factory_id: input.context.factoryId,
     material_id: input.context.materialId,
@@ -780,6 +984,16 @@ async function persistVersion(input: {
     recalculation: input.context.recalculation ? {
       source_version_id: input.context.recalculation.invalidVersionId,
       source_version_number: input.context.recalculation.invalidVersionNumber,
+      source_kind: input.context.recalculation.sourceKind,
+      source_request_id: input.context.recalculation.sourceRequestId,
+      source_request_item: input.context.requestItem,
+      replacement_id: replacement?.replacement_id,
+      replacement_request_id: replacement?.replacement_request_id,
+      replacement_request_item: replacement ? {
+        table: replacement.replacement_request_item_table,
+        id: replacement.replacement_request_item_id,
+      } : null,
+      allowed_lengths_mm: eligibleAllowedLengths,
       accepted_lengths_mm: input.context.recalculation.acceptedLengthsMm,
     } : null,
     planning_recovery: input.context.planningRecovery ? {
@@ -789,7 +1003,7 @@ async function persistVersion(input: {
     } : null,
   }
   const versionResult = await db.rpc<string>('fn_get_or_create_long_stock_cutting_plan_version_v2', {
-    p_plan_id: planResult.data,
+    p_plan_id: planId,
     p_input_snapshot: inputSnapshot,
     p_settings_snapshot: input.context.settingsSnapshot,
     p_segments: segments,
@@ -831,6 +1045,7 @@ function calculationResult(context: CalculationContext) {
     recalculation: context.recalculation ? {
       sourceVersionId: context.recalculation.invalidVersionId,
       sourceVersionNumber: context.recalculation.invalidVersionNumber,
+      sourceKind: context.recalculation.sourceKind,
       acceptedLengthsMm: context.recalculation.acceptedLengthsMm,
     } : null,
     planningRecovery: context.planningRecovery ? {
@@ -847,9 +1062,10 @@ async function loadLongStockPlanningRecoveryState(
   const itemResult = await db.from<{
     id: string
     plan_id: string
+    request_id: string
     cutting_status: string
   }>('long_stock_cutting_plan_items')
-    .select('id,plan_id,cutting_status')
+    .select('id,plan_id,request_id,cutting_status')
     .eq('request_item_table', requestItem.table)
     .eq('request_item_id', requestItem.id)
     .order('linked_at', { ascending: false })
@@ -999,9 +1215,10 @@ async function loadLongStockRecalculationState(
   const itemResult = await db.from<{
     id: string
     plan_id: string
+    request_id: string
     cutting_status: string
   }>('long_stock_cutting_plan_items')
-    .select('id,plan_id,cutting_status')
+    .select('id,plan_id,request_id,cutting_status')
     .eq('request_item_table', requestItem.table)
     .eq('request_item_id', requestItem.id)
     .order('linked_at', { ascending: false })
@@ -1014,14 +1231,24 @@ async function loadLongStockRecalculationState(
     version_number: number
     selected_candidate_number: number
     invalidation_reason: string | null
+    invalidation_receipt_schedule_id: string | null
+    invalidation_inventory_transfer_id: string | null
+    invalidation_department_request_id: string | null
   }>('long_stock_cutting_plan_versions')
-    .select('id,version_number,selected_candidate_number,invalidation_reason')
+    .select('id,version_number,selected_candidate_number,invalidation_reason,invalidation_receipt_schedule_id,invalidation_inventory_transfer_id,invalidation_department_request_id')
     .eq('plan_id', planItem.plan_id)
     .eq('status', 'invalid')
     .order('invalidated_at', { ascending: false })
   if (versionResult.error) throw new Error(versionResult.error.message || 'Не удалось прочитать недействительную версию')
   const invalidVersion = versionResult.data?.[0]
   if (!invalidVersion) throw new Error('Недействительная версия карты раскроя не найдена')
+  const sourceKind: LongStockRecalculationSourceKind = invalidVersion.invalidation_department_request_id
+    ? 'supply_return'
+    : invalidVersion.invalidation_receipt_schedule_id
+      ? 'supply_receipt'
+      : invalidVersion.invalidation_inventory_transfer_id
+        ? 'inventory_transfer'
+        : (() => { throw new Error('Источник пересчёта не определён') })()
 
   const candidate = await one<{ id: string }>(
     db.from<{ id: string }>('long_stock_cutting_candidates')
@@ -1031,7 +1258,7 @@ async function loadLongStockRecalculationState(
       .maybeSingle(),
     'Утверждённый вариант недействительной версии не найден',
   )
-  const [segmentsResult, barsResult, cutsResult, schedulesResult, transfersResult] = await Promise.all([
+  const [segmentsResult, barsResult, cutsResult, schedulesResult, transfersResult, planResult, settingsResult] = await Promise.all([
     db.from<{ segment_number: number; required_length_mm: number | string }>('long_stock_cutting_segments')
       .select('segment_number,required_length_mm')
       .eq('version_id', invalidVersion.id)
@@ -1047,8 +1274,11 @@ async function loadLongStockRecalculationState(
       receipt_parent_schedule_id: string | null
       received_piece_length_mm: number | string | null
       received_piece_count: number | string | null
+      allocated_piece_count: number | string | null
+      allocated_physical_quantity: number | string | null
+      received_quantity: number | string | null
     }>('supply_order_delivery_schedules')
-      .select('status,receipt_parent_schedule_id,received_piece_length_mm,received_piece_count')
+      .select('status,receipt_parent_schedule_id,received_piece_length_mm,received_piece_count,allocated_piece_count,allocated_physical_quantity,received_quantity')
       .eq('request_item_table', requestItem.table)
       .eq('request_item_id', requestItem.id),
     db.from<{
@@ -1059,8 +1289,13 @@ async function loadLongStockRecalculationState(
       .select('piece_length_mm,received_quantity,received_secondary_quantity')
       .eq('request_item_table', requestItem.table)
       .eq('request_item_id', requestItem.id),
+    db.from<{ layout_category_key: string }>('long_stock_cutting_plans')
+      .select('layout_category_key')
+      .eq('id', planItem.plan_id)
+      .maybeSingle(),
+    db.rpc<LayoutSettingsSnapshot>('fn_get_long_stock_layout_settings_snapshot'),
   ])
-  for (const result of [segmentsResult, barsResult, cutsResult, schedulesResult, transfersResult]) {
+  for (const result of [segmentsResult, barsResult, cutsResult, schedulesResult, transfersResult, planResult, settingsResult]) {
     if (result.error) throw new Error(result.error.message || 'Не удалось подготовить данные пересчёта')
   }
 
@@ -1085,41 +1320,68 @@ async function loadLongStockRecalculationState(
     throw new Error('Все хлысты версии уже порезаны; пересчёт не требуется')
   }
 
-  const acceptedLengths = [
-    ...(schedulesResult.data ?? []).flatMap((schedule) => {
+  let allowedPurchaseLengths: Array<{ lengthMm: number; kind: 'standard' | 'nonstandard' }>
+  if (sourceKind === 'supply_return') {
+    if (!planResult.data || !settingsResult.data) {
+      throw new Error('Актуальные настройки длин для пересчёта не найдены')
+    }
+    const settings = normalizeSettingsSnapshot(settingsResult.data)
+    const category = settings.categories.find((entry) => entry.key === planResult.data?.layout_category_key)
+    if (!category) throw new Error('Категория настроек пересчёта не найдена')
+    allowedPurchaseLengths = [
+      ...category.standard_lengths.map((lengthMm) => ({ lengthMm, kind: 'standard' as const })),
+      ...category.nonstandard_lengths.map((lengthMm) => ({ lengthMm, kind: 'nonstandard' as const })),
+    ]
+  } else if (sourceKind === 'supply_receipt') {
+    allowedPurchaseLengths = (schedulesResult.data ?? []).flatMap((schedule) => {
       const lengthMm = Number(schedule.received_piece_length_mm)
-      const pieceCount = Number(schedule.received_piece_count)
+      const pieceCount = [
+        Number(schedule.allocated_piece_count),
+        Number(schedule.received_piece_count),
+        Number(schedule.allocated_physical_quantity) / lengthMm,
+        Number(schedule.received_quantity) / lengthMm,
+      ].find((value) => Number.isFinite(value) && value > 0) ?? 0
       return schedule.status === 'delivered'
-        && schedule.receipt_parent_schedule_id === null
         && Number.isSafeInteger(lengthMm) && lengthMm > 0
         && pieceCount > 0
-        ? [lengthMm]
+        ? [{ lengthMm, kind: 'standard' as const }]
         : []
-    }),
-    ...(transfersResult.data ?? []).flatMap((transfer) => {
+    })
+  } else {
+    allowedPurchaseLengths = (transfersResult.data ?? []).flatMap((transfer) => {
       const lengthMm = Number(transfer.piece_length_mm)
       const receivedQuantity = Number(transfer.received_quantity)
       const receivedPieces = transfer.received_secondary_quantity === null
         ? receivedQuantity / lengthMm
         : Number(transfer.received_secondary_quantity)
       return Number.isSafeInteger(lengthMm) && lengthMm > 0 && receivedPieces > 0
-        ? [lengthMm]
+        ? [{ lengthMm, kind: 'standard' as const }]
         : []
-    }),
-  ]
-  const acceptedLengthsMm = [...new Set(acceptedLengths)].sort((left, right) => left - right)
+    })
+  }
+  allowedPurchaseLengths = [...new Map(
+    allowedPurchaseLengths.map((entry) => [entry.lengthMm, entry]),
+  ).values()].sort((left, right) => left.lengthMm - right.lengthMm)
+  const acceptedLengthsMm = allowedPurchaseLengths.map((entry) => entry.lengthMm)
   if (acceptedLengthsMm.length === 0) {
-    throw new Error('Для пересчёта не найдены фактически принятые длины хлыстов')
+    throw new Error(sourceKind === 'supply_return'
+      ? 'В актуальных настройках не найдены стандартные или нестандартные длины хлыстов'
+      : sourceKind === 'supply_receipt'
+        ? 'Для пересчёта не найдены фактически принятые длины, включая распределённые поставки'
+        : 'Для пересчёта не найдены фактически принятые длины межзаводского перемещения')
   }
 
   return {
     planId: planItem.plan_id,
     planItemId: planItem.id,
+    sourceRequestId: planItem.request_id,
     invalidVersionId: invalidVersion.id,
     invalidVersionNumber: invalidVersion.version_number,
     invalidationReason: invalidVersion.invalidation_reason || 'Фактическая поставка отличается от карты',
+    sourceKind,
     remainingSegments,
     acceptedLengthsMm,
+    allowedPurchaseLengths,
   }
 }
 
@@ -1348,4 +1610,13 @@ async function one<T>(resultPromise: Promise<DbResult<T>>, notFoundMessage: stri
   if (result.error) throw new Error(result.error.message || notFoundMessage)
   if (!result.data) throw new Error(notFoundMessage)
   return result.data
+}
+
+function actionErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = String((error as { message?: unknown }).message ?? '').trim()
+    if (message) return message
+  }
+  return fallback
 }
