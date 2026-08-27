@@ -26,25 +26,35 @@ export function LongStockCuttingPlanStatusControl({ table, itemId }: Props) {
   const [status, setStatus] = useState<LongStockCuttingPlanItemStatus>('none')
   const [overview, setOverview] = useState<LongStockCuttingPlanItemOverview | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
     void getLongStockCuttingPlanItemOverview({ table, id: itemId })
       .then((nextOverview) => {
         if (active) {
+          setLoadError(null)
           setOverview(nextOverview)
           setStatus(nextOverview.status)
         }
       })
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        if (!active) return
+        setLoadError(error instanceof Error ? error.message : 'Не удалось загрузить статус карты раскроя')
+      })
     return () => { active = false }
   }, [itemId, table])
 
-  if (status === 'none') return null
+  if (status === 'none' && !loadError) return null
 
   return (
     <>
       <div className="mt-1 flex flex-col items-start gap-1.5">
+        {loadError && (
+          <span className="max-w-[240px] whitespace-normal text-xs leading-snug text-red-700" role="alert">
+            Карта раскроя: {loadError}
+          </span>
+        )}
         {overview && overview.segments.length > 0 && (
           <span className="max-w-[220px] whitespace-normal text-xs leading-snug text-slate-600">
             Отрезки: {overview.segments.map((segment) => `${formatLength(segment.length_mm)} × ${segment.piece_count}`).join(' + ')}

@@ -3,6 +3,8 @@ export type ProductionFactCuttingReadiness = {
   machineName: string
   ready: boolean
   reason: string | null
+  actionHref: string | null
+  actionLabel: string | null
 }
 
 export function productionFactCuttingReadinessReason(message: string) {

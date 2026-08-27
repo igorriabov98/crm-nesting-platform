@@ -21,12 +21,21 @@ test('turns cutting RPC failures into operator-facing reasons', () => {
 
 test('names every machine that blocks a batch production fact', () => {
   const readiness: ProductionFactCuttingReadiness[] = [
-    { machineId: 'ready', machineName: '4. test 06/08', ready: true, reason: null },
+    {
+      machineId: 'ready',
+      machineName: '4. test 06/08',
+      ready: true,
+      reason: null,
+      actionHref: null,
+      actionLabel: null,
+    },
     {
       machineId: 'blocked',
       machineName: '3. test 6/08',
       ready: false,
       reason: 'Нет утверждённой версии карты раскроя',
+      actionHref: '/sales-plan/blocked/request/request-3',
+      actionLabel: 'Открыть заявку №3',
     },
   ]
 
