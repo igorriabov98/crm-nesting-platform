@@ -39,6 +39,7 @@ for (const required of [
   'Карта не утверждена',
   'Подготовить карту',
   'LongStockPlanningRecoveryDialog',
+  'Карта раскроя: {loadError}',
 ]) {
   assert.ok(statusControl.includes(required), `planning status control is missing ${required}`)
 }
