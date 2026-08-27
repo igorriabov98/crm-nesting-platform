@@ -17,6 +17,7 @@ import {
 } from '@/lib/machine-cutting/files'
 import { isLongStockPlanReadyForSupply } from '@/lib/request-completion-material-scope'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
+import type { CompletionFutureBusinessScrap } from '@/lib/request-completion-future-scrap'
 
 const stagedArchiveSchema = z.object({
   requestId: z.string().uuid(),
@@ -76,6 +77,7 @@ export type CompletionPlanSummary = {
   planStatus: string
   plannedBarCount: number
   readyForSupply: boolean
+  futureBusinessScraps: CompletionFutureBusinessScrap[]
 }
 
 export type CompletionWasteItem = {
@@ -108,7 +110,10 @@ function planFactKey(sourceTable: string, sourceId: string) {
   return `${sourceTable}:${sourceId}`
 }
 
-function mapPlanSummary(row: RawPlanFactRow): CompletionPlanSummary {
+function mapPlanSummary(
+  row: RawPlanFactRow,
+  futureBusinessScraps: CompletionFutureBusinessScrap[] = [],
+): CompletionPlanSummary {
   const planStatus = String(row.plan_status || '')
   const plannedBarCount = Number(row.planned_bar_count || 0)
   const versionId = row.version_id ? String(row.version_id) : null
@@ -118,6 +123,7 @@ function mapPlanSummary(row: RawPlanFactRow): CompletionPlanSummary {
     planStatus,
     plannedBarCount,
     readyForSupply: isLongStockPlanReadyForSupply({ versionId, planStatus, plannedBarCount }),
+    futureBusinessScraps,
   }
 }
 
@@ -179,10 +185,49 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
     const factory = Array.isArray(machineResult.data.factories) ? machineResult.data.factories[0] : machineResult.data.factories
     if (!machineResult.data.factory_id || !factory) throw new Error('У машины не указан завод')
     if (planFactsResult.error) throw new Error(planFactsResult.error.message || 'Не удалось загрузить факты карт раскроя')
-    const planSummaries = new Map<string, CompletionPlanSummary>((planFactsResult.data || []).map((row: RawPlanFactRow) => [
-      planFactKey(String(row.request_item_table), String(row.request_item_id)),
-      mapPlanSummary(row),
-    ]))
+    const planFactRows = (planFactsResult.data || []) as RawPlanFactRow[]
+    const knifeVersionIds = [...new Set(planFactRows
+      .filter((row) => row.request_item_table === 'request_knives' && row.version_id)
+      .map((row) => String(row.version_id)))]
+    const futureScrapsByVersion = new Map<string, CompletionFutureBusinessScrap[]>()
+    if (knifeVersionIds.length > 0) {
+      const scrapLinksResult = await client
+        .from('long_stock_cutting_business_scraps')
+        .select('version_id,inventory_id')
+        .in('version_id', knifeVersionIds)
+      if (scrapLinksResult.error) throw new Error(scrapLinksResult.error.message || 'Не удалось загрузить будущие деловые остатки ножей')
+
+      const inventoryIds = [...new Set((scrapLinksResult.data || []).map((row: RawWasteRow) => String(row.inventory_id)))]
+      const inventoryResult = inventoryIds.length > 0
+        ? await client
+          .from('inventory')
+          .select('id,piece_length_mm,business_scrap_state,deleted_at')
+          .in('id', inventoryIds)
+        : { data: [], error: null }
+      if (inventoryResult.error) throw new Error(inventoryResult.error.message || 'Не удалось загрузить складские строки будущих деловых остатков ножей')
+
+      const inventoryById = new Map<string, RawWasteRow>((inventoryResult.data || []).map((row: RawWasteRow) => [String(row.id), row]))
+      ;(scrapLinksResult.data || []).forEach((link: RawWasteRow) => {
+        const inventory = inventoryById.get(String(link.inventory_id))
+        const lengthMm = num(inventory?.piece_length_mm)
+        if (!inventory || inventory.deleted_at || !lengthMm || lengthMm <= 0) return
+        const versionId = String(link.version_id)
+        const scraps = futureScrapsByVersion.get(versionId) || []
+        scraps.push({
+          inventoryId: String(link.inventory_id),
+          lengthMm,
+          state: inventory.business_scrap_state === 'available' ? 'available' : 'future',
+        })
+        futureScrapsByVersion.set(versionId, scraps)
+      })
+    }
+    const planSummaries = new Map<string, CompletionPlanSummary>(planFactRows.map((row) => {
+      const versionId = row.version_id ? String(row.version_id) : null
+      return [
+        planFactKey(String(row.request_item_table), String(row.request_item_id)),
+        mapPlanSummary(row, versionId ? futureScrapsByVersion.get(versionId) || [] : []),
+      ]
+    }))
     const wasteItems = [
       ...(sheet.data || []).map((row: RawWasteRow) => mapWaste('request_sheet_metal', row)),
       ...(pipe.data || []).map((row: RawWasteRow) => mapWaste('request_pipe', row)),
