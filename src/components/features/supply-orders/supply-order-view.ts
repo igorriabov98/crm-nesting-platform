@@ -62,6 +62,31 @@ export type SupplyOrderMachineRoute = {
   orderedCount: number
 }
 
+export type SupplyOrderItemOrderProgress = {
+  isPartiallyOrdered: boolean
+  orderedQuantity: number
+  remainingQuantity: number
+  totalQuantity: number
+}
+
+export function getSupplyOrderItemOrderProgress(
+  item: Pick<SupplyOrderAggregateSourceItem, 'order_status' | 'quantity' | 'unscheduled_quantity'>
+): SupplyOrderItemOrderProgress {
+  const totalQuantity = Math.max(Number(item.quantity) || 0, 0)
+  const remainingQuantity = Math.min(
+    totalQuantity,
+    Math.max(Number(item.unscheduled_quantity) || 0, 0),
+  )
+  const orderedQuantity = Math.max(totalQuantity - remainingQuantity, 0)
+
+  return {
+    isPartiallyOrdered: item.order_status === 'ordered' && remainingQuantity > 0,
+    orderedQuantity,
+    remainingQuantity,
+    totalQuantity,
+  }
+}
+
 export type SupplyOrderRedeliveryMachineRoute = SupplyOrderMachineRoute & {
   originalDeliveryDates: string[]
 }

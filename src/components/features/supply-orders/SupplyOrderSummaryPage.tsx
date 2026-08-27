@@ -56,6 +56,7 @@ import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
 import {
   filterAndSortAggregates,
+  getSupplyOrderItemOrderProgress,
   groupSupplyOrderAggregatesBySupplyDate,
   hasSupplyOrderRedelivery,
   isSupplyOrderBarMaterial,
@@ -1172,7 +1173,7 @@ function PurchasePlanSummary({
 function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; id: string }) {
   return (
     <div id={id} className="border-t border-border/60 bg-muted/25 p-4">
-      <div className="hidden grid-cols-[minmax(150px,0.8fr)_110px_125px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] gap-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground xl:grid">
+      <div className="hidden grid-cols-[minmax(150px,0.8fr)_110px_155px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] gap-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground xl:grid">
         <span>Машина</span>
         <span>Количество</span>
         <span>Статус</span>
@@ -1184,7 +1185,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
         {factory.items.map((item) => {
           const plan = item.long_stock_purchase_plan
           return (
-            <div key={`${item.table}:${item.id}`} className="grid grid-cols-[minmax(150px,0.8fr)_110px_125px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] items-center gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm">
+            <div key={`${item.table}:${item.id}`} className="grid grid-cols-[minmax(150px,0.8fr)_110px_155px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] items-center gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm">
               <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-medium text-primary hover:underline">
                 {item.machine_name}
               </Link>
@@ -1192,9 +1193,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
               {plan?.cutting_status === 'requires_recalculation' ? (
                 <Badge variant="outline" className="w-fit border-amber-300 bg-amber-50 text-amber-900">Требует пересчёта</Badge>
               ) : (
-                <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className={item.order_status === 'delivered' ? 'w-fit border-emerald-200 bg-emerald-50 text-emerald-700' : 'w-fit'}>
-                  {ORDER_STATUS_LABELS[item.order_status]}
-                </Badge>
+                <MachineItemOrderStatus item={item} />
               )}
               <div>{plan ? <PurchasePlanSummary plans={[plan]} compact /> : <span className="text-xs text-muted-foreground">Нет утверждённой карты</span>}</div>
               <span className="text-xs text-muted-foreground">
@@ -1233,7 +1232,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
                 {plan?.cutting_status === 'requires_recalculation' ? (
                   <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Требует пересчёта</Badge>
                 ) : (
-                  <Badge variant={item.order_status === 'ordered' ? 'default' : 'secondary'} className={item.order_status === 'delivered' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : undefined}>{ORDER_STATUS_LABELS[item.order_status]}</Badge>
+                  <MachineItemOrderStatus item={item} />
                 )}
               </div>
               <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
@@ -1265,6 +1264,33 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
         })}
       </div>
     </div>
+  )
+}
+
+function MachineItemOrderStatus({ item }: { item: SupplyOrderAggregateSourceItem }) {
+  const progress = getSupplyOrderItemOrderProgress(item)
+
+  if (progress.isPartiallyOrdered) {
+    const accessibleLabel = `Заказано частично: ${formatAmount(progress.orderedQuantity)} из ${formatAmount(progress.totalQuantity)} ${item.unit}`
+    return (
+      <div className="flex min-w-0 flex-col items-start gap-1" aria-label={accessibleLabel}>
+        <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-950">
+          Заказано частично
+        </Badge>
+        <span className="text-[11px] leading-4 text-amber-800 tabular-nums">
+          {formatAmount(progress.orderedQuantity)} из {formatAmount(progress.totalQuantity)} {item.unit}
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <Badge
+      variant={item.order_status === 'ordered' ? 'default' : 'secondary'}
+      className={item.order_status === 'delivered' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : undefined}
+    >
+      {ORDER_STATUS_LABELS[item.order_status]}
+    </Badge>
   )
 }
 

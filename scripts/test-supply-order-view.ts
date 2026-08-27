@@ -10,6 +10,7 @@ import {
   filterAndSortAggregates,
   filterAndSortHistory,
   filterSupplyOrderItems,
+  getSupplyOrderItemOrderProgress,
   getSupplyOrderRedeliveryDates,
   groupSupplyOrderAggregatesBySupplyDate,
   groupSupplyOrderItems,
@@ -188,6 +189,29 @@ assert.deepEqual(
 )
 
 const aggregate = makeAggregate()
+assert.deepEqual(
+  getSupplyOrderItemOrderProgress({
+    order_status: 'ordered',
+    quantity: 24_000,
+    unscheduled_quantity: 6_000,
+  }),
+  {
+    isPartiallyOrdered: true,
+    orderedQuantity: 18_000,
+    remainingQuantity: 6_000,
+    totalQuantity: 24_000,
+  },
+  'an ordered position with only 18 000 of 24 000 mm in the graph must be marked as partially ordered',
+)
+assert.equal(
+  getSupplyOrderItemOrderProgress({
+    order_status: 'ordered',
+    quantity: 24_000,
+    unscheduled_quantity: 0,
+  }).isPartiallyOrdered,
+  false,
+  'a fully covered ordered position must keep the normal ordered status',
+)
 const closedAggregate = { ...aggregate, id: 'closed', ordered_count: 0, delivered_count: 1 }
 assert.deepEqual(filterAndSortAggregates([aggregate, closedAggregate], {
   query: '', supplier: 'all', category: 'all', status: 'open', sort: 'date_asc',
@@ -421,6 +445,11 @@ assert.match(
   summaryPageSource,
   /buildInitialSupplyOrderScheduleDrafts\(factory, todayIsoDate\(\), dateSlice\)/u,
   'a date card must initialize drafts through the date-scoped builder',
+)
+assert.match(
+  summaryPageSource,
+  /Заказано частично[\s\S]*progress\.orderedQuantity[\s\S]*progress\.totalQuantity/u,
+  'the machine status must clearly show partial order coverage and its quantities',
 )
 assert.match(
   supplyOrdersAction,
