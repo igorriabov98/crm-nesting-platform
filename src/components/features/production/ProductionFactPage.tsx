@@ -610,10 +610,21 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                 {blockedCuttingMachines.map((machine) => (
                   <li key={machine.machineId}>
                     <span className="font-semibold">{machine.machineName}</span>: {machine.reason}
+                    {machine.actionHref && (
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="ml-2 h-auto p-0 text-red-800 underline"
+                        onClick={() => router.push(machine.actionHref!)}
+                      >
+                        {machine.actionLabel || 'Открыть проблемную карту'}
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
-              <p className="mt-2">Снимите блокирующую машину с выбора или утвердите для неё карту раскроя.</p>
+              <p className="mt-2">Снимите блокирующую машину с выбора или завершите указанную карту раскроя.</p>
               <Button
                 type="button"
                 variant="outline"

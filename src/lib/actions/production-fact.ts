@@ -626,15 +626,74 @@ async function loadProductionFactCuttingReadiness(
       'fn_assert_long_stock_cutting_ready',
       { p_machine_id: machine.id },
     )
+    const message = error ? getErrorMessage(error) : null
+    const blocker = message
+      ? await loadProductionFactCuttingBlocker(admin, machine.id, message)
+      : null
     return {
       machineId: machine.id,
       machineName: machine.production_queue_number
         ? `${machine.production_queue_number}. ${machine.name}`
         : machine.name,
       ready: !error,
-      reason: error ? productionFactCuttingReadinessReason(getErrorMessage(error)) : null,
+      reason: message
+        ? `${productionFactCuttingReadinessReason(message)}${blocker ? ` (${blocker.requestLabel})` : ''}`
+        : null,
+      actionHref: blocker?.href ?? null,
+      actionLabel: blocker ? `Открыть ${blocker.requestLabel.toLocaleLowerCase('ru-RU')}` : null,
     }
   }))
+}
+
+async function loadProductionFactCuttingBlocker(
+  admin: AdminClient,
+  machineId: string,
+  message: string,
+) {
+  const requestsResult = await looseDb(admin)
+    .from('technologist_requests')
+    .select('id, created_at')
+    .eq('machine_id', machineId)
+    .order('created_at', { ascending: true })
+  if (requestsResult.error) throw requestsResult.error
+  const requests = (requestsResult.data || []) as Array<{ id: string; created_at: string }>
+  if (requests.length === 0) return null
+
+  const itemsResult = await looseDb(admin)
+    .from('long_stock_cutting_plan_items')
+    .select('request_id, request_item_table, request_item_id, cutting_status, linked_at')
+    .in('request_id', requests.map((request) => request.id))
+    .order('linked_at', { ascending: false })
+  if (itemsResult.error) throw itemsResult.error
+  const items = (itemsResult.data || []) as Array<{
+    request_id: string
+    request_item_table: string
+    request_item_id: string
+    cutting_status: string
+    linked_at: string
+  }>
+  const requiresRecalculation = message.toLocaleLowerCase('ru-RU').includes('требует пересч')
+  const candidates = items.filter((item) => requiresRecalculation
+    ? item.cutting_status === 'requires_recalculation'
+    : item.cutting_status === 'planning')
+
+  for (const item of candidates) {
+    if (!['request_circle', 'request_pipe', 'request_knives'].includes(item.request_item_table)) continue
+    const requestItemResult = await looseDb(admin)
+      .from(item.request_item_table)
+      .select('id')
+      .eq('id', item.request_item_id)
+      .maybeSingle()
+    if (requestItemResult.error) throw requestItemResult.error
+    if (!requestItemResult.data) continue
+    const requestIndex = requests.findIndex((request) => request.id === item.request_id)
+    const requestLabel = requestIndex >= 0 ? `Заявка №${requestIndex + 1}` : 'заявка с картой'
+    return {
+      requestLabel,
+      href: `${ROUTES.SALES_PLAN}/${machineId}/request/${item.request_id}#request-item-${item.request_item_id}`,
+    }
+  }
+  return null
 }
 
 async function assertProductionFactCuttingReady(

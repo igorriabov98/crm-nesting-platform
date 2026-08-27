@@ -16,6 +16,10 @@ for (const required of [
   'filterLongStockCandidatesByReservedStock',
   'assertLongStockRecoverySegmentTotal',
   'planning_recovery:',
+  'planId: string | null',
+  'planItemId: string | null',
+  "if (!planItem && reservedStock.length === 0) return null",
+  "? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0 }",
 ]) {
   assert.ok(actions.includes(required), `planning recovery action is missing ${required}`)
 }
@@ -35,6 +39,7 @@ for (const required of [
   'Карта не утверждена',
   'Подготовить карту',
   'LongStockPlanningRecoveryDialog',
+  'Карта раскроя: {loadError}',
 ]) {
   assert.ok(statusControl.includes(required), `planning status control is missing ${required}`)
 }

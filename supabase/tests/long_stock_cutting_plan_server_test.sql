@@ -832,6 +832,45 @@ begin
 end;
 $$;
 
+do $$
+declare
+  v_actor uuid := gen_random_uuid();
+  v_factory uuid;
+  v_machine uuid := gen_random_uuid();
+  v_request uuid := gen_random_uuid();
+  v_material uuid := gen_random_uuid();
+  v_variant uuid := gen_random_uuid();
+  v_plan uuid := gen_random_uuid();
+begin
+  select id into v_factory from public.factories order by created_at nulls last limit 1;
+  insert into public.users(id, email, full_name, role, factory_id, is_active)
+  values (v_actor, 'orphan-cutting-readiness@example.test', 'Orphan readiness test', 'technologist', v_factory, true);
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, v_factory, 'ORPHAN-CUTTING-READINESS', v_actor);
+  insert into public.technologist_requests(id, machine_id, created_by)
+  values (v_request, v_machine, v_actor);
+  insert into public.materials(id, name, category, created_by)
+  values (v_material, 'Orphan readiness circle', 'circle', v_actor);
+  insert into public.material_variants(
+    id, material_id, category, diameter_mm, material_grade,
+    standard_length_mm, weight_per_m_kg, default_unit
+  ) values (v_variant, v_material, 'circle', 20, 'S355', 6000, 1, 'шт');
+  insert into public.long_stock_cutting_plans(
+    id, material_variant_id, layout_category_key, created_by
+  ) values (v_plan, v_variant, 'circle', v_actor);
+  -- Simulate a row created before the request-item identity guard existed.
+  alter table public.long_stock_cutting_plan_items
+    disable trigger long_stock_cutting_plan_item_guard_trigger;
+  insert into public.long_stock_cutting_plan_items(
+    plan_id, request_item_table, request_item_id, request_id, linked_by
+  ) values (v_plan, 'request_circle', gen_random_uuid(), v_request, v_actor);
+  alter table public.long_stock_cutting_plan_items
+    enable trigger long_stock_cutting_plan_item_guard_trigger;
+
+  perform public.fn_assert_long_stock_cutting_ready(v_machine);
+end;
+$$;
+
 rollback;
 
 \echo '[long-stock-cutting-plan-server] all assertions passed'
