@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToBuffer } from '@react-pdf/renderer'
 import { getMaterialReceivingPageData } from '@/lib/actions/supply-orders'
 import { buildMaterialReceivingActData } from '@/lib/material-receiving-act'
+import { requirePermission } from '@/lib/permissions/server'
 import { MaterialReceivingActDocument } from '@/lib/pdf/MaterialReceivingActDocument'
 
 export const runtime = 'nodejs'
@@ -16,6 +17,7 @@ function errorResponse(message: string, status: number) {
 
 export async function GET(request: Request) {
   try {
+    await requirePermission('inventory_receiving', 'view')
     const url = new URL(request.url)
     const date = url.searchParams.get('date') || ''
     const factoryId = url.searchParams.get('factory') || ''
