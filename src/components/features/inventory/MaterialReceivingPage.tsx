@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { AlertTriangle, CheckCircle2, ChevronDown, Factory, PackageCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Factory, FileDown, LoaderCircle, PackageCheck } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
@@ -55,6 +55,7 @@ export function MaterialReceivingPage({ data }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [pendingKey, setPendingKey] = useState<string | null>(null)
+  const [downloadingDate, setDownloadingDate] = useState<string | null>(null)
   const [allocationState, setAllocationState] = useState<AllocationState | null>(null)
   const initialOpenDates = useMemo(
     () => new Set(data.groups.filter((group) => group.is_initially_open).map((group) => group.date)),
@@ -95,6 +96,40 @@ export function MaterialReceivingPage({ data }: Props) {
       else next.add(date)
       return next
     })
+  }
+
+  async function downloadReceivingAct(date: string) {
+    if (!data.activeFactoryId) {
+      toast.error('Не выбран завод для акта приёма')
+      return
+    }
+    setDownloadingDate(date)
+    try {
+      const query = new URLSearchParams({ date, factory: data.activeFactoryId })
+      const response = await fetch(`/api/inventory/receiving/act?${query.toString()}`, {
+        method: 'GET',
+        cache: 'no-store',
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null
+        throw new Error(payload?.error || 'Не удалось сформировать акт приёма')
+      }
+
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = `akt-priema-materiala-${date}.pdf`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+      toast.success('Акт приёма сформирован')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось сформировать акт приёма')
+    } finally {
+      setDownloadingDate(null)
+    }
   }
 
   function barValues(item: MaterialReceivingItem) {
@@ -293,21 +328,37 @@ export function MaterialReceivingPage({ data }: Props) {
           const isOpen = openDates.has(group.date)
           return (
             <section key={group.date} className="overflow-hidden rounded-xl border border-[#E8ECF0] bg-white">
-              <button
-                type="button"
-                onClick={() => toggleDate(group.date)}
-                className="flex w-full items-center justify-between gap-3 border-b border-[#E8ECF0] bg-[#F8F9FA] px-4 py-3 text-left"
-                aria-expanded={isOpen}
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <PackageCheck className="h-5 w-5 shrink-0 text-[#1B3A6B]" />
-                  <div className="min-w-0">
-                    <div className="font-semibold text-[#1B3A6B]">{formatDate(group.date)}</div>
-                    <div className="text-sm text-[#6B7280]">{group.items.length} позиций</div>
+              <div className="flex items-stretch gap-2 border-b border-[#E8ECF0] bg-[#F8F9FA] p-2 sm:gap-3 sm:px-4 sm:py-3">
+                <button
+                  type="button"
+                  onClick={() => toggleDate(group.date)}
+                  className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 rounded-lg px-2 text-left transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/30"
+                  aria-expanded={isOpen}
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <PackageCheck className="h-5 w-5 shrink-0 text-[#1B3A6B]" />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[#1B3A6B]">{formatDate(group.date)}</div>
+                      <div className="text-sm text-[#6B7280]">{group.items.length} позиций</div>
+                    </div>
                   </div>
-                </div>
-                <ChevronDown className={cn('h-5 w-5 shrink-0 text-[#6B7280] transition-transform', isOpen && 'rotate-180')} />
-              </button>
+                  <ChevronDown className={cn('h-5 w-5 shrink-0 text-[#6B7280] transition-transform', isOpen && 'rotate-180')} />
+                </button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 shrink-0 border-[#CBD5E1] bg-white px-3 text-[#1B3A6B] hover:border-[#1B3A6B]/30 hover:bg-[#EFF6FF]"
+                  disabled={downloadingDate !== null}
+                  onClick={() => downloadReceivingAct(group.date)}
+                  aria-label={`Сформировать акт приёма на ${formatDate(group.date)}`}
+                >
+                  {downloadingDate === group.date
+                    ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    : <FileDown className="h-4 w-4" aria-hidden="true" />}
+                  <span className="hidden sm:inline">{downloadingDate === group.date ? 'Формирование...' : 'Акт приёма'}</span>
+                  <span className="sm:hidden">PDF</span>
+                </Button>
+              </div>
 
               {isOpen && (
                 <div className="overflow-x-auto">
