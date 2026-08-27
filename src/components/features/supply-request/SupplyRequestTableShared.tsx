@@ -25,6 +25,7 @@ const statusVariant = {
   pending: 'secondary',
   ordered: 'default',
   delivered: 'outline',
+  cancelled: 'outline',
 } as const
 
 export function formatAmount(value: number | null | undefined) {

@@ -67,7 +67,14 @@ export type SupplyOrderPlacementInput = {
 type RequestRow = {
   id: string
   machine_id: string
-  machines: { id: string; name: string; factory_id: string | null; planned_material_date: string | null; is_archived: boolean | null } | null
+  machines: {
+    id: string
+    name: string
+    specification_number?: string | null
+    factory_id: string | null
+    planned_material_date: string | null
+    is_archived: boolean | null
+  } | null
 }
 
 type RequestItemRow = Record<string, unknown> & {
@@ -331,6 +338,7 @@ export type MaterialReceivingItem = {
   request_id: string
   machine_id: string
   machine_name: string
+  machine_specification_number: string | null
   factory_id: string | null
   factory_name: string
   delivery_date: string
@@ -448,6 +456,7 @@ type SupplyOrderAggregateInputItem = RawOrderItem & {
   raw: RequestItemRow
   machine_id: string
   machine_name: string
+  machine_specification_number: string | null
   factory_id: string | null
   planned_material_date: string | null
 }
@@ -1248,7 +1257,7 @@ export async function getSupplyOrders(
     const longStockPlanMap = await loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems)
     const orderableRawItems = rawItems
       .map((item) => applyLongStockPurchasePlan(item, longStockPlanMap))
-      .filter((item) => item.to_order > 0)
+      .filter((item) => item.order_status !== 'cancelled' && item.to_order > 0)
 
     const materialIds = Array.from(new Set(orderableRawItems.map((item) => item.material_id).filter(Boolean))) as string[]
     const materialsRes = materialIds.length
@@ -1471,7 +1480,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
 
     const { data: requestsData, error } = await db
       .from('technologist_requests')
-      .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)')
+      .select('id, machine_id, status, submitted_at, machines!inner(id, name, specification_number, factory_id, planned_material_date, is_archived)')
       .in('status', ['submitted_to_supply', 'completed'])
       .eq('machines.is_archived', false)
       .order('submitted_at', { ascending: false })
@@ -1685,7 +1694,7 @@ async function loadAggregateRequests(db: LooseDb, factoryId?: string | null) {
   for (let from = 0; ; from += batchSize) {
     let query = db
       .from('technologist_requests')
-      .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)')
+      .select('id, machine_id, status, submitted_at, machines!inner(id, name, specification_number, factory_id, planned_material_date, is_archived)')
       .in('status', ['submitted_to_supply', 'completed'])
       .eq('machines.is_archived', false)
       .order('submitted_at', { ascending: false })
@@ -1766,6 +1775,7 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
       raw: row,
       machine_id: machine.id || request.machine_id,
       machine_name: machine.name || 'Машина',
+      machine_specification_number: machine.specification_number || null,
       factory_id: machine.factory_id || null,
       planned_material_date: machine.planned_material_date || null,
     }
@@ -2709,6 +2719,7 @@ function makeReceivingItem(
     request_id: item.request_id,
     machine_id: item.machine_id,
     machine_name: item.machine_name,
+    machine_specification_number: item.machine_specification_number,
     factory_id: item.factory_id,
     factory_name: factoryName,
     delivery_date: deliveryDate,
@@ -3411,7 +3422,9 @@ export async function saveAggregateDeliverySchedule(
     const normalizedSchedules = normalizeScheduleInputs(schedules)
     const selectedItems = await loadSelectedOrderItems(db, groupedItems)
     if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
-    const openItems = selectedItems.filter((item) => item.order_status !== 'delivered')
+    const openItems = selectedItems.filter((item) => (
+      item.order_status !== 'delivered' && item.order_status !== 'cancelled'
+    ))
     if (openItems.length === 0) throw new Error('Вся поставка уже принята и закрыта')
     for (const item of openItems) {
       if (!item.material_id) throw new Error(`Позиция "${item.item_name}" не привязана к материалу`)
@@ -3730,6 +3743,8 @@ export async function updateOrderSupplier(item: { table: string; id: string; mat
   try {
     const { db } = await requireAccess('manage')
     if (!ORDER_TABLES.includes(item.table)) throw new Error('Некорректная таблица позиции')
+    const orderItem = await loadOneOrderItem(db, item.table, item.id)
+    if (orderItem.order_status === 'cancelled') throw new Error('Нельзя менять поставщика отменённой позиции')
     const { error } = await db.from(item.table).update({ supplier_id: supplierId || null }).eq('id', item.id)
     if (error) throw new Error(error.message || 'Не удалось назначить поставщика')
     revalidatePath(ROUTES.SUPPLY_ORDERS)
@@ -3743,6 +3758,8 @@ export async function updateOrderCustomDeliveryDate(item: { table: string; id: s
   try {
     const { db } = await requireAccess('manage')
     if (!ORDER_TABLES.includes(item.table)) throw new Error('Некорректная таблица позиции')
+    const orderItem = await loadOneOrderItem(db, item.table, item.id)
+    if (orderItem.order_status === 'cancelled') throw new Error('Нельзя менять дату отменённой позиции')
     const { error } = await db.from(item.table).update({ custom_delivery_date: date || null }).eq('id', item.id)
     if (error) throw new Error(error.message || 'Не удалось обновить дату доставки')
     revalidatePath(ROUTES.SUPPLY_ORDERS)
@@ -3762,6 +3779,7 @@ export async function addOrderDeliverySchedule(
     validateScheduleInput(data)
     const orderItem = await loadOneOrderItem(db, item.table, item.id)
     if (orderItem.order_status === 'delivered') throw new Error('Нельзя менять график уже принятой позиции')
+    if (orderItem.order_status === 'cancelled') throw new Error('Нельзя добавлять график отменённой позиции')
     assertApprovedLongStockPurchasePlan(orderItem)
     const { error } = await db.from('supply_order_delivery_schedules').insert({
       request_item_table: item.table,
