@@ -45,6 +45,10 @@ import {
   prepareLongStockCuttingPlanPdf,
   removePreparedLongStockCuttingPlanPdf,
 } from '@/lib/long-stock-cutting-plan-pdf-server'
+import {
+  assertLongStockRecoverySegmentTotal,
+  filterLongStockCandidatesByReservedStock,
+} from '@/lib/long-stock-position-ui'
 
 type DbError = { message: string }
 type DbResult<T> = { data: T | null; error: DbError | null }
@@ -138,6 +142,7 @@ type CalculationContext = {
   businessRemnants: Array<{ id: string; lengthMm: number; createdAt: string }>
   purchaseLengths: Array<{ lengthMm: number; kind: 'standard' | 'nonstandard' }>
   recalculation: LongStockRecalculationState | null
+  planningRecovery: LongStockPlanningRecoveryState | null
   solverResult: ReturnType<typeof solveLongStockCutting>
 }
 
@@ -151,13 +156,27 @@ type LongStockRecalculationState = {
   acceptedLengthsMm: number[]
 }
 
+type LongStockPlanningRecoveryState = {
+  planId: string
+  planItemId: string
+  totalLengthMm: number
+  draftSegments: LongStockPlanSegmentInput[]
+  reservedStock: Array<{ lengthMm: number; pieceCount: number }>
+}
+
 export type LongStockRecalculationDraft = LongStockRecalculationState & {
   requestItem: LongStockRequestItemRef
   materialName: string
   variantDescription: string
 }
 
-export type LongStockCuttingPlanItemStatus = 'none' | 'active' | 'requires_recalculation'
+export type LongStockPlanningRecoveryDraft = LongStockPlanningRecoveryState & {
+  requestItem: LongStockRequestItemRef
+  materialName: string
+  variantDescription: string
+}
+
+export type LongStockCuttingPlanItemStatus = 'none' | 'planning' | 'active' | 'requires_recalculation'
 
 type PrepareLongStockRequestItemDraftInput = {
   requestId: string
@@ -288,7 +307,7 @@ export async function getLongStockCuttingPlanItemStatuses(
     const cuttingStatus = result.data?.[0]?.cutting_status
     const status: LongStockCuttingPlanItemStatus = cuttingStatus === 'requires_recalculation'
       ? 'requires_recalculation'
-      : cuttingStatus ? 'active' : 'none'
+      : cuttingStatus === 'planning' ? 'planning' : cuttingStatus ? 'active' : 'none'
     return [`${requestItem.table}:${requestItem.id}`, status] as const
   }))
   return Object.fromEntries(entries) as Record<string, LongStockCuttingPlanItemStatus>
@@ -318,7 +337,7 @@ export async function getLongStockCuttingPlanItemOverview(
 
   const status: LongStockCuttingPlanItemStatus = planItem.cutting_status === 'requires_recalculation'
     ? 'requires_recalculation'
-    : 'active'
+    : planItem.cutting_status === 'planning' ? 'planning' : 'active'
   const expectedVersionStatus = status === 'requires_recalculation'
     ? 'invalid'
     : planItem.cutting_status === 'planning' ? 'draft' : 'approved'
@@ -363,6 +382,42 @@ export async function loadLongStockRecalculationDraft(
   const item = await loadRequestItem(db, requestItem)
   if (!item.material_id || !item.material_variant_id) {
     throw new Error('Для пересчёта не найден точный вариант материала')
+  }
+  const [material, variant] = await Promise.all([
+    one<MaterialRow>(
+      db.from<MaterialRow>('materials')
+        .select('id,name,category,comment')
+        .eq('id', item.material_id)
+        .maybeSingle(),
+      'Материал позиции не найден',
+    ),
+    one<MaterialVariantRow>(
+      db.from<MaterialVariantRow>('material_variants')
+        .select('id,material_id,category,material_grade,knife_material,steel_type_id,pipe_type,knife_bevel_count,weight_per_m_kg,diameter_mm,wall_thickness_mm,piece_description,knife_dimensions,width_mm,height_mm')
+        .eq('id', item.material_variant_id)
+        .maybeSingle(),
+      'Вариант материала позиции не найден',
+    ),
+  ])
+  return {
+    ...state,
+    requestItem,
+    materialName: material.name,
+    variantDescription: recalculationVariantDescription(variant),
+  }
+}
+
+export async function loadLongStockPlanningRecoveryDraft(
+  requestItemInput: LongStockRequestItemRef,
+): Promise<LongStockPlanningRecoveryDraft> {
+  await requirePermission('technologist_requests', 'view')
+  const requestItem = normalizeRequestItemRef(requestItemInput)
+  const db = database()
+  const state = await loadLongStockPlanningRecoveryState(db, requestItem)
+  if (!state) throw new Error('Для позиции не требуется восстановление карты раскроя')
+  const item = await loadRequestItem(db, requestItem)
+  if (!item.material_id || !item.material_variant_id) {
+    throw new Error('Для восстановления карты не найден точный вариант материала')
   }
   const [material, variant] = await Promise.all([
     one<MaterialRow>(
@@ -503,8 +558,14 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
   const db = database()
   const item = await loadRequestItem(db, requestItem)
   const recalculation = await loadLongStockRecalculationState(db, requestItem)
+  const planningRecovery = recalculation
+    ? null
+    : await loadLongStockPlanningRecoveryState(db, requestItem)
   if (recalculation) {
     assertRecalculationSegments(workpieces, recalculation.remainingSegments)
+  }
+  if (planningRecovery) {
+    assertLongStockRecoverySegmentTotal(workpieces, planningRecovery.totalLengthMm)
   }
   if (!item.material_variant_id) {
     throw new Error('Для расчёта раскроя обязателен точный material_variant_id')
@@ -573,7 +634,7 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
   if (remnantsResult.error) {
     throw new Error(remnantsResult.error.message || 'Не удалось прочитать деловые остатки')
   }
-  const businessRemnants = (remnantsResult.data ?? []).flatMap((row) => {
+  const availableBusinessRemnants = (remnantsResult.data ?? []).flatMap((row) => {
     const lengthMm = Number(row.piece_length_mm)
     const availableQuantity = Number(row.available_quantity)
     const availablePieces = Number(row.available_secondary_quantity)
@@ -583,11 +644,18 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
       ? [{ id: row.id, lengthMm, createdAt: row.created_at }]
       : []
   })
+  const usesReservedStock = Boolean(planningRecovery?.reservedStock.length)
+  const businessRemnants = usesReservedStock ? [] : availableBusinessRemnants
   const purchaseLengths = recalculation
     ? recalculation.acceptedLengthsMm.map((lengthMm) => ({
         lengthMm,
         kind: 'standard' as const,
       }))
+    : usesReservedStock && planningRecovery
+      ? planningRecovery.reservedStock.map((stock) => ({
+          lengthMm: stock.lengthMm,
+          kind: 'standard' as const,
+        }))
     : [
         ...layoutCategory.standard_lengths.map((lengthMm) => ({
           lengthMm,
@@ -599,7 +667,7 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
         })),
       ]
   const solverMode = solverModeForPlan(mode)
-  const solverResult = solveLongStockCutting({
+  const rawSolverResult = solveLongStockCutting({
     workpieces,
     businessRemnants,
     purchaseLengths,
@@ -609,6 +677,17 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
     allowMixedLengths: solverMode.allowMixedLengths,
     searchBudget,
   })
+  const constrainedCandidates = usesReservedStock && planningRecovery
+    ? filterLongStockCandidatesByReservedStock(
+        rawSolverResult.candidates,
+        planningRecovery.reservedStock,
+      )
+    : rawSolverResult.candidates
+  const solverResult = {
+    ...rawSolverResult,
+    candidates: constrainedCandidates,
+    recommendedCandidateKey: constrainedCandidates[0]?.key ?? null,
+  }
 
   return {
     requestItem,
@@ -627,6 +706,7 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
     businessRemnants,
     purchaseLengths,
     recalculation,
+    planningRecovery,
     solverResult,
   }
 }
@@ -697,6 +777,11 @@ async function persistVersion(input: {
       source_version_number: input.context.recalculation.invalidVersionNumber,
       accepted_lengths_mm: input.context.recalculation.acceptedLengthsMm,
     } : null,
+    planning_recovery: input.context.planningRecovery ? {
+      plan_item_id: input.context.planningRecovery.planItemId,
+      total_length_mm: input.context.planningRecovery.totalLengthMm,
+      reserved_stock: input.context.planningRecovery.reservedStock,
+    } : null,
   }
   const versionResult = await db.rpc<string>('fn_get_or_create_long_stock_cutting_plan_version_v2', {
     p_plan_id: planResult.data,
@@ -743,7 +828,154 @@ function calculationResult(context: CalculationContext) {
       sourceVersionNumber: context.recalculation.invalidVersionNumber,
       acceptedLengthsMm: context.recalculation.acceptedLengthsMm,
     } : null,
+    planningRecovery: context.planningRecovery ? {
+      totalLengthMm: context.planningRecovery.totalLengthMm,
+      reservedStock: context.planningRecovery.reservedStock,
+    } : null,
   }
+}
+
+async function loadLongStockPlanningRecoveryState(
+  db: LongStockDb,
+  requestItem: LongStockRequestItemRef,
+): Promise<LongStockPlanningRecoveryState | null> {
+  const itemResult = await db.from<{
+    id: string
+    plan_id: string
+    cutting_status: string
+  }>('long_stock_cutting_plan_items')
+    .select('id,plan_id,cutting_status')
+    .eq('request_item_table', requestItem.table)
+    .eq('request_item_id', requestItem.id)
+    .order('linked_at', { ascending: false })
+  if (itemResult.error) throw new Error(itemResult.error.message || 'Не удалось прочитать карту раскроя')
+  const planItem = itemResult.data?.[0]
+  if (!planItem || planItem.cutting_status !== 'planning') return null
+
+  const approvedResult = await db.from<{ id: string }>('long_stock_cutting_plan_versions')
+    .select('id')
+    .eq('plan_id', planItem.plan_id)
+    .eq('status', 'approved')
+    .order('version_number', { ascending: false })
+  if (approvedResult.error) throw new Error(approvedResult.error.message || 'Не удалось проверить утверждённую версию')
+  if ((approvedResult.data?.length ?? 0) > 0) return null
+
+  const requestRow = await loadRequestItem(db, requestItem)
+  if (!requestRow.material_variant_id) {
+    throw new Error('Для восстановления карты не найден точный вариант материала')
+  }
+
+  const totalLengthMm = await loadRequestItemDemandLength(db, requestItem)
+  const draftVersionResult = await db.from<{ id: string }>('long_stock_cutting_plan_versions')
+    .select('id')
+    .eq('plan_id', planItem.plan_id)
+    .eq('status', 'draft')
+    .order('version_number', { ascending: false })
+  if (draftVersionResult.error) throw new Error(draftVersionResult.error.message || 'Не удалось прочитать черновик карты')
+  const draftVersionId = draftVersionResult.data?.[0]?.id ?? null
+  let draftSegments: LongStockPlanSegmentInput[] = []
+  if (draftVersionId) {
+    const segmentsResult = await db.from<{
+      segment_number: number
+      required_length_mm: number | string
+    }>('long_stock_cutting_segments')
+      .select('segment_number,required_length_mm')
+      .eq('version_id', draftVersionId)
+      .eq('plan_item_id', planItem.id)
+      .order('segment_number', { ascending: true })
+    if (segmentsResult.error) throw new Error(segmentsResult.error.message || 'Не удалось прочитать отрезки черновика')
+    draftSegments = (segmentsResult.data ?? []).flatMap((segment) => {
+      const lengthMm = Number(segment.required_length_mm)
+      return Number.isFinite(lengthMm) && lengthMm > 0
+        ? [{ id: `planning-recovery-segment-${segment.segment_number}`, lengthMm }]
+        : []
+    })
+  }
+
+  const reservationsResult = await db.from<{
+    material_variant_id: string | null
+    original_piece_length_mm: number | string | null
+    reserved_quantity: number | string
+    reserved_secondary_quantity: number | string | null
+  }>('inventory_reservations')
+    .select('material_variant_id,original_piece_length_mm,reserved_quantity,reserved_secondary_quantity')
+    .eq('request_item_table', requestItem.table)
+    .eq('request_item_id', requestItem.id)
+    .eq('is_cut_reservation', false)
+    .is('consumed_at', null)
+    .order('created_at', { ascending: true })
+  if (reservationsResult.error) {
+    throw new Error(reservationsResult.error.message || 'Не удалось прочитать физические складские резервы')
+  }
+
+  const groupedStock = new Map<number, number>()
+  let invalidReservationFound = false
+  for (const reservation of reservationsResult.data ?? []) {
+    const lengthMm = Number(reservation.original_piece_length_mm)
+    const reservedQuantity = Number(reservation.reserved_quantity)
+    const secondaryQuantity = Number(reservation.reserved_secondary_quantity)
+    if (reservation.material_variant_id !== requestRow.material_variant_id
+      || !Number.isSafeInteger(lengthMm) || lengthMm <= 0) {
+      invalidReservationFound = true
+      continue
+    }
+    const pieceCount = Math.max(
+      Number.isFinite(secondaryQuantity) ? Math.floor(secondaryQuantity) : 0,
+      Number.isFinite(reservedQuantity) ? Math.floor(reservedQuantity / lengthMm) : 0,
+      1,
+    )
+    groupedStock.set(lengthMm, (groupedStock.get(lengthMm) ?? 0) + pieceCount)
+  }
+  if (invalidReservationFound) {
+    throw new Error(
+      'Складской резерв позиции содержит хлысты без точной длины или варианта материала. Исправьте бронь перед утверждением карты.',
+    )
+  }
+  const reservedStock = Array.from(groupedStock, ([lengthMm, pieceCount]) => ({ lengthMm, pieceCount }))
+    .sort((left, right) => left.lengthMm - right.lengthMm)
+  return {
+    planId: planItem.plan_id,
+    planItemId: planItem.id,
+    totalLengthMm,
+    draftSegments,
+    reservedStock,
+  }
+}
+
+async function loadRequestItemDemandLength(db: LongStockDb, requestItem: LongStockRequestItemRef) {
+  let totalLengthMm: number
+  if (requestItem.table === 'request_circle') {
+    const row = await one<{ remainder_mm: number | string }>(
+      db.from<{ remainder_mm: number | string }>('request_circle')
+        .select('remainder_mm')
+        .eq('id', requestItem.id)
+        .maybeSingle(),
+      'Позиция круга не найдена',
+    )
+    totalLengthMm = Number(row.remainder_mm)
+  } else if (requestItem.table === 'request_pipe') {
+    const row = await one<{ remainder_length_mm: number | string }>(
+      db.from<{ remainder_length_mm: number | string }>('request_pipe')
+        .select('remainder_length_mm')
+        .eq('id', requestItem.id)
+        .maybeSingle(),
+      'Позиция трубы не найдена',
+    )
+    totalLengthMm = Number(row.remainder_length_mm)
+  } else {
+    const row = await one<{ remainder_meters: number | string }>(
+      db.from<{ remainder_meters: number | string }>('request_knives')
+        .select('remainder_meters')
+        .eq('id', requestItem.id)
+        .maybeSingle(),
+      'Позиция ножей не найдена',
+    )
+    totalLengthMm = Number(row.remainder_meters) * 1000
+  }
+  if (!Number.isFinite(totalLengthMm) || totalLengthMm <= 0) {
+    throw new Error('В позиции не указана требуемая длина')
+  }
+  return totalLengthMm
 }
 
 async function loadLongStockRecalculationState(

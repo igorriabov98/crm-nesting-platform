@@ -813,9 +813,29 @@ function compareLayouts(
 ) {
   return sumPurchasedLength(left) - sumPurchasedLength(right)
     || left.length - right.length
-    || maxMutableRemainder(right, endTrimMm) - maxMutableRemainder(left, endTrimMm)
+    || compareRemainderConcentration(left, right, endTrimMm)
     || mutableLayoutSignature(left, kerfMm, endTrimMm)
       .localeCompare(mutableLayoutSignature(right, kerfMm, endTrimMm), 'en')
+}
+
+function compareRemainderConcentration(
+  left: MutableBar[],
+  right: MutableBar[],
+  endTrimMm: number,
+) {
+  const leftRemainders = left
+    .map((bar) => mutableBarRemainder(bar, endTrimMm))
+    .sort((first, second) => second - first)
+  const rightRemainders = right
+    .map((bar) => mutableBarRemainder(bar, endTrimMm))
+    .sort((first, second) => second - first)
+
+  for (let index = 0; index < leftRemainders.length; index += 1) {
+    if (leftRemainders[index] !== rightRemainders[index]) {
+      return rightRemainders[index] - leftRemainders[index]
+    }
+  }
+  return 0
 }
 
 function compareOutputBars(left: UnnumberedOutputBar, right: UnnumberedOutputBar) {
@@ -842,10 +862,6 @@ function mutableBarRemainder(bar: MutableBar, endTrimMm: number) {
 
 function sumPurchasedLength(bars: MutableBar[]) {
   return bars.reduce((total, bar) => total + bar.stockLengthMm, 0)
-}
-
-function maxMutableRemainder(bars: MutableBar[], endTrimMm: number) {
-  return bars.length === 0 ? 0 : Math.max(...bars.map((bar) => mutableBarRemainder(bar, endTrimMm)))
 }
 
 function mutableLayoutSignature(bars: MutableBar[], kerfMm: number, endTrimMm: number) {

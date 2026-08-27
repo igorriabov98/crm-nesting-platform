@@ -78,6 +78,28 @@ test('matches reference layouts and charges kerf for every workpiece', () => {
   assert.deepEqual(newBarRemainders(eightMetres), [996, 6799])
 })
 
+test('moves a 1222 mm cut into a 1776 mm remainder to concentrate reusable stock', () => {
+  const result = solveLongStockCutting({
+    workpieces: [
+      ...Array.from({ length: 4 }, (_, index) => ({ id: `3000-${index + 1}`, lengthMm: 3000 })),
+      ...Array.from({ length: 3 }, (_, index) => ({ id: `1222-${index + 1}`, lengthMm: 1222 })),
+    ],
+    purchaseLengths: [{ lengthMm: 6000, kind: 'standard' }],
+    kerfMm: 1,
+    endTrimMm: 0,
+  })
+
+  const candidate = singleLengthCandidate(result.candidates, 6000)
+  assert.deepEqual(newBarRemainders(candidate), [553, 1776, 2999, 2999])
+  assert.deepEqual(newBarCutSignatures(candidate), [
+    '3000',
+    '3000',
+    '3000+1222',
+    '3000+1222+1222',
+  ])
+  assert.equal(candidate.totalRemainderMm, 8327)
+})
+
 test('uses standard lengths by default and adds nonstandard lengths only in optimal mode', () => {
   const standardOnly = solveLongStockCutting({ ...referenceInput, mode: undefined })
   assert.deepEqual(

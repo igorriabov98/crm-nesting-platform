@@ -25,6 +25,11 @@ import type {
   UserRole,
 } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
+import {
+  productionFactCuttingReadinessError,
+  productionFactCuttingReadinessReason,
+  type ProductionFactCuttingReadiness,
+} from '@/lib/production-fact-cutting-readiness'
 
 type AdminClient = SupabaseClient<Database>
 type RpcClient = {
@@ -582,20 +587,64 @@ async function assertFactoryMachine(admin: AdminClient, factoryId: string, machi
 }
 
 async function assertFactoryMachines(admin: AdminClient, factoryId: string, machineIds: string[]) {
+  await loadFactoryMachines(admin, factoryId, machineIds)
+}
+
+async function loadFactoryMachines(admin: AdminClient, factoryId: string, machineIds: string[]) {
   if (machineIds.length === 0) return
   const { data, error } = await looseDb(admin)
     .from('machines')
-    .select('id, factory_id, is_archived')
+    .select('id, name, factory_id, is_archived, production_queue_number')
     .in('id', machineIds)
 
   if (error) throw error
-  const rows = (data || []) as Array<{ id: string; factory_id: string | null; is_archived: boolean }>
+  const rows = (data || []) as Array<{
+    id: string
+    name: string
+    factory_id: string | null
+    is_archived: boolean
+    production_queue_number: number | null
+  }>
   const byId = new Map(rows.map((machine) => [machine.id, machine]))
   for (const machineId of machineIds) {
     const machine = byId.get(machineId)
     if (!machine) throw new Error('Машина не найдена')
     if (machine.factory_id !== factoryId) throw new Error('Машина относится к другому заводу')
   }
+  return machineIds.map((machineId) => byId.get(machineId)!)
+}
+
+async function loadProductionFactCuttingReadiness(
+  admin: AdminClient,
+  factoryId: string,
+  machineIds: string[],
+): Promise<ProductionFactCuttingReadiness[]> {
+  const uniqueMachineIds = Array.from(new Set(machineIds)).filter(Boolean)
+  const machines = await loadFactoryMachines(admin, factoryId, uniqueMachineIds) || []
+  return Promise.all(machines.map(async (machine) => {
+    const { error } = await (admin as unknown as RpcClient).rpc(
+      'fn_assert_long_stock_cutting_ready',
+      { p_machine_id: machine.id },
+    )
+    return {
+      machineId: machine.id,
+      machineName: machine.production_queue_number
+        ? `${machine.production_queue_number}. ${machine.name}`
+        : machine.name,
+      ready: !error,
+      reason: error ? productionFactCuttingReadinessReason(getErrorMessage(error)) : null,
+    }
+  }))
+}
+
+async function assertProductionFactCuttingReady(
+  admin: AdminClient,
+  factoryId: string,
+  machineIds: string[],
+) {
+  const readiness = await loadProductionFactCuttingReadiness(admin, factoryId, machineIds)
+  const error = productionFactCuttingReadinessError(readiness)
+  if (error) throw new Error(error)
 }
 
 async function assertInventoryTransfersReceived(admin: AdminClient, machineIds: string[]) {
@@ -707,6 +756,24 @@ async function saveMachineFactsAtomic(
     throw new Error('Сервер вернул некорректный результат сохранения фактов')
   }
   return { inserted, skipped }
+}
+
+export async function getProductionFactCuttingReadiness(input: {
+  factory_id: string
+  machine_ids: string[]
+}): Promise<ProductionFactActionResult<{ machines: ProductionFactCuttingReadiness[] }>> {
+  try {
+    const { admin, role, factoryId: userFactoryId } = await getContext('production_fact', 'view')
+    assertFactoryAccess(role, userFactoryId, input.factory_id)
+    const machines = await loadProductionFactCuttingReadiness(
+      admin,
+      input.factory_id,
+      Array.from(new Set(input.machine_ids)).filter(Boolean),
+    )
+    return { success: true, data: { machines }, error: null }
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) }
+  }
 }
 
 export async function getProductionFactWorkspaceData(input: {
@@ -1071,7 +1138,10 @@ export async function saveProductionMachineFact(input: {
       }),
     ])
     const nextIsCutting = isCuttingFactSection(nextSectionContext.section, nextSectionContext.parent)
-    if (nextIsCutting) await assertInventoryTransfersReceived(admin, [input.machine_id])
+    if (nextIsCutting) {
+      await assertInventoryTransfersReceived(admin, [input.machine_id])
+      await assertProductionFactCuttingReady(admin, input.factory_id, [input.machine_id])
+    }
 
     if (existingWasCutting && existing
       && (existing.machine_id !== input.machine_id || existing.section_id !== input.section_id)) {
@@ -1187,6 +1257,7 @@ export async function copyProductionMachineFactsFromPreviousDay(input: {
       })
       .map((fact) => fact.machine_id)
     await assertInventoryTransfersReceived(admin, cuttingMachineIds)
+    await assertProductionFactCuttingReady(admin, input.factory_id, cuttingMachineIds)
 
     const atomicResult = await saveMachineFactsAtomic(admin, payload, userId)
     revalidateProductionCuttingFlow()
@@ -1329,7 +1400,10 @@ export async function saveUnifiedProductionFact(input: {
       assertActiveFactSection(admin, input.factory_id, input.section_id),
     ])
     const isCuttingSection = isCuttingFactSection(sectionContext.section, sectionContext.parent)
-    if (isCuttingSection) await assertInventoryTransfersReceived(admin, machineIds)
+    if (isCuttingSection) {
+      await assertInventoryTransfersReceived(admin, machineIds)
+      await assertProductionFactCuttingReady(admin, input.factory_id, machineIds)
+    }
 
     const { data: existingRaw, error: existingError } = await looseDb(admin)
       .from('production_machine_facts')

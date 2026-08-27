@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import type { ElementType } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
@@ -10,23 +10,31 @@ import {
   Clock3,
   Factory,
   Gauge,
+  Loader2,
   PackageCheck,
   Save,
   Ship,
   Trash2,
   Users,
+  XCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   deleteProductionMachineFact,
+  getProductionFactCuttingReadiness,
   saveUnifiedProductionFact,
   type ProductionFactMachineFactRow,
   type ProductionFactMachineOption,
   type ProductionFactWorkspaceData,
 } from '@/lib/actions/production-fact'
+import {
+  productionFactCuttingReadinessError,
+  type ProductionFactCuttingReadiness,
+} from '@/lib/production-fact-cutting-readiness'
 import {
   getProductionFactStageDefinition,
   resolveProductionFactStandardStages,
@@ -102,6 +110,12 @@ type MachineMonthGroup = {
   machines: ProductionFactMachineOption[]
 }
 
+type CuttingReadinessCheck = {
+  key: string
+  machines: ProductionFactCuttingReadiness[]
+  error: string | null
+}
+
 export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -121,6 +135,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   const [shift, setShift] = useState<ProductionFactShift>('day')
   const [tonnageDrafts, setTonnageDrafts] = useState<Record<string, string>>({})
   const [comment, setComment] = useState('')
+  const [cuttingReadinessCheck, setCuttingReadinessCheck] = useState<CuttingReadinessCheck | null>(null)
 
   const effectiveStageKey = availableStages.some((stage) => stage.definition.key === selectedStageKey)
     ? selectedStageKey
@@ -169,6 +184,62 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   const duplicateSelectedCount = factsForSelectedSection
     .filter((fact) => fact.shift === shift && selectedMachineIds.includes(fact.machine_id))
     .length
+  const cuttingReadinessRequestKey = isCuttingStage && data.selectedFactoryId && selectedMachineIds.length > 0
+    ? `${data.selectedFactoryId}:${selectedMachineIds.join(',')}`
+    : null
+  const activeCuttingReadinessCheck = cuttingReadinessCheck?.key === cuttingReadinessRequestKey
+    ? cuttingReadinessCheck
+    : null
+  const cuttingReadiness = activeCuttingReadinessCheck?.machines || []
+  const cuttingReadinessPending = Boolean(cuttingReadinessRequestKey && !activeCuttingReadinessCheck)
+  const cuttingReadinessCheckError = activeCuttingReadinessCheck?.error || null
+  const cuttingReadinessByMachine = new Map(
+    cuttingReadiness.map((machine) => [machine.machineId, machine]),
+  )
+  const blockedCuttingMachines = cuttingReadiness.filter((machine) => !machine.ready)
+  const cuttingReadinessComplete = !isCuttingStage || selectedMachineIds.length === 0 || (
+    !cuttingReadinessPending
+    && !cuttingReadinessCheckError
+    && selectedMachineIds.every((machineId) => cuttingReadinessByMachine.has(machineId))
+  )
+  const cuttingSaveBlocked = isCuttingStage && selectedMachineIds.length > 0 && (
+    !cuttingReadinessComplete || blockedCuttingMachines.length > 0
+  )
+
+  useEffect(() => {
+    if (!cuttingReadinessRequestKey || !data.selectedFactoryId) return
+
+    let active = true
+    void getProductionFactCuttingReadiness({
+      factory_id: data.selectedFactoryId,
+      machine_ids: selectedMachineIds,
+    }).then((result) => {
+      if (!active) return
+      const machines = result.data?.machines || []
+      const checkedIds = new Set(machines.map((machine) => machine.machineId))
+      const missingMachine = selectedMachineIds.some((machineId) => !checkedIds.has(machineId))
+      setCuttingReadinessCheck({
+        key: cuttingReadinessRequestKey,
+        machines,
+        error: !result.success
+          ? result.error || 'Не удалось проверить карты раскроя'
+          : missingMachine ? 'Не удалось проверить все выбранные машины' : null,
+      })
+    }).catch((readinessError: unknown) => {
+      if (!active) return
+      setCuttingReadinessCheck({
+        key: cuttingReadinessRequestKey,
+        machines: [],
+        error: readinessError instanceof Error
+          ? readinessError.message
+          : 'Не удалось проверить карты раскроя',
+      })
+    })
+
+    return () => {
+      active = false
+    }
+  }, [cuttingReadinessRequestKey, data.selectedFactoryId, selectedMachineIds])
 
   const dayOverviewRows = useMemo<DayOverviewRow[]>(() => {
     const rows: DayOverviewRow[] = []
@@ -234,6 +305,17 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
     }
     if (selectedMachineIds.length === 0) {
       toast.error('Выберите машины')
+      return
+    }
+    if (isCuttingStage && !cuttingReadinessComplete) {
+      toast.error(cuttingReadinessCheckError || 'Дождитесь проверки карт раскроя')
+      return
+    }
+    if (isCuttingStage && blockedCuttingMachines.length > 0) {
+      toast.error(
+        productionFactCuttingReadinessError(blockedCuttingMachines)
+        || 'Для выбранных машин карта раскроя не готова',
+      )
       return
     }
     if (requiresTonnage) {
@@ -411,6 +493,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                       <div className="mt-1 space-y-0.5">
                         {group.machines.map((machine) => {
                           const checked = selectedMachineIds.includes(machine.id)
+                          const readiness = cuttingReadinessByMachine.get(machine.id)
                           return (
                             <button
                               key={machine.id}
@@ -435,7 +518,16 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                               <span className="min-w-0 flex-1 truncate">
                                 {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
                               </span>
-                              <span className="shrink-0 text-xs text-[#64748B]">{formatNumber(machine.total_weight, 2)} т</span>
+                              <span className="flex shrink-0 items-center gap-1.5 text-xs text-[#64748B]">
+                                {isCuttingStage && checked && readiness ? (
+                                  readiness.ready ? (
+                                    <CheckCircle2 className="size-3.5 text-[#15803D]" aria-label="Карта раскроя готова" />
+                                  ) : (
+                                    <XCircle className="size-3.5 text-[#B91C1C]" aria-label={readiness.reason || 'Карта раскроя не готова'} />
+                                  )
+                                ) : null}
+                                {formatNumber(machine.total_weight, 2)} т
+                              </span>
                             </button>
                           )
                         })}
@@ -486,11 +578,60 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
             <Input value={comment} onChange={(event) => setComment(event.target.value)} disabled={!canEdit} />
           </label>
 
-          <Button type="button" onClick={handleSave} disabled={!canEdit || isPending || selectedMachineIds.length === 0 || !selectedSection} className="min-w-28">
-            <Save className="size-4" />
-            Сохранить
+          <Button
+            type="button"
+            onClick={handleSave}
+            disabled={!canEdit || isPending || selectedMachineIds.length === 0 || !selectedSection || cuttingSaveBlocked}
+            className="min-w-28"
+          >
+            {isCuttingStage && cuttingReadinessPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            {isCuttingStage && cuttingReadinessPending ? 'Проверка карт…' : 'Сохранить'}
           </Button>
         </div>
+
+        {isCuttingStage && selectedMachineIds.length > 0 && cuttingReadinessPending ? (
+          <Alert className="border-[#BFDBFE] bg-[#EFF6FF] text-[#1E3A8A]" role="status" aria-live="polite">
+            <Loader2 className="animate-spin" />
+            <AlertTitle>Проверяем карты раскроя</AlertTitle>
+            <AlertDescription>Сверяем каждую выбранную машину перед фиксацией факта.</AlertDescription>
+          </Alert>
+        ) : isCuttingStage && cuttingReadinessCheckError ? (
+          <Alert variant="destructive" role="alert">
+            <XCircle />
+            <AlertTitle>Не удалось проверить карты раскроя</AlertTitle>
+            <AlertDescription>{cuttingReadinessCheckError}</AlertDescription>
+          </Alert>
+        ) : isCuttingStage && blockedCuttingMachines.length > 0 ? (
+          <Alert variant="destructive" role="alert" aria-live="assertive">
+            <XCircle />
+            <AlertTitle>Факт заготовки заблокирован</AlertTitle>
+            <AlertDescription>
+              <ul className="mt-1 list-disc space-y-1 pl-5">
+                {blockedCuttingMachines.map((machine) => (
+                  <li key={machine.machineId}>
+                    <span className="font-semibold">{machine.machineName}</span>: {machine.reason}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2">Снимите блокирующую машину с выбора или утвердите для неё карту раскроя.</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3 border-red-300 bg-white text-red-800 hover:bg-red-50 hover:text-red-900"
+                onClick={() => router.push('/production/cutting-area')}
+              >
+                Открыть участок заготовки
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : isCuttingStage && cuttingReadinessComplete && cuttingReadiness.length > 0 ? (
+          <Alert className="border-[#BBF7D0] bg-[#F0FDF4] text-[#166534]" role="status" aria-live="polite">
+            <CheckCircle2 />
+            <AlertTitle>Карты раскроя готовы</AlertTitle>
+            <AlertDescription>Проверено машин: {cuttingReadiness.length}.</AlertDescription>
+          </Alert>
+        ) : null}
 
         {duplicateSelectedCount > 0 && isCuttingStage ? (
           <div className="rounded-md border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-sm text-[#1E3A8A]">

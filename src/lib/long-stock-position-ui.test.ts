@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  assertLongStockRecoverySegmentTotal,
   candidatePurchaseComposition,
   candidateRemainderPreview,
   candidateWastePercent,
@@ -8,6 +9,7 @@ import {
   cutDisplayLabel,
   DEFAULT_MIXED_LONG_STOCK_LENGTHS,
   expandLongStockSegmentRows,
+  filterLongStockCandidatesByReservedStock,
   longStockCutColorMap,
   shouldShowBarSegmentLabel,
   totalLongStockSegmentLength,
@@ -32,6 +34,58 @@ test('rejects a non-integer quantity and points to the row', () => {
   assert.throws(
     () => expandLongStockSegmentRows([{ id: 'row-a', lengthMm: 1200, quantity: 1.5 }]),
     /Строка 1: количество/,
+  )
+})
+
+test('requires legacy recovery cuts to preserve the request demand total', () => {
+  assert.doesNotThrow(() => assertLongStockRecoverySegmentTotal([
+    { id: 'a', lengthMm: 3000 },
+    { id: 'b', lengthMm: 3000 },
+    { id: 'c', lengthMm: 2000 },
+  ], 8000))
+  assert.throws(
+    () => assertLongStockRecoverySegmentTotal([{ id: 'a', lengthMm: 3000 }], 8000),
+    /Сумма отрезков должна равняться потребности позиции: 8000 мм/,
+  )
+})
+
+test('keeps only layouts that use the exact physical reserved bar composition', () => {
+  const oneBar = {
+    key: 'one-bar',
+    bars: [{ source: 'new_stock', stockLengthMm: 12000 }],
+  } as LongStockCuttingCandidate
+  const twoBars = {
+    key: 'two-bars',
+    bars: [
+      { source: 'new_stock', stockLengthMm: 6000 },
+      { source: 'new_stock', stockLengthMm: 6000 },
+    ],
+  } as LongStockCuttingCandidate
+  const wrongLength = {
+    key: 'wrong-length',
+    bars: [{ source: 'new_stock', stockLengthMm: 9000 }],
+  } as LongStockCuttingCandidate
+
+  assert.deepEqual(
+    filterLongStockCandidatesByReservedStock(
+      [oneBar, twoBars, wrongLength],
+      [{ lengthMm: 12000, pieceCount: 1 }],
+    ).map((candidate) => candidate.key),
+    ['one-bar'],
+  )
+  assert.deepEqual(
+    filterLongStockCandidatesByReservedStock(
+      [oneBar, twoBars, wrongLength],
+      [{ lengthMm: 6000, pieceCount: 2 }],
+    ).map((candidate) => candidate.key),
+    ['two-bars'],
+  )
+  assert.deepEqual(
+    filterLongStockCandidatesByReservedStock(
+      [oneBar, twoBars, wrongLength],
+      [{ lengthMm: 12000, pieceCount: 1 }, { lengthMm: 6000, pieceCount: 1 }],
+    ),
+    [],
   )
 })
 

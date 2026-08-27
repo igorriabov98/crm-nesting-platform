@@ -45,6 +45,21 @@ const saveProductionMachineFact = sourceSection(
   'export async function saveProductionMachineFact',
   'export async function deleteProductionMachineFact',
 )
+const loadProductionFactCuttingReadiness = sourceSection(
+  productionFactActions,
+  'async function loadProductionFactCuttingReadiness',
+  'async function assertProductionFactCuttingReady',
+)
+const getProductionFactCuttingReadiness = sourceSection(
+  productionFactActions,
+  'export async function getProductionFactCuttingReadiness',
+  'export async function getProductionFactWorkspaceData',
+)
+const saveUnifiedProductionFact = sourceSection(
+  productionFactActions,
+  'export async function saveUnifiedProductionFact',
+  'export async function deleteProductionTonnageFact',
+)
 const getProductionCuttingRollbackPreview = sourceSection(
   taskActions,
   'export async function getProductionCuttingRollbackPreview',
@@ -70,6 +85,21 @@ assert.match(
   saveMachineFactAtomic,
   /\.rpc\([\s\S]*'fn_save_production_machine_fact_atomic_v1',[\s\S]*p_actor: userId/u,
   'the cutting-fact RPC actor must come from the authorized server context',
+)
+assert.match(
+  loadProductionFactCuttingReadiness,
+  /admin as unknown as RpcClient[\s\S]*'fn_assert_long_stock_cutting_ready'[\s\S]*p_machine_id: machine\.id/u,
+  'cutting readiness must use the service-role client and the existing read-only guard RPC',
+)
+assert.match(
+  getProductionFactCuttingReadiness,
+  /getContext\('production_fact', 'view'\)[\s\S]*assertFactoryAccess[\s\S]*loadProductionFactCuttingReadiness/u,
+  'the client preflight must authorize production-fact viewing and factory access',
+)
+assert.match(
+  saveUnifiedProductionFact,
+  /isCuttingSection[\s\S]*assertInventoryTransfersReceived[\s\S]*assertProductionFactCuttingReady[\s\S]*saveMachineFactsAtomic/u,
+  'the batch mutation must repeat the named readiness check before the atomic write',
 )
 assert.match(
   getProductionCuttingRollbackPreview,
@@ -102,6 +132,12 @@ assert.doesNotMatch(
   'the authenticated task client must not invoke the keep-rollback mutation RPC',
 )
 
+assertRpcDeniedForAuthenticated(
+  'fn_assert_long_stock_cutting_ready',
+  `select public.fn_assert_long_stock_cutting_ready(
+    '00000000-0000-0000-0000-000000000001'::uuid
+  );`,
+)
 assertRpcDeniedForAuthenticated(
   'fn_apply_production_fact_cutting',
   `select public.fn_apply_production_fact_cutting(
@@ -205,6 +241,11 @@ function assertServiceRoleCanExecute() {
       env: postgresEnv,
       input: `select
         has_function_privilege(
+          'service_role',
+          'public.fn_assert_long_stock_cutting_ready(uuid)',
+          'EXECUTE'
+        )
+        and has_function_privilege(
           'service_role',
           'public.fn_apply_production_fact_cutting(uuid, uuid)',
           'EXECUTE'

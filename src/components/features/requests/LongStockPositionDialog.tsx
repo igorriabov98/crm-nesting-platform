@@ -12,11 +12,13 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  ClipboardPenLine,
   Loader2,
   Plus,
   RotateCcw,
   Ruler,
   Sparkles,
+  TableProperties,
   Trash2,
   Wrench,
 } from 'lucide-react'
@@ -42,9 +44,11 @@ import {
   createLongStockMaterialVariant,
   createLongStockCuttingPlanVersion,
   createManualLongStockCuttingPlanVersion,
+  loadLongStockPlanningRecoveryDraft,
   loadLongStockRecalculationDraft,
   prepareLongStockRequestItemDraft,
   recalculateLongStockCuttingPlanVersion,
+  type LongStockPlanningRecoveryDraft,
   type LongStockRecalculationDraft,
 } from '@/lib/actions/long-stock-cutting-plans'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
@@ -157,6 +161,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   const [mixedLengths, setMixedLengths] = useState(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
   const [nonstandardLengths, setNonstandardLengths] = useState(false)
   const [manualMode, setManualMode] = useState(false)
+  const [showCuttingMatrix, setShowCuttingMatrix] = useState(false)
   const [manualBars, setManualBars] = useState<LongStockManualBarInput[]>([])
   const [manualReason, setManualReason] = useState('')
   const [manualReasonText, setManualReasonText] = useState('')
@@ -198,6 +203,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setCalculation(null)
     setSelectedCandidateKey(null)
     setManualMode(false)
+    setShowCuttingMatrix(false)
     setManualBars([])
     setError(null)
   }
@@ -346,6 +352,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       setCalculation(result)
       setSelectedCandidateKey(nextCandidates[0]?.key ?? null)
       setManualMode(false)
+      setShowCuttingMatrix(false)
       setManualBars([])
       if (nextCandidates.length === 0) setError('Для заданных отрезков подходящая раскладка не найдена')
     } catch (calculationError) {
@@ -470,6 +477,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setMixedLengths(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
     setNonstandardLengths(false)
     setManualMode(false)
+    setShowCuttingMatrix(false)
     setManualBars([])
     setManualReason('')
     setManualReasonText('')
@@ -658,6 +666,31 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
                 )}
               </div>
 
+              {visibleCandidates.length > 0 && (
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    aria-expanded={showCuttingMatrix}
+                    aria-controls={`${category}-cutting-matrix`}
+                    onClick={() => setShowCuttingMatrix((visible) => !visible)}
+                  >
+                    <TableProperties className="size-4" />
+                    {showCuttingMatrix ? 'Скрыть всю матрицу' : 'Показать всю матрицу по отрезкам'}
+                  </Button>
+                </div>
+              )}
+
+              {showCuttingMatrix && visibleCandidates.length > 0 && (
+                <CuttingLayoutsMatrix
+                  id={`${category}-cutting-matrix`}
+                  candidates={visibleCandidates}
+                  selectedKey={selectedCandidateKey}
+                  bestKey={bestCandidateKey}
+                  onSelect={chooseCandidate}
+                />
+              )}
+
               {visibleCandidates.length > 0 ? mixedLengths ? (
                 <MixedCandidateList
                   candidates={visibleCandidates}
@@ -767,6 +800,428 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   )
 }
 
+export function LongStockPlanningRecoveryDialog({
+  requestItem,
+  open,
+  onOpenChange,
+  onApproved,
+}: RecalculationDialogProps) {
+  const nextSegmentRow = useRef(2)
+  const [draft, setDraft] = useState<LongStockPlanningRecoveryDraft | null>(null)
+  const [segmentRows, setSegmentRows] = useState<LongStockSegmentRow[]>([
+    { id: 'planning-recovery-row-1', lengthMm: '', quantity: 1 },
+  ])
+  const [calculation, setCalculation] = useState<Calculation | null>(null)
+  const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null)
+  const [mixedLengths, setMixedLengths] = useState(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
+  const [showCuttingMatrix, setShowCuttingMatrix] = useState(false)
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const segmentValidation = useMemo(() => {
+    try {
+      return { segments: expandLongStockSegmentRows(segmentRows), error: null }
+    } catch (validationError) {
+      return {
+        segments: [] as LongStockPlanSegmentInput[],
+        error: validationError instanceof Error ? validationError.message : 'Проверьте отрезки',
+      }
+    }
+  }, [segmentRows])
+  const segmentTotalLengthMm = totalLongStockSegmentLength(segmentValidation.segments)
+  const demandMatches = Boolean(
+    draft
+    && segmentValidation.error === null
+    && Math.abs(segmentTotalLengthMm - draft.totalLengthMm) <= 0.001,
+  )
+  const hasReservedStock = Boolean(draft?.reservedStock.length)
+  const visibleCandidates = useMemo(
+    () => candidatesForLongStockMode(calculation?.candidates ?? [], mixedLengths),
+    [calculation, mixedLengths],
+  )
+  const selectedCandidate = visibleCandidates.find((candidate) => candidate.key === selectedCandidateKey) ?? null
+  const bestCandidateKey = visibleCandidates[0]?.key ?? null
+  const minimumUsefulLengthMm = calculation?.settingsSnapshot.categories
+    .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    setPendingAction('load')
+    setError(null)
+    setDraft(null)
+    setCalculation(null)
+    setSelectedCandidateKey(null)
+    setMixedLengths(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
+    setShowCuttingMatrix(false)
+    setSegmentRows([{ id: 'planning-recovery-row-1', lengthMm: '', quantity: 1 }])
+
+    void (async () => {
+      try {
+        const requestItemRef = { id: requestItem.id, table: requestItem.table }
+        const nextDraft = await loadLongStockPlanningRecoveryDraft(requestItemRef)
+        if (!active) return
+        const nextRows = planningRecoverySegmentRows(nextDraft.draftSegments)
+        nextSegmentRow.current = nextRows.length + 1
+        setDraft(nextDraft)
+        setSegmentRows(nextRows)
+        if (nextDraft.draftSegments.length === 0) return
+        const recoverySegments = expandLongStockSegmentRows(nextRows)
+
+        const nextCalculation = await calculateLongStockCuttingPlan({
+          requestItem: requestItemRef,
+          segments: recoverySegments,
+          mode: DEFAULT_MIXED_LONG_STOCK_LENGTHS ? 'mixed' : 'standard',
+        })
+        if (!active) return
+        const candidates = candidatesForLongStockMode(
+          nextCalculation.candidates,
+          DEFAULT_MIXED_LONG_STOCK_LENGTHS,
+        )
+        setCalculation(nextCalculation)
+        setSelectedCandidateKey(candidates[0]?.key ?? null)
+        if (candidates.length === 0) {
+          setError(nextDraft.reservedStock.length > 0
+            ? 'Сохранённая раскладка не соответствует точному составу забронированных физических хлыстов'
+            : 'Для сохранённых отрезков подходящая раскладка не найдена')
+        }
+      } catch (loadError) {
+        if (!active) return
+        setError(errorMessage(loadError, 'Не удалось подготовить карту по складскому резерву'))
+      } finally {
+        if (active) setPendingAction(null)
+      }
+    })()
+    return () => { active = false }
+  }, [open, requestItem.id, requestItem.table])
+
+  function invalidateCalculation() {
+    setCalculation(null)
+    setSelectedCandidateKey(null)
+    setShowCuttingMatrix(false)
+    setError(null)
+  }
+
+  function updateSegmentRow(id: string, patch: Partial<LongStockSegmentRow>) {
+    setSegmentRows((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row))
+    invalidateCalculation()
+  }
+
+  function addSegmentRow() {
+    const id = `planning-recovery-row-${nextSegmentRow.current}`
+    nextSegmentRow.current += 1
+    setSegmentRows((current) => [...current, { id, lengthMm: '', quantity: 1 }])
+    invalidateCalculation()
+  }
+
+  function removeSegmentRow(id: string) {
+    setSegmentRows((current) => current.filter((row) => row.id !== id))
+    invalidateCalculation()
+  }
+
+  async function calculate(mode: 'mixed' | 'standard', searchBudget = DEFAULT_LONG_STOCK_SEARCH_BUDGET) {
+    if (!draft || !demandMatches) return
+    setPendingAction(searchBudget > DEFAULT_LONG_STOCK_SEARCH_BUDGET ? 'longer' : 'calculate')
+    setError(null)
+    try {
+      const nextCalculation = await calculateLongStockCuttingPlan({
+        requestItem,
+        segments: segmentValidation.segments,
+        mode,
+        searchBudget,
+      })
+      const nextMixed = mode === 'mixed'
+      const candidates = candidatesForLongStockMode(nextCalculation.candidates, nextMixed)
+      setMixedLengths(nextMixed)
+      setCalculation(nextCalculation)
+      setSelectedCandidateKey(candidates[0]?.key ?? null)
+      setShowCuttingMatrix(false)
+      if (candidates.length === 0) {
+        setError(hasReservedStock
+          ? 'Раскладка не соответствует точному составу забронированных физических хлыстов'
+          : 'Для этих отрезков подходящая раскладка не найдена')
+      }
+    } catch (calculationError) {
+      setError(errorMessage(calculationError, 'Не удалось рассчитать карту по складскому резерву'))
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function approveRecovery() {
+    if (!draft || !calculation || !selectedCandidate || !demandMatches) return
+    setPendingAction('approve')
+    setError(null)
+    try {
+      const version = await createLongStockCuttingPlanVersion({
+        requestItem,
+        segments: segmentValidation.segments,
+        mode: mixedLengths ? 'mixed' : 'standard',
+        searchBudget: calculation.searchBudget,
+        selectedCandidateKey: selectedCandidate.key,
+      })
+      await approveLongStockCuttingPlanVersion(version.id)
+      toast.success(`Версия ${version.version_number} карты раскроя утверждена`)
+      onApproved?.()
+      onOpenChange(false)
+    } catch (approvalError) {
+      const message = errorMessage(approvalError, 'Не удалось утвердить карту по складскому резерву')
+      setError(message)
+      toast.error(message)
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const searchBudget = calculation?.searchBudget ?? DEFAULT_LONG_STOCK_SEARCH_BUDGET
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!pendingAction || pendingAction === 'load') onOpenChange(nextOpen)
+    }}>
+      <DialogContent className="flex max-h-[94vh] w-[min(1180px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
+        <DialogHeader className="border-b bg-red-50/70 px-5 py-4 pr-16">
+          <DialogTitle className="flex items-center gap-2 text-lg text-red-950">
+            <ClipboardPenLine className="size-5" />Подготовка отсутствующей карты
+          </DialogTitle>
+          <DialogDescription>
+            {hasReservedStock
+              ? 'Укажите точные отрезки старой позиции. Раскладка строится только по уже забронированным физическим хлыстам.'
+              : 'Укажите точные отрезки позиции и утвердите подходящую раскладку хлыстов.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
+          {pendingAction === 'load' && (
+            <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-slate-600" role="status">
+              <Loader2 className="size-4 animate-spin" />Сверяем позицию и складские резервы…
+            </div>
+          )}
+
+          {draft && (
+            <>
+              <Alert className="border-red-300 bg-red-50">
+                <AlertTriangle className="text-red-700" />
+                <AlertTitle>Старая позиция блокирует факт заготовки</AlertTitle>
+                <AlertDescription>
+                  {hasReservedStock
+                    ? 'У позиции есть физический резерв, но нет утверждённой карты. Карта будет рассчитана по точному составу этих хлыстов.'
+                    : 'У позиции нет утверждённой карты. Без неё факт заготовки по машине остаётся заблокирован.'}
+                </AlertDescription>
+              </Alert>
+
+              <section className="grid gap-3 rounded-xl border bg-white p-4 md:grid-cols-2 lg:grid-cols-4">
+                <Metric label="Материал" value={draft.materialName} />
+                <Metric label="Вариант" value={draft.variantDescription || 'Точный вариант из каталога'} />
+                <Metric label="Потребность" value={`${formatMm(draft.totalLengthMm)} мм`} />
+                <Metric
+                  label="Физический резерв"
+                  value={hasReservedStock
+                    ? draft.reservedStock.map((stock) => `${formatMm(stock.lengthMm)} мм × ${stock.pieceCount}`).join(' + ')
+                    : 'Ещё не создан'}
+                />
+              </section>
+
+              <section className="rounded-xl border bg-white p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Точные отрезки позиции</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Сумма должна совпасть с потребностью {formatMm(draft.totalLengthMm)} мм.
+                    </p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" disabled={Boolean(pendingAction)} onClick={addSegmentRow}>
+                    <Plus className="size-4" />Добавить строку
+                  </Button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {segmentRows.map((row, index) => (
+                    <div key={row.id} className="grid items-end gap-3 rounded-lg border bg-slate-50/60 p-3 sm:grid-cols-[1fr_1fr_auto]">
+                      <div className="space-y-1">
+                        <Label htmlFor={`${row.id}-recovery-length`}>Длина отрезка, мм</Label>
+                        <Input
+                          id={`${row.id}-recovery-length`}
+                          type="number"
+                          min="0.001"
+                          step="0.001"
+                          inputMode="decimal"
+                          value={row.lengthMm}
+                          onChange={(event) => updateSegmentRow(row.id, { lengthMm: event.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor={`${row.id}-recovery-quantity`}>Количество</Label>
+                        <Input
+                          id={`${row.id}-recovery-quantity`}
+                          type="number"
+                          min="1"
+                          step="1"
+                          inputMode="numeric"
+                          value={row.quantity}
+                          onChange={(event) => updateSegmentRow(row.id, { quantity: event.target.value })}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        disabled={segmentRows.length === 1 || Boolean(pendingAction)}
+                        onClick={() => removeSegmentRow(row.id)}
+                        aria-label={`Удалить строку отрезков ${index + 1}`}
+                      >
+                        <Trash2 className="size-4 text-red-500" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-3 text-sm">
+                  {segmentValidation.error ? (
+                    <p className="text-amber-700">{segmentValidation.error}</p>
+                  ) : demandMatches ? (
+                    <p className="text-emerald-700">Сумма отрезков: {formatMm(segmentTotalLengthMm)} мм — совпадает.</p>
+                  ) : (
+                    <p className="text-red-700">
+                      Сумма отрезков {formatMm(segmentTotalLengthMm)} мм; требуется {formatMm(draft.totalLengthMm)} мм.
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-3 border-t pt-4">
+                  <Button
+                    type="button"
+                    disabled={!demandMatches || Boolean(pendingAction)}
+                    onClick={() => void calculate(mixedLengths ? 'mixed' : 'standard')}
+                  >
+                    {pendingAction === 'calculate' ? <Loader2 className="size-4 animate-spin" /> : <Calculator className="size-4" />}
+                    {pendingAction === 'calculate'
+                      ? 'Расчёт…'
+                      : hasReservedStock ? 'Рассчитать по резерву' : 'Рассчитать'}
+                  </Button>
+                  <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm">
+                    <Checkbox
+                      checked={mixedLengths}
+                      disabled={!demandMatches || Boolean(pendingAction)}
+                      onCheckedChange={(checked) => void calculate(checked === true ? 'mixed' : 'standard')}
+                    />
+                    {hasReservedStock ? 'Смешивать длины резерва' : 'Смешивать стандартные длины'}
+                  </label>
+                </div>
+              </section>
+
+              {calculation && visibleCandidates.length > 0 && (
+                <section className="space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-slate-900">
+                        {hasReservedStock ? 'Варианты по физическому резерву' : 'Варианты раскладки'}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {hasReservedStock
+                          ? 'Каждый вариант использует точный состав забронированных физических хлыстов.'
+                          : 'Сначала показана минимальная требуемая длина.'}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      aria-expanded={showCuttingMatrix}
+                      aria-controls="planning-recovery-cutting-matrix"
+                      onClick={() => setShowCuttingMatrix((visible) => !visible)}
+                    >
+                      <TableProperties className="size-4" />
+                      {showCuttingMatrix ? 'Скрыть всю матрицу' : 'Показать всю матрицу по отрезкам'}
+                    </Button>
+                  </div>
+                  {showCuttingMatrix && (
+                    <CuttingLayoutsMatrix
+                      id="planning-recovery-cutting-matrix"
+                      candidates={visibleCandidates}
+                      selectedKey={selectedCandidateKey}
+                      bestKey={bestCandidateKey}
+                      onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
+                    />
+                  )}
+                  {mixedLengths ? (
+                    <MixedCandidateList
+                      candidates={visibleCandidates}
+                      selectedKey={selectedCandidateKey}
+                      bestKey={bestCandidateKey}
+                      weightPerMeterKg={calculation.weightPerMeterKg}
+                      onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
+                    />
+                  ) : (
+                    <CandidateMatrix
+                      candidates={visibleCandidates}
+                      selectedKey={selectedCandidateKey}
+                      bestKey={bestCandidateKey}
+                      weightPerMeterKg={calculation.weightPerMeterKg}
+                      minimumUsefulLengthMm={minimumUsefulLengthMm}
+                      onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
+                    />
+                  )}
+                  {selectedCandidate && (
+                    <div className="space-y-3 rounded-xl border bg-white p-4">
+                      <h4 className="font-semibold text-slate-900">
+                        {hasReservedStock ? 'Раскладка по забронированным хлыстам' : 'Раскладка по хлыстам'}
+                      </h4>
+                      <LayoutPreview candidate={selectedCandidate} calculation={calculation} />
+                      {selectedCandidate.searchComplete === false && (
+                        <div className="flex items-center gap-2 border-t pt-3 text-xs text-slate-500">
+                          <span>Проверены не все варианты</span>
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="h-auto p-0 text-xs"
+                            disabled={Boolean(pendingAction)}
+                            onClick={() => void calculate(
+                              mixedLengths ? 'mixed' : 'standard',
+                              searchBudget < EXTENDED_LONG_STOCK_SEARCH_BUDGET
+                                ? EXTENDED_LONG_STOCK_SEARCH_BUDGET
+                                : Math.min(Number.MAX_SAFE_INTEGER, searchBudget * 2),
+                            )}
+                          >
+                            {pendingAction === 'longer' && <Loader2 className="size-3 animate-spin" />}
+                            Искать дольше
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )}
+            </>
+          )}
+
+          {error && (
+            <Alert variant="destructive" role="alert">
+              <CircleAlert />
+              <AlertTitle>Карта не готова</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+
+        <DialogFooter className="mx-0 mb-0 shrink-0 rounded-none px-5 py-4">
+          <Button type="button" variant="outline" disabled={pendingAction === 'approve'} onClick={() => onOpenChange(false)}>
+            Закрыть
+          </Button>
+          <Button
+            type="button"
+            disabled={!selectedCandidate || !demandMatches || Boolean(pendingAction)}
+            onClick={() => void approveRecovery()}
+          >
+            {pendingAction === 'approve' ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
+            {pendingAction === 'approve' ? 'Утверждение…' : 'Утвердить карту'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function LongStockRecalculationDialog({
   requestItem,
   open,
@@ -777,6 +1232,7 @@ export function LongStockRecalculationDialog({
   const [calculation, setCalculation] = useState<Calculation | null>(null)
   const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null)
   const [mixedLengths, setMixedLengths] = useState(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
+  const [showCuttingMatrix, setShowCuttingMatrix] = useState(false)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -798,6 +1254,7 @@ export function LongStockRecalculationDialog({
     setCalculation(null)
     setSelectedCandidateKey(null)
     setMixedLengths(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
+    setShowCuttingMatrix(false)
 
     void (async () => {
       try {
@@ -843,6 +1300,7 @@ export function LongStockRecalculationDialog({
       setMixedLengths(nextMixed)
       setCalculation(nextCalculation)
       setSelectedCandidateKey(candidates[0]?.key ?? null)
+      setShowCuttingMatrix(false)
       if (candidates.length === 0) setError('Для фактически принятых длин раскладка не найдена')
     } catch (calculationError) {
       setError(errorMessage(calculationError, 'Не удалось пересчитать раскладку'))
@@ -934,10 +1392,31 @@ export function LongStockRecalculationDialog({
 
               {calculation && visibleCandidates.length > 0 && (
                 <section className="space-y-4">
-                  <div>
-                    <h3 className="font-semibold text-slate-900">Варианты по фактической приёмке</h3>
-                    <p className="mt-1 text-sm text-slate-500">Сначала показана минимальная требуемая длина.</p>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-slate-900">Варианты по фактической приёмке</h3>
+                      <p className="mt-1 text-sm text-slate-500">Сначала показана минимальная требуемая длина.</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      aria-expanded={showCuttingMatrix}
+                      aria-controls="recalculation-cutting-matrix"
+                      onClick={() => setShowCuttingMatrix((visible) => !visible)}
+                    >
+                      <TableProperties className="size-4" />
+                      {showCuttingMatrix ? 'Скрыть всю матрицу' : 'Показать всю матрицу по отрезкам'}
+                    </Button>
                   </div>
+                  {showCuttingMatrix && (
+                    <CuttingLayoutsMatrix
+                      id="recalculation-cutting-matrix"
+                      candidates={visibleCandidates}
+                      selectedKey={selectedCandidateKey}
+                      bestKey={bestCandidateKey}
+                      onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
+                    />
+                  )}
                   {mixedLengths ? (
                     <MixedCandidateList
                       candidates={visibleCandidates}
@@ -1235,6 +1714,87 @@ function CandidateMatrix({
           Остатки короче минимальной полезной длины {formatMm(minimumUsefulLengthMm)} мм помечены как «мелочь»; на складской учёт это не влияет.
         </p>
       )}
+    </div>
+  )
+}
+
+function CuttingLayoutsMatrix({
+  id,
+  candidates,
+  selectedKey,
+  bestKey,
+  onSelect,
+}: {
+  id: string
+  candidates: LongStockCuttingCandidate[]
+  selectedKey: string | null
+  bestKey: string | null
+  onSelect: (candidate: LongStockCuttingCandidate) => void
+}) {
+  return (
+    <div id={id} className="max-h-[480px] overflow-auto rounded-xl border bg-white" role="region" aria-label="Вся матрица раскладки по отрезкам">
+      <table className="min-w-[880px] w-full text-sm">
+        <caption className="sr-only">Все рассчитанные варианты с составом каждого хлыста</caption>
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-4 py-3">Вариант</th>
+            <th className="px-4 py-3">Хлыст</th>
+            <th className="px-4 py-3">Отрезки по порядку резов</th>
+            <th className="px-4 py-3 text-right">Остаток</th>
+          </tr>
+        </thead>
+        <tbody>
+          {candidates.flatMap((candidate) => candidate.bars.map((bar, barIndex) => {
+            const selected = candidate.key === selectedKey
+            const best = candidate.key === bestKey
+            return (
+              <tr
+                key={`${candidate.key}-${bar.barNumber}`}
+                className={cn(
+                  'border-t align-top',
+                  best && 'bg-emerald-50/40',
+                  selected && 'bg-blue-50/70',
+                )}
+              >
+                {barIndex === 0 && (
+                  <td className="w-[230px] px-4 py-3" rowSpan={candidate.bars.length}>
+                    <button
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => onSelect(candidate)}
+                      className="rounded-md text-left font-semibold text-slate-900 outline-none hover:text-blue-700 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                    >
+                      {candidatePurchaseLengthLabel(candidate)}
+                    </button>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
+                      {selected && <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700">Выбран</Badge>}
+                    </div>
+                  </td>
+                )}
+                <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-800">
+                  №{bar.barNumber} · {formatMm(bar.stockLengthMm)} мм
+                  {bar.source === 'business_remnant' && (
+                    <span className="mt-1 block text-xs font-normal text-slate-500">Со склада</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {bar.cuts.map((cut) => (
+                      <span key={cut.workpieceId} className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1 tabular-nums text-blue-900">
+                        {cutDisplayLabel(cut.cutNumber)}: {formatMm(cut.lengthMm)}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular-nums text-emerald-800">
+                  {formatMm(bar.remainderMm)} мм
+                </td>
+              </tr>
+            )
+          }))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -1590,6 +2150,21 @@ function MoveButton({ label, disabled, onClick, children }: { label: string; dis
       {children}
     </button>
   )
+}
+
+function planningRecoverySegmentRows(segments: readonly LongStockPlanSegmentInput[]): LongStockSegmentRow[] {
+  if (segments.length === 0) {
+    return [{ id: 'planning-recovery-row-1', lengthMm: '', quantity: 1 }]
+  }
+  const grouped = new Map<number, number>()
+  for (const segment of segments) {
+    grouped.set(segment.lengthMm, (grouped.get(segment.lengthMm) ?? 0) + 1)
+  }
+  return Array.from(grouped, ([lengthMm, quantity], index) => ({
+    id: `planning-recovery-row-${index + 1}`,
+    lengthMm,
+    quantity,
+  })).sort((left, right) => Number(right.lengthMm) - Number(left.lengthMm))
 }
 
 function variantSummary(category: Category, variant: MaterialVariant) {
