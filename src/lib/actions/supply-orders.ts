@@ -67,7 +67,14 @@ export type SupplyOrderPlacementInput = {
 type RequestRow = {
   id: string
   machine_id: string
-  machines: { id: string; name: string; factory_id: string | null; planned_material_date: string | null; is_archived: boolean | null } | null
+  machines: {
+    id: string
+    name: string
+    specification_number?: string | null
+    factory_id: string | null
+    planned_material_date: string | null
+    is_archived: boolean | null
+  } | null
 }
 
 type RequestItemRow = Record<string, unknown> & {
@@ -331,6 +338,7 @@ export type MaterialReceivingItem = {
   request_id: string
   machine_id: string
   machine_name: string
+  machine_specification_number: string | null
   factory_id: string | null
   factory_name: string
   delivery_date: string
@@ -448,6 +456,7 @@ type SupplyOrderAggregateInputItem = RawOrderItem & {
   raw: RequestItemRow
   machine_id: string
   machine_name: string
+  machine_specification_number: string | null
   factory_id: string | null
   planned_material_date: string | null
 }
@@ -1471,7 +1480,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
 
     const { data: requestsData, error } = await db
       .from('technologist_requests')
-      .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)')
+      .select('id, machine_id, status, submitted_at, machines!inner(id, name, specification_number, factory_id, planned_material_date, is_archived)')
       .in('status', ['submitted_to_supply', 'completed'])
       .eq('machines.is_archived', false)
       .order('submitted_at', { ascending: false })
@@ -1685,7 +1694,7 @@ async function loadAggregateRequests(db: LooseDb, factoryId?: string | null) {
   for (let from = 0; ; from += batchSize) {
     let query = db
       .from('technologist_requests')
-      .select('id, machine_id, status, submitted_at, machines!inner(id, name, factory_id, planned_material_date, is_archived)')
+      .select('id, machine_id, status, submitted_at, machines!inner(id, name, specification_number, factory_id, planned_material_date, is_archived)')
       .in('status', ['submitted_to_supply', 'completed'])
       .eq('machines.is_archived', false)
       .order('submitted_at', { ascending: false })
@@ -1766,6 +1775,7 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
       raw: row,
       machine_id: machine.id || request.machine_id,
       machine_name: machine.name || 'Машина',
+      machine_specification_number: machine.specification_number || null,
       factory_id: machine.factory_id || null,
       planned_material_date: machine.planned_material_date || null,
     }
@@ -2709,6 +2719,7 @@ function makeReceivingItem(
     request_id: item.request_id,
     machine_id: item.machine_id,
     machine_name: item.machine_name,
+    machine_specification_number: item.machine_specification_number,
     factory_id: item.factory_id,
     factory_name: factoryName,
     delivery_date: deliveryDate,
