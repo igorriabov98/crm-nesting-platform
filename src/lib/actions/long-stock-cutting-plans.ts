@@ -157,8 +157,8 @@ type LongStockRecalculationState = {
 }
 
 type LongStockPlanningRecoveryState = {
-  planId: string
-  planItemId: string
+  planId: string | null
+  planItemId: string | null
   totalLengthMm: number
   draftSegments: LongStockPlanSegmentInput[]
   reservedStock: Array<{ lengthMm: number; pieceCount: number }>
@@ -333,7 +333,12 @@ export async function getLongStockCuttingPlanItemOverview(
     .order('linked_at', { ascending: false })
   if (itemResult.error) throw new Error(itemResult.error.message || 'Не удалось прочитать карту раскроя')
   const planItem = itemResult.data?.[0]
-  if (!planItem) return { status: 'none', segments: [], total_length_mm: 0, piece_count: 0 }
+  if (!planItem) {
+    const recovery = await loadLongStockPlanningRecoveryState(db, requestItem)
+    return recovery
+      ? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0 }
+      : { status: 'none', segments: [], total_length_mm: 0, piece_count: 0 }
+  }
 
   const status: LongStockCuttingPlanItemStatus = planItem.cutting_status === 'requires_recalculation'
     ? 'requires_recalculation'
@@ -850,15 +855,17 @@ async function loadLongStockPlanningRecoveryState(
     .order('linked_at', { ascending: false })
   if (itemResult.error) throw new Error(itemResult.error.message || 'Не удалось прочитать карту раскроя')
   const planItem = itemResult.data?.[0]
-  if (!planItem || planItem.cutting_status !== 'planning') return null
+  if (planItem && planItem.cutting_status !== 'planning') return null
 
-  const approvedResult = await db.from<{ id: string }>('long_stock_cutting_plan_versions')
-    .select('id')
-    .eq('plan_id', planItem.plan_id)
-    .eq('status', 'approved')
-    .order('version_number', { ascending: false })
-  if (approvedResult.error) throw new Error(approvedResult.error.message || 'Не удалось проверить утверждённую версию')
-  if ((approvedResult.data?.length ?? 0) > 0) return null
+  if (planItem) {
+    const approvedResult = await db.from<{ id: string }>('long_stock_cutting_plan_versions')
+      .select('id')
+      .eq('plan_id', planItem.plan_id)
+      .eq('status', 'approved')
+      .order('version_number', { ascending: false })
+    if (approvedResult.error) throw new Error(approvedResult.error.message || 'Не удалось проверить утверждённую версию')
+    if ((approvedResult.data?.length ?? 0) > 0) return null
+  }
 
   const requestRow = await loadRequestItem(db, requestItem)
   if (!requestRow.material_variant_id) {
@@ -866,15 +873,18 @@ async function loadLongStockPlanningRecoveryState(
   }
 
   const totalLengthMm = await loadRequestItemDemandLength(db, requestItem)
-  const draftVersionResult = await db.from<{ id: string }>('long_stock_cutting_plan_versions')
-    .select('id')
-    .eq('plan_id', planItem.plan_id)
-    .eq('status', 'draft')
-    .order('version_number', { ascending: false })
-  if (draftVersionResult.error) throw new Error(draftVersionResult.error.message || 'Не удалось прочитать черновик карты')
-  const draftVersionId = draftVersionResult.data?.[0]?.id ?? null
+  let draftVersionId: string | null = null
+  if (planItem) {
+    const draftVersionResult = await db.from<{ id: string }>('long_stock_cutting_plan_versions')
+      .select('id')
+      .eq('plan_id', planItem.plan_id)
+      .eq('status', 'draft')
+      .order('version_number', { ascending: false })
+    if (draftVersionResult.error) throw new Error(draftVersionResult.error.message || 'Не удалось прочитать черновик карты')
+    draftVersionId = draftVersionResult.data?.[0]?.id ?? null
+  }
   let draftSegments: LongStockPlanSegmentInput[] = []
-  if (draftVersionId) {
+  if (draftVersionId && planItem) {
     const segmentsResult = await db.from<{
       segment_number: number
       required_length_mm: number | string
@@ -933,9 +943,13 @@ async function loadLongStockPlanningRecoveryState(
   }
   const reservedStock = Array.from(groupedStock, ([lengthMm, pieceCount]) => ({ lengthMm, pieceCount }))
     .sort((left, right) => left.lengthMm - right.lengthMm)
+  // Legacy received requests may predate cutting-plan creation entirely. They
+  // are recoverable only when the exact physical whole-bar reservation exists;
+  // otherwise this is an ordinary position that has not entered cutting yet.
+  if (!planItem && reservedStock.length === 0) return null
   return {
-    planId: planItem.plan_id,
-    planItemId: planItem.id,
+    planId: planItem?.plan_id ?? null,
+    planItemId: planItem?.id ?? null,
     totalLengthMm,
     draftSegments,
     reservedStock,
