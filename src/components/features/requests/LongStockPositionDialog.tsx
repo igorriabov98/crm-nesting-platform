@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Ruler,
   Sparkles,
+  TableProperties,
   Trash2,
   Wrench,
 } from 'lucide-react'
@@ -157,6 +158,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   const [mixedLengths, setMixedLengths] = useState(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
   const [nonstandardLengths, setNonstandardLengths] = useState(false)
   const [manualMode, setManualMode] = useState(false)
+  const [showCuttingMatrix, setShowCuttingMatrix] = useState(false)
   const [manualBars, setManualBars] = useState<LongStockManualBarInput[]>([])
   const [manualReason, setManualReason] = useState('')
   const [manualReasonText, setManualReasonText] = useState('')
@@ -198,6 +200,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setCalculation(null)
     setSelectedCandidateKey(null)
     setManualMode(false)
+    setShowCuttingMatrix(false)
     setManualBars([])
     setError(null)
   }
@@ -346,6 +349,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       setCalculation(result)
       setSelectedCandidateKey(nextCandidates[0]?.key ?? null)
       setManualMode(false)
+      setShowCuttingMatrix(false)
       setManualBars([])
       if (nextCandidates.length === 0) setError('Для заданных отрезков подходящая раскладка не найдена')
     } catch (calculationError) {
@@ -470,6 +474,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setMixedLengths(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
     setNonstandardLengths(false)
     setManualMode(false)
+    setShowCuttingMatrix(false)
     setManualBars([])
     setManualReason('')
     setManualReasonText('')
@@ -658,6 +663,31 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
                 )}
               </div>
 
+              {visibleCandidates.length > 0 && (
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    aria-expanded={showCuttingMatrix}
+                    aria-controls={`${category}-cutting-matrix`}
+                    onClick={() => setShowCuttingMatrix((visible) => !visible)}
+                  >
+                    <TableProperties className="size-4" />
+                    {showCuttingMatrix ? 'Скрыть всю матрицу' : 'Показать всю матрицу по отрезкам'}
+                  </Button>
+                </div>
+              )}
+
+              {showCuttingMatrix && visibleCandidates.length > 0 && (
+                <CuttingLayoutsMatrix
+                  id={`${category}-cutting-matrix`}
+                  candidates={visibleCandidates}
+                  selectedKey={selectedCandidateKey}
+                  bestKey={bestCandidateKey}
+                  onSelect={chooseCandidate}
+                />
+              )}
+
               {visibleCandidates.length > 0 ? mixedLengths ? (
                 <MixedCandidateList
                   candidates={visibleCandidates}
@@ -777,6 +807,7 @@ export function LongStockRecalculationDialog({
   const [calculation, setCalculation] = useState<Calculation | null>(null)
   const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null)
   const [mixedLengths, setMixedLengths] = useState(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
+  const [showCuttingMatrix, setShowCuttingMatrix] = useState(false)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -798,6 +829,7 @@ export function LongStockRecalculationDialog({
     setCalculation(null)
     setSelectedCandidateKey(null)
     setMixedLengths(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
+    setShowCuttingMatrix(false)
 
     void (async () => {
       try {
@@ -843,6 +875,7 @@ export function LongStockRecalculationDialog({
       setMixedLengths(nextMixed)
       setCalculation(nextCalculation)
       setSelectedCandidateKey(candidates[0]?.key ?? null)
+      setShowCuttingMatrix(false)
       if (candidates.length === 0) setError('Для фактически принятых длин раскладка не найдена')
     } catch (calculationError) {
       setError(errorMessage(calculationError, 'Не удалось пересчитать раскладку'))
@@ -934,10 +967,31 @@ export function LongStockRecalculationDialog({
 
               {calculation && visibleCandidates.length > 0 && (
                 <section className="space-y-4">
-                  <div>
-                    <h3 className="font-semibold text-slate-900">Варианты по фактической приёмке</h3>
-                    <p className="mt-1 text-sm text-slate-500">Сначала показана минимальная требуемая длина.</p>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-slate-900">Варианты по фактической приёмке</h3>
+                      <p className="mt-1 text-sm text-slate-500">Сначала показана минимальная требуемая длина.</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      aria-expanded={showCuttingMatrix}
+                      aria-controls="recalculation-cutting-matrix"
+                      onClick={() => setShowCuttingMatrix((visible) => !visible)}
+                    >
+                      <TableProperties className="size-4" />
+                      {showCuttingMatrix ? 'Скрыть всю матрицу' : 'Показать всю матрицу по отрезкам'}
+                    </Button>
                   </div>
+                  {showCuttingMatrix && (
+                    <CuttingLayoutsMatrix
+                      id="recalculation-cutting-matrix"
+                      candidates={visibleCandidates}
+                      selectedKey={selectedCandidateKey}
+                      bestKey={bestCandidateKey}
+                      onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
+                    />
+                  )}
                   {mixedLengths ? (
                     <MixedCandidateList
                       candidates={visibleCandidates}
@@ -1235,6 +1289,87 @@ function CandidateMatrix({
           Остатки короче минимальной полезной длины {formatMm(minimumUsefulLengthMm)} мм помечены как «мелочь»; на складской учёт это не влияет.
         </p>
       )}
+    </div>
+  )
+}
+
+function CuttingLayoutsMatrix({
+  id,
+  candidates,
+  selectedKey,
+  bestKey,
+  onSelect,
+}: {
+  id: string
+  candidates: LongStockCuttingCandidate[]
+  selectedKey: string | null
+  bestKey: string | null
+  onSelect: (candidate: LongStockCuttingCandidate) => void
+}) {
+  return (
+    <div id={id} className="max-h-[480px] overflow-auto rounded-xl border bg-white" role="region" aria-label="Вся матрица раскладки по отрезкам">
+      <table className="min-w-[880px] w-full text-sm">
+        <caption className="sr-only">Все рассчитанные варианты с составом каждого хлыста</caption>
+        <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-4 py-3">Вариант</th>
+            <th className="px-4 py-3">Хлыст</th>
+            <th className="px-4 py-3">Отрезки по порядку резов</th>
+            <th className="px-4 py-3 text-right">Остаток</th>
+          </tr>
+        </thead>
+        <tbody>
+          {candidates.flatMap((candidate) => candidate.bars.map((bar, barIndex) => {
+            const selected = candidate.key === selectedKey
+            const best = candidate.key === bestKey
+            return (
+              <tr
+                key={`${candidate.key}-${bar.barNumber}`}
+                className={cn(
+                  'border-t align-top',
+                  best && 'bg-emerald-50/40',
+                  selected && 'bg-blue-50/70',
+                )}
+              >
+                {barIndex === 0 && (
+                  <td className="w-[230px] px-4 py-3" rowSpan={candidate.bars.length}>
+                    <button
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => onSelect(candidate)}
+                      className="rounded-md text-left font-semibold text-slate-900 outline-none hover:text-blue-700 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                    >
+                      {candidatePurchaseLengthLabel(candidate)}
+                    </button>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
+                      {selected && <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700">Выбран</Badge>}
+                    </div>
+                  </td>
+                )}
+                <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-800">
+                  №{bar.barNumber} · {formatMm(bar.stockLengthMm)} мм
+                  {bar.source === 'business_remnant' && (
+                    <span className="mt-1 block text-xs font-normal text-slate-500">Со склада</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {bar.cuts.map((cut) => (
+                      <span key={cut.workpieceId} className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1 tabular-nums text-blue-900">
+                        {cutDisplayLabel(cut.cutNumber)}: {formatMm(cut.lengthMm)}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular-nums text-emerald-800">
+                  {formatMm(bar.remainderMm)} мм
+                </td>
+              </tr>
+            )
+          }))}
+        </tbody>
+      </table>
     </div>
   )
 }
