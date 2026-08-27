@@ -24,6 +24,11 @@ import {
 } from '@/components/features/supply-orders/supply-order-view'
 import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
+import {
+  deliveryScheduleBelongsToScope,
+  deliveryScheduleScopeForDateSlice,
+} from '@/lib/supply-orders/delivery-schedule-scope'
+import { buildInitialSupplyOrderScheduleDrafts } from '@/lib/supply-orders/delivery-schedule-drafts'
 
 const supplyOrdersAction = readFileSync(new URL('../src/lib/actions/supply-orders.ts', import.meta.url), 'utf8')
 const getSupplyOrdersSource = supplyOrdersAction.slice(
@@ -282,7 +287,145 @@ assert.equal(
 assert.equal(
   supplyDateGroups.every((group) => group.rows[0].aggregate === splitScheduleAggregate),
   true,
-  'date slicing must keep the original aggregate for totals and full-schedule editing',
+  'date slicing must keep the original aggregate for shared totals while the editor scopes changes by date',
+)
+
+const julyScheduleScope = deliveryScheduleScopeForDateSlice('2026-07-31')
+assert.deepEqual(
+  julyScheduleScope,
+  { replace_delivery_date: '2026-07-31' },
+  'a dated card must carry its own server-side replacement scope',
+)
+assert.equal(deliveryScheduleBelongsToScope('2026-07-31', julyScheduleScope), true)
+assert.equal(
+  deliveryScheduleBelongsToScope('2026-08-02', julyScheduleScope),
+  false,
+  'saving one date must never select a different date for replacement',
+)
+assert.equal(
+  deliveryScheduleBelongsToScope('2026-08-02', undefined),
+  true,
+  'legacy full-schedule actions must still be able to replace every planned date',
+)
+assert.equal(
+  deliveryScheduleBelongsToScope('2026-08-02', deliveryScheduleScopeForDateSlice('no_supply_date')),
+  false,
+  'creating a schedule for an uncovered no-date card must preserve every existing dated schedule',
+)
+
+assert.deepEqual(
+  buildInitialSupplyOrderScheduleDrafts(
+    splitScheduleAggregate.factories[0],
+    '2026-08-27',
+    supplyDateGroups[0].rows[0],
+  ).map((draft) => ({ date: draft.delivery_date, quantity: draft.quantity })),
+  [{ date: '2026-07-31', quantity: '3000' }],
+  'a planned date card must initialize only its own delivery rows',
+)
+assert.deepEqual(
+  buildInitialSupplyOrderScheduleDrafts(
+    splitScheduleAggregate.factories[0],
+    '2026-08-27',
+    supplyDateGroups[2].rows[0],
+  ).map((draft) => ({ date: draft.delivery_date, quantity: draft.quantity })),
+  [{ date: '2026-08-28', quantity: '1000' }],
+  'an uncovered production-date card must initialize its own remaining quantity instead of copying another date',
+)
+
+const productionKnifeFactory = {
+  ...splitScheduleAggregate.factories[0],
+  quantity: 24_000,
+  requested_quantity: 24_000,
+  planned_schedule_quantity: 18_000,
+  delivered_schedule_quantity: 0,
+  unscheduled_quantity: 6_000,
+  production_date: '2026-08-27',
+  supply_delivery_date: '2026-08-29',
+  items: [{
+    ...splitScheduleAggregate.factories[0].items[0],
+    quantity: 24_000,
+    supplier_id: 'supplier-a',
+    planned_schedule_quantity: 18_000,
+    delivered_schedule_quantity: 0,
+    unscheduled_quantity: 6_000,
+    delivery_schedules: [makeDeliverySchedule({
+      id: 'knife-august-29',
+      delivery_date: '2026-08-29',
+      quantity: 18_000,
+      status: 'planned',
+      received_quantity: null,
+      allocated_quantity: null,
+      allocated_physical_quantity: null,
+      planned_piece_length_mm: 6_000,
+      planned_piece_count: 3,
+      delivered_at: null,
+    })],
+    long_stock_purchase_plan: {
+      plan_id: 'knife-plan',
+      plan_number: 1,
+      version_id: 'knife-version',
+      version_number: 1,
+      version_status: 'approved' as const,
+      cutting_status: 'plan_approved' as const,
+      components: [{ length_mm: 6_000, piece_count: 4, is_nonstandard: false }],
+      total_piece_count: 4,
+      total_length_mm: 24_000,
+      uses_nonstandard_length: false,
+    },
+  }],
+}
+assert.deepEqual(
+  buildInitialSupplyOrderScheduleDrafts(
+    productionKnifeFactory,
+    '2026-08-27',
+    { dateKey: '2026-08-27', unscheduledQuantity: 6_000 },
+  ).map((draft) => ({
+    date: draft.delivery_date,
+    pieceLength: draft.piece_length_mm,
+    pieceCount: draft.piece_count,
+    quantity: draft.quantity,
+  })),
+  [{ date: '2026-08-27', pieceLength: '6000', pieceCount: '1', quantity: '6000' }],
+  'the uncovered knife card must offer only the one remaining bar on its own date',
+)
+assert.deepEqual(
+  buildInitialSupplyOrderScheduleDrafts(
+    productionKnifeFactory,
+    '2026-08-27',
+    { dateKey: '2026-08-29', unscheduledQuantity: 0 },
+  ).map((draft) => ({
+    date: draft.delivery_date,
+    pieceLength: draft.piece_length_mm,
+    pieceCount: draft.piece_count,
+    quantity: draft.quantity,
+  })),
+  [{ date: '2026-08-29', pieceLength: '6000', pieceCount: '3', quantity: '18000' }],
+  'the planned knife card must keep its original three-bar graph independent from the uncovered card',
+)
+
+const summaryPageSource = readFileSync(
+  new URL('../src/components/features/supply-orders/SupplyOrderSummaryPage.tsx', import.meta.url),
+  'utf8',
+)
+assert.match(
+  summaryPageSource,
+  /FactoryDeliveryEditor aggregate=\{aggregate\} factory=\{factory\} suppliers=\{suppliers\} dateSlice=\{dateSlice\}/u,
+  'each delivery editor must receive the date slice rendered by its card',
+)
+assert.match(
+  summaryPageSource,
+  /saveAggregateDeliverySchedule\(itemKeys, schedules, scheduleScope\)/u,
+  'the client must pass the date scope to the server mutation',
+)
+assert.match(
+  summaryPageSource,
+  /buildInitialSupplyOrderScheduleDrafts\(factory, todayIsoDate\(\), dateSlice\)/u,
+  'a date card must initialize drafts through the date-scoped builder',
+)
+assert.match(
+  supplyOrdersAction,
+  /schedule\.status === 'planned'[\s\S]*deliveryScheduleBelongsToScope\(schedule\.delivery_date, normalizedScope\)/u,
+  'the server must delete only planned schedules inside the requested date scope',
 )
 
 const mergedDateGroups = groupSupplyOrderAggregatesBySupplyDate([

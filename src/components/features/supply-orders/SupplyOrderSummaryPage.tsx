@@ -44,6 +44,14 @@ import {
   mergeLongStockPurchasePlans,
   type LongStockPurchasePlan,
 } from '@/lib/supply-orders/long-stock-purchase-plan'
+import {
+  deliveryScheduleBelongsToScope,
+  deliveryScheduleScopeForDateSlice,
+} from '@/lib/supply-orders/delivery-schedule-scope'
+import {
+  buildInitialSupplyOrderScheduleDrafts,
+  type SupplyOrderScheduleDraft,
+} from '@/lib/supply-orders/delivery-schedule-drafts'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
 import {
@@ -69,14 +77,7 @@ type SupplyOrderSummaryPageProps = {
   suppliers: SupplierWithRelations[]
 }
 
-type ScheduleDraft = {
-  id: string
-  delivery_date: string
-  quantity: string
-  supplier_id: string
-  piece_length_mm: string
-  piece_count: string
-}
+type ScheduleDraft = SupplyOrderScheduleDraft
 
 type ScheduleGroup = {
   key: string
@@ -504,7 +505,7 @@ function MaterialOrderCard({
 
       {factory && (
         <div id={deliveryId} hidden={!deliveryOpen} className="border-t border-border bg-muted/15 p-3 sm:p-4">
-          <FactoryDeliveryEditor aggregate={aggregate} factory={factory} suppliers={suppliers} />
+          <FactoryDeliveryEditor aggregate={aggregate} factory={factory} suppliers={suppliers} dateSlice={dateSlice} />
         </div>
       )}
     </article>
@@ -687,28 +688,43 @@ function FactoryDeliveryEditor({
   aggregate,
   factory,
   suppliers,
+  dateSlice,
 }: {
   aggregate: SupplyOrderAggregate
   factory: SupplyOrderAggregateFactory
   suppliers: SupplierWithRelations[]
+  dateSlice?: SupplyOrderDateSlice
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [scheduleDrafts, setScheduleDrafts] = useState<ScheduleDraft[]>(() => makeInitialScheduleDrafts(factory))
+  const [scheduleDrafts, setScheduleDrafts] = useState<ScheduleDraft[]>(() => (
+    buildInitialSupplyOrderScheduleDrafts(factory, todayIsoDate(), dateSlice)
+  ))
   const [financeOpen, setFinanceOpen] = useState(false)
   const [financeDrafts, setFinanceDrafts] = useState<Record<string, FinanceDraft>>({})
   const itemKeys = useMemo(() => factory.items.map((item) => ({ table: item.table, id: item.id })), [factory.items])
-  const deliveredGroups = useMemo(() => makeDeliveredScheduleGroups(factory), [factory])
+  const deliveredGroups = useMemo(
+    () => makeDeliveredScheduleGroups(factory, dateSlice?.dateKey),
+    [dateSlice?.dateKey, factory],
+  )
+  const scheduleScope = dateSlice ? deliveryScheduleScopeForDateSlice(dateSlice.dateKey) : undefined
   const plannedTotal = scheduleDrafts.reduce((sum, draft) => sum + parseQuantity(draft.quantity), 0)
-  const remainingQuantity = Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
+  const remainingQuantity = dateSlice
+    ? Math.max(dateSlice.quantity - dateSlice.deliveredQuantity, 0)
+    : Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
   const isClosed = factory.delivered_count === factory.item_count && factory.unscheduled_quantity <= 0
   const missingFinanceSuppliers = factory.items.some((item) => (
     (item.order_status === 'pending' || item.order_status === 'ordered')
     && !item.supplier_id
     && !item.delivery_schedules.some((schedule) => schedule.status === 'planned' && schedule.supplier_id)
   ))
-  const hasPlannedSchedules = factory.items.some((item) => item.delivery_schedules.some((schedule) => schedule.status === 'planned'))
-  const financeGroups = useMemo(() => makeFinanceGroups(factory), [factory])
+  const hasPlannedSchedules = factory.items.some((item) => item.delivery_schedules.some((schedule) => (
+    schedule.status === 'planned' && deliveryScheduleBelongsToScope(schedule.delivery_date, scheduleScope)
+  )))
+  const financeGroups = useMemo(
+    () => makeFinanceGroups(factory, dateSlice),
+    [dateSlice, factory],
+  )
   const financePayments = makeFinancePayments(financeGroups, financeDrafts)
   const financeInvalid = financeOpen && (
     financeGroups.length === 0 ||
@@ -721,8 +737,8 @@ function FactoryDeliveryEditor({
   const isBarMaterial = isSupplyOrderBarMaterial(aggregate) || longStockPlans.length > 0
 
   useEffect(() => {
-    setScheduleDrafts(makeInitialScheduleDrafts(factory))
-  }, [factory])
+    setScheduleDrafts(buildInitialSupplyOrderScheduleDrafts(factory, todayIsoDate(), dateSlice))
+  }, [dateSlice, factory])
 
   const markOrderedWithPayments = () => {
     const targetKeys = new Set(financePayments.flatMap((payment) => payment.itemKeys))
@@ -763,7 +779,7 @@ function FactoryDeliveryEditor({
     }))
 
     startTransition(async () => {
-      const result = await saveAggregateDeliverySchedule(itemKeys, schedules)
+      const result = await saveAggregateDeliverySchedule(itemKeys, schedules, scheduleScope)
       if (!result.success) {
         toast.error(result.error || 'Не удалось сохранить график поставки')
         return
@@ -786,7 +802,7 @@ function FactoryDeliveryEditor({
       ...current,
       {
         id: `new:${Date.now()}:${current.length}`,
-        delivery_date: factory.supply_delivery_date || factory.production_date || todayIsoDate(),
+        delivery_date: scheduleScope?.replace_delivery_date || factory.supply_delivery_date || factory.production_date || todayIsoDate(),
         quantity: '',
         supplier_id: current[0]?.supplier_id || '',
         piece_length_mm: '',
@@ -801,10 +817,13 @@ function FactoryDeliveryEditor({
 
   const clearSchedule = () => {
     if (!hasPlannedSchedules) return
-    if (!window.confirm('Сбросить все плановые даты графика? Принятые поставки останутся заблокированными.')) return
+    const confirmation = dateSlice
+      ? 'Сбросить график только на эту дату? Остальные даты и принятые поставки не изменятся.'
+      : 'Сбросить все плановые даты графика? Принятые поставки останутся заблокированными.'
+    if (!window.confirm(confirmation)) return
 
     startTransition(async () => {
-      const result = await clearAggregateDeliverySchedule(itemKeys)
+      const result = await clearAggregateDeliverySchedule(itemKeys, scheduleScope)
       if (!result.success) {
         toast.error(result.error || 'Не удалось сбросить график поставки')
         return
@@ -920,7 +939,7 @@ function FactoryDeliveryEditor({
               disabled={isPending}
               onClick={clearSchedule}
             >
-              Сбросить даты
+              {dateSlice ? 'Сбросить эту дату' : 'Сбросить даты'}
             </Button>
           )}
         </div>}
@@ -985,16 +1004,24 @@ function FactoryDeliveryEditor({
         </div>
       )}
 
-      {!isClosed && !requiresRecalculation && (
+      {!isClosed && !requiresRecalculation && (!dateSlice || dateSlice.plannedScheduleCount > 0 || dateSlice.unscheduledQuantity > 0) && (
         <div className="mt-3 rounded-md border border-[#E8ECF0] bg-white p-3">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div className="text-sm font-semibold text-[#1B3A6B]">Полный график поставки</div>
+              <div className="text-sm font-semibold text-[#1B3A6B]">
+                {dateSlice && dateSlice.dateKey !== 'no_supply_date'
+                  ? `График на ${formatDate(dateSlice.dateKey)}`
+                  : 'График поставки'}
+              </div>
               <div className="text-xs text-[#64748B]">
                 План {formatAmount(plannedTotal)} из {formatAmount(remainingQuantity)} {aggregate.unit}
                 {factory.weight_kg !== null && ` · ${formatWeightForQuantity(plannedTotal, factory)}`}
               </div>
-              <div className="text-xs text-[#64748B]">Изменения сохраняют все даты графика целиком и сразу отмечают материал как заказанный.</div>
+              <div className="text-xs text-[#64748B]">
+                {dateSlice
+                  ? 'Изменения относятся только к этой поставке и не затрагивают графики на другие даты.'
+                  : 'Изменения сохраняют график целиком и сразу отмечают материал как заказанный.'}
+              </div>
             </div>
             <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={addDraft}>
               <Plus className="h-3.5 w-3.5" />
@@ -1081,10 +1108,15 @@ function FactoryDeliveryEditor({
             </Button>
             {hasPlannedSchedules && (
               <Button type="button" variant="ghost" size="sm" disabled={isPending} onClick={clearSchedule}>
-                Сбросить плановые даты
+                {dateSlice ? 'Сбросить эту дату' : 'Сбросить плановые даты'}
               </Button>
             )}
           </div>
+        </div>
+      )}
+      {!isClosed && !requiresRecalculation && dateSlice && dateSlice.plannedScheduleCount === 0 && dateSlice.unscheduledQuantity === 0 && (
+        <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          Поставка на эту дату уже принята. Редактирование графика недоступно.
         </div>
       )}
     </section>
@@ -1303,74 +1335,12 @@ function dateCountLabel(count: number) {
   return `${count} ${word}`
 }
 
-function makeInitialScheduleDrafts(factory: SupplyOrderAggregateFactory): ScheduleDraft[] {
-  const plannedGroups = new Map<string, ScheduleGroup>()
-  for (const item of factory.items) {
-    for (const schedule of item.delivery_schedules) {
-      if (schedule.status !== 'planned') continue
-      const key = `${schedule.delivery_date}:${schedule.supplier_id || 'none'}:${schedule.planned_piece_length_mm || 'bulk'}`
-      const current = plannedGroups.get(key) || {
-        key,
-        delivery_date: schedule.delivery_date,
-        supplier_id: schedule.supplier_id,
-        supplier_name: schedule.supplier_name,
-        quantity: 0,
-        received_quantity: 0,
-        piece_length_mm: schedule.planned_piece_length_mm,
-        piece_count: schedule.planned_piece_count,
-      }
-      current.quantity += Number(schedule.quantity || 0)
-      plannedGroups.set(key, current)
-    }
-  }
-
-  const existing = Array.from(plannedGroups.values())
-    .sort((a, b) => a.delivery_date.localeCompare(b.delivery_date))
-    .map((group) => ({
-      id: group.key,
-      delivery_date: group.delivery_date,
-      quantity: String(roundDisplay(group.quantity)),
-      supplier_id: group.supplier_id || '',
-      piece_length_mm: group.piece_length_mm ? String(roundDisplay(group.piece_length_mm)) : '',
-      piece_count: group.piece_count ? String(roundDisplay(group.piece_count)) : '',
-    }))
-
-  if (existing.length > 0) return existing
-
-  const supplierIds = Array.from(new Set(factory.items.map((item) => item.supplier_id).filter(Boolean))) as string[]
-  const defaultSupplierId = supplierIds.length === 1 ? supplierIds[0] : ''
-  const defaultDeliveryDate = factory.supply_delivery_date || factory.production_date || todayIsoDate()
-  const purchase = mergeLongStockPurchasePlans(
-    factory.items.map((item) => item.long_stock_purchase_plan).filter((plan) => plan?.cutting_status === 'plan_approved'),
-  )
-
-  if (purchase.components.length > 0) {
-    return purchase.components.map((component) => ({
-      id: `cutting-plan:${component.length_mm}:${component.is_nonstandard ? 'nonstandard' : 'standard'}`,
-      delivery_date: defaultDeliveryDate,
-      quantity: String(roundDisplay(component.length_mm * component.piece_count)),
-      supplier_id: defaultSupplierId,
-      piece_length_mm: String(roundDisplay(component.length_mm)),
-      piece_count: String(roundDisplay(component.piece_count)),
-    }))
-  }
-
-  const remaining = Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
-  return [{
-    id: 'initial',
-    delivery_date: defaultDeliveryDate,
-    quantity: remaining > 0 ? String(roundDisplay(remaining)) : '',
-    supplier_id: defaultSupplierId,
-    piece_length_mm: '',
-    piece_count: '',
-  }]
-}
-
-function makeDeliveredScheduleGroups(factory: SupplyOrderAggregateFactory) {
+function makeDeliveredScheduleGroups(factory: SupplyOrderAggregateFactory, dateKey?: string) {
   const groups = new Map<string, ScheduleGroup>()
   for (const item of factory.items) {
     for (const schedule of item.delivery_schedules) {
       if (schedule.status !== 'delivered') continue
+      if (dateKey && schedule.delivery_date !== dateKey) continue
       const key = `${schedule.delivery_date}:${schedule.supplier_id || 'none'}`
       const current = groups.get(key) || {
         key,
@@ -1390,7 +1360,7 @@ function makeDeliveredScheduleGroups(factory: SupplyOrderAggregateFactory) {
   return Array.from(groups.values()).sort((a, b) => a.delivery_date.localeCompare(b.delivery_date))
 }
 
-function makeFinanceGroups(factory: SupplyOrderAggregateFactory) {
+function makeFinanceGroups(factory: SupplyOrderAggregateFactory, dateSlice?: SupplyOrderDateSlice) {
   const groups = new Map<string, {
     key: string
     supplierId: string
@@ -1404,6 +1374,7 @@ function makeFinanceGroups(factory: SupplyOrderAggregateFactory) {
     if (item.order_status !== 'pending' && item.order_status !== 'ordered') continue
     const scheduledSuppliers = item.delivery_schedules.filter((schedule) => (
       schedule.status === 'planned' && schedule.supplier_id
+      && (!dateSlice || schedule.delivery_date === dateSlice.dateKey)
     ))
     const financeSources = scheduledSuppliers.length > 0
       ? scheduledSuppliers.map((schedule) => ({
@@ -1411,11 +1382,13 @@ function makeFinanceGroups(factory: SupplyOrderAggregateFactory) {
         supplierName: schedule.supplier_name || 'Поставщик',
         plannedDate: schedule.delivery_date,
       }))
-      : item.supplier_id
+      : item.supplier_id && (!dateSlice || dateSlice.unscheduledQuantity > 0)
         ? [{
           supplierId: item.supplier_id,
           supplierName: item.supplier_name || 'Поставщик',
-          plannedDate: item.supply_delivery_date || factory.supply_delivery_date || factory.production_date || todayIsoDate(),
+          plannedDate: dateSlice?.dateKey && dateSlice.dateKey !== 'no_supply_date'
+            ? dateSlice.dateKey
+            : item.supply_delivery_date || factory.supply_delivery_date || factory.production_date || todayIsoDate(),
         }]
         : []
 
