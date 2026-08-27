@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useId, useMemo, useState, useTransition } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
@@ -36,7 +36,12 @@ import { formatKnifeProfileDimensions, knifeProfileDimensions } from '@/lib/mate
 import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { addReceipt, adjustInventory, convertBusinessScrapToMetal, deleteInventoryItem, type InventoryFactory, type InventoryWithMaterial } from '@/lib/actions/inventory'
 import { createMaterial, recordMaterialUsage, type MaterialWithSupplier } from '@/lib/actions/materials'
-import { appendKnifePieceLengthToSummary } from '@/lib/inventory/knife-piece-length-summary'
+import {
+  appendLongStockPieceLengthToSummary,
+  newMaterialReceiptPieceLength,
+  requiresPhysicalPieceLength,
+  validateNewMaterialPieceLength,
+} from '@/lib/inventory/long-stock-piece-length-summary'
 import type { MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
 import type { SteelType } from '@/lib/types/database'
 
@@ -185,7 +190,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
           pipe_type: value,
           size: '',
           diameter_mm: '',
-          ...(value === 'wire' ? { wall_thickness_mm: '', steel_type_id: '' } : {}),
+          ...(value === 'wire' ? { wall_thickness_mm: '', steel_type_id: '', piece_length_mm: '' } : {}),
         }
         : { ...current.fields, [field]: value },
     } : current)
@@ -198,6 +203,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
       toast.error(validationError)
       return
     }
+    const pieceLength = newMaterialReceiptPieceLength(newMaterialDraft.category, newMaterialDraft.fields)
 
     startTransition(async () => {
       const materialResult = await createMaterial({
@@ -225,7 +231,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
       setReceiptVariant(variantResult.data)
       setReceiptQuantity('')
       setReceiptSecondaryQuantity('')
-      setReceiptPieceLength('')
+      setReceiptPieceLength(pieceLength)
       setReceiptSteelTypeId('')
       setReceiptUnitWeightKg('')
       setNewMaterialDraft(null)
@@ -1020,6 +1026,7 @@ function NewMaterialForm({
 }) {
   const isPipeWire = draft.category === 'pipe' && draft.fields.pipe_type === 'wire'
   const isPipeRound = draft.category === 'pipe' && draft.fields.pipe_type === 'round'
+  const needsPieceLength = requiresPhysicalPieceLength(draft.category, String(draft.fields.pipe_type || ''))
 
   return (
     <div className="mt-4 rounded-lg border border-dashed border-[#BFD0E8] bg-[#F8FBFF] p-4">
@@ -1102,6 +1109,18 @@ function NewMaterialForm({
           </>
         )}
 
+        {needsPieceLength && (
+          <DraftInput
+            label="Длина, мм"
+            type="number"
+            value={draft.fields.piece_length_mm}
+            onChange={(value) => onFieldChange('piece_length_mm', value)}
+            placeholder="Например: 6000"
+            description="Физическая длина будет перенесена в приход и не изменит вариант материала."
+            required
+          />
+        )}
+
         {draft.category === 'paint' && (
           <>
             <DraftInput label="RAL" value={draft.fields.ral_code} onChange={(value) => onFieldChange('ral_code', value)} />
@@ -1156,17 +1175,35 @@ function DraftInput({
   onChange,
   type = 'text',
   placeholder,
+  description,
+  required = false,
 }: {
   label: string
   value: string | boolean | undefined
   onChange: (value: string) => void
   type?: string
   placeholder?: string
+  description?: string
+  required?: boolean
 }) {
+  const inputId = useId()
+  const descriptionId = description ? `${inputId}-description` : undefined
   return (
     <div>
-      <label className="mb-1 block text-sm font-medium text-[#374151]">{label}</label>
-      <Input type={type} value={typeof value === 'boolean' ? String(value) : String(value ?? '')} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+      <label htmlFor={inputId} className="mb-1 block text-sm font-medium text-[#374151]">
+        {label}{required && <><span className="text-red-600" aria-hidden="true"> *</span><span className="sr-only"> (обязательное поле)</span></>}
+      </label>
+      <Input
+        id={inputId}
+        type={type}
+        value={typeof value === 'boolean' ? String(value) : String(value ?? '')}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        required={required}
+        aria-required={required}
+        aria-describedby={descriptionId}
+      />
+      {description && <span id={descriptionId} className="mt-1 block text-xs text-[#6B7280]">{description}</span>}
     </div>
   )
 }
@@ -1396,9 +1433,10 @@ function inventoryCharacteristicsSummary(row: InventoryWithMaterial, steelTypes:
   const variant = row.variant
   if (!category) return '—'
   if (!variant) {
-    return appendKnifePieceLengthToSummary(
+    return appendLongStockPieceLengthToSummary(
       legacyCharacteristicsText(row),
       category,
+      null,
       formatPieceLength(row.piece_length_mm),
     )
   }
@@ -1414,9 +1452,10 @@ function inventoryCharacteristicsSummary(row: InventoryWithMaterial, steelTypes:
     if (category === 'knives' && field.label === 'Высота, мм') return `Высота: ${formatMillimeters(field.value)}`
     return String(field.value)
   })
-  return appendKnifePieceLengthToSummary(
+  return appendLongStockPieceLengthToSummary(
     values.length ? values.join(', ') : legacyCharacteristicsText(row),
     category,
+    variant.pipe_type,
     formatPieceLength(row.piece_length_mm),
   )
 }
@@ -1438,9 +1477,9 @@ function formatAmount(value: number | null | undefined) {
 }
 
 function defaultDraftFields(category: MaterialCategory): Record<string, string | boolean> {
-  if (category === 'circle') return { diameter_mm: '', steel_type_id: '', is_calibrated: false }
-  if (category === 'pipe') return { pipe_type: 'square', steel_type_id: '', size: '', wall_thickness_mm: '', diameter_mm: '' }
-  if (category === 'knives') return { steel_type_id: '', knife_bevel_count: '', width_mm: '', height_mm: '' }
+  if (category === 'circle') return { diameter_mm: '', steel_type_id: '', is_calibrated: false, piece_length_mm: '' }
+  if (category === 'pipe') return { pipe_type: 'square', steel_type_id: '', size: '', wall_thickness_mm: '', diameter_mm: '', piece_length_mm: '' }
+  if (category === 'knives') return { steel_type_id: '', knife_bevel_count: '', width_mm: '', height_mm: '', piece_length_mm: '' }
   if (category === 'paint') return { ral_code: '', finish: '' }
   if (category === 'components') return { diameter_mm: '', specification: '', unit_weight_kg: '' }
   if (category === 'mesh') return { mesh_description: '', mesh_length_mm: '', mesh_width_mm: '' }
@@ -1472,6 +1511,8 @@ function validateDraft(draft: NewMaterialDraft) {
     if (!positiveNumber(draft.fields.width_mm)) return 'Введите ширину ножа'
     if (!positiveNumber(draft.fields.height_mm)) return 'Введите высоту ножа'
   }
+  const pieceLengthError = validateNewMaterialPieceLength(draft.category, draft.fields)
+  if (pieceLengthError) return pieceLengthError
   if (draft.category === 'components') {
     if (!positiveNumber(draft.fields.unit_weight_kg)) return 'Введите вес одной позиции'
   }

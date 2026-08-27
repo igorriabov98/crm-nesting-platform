@@ -15,6 +15,10 @@ import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notificat
 import { formatCompanyLocation } from '@/lib/transport/company-location'
 import { getRequestItemSelect, withPipeSteelGrade } from '@/lib/supply-orders/pipe-steel-grade'
 import { formatSupplyOrderCharacteristicValue } from '@/lib/supply-orders/characteristic-labels'
+import {
+  deliveryScheduleBelongsToScope,
+  type SupplyOrderDeliveryScheduleScope,
+} from '@/lib/supply-orders/delivery-schedule-scope'
 import { normalizeSingleLengthReceipt } from '@/lib/supply-orders/single-length-receipt'
 import { calculateLongStockWeightForLength } from '@/lib/long-stock-material-weight'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
@@ -3396,7 +3400,8 @@ function proportionalWeight(totalWeight: number | null, totalQuantity: number, q
 
 export async function saveAggregateDeliverySchedule(
   items: { table: string; id: string }[],
-  schedules: SupplyOrderAggregateScheduleInput[]
+  schedules: SupplyOrderAggregateScheduleInput[],
+  scope?: SupplyOrderDeliveryScheduleScope,
 ) {
   try {
     const { db, userId } = await requireAccess('manage')
@@ -3423,8 +3428,14 @@ export async function saveAggregateDeliverySchedule(
 
     const existingSchedules = await loadReceivingSchedules(db, selectedItems)
     const existingDeliveredByItem = new Map<string, number>()
+    const normalizedScope = scope
+      ? { replace_delivery_date: assertDateOrNull(scope.replace_delivery_date) }
+      : undefined
     const plannedScheduleIds = existingSchedules
-      .filter((schedule) => schedule.status === 'planned')
+      .filter((schedule) => (
+        schedule.status === 'planned'
+        && deliveryScheduleBelongsToScope(schedule.delivery_date, normalizedScope)
+      ))
       .map((schedule) => schedule.id)
 
     for (const schedule of existingSchedules) {
@@ -3505,7 +3516,10 @@ export async function saveAggregateDeliverySchedule(
   }
 }
 
-export async function clearAggregateDeliverySchedule(items: { table: string; id: string }[]) {
+export async function clearAggregateDeliverySchedule(
+  items: { table: string; id: string }[],
+  scope?: SupplyOrderDeliveryScheduleScope,
+) {
   try {
     const { db } = await requireAccess('manage')
     const groupedItems = groupItemsByTable(items)
@@ -3515,8 +3529,14 @@ export async function clearAggregateDeliverySchedule(items: { table: string; id:
     if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
 
     const existingSchedules = await loadReceivingSchedules(db, selectedItems)
+    const normalizedScope = scope
+      ? { replace_delivery_date: assertDateOrNull(scope.replace_delivery_date) }
+      : undefined
     const plannedScheduleIds = existingSchedules
-      .filter((schedule) => schedule.status === 'planned')
+      .filter((schedule) => (
+        schedule.status === 'planned'
+        && deliveryScheduleBelongsToScope(schedule.delivery_date, normalizedScope)
+      ))
       .map((schedule) => schedule.id)
 
     if (plannedScheduleIds.length > 0) {

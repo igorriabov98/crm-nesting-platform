@@ -5,6 +5,10 @@ import { resolveCompletionWorkspaceNavigation } from '../src/lib/request-complet
 import { ROUTES } from '../src/lib/constants/routes'
 import { classifyBusinessScrapLength } from '../src/lib/inventory/business-scrap-size'
 import { hasSheetMetalForCompletion, isLongStockPlanReadyForSupply } from '../src/lib/request-completion-material-scope'
+import {
+  completionFutureBusinessScrapTotalLength,
+  groupCompletionFutureBusinessScraps,
+} from '../src/lib/request-completion-future-scrap'
 
 assert.deepEqual(calculateWaste(1000, 15.5), { scrapKg: 155, usefulKg: 845 })
 assert.deepEqual(calculateWaste(123.456, 15.5), { scrapKg: 19.136, usefulKg: 104.32 })
@@ -21,6 +25,19 @@ assert.equal(isLongStockPlanReadyForSupply({ versionId: 'approved', planStatus: 
 assert.equal(isLongStockPlanReadyForSupply({ versionId: 'approved', planStatus: 'closed', plannedBarCount: 2 }), true)
 assert.equal(isLongStockPlanReadyForSupply({ versionId: null, planStatus: 'open', plannedBarCount: 2 }), false)
 assert.equal(isLongStockPlanReadyForSupply({ versionId: 'approved', planStatus: 'invalid', plannedBarCount: 2 }), false)
+const groupedFutureScraps = groupCompletionFutureBusinessScraps([
+  { inventoryId: 'future-1', lengthMm: 1200, state: 'future' },
+  { inventoryId: 'future-2', lengthMm: 1200, state: 'future' },
+  { inventoryId: 'available-1', lengthMm: 800, state: 'available' },
+])
+assert.deepEqual(groupedFutureScraps, [
+  { lengthMm: 1200, pieceCount: 2, state: 'future' },
+  { lengthMm: 800, pieceCount: 1, state: 'available' },
+])
+assert.equal(completionFutureBusinessScrapTotalLength([
+  { inventoryId: 'future-1', lengthMm: 1200, state: 'future' },
+  { inventoryId: 'future-2', lengthMm: 1200, state: 'future' },
+]), 2400)
 
 const migration = readFileSync('supabase/migrations/20260729120000_technologist_completion_future_detailing_scrap.sql', 'utf8')
 for (const required of [
@@ -49,6 +66,9 @@ for (const required of [
 const completionAction = readFileSync('src/lib/actions/request-completion.ts', 'utf8')
 assert.ok(completionAction.includes("accountingMode: 'manual_percent' | 'approved_plan'"))
 assert.ok(completionAction.includes("client.rpc('fn_get_long_stock_completion_plan_facts_v1'"))
+assert.ok(completionAction.includes("from('long_stock_cutting_business_scraps')"))
+assert.ok(completionAction.includes(".select('id,piece_length_mm,business_scrap_state,deleted_at')"))
+assert.ok(completionAction.includes('futureBusinessScraps'))
 assert.ok(completionAction.includes('wasteItems: z.array(wasteSchema)'))
 assert.ok(!completionAction.includes('wasteItems: z.array(wasteSchema).min(1)'))
 
@@ -59,6 +79,8 @@ assert.ok(completionWizard.includes('wasteItems: manualWasteItems.map'))
 assert.ok(!completionWizard.includes('wasteItems: workspace.wasteItems.map'))
 assert.ok(completionWizard.includes('{hasSheetMetal && <>'))
 assert.ok(completionWizard.includes('Производственные факты не требуются для передачи заявки снабжению.'))
+assert.ok(completionWizard.includes('Будущие деловые остатки'))
+assert.ok(completionWizard.includes('Ожидает факта резки'))
 assert.ok(!completionWizard.includes('Не все хлысты закрыты фактами'))
 
 const completionStageFix = readFileSync('supabase/migrations/20260824193000_technologist_completion_approved_plan_stage.sql', 'utf8')
