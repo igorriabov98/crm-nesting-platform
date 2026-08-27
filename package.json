@@ -32,7 +32,7 @@
     "test:supply-request-flow": "tsx scripts/test-supply-request-flow.ts",
     "test:user-impersonation": "tsx scripts/test-user-impersonation.ts",
     "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && tsx --test src/lib/supply-orders/manual-allocation.test.ts src/lib/supply-orders/single-length-receipt.test.ts && node scripts/test-supply-partial-receiving.mjs",
-    "test:knife-profile": "tsx --test src/lib/materials/knife-profile.test.ts && node scripts/test-knife-profile-without-length.mjs && node scripts/test-knife-reset-safety.mjs",
+    "test:knife-profile": "tsx --test src/lib/materials/knife-profile.test.ts src/lib/inventory/knife-piece-length-summary.test.ts && node scripts/test-knife-profile-without-length.mjs && node scripts/test-knife-reset-safety.mjs",
     "ops:knife-reset:cleanup": "NODE_OPTIONS=--conditions=react-server NODE_PATH=./node_modules/next/dist/compiled tsx scripts/cleanup-knife-reset-storage.ts",
     "test:supply-receiving-plan-fact": "node scripts/test-supply-receiving-plan-fact.mjs",
     "test:detailing": "node scripts/test-detailing-module.mjs",

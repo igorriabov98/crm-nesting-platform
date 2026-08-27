@@ -36,6 +36,7 @@ import { formatKnifeProfileDimensions, knifeProfileDimensions } from '@/lib/mate
 import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { addReceipt, adjustInventory, convertBusinessScrapToMetal, deleteInventoryItem, type InventoryFactory, type InventoryWithMaterial } from '@/lib/actions/inventory'
 import { createMaterial, recordMaterialUsage, type MaterialWithSupplier } from '@/lib/actions/materials'
+import { appendKnifePieceLengthToSummary } from '@/lib/inventory/knife-piece-length-summary'
 import type { MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
 import type { SteelType } from '@/lib/types/database'
 
@@ -1394,7 +1395,13 @@ function inventoryCharacteristicsSummary(row: InventoryWithMaterial, steelTypes:
   const category = row.material?.category
   const variant = row.variant
   if (!category) return '—'
-  if (!variant) return legacyCharacteristicsText(row)
+  if (!variant) {
+    return appendKnifePieceLengthToSummary(
+      legacyCharacteristicsText(row),
+      category,
+      formatPieceLength(row.piece_length_mm),
+    )
+  }
   const values = characteristicFields(category, variant, steelTypes).map((field) => {
     if (field.label === 'Скос') return `Скос: ${field.value}`
     if (category === 'circle' && field.label === 'Диаметр, мм') return `Диаметр: ${formatMillimeters(field.value)}`
@@ -1407,8 +1414,11 @@ function inventoryCharacteristicsSummary(row: InventoryWithMaterial, steelTypes:
     if (category === 'knives' && field.label === 'Высота, мм') return `Высота: ${formatMillimeters(field.value)}`
     return String(field.value)
   })
-  if (values.length) return values.join(', ')
-  return legacyCharacteristicsText(row)
+  return appendKnifePieceLengthToSummary(
+    values.length ? values.join(', ') : legacyCharacteristicsText(row),
+    category,
+    formatPieceLength(row.piece_length_mm),
+  )
 }
 
 function formatMillimeters(value: CharacteristicField['value']) {
