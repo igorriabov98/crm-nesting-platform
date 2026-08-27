@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { RotateCcw } from 'lucide-react'
+import { ClipboardPenLine, RotateCcw } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -11,7 +11,10 @@ import {
   type LongStockCuttingPlanItemStatus,
 } from '@/lib/actions/long-stock-cutting-plans'
 import type { LongStockRequestItemTable } from '@/lib/long-stock-cutting-plan'
-import { LongStockRecalculationDialog } from './LongStockPositionDialog'
+import {
+  LongStockPlanningRecoveryDialog,
+  LongStockRecalculationDialog,
+} from './LongStockPositionDialog'
 
 type Props = {
   table: LongStockRequestItemTable
@@ -63,16 +66,44 @@ export function LongStockCuttingPlanStatusControl({ table, itemId }: Props) {
             </Button>
           </>
         )}
+        {status === 'planning' && (
+          <>
+            <Badge variant="outline" className="border-red-300 bg-red-50 text-red-800">
+              Карта не утверждена
+            </Badge>
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto p-0 text-xs text-red-800"
+              onClick={() => setDialogOpen(true)}
+            >
+              <ClipboardPenLine className="size-3.5" />Подготовить карту
+            </Button>
+          </>
+        )}
       </div>
-      <LongStockRecalculationDialog
-        requestItem={{ table, id: itemId }}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        onApproved={() => {
-          setStatus('active')
-          router.refresh()
-        }}
-      />
+      {status === 'planning' ? (
+        <LongStockPlanningRecoveryDialog
+          requestItem={{ table, id: itemId }}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          onApproved={() => {
+            setStatus('active')
+            router.refresh()
+          }}
+        />
+      ) : (
+        <LongStockRecalculationDialog
+          requestItem={{ table, id: itemId }}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          onApproved={() => {
+            setStatus('active')
+            router.refresh()
+          }}
+        />
+      )}
     </>
   )
 }

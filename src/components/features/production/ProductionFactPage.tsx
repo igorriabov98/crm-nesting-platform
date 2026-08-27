@@ -614,6 +614,15 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                 ))}
               </ul>
               <p className="mt-2">Снимите блокирующую машину с выбора или утвердите для неё карту раскроя.</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3 border-red-300 bg-white text-red-800 hover:bg-red-50 hover:text-red-900"
+                onClick={() => router.push('/production/cutting-area')}
+              >
+                Открыть участок заготовки
+              </Button>
             </AlertDescription>
           </Alert>
         ) : isCuttingStage && cuttingReadinessComplete && cuttingReadiness.length > 0 ? (

@@ -43,6 +43,33 @@ export function totalLongStockSegmentLength(segments: readonly LongStockPlanSegm
   return segments.reduce((total, segment) => total + segment.lengthMm, 0)
 }
 
+export function assertLongStockRecoverySegmentTotal(
+  segments: readonly LongStockPlanSegmentInput[],
+  expectedTotalLengthMm: number,
+) {
+  const actualTotalLengthMm = totalLongStockSegmentLength(segments)
+  if (Math.abs(actualTotalLengthMm - expectedTotalLengthMm) > 0.001) {
+    throw new Error(`Сумма отрезков должна равняться потребности позиции: ${expectedTotalLengthMm} мм`)
+  }
+}
+
+export function filterLongStockCandidatesByReservedStock(
+  candidates: readonly LongStockCuttingCandidate[],
+  stockLimits: readonly { lengthMm: number; pieceCount: number }[],
+) {
+  const availableByLength = new Map(stockLimits.map((stock) => [stock.lengthMm, stock.pieceCount]))
+  return candidates.filter((candidate) => {
+    const usedByLength = new Map<number, number>()
+    for (const bar of candidate.bars) {
+      if (bar.source !== 'new_stock') continue
+      usedByLength.set(bar.stockLengthMm, (usedByLength.get(bar.stockLengthMm) ?? 0) + 1)
+    }
+    return usedByLength.size === availableByLength.size
+      && Array.from(availableByLength).every(([lengthMm, pieceCount]) =>
+        usedByLength.get(lengthMm) === pieceCount)
+  })
+}
+
 export function candidateWastePercent(candidate: LongStockCuttingCandidate) {
   const totalStockLength = candidate.bars.reduce((total, bar) => total + bar.stockLengthMm, 0)
   return totalStockLength > 0 ? candidate.totalRemainderMm / totalStockLength * 100 : 0
