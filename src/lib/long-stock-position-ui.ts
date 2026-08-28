@@ -1,4 +1,4 @@
-import type { LongStockCuttingCandidate } from '@/lib/long-stock-cutting-solver'
+import type { LongStockCuttingBar, LongStockCuttingCandidate } from '@/lib/long-stock-cutting-solver'
 import type { LongStockManualBarInput, LongStockPlanSegmentInput } from '@/lib/long-stock-cutting-plan'
 
 export type LongStockSegmentRow = {
@@ -121,25 +121,72 @@ export function longStockCutColorMap(lengthsMm: readonly number[]) {
 }
 
 export function candidatePurchaseComposition(candidate: LongStockCuttingCandidate) {
-  const grouped = new Map<number, { count: number; lengthMm: number }>()
-  for (const bar of candidate.bars) {
-    if (bar.source !== 'new_stock') continue
-    const existing = grouped.get(bar.stockLengthMm)
-    grouped.set(bar.stockLengthMm, {
-      lengthMm: bar.stockLengthMm,
-      count: (existing?.count ?? 0) + 1,
-    })
-  }
-  return [...grouped.values()]
-    .sort((left, right) => right.lengthMm - left.lengthMm)
-    .map((group) => `${formatMm(group.lengthMm)} × ${group.count}`)
+  return groupLongStockLengths(candidate.bars.filter((bar) => bar.source === 'new_stock').map((bar) => bar.stockLengthMm))
+    .map((group) => `${formatMm(group.lengthMm)} × ${group.pieceCount}`)
     .join(' + ')
 }
 
 export function candidatePurchaseLengthLabel(candidate: LongStockCuttingCandidate) {
-  if (candidate.newBarCount === 0) return 'Только остатки со склада'
+  if (candidate.newBarCount === 0) return 'Без закупки'
   if (candidate.purchaseLengthsMm.length === 1) return `${formatMm(candidate.purchaseLengthsMm[0])} мм`
   return candidatePurchaseComposition(candidate)
+}
+
+export type LongStockNewBarOrigin = 'purchase' | 'reserved_stock' | 'received_stock'
+
+export function longStockNewBarOrigin(context: {
+  planningRecovery?: { reservedStock: readonly unknown[] } | null
+  recalculation?: { sourceKind: string } | null
+}): LongStockNewBarOrigin {
+  if (context.planningRecovery?.reservedStock.length || context.recalculation?.sourceKind === 'inventory_reconciliation') {
+    return 'reserved_stock'
+  }
+  if (context.recalculation && context.recalculation.sourceKind !== 'supply_return') return 'received_stock'
+  return 'purchase'
+}
+
+export function groupLongStockLengths(lengthsMm: readonly number[]) {
+  const counts = new Map<number, number>()
+  for (const lengthMm of lengthsMm) counts.set(lengthMm, (counts.get(lengthMm) ?? 0) + 1)
+  return [...counts].sort(([left], [right]) => right - left)
+    .map(([lengthMm, pieceCount]) => ({ lengthMm, pieceCount }))
+}
+
+export function formatLongStockComposition(groups: ReturnType<typeof groupLongStockLengths>) {
+  return groups.map(({ lengthMm, pieceCount }) => `${formatMm(lengthMm)} мм × ${pieceCount} шт.`).join(' + ')
+}
+
+export function candidateMaterialBreakdown(candidate: LongStockCuttingCandidate, newBarOrigin: LongStockNewBarOrigin = 'purchase') {
+  const purchaseBars = candidate.bars.filter((bar) => bar.source === 'new_stock' && newBarOrigin === 'purchase')
+  const stockBars = candidate.bars.filter((bar) => bar.source !== 'new_stock' || newBarOrigin !== 'purchase')
+  // Every positive physical remainder stays visible, including pieces below the useful-length threshold.
+  const remnantBars = candidate.bars.filter((bar) => bar.remainderMm > 0)
+  return {
+    stockBars,
+    purchaseBars,
+    remnantBars,
+    stockGroups: groupLongStockLengths(stockBars.map((bar) => bar.stockLengthMm)),
+    purchaseGroups: groupLongStockLengths(purchaseBars.map((bar) => bar.stockLengthMm)),
+    remnantGroups: groupLongStockLengths(remnantBars.map((bar) => bar.remainderMm)),
+    stockLengthMm: stockBars.reduce((sum, bar) => sum + bar.stockLengthMm, 0),
+    purchasedLengthMm: purchaseBars.reduce((sum, bar) => sum + bar.stockLengthMm, 0),
+  }
+}
+
+export function longStockBarSourceLabel(
+  source: LongStockCuttingBar['source'],
+  availableFromDate: string | null,
+  newBarOrigin: LongStockNewBarOrigin = 'purchase',
+) {
+  if (source === 'new_stock') {
+    return newBarOrigin === 'reserved_stock' ? 'Забронированный склад'
+      : newBarOrigin === 'received_stock' ? 'Принятый материал' : 'Закупка'
+  }
+  if (source === 'warehouse_stock') return 'Обычный склад'
+  if (source === 'business_remnant') return 'Деловой остаток'
+  const date = availableFromDate ? new Date(`${availableFromDate}T00:00:00`) : null
+  return date && !Number.isNaN(date.getTime())
+    ? `Будущий остаток до ${new Intl.DateTimeFormat('ru-RU').format(date)}` : 'Будущий остаток'
 }
 
 export function candidatesForLongStockMode(

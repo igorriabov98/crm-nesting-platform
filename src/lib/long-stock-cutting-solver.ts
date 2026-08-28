@@ -1099,7 +1099,15 @@ function compareCandidates(left: LongStockCuttingCandidate, right: LongStockCutt
     || compareSourceFifo(left.bars, right.bars)
     || left.newBarCount - right.newBarCount
     || compareNumberArrays(left.purchaseLengthsMm, right.purchaseLengthsMm)
+    // At equal cost and with the same physical sources, use existing stock
+    // more fully before assigning cuts to purchased bars. A lexical layout
+    // signature must not prefer 8 + 2 over 9 + 1 merely because 1574 < 272 as text.
+    || physicalStockRemainder(left) - physicalStockRemainder(right)
     || layoutSignature(left.bars).localeCompare(layoutSignature(right.bars), 'en')
+}
+
+function physicalStockRemainder(candidate: LongStockCuttingCandidate) {
+  return candidate.bars.reduce((total, bar) => total + (bar.source === 'new_stock' ? 0 : bar.remainderMm), 0)
 }
 
 function compareSourceFifo(left: LongStockCuttingBar[], right: LongStockCuttingBar[]) {

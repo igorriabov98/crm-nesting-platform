@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowDown,
@@ -42,6 +42,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { LongStockCandidateList, LongStockCandidateSummary } from './LongStockCandidateList'
 import {
   approveLongStockRecalculationSafe,
   approveLongStockCuttingPlanVersion,
@@ -67,7 +68,7 @@ import {
 } from '@/lib/actions/technologist-requests'
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import {
-  candidatePurchaseComposition,
+  candidateMaterialBreakdown,
   candidatePurchaseLengthLabel,
   candidateRemainderPreview,
   candidateToManualBars,
@@ -77,9 +78,12 @@ import {
   DEFAULT_MIXED_LONG_STOCK_LENGTHS,
   expandLongStockSegmentRows,
   formatKg,
+  formatLongStockComposition,
   formatMm,
   mergeRefreshedLongStockSources,
   longStockCutColorMap,
+  longStockBarSourceLabel,
+  longStockNewBarOrigin,
   shouldShowBarSegmentLabel,
   totalLongStockSegmentLength,
   type LongStockSegmentRow,
@@ -811,8 +815,9 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
               {showCuttingMatrix && visibleCandidates.length > 0 && (
                 <CuttingLayoutsMatrix
                   id={`${category}-cutting-matrix`}
+                  calculation={calculation}
                   candidates={visibleCandidates}
-                  selectedKey={selectedCandidateKey}
+                  selectedKey={manualMode ? null : selectedCandidateKey}
                   bestKey={bestCandidateKey}
                   onSelect={chooseCandidate}
                 />
@@ -821,17 +826,19 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
               {visibleCandidates.length > 0 ? mixedLengths ? (
                 <MixedCandidateList
                   candidates={visibleCandidates}
-                  selectedKey={selectedCandidateKey}
+                  selectedKey={manualMode ? null : selectedCandidateKey}
                   bestKey={bestCandidateKey}
                   weightPerMeterKg={calculation.weightPerMeterKg}
+                  calculation={calculation}
                   onSelect={chooseCandidate}
                 />
               ) : (
                 <CandidateMatrix
                   candidates={visibleCandidates}
-                  selectedKey={selectedCandidateKey}
+                  selectedKey={manualMode ? null : selectedCandidateKey}
                   bestKey={bestCandidateKey}
                   weightPerMeterKg={calculation.weightPerMeterKg}
+                  calculation={calculation}
                   minimumUsefulLengthMm={minimumUsefulLengthMm}
                   onSelect={chooseCandidate}
                 />
@@ -852,6 +859,8 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
                   </AlertDescription>
                 </Alert>
               )}
+
+              {manualMode && <p className="text-sm text-amber-800">Сейчас редактируется ручная раскладка. Выбор другой комбинации отменит ручные изменения; её сводка откроется заново.</p>}
 
               {selectedCandidate && (
                 <div className="space-y-4 rounded-xl border bg-white p-4">
@@ -1264,6 +1273,7 @@ export function LongStockPlanningRecoveryDialog({
                   {showCuttingMatrix && (
                     <CuttingLayoutsMatrix
                       id="planning-recovery-cutting-matrix"
+                      calculation={calculation}
                       candidates={visibleCandidates}
                       selectedKey={selectedCandidateKey}
                       bestKey={bestCandidateKey}
@@ -1276,6 +1286,7 @@ export function LongStockPlanningRecoveryDialog({
                       selectedKey={selectedCandidateKey}
                       bestKey={bestCandidateKey}
                       weightPerMeterKg={calculation.weightPerMeterKg}
+                      calculation={calculation}
                       onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
                     />
                   ) : (
@@ -1284,6 +1295,7 @@ export function LongStockPlanningRecoveryDialog({
                       selectedKey={selectedCandidateKey}
                       bestKey={bestCandidateKey}
                       weightPerMeterKg={calculation.weightPerMeterKg}
+                      calculation={calculation}
                       minimumUsefulLengthMm={minimumUsefulLengthMm}
                       onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
                     />
@@ -1572,6 +1584,7 @@ export function LongStockRecalculationDialog({
                   {showCuttingMatrix && (
                     <CuttingLayoutsMatrix
                       id="recalculation-cutting-matrix"
+                      calculation={calculation}
                       candidates={visibleCandidates}
                       selectedKey={selectedCandidateKey}
                       bestKey={bestCandidateKey}
@@ -1584,6 +1597,7 @@ export function LongStockRecalculationDialog({
                       selectedKey={selectedCandidateKey}
                       bestKey={bestCandidateKey}
                       weightPerMeterKg={calculation.weightPerMeterKg}
+                      calculation={calculation}
                       onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
                     />
                   ) : (
@@ -1592,6 +1606,7 @@ export function LongStockRecalculationDialog({
                       selectedKey={selectedCandidateKey}
                       bestKey={bestCandidateKey}
                       weightPerMeterKg={calculation.weightPerMeterKg}
+                      calculation={calculation}
                       minimumUsefulLengthMm={minimumUsefulLengthMm}
                       onSelect={(candidate) => setSelectedCandidateKey(candidate.key)}
                     />
@@ -2002,6 +2017,7 @@ function CandidateMatrix({
   selectedKey,
   bestKey,
   weightPerMeterKg,
+  calculation,
   minimumUsefulLengthMm,
   onSelect,
 }: {
@@ -2009,9 +2025,11 @@ function CandidateMatrix({
   selectedKey: string | null
   bestKey: string | null
   weightPerMeterKg: number | null
+  calculation: Calculation
   minimumUsefulLengthMm: number
   onSelect: (candidate: LongStockCuttingCandidate) => void
 }) {
+  const newBarOrigin = longStockNewBarOrigin(calculation)
   const hasShortRemainders = candidates.some((candidate) => candidate.bars.some(
     (bar) => bar.remainderMm > 0 && bar.remainderMm < minimumUsefulLengthMm,
   ))
@@ -2021,8 +2039,8 @@ function CandidateMatrix({
         <table className="min-w-[980px] w-full text-sm">
           <thead className="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-4 py-3">Длина хлыста</th>
-              <th className="px-4 py-3 text-right">Хлыстов</th>
+              <th className="px-4 py-3">Состав хлыстов</th>
+              <th className="px-4 py-3 text-right">В закупку, шт.</th>
               <th className="px-4 py-3 text-right">Закупаемая длина</th>
               <th className="px-4 py-3 text-right">Излишек, мм</th>
               <th className="px-4 py-3 text-right">Остатки</th>
@@ -2034,9 +2052,10 @@ function CandidateMatrix({
             {candidates.map((candidate) => {
               const selected = candidate.key === selectedKey
               const best = candidate.key === bestKey
+              const breakdown = candidateMaterialBreakdown(candidate, newBarOrigin)
               return (
+                <Fragment key={candidate.key}>
                 <tr
-                  key={candidate.key}
                   className={cn(
                     'cursor-pointer border-t transition-colors hover:bg-blue-50/60',
                     best && 'bg-emerald-50/70',
@@ -2047,13 +2066,15 @@ function CandidateMatrix({
                   <td className="px-4 py-3">
                     <label className="flex cursor-pointer items-center gap-3 font-medium text-slate-900">
                       <input type="radio" name="long-stock-candidate" checked={selected} onChange={() => onSelect(candidate)} />
-                      <span>{candidatePurchaseLengthLabel(candidate)}</span>
+                      <span>{breakdown.purchaseBars.length ? candidatePurchaseLengthLabel(candidate) : 'Без закупки'}</span>
                       {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
                       {candidate.usesNonstandardLength && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700"><Sparkles />Нестандартная</Badge>}
                     </label>
+                    <p className="mt-2 text-xs text-slate-600">Со склада: {formatLongStockComposition(breakdown.stockGroups) || 'не используется'}</p>
+                    <p className="mt-1 text-xs text-slate-600">В закупку: {formatLongStockComposition(breakdown.purchaseGroups) || 'не требуется'}</p>
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">{candidate.newBarCount}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{formatMm(candidate.purchasedLengthMm)} мм</td>
+                  <td className="px-4 py-3 text-right tabular-nums">{breakdown.purchaseBars.length}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">{formatMm(breakdown.purchasedLengthMm)} мм</td>
                   <td className="px-4 py-3 text-right tabular-nums">{formatMm(candidate.totalRemainderMm)}</td>
                   <td className="px-4 py-3 text-right">
                     <RemainderComposition candidate={candidate} minimumUsefulLengthMm={minimumUsefulLengthMm} />
@@ -2061,6 +2082,12 @@ function CandidateMatrix({
                   <td className="px-4 py-3 text-right tabular-nums">{formatKg(remainderWeight(candidate, weightPerMeterKg))}</td>
                   <td className="px-4 py-3"><ChevronRight className={cn('size-4 text-slate-400', selected && 'rotate-90 text-blue-600')} /></td>
                 </tr>
+                {selected && (
+                  <tr><td colSpan={7} className="border-t border-blue-200 bg-blue-50/20">
+                    <LongStockCandidateSummary candidate={candidate} minimumUsefulLengthMm={minimumUsefulLengthMm} sources={calculation.stockSources} newBarOrigin={newBarOrigin} />
+                  </td></tr>
+                )}
+                </Fragment>
               )
             })}
           </tbody>
@@ -2077,17 +2104,20 @@ function CandidateMatrix({
 
 function CuttingLayoutsMatrix({
   id,
+  calculation,
   candidates,
   selectedKey,
   bestKey,
   onSelect,
 }: {
   id: string
+  calculation: Calculation
   candidates: LongStockCuttingCandidate[]
   selectedKey: string | null
   bestKey: string | null
   onSelect: (candidate: LongStockCuttingCandidate) => void
 }) {
+  const newBarOrigin = longStockNewBarOrigin(calculation)
   return (
     <div id={id} className="max-h-[480px] overflow-auto rounded-xl border bg-white" role="region" aria-label="Вся матрица раскладки по отрезкам">
       <table className="min-w-[880px] w-full text-sm">
@@ -2121,7 +2151,7 @@ function CuttingLayoutsMatrix({
                       onClick={() => onSelect(candidate)}
                       className="rounded-md text-left font-semibold text-slate-900 outline-none hover:text-blue-700 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
                     >
-                      {candidatePurchaseLengthLabel(candidate)}
+                      {newBarOrigin === 'purchase' ? candidatePurchaseLengthLabel(candidate) : 'Без закупки'}
                     </button>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
@@ -2131,11 +2161,9 @@ function CuttingLayoutsMatrix({
                 )}
                 <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-800">
                   №{bar.barNumber} · {formatMm(bar.stockLengthMm)} мм
-                  {bar.source !== 'new_stock' && (
-                    <span className="mt-1 block text-xs font-normal text-slate-500">
-                      {longStockBarSourceLabel(bar.source, bar.availableFromDate)}
-                    </span>
-                  )}
+                  <span className="mt-1 block text-xs font-normal text-slate-500">
+                    {longStockBarSourceLabel(bar.source, bar.availableFromDate, newBarOrigin)}
+                  </span>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-1.5">
@@ -2190,48 +2218,24 @@ function RemainderComposition({
 }
 
 function MixedCandidateList({
-  candidates,
-  selectedKey,
-  bestKey,
-  weightPerMeterKg,
-  onSelect,
+  calculation,
+  ...props
 }: {
   candidates: LongStockCuttingCandidate[]
   selectedKey: string | null
   bestKey: string | null
   weightPerMeterKg: number | null
+  calculation: Calculation
   onSelect: (candidate: LongStockCuttingCandidate) => void
 }) {
   return (
-    <div className="space-y-2">
-      {candidates.map((candidate) => {
-        const selected = candidate.key === selectedKey
-        const best = candidate.key === bestKey
-        return (
-          <button
-            key={candidate.key}
-            type="button"
-            onClick={() => onSelect(candidate)}
-            className={cn(
-              'grid w-full gap-3 rounded-xl border bg-white p-4 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40 md:grid-cols-[minmax(0,1fr)_repeat(3,auto)] md:items-center',
-              best && 'border-emerald-300 bg-emerald-50/70',
-              selected && 'ring-2 ring-blue-500',
-            )}
-          >
-            <span>
-              <span className="flex flex-wrap items-center gap-2 font-semibold text-slate-900">
-                {candidatePurchaseComposition(candidate)}
-                {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
-                {candidate.usesNonstandardLength && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700"><Sparkles />Есть нестандартная</Badge>}
-              </span>
-            </span>
-            <Metric label="Закупка" value={`${formatMm(candidate.purchasedLengthMm)} мм`} />
-            <Metric label="Излишек" value={`${formatMm(candidate.totalRemainderMm)} мм`} />
-            <Metric label="Излишек" value={formatWeight(remainderWeight(candidate, weightPerMeterKg))} />
-          </button>
-        )
-      })}
-    </div>
+    <LongStockCandidateList
+      {...props}
+      sources={calculation.stockSources}
+      newBarOrigin={longStockNewBarOrigin(calculation)}
+      minimumUsefulLengthMm={calculation.settingsSnapshot.categories
+        .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0}
+    />
   )
 }
 
@@ -2240,6 +2244,8 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function LayoutPreview({ candidate, calculation }: { candidate: LongStockCuttingCandidate; calculation: Calculation }) {
+  const newBarOrigin = longStockNewBarOrigin(calculation)
+  const breakdown = candidateMaterialBreakdown(candidate, newBarOrigin)
   const minimumUsefulLengthMm = calculation.settingsSnapshot.categories
     .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0
   const cutColors = longStockCutColorMap(candidate.bars.flatMap((bar) => bar.cuts.map((cut) => cut.lengthMm)))
@@ -2250,7 +2256,8 @@ function LayoutPreview({ candidate, calculation }: { candidate: LongStockCutting
         <Badge variant="outline">Деловые остатки: {candidate.businessRemnantBarCount}</Badge>
         <Badge variant="outline">Будущие зависимости: {candidate.futureBusinessRemnantBarCount}</Badge>
         <Badge variant="outline">Переводы: {candidate.transferBarCount}</Badge>
-        <Badge variant="outline">Закупка: {candidate.newBarCount} шт. · {formatMm(candidate.purchasedLengthMm)} мм</Badge>
+        {newBarOrigin !== 'purchase' && <Badge variant="outline">{longStockBarSourceLabel('new_stock', null, newBarOrigin)}: {candidate.newBarCount} шт.</Badge>}
+        <Badge variant="outline">Закупка: {breakdown.purchaseBars.length} шт. · {formatMm(breakdown.purchasedLengthMm)} мм</Badge>
       </div>
       {candidate.bars.map((bar) => (
         <div key={bar.barNumber} className="rounded-lg border p-3">
@@ -2258,7 +2265,7 @@ function LayoutPreview({ candidate, calculation }: { candidate: LongStockCutting
             <div className="flex items-center gap-2 font-medium text-slate-900">
               Хлыст №{bar.barNumber}
               <Badge variant="outline">{formatMm(bar.stockLengthMm)} мм</Badge>
-              <Badge variant="secondary">{longStockBarSourceLabel(bar.source, bar.availableFromDate)}</Badge>
+              <Badge variant="secondary">{longStockBarSourceLabel(bar.source, bar.availableFromDate, newBarOrigin)}</Badge>
               {bar.requiresTransfer && (
                 <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
                   {longStockTransferLabel(bar.sourceInventoryId, calculation)}
@@ -2288,13 +2295,6 @@ function LayoutPreview({ candidate, calculation }: { candidate: LongStockCutting
       ))}
     </div>
   )
-}
-
-function longStockBarSourceLabel(source: LongStockCuttingCandidate['bars'][number]['source'], availableFromDate: string | null) {
-  if (source === 'new_stock') return 'Закупка'
-  if (source === 'warehouse_stock') return 'Обычный склад'
-  if (source === 'business_remnant') return 'Деловой остаток'
-  return availableFromDate ? `Будущий остаток до ${formatLongStockDate(availableFromDate)}` : 'Будущий остаток'
 }
 
 function longStockTransferLabel(inventoryId: string | null, calculation: Calculation) {
@@ -2579,10 +2579,6 @@ function remainderWeight(candidate: LongStockCuttingCandidate, weightPerMeterKg:
   if (weightPerMeterKg === null) return null
   const weight = Number(weightPerMeterKg)
   return Number.isFinite(weight) && weight > 0 ? candidate.totalRemainderMm / 1000 * weight : null
-}
-
-function formatWeight(value: number | null) {
-  return value === null ? '—' : `${formatKg(value)} кг`
 }
 
 function manualReasonReady(reason: string, text: string) {
