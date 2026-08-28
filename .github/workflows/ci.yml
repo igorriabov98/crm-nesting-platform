@@ -32,6 +32,8 @@ jobs:
         run: npx tsc --noEmit
       - name: Access control registry and policies
         run: npm run test:access-control
+      - name: Material search authorization and performance
+        run: npm run test:material-search-performance
       - name: Product PDF and STEP upload rules
         run: npm run test:product-file-uploads
       - name: Restricted product production drawing rules

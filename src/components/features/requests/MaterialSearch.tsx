@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { Loader2, PackageSearch, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { createMaterial, searchMaterialsWithVariants, type MaterialSearchBundle, type MaterialVariantWithSteelType, type MaterialWithSupplier } from '@/lib/actions/materials'
+import { createMaterial, type MaterialSearchBundle, type MaterialVariantWithSteelType, type MaterialWithSupplier } from '@/lib/actions/materials'
 import { CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGORY_LABELS, PIPE_SUBTYPE_LABELS, defaultMaterialNameForCategory } from '@/lib/constants/procurement'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
@@ -72,7 +72,13 @@ async function loadMaterialSearchBundle(
   const running = materialSearchInFlight.get(key)
   if (running) return running
 
-  const request = searchMaterialsWithVariants(query, category, allowCrossCategoryFallback)
+  const params = new URLSearchParams({ q: query })
+  if (category) params.set('category', category)
+  if (allowCrossCategoryFallback) params.set('fallback', '1')
+  const request = fetch(`/api/materials/search?${params}`, { cache: 'no-store' })
+    .then(async (response) => response.ok
+      ? await response.json() as { data: MaterialSearchBundle | null }
+      : { data: null })
     .then((result) => {
       if (!result.data) return null
       if (materialSearchCache.size >= MATERIAL_SEARCH_CACHE_LIMIT) {
@@ -85,6 +91,7 @@ async function loadMaterialSearchBundle(
       })
       return result.data
     })
+    .catch(() => null)
     .finally(() => materialSearchInFlight.delete(key))
   materialSearchInFlight.set(key, request)
   return request
@@ -108,6 +115,7 @@ export function MaterialSearch({
   const [materials, setMaterials] = useState<MaterialWithSupplier[]>([])
   const [variants, setVariants] = useState<Record<string, MaterialVariantWithSteelType[]>>({})
   const [open, setOpen] = useState(false)
+  const [searchFailed, setSearchFailed] = useState(false)
   const [localSelection, setLocalSelection] = useState<{ id: string; name: string } | null>(null)
   const [dropdownRect, setDropdownRect] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -219,9 +227,13 @@ export function MaterialSearch({
         if (normalizeMaterialName(queryRef.current) !== normalized) return
         if (suppressedQueryRef.current === normalized) return
         if (result) {
+          setSearchFailed(false)
           setMaterials(result.materials)
           setVariants((current) => ({ ...current, ...result.variantsByMaterialId }))
           openDropdown()
+        } else {
+          setSearchFailed(true)
+          setMaterials([])
         }
       })
     }, 100)
@@ -288,6 +300,7 @@ export function MaterialSearch({
             setLocalSelection(null)
             suppressedQueryRef.current = null
             setQuery(nextValue)
+            setSearchFailed(false)
             if (nextValue.trim().length < 2) {
               setMaterials([])
               setOpen(false)
@@ -369,7 +382,9 @@ export function MaterialSearch({
             )
           })}
 
-          {visibleMaterials.length === 0 && <div className="px-2 py-3 text-sm text-slate-500">Материалы не найдены</div>}
+          {visibleMaterials.length === 0 && <div className="px-2 py-3 text-sm text-slate-500" role="status">
+            {isPending ? 'Ищу материалы…' : searchFailed ? 'Не удалось загрузить материалы. Повторите поиск.' : 'Материалы не найдены'}
+          </div>}
           {canCreate && category && (
             <Button type="button" variant="ghost" size="sm" className="mt-2 w-full justify-start" onClick={createNew}>
               <Plus className="mr-2 h-4 w-4" />

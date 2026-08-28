@@ -5,7 +5,7 @@ import { ACTIVE_MATERIAL_CATEGORIES, CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGOR
 import { ROUTES } from '@/lib/constants/routes'
 import { requireKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
-import { requirePermission } from '@/lib/permissions/server'
+import { requirePermission, requireReadPermissionDataClient } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import type { Material, MaterialCategory, MaterialVariant, Supplier } from '@/lib/types'
 
@@ -51,8 +51,11 @@ type MaterialUsageInput = {
 }
 
 async function requireMaterialPermission(operation: PermissionOperation = 'view') {
-  const { supabase, userId, role } = await requirePermission('materials', operation)
-  return { db: supabase as unknown as LooseDb, userId, role }
+  const permission = operation === 'view'
+    ? await requireReadPermissionDataClient('materials')
+    : await requirePermission('materials', operation)
+  const { supabase, userId } = permission
+  return { db: supabase as unknown as LooseDb, userId }
 }
 
 function text(value: unknown) {

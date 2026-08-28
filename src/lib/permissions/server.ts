@@ -2,7 +2,7 @@ import 'server-only'
 
 import { cache } from 'react'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { getCurrentUserContext } from '@/lib/auth/current-user'
+import { AuthRequiredError, getCurrentUserContext } from '@/lib/auth/current-user'
 import {
   resolveDepartmentPermissions,
   shouldUseLegacyPermissionFallback,
@@ -175,11 +175,13 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
   const supabase = await createServerSupabaseClient()
   const db = supabase as unknown as PermissionDb
 
-  const { data: userData, error: userError } = await db
-    .from('users')
-    .select('id, role, is_active')
-    .eq('id', userId)
-    .maybeSingle()
+  const [userResult, membershipResult] = await Promise.all([
+    db.from('users').select('id, role, is_active').eq('id', userId).maybeSingle(),
+    db.from('department_members')
+      .select('department_id, position_id, is_department_head, department:departments(id, name), position:positions(id, name, level)')
+      .eq('user_id', userId),
+  ])
+  const { data: userData, error: userError } = userResult
 
   const userRow = userData as { id: string; role: UserRole | null; is_active: boolean | null } | null
   if (userError || !userRow || userRow.is_active === false) {
@@ -193,10 +195,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
     }
   }
 
-  const { data: membershipData, error: membershipError } = await db
-    .from('department_members')
-    .select('department_id, position_id, is_department_head, department:departments(id, name), position:positions(id, name, level)')
-    .eq('user_id', userId)
+  const { data: membershipData, error: membershipError } = membershipResult
 
   if (membershipError) {
     throw new Error(membershipError.message || 'Не удалось проверить отделы пользователя')
@@ -305,6 +304,19 @@ export async function requireAnyPermission(requirements: readonly PermissionRequ
 
 export async function requirePermission(resourceKey: ResourceKey, operation: PermissionOperation) {
   return requireAnyPermission([{ resourceKey, operation }])
+}
+
+// Read-only lookups need authorization, not the factory/UI profile context.
+// Reuse the same live Auth validation and permission resolver as other actions.
+export async function requireReadPermissionDataClient(resourceKey: ResourceKey) {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user }, error } = await supabase.auth.getUser()
+  if (error || !user) throw new AuthRequiredError()
+  const permissionDetails = await getCurrentUserPermissions(user.id)
+  if (!hasPermission(permissionDetails.permissions, resourceKey, 'view')) {
+    throw new PermissionDeniedError(resourceKey, 'view')
+  }
+  return { supabase, userId: user.id }
 }
 
 export async function requireAccessSettingsPermission() {

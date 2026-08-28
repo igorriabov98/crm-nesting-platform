@@ -23,8 +23,9 @@ const currentUserSource = await readFile(
   'utf8',
 )
 
-test('material search receives materials and variants in one server action', () => {
-  assert.match(materialSearchSource, /searchMaterialsWithVariants/)
+test('material search receives materials and variants without the serialized server-action queue', () => {
+  assert.match(materialSearchSource, /fetch\(`\/api\/materials\/search\?/)
+  assert.doesNotMatch(materialSearchSource, /searchMaterialsWithVariants\(/)
   assert.doesNotMatch(materialSearchSource, /getMaterialVariants/)
   assert.match(materialActionsSource, /\.in\('material_id', materialIds\)/)
   assert.match(materialActionsSource, /variantsByMaterialId/)
@@ -45,6 +46,14 @@ test('trusted CRM admin context skips duplicate permission queries', () => {
   assert.match(permissionSource, /getCurrentContextAdminPermissions\(context\.user\)/)
   assert.match(permissionSource, /\?\? await getCurrentUserPermissions\(context\.user\.id\)/)
   assert.match(currentUserSource, /const \[profileResult, membershipResult\] = await Promise\.all/)
+})
+
+test('read-only material search reuses live authorization without loading factory context', () => {
+  assert.match(materialActionsSource, /operation === 'view'/)
+  assert.match(materialActionsSource, /requireReadPermissionDataClient\('materials'\)/)
+  assert.doesNotMatch(permissionSource, /supabase\.auth\.getClaims\(\)/)
+  assert.match(permissionSource, /supabase\.auth\.getUser\(\)/)
+  assert.match(permissionSource, /const \[userResult, membershipResult\] = await Promise\.all/)
 })
 
 test('search debounce is short enough for interactive use', () => {
