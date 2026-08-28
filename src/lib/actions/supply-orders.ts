@@ -3311,6 +3311,7 @@ function revalidateSupplyOrderPaths(machineIds: string[] = []) {
   revalidatePath(ROUTES.INVENTORY)
   revalidatePath(ROUTES.INVENTORY_RECEIVING)
   revalidatePath(ROUTES.PRODUCTION)
+  revalidatePath(ROUTES.PRODUCTION_CUTTING_AREA)
   revalidatePath(ROUTES.GANTT)
   revalidatePath(ROUTES.SALES_PLAN)
   revalidatePath(ROUTES.TASKS)

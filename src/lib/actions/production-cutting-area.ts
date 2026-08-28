@@ -25,6 +25,12 @@ import {
   formatLongStockMaterialVariant,
   parseLongStockCuttingPlanPdfMetadata,
 } from '@/lib/long-stock-cutting-plan-pdf'
+import { loadCuttingAreaMaterialSummaries } from '@/lib/production-cutting-area/load-materials'
+import {
+  emptyCuttingAreaMaterialSummary,
+  mergeCuttingAreaMaterialSummaries,
+  type CuttingAreaMaterialSummary,
+} from '@/lib/production-cutting-area/materials'
 
 export type CuttingAreaQueueStatus = 'waiting' | 'in_progress' | 'completed'
 
@@ -54,6 +60,7 @@ export type CuttingAreaOrder = {
   cycleNumber: number | null
   canStart: boolean
   startBlocker: string | null
+  materials: CuttingAreaMaterialSummary
 }
 
 export type CuttingAreaWorkspace = {
@@ -83,6 +90,7 @@ export type CuttingAreaRequestDetails = {
   completion: null | { enteredMinutes: number; addedMinutes: number; actualMinutes: number; finalizedAt: string }
   archives: CuttingAreaArchive[]
   cuttingPlans: CuttingAreaCuttingPlanCard[]
+  materials: CuttingAreaMaterialSummary
 }
 
 export type CuttingAreaCuttingPlanCard = {
@@ -241,7 +249,10 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
   const requests = requestResult.data || []
   const completions = completionResult.data || []
   const completionByRequest = new Map(completions.map((completion: any) => [completion.request_id, completion]))
-  const covered = await loadCoveredRequestIds(db, requests.map((request: any) => request.id))
+  const [covered, materialSummaries] = await Promise.all([
+    loadCoveredRequestIds(db, requests.map((request: any) => request.id)),
+    loadCuttingAreaMaterialSummaries(db, visibleMachines.map((machine: any) => machine.factory_id), requests.map((request: any) => request.id)),
+  ])
   const cyclesByMachine = new Map<string, any[]>()
   for (const cycle of cycleResult.data || []) {
     const rows = cyclesByMachine.get(cycle.machine_id) || []
@@ -285,6 +296,7 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
       cycleNumber: active?.cycle_number || latest?.cycle_number || null,
       canStart: !startBlocker,
       startBlocker,
+      materials: mergeCuttingAreaMaterialSummaries(machineRequests.map((request: any) => materialSummaries.get(request.id) || emptyCuttingAreaMaterialSummary())),
     }
   })
 
@@ -329,12 +341,13 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
     const requestIds = requests.map((request: any) => request.id)
     const productIds = Array.from(new Set(items.map((item: any) => item.product_id).filter(Boolean))) as string[]
     const projectIds = Array.from(new Set(items.map((item: any) => item.product_project_id).filter(Boolean))) as string[]
-    const [completionResult, archiveResult, currentVersionResult, projectResult, cuttingPlanItemResult] = await Promise.all([
+    const [completionResult, archiveResult, currentVersionResult, projectResult, cuttingPlanItemResult, materialSummaries] = await Promise.all([
       requestIds.length ? db.from('technologist_request_completions').select('id,request_id,entered_plasma_minutes,added_plasma_minutes,actual_plasma_minutes,finalized_at,state').in('request_id', requestIds).eq('state', 'finalized') : { data: [], error: null },
       requestIds.length ? db.from('machine_cutting_archives').select('id,request_id,file_name,file_size,uploaded_at,uploaded_by').in('request_id', requestIds).order('uploaded_at', { ascending: false }) : { data: [], error: null },
       productIds.length ? db.from('product_versions').select('id,product_id').in('product_id', productIds).eq('status', 'current') : { data: [], error: null },
       projectIds.length ? db.from('product_projects').select('id,approved_version_id').in('id', projectIds) : { data: [], error: null },
       requestIds.length ? db.from('long_stock_cutting_plan_items').select('plan_id,request_id').in('request_id', requestIds) : { data: [], error: null },
+      loadCuttingAreaMaterialSummaries(db, [machine.data.factory_id], requestIds),
     ])
     for (const result of [completionResult, archiveResult, currentVersionResult, projectResult, cuttingPlanItemResult]) if (result.error) throw new Error(result.error.message)
 
@@ -416,6 +429,7 @@ export async function getProductionCuttingAreaDetails(machineId: string) {
         return {
           id: request.id, number: index + 1, createdAt: request.created_at,
           authorName: userNames.get(request.created_by) || 'Технолог', status: request.status,
+          materials: materialSummaries.get(request.id) || emptyCuttingAreaMaterialSummary(),
           completion: completion ? { enteredMinutes: completion.entered_plasma_minutes, addedMinutes: completion.added_plasma_minutes, actualMinutes: completion.actual_plasma_minutes, finalizedAt: completion.finalized_at } : null,
           archives: (archiveResult.data || []).filter((archive: any) => archive.request_id === request.id).map((archive: any) => ({
             id: archive.id, fileName: archive.file_name, fileSize: Number(archive.file_size), uploadedAt: archive.uploaded_at,
