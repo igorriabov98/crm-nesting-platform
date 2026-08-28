@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { Loader2, PackageSearch, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { createMaterial, getMaterialVariants, searchMaterials, type MaterialVariantWithSteelType, type MaterialWithSupplier } from '@/lib/actions/materials'
+import { createMaterial, searchMaterialsWithVariants, type MaterialSearchBundle, type MaterialVariantWithSteelType, type MaterialWithSupplier } from '@/lib/actions/materials'
 import { CHAIN_CORD_SUBTYPE_LABELS, MATERIAL_CATEGORY_LABELS, PIPE_SUBTYPE_LABELS, defaultMaterialNameForCategory } from '@/lib/constants/procurement'
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
@@ -31,6 +31,46 @@ type MaterialSearchProps = {
 }
 
 const MATERIAL_SEARCH_OPEN_EVENT = 'crm:material-search-open'
+const MATERIAL_SEARCH_CACHE_TTL_MS = 5 * 60 * 1000
+const MATERIAL_SEARCH_CACHE_LIMIT = 100
+const materialSearchCache = new Map<string, { data: MaterialSearchBundle; expiresAt: number }>()
+const materialSearchInFlight = new Map<string, Promise<MaterialSearchBundle | null>>()
+
+function clearMaterialSearchCache() {
+  materialSearchCache.clear()
+  materialSearchInFlight.clear()
+}
+
+async function loadMaterialSearchBundle(
+  key: string,
+  query: string,
+  category: MaterialCategory | null | undefined,
+  allowCrossCategoryFallback: boolean,
+) {
+  const cached = materialSearchCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.data
+  if (cached) materialSearchCache.delete(key)
+
+  const running = materialSearchInFlight.get(key)
+  if (running) return running
+
+  const request = searchMaterialsWithVariants(query, category, allowCrossCategoryFallback)
+    .then((result) => {
+      if (!result.data) return null
+      if (materialSearchCache.size >= MATERIAL_SEARCH_CACHE_LIMIT) {
+        const oldestKey = materialSearchCache.keys().next().value
+        if (oldestKey) materialSearchCache.delete(oldestKey)
+      }
+      materialSearchCache.set(key, {
+        data: result.data,
+        expiresAt: Date.now() + MATERIAL_SEARCH_CACHE_TTL_MS,
+      })
+      return result.data
+    })
+    .finally(() => materialSearchInFlight.delete(key))
+  materialSearchInFlight.set(key, request)
+  return request
+}
 
 export function MaterialSearch({
   category,
@@ -53,7 +93,6 @@ export function MaterialSearch({
   const [localSelection, setLocalSelection] = useState<{ id: string; name: string } | null>(null)
   const [dropdownRect, setDropdownRect] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null)
   const [isPending, startTransition] = useTransition()
-  const cache = useRef(new Map<string, MaterialWithSupplier[]>())
   const rootRef = useRef<HTMLDivElement | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const queryRef = useRef(query)
@@ -146,48 +185,24 @@ export function MaterialSearch({
       return () => window.clearTimeout(timer)
     }
 
-    const key = `${category ?? 'all'}:${normalized}`
+    const key = `${category ?? 'all'}:${allowCrossCategoryFallback ? 'fallback' : 'strict'}:${normalized}`
     const timer = window.setTimeout(() => {
       if (normalizeMaterialName(queryRef.current) !== normalized) return
       if (suppressedQueryRef.current === normalized) return
-      if (cache.current.has(key)) {
-        setMaterials(cache.current.get(key) || [])
-        openDropdown()
-        return
-      }
-
       startTransition(async () => {
-        let result = await searchMaterials(normalized, category)
-        if (allowCrossCategoryFallback && category && !result.data?.length) {
-          result = await searchMaterials(normalized, null)
-        }
+        const result = await loadMaterialSearchBundle(key, normalized, category, allowCrossCategoryFallback)
         if (normalizeMaterialName(queryRef.current) !== normalized) return
         if (suppressedQueryRef.current === normalized) return
-        if (result.data) {
-          cache.current.set(key, result.data)
-          setMaterials(result.data)
+        if (result) {
+          setMaterials(result.materials)
+          setVariants((current) => ({ ...current, ...result.variantsByMaterialId }))
           openDropdown()
         }
       })
-    }, 300)
+    }, 100)
 
     return () => window.clearTimeout(timer)
   }, [allowCrossCategoryFallback, category, disabled, localSelection?.name, openDropdown, query, selectedMaterialId, value])
-
-  useEffect(() => {
-    const load = async () => {
-      const missing = materials.filter((material) => !variants[material.id])
-      if (!missing.length) return
-
-      const loaded = await Promise.all(missing.map(async (material) => {
-        const result = await getMaterialVariants(material.id, material.category)
-        return [material.id, result.data || []] as const
-      }))
-      setVariants((current) => ({ ...current, ...Object.fromEntries(loaded) }))
-    }
-
-    void load()
-  }, [category, materials, variants])
 
   const normalizedQuery = normalizeMaterialName(query)
   const selectedMatchesQuery = Boolean(
@@ -228,6 +243,7 @@ export function MaterialSearch({
     startTransition(async () => {
       const result = await createMaterial({ name, category })
       if (result.success && result.data) {
+        clearMaterialSearchCache()
         const material = { ...(result.data as Material), supplier_name: null } satisfies MaterialWithSupplier
         selectMaterial(material, undefined, 'new_material')
       }

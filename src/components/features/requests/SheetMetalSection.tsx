@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Trash2 } from 'lucide-react'
+import { Loader2, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { InlineEditCell } from './InlineEditCell'
@@ -55,25 +55,32 @@ export function SheetMetalSection({ requestId, items, canEdit, steelTypes }: Pro
   const router = useRouter()
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
+  const [isAdding, setIsAdding] = useState(false)
 
   useEffect(() => {
     setRows(items)
   }, [items])
 
   const handleAdd = async () => {
-    const result = await addSheetMetal(requestId, {
-      material_name: null,
-      material_grade: null,
-      sheet_size: null,
-      thickness_mm: null,
-      remainder_qty: 0,
-    })
-    if (!result.success || !result.data) {
-      toast.error(result.error || 'Ошибка')
-      return
+    if (isAdding) return
+    setIsAdding(true)
+    try {
+      const result = await addSheetMetal(requestId, {
+        material_name: null,
+        material_grade: null,
+        sheet_size: null,
+        thickness_mm: null,
+        remainder_qty: 0,
+      })
+      if (!result.success || !result.data) {
+        toast.error(result.error || 'Ошибка')
+        return
+      }
+      setRows((current) => [...current, result.data as SheetMetalRow])
+      toast.success('Позиция добавлена')
+    } finally {
+      setIsAdding(false)
     }
-    setRows((current) => [...current, result.data as SheetMetalRow])
-    toast.success('Позиция добавлена')
   }
 
   const handleUpdate = async (id: string, patch: SheetMetalPatch) => {
@@ -181,11 +188,18 @@ export function SheetMetalSection({ requestId, items, canEdit, steelTypes }: Pro
               </tr>
               )
             })}
-            {rows.length === 0 && (
+            {isAdding && (
+              <tr>
+                <td colSpan={8} className="px-4 py-5 text-center text-slate-500">
+                  <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Добавляю позицию…</span>
+                </td>
+              </tr>
+            )}
+            {rows.length === 0 && !isAdding && (
               <tr>
                 <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {canEdit && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
+                  {canEdit && <Button type="button" variant="outline" size="sm" className="ml-3" disabled={isAdding} onClick={handleAdd}>Добавить</Button>}
                 </td>
               </tr>
             )}
@@ -194,9 +208,9 @@ export function SheetMetalSection({ requestId, items, canEdit, steelTypes }: Pro
       </div>
       {canEdit && (
         <div className="flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
-            <Plus className="mr-2 h-4 w-4" />
-            Добавить позицию
+          <Button type="button" variant="outline" size="sm" disabled={isAdding} onClick={handleAdd}>
+            {isAdding ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+            {isAdding ? 'Добавляем…' : 'Добавить позицию'}
           </Button>
         </div>
       )}

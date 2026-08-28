@@ -39,6 +39,11 @@ export type MaterialVariantWithSteelType = MaterialVariant & {
   steel_types?: { name: string | null } | null
 }
 
+export type MaterialSearchBundle = {
+  materials: MaterialWithSupplier[]
+  variantsByMaterialId: Record<string, MaterialVariantWithSteelType[]>
+}
+
 type MaterialUsageInput = {
   material_id: string
   category: MaterialCategory
@@ -284,11 +289,9 @@ async function hydrateSuppliers(db: LooseDb, materials: Material[]): Promise<Mat
   }))
 }
 
-export async function searchMaterials(query: string, category?: MaterialCategory | null) {
-  try {
-    const { db } = await requireMaterialPermission('view')
+async function searchMaterialsWithDb(db: LooseDb, query: string, category?: MaterialCategory | null) {
     const normalized = normalizeMaterialName(query)
-    if (normalized.length < 2) return { data: [], error: null }
+    if (normalized.length < 2) return []
 
     const categoryLabelMatchesQuery = category
       ? normalizeMaterialName(MATERIAL_CATEGORY_LABELS[category] ?? category).includes(normalized)
@@ -420,7 +423,54 @@ export async function searchMaterials(query: string, category?: MaterialCategory
         return aExact - bExact || a.name.localeCompare(b.name)
       })
       .slice(0, 10)
-    return { data: await hydrateSuppliers(db, rows), error: null }
+    return hydrateSuppliers(db, rows)
+}
+
+export async function searchMaterials(query: string, category?: MaterialCategory | null) {
+  try {
+    const { db } = await requireMaterialPermission('view')
+    return { data: await searchMaterialsWithDb(db, query, category), error: null }
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось найти материалы' }
+  }
+}
+
+export async function searchMaterialsWithVariants(
+  query: string,
+  category?: MaterialCategory | null,
+  allowCrossCategoryFallback = false,
+) {
+  try {
+    const { db } = await requireMaterialPermission('view')
+    let materials = await searchMaterialsWithDb(db, query, category)
+    if (allowCrossCategoryFallback && category && materials.length === 0) {
+      materials = await searchMaterialsWithDb(db, query, null)
+    }
+
+    const materialIds = materials.map((material) => material.id)
+    const variantsByMaterialId: MaterialSearchBundle['variantsByMaterialId'] = Object.fromEntries(
+      materialIds.map((materialId) => [materialId, []]),
+    )
+
+    if (materialIds.length > 0) {
+      const { data, error } = await db
+        .from('material_variants')
+        .select('*, steel_types(name)')
+        .in('material_id', materialIds)
+        .order('times_used', { ascending: false })
+        .limit(materialIds.length * 20)
+      if (error) throw new Error(error.message || 'Не удалось загрузить варианты')
+
+      for (const variant of (data || []) as MaterialVariantWithSteelType[]) {
+        const target = variantsByMaterialId[variant.material_id]
+        if (target && target.length < 20) target.push(variant)
+      }
+    }
+
+    return {
+      data: { materials, variantsByMaterialId } satisfies MaterialSearchBundle,
+      error: null,
+    }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось найти материалы' }
   }

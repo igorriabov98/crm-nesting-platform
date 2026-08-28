@@ -61,6 +61,7 @@
     "test:technologist-request-editability": "tsx scripts/test-technologist-request-editability.ts",
     "test:material-request-queue": "tsx scripts/test-material-request-queue.ts",
     "test:material-request-stock-coverage": "tsx scripts/test-material-request-stock-coverage.ts",
+    "test:material-search-performance": "node --test scripts/test-material-search-performance.mjs",
     "test:people-planning": "tsx scripts/test-people-planning.ts",
     "test:planning-dashboard": "tsx scripts/test-planning-director-dashboard.ts",
     "test:sidebar-work-queue-badges": "tsx scripts/test-sidebar-work-queue-badges.ts",
