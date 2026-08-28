@@ -339,5 +339,11 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install root dependencies
         run: npm ci
-      - name: Run production smoke
+      - name: Run read-only CRM smoke
+        if: ${{ inputs.deploy_railway == false }}
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        run: node scripts/prod-crm-smoke.mjs
+      - name: Run full production smoke
+        if: ${{ inputs.deploy_railway == true }}
         run: npm run smoke:prod

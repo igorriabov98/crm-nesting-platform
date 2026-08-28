@@ -30,6 +30,8 @@ jobs:
         working-directory: nesting-service
       - name: Typecheck root
         run: npx tsc --noEmit
+      - name: Read-only CRM smoke regression
+        run: node --test scripts/prod-crm-smoke.test.mjs
       - name: Access control registry and policies
         run: npm run test:access-control
       - name: Material search authorization and performance

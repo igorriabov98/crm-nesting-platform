@@ -14,7 +14,9 @@
 6. Approve the `production` environment review in GitHub UI.
 7. Let the workflow apply Prisma migrations, handle Supabase SQL migrations,
    optionally deploy Railway, deploy Vercel from the same SHA, then run
-   `scripts/prod-smoke.ts`.
+   `scripts/prod-smoke.ts` for a full release. With `deploy_railway=false`,
+   run `scripts/prod-crm-smoke.mjs` instead: it only reads the CRM version and
+   login page, does not contact Railway, and does not create smoke projects.
 
 Railway and Vercel autodeploy from `main` should stay disabled after the operator explicitly changes those settings. Production deploys should come from `deploy.yml`, not from feature branches or provider autodeploy.
 
