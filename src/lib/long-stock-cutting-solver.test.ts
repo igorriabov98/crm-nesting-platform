@@ -103,18 +103,18 @@ test('equal-cost stock selection uses FIFO then stable ID independently of loade
   assert.deepEqual(first.candidates, reversed.candidates)
 })
 
-test('every alternative honours the source set adopted from the recommendation', () => {
+test('automatic alternatives independently choose the best stock for their purchase lengths', () => {
   const result = solveLongStockCutting({
     workpieces: [6, 4, 4].map((lengthMm, i) => ({ id: `cut-${i}`, lengthMm })),
     stockSources: [physicalSource('small', 5), physicalSource('large', 9)],
     purchaseLengths: [6, 8, 12].map((lengthMm) => ({ lengthMm, kind: 'standard' })),
     kerfMm: 0, endTrimMm: 0, allowMixedLengths: true,
   })
-  const selected = result.stockBars.map((bar) => bar.stockSourceId).sort()
-  for (const candidate of result.candidates) {
-    assert.deepEqual(candidate.bars.filter((bar) => bar.source !== 'new_stock').map((bar) => bar.stockSourceId).sort(), selected)
-    assert.ok(candidate.bars.every((bar) => bar.cuts.length > 0))
-  }
+  assert.deepEqual(result.candidates.find((candidate) => candidate.key === 'single:6')?.bars
+    .filter((bar) => bar.source !== 'new_stock').map((bar) => bar.sourceInventoryId), ['large'])
+  assert.deepEqual(result.candidates.find((candidate) => candidate.key === 'single:12')?.bars
+    .filter((bar) => bar.source !== 'new_stock').map((bar) => bar.sourceInventoryId), ['small'])
+  assert.ok(result.candidates.every((candidate) => candidate.bars.every((bar) => bar.cuts.length > 0)))
 })
 
 test('joint search reports an unproven incumbent when its budget is exhausted', () => {

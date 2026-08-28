@@ -245,7 +245,7 @@ function solveStockFirstCutting(normalized: ReturnType<typeof normalizeInput>): 
     if (mixedCandidate.purchaseLengthsMm.length > 1) candidates.push(mixedCandidate)
   }
 
-  candidates.sort(compareCandidates)
+  candidates.sort(compareLongStockCandidates)
   return {
     stockBars: canonicalizeOutputBars(stockSelection.usedBars, [], normalized.kerfMm, normalized.endTrimMm),
     unusedStockSourceIds: stockSelection.unusedStockSourceIds,
@@ -265,11 +265,11 @@ function solveJointStockCutting(input: ReturnType<typeof normalizeInput>): LongS
   for (const search of searches) {
     if (!search.candidate) continue
     const previous = byKey.get(search.candidate.key)
-    if (!previous || compareCandidates(search.candidate, previous) < 0) byKey.set(search.candidate.key, search.candidate)
+    if (!previous || compareLongStockCandidates(search.candidate, previous) < 0) byKey.set(search.candidate.key, search.candidate)
   }
   const searchComplete = searches.every((search) => search.searchComplete)
   const exploredVariants = searches.reduce((sum, search) => sum + search.exploredVariants, 0)
-  const candidates = [...byKey.values()].map((candidate) => ({ ...candidate, searchComplete, exploredVariants })).sort(compareCandidates)
+  const candidates = [...byKey.values()].map((candidate) => ({ ...candidate, searchComplete, exploredVariants })).sort(compareLongStockCandidates)
   if (candidates.length === 0 && input.requireAllStockSources) {
     throw new Error(searchComplete
       ? 'Выбранные складские хлысты и закупаемые длины не позволяют разместить все отрезки'
@@ -279,25 +279,6 @@ function solveJointStockCutting(input: ReturnType<typeof normalizeInput>): LongS
   const stockBars = best?.bars.filter((bar) => bar.source !== 'new_stock') ?? []
   const usedIds = new Set(stockBars.map((bar) => bar.stockSourceId))
   const unused = input.stockSources.filter((source) => !usedIds.has(source.id))
-  // The UI adopts this recommended source set. Every displayed alternative must
-  // therefore honour the same exact selection, just like a subsequent recalculation.
-  if (best && !input.requireAllStockSources) {
-    const exactInput = {
-      ...input,
-      stockSources: input.stockSources.filter((source) => usedIds.has(source.id)),
-      requireAllStockSources: true,
-    }
-    const exactResult = solveJointStockCutting(exactInput)
-    return {
-      ...exactResult,
-      candidates: exactResult.candidates.map((candidate) => ({
-        ...candidate, searchComplete: candidate.searchComplete && searchComplete,
-        exploredVariants: candidate.exploredVariants + exploredVariants,
-      })),
-      unusedStockSourceIds: unused.map((source) => source.id),
-      unusedBusinessRemnantIds: unused.filter((source) => source.source === 'business_remnant').map((source) => source.inventoryId),
-    }
-  }
   return {
     stockBars,
     unusedStockSourceIds: unused.map((source) => source.id),
@@ -345,7 +326,7 @@ function searchJointLayout(input: ReturnType<typeof normalizeInput>, lengths: Lo
       const kind = purchased.length === 0 ? 'stock_only'
         : new Set(purchased.map((bar) => bar.stockLengthMm)).size === 1 ? 'single_length' : 'mixed_lengths'
       const candidate = buildCandidate(kind, used, purchased, kerfMm, endTrimMm, 0, true)
-      if (!best || compareCandidates(candidate, best) < 0) best = candidate
+      if (!best || compareLongStockCandidates(candidate, best) < 0) best = candidate
       return
     }
     // Optimistic volume bound includes all free physical capacity, even optional bars.
@@ -1090,7 +1071,7 @@ function comparePurchaseLengths(left: LongStockPurchaseLength, right: LongStockP
     || (left.kind === 'standard' ? -1 : 1)
 }
 
-function compareCandidates(left: LongStockCuttingCandidate, right: LongStockCuttingCandidate) {
+export function compareLongStockCandidates(left: LongStockCuttingCandidate, right: LongStockCuttingCandidate) {
   return left.purchasedLengthMm - right.purchasedLengthMm
     || (left.futureBusinessRemnantBarCount + left.transferBarCount)
       - (right.futureBusinessRemnantBarCount + right.transferBarCount)

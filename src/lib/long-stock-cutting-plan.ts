@@ -30,6 +30,8 @@ export type LongStockPlanCalculationInput = {
   stockSelection?: LongStockSourceSelection[]
   mode?: LongStockPlanCalculationMode
   searchBudget?: number
+  /** Returned by the server for the reviewed candidate; checked before version creation. */
+  expectedCalculationFingerprint?: string
 }
 
 export type LongStockSourceSelection = {

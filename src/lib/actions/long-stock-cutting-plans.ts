@@ -45,6 +45,8 @@ import { requirePermission } from '@/lib/permissions/server'
 import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { candidateStockSelection, solveLongStockRecommendations } from '@/lib/long-stock-recommendations'
+import { assertLongStockCalculationFingerprint, longStockCalculationFingerprint } from '@/lib/long-stock-calculation-fingerprint'
 import {
   prepareLongStockCuttingPlanPdf,
   removePreparedLongStockCuttingPlanPdf,
@@ -169,6 +171,8 @@ type CalculationContext = {
   requestId: string
   machineId: string
   factoryId: string
+  factoryName: string
+  consumerCuttingDate: string | null
   materialId: string
   materialVariantId: string
   gradeKey: string
@@ -378,6 +382,7 @@ export async function loadLongStockSourceOptions(input: {
 }): Promise<{
   machineId: string
   factoryId: string
+  factoryName: string
   consumerCuttingDate: string | null
   sources: LongStockSourceOption[]
 }> {
@@ -675,6 +680,8 @@ export async function createLongStockCuttingPlanVersion(input: LongStockPlanCalc
     (candidate) => candidate.key === input.selectedCandidateKey,
   )
   if (selectedIndex < 0) throw new Error('Выбранный вариант отсутствует в результате расчёта')
+  assertLongStockCalculationFingerprint(input.expectedCalculationFingerprint,
+    calculationFingerprint(context, context.solverResult.candidates[selectedIndex]))
 
   return persistVersion({
     context,
@@ -730,6 +737,8 @@ export async function recalculateLongStockCuttingPlanVersion(input: LongStockPla
     (candidate) => candidate.key === input.selectedCandidateKey,
   )
   if (selectedIndex < 0) throw new Error('Выбранный вариант отсутствует в результате пересчёта')
+  assertLongStockCalculationFingerprint(input.expectedCalculationFingerprint,
+    calculationFingerprint(context, context.solverResult.candidates[selectedIndex]))
 
   return persistVersion({
     context,
@@ -848,7 +857,7 @@ async function loadLongStockSourceOptionsInternal(input: {
   const futureIds = rows
     .filter((row) => row.is_business_scrap && row.business_scrap_state === 'future')
     .map((row) => row.id)
-  const factoryIds = [...new Set(rows.map((row) => row.factory_id).filter(Boolean))]
+  const factoryIds = [...new Set([machine.factory_id, ...rows.map((row) => row.factory_id)].filter(Boolean))]
   const machineIds = [...new Set(rows.map((row) => row.source_machine_id).filter((id): id is string => Boolean(id)))]
 
   const [linksResult, factoriesResult, machinesResult] = await Promise.all([
@@ -951,6 +960,7 @@ async function loadLongStockSourceOptionsInternal(input: {
   return {
     machineId: machine.id,
     factoryId: machine.factory_id,
+    factoryName: factoryNameById.get(machine.factory_id) ?? 'Завод машины',
     consumerCuttingDate,
     sources,
   }
@@ -989,7 +999,7 @@ function expandLongStockPhysicalSources(
     }
   }
 
-  return [...selectedQuantities.entries()].flatMap(([inventoryId, quantity]) => {
+  return [...selectedQuantities.entries()].sort(([a], [b]) => a.localeCompare(b, 'en')).flatMap(([inventoryId, quantity]) => {
     const option = availableById.get(inventoryId)
     if (!option) return []
     return Array.from({ length: quantity }, (_, pieceIndex) => ({
@@ -1113,7 +1123,7 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
         })),
       ]
   const solverMode = solverModeForPlan(mode)
-  const rawSolverResult = solveLongStockCutting({
+  const rawSolverResult = solveLongStockRecommendations({
     workpieces,
     stockSources,
     requireAllStockSources: input.stockSelection !== undefined,
@@ -1141,6 +1151,8 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
     requestId: request.id,
     machineId: machine.id,
     factoryId: machine.factory_id,
+    factoryName: sourceLoad.factoryName,
+    consumerCuttingDate: sourceLoad.consumerCuttingDate,
     materialId: item.material_id,
     materialVariantId: item.material_variant_id,
     gradeKey: gradeKey(item, variant),
@@ -1254,7 +1266,8 @@ async function persistVersion(input: {
     segments: input.context.workpieces,
     available_business_remnants: input.context.businessRemnants,
     available_stock_sources: input.context.stockSourceOptions,
-    selected_stock_sources: input.context.stockSources.map((source) => ({
+    selected_stock_sources: input.context.stockSources.filter((source) =>
+      input.candidates[input.selectedIndex].bars.some((bar) => bar.stockSourceId === source.id)).map((source) => ({
       physical_source_id: source.id,
       inventory_id: source.inventoryId,
       source_type: source.source,
@@ -1264,6 +1277,7 @@ async function persistVersion(input: {
       available_from_date: source.availableFromDate,
     })),
     selected_candidate_key: input.selectedCandidateKey,
+    calculation_fingerprint: calculationFingerprint(input.context, input.candidates[input.selectedIndex]),
     manual_edit_reason: input.manualEditReason,
     manual_layout: input.manualLayout,
     recalculation: input.context.recalculation ? {
@@ -1312,6 +1326,34 @@ async function persistVersion(input: {
   return version
 }
 
+function calculationFingerprint(context: CalculationContext, candidate: LongStockCuttingCandidate) {
+  const selection = candidateStockSelection(candidate)
+  return longStockCalculationFingerprint({
+    requestItem: context.requestItem,
+    machineId: context.machineId,
+    factoryId: context.factoryId,
+    materialId: context.materialId,
+    materialVariantId: context.materialVariantId,
+    weightPerMeterKg: context.weightPerMeterKg,
+    consumerCuttingDate: context.consumerCuttingDate,
+    settings: context.settingsSnapshot,
+    mode: context.mode,
+    searchBudget: context.searchBudget,
+    segments: context.workpieces,
+    purchaseLengths: context.purchaseLengths,
+    selection,
+    sources: selection.map(({ inventoryId }) => {
+      const source = context.stockSourceOptions.find((option) => option.inventoryId === inventoryId)!
+      return {
+        inventoryId, source: source.source, lengthMm: source.lengthMm, factoryId: source.factoryId,
+        state: source.state, availableFromDate: source.availableFromDate, createdAt: source.createdAt,
+        sourceVersionId: source.sourceVersionId, sourceBarId: source.sourceBarId,
+      }
+    }),
+    reservedStock: context.planningRecovery?.reservedStock ?? context.recalculation?.reservedStock ?? [],
+  }, candidate)
+}
+
 function calculationResult(context: CalculationContext) {
   const recommendedCandidate = context.solverResult.candidates.find(
     (candidate) => candidate.key === context.solverResult.recommendedCandidateKey,
@@ -1326,6 +1368,8 @@ function calculationResult(context: CalculationContext) {
     requestId: context.requestId,
     machineId: context.machineId,
     factoryId: context.factoryId,
+    factoryName: context.factoryName,
+    consumerCuttingDate: context.consumerCuttingDate,
     materialId: context.materialId,
     materialVariantId: context.materialVariantId,
     gradeKey: context.gradeKey,
@@ -1334,6 +1378,13 @@ function calculationResult(context: CalculationContext) {
     layoutCategoryKey: context.layoutCategory.key,
     searchBudget: context.searchBudget,
     candidates: context.solverResult.candidates,
+    candidateInputs: context.solverResult.candidates.map((candidate) => ({
+      candidateKey: candidate.key,
+      stockSelection: candidateStockSelection(candidate),
+      mode: context.mode,
+      searchBudget: context.searchBudget,
+      expectedCalculationFingerprint: calculationFingerprint(context, candidate),
+    })),
     recommendedCandidateKey: context.solverResult.recommendedCandidateKey,
     stockSources: context.stockSourceOptions,
     recommendedStockSelection: Array.from(recommendedSelection, ([inventoryId, quantity]) => ({
