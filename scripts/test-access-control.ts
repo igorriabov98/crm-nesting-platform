@@ -225,6 +225,19 @@ for (const filePath of walk(join(root, 'src/app/api'), 'route.ts')) {
   const relativePath = relative(root, filePath)
   if (apiRoutesWithDedicatedAuthorization.has(relativePath)) continue
   const source = readFileSync(filePath, 'utf8')
+  if (relativePath === 'src/app/api/materials/search/route.ts') {
+    assert(/await searchMaterialsWithVariants\(/u.test(source), 'Поиск должен делегировать защищённому действию')
+    const materialActions = readFileSync(join(root, 'src/lib/actions/materials.ts'), 'utf8')
+    const bundleAction = materialActions.split('export async function searchMaterialsWithVariants(')[1]?.split('export async function ')[0]
+    assert(bundleAction && /await requireMaterialPermission\('view'\)/u.test(bundleAction), 'Действие поиска должно проверять materials.view')
+    assert(/await requireReadPermissionDataClient\('materials'\)/u.test(materialActions), 'Чтение должно использовать общую проверку materials.view')
+    const permissions = readFileSync(join(root, 'src/lib/permissions/server.ts'), 'utf8')
+    const readGuard = permissions.split('export async function requireReadPermissionDataClient(')[1]?.split('export async function ')[0]
+    assert(readGuard && /auth\.getUser\(\)/u.test(readGuard), 'Поиск должен проверять сессию через Auth')
+    assert(readGuard && /await getCurrentUserPermissions\(user.id\)/u.test(readGuard), 'Поиск должен использовать общую матрицу прав')
+    assert(readGuard && /hasPermission\(permissionDetails.permissions, resourceKey, 'view'\)/u.test(readGuard), 'Поиск должен требовать право чтения')
+    continue
+  }
   assert(
     /(?:get|require)NestingProxyAccess\(|requirePermission\(|requireProductProductionDrawingAccess\(/u.test(source),
     `API-маршрут ${relativePath} не проверяет право модуля`,
