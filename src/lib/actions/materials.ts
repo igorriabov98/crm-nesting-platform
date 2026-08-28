@@ -299,6 +299,7 @@ async function searchMaterialsWithDb(db: LooseDb, query: string, category?: Mate
     const matchedCategory = !category
       ? ACTIVE_MATERIAL_CATEGORIES.find((item) => normalizeMaterialName(MATERIAL_CATEGORY_LABELS[item] ?? item).includes(normalized))
       : null
+    const shouldSearchVariantCharacteristics = !categoryLabelMatchesQuery && !matchedCategory
     const searchVariants = searchTextVariants(normalized)
 
     let queryBuilder = db
@@ -336,7 +337,7 @@ async function searchMaterialsWithDb(db: LooseDb, query: string, category?: Mate
       textFilters.push('is_calibrated.eq.false')
     }
 
-    if (textFilters.length) {
+    if (shouldSearchVariantCharacteristics && textFilters.length) {
       const { data: variantTextData, error: variantTextError } = await scopeVariantQuery(
         db
           .from('material_variants')
@@ -353,7 +354,7 @@ async function searchMaterialsWithDb(db: LooseDb, query: string, category?: Mate
     }
 
     const numericValue = numberFromSearch(normalized)
-    if (numericValue !== null) {
+    if (shouldSearchVariantCharacteristics && numericValue !== null) {
       const numericColumns = variantNumericColumnsForSearch(category, matchedCategory)
       const numericResults = await Promise.all(numericColumns.map(async (column) => {
         const { data: numericData, error: numericError } = await scopeVariantQuery(
@@ -376,7 +377,8 @@ async function searchMaterialsWithDb(db: LooseDb, query: string, category?: Mate
     }
 
     const dimensionValues = dimensionParts(normalized)
-    const canSearchKnifeDimensions = dimensionValues.length >= 2
+    const canSearchKnifeDimensions = shouldSearchVariantCharacteristics
+      && dimensionValues.length >= 2
       && (!category || category === 'knives')
       && (!matchedCategory || matchedCategory === 'knives')
     if (canSearchKnifeDimensions) {
