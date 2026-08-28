@@ -11,11 +11,29 @@ import {
   expandLongStockSegmentRows,
   filterLongStockCandidatesByReservedStock,
   longStockCutColorMap,
+  mergeRefreshedLongStockSources,
   shouldShowBarSegmentLabel,
   totalLongStockSegmentLength,
   upsertLongStockRequestRow,
 } from '@/lib/long-stock-position-ui'
 import type { LongStockCuttingCandidate } from '@/lib/long-stock-cutting-solver'
+
+test('source refresh keeps a missing selected bar visible and never silently changes quantity', () => {
+  const previous = ['selected', 'unused', 'remaining'].map((inventoryId) => ({
+    inventoryId, available: true, availableQuantity: 2, unavailableReason: null as string | null,
+  }))
+  const refreshed = [{ ...previous[2], availableQuantity: 1 }]
+  const quantities = { selected: 2, remaining: 2 }
+  const merged = mergeRefreshedLongStockSources(previous, refreshed, quantities)
+  assert.equal(merged.length, 2)
+  assert.deepEqual(merged[0], refreshed[0])
+  assert.equal(merged[1].inventoryId, 'selected')
+  assert.equal(merged[1].available, false)
+  assert.equal(merged[1].availableQuantity, 0)
+  assert.match(merged[1].unavailableReason!, /Снимите выбор/)
+  assert.deepEqual(quantities, { selected: 2, remaining: 2 })
+  assert.equal(previous[0].available, true)
+})
 
 test('expands length and quantity rows into stable workpieces', () => {
   const segments = expandLongStockSegmentRows([

@@ -5,6 +5,7 @@ import {
   solveLongStockCutting,
   type LongStockCuttingCandidate,
   type LongStockSolverInput,
+  type LongStockPhysicalSource,
 } from './long-stock-cutting-solver'
 
 const referenceWorkpieces = [
@@ -26,6 +27,166 @@ const referenceInput: LongStockSolverInput = {
   endTrimMm: 0,
   mode: 'optimal',
 }
+
+function physicalSource(id: string, lengthMm: number, overrides: Partial<LongStockPhysicalSource> = {}): LongStockPhysicalSource {
+  return {
+    id, inventoryId: id, lengthMm, source: 'warehouse_stock',
+    createdAt: '2026-08-01T00:00:00.000Z', factoryId: 'factory-a',
+    requiresTransfer: false, availableFromDate: null, ...overrides,
+  }
+}
+
+test('optimizes stock and purchase jointly instead of putting the longest cut into stock first', () => {
+  for (const requireAllStockSources of [false, true]) {
+    const result = solveLongStockCutting({
+      workpieces: [6000, 4000, 4000].map((lengthMm, i) => ({ id: `cut-${i}`, lengthMm })),
+      stockSources: [physicalSource('stock', 8002)],
+      requireAllStockSources,
+      purchaseLengths: [{ lengthMm: 6001, kind: 'standard' }], kerfMm: 1, endTrimMm: 0,
+    })
+    const best = result.candidates[0]
+    assert.equal(best.purchasedLengthMm, 6001)
+    assert.equal(best.searchComplete, true)
+    assert.deepEqual(best.bars.find((bar) => bar.sourceInventoryId === 'stock')?.cuts.map((cut) => cut.lengthMm), [4000, 4000])
+    assert.deepEqual(best.bars.find((bar) => bar.source === 'new_stock')?.cuts.map((cut) => cut.lengthMm), [6000])
+  }
+})
+
+test('purchase minimization precedes dependency avoidance across the complete layout', () => {
+  const result = solveLongStockCutting({
+    workpieces: [6, 4, 4].map((lengthMm, i) => ({ id: `cut-${i}`, lengthMm })),
+    stockSources: [physicalSource('local', 8), physicalSource('future', 6, { source: 'future_business_remnant' })],
+    purchaseLengths: [{ lengthMm: 10, kind: 'standard' }], kerfMm: 0, endTrimMm: 0,
+  })
+  assert.equal(result.candidates[0].purchasedLengthMm, 0)
+  assert.equal(result.candidates[0].futureBusinessRemnantBarCount, 1)
+})
+
+test('equal-cost stock selection uses FIFO then stable ID independently of loader order', () => {
+  const sources = [physicalSource('z', 10), physicalSource('a', 10)]
+  const input: LongStockSolverInput = {
+    workpieces: [{ id: 'cut', lengthMm: 6 }], stockSources: sources,
+    purchaseLengths: [], kerfMm: 0, endTrimMm: 0,
+  }
+  const first = solveLongStockCutting(input)
+  const reversed = solveLongStockCutting({ ...input, stockSources: [...sources].reverse() })
+  assert.equal(first.candidates[0].bars[0].sourceInventoryId, 'a')
+  assert.deepEqual(first.candidates, reversed.candidates)
+})
+
+test('every alternative honours the source set adopted from the recommendation', () => {
+  const result = solveLongStockCutting({
+    workpieces: [6, 4, 4].map((lengthMm, i) => ({ id: `cut-${i}`, lengthMm })),
+    stockSources: [physicalSource('small', 5), physicalSource('large', 9)],
+    purchaseLengths: [6, 8, 12].map((lengthMm) => ({ lengthMm, kind: 'standard' })),
+    kerfMm: 0, endTrimMm: 0, allowMixedLengths: true,
+  })
+  const selected = result.stockBars.map((bar) => bar.stockSourceId).sort()
+  for (const candidate of result.candidates) {
+    assert.deepEqual(candidate.bars.filter((bar) => bar.source !== 'new_stock').map((bar) => bar.stockSourceId).sort(), selected)
+    assert.ok(candidate.bars.every((bar) => bar.cuts.length > 0))
+  }
+})
+
+test('joint search reports an unproven incumbent when its budget is exhausted', () => {
+  const input: LongStockSolverInput = {
+    workpieces: [6000, 4000, 4000].map((lengthMm, i) => ({ id: `cut-${i}`, lengthMm })),
+    stockSources: [physicalSource('stock', 8002)],
+    purchaseLengths: [{ lengthMm: 6001, kind: 'standard' }], kerfMm: 1, endTrimMm: 0, searchBudget: 1,
+  }
+  const result = solveLongStockCutting(input)
+  assert.deepEqual(result, solveLongStockCutting(input))
+  assert.ok(result.candidates.every((candidate) => !candidate.searchComplete))
+  assert.deepEqual(result.candidates[0].bars.flatMap((bar) => bar.cuts.map((cut) => cut.workpieceId)).sort(), ['cut-0', 'cut-1', 'cut-2'])
+})
+
+test('mixed purchases keep short lengths that fit smaller cuts even when the longest cut needs another length', () => {
+  const result = solveLongStockCutting({
+    workpieces: [5, 6, 7].map((lengthMm, i) => ({ id: `cut-${i}`, lengthMm })),
+    purchaseLengths: [5, 8, 10].map((lengthMm) => ({ lengthMm, kind: 'standard' })),
+    kerfMm: 1, endTrimMm: 1, allowMixedLengths: true,
+  })
+  assert.equal(result.candidates[0].purchasedLengthMm, 26)
+  assert.deepEqual(result.candidates[0].purchaseLengthsMm, [8, 10])
+})
+
+// Independent, deliberately exhaustive oracle: no solver pruning, heuristics,
+// candidate serialization, or source selection are used to derive the expectation.
+function bruteForceCost(input: LongStockSolverInput): number[] | null {
+  const sources = input.stockSources ?? []
+  const stockUsed = sources.map(() => 0)
+  const stockCuts = sources.map(() => 0)
+  const purchases: Array<{ length: number; occupied: number }> = []
+  let best: number[] | null = null
+  const less = (left: number[], right: number[]) => {
+    for (let i = 0; i < left.length; i += 1) if (left[i] !== right[i]) return left[i] < right[i]
+    return false
+  }
+  const visit = (index: number) => {
+    if (index === input.workpieces.length) {
+      if (input.requireAllStockSources && stockCuts.some((cuts) => cuts === 0)) return
+      const used = sources.filter((_, i) => stockCuts[i] > 0)
+      const cost = [
+        purchases.reduce((sum, bar) => sum + bar.length, 0),
+        used.reduce((sum, bar) => sum + Number(bar.requiresTransfer) + Number(bar.source === 'future_business_remnant'), 0),
+        sources.reduce((sum, bar, i) => sum + (stockCuts[i] > 0 ? bar.lengthMm - input.endTrimMm - stockUsed[i] : 0), 0)
+          + purchases.reduce((sum, bar) => sum + bar.length - input.endTrimMm - bar.occupied, 0),
+        -used.filter((bar) => bar.source === 'business_remnant').length,
+      ]
+      if (!best || less(cost, best)) best = cost
+      return
+    }
+    const size = input.workpieces[index].lengthMm + input.kerfMm
+    for (let i = 0; i < sources.length; i += 1) {
+      if (sources[i].lengthMm - input.endTrimMm - stockUsed[i] < size) continue
+      stockUsed[i] += size
+      stockCuts[i] += 1
+      visit(index + 1)
+      stockCuts[i] -= 1
+      stockUsed[i] -= size
+    }
+    for (const bar of purchases) {
+      if (bar.length - input.endTrimMm - bar.occupied < size) continue
+      bar.occupied += size
+      visit(index + 1)
+      bar.occupied -= size
+    }
+    for (const option of input.purchaseLengths) {
+      if (option.lengthMm - input.endTrimMm < size) continue
+      purchases.push({ length: option.lengthMm, occupied: size })
+      visit(index + 1)
+      purchases.pop()
+    }
+  }
+  visit(0)
+  return best
+}
+
+test('joint lexicographic objective matches exhaustive enumeration for mixed sources and losses', () => {
+  let randomState = 7163
+  const next = (max: number) => { randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0; return randomState % max }
+  for (let sample = 0; sample < 80; sample += 1) {
+    const input: LongStockSolverInput = {
+      workpieces: Array.from({ length: 3 + next(3) }, (_, i) => ({ id: `cut-${i}`, lengthMm: 1 + next(7) })),
+      stockSources: Array.from({ length: 1 + next(3) }, (_, i) => physicalSource(`stock-${i}`, 3 + next(9), {
+        source: (['warehouse_stock', 'business_remnant', 'future_business_remnant'] as const)[next(3)],
+        requiresTransfer: next(3) === 0,
+      })),
+      requireAllStockSources: sample % 2 === 0,
+      purchaseLengths: [5, 8, 10].map((lengthMm) => ({ lengthMm, kind: 'standard' })),
+      allowMixedLengths: true, kerfMm: sample % 2, endTrimMm: sample % 3,
+    }
+    const expected = bruteForceCost(input)
+    if (!expected) { assert.throws(() => solveLongStockCutting(input)); continue }
+    const result = solveLongStockCutting(input)
+    const best = result.candidates[0]
+    assert.ok(best.searchComplete, `sample ${sample}`)
+    assert.deepEqual([best.purchasedLengthMm, best.futureBusinessRemnantBarCount + best.transferBarCount,
+      best.totalRemainderMm, -best.businessRemnantBarCount], expected, `sample ${sample}: ${JSON.stringify(input)}`)
+    assert.deepEqual(best.bars.flatMap((bar) => bar.cuts.map((cut) => cut.workpieceId)).sort(), input.workpieces.map((piece) => piece.id).sort())
+    assert.ok(best.bars.every((bar) => bar.remainderMm >= 0 && bar.cuts.length > 0))
+  }
+})
 
 function singleLengthCandidate(candidates: LongStockCuttingCandidate[], lengthMm: number) {
   const candidate = candidates.find((item) =>

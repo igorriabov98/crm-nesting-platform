@@ -45,3 +45,12 @@ for (const required of [
 }
 
 console.log('Long-stock planning recovery regression passed')
+
+const approvalFailure = dialog.slice(dialog.indexOf('} catch (approvalError) {'), dialog.indexOf('async function close()'))
+assert.ok(approvalFailure.includes('await refreshSources()'), 'approval conflict must refresh sources and discard the stale calculation')
+const refreshSources = dialog.slice(dialog.indexOf('async function refreshSources()'), dialog.indexOf('function updateSourceQuantity('))
+assert.ok(refreshSources.includes('invalidateCalculation()'), 'refresh must require a new calculation')
+assert.ok(refreshSources.includes('mergeRefreshedLongStockSources'), 'refresh must retain unavailable operator selections')
+assert.ok(dialog.includes('&& !hasSourceConflict'), 'invalid selected quantities must block recalculation')
+assert.ok(dialog.includes('generation !== sourceLoadGeneration.current'), 'late source loads must not overwrite a newer material selection')
+console.log('Long-stock source conflict recovery wiring passed')
