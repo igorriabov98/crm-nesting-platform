@@ -8,7 +8,9 @@ import {
   ArrowRight,
   ArrowUp,
   BadgeCheck,
+  Boxes,
   Calculator,
+  CalendarClock,
   Check,
   ChevronRight,
   CircleAlert,
@@ -17,9 +19,11 @@ import {
   Plus,
   RotateCcw,
   Ruler,
+  ShoppingCart,
   Sparkles,
   TableProperties,
   Trash2,
+  Truck,
   Wrench,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -48,9 +52,11 @@ import {
   createManualLongStockCuttingPlanVersion,
   loadLongStockPlanningRecoveryDraft,
   loadLongStockRecalculationSafe,
+  loadLongStockSourceOptions,
   prepareLongStockRequestItemDraft,
   type LongStockPlanningRecoveryDraft,
   type LongStockRecalculationDraft,
+  type LongStockSourceOption,
 } from '@/lib/actions/long-stock-cutting-plans'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import {
@@ -97,6 +103,7 @@ import type {
   LongStockPlanCalculationMode,
   LongStockPlanSegmentInput,
   LongStockRequestItemTable,
+  LongStockSourceSelection,
 } from '@/lib/long-stock-cutting-plan'
 import type { MaterialVariant, RequestCircle, RequestKnives, RequestPipe } from '@/lib/types'
 import type { SteelType } from '@/lib/types/database'
@@ -169,6 +176,44 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [materialError, setMaterialError] = useState<string | null>(null)
+  const [sourceOptions, setSourceOptions] = useState<LongStockSourceOption[]>([])
+  const [sourceQuantities, setSourceQuantities] = useState<Record<string, number>>({})
+  const [sourceSelectionCustomized, setSourceSelectionCustomized] = useState(false)
+  const [sourceLoading, setSourceLoading] = useState(false)
+  const [sourceError, setSourceError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const materialId = material?.id
+    const materialVariantId = variant?.id
+    if (!materialId || !materialVariantId || (category === 'pipe' && variant?.pipe_type === 'wire')) {
+      setSourceOptions([])
+      setSourceQuantities({})
+      setSourceSelectionCustomized(false)
+      setSourceLoading(false)
+      setSourceError(null)
+      return
+    }
+
+    let cancelled = false
+    setSourceLoading(true)
+    setSourceError(null)
+    setSourceOptions([])
+    setSourceQuantities({})
+    setSourceSelectionCustomized(false)
+    void loadLongStockSourceOptions({ requestId, materialId, materialVariantId })
+      .then((result) => {
+        if (cancelled) return
+        setSourceOptions(result.sources)
+      })
+      .catch((loadError) => {
+        if (cancelled) return
+        setSourceError(errorMessage(loadError, 'Не удалось загрузить источники хлыстов'))
+      })
+      .finally(() => {
+        if (!cancelled) setSourceLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [category, material?.id, requestId, variant?.id, variant?.pipe_type])
 
   const segmentValidation = useMemo(() => {
     try {
@@ -193,7 +238,11 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0
   const showOptimizationHint = Boolean(selectedCandidate && !mixedLengths && !nonstandardLengths && wastePercent > threshold)
   const exactVariantReady = Boolean(variant?.id && variant.category === category && !(category === 'pipe' && variant.pipe_type === 'wire'))
-  const canCalculate = exactVariantReady && segmentValidation.error === null && !pendingAction
+  const canCalculate = exactVariantReady
+    && segmentValidation.error === null
+    && !sourceLoading
+    && !sourceError
+    && !pendingAction
   const selectedSteelTypeName = variant
     ? steelTypes.find((steelType) => steelType.id === variant.steel_type_id)?.name
       ?? (variant as MaterialVariant & { steel_types?: { name?: string | null } | null }).steel_types?.name
@@ -207,6 +256,30 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setShowCuttingMatrix(false)
     setManualBars([])
     setError(null)
+  }
+
+  function selectedStockSources(): LongStockSourceSelection[] | undefined {
+    if (!sourceSelectionCustomized) return undefined
+    return sourceOptions.flatMap((option) => {
+      const quantity = sourceQuantities[option.inventoryId] ?? 0
+      return quantity > 0 ? [{ inventoryId: option.inventoryId, quantity }] : []
+    })
+  }
+
+  function updateSourceQuantity(option: LongStockSourceOption, rawValue: string) {
+    const parsed = rawValue === '' ? 0 : Number(rawValue)
+    const quantity = Number.isFinite(parsed)
+      ? Math.max(0, Math.min(option.availableQuantity, Math.floor(parsed)))
+      : 0
+    setSourceQuantities((current) => ({ ...current, [option.inventoryId]: quantity }))
+    setSourceSelectionCustomized(true)
+    invalidateCalculation()
+  }
+
+  function resetSourceRecommendation() {
+    setSourceQuantities({})
+    setSourceSelectionCustomized(false)
+    invalidateCalculation()
   }
 
   function selectMaterial(
@@ -343,6 +416,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       const result = await calculateLongStockCuttingPlan({
         requestItem: { table: draft.table, id: draft.id },
         segments,
+        stockSelection: selectedStockSources(),
         mode,
         searchBudget,
       })
@@ -352,6 +426,12 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       setNonstandardLengths(mode === 'with_nonstandard')
       setCalculation(result)
       setSelectedCandidateKey(nextCandidates[0]?.key ?? null)
+      if (!sourceSelectionCustomized) {
+        setSourceQuantities(Object.fromEntries(
+          result.recommendedStockSelection.map((entry) => [entry.inventoryId, entry.quantity]),
+        ))
+        setSourceSelectionCustomized(true)
+      }
       setManualMode(false)
       setShowCuttingMatrix(false)
       setManualBars([])
@@ -409,6 +489,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       const input: LongStockPlanCalculationInput = {
         requestItem: { table: draftRef.current.table, id: draftRef.current.id },
         segments: expandLongStockSegmentRows(segmentRows),
+        stockSelection: selectedStockSources(),
         mode: mixedLengths ? 'mixed' : nonstandardLengths ? 'with_nonstandard' : 'standard',
         searchBudget: calculation.searchBudget,
       }
@@ -484,6 +565,11 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setManualReasonText('')
     setError(null)
     setMaterialError(null)
+    setSourceOptions([])
+    setSourceQuantities({})
+    setSourceSelectionCustomized(false)
+    setSourceLoading(false)
+    setSourceError(null)
   }
 
   return (
@@ -573,6 +659,19 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
               />
             )}
           </section>
+
+          <LongStockSourcesSection
+            titleId={`${category}-sources-title`}
+            exactVariantReady={exactVariantReady}
+            loading={sourceLoading}
+            error={sourceError}
+            options={sourceOptions}
+            quantities={sourceQuantities}
+            customized={sourceSelectionCustomized}
+            disabled={Boolean(pendingAction)}
+            onQuantityChange={updateSourceQuantity}
+            onUseRecommendation={resetSourceRecommendation}
+          />
 
           <section aria-labelledby={`${category}-segments-title`} className="rounded-xl border bg-white p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1361,6 +1460,8 @@ export function LongStockRecalculationDialog({
           <DialogDescription>
             {draft?.sourceKind === 'supply_return'
               ? 'Непорезанная потребность пересчитывается по актуальным стандартным и нестандартным длинам.'
+              : draft?.sourceKind === 'inventory_reconciliation'
+                ? 'Непорезанная потребность пересчитывается по сохранённым фактическим складским резервам.'
               : 'Непорезанная потребность пересчитывается по фактически принятым длинам.'}
           </DialogDescription>
         </DialogHeader>
@@ -1389,7 +1490,9 @@ export function LongStockRecalculationDialog({
                     ? 'Актуальные настройки раскроя'
                     : draft.sourceKind === 'supply_receipt'
                       ? 'Фактическая приёмка'
-                      : 'Межзаводское перемещение'}
+                      : draft.sourceKind === 'inventory_reconciliation'
+                        ? 'Сверенные складские резервы'
+                        : 'Межзаводское перемещение'}
                 />
                 <Metric label="Допустимые длины" value={draft.acceptedLengthsMm.map(formatMm).join(' + ')} />
               </section>
@@ -1410,7 +1513,9 @@ export function LongStockRecalculationDialog({
                     />
                     {draft.sourceKind === 'supply_return'
                       ? 'Разрешить нестандартные длины'
-                      : 'Смешивать принятые длины'}
+                      : draft.sourceKind === 'inventory_reconciliation'
+                        ? 'Смешивать сохранённые резервы'
+                        : 'Смешивать принятые длины'}
                   </label>
                 </div>
               </section>
@@ -1533,6 +1638,177 @@ export function LongStockRecalculationDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+function LongStockSourcesSection({
+  titleId,
+  exactVariantReady,
+  loading,
+  error,
+  options,
+  quantities,
+  customized,
+  disabled,
+  onQuantityChange,
+  onUseRecommendation,
+}: {
+  titleId: string
+  exactVariantReady: boolean
+  loading: boolean
+  error: string | null
+  options: LongStockSourceOption[]
+  quantities: Record<string, number>
+  customized: boolean
+  disabled: boolean
+  onQuantityChange: (option: LongStockSourceOption, value: string) => void
+  onUseRecommendation: () => void
+}) {
+  const groups = [
+    {
+      key: 'own',
+      title: 'На заводе машины',
+      description: 'Свободные хлысты и доступные деловые остатки без перевода.',
+      icon: <Boxes className="size-4" />,
+      options: options.filter((option) => option.source !== 'future_business_remnant' && !option.requiresTransfer),
+    },
+    {
+      key: 'future',
+      title: 'Будущие остатки',
+      description: 'Можно выбрать только когда исходная порезка строго раньше потребляющей.',
+      icon: <CalendarClock className="size-4" />,
+      options: options.filter((option) => option.source === 'future_business_remnant'),
+    },
+    {
+      key: 'transfer',
+      title: 'Другой завод',
+      description: 'При утверждении будет создан резерв и межзаводской перевод.',
+      icon: <Truck className="size-4" />,
+      options: options.filter((option) => option.source !== 'future_business_remnant' && option.requiresTransfer),
+    },
+  ]
+  const selectedCount = Object.values(quantities).reduce((sum, quantity) => sum + quantity, 0)
+
+  return (
+    <section aria-labelledby={titleId} className="rounded-xl border bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 id={titleId} className="font-semibold text-slate-900">Источники хлыстов</h3>
+          <p className="mt-1 max-w-3xl text-sm text-slate-500">
+            Выбранное количество обязательно: каждый физический хлыст получит хотя бы один рез.
+            Недостающее система добавит как закупку.
+          </p>
+        </div>
+        {exactVariantReady && !loading && !error && (
+          <Button type="button" variant="outline" size="sm" disabled={disabled || !customized} onClick={onUseRecommendation}>
+            <RotateCcw className="size-4" />Рекомендовать заново
+          </Button>
+        )}
+      </div>
+
+      {!exactVariantReady && (
+        <p className="mt-4 text-sm text-slate-500">Сначала выберите точный вариант материала.</p>
+      )}
+      {loading && (
+        <div className="mt-4 flex min-h-20 items-center justify-center gap-2 rounded-lg border border-dashed bg-slate-50 text-sm text-slate-600" role="status">
+          <Loader2 className="size-4 animate-spin" />Проверяем склад, будущие остатки и другие заводы…
+        </div>
+      )}
+      {error && (
+        <Alert variant="destructive" className="mt-4">
+          <CircleAlert className="size-4" />
+          <AlertTitle>Источники не загружены</AlertTitle>
+          <AlertDescription>{error}. Расчёт заблокирован, чтобы не использовать устаревшие остатки.</AlertDescription>
+        </Alert>
+      )}
+
+      {exactVariantReady && !loading && !error && (
+        <div className="mt-4 grid gap-3 xl:grid-cols-2">
+          {groups.map((group) => (
+            <div key={group.key} className="rounded-lg border bg-slate-50/60 p-3">
+              <div className="flex items-center gap-2 font-medium text-slate-900">{group.icon}{group.title}</div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{group.description}</p>
+              {group.options.length === 0 ? (
+                <p className="mt-3 rounded-md border border-dashed bg-white px-3 py-2 text-xs text-slate-500">Подходящих позиций нет</p>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {group.options.map((option) => {
+                    const inputId = `long-stock-source-${option.inventoryId}`
+                    return (
+                      <div key={option.inventoryId} className={cn('rounded-md border bg-white p-3', !option.available && 'bg-slate-100 opacity-75')}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900">
+                              {longStockSourceLabel(option)}
+                              <Badge variant="outline">{formatMm(option.lengthMm)} мм</Badge>
+                              {option.requiresTransfer && <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">Перевод</Badge>}
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-slate-600">
+                              {option.factoryName}
+                              {option.sourceMachineName ? ` · станок ${option.sourceMachineName}` : ''}
+                              {option.sourceVersionNumber ? ` · раскладка №${option.sourceVersionNumber}` : ''}
+                              {option.availableFromDate ? ` · план ${formatLongStockDate(option.availableFromDate)}` : ''}
+                            </p>
+                            {option.unavailableReason && (
+                              <p className="mt-1 flex items-start gap-1 text-xs leading-5 text-amber-700" role="status">
+                                <CircleAlert className="mt-0.5 size-3.5 shrink-0" />{option.unavailableReason}
+                              </p>
+                            )}
+                          </div>
+                          <div className="w-24 space-y-1">
+                            <Label htmlFor={inputId} className="text-xs">Выбрать, шт.</Label>
+                            <Input
+                              id={inputId}
+                              type="number"
+                              inputMode="numeric"
+                              min={0}
+                              max={option.availableQuantity}
+                              step={1}
+                              value={quantities[option.inventoryId] ?? 0}
+                              disabled={disabled || !option.available}
+                              aria-describedby={`${inputId}-available`}
+                              onChange={(event) => onQuantityChange(option, event.target.value)}
+                            />
+                            <p id={`${inputId}-available`} className="text-right text-[11px] text-slate-500">
+                              свободно {option.availableQuantity}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+
+          <div className="rounded-lg border border-dashed bg-blue-50/50 p-3">
+            <div className="flex items-center gap-2 font-medium text-slate-900"><ShoppingCart className="size-4" />Закупить</div>
+            <p className="mt-1 text-xs leading-5 text-slate-600">
+              Количество и длины закупаемых хлыстов определяются только для отрезков, которые не помещаются в выбранные источники.
+            </p>
+            <div className="mt-3 rounded-md bg-white px-3 py-2 text-sm text-slate-700">
+              {customized
+                ? `Технолог выбрал ${selectedCount} складских хлыстов; закупка будет рассчитана по остатку потребности.`
+                : 'При первом расчёте система сама предложит складские источники с минимальной закупаемой длиной.'}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function longStockSourceLabel(option: LongStockSourceOption) {
+  if (option.source === 'warehouse_stock') return 'Обычный склад'
+  if (option.source === 'business_remnant') return 'Деловой остаток'
+  return option.availableFromDate
+    ? `Будущий остаток до ${formatLongStockDate(option.availableFromDate)}`
+    : 'Будущий остаток'
+}
+
+function formatLongStockDate(value: string) {
+  const date = new Date(`${value}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('ru-RU').format(date)
 }
 
 function NewLongStockMaterialForm({
@@ -1815,8 +2091,10 @@ function CuttingLayoutsMatrix({
                 )}
                 <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-800">
                   №{bar.barNumber} · {formatMm(bar.stockLengthMm)} мм
-                  {bar.source === 'business_remnant' && (
-                    <span className="mt-1 block text-xs font-normal text-slate-500">Со склада</span>
+                  {bar.source !== 'new_stock' && (
+                    <span className="mt-1 block text-xs font-normal text-slate-500">
+                      {longStockBarSourceLabel(bar.source, bar.availableFromDate)}
+                    </span>
                   )}
                 </td>
                 <td className="px-4 py-3">
@@ -1927,13 +2205,25 @@ function LayoutPreview({ candidate, calculation }: { candidate: LongStockCutting
   const cutColors = longStockCutColorMap(candidate.bars.flatMap((bar) => bar.cuts.map((cut) => cut.lengthMm)))
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 text-xs" aria-label="Итоги по источникам">
+        <Badge variant="outline">Обычный склад: {candidate.warehouseBarCount}</Badge>
+        <Badge variant="outline">Деловые остатки: {candidate.businessRemnantBarCount}</Badge>
+        <Badge variant="outline">Будущие зависимости: {candidate.futureBusinessRemnantBarCount}</Badge>
+        <Badge variant="outline">Переводы: {candidate.transferBarCount}</Badge>
+        <Badge variant="outline">Закупка: {candidate.newBarCount} шт. · {formatMm(candidate.purchasedLengthMm)} мм</Badge>
+      </div>
       {candidate.bars.map((bar) => (
         <div key={bar.barNumber} className="rounded-lg border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-medium text-slate-900">
               Хлыст №{bar.barNumber}
               <Badge variant="outline">{formatMm(bar.stockLengthMm)} мм</Badge>
-              {bar.source === 'business_remnant' && <Badge variant="secondary">Со склада</Badge>}
+              <Badge variant="secondary">{longStockBarSourceLabel(bar.source, bar.availableFromDate)}</Badge>
+              {bar.requiresTransfer && (
+                <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                  {longStockTransferLabel(bar.sourceInventoryId, calculation)}
+                </Badge>
+              )}
               {bar.purchaseLengthKind === 'nonstandard' && <Badge variant="outline" className="border-violet-200 text-violet-700">Нестандартный</Badge>}
             </div>
             <span className={cn('text-sm text-slate-600', bar.remainderMm > 0 && bar.remainderMm < minimumUsefulLengthMm && 'text-amber-700')}>
@@ -1958,6 +2248,20 @@ function LayoutPreview({ candidate, calculation }: { candidate: LongStockCutting
       ))}
     </div>
   )
+}
+
+function longStockBarSourceLabel(source: LongStockCuttingCandidate['bars'][number]['source'], availableFromDate: string | null) {
+  if (source === 'new_stock') return 'Закупка'
+  if (source === 'warehouse_stock') return 'Обычный склад'
+  if (source === 'business_remnant') return 'Деловой остаток'
+  return availableFromDate ? `Будущий остаток до ${formatLongStockDate(availableFromDate)}` : 'Будущий остаток'
+}
+
+function longStockTransferLabel(inventoryId: string | null, calculation: Calculation) {
+  const source = calculation.stockSources.find((option) => option.inventoryId === inventoryId)
+  if (!source) return 'Межзаводской перевод'
+  const destination = calculation.stockSources.find((option) => option.isOwnFactory)?.factoryName ?? 'завод машины'
+  return `Перевод ${source.factoryName} → ${destination}`
 }
 
 function BarStrip({
@@ -2096,12 +2400,14 @@ function ManualLayoutEditor({
             calculation.settingsSnapshot.end_trim_mm,
           )
           return (
-            <div key={`${bar.source}-${bar.businessRemnantId ?? 'new'}-${barIndex}`} className={cn('rounded-lg border p-3', remainder < 0 && 'border-red-300 bg-red-50/50')}>
+            <div key={`${bar.source}-${bar.stockSourceId ?? 'new'}-${barIndex}`} className={cn('rounded-lg border p-3', remainder < 0 && 'border-red-300 bg-red-50/50')}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
                   Хлыст №{barIndex + 1}
-                  {bar.source === 'business_remnant' ? (
-                    <Badge variant="secondary">{formatMm(bar.stockLengthMm)} мм · со склада</Badge>
+                  {bar.source !== 'new_stock' ? (
+                    <Badge variant="secondary">
+                      {formatMm(bar.stockLengthMm)} мм · {longStockBarSourceLabel(bar.source, bar.availableFromDate ?? null)}
+                    </Badge>
                   ) : (
                     <label className="flex items-center gap-2 text-sm font-normal">
                       <span className="text-slate-500">Длина</span>

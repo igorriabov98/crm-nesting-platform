@@ -4,6 +4,8 @@ import {
   DEFAULT_LONG_STOCK_SEARCH_BUDGET,
   solveLongStockCutting,
   type LongStockCuttingCandidate,
+  type LongStockPhysicalSource,
+  type LongStockPhysicalSourceKind,
 } from '@/lib/long-stock-cutting-solver'
 import {
   createLongStockMaterialDraft,
@@ -18,11 +20,13 @@ import {
   normalizeLongStockPlanSegments,
   serializeLongStockCandidates,
   solverModeForPlan,
+  supportsLongStockSourceSelection,
   validateManualLongStockLayout,
   type LongStockManualBarInput,
   type LongStockPlanCalculationInput,
   type LongStockPlanSegmentInput,
   type LongStockRequestItemRef,
+  type LongStockSourceSelection,
 } from '@/lib/long-stock-cutting-plan'
 import {
   calculateLongStockWeightPerMeterKg,
@@ -55,6 +59,7 @@ type DbResult<T> = { data: T | null; error: DbError | null }
 type DbQuery<T> = PromiseLike<DbResult<T[]>> & {
   select(columns: string): DbQuery<T>
   eq(column: string, value: unknown): DbQuery<T>
+  in(column: string, values: readonly unknown[]): DbQuery<T>
   is(column: string, value: null): DbQuery<T>
   gt(column: string, value: number): DbQuery<T>
   order(column: string, options?: { ascending?: boolean }): DbQuery<T>
@@ -117,12 +122,46 @@ type LayoutSettingsSnapshot = {
   categories: LayoutCategorySnapshot[]
 }
 
-type InventoryRemnantRow = {
+type InventorySourceRow = {
   id: string
+  factory_id: string
   piece_length_mm: number | string | null
   available_quantity: number | string
   available_secondary_quantity: number | string | null
+  is_business_scrap: boolean
+  business_scrap_state: 'available' | 'future'
+  available_from_date: string | null
+  available_from_stage_id: string | null
+  source_machine_id: string | null
   created_at: string
+}
+
+type LongStockSourceLinkRow = {
+  inventory_id: string
+  version_id: string
+  bar_id: string
+}
+
+export type LongStockSourceOption = {
+  inventoryId: string
+  source: LongStockPhysicalSourceKind
+  lengthMm: number
+  availableQuantity: number
+  factoryId: string
+  factoryName: string
+  isOwnFactory: boolean
+  requiresTransfer: boolean
+  state: 'available' | 'future'
+  availableFromDate: string | null
+  sourceMachineId: string | null
+  sourceMachineName: string | null
+  sourceRequestId: string | null
+  sourceVersionId: string | null
+  sourceVersionNumber: number | null
+  sourceBarId: string | null
+  available: boolean
+  unavailableReason: string | null
+  createdAt: string
 }
 
 type CalculationContext = {
@@ -140,6 +179,8 @@ type CalculationContext = {
   searchBudget: number
   workpieces: ReturnType<typeof normalizeLongStockPlanSegments>
   businessRemnants: Array<{ id: string; lengthMm: number; createdAt: string }>
+  stockSources: LongStockPhysicalSource[]
+  stockSourceOptions: LongStockSourceOption[]
   purchaseLengths: Array<{ lengthMm: number; kind: 'standard' | 'nonstandard' }>
   recalculation: LongStockRecalculationState | null
   planningRecovery: LongStockPlanningRecoveryState | null
@@ -157,12 +198,14 @@ type LongStockRecalculationState = {
   remainingSegments: LongStockPlanSegmentInput[]
   acceptedLengthsMm: number[]
   allowedPurchaseLengths: Array<{ lengthMm: number; kind: 'standard' | 'nonstandard' }>
+  reservedStock: Array<{ lengthMm: number; pieceCount: number }>
 }
 
 export type LongStockRecalculationSourceKind =
   | 'supply_return'
   | 'supply_receipt'
   | 'inventory_transfer'
+  | 'inventory_reconciliation'
 
 export type LongStockRecalculationReplacement = {
   replacement_id: string
@@ -326,6 +369,24 @@ export async function calculateLongStockCuttingPlan(input: LongStockPlanCalculat
   await requirePermission('technologist_requests', 'view')
   const context = await calculateContext(input)
   return calculationResult(context)
+}
+
+export async function loadLongStockSourceOptions(input: {
+  requestId: string
+  materialId: string
+  materialVariantId: string
+}): Promise<{
+  machineId: string
+  factoryId: string
+  consumerCuttingDate: string | null
+  sources: LongStockSourceOption[]
+}> {
+  await requirePermission('technologist_requests', 'view')
+  return loadLongStockSourceOptionsInternal({
+    requestId: requireUuid(input?.requestId, 'Идентификатор заявки'),
+    materialId: requireUuid(input?.materialId, 'Идентификатор материала'),
+    materialVariantId: requireUuid(input?.materialVariantId, 'Идентификатор варианта материала'),
+  })
 }
 
 export async function getLongStockCuttingPlanItemStatuses(
@@ -642,6 +703,7 @@ export async function createManualLongStockCuttingPlanVersion(
   const manualCandidate = validateManualLongStockLayout({
     workpieces: context.workpieces,
     businessRemnants: context.businessRemnants,
+    stockSources: context.stockSources,
     purchaseLengths: eligiblePurchaseLengths,
     bars: input.bars,
     kerfMm: context.settingsSnapshot.kerf_mm,
@@ -723,6 +785,226 @@ export async function approveLongStockCuttingPlanVersion(versionId: string) {
   }
 }
 
+async function loadLongStockSourceOptionsInternal(input: {
+  requestId: string
+  materialId: string
+  materialVariantId: string
+}) {
+  const db = database()
+  const [request, variant] = await Promise.all([
+    one<{ id: string; machine_id: string }>(
+      db.from<{ id: string; machine_id: string }>('technologist_requests')
+        .select('id,machine_id')
+        .eq('id', input.requestId)
+        .maybeSingle(),
+      'Заявка технолога не найдена',
+    ),
+    one<{ id: string; material_id: string; category: string; pipe_type: string | null }>(
+      db.from<{ id: string; material_id: string; category: string; pipe_type: string | null }>('material_variants')
+        .select('id,material_id,category,pipe_type')
+        .eq('id', input.materialVariantId)
+        .maybeSingle(),
+      'Вариант материала не найден',
+    ),
+  ])
+  if (variant.material_id !== input.materialId) {
+    throw new Error('Вариант материала не относится к выбранному материалу')
+  }
+  if (!supportsLongStockSourceSelection(variant.category, variant.pipe_type)) {
+    throw new Error('Для этого материала раскладка складских хлыстов недоступна')
+  }
+
+  const machine = await one<{ id: string; factory_id: string | null }>(
+    db.from<{ id: string; factory_id: string | null }>('machines')
+      .select('id,factory_id')
+      .eq('id', request.machine_id)
+      .maybeSingle(),
+    'Машина заявки не найдена',
+  )
+  if (!machine.factory_id) throw new Error('Для машины не определён завод')
+
+  const [inventoryResult, consumerStagesResult] = await Promise.all([
+    db.from<InventorySourceRow>('inventory')
+      .select('id,factory_id,piece_length_mm,available_quantity,available_secondary_quantity,is_business_scrap,business_scrap_state,available_from_date,available_from_stage_id,source_machine_id,created_at')
+      .eq('material_id', input.materialId)
+      .eq('material_variant_id', input.materialVariantId)
+      .is('deleted_at', null)
+      .gt('total_quantity', 0)
+      .order('created_at', { ascending: true }),
+    db.from<{ id: string; date_start: string | null; created_at: string }>('production_stages')
+      .select('id,date_start,created_at')
+      .eq('machine_id', machine.id)
+      .eq('stage_type', 'cutting')
+      .order('created_at', { ascending: true }),
+  ])
+  if (inventoryResult.error) {
+    throw new Error(inventoryResult.error.message || 'Не удалось загрузить складские хлысты')
+  }
+  if (consumerStagesResult.error) {
+    throw new Error(consumerStagesResult.error.message || 'Не удалось загрузить дату порезки')
+  }
+  const rows = (inventoryResult.data ?? []).filter((row) => Number(row.piece_length_mm) > 0)
+  const consumerCuttingDate = consumerStagesResult.data?.[0]?.date_start ?? null
+  const futureIds = rows
+    .filter((row) => row.is_business_scrap && row.business_scrap_state === 'future')
+    .map((row) => row.id)
+  const factoryIds = [...new Set(rows.map((row) => row.factory_id).filter(Boolean))]
+  const machineIds = [...new Set(rows.map((row) => row.source_machine_id).filter((id): id is string => Boolean(id)))]
+
+  const [linksResult, factoriesResult, machinesResult] = await Promise.all([
+    futureIds.length > 0
+      ? db.from<LongStockSourceLinkRow>('long_stock_cutting_business_scraps')
+          .select('inventory_id,version_id,bar_id')
+          .in('inventory_id', futureIds)
+      : Promise.resolve({ data: [] as LongStockSourceLinkRow[], error: null }),
+    factoryIds.length > 0
+      ? db.from<{ id: string; name: string }>('factories').select('id,name').in('id', factoryIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; name: string }>, error: null }),
+    machineIds.length > 0
+      ? db.from<{ id: string; name: string }>('machines').select('id,name').in('id', machineIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; name: string }>, error: null }),
+  ])
+  if (linksResult.error || factoriesResult.error || machinesResult.error) {
+    throw new Error(
+      linksResult.error?.message
+      || factoriesResult.error?.message
+      || machinesResult.error?.message
+      || 'Не удалось загрузить происхождение складских хлыстов',
+    )
+  }
+  const links = linksResult.data ?? []
+  const versionIds = [...new Set(links.map((link) => link.version_id))]
+  const versionsResult = versionIds.length > 0
+    ? await db.from<{ id: string; plan_id: string; version_number: number; status: string }>('long_stock_cutting_plan_versions')
+        .select('id,plan_id,version_number,status')
+        .in('id', versionIds)
+    : { data: [] as Array<{ id: string; plan_id: string; version_number: number; status: string }>, error: null }
+  if (versionsResult.error) throw new Error(versionsResult.error.message || 'Не удалось загрузить исходные версии')
+  const planIds = [...new Set((versionsResult.data ?? []).map((version) => version.plan_id))]
+  const planItemsResult = planIds.length > 0
+    ? await db.from<{ plan_id: string; request_id: string }>('long_stock_cutting_plan_items')
+        .select('plan_id,request_id')
+        .in('plan_id', planIds)
+        .order('linked_at', { ascending: true })
+    : { data: [] as Array<{ plan_id: string; request_id: string }>, error: null }
+  if (planItemsResult.error) throw new Error(planItemsResult.error.message || 'Не удалось загрузить исходные заявки')
+
+  const linkByInventory = new Map(links.map((link) => [link.inventory_id, link]))
+  const versionById = new Map((versionsResult.data ?? []).map((version) => [version.id, version]))
+  const requestByPlan = new Map((planItemsResult.data ?? []).map((item) => [item.plan_id, item.request_id]))
+  const factoryNameById = new Map((factoriesResult.data ?? []).map((factory) => [factory.id, factory.name]))
+  const machineNameById = new Map((machinesResult.data ?? []).map((sourceMachine) => [sourceMachine.id, sourceMachine.name]))
+
+  const sources: LongStockSourceOption[] = rows.map((row) => {
+    const lengthMm = Number(row.piece_length_mm)
+    const availableByLength = Math.max(0, Math.floor(Number(row.available_quantity) / lengthMm))
+    const availableSecondary = Number(row.available_secondary_quantity)
+    const availableQuantity = Number.isFinite(availableSecondary)
+      ? Math.max(0, Math.min(availableByLength, Math.floor(availableSecondary)))
+      : availableByLength
+    const source: LongStockPhysicalSourceKind = !row.is_business_scrap
+      ? 'warehouse_stock'
+      : row.business_scrap_state === 'future' ? 'future_business_remnant' : 'business_remnant'
+    const link = linkByInventory.get(row.id)
+    const sourceVersion = link ? versionById.get(link.version_id) : undefined
+    let unavailableReason: string | null = null
+    if (availableQuantity < 1) {
+      unavailableReason = 'Свободных физических хлыстов не осталось'
+    } else if (source === 'future_business_remnant') {
+      if (!link || !sourceVersion) unavailableReason = 'Не найдена утверждённая исходная раскладка'
+      else if (sourceVersion.status !== 'approved') unavailableReason = 'Исходная раскладка больше не утверждена'
+      else if (!row.available_from_date) unavailableReason = 'Не назначена дата исходной порезки'
+      else if (!consumerCuttingDate) unavailableReason = 'Не назначена дата порезки потребителя'
+      else if (row.available_from_date >= consumerCuttingDate) {
+        unavailableReason = `Исходная порезка должна быть раньше ${consumerCuttingDate}`
+      }
+    }
+    return {
+      inventoryId: row.id,
+      source,
+      lengthMm,
+      availableQuantity,
+      factoryId: row.factory_id,
+      factoryName: factoryNameById.get(row.factory_id) ?? 'Завод не указан',
+      isOwnFactory: row.factory_id === machine.factory_id,
+      requiresTransfer: row.factory_id !== machine.factory_id,
+      state: row.business_scrap_state,
+      availableFromDate: row.available_from_date,
+      sourceMachineId: row.source_machine_id,
+      sourceMachineName: row.source_machine_id ? machineNameById.get(row.source_machine_id) ?? null : null,
+      sourceRequestId: sourceVersion ? requestByPlan.get(sourceVersion.plan_id) ?? null : null,
+      sourceVersionId: sourceVersion?.id ?? null,
+      sourceVersionNumber: sourceVersion?.version_number ?? null,
+      sourceBarId: link?.bar_id ?? null,
+      available: unavailableReason === null,
+      unavailableReason,
+      createdAt: row.created_at,
+    }
+  }).sort((left, right) =>
+    Number(!left.available) - Number(!right.available)
+    || Number(left.requiresTransfer) - Number(right.requiresTransfer)
+    || Number(left.source === 'future_business_remnant') - Number(right.source === 'future_business_remnant')
+    || (left.source === 'business_remnant' ? -1 : right.source === 'business_remnant' ? 1 : 0)
+    || left.createdAt.localeCompare(right.createdAt)
+    || left.inventoryId.localeCompare(right.inventoryId, 'en'))
+
+  return {
+    machineId: machine.id,
+    factoryId: machine.factory_id,
+    consumerCuttingDate,
+    sources,
+  }
+}
+
+function expandLongStockPhysicalSources(
+  options: readonly LongStockSourceOption[],
+  selection: readonly LongStockSourceSelection[] | undefined,
+): LongStockPhysicalSource[] {
+  const availableById = new Map(options.filter((option) => option.available).map((option) => [option.inventoryId, option]))
+  let selectedQuantities: Map<string, number>
+  if (selection === undefined) {
+    selectedQuantities = new Map(
+      [...availableById.values()].map((option) => [option.inventoryId, option.availableQuantity]),
+    )
+  } else {
+    selectedQuantities = new Map()
+    for (const entry of selection) {
+      const inventoryId = requireUuid(entry?.inventoryId, 'Идентификатор складского источника')
+      const quantity = Number(entry?.quantity)
+      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+        throw new Error('Количество выбранных складских хлыстов должно быть положительным целым числом')
+      }
+      if (selectedQuantities.has(inventoryId)) {
+        throw new Error(`Складской источник ${inventoryId} указан повторно`)
+      }
+      const option = availableById.get(inventoryId)
+      if (!option) {
+        const unavailable = options.find((candidate) => candidate.inventoryId === inventoryId)
+        throw new Error(unavailable?.unavailableReason || 'Выбранный складской источник больше недоступен')
+      }
+      if (quantity > option.availableQuantity) {
+        throw new Error(`Для источника ${option.lengthMm} мм свободно только ${option.availableQuantity} шт.`)
+      }
+      selectedQuantities.set(inventoryId, quantity)
+    }
+  }
+
+  return [...selectedQuantities.entries()].flatMap(([inventoryId, quantity]) => {
+    const option = availableById.get(inventoryId)
+    if (!option) return []
+    return Array.from({ length: quantity }, (_, pieceIndex) => ({
+      id: `${inventoryId}:${pieceIndex + 1}`,
+      inventoryId,
+      source: option.source,
+      lengthMm: option.lengthMm,
+      createdAt: option.createdAt,
+      factoryId: option.factoryId,
+      requiresTransfer: option.requiresTransfer,
+      availableFromDate: option.availableFromDate,
+    }))
+  })
+}
+
 async function calculateContext(input: LongStockPlanCalculationInput): Promise<CalculationContext> {
   const requestItem = normalizeRequestItemRef(input.requestItem)
   const workpieces = normalizeLongStockPlanSegments(input.segments)
@@ -799,34 +1081,24 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
   const layoutCategory = settingsSnapshot.categories.find((category) => category.key === categoryKey)
   if (!layoutCategory) throw new Error(`Настройки категории ${categoryKey} не найдены`)
 
-  const remnantsResult = await db.from<InventoryRemnantRow>('inventory')
-    .select('id,piece_length_mm,available_quantity,available_secondary_quantity,created_at')
-    .eq('material_id', item.material_id)
-    .eq('material_variant_id', item.material_variant_id)
-    .eq('is_business_scrap', true)
-    .eq('business_scrap_state', 'available')
-    .is('deleted_at', null)
-    .gt('available_quantity', 0)
-    .order('created_at', { ascending: true })
-  if (remnantsResult.error) {
-    throw new Error(remnantsResult.error.message || 'Не удалось прочитать деловые остатки')
-  }
-  const availableBusinessRemnants = (remnantsResult.data ?? []).flatMap((row) => {
-    const lengthMm = Number(row.piece_length_mm)
-    const availableQuantity = Number(row.available_quantity)
-    const availablePieces = Number(row.available_secondary_quantity)
-    return Number.isFinite(lengthMm) && lengthMm > 0
-      && availableQuantity >= lengthMm
-      && Number.isFinite(availablePieces) && availablePieces >= 1
-      ? [{ id: row.id, lengthMm, createdAt: row.created_at }]
-      : []
+  const reservedStock = planningRecovery?.reservedStock ?? recalculation?.reservedStock ?? []
+  const usesReservedStock = reservedStock.length > 0
+  const sourceLoad = await loadLongStockSourceOptionsInternal({
+    requestId: request.id,
+    materialId: item.material_id,
+    materialVariantId: item.material_variant_id,
   })
-  const usesReservedStock = Boolean(planningRecovery?.reservedStock.length)
-  const businessRemnants = usesReservedStock ? [] : availableBusinessRemnants
+  const stockSourceOptions = usesReservedStock ? [] : sourceLoad.sources
+  const stockSources = usesReservedStock
+    ? []
+    : expandLongStockPhysicalSources(stockSourceOptions, input.stockSelection)
+  const businessRemnants = stockSources
+    .filter((source) => source.source === 'business_remnant')
+    .map((source) => ({ id: source.id, lengthMm: source.lengthMm, createdAt: source.createdAt }))
   const purchaseLengths = recalculation
     ? recalculation.allowedPurchaseLengths
-    : usesReservedStock && planningRecovery
-      ? planningRecovery.reservedStock.map((stock) => ({
+    : usesReservedStock
+      ? reservedStock.map((stock) => ({
           lengthMm: stock.lengthMm,
           kind: 'standard' as const,
         }))
@@ -843,7 +1115,8 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
   const solverMode = solverModeForPlan(mode)
   const rawSolverResult = solveLongStockCutting({
     workpieces,
-    businessRemnants,
+    stockSources,
+    requireAllStockSources: input.stockSelection !== undefined,
     purchaseLengths,
     kerfMm: settingsSnapshot.kerf_mm,
     endTrimMm: settingsSnapshot.end_trim_mm,
@@ -851,10 +1124,10 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
     allowMixedLengths: solverMode.allowMixedLengths,
     searchBudget,
   })
-  const constrainedCandidates = usesReservedStock && planningRecovery
+  const constrainedCandidates = usesReservedStock
     ? filterLongStockCandidatesByReservedStock(
         rawSolverResult.candidates,
-        planningRecovery.reservedStock,
+        reservedStock,
       )
     : rawSolverResult.candidates
   const solverResult = {
@@ -878,6 +1151,8 @@ async function calculateContext(input: LongStockPlanCalculationInput): Promise<C
     searchBudget,
     workpieces,
     businessRemnants,
+    stockSources,
+    stockSourceOptions,
     purchaseLengths,
     recalculation,
     planningRecovery,
@@ -978,6 +1253,16 @@ async function persistVersion(input: {
     search_budget: input.context.searchBudget,
     segments: input.context.workpieces,
     available_business_remnants: input.context.businessRemnants,
+    available_stock_sources: input.context.stockSourceOptions,
+    selected_stock_sources: input.context.stockSources.map((source) => ({
+      physical_source_id: source.id,
+      inventory_id: source.inventoryId,
+      source_type: source.source,
+      length_mm: source.lengthMm,
+      factory_id: source.factoryId,
+      requires_transfer: source.requiresTransfer,
+      available_from_date: source.availableFromDate,
+    })),
     selected_candidate_key: input.selectedCandidateKey,
     manual_edit_reason: input.manualEditReason,
     manual_layout: input.manualLayout,
@@ -1028,6 +1313,14 @@ async function persistVersion(input: {
 }
 
 function calculationResult(context: CalculationContext) {
+  const recommendedCandidate = context.solverResult.candidates.find(
+    (candidate) => candidate.key === context.solverResult.recommendedCandidateKey,
+  )
+  const recommendedSelection = new Map<string, number>()
+  for (const bar of recommendedCandidate?.bars ?? []) {
+    if (!bar.sourceInventoryId) continue
+    recommendedSelection.set(bar.sourceInventoryId, (recommendedSelection.get(bar.sourceInventoryId) ?? 0) + 1)
+  }
   return {
     requestItem: context.requestItem,
     requestId: context.requestId,
@@ -1042,6 +1335,11 @@ function calculationResult(context: CalculationContext) {
     searchBudget: context.searchBudget,
     candidates: context.solverResult.candidates,
     recommendedCandidateKey: context.solverResult.recommendedCandidateKey,
+    stockSources: context.stockSourceOptions,
+    recommendedStockSelection: Array.from(recommendedSelection, ([inventoryId, quantity]) => ({
+      inventoryId,
+      quantity,
+    })),
     recalculation: context.recalculation ? {
       sourceVersionId: context.recalculation.invalidVersionId,
       sourceVersionNumber: context.recalculation.invalidVersionNumber,
@@ -1242,7 +1540,21 @@ async function loadLongStockRecalculationState(
   if (versionResult.error) throw new Error(versionResult.error.message || 'Не удалось прочитать недействительную версию')
   const invalidVersion = versionResult.data?.[0]
   if (!invalidVersion) throw new Error('Недействительная версия карты раскроя не найдена')
-  const sourceKind: LongStockRecalculationSourceKind = invalidVersion.invalidation_department_request_id
+  const reconciliationResult = await db.from<{
+    status: string
+    actual_sources: Array<{ length_mm?: number | string | null }>
+  }>('long_stock_cutting_source_reconciliations')
+    .select('status,actual_sources')
+    .eq('version_id', invalidVersion.id)
+    .eq('status', 'invalidated')
+    .maybeSingle()
+  if (reconciliationResult.error) {
+    throw new Error(reconciliationResult.error.message || 'Не удалось прочитать сверку складских источников')
+  }
+  const reconciliation = reconciliationResult.data
+  const sourceKind: LongStockRecalculationSourceKind = reconciliation
+    ? 'inventory_reconciliation'
+    : invalidVersion.invalidation_department_request_id
     ? 'supply_return'
     : invalidVersion.invalidation_receipt_schedule_id
       ? 'supply_receipt'
@@ -1321,7 +1633,20 @@ async function loadLongStockRecalculationState(
   }
 
   let allowedPurchaseLengths: Array<{ lengthMm: number; kind: 'standard' | 'nonstandard' }>
-  if (sourceKind === 'supply_return') {
+  const reconciliationStock = new Map<number, number>()
+  for (const source of reconciliation?.actual_sources ?? []) {
+    const lengthMm = Number(source.length_mm)
+    if (!Number.isSafeInteger(lengthMm) || lengthMm <= 0) continue
+    reconciliationStock.set(lengthMm, (reconciliationStock.get(lengthMm) ?? 0) + 1)
+  }
+  const reservedStock = Array.from(reconciliationStock, ([lengthMm, pieceCount]) => ({ lengthMm, pieceCount }))
+    .sort((left, right) => left.lengthMm - right.lengthMm)
+  if (sourceKind === 'inventory_reconciliation') {
+    allowedPurchaseLengths = reservedStock.map((stock) => ({
+      lengthMm: stock.lengthMm,
+      kind: 'standard' as const,
+    }))
+  } else if (sourceKind === 'supply_return') {
     if (!planResult.data || !settingsResult.data) {
       throw new Error('Актуальные настройки длин для пересчёта не найдены')
     }
@@ -1382,6 +1707,7 @@ async function loadLongStockRecalculationState(
     remainingSegments,
     acceptedLengthsMm,
     allowedPurchaseLengths,
+    reservedStock,
   }
 }
 

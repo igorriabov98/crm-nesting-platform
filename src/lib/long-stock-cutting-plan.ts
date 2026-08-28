@@ -3,6 +3,8 @@ import {
   type LongStockBusinessRemnant,
   type LongStockCuttingBar,
   type LongStockCuttingCandidate,
+  type LongStockPhysicalSource,
+  type LongStockPhysicalSourceKind,
   type LongStockPurchaseLength,
   type LongStockWorkpiece,
 } from '@/lib/long-stock-cutting-solver'
@@ -24,12 +26,34 @@ export type LongStockPlanSegmentInput = {
 export type LongStockPlanCalculationInput = {
   requestItem: LongStockRequestItemRef
   segments: LongStockPlanSegmentInput[]
+  /** Undefined asks the solver for a recommendation; an array is an exact mandatory selection. */
+  stockSelection?: LongStockSourceSelection[]
   mode?: LongStockPlanCalculationMode
   searchBudget?: number
 }
 
+export type LongStockSourceSelection = {
+  inventoryId: string
+  quantity: number
+}
+
+export function supportsLongStockSourceSelection(
+  category: string,
+  pipeType: string | null | undefined,
+) {
+  return category === 'circle'
+    || category === 'knives'
+    || (category === 'pipe' && pipeType !== 'wire')
+}
+
 export type LongStockManualBarInput = {
-  source: 'business_remnant' | 'new_stock'
+  source: LongStockPhysicalSourceKind | 'new_stock'
+  sourceInventoryId?: string | null
+  stockSourceId?: string | null
+  sourceFactoryId?: string | null
+  requiresTransfer?: boolean
+  availableFromDate?: string | null
+  /** @deprecated Use sourceInventoryId. */
   businessRemnantId?: string | null
   purchaseLengthKind?: 'standard' | 'nonstandard' | null
   stockLengthMm: number
@@ -55,7 +79,7 @@ export type StoredLongStockCandidate = {
     bar_number: number
     stock_length_mm: number
     length_group: 'standard' | 'nonstandard' | null
-    source_type: 'business_remnant' | 'new_stock'
+    source_type: LongStockPhysicalSourceKind | 'new_stock'
     source_inventory_id: string | null
     cuts: Array<{
       cut_number: number
@@ -68,6 +92,9 @@ export type StoredLongStockCandidate = {
 export function assertLongStockCuttingPlanApprovalSucceeded<T>(result: T): T {
   if (result && typeof result === 'object' && !Array.isArray(result)) {
     const approval = result as Record<string, unknown>
+    if (approval.status === 'conflict') {
+      throw new Error(String(approval.message || 'Выбранный складской источник уже занят. Обновите остатки и пересчитайте раскладку.'))
+    }
     if (approval.status === 'invalid' || approval.position_status === 'requires_recalculation') {
       throw new Error(
         'Утверждение не состоялось: фактический состав принятого материала расходится с картой. Требуется пересчёт.',
@@ -113,6 +140,7 @@ export function solverModeForPlan(mode: LongStockPlanCalculationMode = 'standard
 export function validateManualLongStockLayout(input: {
   workpieces: LongStockWorkpiece[]
   businessRemnants: LongStockBusinessRemnant[]
+  stockSources?: LongStockPhysicalSource[]
   purchaseLengths: LongStockPurchaseLength[]
   bars: LongStockManualBarInput[]
   kerfMm: number
@@ -125,8 +153,16 @@ export function validateManualLongStockLayout(input: {
   const workpieceById = new Map(input.workpieces.map((piece) => [piece.id, piece]))
   const expectedIds = new Set(workpieceById.keys())
   const assignedIds = new Set<string>()
-  const remnantById = new Map(input.businessRemnants.map((remnant) => [remnant.id, remnant]))
-  const usedRemnantIds = new Set<string>()
+  const legacySources: LongStockPhysicalSource[] = input.businessRemnants.map((remnant) => ({
+    ...remnant,
+    inventoryId: remnant.id,
+    source: 'business_remnant',
+    factoryId: 'legacy',
+    requiresTransfer: false,
+    availableFromDate: null,
+  }))
+  const sourceByPhysicalId = new Map((input.stockSources ?? legacySources).map((source) => [source.id, source]))
+  const usedSourceIds = new Set<string>()
   const purchaseLengthByValue = new Map(input.purchaseLengths.map((length) => [length.lengthMm, length]))
   const distinctPurchaseLengths = new Set<number>()
 
@@ -141,21 +177,31 @@ export function validateManualLongStockLayout(input: {
 
     let businessRemnantId: string | null = null
     let businessRemnantCreatedAt: string | null = null
+    let sourceInventoryId: string | null = null
+    let stockSourceId: string | null = null
+    let sourceFactoryId: string | null = null
+    let requiresTransfer = false
+    let availableFromDate: string | null = null
     let purchaseLengthKind: 'standard' | 'nonstandard' | null = null
-    if (bar.source === 'business_remnant') {
-      businessRemnantId = String(bar.businessRemnantId ?? '').trim()
-      const remnant = remnantById.get(businessRemnantId)
-      if (!remnant) {
-        throw new Error(`Хлыст №${barNumber}: складской деловой остаток недоступен`)
+    if (bar.source !== 'new_stock') {
+      stockSourceId = String(bar.stockSourceId ?? bar.businessRemnantId ?? '').trim()
+      const source = sourceByPhysicalId.get(stockSourceId)
+      if (!source || source.source !== bar.source) {
+        throw new Error(`Хлыст №${barNumber}: выбранный складской источник недоступен`)
       }
-      if (usedRemnantIds.has(remnant.id)) {
-        throw new Error(`Хлыст №${barNumber}: складской остаток ${remnant.id} использован повторно`)
+      if (usedSourceIds.has(source.id)) {
+        throw new Error(`Хлыст №${barNumber}: физический источник ${source.id} использован повторно`)
       }
-      if (remnant.lengthMm !== bar.stockLengthMm) {
-        throw new Error(`Хлыст №${barNumber}: длина складского остатка изменилась`)
+      if (source.lengthMm !== bar.stockLengthMm) {
+        throw new Error(`Хлыст №${barNumber}: длина складского источника изменилась`)
       }
-      usedRemnantIds.add(remnant.id)
-      businessRemnantCreatedAt = remnant.createdAt
+      usedSourceIds.add(source.id)
+      sourceInventoryId = source.inventoryId
+      sourceFactoryId = source.factoryId
+      requiresTransfer = source.requiresTransfer
+      availableFromDate = source.availableFromDate
+      businessRemnantId = source.source === 'business_remnant' ? source.inventoryId : null
+      businessRemnantCreatedAt = source.createdAt
     } else if (bar.source === 'new_stock') {
       const purchaseLength = purchaseLengthByValue.get(bar.stockLengthMm)
       if (!purchaseLength || purchaseLength.kind !== bar.purchaseLengthKind) {
@@ -202,6 +248,11 @@ export function validateManualLongStockLayout(input: {
     return {
       barNumber,
       source: bar.source,
+      sourceInventoryId,
+      stockSourceId,
+      sourceFactoryId,
+      requiresTransfer,
+      availableFromDate,
       businessRemnantId,
       businessRemnantCreatedAt,
       purchaseLengthKind,
@@ -240,6 +291,10 @@ export function validateManualLongStockLayout(input: {
     maxNewBarRemainderMm: newBars.length === 0
       ? 0
       : Math.max(...newBars.map((bar) => bar.remainderMm)),
+    warehouseBarCount: bars.filter((bar) => bar.source === 'warehouse_stock').length,
+    businessRemnantBarCount: bars.filter((bar) => bar.source === 'business_remnant').length,
+    futureBusinessRemnantBarCount: bars.filter((bar) => bar.source === 'future_business_remnant').length,
+    transferBarCount: bars.filter((bar) => bar.requiresTransfer).length,
     exploredVariants: 0,
     searchComplete: true,
     bars,
@@ -276,7 +331,7 @@ export function serializeLongStockCandidates(input: {
       stock_length_mm: bar.stockLengthMm,
       length_group: bar.source === 'new_stock' ? bar.purchaseLengthKind : null,
       source_type: bar.source,
-      source_inventory_id: bar.businessRemnantId,
+      source_inventory_id: bar.sourceInventoryId,
       cuts: bar.cuts.map((cut) => {
         const segmentNumber = segmentNumberById.get(cut.workpieceId)
         if (!segmentNumber) throw new Error(`Заготовка ${cut.workpieceId} отсутствует во входных данных`)
@@ -293,7 +348,8 @@ export function serializeLongStockCandidates(input: {
 function manualLayoutSignature(bars: LongStockCuttingBar[]) {
   return bars.map((bar) => [
     bar.source,
-    bar.businessRemnantId ?? '',
+    bar.sourceInventoryId ?? '',
+    bar.stockSourceId ?? '',
     bar.stockLengthMm,
     bar.cuts.map((cut) => cut.workpieceId).join(','),
   ].join(':')).join('|')

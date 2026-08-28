@@ -6,9 +6,15 @@
 2. Open a pull request.
 3. Wait for `.github/workflows/ci.yml` to pass.
 4. Merge into `main` with one writer.
-5. Run `Deploy Production` from GitHub Actions on `main`.
+5. Run `Deploy Production` from GitHub Actions on `main`. Leave
+   `deploy_railway=true` for a full release; set it to `false` only for an
+   explicitly approved CRM/DB-only release. Keep
+   `apply_long_stock_reconciliation=false` until the preceding run's
+   read-only report and fingerprint have been reviewed and approved.
 6. Approve the `production` environment review in GitHub UI.
-7. Let the workflow apply Prisma migrations, handle Supabase SQL migrations, deploy Railway, deploy Vercel from the same SHA, then run `scripts/prod-smoke.ts`.
+7. Let the workflow apply Prisma migrations, handle Supabase SQL migrations,
+   optionally deploy Railway, deploy Vercel from the same SHA, then run
+   `scripts/prod-smoke.ts`.
 
 Railway and Vercel autodeploy from `main` should stay disabled after the operator explicitly changes those settings. Production deploys should come from `deploy.yml`, not from feature branches or provider autodeploy.
 

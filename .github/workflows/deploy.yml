@@ -7,6 +7,14 @@ on:
         description: Validate deploy workflow without migrations, deploys, or smoke.
         type: boolean
         default: true
+      deploy_railway:
+        description: Deploy the Railway nesting service. Disable for CRM/DB-only releases.
+        type: boolean
+        default: true
+      apply_long_stock_reconciliation:
+        description: Apply the reported legacy long-stock reconciliation after its read-only preflight.
+        type: boolean
+        default: false
       confirm:
         description: Type deploy-production to run this workflow.
         type: string
@@ -115,12 +123,34 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Apply Supabase migrations through ledger
         run: npm run supabase:migrate
+      - name: Read-only legacy long-stock reconciliation preflight
+        run: |
+          psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN TRANSACTION READ ONLY;
+          WITH report AS MATERIALIZED (
+            SELECT public.fn_reconcile_approved_long_stock_sources_v1(false) AS value
+          )
+          SELECT jsonb_build_object(
+            'fingerprint', md5(value::text),
+            'report', value
+          )
+          FROM report;
+          ROLLBACK;
+          SQL
+      - name: Apply legacy long-stock reconciliation
+        if: ${{ inputs.apply_long_stock_reconciliation == true }}
+        run: |
+          psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          SELECT public.fn_reconcile_approved_long_stock_sources_v1(true);
+          COMMIT;
+          SQL
 
   railway:
     name: railway deploy
     runs-on: ubuntu-latest
     needs: supabase
-    if: ${{ inputs.dry_run == false }}
+    if: ${{ inputs.dry_run == false && inputs.deploy_railway == true }}
     environment: production
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -214,8 +244,12 @@ jobs:
   vercel:
     name: vercel deploy
     runs-on: ubuntu-latest
-    needs: railway
-    if: ${{ inputs.dry_run == false }}
+    needs: [supabase, railway]
+    if: >-
+      ${{ always()
+          && inputs.dry_run == false
+          && needs.supabase.result == 'success'
+          && (needs.railway.result == 'success' || needs.railway.result == 'skipped') }}
     environment: production
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

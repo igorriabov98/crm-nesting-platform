@@ -5,6 +5,7 @@ import {
   assertLongStockCuttingPlanApprovalSucceeded,
   normalizeLongStockPlanSegments,
   serializeLongStockCandidates,
+  supportsLongStockSourceSelection,
   solverModeForPlan,
   validateManualLongStockLayout,
 } from './long-stock-cutting-plan'
@@ -19,6 +20,16 @@ test('approval self-invalidation is reported as an error', () => {
   )
   const approved = { status: 'approved', position_status: 'plan_approved' }
   assert.equal(assertLongStockCuttingPlanApprovalSucceeded(approved), approved)
+})
+
+test('approval source conflict is reported with the server explanation', () => {
+  assert.throws(
+    () => assertLongStockCuttingPlanApprovalSucceeded({
+      status: 'conflict',
+      message: 'Хлыст №1 уже занят другим технологом',
+    }),
+    /Хлыст №1 уже занят другим технологом/u,
+  )
 })
 
 const workpieces = normalizeLongStockPlanSegments([
@@ -137,4 +148,14 @@ test('calculation modes map to solver flags explicitly', () => {
   assert.deepEqual(solverModeForPlan(), { mode: 'standard_only', allowMixedLengths: false })
   assert.deepEqual(solverModeForPlan('with_nonstandard'), { mode: 'optimal', allowMixedLengths: false })
   assert.deepEqual(solverModeForPlan('mixed'), { mode: 'standard_only', allowMixedLengths: true })
+})
+
+test('source selection covers circles, non-wire pipes and every exact knife variant', () => {
+  assert.equal(supportsLongStockSourceSelection('circle', null), true)
+  assert.equal(supportsLongStockSourceSelection('pipe', 'round'), true)
+  assert.equal(supportsLongStockSourceSelection('pipe', 'profile'), true)
+  assert.equal(supportsLongStockSourceSelection('pipe', 'standard'), true)
+  assert.equal(supportsLongStockSourceSelection('pipe', 'wire'), false)
+  assert.equal(supportsLongStockSourceSelection('knives', null), true)
+  assert.equal(supportsLongStockSourceSelection('sheet', null), false)
 })

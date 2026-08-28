@@ -27,22 +27,24 @@ postgresEnv.PGSSLMODE = databaseUrl.searchParams.get('sslmode') || 'disable'
 if (databaseUrl.username) postgresEnv.PGUSER = decodeURIComponent(databaseUrl.username)
 if (databaseUrl.password) postgresEnv.PGPASSWORD = decodeURIComponent(databaseUrl.password)
 
-const testSql = readFileSync(
-  path.join(root, 'supabase', 'tests', 'long_stock_cutting_plan_server_test.sql'),
-  'utf8',
-)
-const result = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', databaseName], {
-  cwd: root,
-  encoding: 'utf8',
-  env: postgresEnv,
-  input: testSql,
-})
-if (result.status !== 0) {
-  process.stderr.write(result.stdout || '')
-  process.stderr.write(result.stderr || '')
+for (const testFile of [
+  'long_stock_cutting_plan_server_test.sql',
+  'long_stock_selected_sources_test.sql',
+]) {
+  const testSql = readFileSync(path.join(root, 'supabase', 'tests', testFile), 'utf8')
+  const result = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', databaseName], {
+    cwd: root,
+    encoding: 'utf8',
+    env: postgresEnv,
+    input: testSql,
+  })
+  if (result.status !== 0) {
+    process.stderr.write(result.stdout || '')
+    process.stderr.write(result.stderr || '')
+  }
+  assert.equal(result.status, 0, `${testFile} SQL assertions failed`)
+  process.stdout.write(result.stdout || '')
 }
-assert.equal(result.status, 0, 'Long-stock cutting plan server SQL assertions failed')
-process.stdout.write(result.stdout || '')
 console.log('[long-stock-cutting-plan-server] all assertions passed')
 
 function run(command, args) {
