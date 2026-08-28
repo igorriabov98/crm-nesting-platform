@@ -36,6 +36,35 @@ function physicalSource(id: string, lengthMm: number, overrides: Partial<LongSto
   }
 }
 
+test('fills the selected 12000 mm warehouse bar with nine of ten 1300 mm cuts at equal purchase cost', () => {
+  for (const requireAllStockSources of [false, true]) {
+    const result = solveLongStockCutting({
+      workpieces: Array.from({ length: 10 }, (_, i) => ({ id: `cut-${i}`, lengthMm: 1300 })),
+      stockSources: [physicalSource('warehouse', 12000)],
+      requireAllStockSources,
+      purchaseLengths: [6000, 12000].map((lengthMm) => ({ lengthMm, kind: 'standard' })),
+      kerfMm: 2, endTrimMm: 10, allowMixedLengths: true,
+    })
+    const best = result.candidates[0]
+    assert.equal(best.purchasedLengthMm, 6000)
+    assert.equal(best.totalRemainderMm, 4960)
+    assert.equal(best.searchComplete, true)
+    for (const candidate of result.candidates) {
+      const stock = candidate.bars.filter((bar) => bar.sourceInventoryId === 'warehouse')
+      const purchased = candidate.bars.filter((bar) => bar.source === 'new_stock')
+      assert.equal(stock.length, 1)
+      assert.equal(stock[0].cuts.length, 9)
+      assert.equal(stock[0].remainderMm, 272)
+      assert.equal(purchased.length, 1)
+      assert.equal(purchased[0].cuts.length, 1)
+      assert.equal(purchased[0].remainderMm, purchased[0].stockLengthMm - 1312)
+      assert.deepEqual(candidate.bars.flatMap((bar) => bar.cuts.map((cut) => cut.workpieceId)).sort(),
+        Array.from({ length: 10 }, (_, i) => `cut-${i}`).sort())
+    }
+    assert.equal(best.bars.find((bar) => bar.source === 'new_stock')?.remainderMm, 4688)
+  }
+})
+
 test('optimizes stock and purchase jointly instead of putting the longest cut into stock first', () => {
   for (const requireAllStockSources of [false, true]) {
     const result = solveLongStockCutting({
