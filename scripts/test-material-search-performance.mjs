@@ -39,6 +39,12 @@ test('selected and hidden material inputs do not search in the background', () =
   assert.match(materialSearchSource, /localSelection\?\.name, open, openDropdown/)
 })
 
+test('category-label searches skip the irrelevant variant full scan', () => {
+  assert.match(materialActionsSource, /const shouldSearchVariantCharacteristics = !categoryLabelMatchesQuery && !matchedCategory/)
+  assert.match(materialActionsSource, /if \(shouldSearchVariantCharacteristics && textFilters\.length\)/)
+  assert.match(materialActionsSource, /if \(shouldSearchVariantCharacteristics && numericValue !== null\)/)
+})
+
 test('adding a sheet row gives immediate feedback and rejects duplicate clicks', () => {
   assert.match(sheetMetalSource, /if \(isAdding\) return/)
   assert.match(sheetMetalSource, /Добавляю позицию…/)
