@@ -133,12 +133,23 @@ export function candidatesForLongStockMode(
 ) {
   return candidates
     .filter((candidate) => mixedLengths || candidate.kind !== 'mixed_lengths')
-    .sort((left, right) => left.purchasedLengthMm - right.purchasedLengthMm || left.newBarCount - right.newBarCount)
+    .sort((left, right) => left.purchasedLengthMm - right.purchasedLengthMm
+      || (left.futureBusinessRemnantBarCount + left.transferBarCount)
+        - (right.futureBusinessRemnantBarCount + right.transferBarCount)
+      || left.totalRemainderMm - right.totalRemainderMm
+      || right.businessRemnantBarCount - left.businessRemnantBarCount
+      || left.newBarCount - right.newBarCount
+      || left.key.localeCompare(right.key, 'en'))
 }
 
 export function candidateToManualBars(candidate: LongStockCuttingCandidate): LongStockManualBarInput[] {
   return candidate.bars.map((bar) => ({
     source: bar.source,
+    sourceInventoryId: bar.sourceInventoryId,
+    stockSourceId: bar.stockSourceId,
+    sourceFactoryId: bar.sourceFactoryId,
+    requiresTransfer: bar.requiresTransfer,
+    availableFromDate: bar.availableFromDate,
     businessRemnantId: bar.businessRemnantId,
     purchaseLengthKind: bar.purchaseLengthKind,
     stockLengthMm: bar.stockLengthMm,

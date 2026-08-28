@@ -141,6 +141,81 @@ test('uses the oldest remnant when equal lengths are equally suitable', () => {
   assert.equal(result.stockBars[0].businessRemnantId, 'older')
 })
 
+test('uses two selected 8500 mm warehouse bars and keeps both 2499 mm remainders', () => {
+  const result = solveLongStockCutting({
+    workpieces: [
+      { id: 'part-6000-1', lengthMm: 6000 },
+      { id: 'part-6000-2', lengthMm: 6000 },
+    ],
+    stockSources: [1, 2].map((pieceNumber) => ({
+      id: `inventory-8500:${pieceNumber}`,
+      inventoryId: 'inventory-8500',
+      source: 'warehouse_stock' as const,
+      lengthMm: 8500,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      factoryId: 'factory-a',
+      requiresTransfer: false,
+      availableFromDate: null,
+    })),
+    requireAllStockSources: true,
+    purchaseLengths: [{ lengthMm: 12000, kind: 'standard' }],
+    kerfMm: 1,
+    endTrimMm: 0,
+  })
+
+  const candidate = result.candidates[0]
+  assert.equal(candidate.kind, 'stock_only')
+  assert.equal(candidate.purchasedLengthMm, 0)
+  assert.equal(candidate.warehouseBarCount, 2)
+  assert.deepEqual(candidate.bars.map((bar) => bar.remainderMm), [2499, 2499])
+  assert.deepEqual(candidate.bars.map((bar) => bar.sourceInventoryId), ['inventory-8500', 'inventory-8500'])
+})
+
+test('requires every explicitly selected physical bar to receive a cut', () => {
+  assert.throws(() => solveLongStockCutting({
+    workpieces: [{ id: 'part-1000', lengthMm: 1000 }],
+    stockSources: [1, 2].map((pieceNumber) => ({
+      id: `inventory:${pieceNumber}`,
+      inventoryId: 'inventory',
+      source: 'warehouse_stock' as const,
+      lengthMm: 6000,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      factoryId: 'factory-a',
+      requiresTransfer: false,
+      availableFromDate: null,
+    })),
+    requireAllStockSources: true,
+    purchaseLengths: [{ lengthMm: 6000, kind: 'standard' }],
+    kerfMm: 1,
+    endTrimMm: 0,
+  }), /больше складских хлыстов, чем задано отрезков/)
+})
+
+test('prefers an available business remnant over future and transfer dependencies', () => {
+  const result = solveLongStockCutting({
+    workpieces: [{ id: 'part-6000', lengthMm: 6000 }],
+    stockSources: [
+      {
+        id: 'future:1', inventoryId: 'future', source: 'future_business_remnant', lengthMm: 6500,
+        createdAt: '2026-07-01T00:00:00.000Z', factoryId: 'factory-b', requiresTransfer: true,
+        availableFromDate: '2026-08-20',
+      },
+      {
+        id: 'business:1', inventoryId: 'business', source: 'business_remnant', lengthMm: 9000,
+        createdAt: '2026-08-01T00:00:00.000Z', factoryId: 'factory-a', requiresTransfer: false,
+        availableFromDate: null,
+      },
+    ],
+    purchaseLengths: [{ lengthMm: 12000, kind: 'standard' }],
+    kerfMm: 1,
+    endTrimMm: 0,
+  })
+
+  assert.equal(result.candidates[0].bars[0].sourceInventoryId, 'business')
+  assert.equal(result.candidates[0].futureBusinessRemnantBarCount, 0)
+  assert.equal(result.candidates[0].transferBarCount, 0)
+})
+
 test('does not return purchase lengths that cannot fit the longest workpiece with losses', () => {
   const result = solveLongStockCutting({
     workpieces: [{ id: 'part-2300', lengthMm: 2300 }],

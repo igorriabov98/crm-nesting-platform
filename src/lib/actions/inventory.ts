@@ -929,8 +929,9 @@ export async function reserveFutureBusinessScrapForMachine(data: {
   secondary_quantity?: number | null
 }): Promise<ActionResult> {
   try {
-    const { db, userId } = await requireAccess('manage')
-    const { error } = await db.rpc('fn_reserve_future_business_scrap_for_machine', {
+    const { userId } = await requireAccess('manage')
+    const adminDb = createAdminClient() as unknown as LooseDb
+    const { error } = await adminDb.rpc('fn_reserve_future_business_scrap_for_machine', {
       p_inventory_id: data.inventory_id,
       p_machine_id: data.machine_id,
       p_quantity: Number(data.quantity),

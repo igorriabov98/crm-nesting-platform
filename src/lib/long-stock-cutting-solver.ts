@@ -12,6 +12,23 @@ export type LongStockBusinessRemnant = {
   createdAt: string
 }
 
+export type LongStockPhysicalSourceKind =
+  | 'warehouse_stock'
+  | 'business_remnant'
+  | 'future_business_remnant'
+
+export type LongStockPhysicalSource = {
+  /** Unique physical-piece key. Aggregate inventory rows use inventoryId:pieceNumber. */
+  id: string
+  inventoryId: string
+  source: LongStockPhysicalSourceKind
+  lengthMm: number
+  createdAt: string
+  factoryId: string
+  requiresTransfer: boolean
+  availableFromDate: string | null
+}
+
 export type LongStockPurchaseLength = {
   lengthMm: number
   kind: LongStockLengthKind
@@ -19,6 +36,9 @@ export type LongStockPurchaseLength = {
 
 export type LongStockSolverInput = {
   workpieces: LongStockWorkpiece[]
+  stockSources?: LongStockPhysicalSource[]
+  requireAllStockSources?: boolean
+  /** @deprecated Use stockSources. Kept for stored versions and focused legacy tests. */
   businessRemnants?: LongStockBusinessRemnant[]
   purchaseLengths: LongStockPurchaseLength[]
   kerfMm: number
@@ -36,7 +56,12 @@ export type LongStockCut = {
 
 export type LongStockCuttingBar = {
   barNumber: number
-  source: 'business_remnant' | 'new_stock'
+  source: LongStockPhysicalSourceKind | 'new_stock'
+  sourceInventoryId: string | null
+  stockSourceId: string | null
+  sourceFactoryId: string | null
+  requiresTransfer: boolean
+  availableFromDate: string | null
   businessRemnantId: string | null
   businessRemnantCreatedAt: string | null
   purchaseLengthKind: LongStockLengthKind | null
@@ -58,6 +83,10 @@ export type LongStockCuttingCandidate = {
   endTrimLossLengthMm: number
   totalRemainderMm: number
   maxNewBarRemainderMm: number
+  warehouseBarCount: number
+  businessRemnantBarCount: number
+  futureBusinessRemnantBarCount: number
+  transferBarCount: number
   exploredVariants: number
   searchComplete: boolean
   bars: LongStockCuttingBar[]
@@ -65,6 +94,7 @@ export type LongStockCuttingCandidate = {
 
 export type LongStockSolverResult = {
   stockBars: LongStockCuttingBar[]
+  unusedStockSourceIds: string[]
   unusedBusinessRemnantIds: string[]
   workpieceIdsRequiringPurchase: string[]
   candidates: LongStockCuttingCandidate[]
@@ -108,12 +138,36 @@ export function calculateLongStockBarRemainder(
 
 export function solveLongStockCutting(input: LongStockSolverInput): LongStockSolverResult {
   const normalized = normalizeInput(input)
-  const stockSelection = selectBusinessRemnants(
+  let stockSelection = selectStockSources(
     normalized.workpieces,
-    normalized.businessRemnants,
+    normalized.stockSources,
     normalized.kerfMm,
     normalized.endTrimMm,
+    normalized.requireAllStockSources,
   )
+  if (!normalized.requireAllStockSources && stockSelection.usedBars.length > 0) {
+    const initiallyUnusedStockSourceIds = stockSelection.unusedStockSourceIds
+    const initiallyUnusedBusinessRemnantIds = stockSelection.unusedBusinessRemnantIds
+    const recommendedIds = new Set(stockSelection.usedBars.map((bar) => bar.id))
+    const recommendedSources = normalized.stockSources
+      .filter((source) => recommendedIds.has(source.id))
+      .map((source) => ({ ...source, cuts: [] as IndexedWorkpiece[] }))
+    stockSelection = selectStockSources(
+      normalized.workpieces,
+      recommendedSources,
+      normalized.kerfMm,
+      normalized.endTrimMm,
+      true,
+    )
+    stockSelection.unusedStockSourceIds = [
+      ...initiallyUnusedStockSourceIds,
+      ...stockSelection.unusedStockSourceIds,
+    ]
+    stockSelection.unusedBusinessRemnantIds = [
+      ...initiallyUnusedBusinessRemnantIds,
+      ...stockSelection.unusedBusinessRemnantIds,
+    ]
+  }
 
   if (stockSelection.remainingWorkpieces.length === 0) {
     const stockOnly = buildCandidate(
@@ -127,6 +181,7 @@ export function solveLongStockCutting(input: LongStockSolverInput): LongStockSol
     )
     return {
       stockBars: stockOnly.bars,
+      unusedStockSourceIds: stockSelection.unusedStockSourceIds,
       unusedBusinessRemnantIds: stockSelection.unusedBusinessRemnantIds,
       workpieceIdsRequiringPurchase: [],
       candidates: [stockOnly],
@@ -183,6 +238,7 @@ export function solveLongStockCutting(input: LongStockSolverInput): LongStockSol
   candidates.sort(compareCandidates)
   return {
     stockBars: canonicalizeOutputBars(stockSelection.usedBars, [], normalized.kerfMm, normalized.endTrimMm),
+    unusedStockSourceIds: stockSelection.unusedStockSourceIds,
     unusedBusinessRemnantIds: stockSelection.unusedBusinessRemnantIds,
     workpieceIdsRequiringPurchase: stockSelection.remainingWorkpieces.map((piece) => piece.id),
     candidates,
@@ -211,17 +267,30 @@ function normalizeInput(input: LongStockSolverInput) {
     return { ...piece, inputIndex }
   }).sort(compareWorkpieces)
 
-  const remnantIds = new Set<string>()
-  const businessRemnants = (input.businessRemnants ?? []).map((remnant, inputIndex) => {
-    assertIdentifier(remnant.id, 'business remnant id')
-    assertPositiveFinite(remnant.lengthMm, `business remnant ${remnant.id} lengthMm`)
-    const createdAtMs = Date.parse(remnant.createdAt)
-    if (!Number.isFinite(createdAtMs)) {
-      throw new Error(`business remnant ${remnant.id} createdAt must be an ISO date`)
+  const legacyStockSources: LongStockPhysicalSource[] = (input.businessRemnants ?? []).map((remnant) => ({
+    ...remnant,
+    inventoryId: remnant.id,
+    source: 'business_remnant',
+    factoryId: 'legacy',
+    requiresTransfer: false,
+    availableFromDate: null,
+  }))
+  const sourceIds = new Set<string>()
+  const stockSources = (input.stockSources ?? legacyStockSources).map((source, inputIndex) => {
+    assertIdentifier(source.id, 'stock source id')
+    assertIdentifier(source.inventoryId, `stock source ${source.id} inventoryId`)
+    assertIdentifier(source.factoryId, `stock source ${source.id} factoryId`)
+    assertPositiveFinite(source.lengthMm, `stock source ${source.id} lengthMm`)
+    if (!['warehouse_stock', 'business_remnant', 'future_business_remnant'].includes(source.source)) {
+      throw new Error(`stock source ${source.id} has an unknown source type`)
     }
-    if (remnantIds.has(remnant.id)) throw new Error(`Duplicate business remnant id: ${remnant.id}`)
-    remnantIds.add(remnant.id)
-    return { ...remnant, createdAtMs, inputIndex, cuts: [] as IndexedWorkpiece[] }
+    const createdAtMs = Date.parse(source.createdAt)
+    if (!Number.isFinite(createdAtMs)) {
+      throw new Error(`stock source ${source.id} createdAt must be an ISO date`)
+    }
+    if (sourceIds.has(source.id)) throw new Error(`Duplicate stock source id: ${source.id}`)
+    sourceIds.add(source.id)
+    return { ...source, createdAtMs, inputIndex, cuts: [] as IndexedWorkpiece[] }
   })
 
   const purchaseLengthValues = new Set<number>()
@@ -241,7 +310,8 @@ function normalizeInput(input: LongStockSolverInput) {
 
   return {
     workpieces,
-    businessRemnants,
+    stockSources,
+    requireAllStockSources: input.requireAllStockSources ?? false,
     purchaseLengths,
     kerfMm: input.kerfMm,
     endTrimMm: input.endTrimMm,
@@ -251,19 +321,43 @@ function normalizeInput(input: LongStockSolverInput) {
   }
 }
 
-function selectBusinessRemnants(
+function selectStockSources(
   workpieces: IndexedWorkpiece[],
-  businessRemnants: Array<LongStockBusinessRemnant & {
+  stockSources: Array<LongStockPhysicalSource & {
     createdAtMs: number
     inputIndex: number
     cuts: IndexedWorkpiece[]
   }>,
   kerfMm: number,
   endTrimMm: number,
+  requireAllStockSources: boolean,
 ) {
-  const remainingWorkpieces: IndexedWorkpiece[] = []
-  for (const workpiece of workpieces) {
-    const fitting = businessRemnants
+  const remainingWorkpieces = [...workpieces]
+  if (requireAllStockSources && stockSources.length > remainingWorkpieces.length) {
+    throw new Error('Выбрано больше складских хлыстов, чем задано отрезков')
+  }
+
+  if (requireAllStockSources) {
+    const mandatorySources = [...stockSources].sort((left, right) =>
+      left.lengthMm - right.lengthMm
+      || stockSourceDependencyScore(left) - stockSourceDependencyScore(right)
+      || stockSourceTypePriority(left) - stockSourceTypePriority(right)
+      || left.createdAtMs - right.createdAtMs
+      || left.inputIndex - right.inputIndex
+      || left.id.localeCompare(right.id, 'en'))
+    for (const source of mandatorySources) {
+      const workpieceIndex = remainingWorkpieces.findIndex((workpiece) =>
+        calculateLongStockBarRemainder(source.lengthMm, [workpiece.lengthMm], kerfMm, endTrimMm) >= 0)
+      if (workpieceIndex < 0) {
+        throw new Error(`Выбранный складской хлыст ${source.lengthMm} мм нельзя использовать ни для одного отрезка`)
+      }
+      source.cuts.push(remainingWorkpieces.splice(workpieceIndex, 1)[0])
+    }
+  }
+
+  const requiringPurchase: IndexedWorkpiece[] = []
+  for (const workpiece of remainingWorkpieces) {
+    const fitting = stockSources
       .map((remnant) => ({
         remnant,
         remainderAfter: calculateLongStockBarRemainder(
@@ -275,17 +369,19 @@ function selectBusinessRemnants(
       }))
       .filter((candidate) => candidate.remainderAfter >= 0)
       .sort((left, right) =>
-        left.remainderAfter - right.remainderAfter
+        stockSourceDependencyScore(left.remnant) - stockSourceDependencyScore(right.remnant)
+        || left.remainderAfter - right.remainderAfter
+        || stockSourceTypePriority(left.remnant) - stockSourceTypePriority(right.remnant)
         || left.remnant.createdAtMs - right.remnant.createdAtMs
         || left.remnant.inputIndex - right.remnant.inputIndex
         || left.remnant.id.localeCompare(right.remnant.id, 'en'))
 
     const selected = fitting[0]?.remnant
     if (selected) selected.cuts.push(workpiece)
-    else remainingWorkpieces.push(workpiece)
+    else requiringPurchase.push(workpiece)
   }
 
-  const usedBars = businessRemnants
+  const usedBars = stockSources
     .filter((remnant) => remnant.cuts.length > 0)
     .sort((left, right) =>
       left.createdAtMs - right.createdAtMs
@@ -293,6 +389,11 @@ function selectBusinessRemnants(
       || left.id.localeCompare(right.id, 'en'))
     .map((remnant) => ({
       id: remnant.id,
+      inventoryId: remnant.inventoryId,
+      source: remnant.source,
+      factoryId: remnant.factoryId,
+      requiresTransfer: remnant.requiresTransfer,
+      availableFromDate: remnant.availableFromDate,
       createdAt: remnant.createdAt,
       lengthMm: remnant.lengthMm,
       cuts: [...remnant.cuts],
@@ -300,15 +401,28 @@ function selectBusinessRemnants(
 
   return {
     usedBars,
-    unusedBusinessRemnantIds: businessRemnants
+    unusedStockSourceIds: stockSources
       .filter((remnant) => remnant.cuts.length === 0)
       .sort((left, right) =>
         left.createdAtMs - right.createdAtMs
         || left.inputIndex - right.inputIndex
         || left.id.localeCompare(right.id, 'en'))
       .map((remnant) => remnant.id),
-    remainingWorkpieces,
+    unusedBusinessRemnantIds: stockSources
+      .filter((source) => source.source === 'business_remnant' && source.cuts.length === 0)
+      .map((source) => source.inventoryId),
+    remainingWorkpieces: requiringPurchase,
   }
+}
+
+function stockSourceDependencyScore(source: Pick<LongStockPhysicalSource, 'source' | 'requiresTransfer'>) {
+  return Number(source.source === 'future_business_remnant') + Number(source.requiresTransfer)
+}
+
+function stockSourceTypePriority(source: Pick<LongStockPhysicalSource, 'source'>) {
+  if (source.source === 'business_remnant') return 0
+  if (source.source === 'warehouse_stock') return 1
+  return 2
 }
 
 function searchNewBarLayouts(
@@ -696,6 +810,11 @@ function buildCandidate(
   kind: LongStockCuttingCandidate['kind'],
   stockBars: Array<{
     id: string
+    inventoryId: string
+    source: LongStockPhysicalSourceKind
+    factoryId: string
+    requiresTransfer: boolean
+    availableFromDate: string | null
     createdAt: string
     lengthMm: number
     cuts: IndexedWorkpiece[]
@@ -732,6 +851,10 @@ function buildCandidate(
     maxNewBarRemainderMm: newOutputBars.length === 0
       ? 0
       : Math.max(...newOutputBars.map((bar) => bar.remainderMm)),
+    warehouseBarCount: bars.filter((bar) => bar.source === 'warehouse_stock').length,
+    businessRemnantBarCount: bars.filter((bar) => bar.source === 'business_remnant').length,
+    futureBusinessRemnantBarCount: bars.filter((bar) => bar.source === 'future_business_remnant').length,
+    transferBarCount: bars.filter((bar) => bar.requiresTransfer).length,
     exploredVariants,
     searchComplete,
     bars,
@@ -741,6 +864,11 @@ function buildCandidate(
 function canonicalizeOutputBars(
   stockBars: Array<{
     id: string
+    inventoryId: string
+    source: LongStockPhysicalSourceKind
+    factoryId: string
+    requiresTransfer: boolean
+    availableFromDate: string | null
     createdAt: string
     lengthMm: number
     cuts: IndexedWorkpiece[]
@@ -750,8 +878,13 @@ function canonicalizeOutputBars(
   endTrimMm: number,
 ): LongStockCuttingBar[] {
   const stockOutput = stockBars.map((bar) => ({
-    source: 'business_remnant' as const,
-    businessRemnantId: bar.id,
+    source: bar.source,
+    sourceInventoryId: bar.inventoryId,
+    stockSourceId: bar.id,
+    sourceFactoryId: bar.factoryId,
+    requiresTransfer: bar.requiresTransfer,
+    availableFromDate: bar.availableFromDate,
+    businessRemnantId: bar.source === 'business_remnant' ? bar.inventoryId : null,
     businessRemnantCreatedAt: bar.createdAt,
     purchaseLengthKind: null,
     stockLengthMm: bar.lengthMm,
@@ -765,6 +898,11 @@ function canonicalizeOutputBars(
   }))
   const newOutput = newBars.map((bar) => ({
     source: 'new_stock' as const,
+    sourceInventoryId: null,
+    stockSourceId: null,
+    sourceFactoryId: null,
+    requiresTransfer: false,
+    availableFromDate: null,
     businessRemnantId: null,
     businessRemnantCreatedAt: null,
     purchaseLengthKind: bar.purchaseLengthKind,
@@ -799,8 +937,11 @@ function comparePurchaseLengths(left: LongStockPurchaseLength, right: LongStockP
 
 function compareCandidates(left: LongStockCuttingCandidate, right: LongStockCuttingCandidate) {
   return left.purchasedLengthMm - right.purchasedLengthMm
+    || (left.futureBusinessRemnantBarCount + left.transferBarCount)
+      - (right.futureBusinessRemnantBarCount + right.transferBarCount)
+    || left.totalRemainderMm - right.totalRemainderMm
+    || right.businessRemnantBarCount - left.businessRemnantBarCount
     || left.newBarCount - right.newBarCount
-    || right.maxNewBarRemainderMm - left.maxNewBarRemainderMm
     || compareNumberArrays(left.purchaseLengthsMm, right.purchaseLengthsMm)
     || layoutSignature(left.bars).localeCompare(layoutSignature(right.bars), 'en')
 }
@@ -871,7 +1012,7 @@ function mutableLayoutSignature(bars: MutableBar[], kerfMm: number, endTrimMm: n
 
 function layoutSignature(bars: LongStockCuttingBar[]) {
   return bars.map((bar) =>
-    `${bar.stockLengthMm}:${bar.remainderMm}:${cutsSignature(bar.cuts)}`).join('|')
+    `${bar.source}:${bar.sourceInventoryId ?? ''}:${bar.stockSourceId ?? ''}:${bar.stockLengthMm}:${bar.remainderMm}:${cutsSignature(bar.cuts)}`).join('|')
 }
 
 function cutsSignature(cuts: Array<{ workpieceId: string; lengthMm: number }>) {
