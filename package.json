@@ -65,7 +65,7 @@
     "test:people-planning": "tsx scripts/test-people-planning.ts",
     "test:planning-dashboard": "tsx scripts/test-planning-director-dashboard.ts",
     "test:sidebar-work-queue-badges": "tsx scripts/test-sidebar-work-queue-badges.ts",
-    "test:technologist-completion": "tsx scripts/test-technologist-completion.ts",
+    "test:technologist-completion": "tsx scripts/test-technologist-completion.ts && tsx --test scripts/test-technologist-completion-long-stock.tsx",
     "test:metal-scrap-ui": "tsx --test src/lib/metal-scrap.test.ts",
     "test:nesting-dimension-choice": "tsx scripts/test-nesting-dimension-choice.ts",
     "test:nesting-ai-match-policy": "tsx scripts/test-nesting-ai-match-policy.ts",

@@ -17,6 +17,7 @@ import {
 } from '@/lib/machine-cutting/files'
 import { isLongStockPlanReadyForSupply } from '@/lib/request-completion-material-scope'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
+import { formatMetalScrapMaterialName } from '@/lib/metal-scrap'
 import type { CompletionFutureBusinessScrap } from '@/lib/request-completion-future-scrap'
 
 const stagedArchiveSchema = z.object({
@@ -129,7 +130,7 @@ function mapPlanSummary(
 
 function mapWaste(sourceTable: CompletionWasteItem['sourceTable'], row: RawWasteRow): CompletionWasteItem {
   const fallbackName = sourceTable === 'request_circle' ? `Круг Ø${row.diameter_mm || '—'} мм` : 'Металл'
-  const materialName = String(row.material_name || row.pipe_type || row.knife_type || fallbackName)
+  const materialName = formatMetalScrapMaterialName(String(row.material_name || row.pipe_type || row.knife_type || fallbackName))
   const grade = row.material_grade || row.steel_grade || null
   const pipeProfile = sourceTable === 'request_pipe' && row.pipe_type === 'round'
     ? `Ø${roundPipeOuterDiameterMm(row) ?? '—'} мм`
@@ -186,16 +187,16 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
     if (!machineResult.data.factory_id || !factory) throw new Error('У машины не указан завод')
     if (planFactsResult.error) throw new Error(planFactsResult.error.message || 'Не удалось загрузить факты карт раскроя')
     const planFactRows = (planFactsResult.data || []) as RawPlanFactRow[]
-    const knifeVersionIds = [...new Set(planFactRows
-      .filter((row) => row.request_item_table === 'request_knives' && row.version_id)
+    const planVersionIds = [...new Set(planFactRows
+      .filter((row) => row.version_id)
       .map((row) => String(row.version_id)))]
     const futureScrapsByVersion = new Map<string, CompletionFutureBusinessScrap[]>()
-    if (knifeVersionIds.length > 0) {
+    if (planVersionIds.length > 0) {
       const scrapLinksResult = await client
         .from('long_stock_cutting_business_scraps')
         .select('version_id,inventory_id')
-        .in('version_id', knifeVersionIds)
-      if (scrapLinksResult.error) throw new Error(scrapLinksResult.error.message || 'Не удалось загрузить будущие деловые остатки ножей')
+        .in('version_id', planVersionIds)
+      if (scrapLinksResult.error) throw new Error(scrapLinksResult.error.message || 'Не удалось загрузить будущие деловые остатки')
 
       const inventoryIds = [...new Set((scrapLinksResult.data || []).map((row: RawWasteRow) => String(row.inventory_id)))]
       const inventoryResult = inventoryIds.length > 0
@@ -204,7 +205,7 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
           .select('id,piece_length_mm,business_scrap_state,deleted_at')
           .in('id', inventoryIds)
         : { data: [], error: null }
-      if (inventoryResult.error) throw new Error(inventoryResult.error.message || 'Не удалось загрузить складские строки будущих деловых остатков ножей')
+      if (inventoryResult.error) throw new Error(inventoryResult.error.message || 'Не удалось загрузить складские строки будущих деловых остатков')
 
       const inventoryById = new Map<string, RawWasteRow>((inventoryResult.data || []).map((row: RawWasteRow) => [String(row.id), row]))
       ;(scrapLinksResult.data || []).forEach((link: RawWasteRow) => {
