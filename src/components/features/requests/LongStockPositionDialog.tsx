@@ -78,6 +78,7 @@ import {
   expandLongStockSegmentRows,
   formatKg,
   formatMm,
+  mergeRefreshedLongStockSources,
   longStockCutColorMap,
   shouldShowBarSegmentLabel,
   totalLongStockSegmentLength,
@@ -181,8 +182,10 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   const [sourceSelectionCustomized, setSourceSelectionCustomized] = useState(false)
   const [sourceLoading, setSourceLoading] = useState(false)
   const [sourceError, setSourceError] = useState<string | null>(null)
+  const sourceLoadGeneration = useRef(0)
 
   useEffect(() => {
+    const generation = ++sourceLoadGeneration.current
     const materialId = material?.id
     const materialVariantId = variant?.id
     if (!materialId || !materialVariantId || (category === 'pipe' && variant?.pipe_type === 'wire')) {
@@ -202,15 +205,15 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setSourceSelectionCustomized(false)
     void loadLongStockSourceOptions({ requestId, materialId, materialVariantId })
       .then((result) => {
-        if (cancelled) return
+        if (cancelled || generation !== sourceLoadGeneration.current) return
         setSourceOptions(result.sources)
       })
       .catch((loadError) => {
-        if (cancelled) return
+        if (cancelled || generation !== sourceLoadGeneration.current) return
         setSourceError(errorMessage(loadError, 'Не удалось загрузить источники хлыстов'))
       })
       .finally(() => {
-        if (!cancelled) setSourceLoading(false)
+        if (!cancelled && generation === sourceLoadGeneration.current) setSourceLoading(false)
       })
     return () => { cancelled = true }
   }, [category, material?.id, requestId, variant?.id, variant?.pipe_type])
@@ -238,10 +241,16 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0
   const showOptimizationHint = Boolean(selectedCandidate && !mixedLengths && !nonstandardLengths && wastePercent > threshold)
   const exactVariantReady = Boolean(variant?.id && variant.category === category && !(category === 'pipe' && variant.pipe_type === 'wire'))
+  const hasSourceConflict = sourceSelectionCustomized && Object.entries(sourceQuantities).some(([id, quantity]) => {
+    if (quantity <= 0) return false
+    const option = sourceOptions.find((source) => source.inventoryId === id)
+    return !option?.available || quantity > option.availableQuantity
+  })
   const canCalculate = exactVariantReady
     && segmentValidation.error === null
     && !sourceLoading
     && !sourceError
+    && !hasSourceConflict
     && !pendingAction
   const selectedSteelTypeName = variant
     ? steelTypes.find((steelType) => steelType.id === variant.steel_type_id)?.name
@@ -260,10 +269,26 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
 
   function selectedStockSources(): LongStockSourceSelection[] | undefined {
     if (!sourceSelectionCustomized) return undefined
-    return sourceOptions.flatMap((option) => {
-      const quantity = sourceQuantities[option.inventoryId] ?? 0
-      return quantity > 0 ? [{ inventoryId: option.inventoryId, quantity }] : []
-    })
+    return Object.entries(sourceQuantities).flatMap(([inventoryId, quantity]) =>
+      quantity > 0 ? [{ inventoryId, quantity }] : [])
+  }
+
+  async function refreshSources() {
+    invalidateCalculation()
+    if (!material?.id || !variant?.id) return
+    const generation = ++sourceLoadGeneration.current
+    setSourceLoading(true)
+    setSourceError(null)
+    try {
+      const refreshed = await loadLongStockSourceOptions({ requestId, materialId: material.id, materialVariantId: variant.id })
+      if (generation !== sourceLoadGeneration.current) return
+      // Keep the operator's choice visible even if the inventory row disappeared.
+      setSourceOptions((previous) => mergeRefreshedLongStockSources(previous, refreshed.sources, sourceQuantities))
+    } catch (loadError) {
+      if (generation === sourceLoadGeneration.current) setSourceError(errorMessage(loadError, 'Не удалось обновить источники хлыстов'))
+    } finally {
+      if (generation === sourceLoadGeneration.current) setSourceLoading(false)
+    }
   }
 
   function updateSourceQuantity(option: LongStockSourceOption, rawValue: string) {
@@ -515,7 +540,8 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       onOpenChange(false)
     } catch (approvalError) {
       const message = errorMessage(approvalError, 'Не удалось утвердить позицию')
-      setError(message)
+      await refreshSources()
+      setError(`${message}. Проверьте обновлённые источники и выполните расчёт заново.`)
       toast.error(message)
     } finally {
       setPendingAction(null)
@@ -670,6 +696,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
             customized={sourceSelectionCustomized}
             disabled={Boolean(pendingAction)}
             onQuantityChange={updateSourceQuantity}
+            onRefresh={() => void refreshSources()}
             onUseRecommendation={resetSourceRecommendation}
           />
 
@@ -1650,6 +1677,7 @@ function LongStockSourcesSection({
   customized,
   disabled,
   onQuantityChange,
+  onRefresh,
   onUseRecommendation,
 }: {
   titleId: string
@@ -1661,6 +1689,7 @@ function LongStockSourcesSection({
   customized: boolean
   disabled: boolean
   onQuantityChange: (option: LongStockSourceOption, value: string) => void
+  onRefresh: () => void
   onUseRecommendation: () => void
 }) {
   const groups = [
@@ -1698,10 +1727,17 @@ function LongStockSourcesSection({
             Недостающее система добавит как закупку.
           </p>
         </div>
-        {exactVariantReady && !loading && !error && (
-          <Button type="button" variant="outline" size="sm" disabled={disabled || !customized} onClick={onUseRecommendation}>
-            <RotateCcw className="size-4" />Рекомендовать заново
-          </Button>
+        {exactVariantReady && (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={disabled || loading} onClick={onRefresh}>
+              <RotateCcw className="size-4" />Обновить источники
+            </Button>
+            {!loading && !error && (
+              <Button type="button" variant="outline" size="sm" disabled={disabled || !customized} onClick={onUseRecommendation}>
+                Рекомендовать заново
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -1764,13 +1800,17 @@ function LongStockSourcesSection({
                               max={option.availableQuantity}
                               step={1}
                               value={quantities[option.inventoryId] ?? 0}
-                              disabled={disabled || !option.available}
+                              disabled={disabled || (!option.available && !(quantities[option.inventoryId] > 0))}
+                              aria-invalid={(quantities[option.inventoryId] ?? 0) > option.availableQuantity}
                               aria-describedby={`${inputId}-available`}
                               onChange={(event) => onQuantityChange(option, event.target.value)}
                             />
                             <p id={`${inputId}-available`} className="text-right text-[11px] text-slate-500">
                               свободно {option.availableQuantity}
                             </p>
+                            {(quantities[option.inventoryId] ?? 0) > option.availableQuantity && (
+                              <p className="text-xs text-amber-700" role="alert">Уменьшите выбранное количество.</p>
+                            )}
                           </div>
                         </div>
                       </div>

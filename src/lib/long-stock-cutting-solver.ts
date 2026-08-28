@@ -138,6 +138,12 @@ export function calculateLongStockBarRemainder(
 
 export function solveLongStockCutting(input: LongStockSolverInput): LongStockSolverResult {
   const normalized = normalizeInput(input)
+  if (normalized.stockSources.length > 0) return solveJointStockCutting(normalized)
+  return solveStockFirstCutting(normalized)
+}
+
+/** Legacy greedy layout is an incumbent, never a proof of the joint optimum. */
+function solveStockFirstCutting(normalized: ReturnType<typeof normalizeInput>): LongStockSolverResult {
   let stockSelection = selectStockSources(
     normalized.workpieces,
     normalized.stockSources,
@@ -214,10 +220,14 @@ export function solveLongStockCutting(input: LongStockSolverInput): LongStockSol
     )
   })
 
-  if (normalized.allowMixedLengths && eligibleLengths.length > 1) {
+  const shortestWorkpieceMm = stockSelection.remainingWorkpieces[stockSelection.remainingWorkpieces.length - 1].lengthMm
+  const mixedLengths = normalized.purchaseLengths.filter((option) =>
+    option.lengthMm >= shortestWorkpieceMm + normalized.kerfMm + normalized.endTrimMm
+    && (normalized.mode === 'optimal' || option.kind === 'standard'))
+  if (normalized.allowMixedLengths && eligibleLengths.length > 0 && mixedLengths.length > 1) {
     const mixedSearch = searchNewBarLayouts(
       stockSelection.remainingWorkpieces,
-      eligibleLengths,
+      mixedLengths,
       normalized.kerfMm,
       normalized.endTrimMm,
       normalized.searchBudget,
@@ -244,6 +254,155 @@ export function solveLongStockCutting(input: LongStockSolverInput): LongStockSol
     candidates,
     recommendedCandidateKey: candidates[0]?.key ?? null,
   }
+}
+
+function solveJointStockCutting(input: ReturnType<typeof normalizeInput>): LongStockSolverResult {
+  const lengths = input.purchaseLengths.filter((option) => input.mode === 'optimal' || option.kind === 'standard')
+  const lengthGroups = lengths.length > 0 ? lengths.map((option) => [option]) : [[]]
+  if (input.allowMixedLengths && lengths.length > 1) lengthGroups.push(lengths)
+  const searches = lengthGroups.map((options) => searchJointLayout(input, options))
+  const byKey = new Map<string, LongStockCuttingCandidate>()
+  for (const search of searches) {
+    if (!search.candidate) continue
+    const previous = byKey.get(search.candidate.key)
+    if (!previous || compareCandidates(search.candidate, previous) < 0) byKey.set(search.candidate.key, search.candidate)
+  }
+  const searchComplete = searches.every((search) => search.searchComplete)
+  const exploredVariants = searches.reduce((sum, search) => sum + search.exploredVariants, 0)
+  const candidates = [...byKey.values()].map((candidate) => ({ ...candidate, searchComplete, exploredVariants })).sort(compareCandidates)
+  if (candidates.length === 0 && input.requireAllStockSources) {
+    throw new Error(searchComplete
+      ? 'Выбранные складские хлысты и закупаемые длины не позволяют разместить все отрезки'
+      : 'Не удалось найти раскладку за отведённое число вариантов. Запустите расширенный расчёт')
+  }
+  const best = candidates[0]
+  const stockBars = best?.bars.filter((bar) => bar.source !== 'new_stock') ?? []
+  const usedIds = new Set(stockBars.map((bar) => bar.stockSourceId))
+  const unused = input.stockSources.filter((source) => !usedIds.has(source.id))
+  // The UI adopts this recommended source set. Every displayed alternative must
+  // therefore honour the same exact selection, just like a subsequent recalculation.
+  if (best && !input.requireAllStockSources) {
+    const exactInput = {
+      ...input,
+      stockSources: input.stockSources.filter((source) => usedIds.has(source.id)),
+      requireAllStockSources: true,
+    }
+    const exactResult = solveJointStockCutting(exactInput)
+    return {
+      ...exactResult,
+      candidates: exactResult.candidates.map((candidate) => ({
+        ...candidate, searchComplete: candidate.searchComplete && searchComplete,
+        exploredVariants: candidate.exploredVariants + exploredVariants,
+      })),
+      unusedStockSourceIds: unused.map((source) => source.id),
+      unusedBusinessRemnantIds: unused.filter((source) => source.source === 'business_remnant').map((source) => source.inventoryId),
+    }
+  }
+  return {
+    stockBars,
+    unusedStockSourceIds: unused.map((source) => source.id),
+    unusedBusinessRemnantIds: unused.filter((source) => source.source === 'business_remnant').map((source) => source.inventoryId),
+    workpieceIdsRequiringPurchase: best
+      ? best.bars.filter((bar) => bar.source === 'new_stock').flatMap((bar) => bar.cuts.map((cut) => cut.workpieceId))
+      : input.workpieces.map((piece) => piece.id),
+    candidates,
+    recommendedCandidateKey: best?.key ?? null,
+  }
+}
+
+/** Search physical bars and new bars in the same tree so neither consumes cuts prematurely. */
+function searchJointLayout(input: ReturnType<typeof normalizeInput>, lengths: LongStockPurchaseLength[]) {
+  const { workpieces, kerfMm, endTrimMm, requireAllStockSources, searchBudget } = input
+  // The seed also validates that every mandatory bar can receive a distinct cut.
+  const seed = solveStockFirstCutting({
+    ...input,
+    stockSources: input.stockSources.map((source) => ({ ...source, cuts: [] })),
+    purchaseLengths: lengths,
+    allowMixedLengths: lengths.length > 1,
+  })
+  let best = seed.candidates[0] ?? null
+  const stock = input.stockSources.map((source) => ({ ...source, cuts: [] as IndexedWorkpiece[], occupiedMm: 0 }))
+  const purchased: MutableBar[] = []
+  const remainingOccupied = Array<number>(workpieces.length + 1).fill(0)
+  for (let i = workpieces.length - 1; i >= 0; i -= 1) remainingOccupied[i] = remainingOccupied[i + 1] + workpieces[i].lengthMm + kerfMm
+  const visited = new Set<string>()
+  let exploredVariants = 0
+  let exhausted = false
+  const visit = (index: number, purchasedLength: number, dependencies: number) => {
+    if (exhausted) return
+    if (best && (purchasedLength > best.purchasedLengthMm
+      || (purchasedLength === best.purchasedLengthMm && dependencies > best.futureBusinessRemnantBarCount + best.transferBarCount))) return
+    const emptyCount = stock.filter((bar) => bar.cuts.length === 0).length
+    if (requireAllStockSources && emptyCount > workpieces.length - index) return
+    const stateKey = `${index}|${stock.map((bar) => bar.occupiedMm).join(',')}|${purchased
+      .map((bar) => `${bar.stockLengthMm}:${bar.occupiedMm}`).sort().join(',')}`
+    if (visited.has(stateKey)) return
+    if (exploredVariants >= searchBudget) { exhausted = true; return }
+    visited.add(stateKey)
+    exploredVariants += 1
+    if (index === workpieces.length) {
+      const used = stock.filter((bar) => bar.cuts.length > 0)
+      const kind = purchased.length === 0 ? 'stock_only'
+        : new Set(purchased.map((bar) => bar.stockLengthMm)).size === 1 ? 'single_length' : 'mixed_lengths'
+      const candidate = buildCandidate(kind, used, purchased, kerfMm, endTrimMm, 0, true)
+      if (!best || compareCandidates(candidate, best) < 0) best = candidate
+      return
+    }
+    // Optimistic volume bound includes all free physical capacity, even optional bars.
+    const shortestOccupied = workpieces[workpieces.length - 1].lengthMm + kerfMm
+    const freeCapacity = [...stock.map((bar) => bar.lengthMm - endTrimMm - bar.occupiedMm),
+      ...purchased.map((bar) => mutableBarRemainder(bar, endTrimMm))]
+      .reduce((sum, capacity) => sum + (capacity >= shortestOccupied ? capacity : 0), 0)
+    if (best && purchasedLength + Math.max(0, remainingOccupied[index] - freeCapacity) > best.purchasedLengthMm) return
+
+    const piece = workpieces[index]
+    const occupied = piece.lengthMm + kerfMm
+    const placements = stock.map((bar) => ({ bar, remainder: bar.lengthMm - endTrimMm - bar.occupiedMm - occupied }))
+      .filter(({ remainder }) => remainder >= 0)
+      .sort((a, b) => Number(a.bar.cuts.length === 0) - Number(b.bar.cuts.length === 0)
+        || stockSourceDependencyScore(a.bar) - stockSourceDependencyScore(b.bar)
+        || a.remainder - b.remainder || stockSourceTypePriority(a.bar) - stockSourceTypePriority(b.bar)
+        || a.bar.createdAtMs - b.bar.createdAtMs || a.bar.id.localeCompare(b.bar.id, 'en'))
+    const equivalentStock = new Set<string>()
+    for (const { bar } of placements) {
+      const key = `${bar.source}:${bar.requiresTransfer}:${bar.lengthMm}:${bar.occupiedMm}`
+      // Unopened equivalent bars are ordered by FIFO and stable ID above.
+      if (equivalentStock.has(key)) continue
+      equivalentStock.add(key)
+      const addedDependencies = bar.cuts.length === 0 ? stockSourceDependencyScore(bar) : 0
+      bar.cuts.push(piece)
+      bar.occupiedMm += occupied
+      visit(index + 1, purchasedLength, dependencies + addedDependencies)
+      bar.occupiedMm -= occupied
+      bar.cuts.pop()
+      if (exhausted) return
+    }
+    const equivalentPurchased = new Set<string>()
+    for (const bar of purchased) {
+      if (mutableBarRemainder(bar, endTrimMm) < occupied) continue
+      const key = `${bar.stockLengthMm}:${bar.occupiedMm}`
+      if (equivalentPurchased.has(key)) continue
+      equivalentPurchased.add(key)
+      bar.cuts.push(piece)
+      bar.occupiedMm += occupied
+      visit(index + 1, purchasedLength, dependencies)
+      bar.occupiedMm -= occupied
+      bar.cuts.pop()
+      if (exhausted) return
+    }
+    const distinctLengths = new Set(purchased.map((bar) => bar.stockLengthMm))
+    for (const option of lengths) {
+      if (option.lengthMm - endTrimMm < occupied) continue
+      if (!distinctLengths.has(option.lengthMm) && distinctLengths.size >= MAX_MIXED_LENGTHS) continue
+      if (best && purchasedLength + option.lengthMm > best.purchasedLengthMm) continue
+      purchased.push({ stockLengthMm: option.lengthMm, purchaseLengthKind: option.kind, cuts: [piece], occupiedMm: occupied })
+      visit(index + 1, purchasedLength + option.lengthMm, dependencies)
+      purchased.pop()
+      if (exhausted) return
+    }
+  }
+  visit(0, 0, 0)
+  return { candidate: best, exploredVariants, searchComplete: !exhausted }
 }
 
 function normalizeInput(input: LongStockSolverInput) {
@@ -291,7 +450,7 @@ function normalizeInput(input: LongStockSolverInput) {
     if (sourceIds.has(source.id)) throw new Error(`Duplicate stock source id: ${source.id}`)
     sourceIds.add(source.id)
     return { ...source, createdAtMs, inputIndex, cuts: [] as IndexedWorkpiece[] }
-  })
+  }).sort((left, right) => left.createdAtMs - right.createdAtMs || left.id.localeCompare(right.id, 'en'))
 
   const purchaseLengthValues = new Set<number>()
   const purchaseLengths = input.purchaseLengths.map((option) => {
@@ -343,7 +502,6 @@ function selectStockSources(
       || stockSourceDependencyScore(left) - stockSourceDependencyScore(right)
       || stockSourceTypePriority(left) - stockSourceTypePriority(right)
       || left.createdAtMs - right.createdAtMs
-      || left.inputIndex - right.inputIndex
       || left.id.localeCompare(right.id, 'en'))
     for (const source of mandatorySources) {
       const workpieceIndex = remainingWorkpieces.findIndex((workpiece) =>
@@ -373,7 +531,6 @@ function selectStockSources(
         || left.remainderAfter - right.remainderAfter
         || stockSourceTypePriority(left.remnant) - stockSourceTypePriority(right.remnant)
         || left.remnant.createdAtMs - right.remnant.createdAtMs
-        || left.remnant.inputIndex - right.remnant.inputIndex
         || left.remnant.id.localeCompare(right.remnant.id, 'en'))
 
     const selected = fitting[0]?.remnant
@@ -385,7 +542,6 @@ function selectStockSources(
     .filter((remnant) => remnant.cuts.length > 0)
     .sort((left, right) =>
       left.createdAtMs - right.createdAtMs
-      || left.inputIndex - right.inputIndex
       || left.id.localeCompare(right.id, 'en'))
     .map((remnant) => ({
       id: remnant.id,
@@ -405,7 +561,6 @@ function selectStockSources(
       .filter((remnant) => remnant.cuts.length === 0)
       .sort((left, right) =>
         left.createdAtMs - right.createdAtMs
-        || left.inputIndex - right.inputIndex
         || left.id.localeCompare(right.id, 'en'))
       .map((remnant) => remnant.id),
     unusedBusinessRemnantIds: stockSources
@@ -941,9 +1096,24 @@ function compareCandidates(left: LongStockCuttingCandidate, right: LongStockCutt
       - (right.futureBusinessRemnantBarCount + right.transferBarCount)
     || left.totalRemainderMm - right.totalRemainderMm
     || right.businessRemnantBarCount - left.businessRemnantBarCount
+    || compareSourceFifo(left.bars, right.bars)
     || left.newBarCount - right.newBarCount
     || compareNumberArrays(left.purchaseLengthsMm, right.purchaseLengthsMm)
     || layoutSignature(left.bars).localeCompare(layoutSignature(right.bars), 'en')
+}
+
+function compareSourceFifo(left: LongStockCuttingBar[], right: LongStockCuttingBar[]) {
+  const fifo = (bars: LongStockCuttingBar[]) => bars.filter((bar) => bar.source !== 'new_stock').sort((a, b) =>
+    Date.parse(a.businessRemnantCreatedAt!) - Date.parse(b.businessRemnantCreatedAt!)
+    || a.stockSourceId!.localeCompare(b.stockSourceId!, 'en'))
+  const a = fifo(left)
+  const b = fifo(right)
+  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+    const difference = Date.parse(a[index].businessRemnantCreatedAt!) - Date.parse(b[index].businessRemnantCreatedAt!)
+      || a[index].stockSourceId!.localeCompare(b[index].stockSourceId!, 'en')
+    if (difference) return difference
+  }
+  return a.length - b.length
 }
 
 function compareLayouts(

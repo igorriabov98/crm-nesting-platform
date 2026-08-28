@@ -9,6 +9,21 @@ export type LongStockSegmentRow = {
 
 export const DEFAULT_MIXED_LONG_STOCK_LENGTHS = true
 
+export function mergeRefreshedLongStockSources<T extends {
+  inventoryId: string
+  available: boolean
+  availableQuantity: number
+  unavailableReason: string | null
+}>(previous: readonly T[], refreshed: readonly T[], quantities: Record<string, number>): T[] {
+  const refreshedIds = new Set(refreshed.map((option) => option.inventoryId))
+  return [...refreshed, ...previous
+    .filter((option) => (quantities[option.inventoryId] ?? 0) > 0 && !refreshedIds.has(option.inventoryId))
+    .map((option) => ({
+      ...option, available: false, availableQuantity: 0,
+      unavailableReason: 'Выбранный источник больше недоступен. Снимите выбор или запросите новую рекомендацию.',
+    }))]
+}
+
 export function upsertLongStockRequestRow<T extends { id: string }>(
   rows: readonly T[],
   row: T,
