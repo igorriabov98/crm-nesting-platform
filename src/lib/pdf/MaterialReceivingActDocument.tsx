@@ -45,9 +45,13 @@ const styles = StyleSheet.create({
   table: { marginTop: 1 },
   tableRow: { marginBottom: 7, padding: 8, borderWidth: 0.7, borderColor: COLORS.border, borderRadius: 4, backgroundColor: COLORS.white },
   itemTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  itemTitle: { width: '72%' },
-  itemPlan: { width: '25%', paddingLeft: 8, borderLeftWidth: 0.7, borderLeftColor: COLORS.border, textAlign: 'right' },
+  itemTitle: { width: '55%' },
+  itemMeasures: { width: '42%', flexDirection: 'row', borderLeftWidth: 0.7, borderLeftColor: COLORS.border },
+  itemPlan: { width: '45%', paddingLeft: 8, paddingRight: 6, textAlign: 'right' },
+  itemActual: { width: '55%', paddingLeft: 7, borderLeftWidth: 0.7, borderLeftColor: COLORS.border },
   itemPlanLabel: { fontSize: 6.2, fontWeight: 'bold', color: COLORS.muted, letterSpacing: 0.35, textTransform: 'uppercase' },
+  itemActualLabel: { fontSize: 6.2, fontWeight: 'bold', color: COLORS.accent, letterSpacing: 0.35, textTransform: 'uppercase' },
+  itemActualLine: { marginTop: 4, paddingBottom: 1, borderBottomWidth: 0.7, borderBottomColor: COLORS.slate, fontSize: 6.4, color: COLORS.muted },
   itemDetailRow: { marginTop: 6, paddingTop: 6, borderTopWidth: 0.7, borderTopColor: COLORS.border, flexDirection: 'row', justifyContent: 'space-between' },
   itemCharacteristics: { width: '59%', paddingRight: 8 },
   itemMeta: { width: '41%', paddingLeft: 8, borderLeftWidth: 0.7, borderLeftColor: COLORS.border },
@@ -129,12 +133,19 @@ function MaterialRow({ item, index }: { item: MaterialReceivingActItem; index: n
           <Text style={styles.bodySmall}>{item.categoryLabel}</Text>
           {item.isVirtualSchedule && <Text style={styles.bodyAccent}>Дата без отдельного графика</Text>}
         </View>
-        <View style={styles.itemPlan}>
-          <Text style={styles.itemPlanLabel}>План к приёмке</Text>
-          <Text style={styles.tabular}>{formatNumber(item.plannedQuantity)} {item.unit}</Text>
-          <Text style={styles.bodySmall}>
-            {item.plannedWeightKg === null ? 'Вес не указан' : `${formatNumber(item.plannedWeightKg)} кг`}
-          </Text>
+        <View style={styles.itemMeasures}>
+          <View style={styles.itemPlan}>
+            <Text style={styles.itemPlanLabel}>План</Text>
+            <Text style={styles.tabular}>{formatNumber(item.plannedQuantity)} {item.unit}</Text>
+            <Text style={styles.bodySmall}>
+              {item.plannedWeightKg === null ? 'Вес не указан' : `${formatNumber(item.plannedWeightKg)} кг`}
+            </Text>
+          </View>
+          <View style={styles.itemActual}>
+            <Text style={styles.itemActualLabel}>Факт приёмки</Text>
+            <Text style={styles.itemActualLine}>Количество:                         {item.unit}</Text>
+            <Text style={styles.itemActualLine}>Вес:                                  кг</Text>
+          </View>
         </View>
       </View>
       <View style={styles.itemDetailRow}>
