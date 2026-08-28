@@ -8,9 +8,7 @@ import {
   ArrowRight,
   ArrowUp,
   BadgeCheck,
-  Boxes,
   Calculator,
-  CalendarClock,
   Check,
   ChevronRight,
   CircleAlert,
@@ -19,11 +17,9 @@ import {
   Plus,
   RotateCcw,
   Ruler,
-  ShoppingCart,
   Sparkles,
   TableProperties,
   Trash2,
-  Truck,
   Wrench,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -43,6 +39,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { LongStockCandidateList, LongStockCandidateSummary } from './LongStockCandidateList'
+import { LongStockScenarioSources } from './LongStockScenarioSources'
+import {
+  bestLongStockScenarioId,
+  createLongStockScenario,
+  finishLongStockScenarioCalculation,
+  longStockScenarioSelection,
+  refreshLongStockScenarios,
+  updateLongStockScenarioQuantity,
+  type LongStockScenario,
+} from '@/lib/long-stock-scenarios'
 import {
   approveLongStockRecalculationSafe,
   approveLongStockCuttingPlanVersion,
@@ -108,7 +114,6 @@ import type {
   LongStockPlanCalculationMode,
   LongStockPlanSegmentInput,
   LongStockRequestItemTable,
-  LongStockSourceSelection,
 } from '@/lib/long-stock-cutting-plan'
 import type { MaterialVariant, RequestCircle, RequestKnives, RequestPipe } from '@/lib/types'
 import type { SteelType } from '@/lib/types/database'
@@ -169,7 +174,10 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   const [segmentRows, setSegmentRows] = useState<LongStockSegmentRow[]>([
     { id: 'segment-row-1', lengthMm: '', quantity: 1 },
   ])
-  const [calculation, setCalculation] = useState<Calculation | null>(null)
+  const [initialCalculation, setCalculation] = useState<Calculation | null>(null)
+  const [scenarios, setScenarios] = useState<LongStockScenario[]>([])
+  const scenariosRef = useRef<LongStockScenario[]>([])
+  const calculationGeneration = useRef(0)
   const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null)
   const [mixedLengths, setMixedLengths] = useState(DEFAULT_MIXED_LONG_STOCK_LENGTHS)
   const [nonstandardLengths, setNonstandardLengths] = useState(false)
@@ -182,20 +190,26 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   const [error, setError] = useState<string | null>(null)
   const [materialError, setMaterialError] = useState<string | null>(null)
   const [sourceOptions, setSourceOptions] = useState<LongStockSourceOption[]>([])
-  const [sourceQuantities, setSourceQuantities] = useState<Record<string, number>>({})
-  const [sourceSelectionCustomized, setSourceSelectionCustomized] = useState(false)
+  const sourcesRef = useRef<LongStockSourceOption[]>([])
+  const sourceContextRef = useRef<{ factoryId: string; consumerCuttingDate: string | null } | null>(null)
+  const [factoryName, setFactoryName] = useState('Завод машины')
   const [sourceLoading, setSourceLoading] = useState(false)
   const [sourceError, setSourceError] = useState<string | null>(null)
   const sourceLoadGeneration = useRef(0)
 
   useEffect(() => {
     const generation = ++sourceLoadGeneration.current
+    calculationGeneration.current += 1
+    scenariosRef.current = []
+    setScenarios([])
+    setCalculation(null)
+    setSelectedCandidateKey(null)
     const materialId = material?.id
     const materialVariantId = variant?.id
-    if (!materialId || !materialVariantId || (category === 'pipe' && variant?.pipe_type === 'wire')) {
+    if (!open || !materialId || !materialVariantId || (category === 'pipe' && variant?.pipe_type === 'wire')) {
       setSourceOptions([])
-      setSourceQuantities({})
-      setSourceSelectionCustomized(false)
+      sourcesRef.current = []
+      sourceContextRef.current = null
       setSourceLoading(false)
       setSourceError(null)
       return
@@ -205,12 +219,15 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setSourceLoading(true)
     setSourceError(null)
     setSourceOptions([])
-    setSourceQuantities({})
-    setSourceSelectionCustomized(false)
+    sourcesRef.current = []
+    sourceContextRef.current = null
     void loadLongStockSourceOptions({ requestId, materialId, materialVariantId })
       .then((result) => {
         if (cancelled || generation !== sourceLoadGeneration.current) return
         setSourceOptions(result.sources)
+        sourcesRef.current = result.sources
+        sourceContextRef.current = result
+        setFactoryName(result.factoryName)
       })
       .catch((loadError) => {
         if (cancelled || generation !== sourceLoadGeneration.current) return
@@ -219,8 +236,8 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       .finally(() => {
         if (!cancelled && generation === sourceLoadGeneration.current) setSourceLoading(false)
       })
-    return () => { cancelled = true }
-  }, [category, material?.id, requestId, variant?.id, variant?.pipe_type])
+    return () => { cancelled = true; calculationGeneration.current += 1 }
+  }, [category, material?.id, open, requestId, variant?.id, variant?.pipe_type])
 
   const segmentValidation = useMemo(() => {
     try {
@@ -233,28 +250,22 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     }
   }, [segmentRows])
 
-  const visibleCandidates = useMemo(
-    () => candidatesForLongStockMode(calculation?.candidates ?? [], mixedLengths),
-    [calculation, mixedLengths],
-  )
-  const selectedCandidate = visibleCandidates.find((candidate) => candidate.key === selectedCandidateKey) ?? null
-  const bestCandidateKey = visibleCandidates[0]?.key ?? null
+  // Card identity is independent of the solver's key (which changes with purchased lengths).
+  const visibleCandidates = useMemo(() => scenarios.map((scenario) => ({ ...scenario.candidate, key: scenario.id })), [scenarios])
+  const selectedScenario = scenarios.find((scenario) => scenario.id === selectedCandidateKey) ?? null
+  const selectedCandidate = selectedScenario?.candidate ?? null
+  const calculation = selectedScenario?.calculation ?? initialCalculation
+  const bestCandidateKey = bestLongStockScenarioId(scenarios)
   const wastePercent = selectedCandidate ? candidateWastePercent(selectedCandidate) : 0
   const threshold = Number(calculation?.settingsSnapshot.optimization_hint_threshold_percent ?? 0)
   const minimumUsefulLengthMm = calculation?.settingsSnapshot.categories
     .find((entry) => entry.key === calculation.layoutCategoryKey)?.minimum_useful_length_mm ?? 0
   const showOptimizationHint = Boolean(selectedCandidate && !mixedLengths && !nonstandardLengths && wastePercent > threshold)
   const exactVariantReady = Boolean(variant?.id && variant.category === category && !(category === 'pipe' && variant.pipe_type === 'wire'))
-  const hasSourceConflict = sourceSelectionCustomized && Object.entries(sourceQuantities).some(([id, quantity]) => {
-    if (quantity <= 0) return false
-    const option = sourceOptions.find((source) => source.inventoryId === id)
-    return !option?.available || quantity > option.availableQuantity
-  })
   const canCalculate = exactVariantReady
     && segmentValidation.error === null
     && !sourceLoading
     && !sourceError
-    && !hasSourceConflict
     && !pendingAction
   const selectedSteelTypeName = variant
     ? steelTypes.find((steelType) => steelType.id === variant.steel_type_id)?.name
@@ -263,6 +274,8 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     : null
 
   function invalidateCalculation() {
+    calculationGeneration.current += 1
+    updateScenarios(() => [])
     setCalculation(null)
     setSelectedCandidateKey(null)
     setManualMode(false)
@@ -271,14 +284,34 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setError(null)
   }
 
-  function selectedStockSources(): LongStockSourceSelection[] | undefined {
-    if (!sourceSelectionCustomized) return undefined
-    return Object.entries(sourceQuantities).flatMap(([inventoryId, quantity]) =>
-      quantity > 0 ? [{ inventoryId, quantity }] : [])
+  function updateScenarios(update: (current: LongStockScenario[]) => LongStockScenario[]) {
+    const next = update(scenariosRef.current)
+    scenariosRef.current = next
+    setScenarios(next)
+  }
+
+  function applySourceSnapshot(snapshot: { sources: LongStockSourceOption[]; factoryId: string; factoryName: string; consumerCuttingDate: string | null }, exceptId?: string) {
+    const previous = sourcesRef.current
+    const selectedQuantities: Record<string, number> = {}
+    for (const scenario of scenariosRef.current) {
+      for (const [id, value] of Object.entries(scenario.quantities)) {
+        selectedQuantities[id] = Math.max(selectedQuantities[id] ?? 0, Number(value) || 0)
+      }
+      for (const selection of scenario.input.stockSelection) selectedQuantities[selection.inventoryId] = Math.max(selectedQuantities[selection.inventoryId] ?? 0, selection.quantity)
+    }
+    const sources = mergeRefreshedLongStockSources(previous, snapshot.sources, selectedQuantities)
+    const previousContext = sourceContextRef.current
+    const contextChanged = Boolean(previousContext && (previousContext.factoryId !== snapshot.factoryId
+      || previousContext.consumerCuttingDate !== snapshot.consumerCuttingDate))
+    updateScenarios((current) => refreshLongStockScenarios(current, previous, sources, contextChanged, exceptId))
+    sourcesRef.current = sources
+    sourceContextRef.current = snapshot
+    setSourceOptions(sources)
+    setFactoryName(snapshot.factoryName)
+    setSourceError(null)
   }
 
   async function refreshSources() {
-    invalidateCalculation()
     if (!material?.id || !variant?.id) return
     const generation = ++sourceLoadGeneration.current
     setSourceLoading(true)
@@ -286,8 +319,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     try {
       const refreshed = await loadLongStockSourceOptions({ requestId, materialId: material.id, materialVariantId: variant.id })
       if (generation !== sourceLoadGeneration.current) return
-      // Keep the operator's choice visible even if the inventory row disappeared.
-      setSourceOptions((previous) => mergeRefreshedLongStockSources(previous, refreshed.sources, sourceQuantities))
+      applySourceSnapshot(refreshed)
     } catch (loadError) {
       if (generation === sourceLoadGeneration.current) setSourceError(errorMessage(loadError, 'Не удалось обновить источники хлыстов'))
     } finally {
@@ -295,20 +327,43 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     }
   }
 
-  function updateSourceQuantity(option: LongStockSourceOption, rawValue: string) {
-    const parsed = rawValue === '' ? 0 : Number(rawValue)
-    const quantity = Number.isFinite(parsed)
-      ? Math.max(0, Math.min(option.availableQuantity, Math.floor(parsed)))
-      : 0
-    setSourceQuantities((current) => ({ ...current, [option.inventoryId]: quantity }))
-    setSourceSelectionCustomized(true)
-    invalidateCalculation()
+  function updateSourceQuantity(scenarioId: string, inventoryId: string, value: string) {
+    updateScenarios((current) => current.map((scenario) => scenario.id === scenarioId
+      ? updateLongStockScenarioQuantity(scenario, inventoryId, value) : scenario))
   }
 
-  function resetSourceRecommendation() {
-    setSourceQuantities({})
-    setSourceSelectionCustomized(false)
-    invalidateCalculation()
+  async function runScenarioCalculation(scenarioId: string, recommend = false, searchBudget?: number) {
+    const scenario = scenariosRef.current.find((entry) => entry.id === scenarioId)
+    if (!scenario || pendingAction || scenario.status === 'calculating') return
+    const generation = calculationGeneration.current
+    const sourceGeneration = sourceLoadGeneration.current
+    const revision = scenario.revision + 1
+    updateScenarios((current) => current.map((entry) => entry.id === scenarioId ? { ...entry, revision, status: 'calculating', error: null } : entry))
+    try {
+      const stockSelection = recommend ? undefined : longStockScenarioSelection(scenario.quantities, sourcesRef.current)
+      const result = await calculateLongStockCuttingPlan({
+        requestItem: scenario.calculation.requestItem,
+        segments: expandLongStockSegmentRows(segmentRows),
+        stockSelection,
+        mode: scenario.input.mode,
+        searchBudget: searchBudget ?? scenario.input.searchBudget,
+      })
+      if (generation !== calculationGeneration.current) return
+      const current = scenariosRef.current.find((entry) => entry.id === scenarioId)
+      if (current?.revision !== revision || current.status !== 'calculating') return
+      if (sourceGeneration !== sourceLoadGeneration.current) {
+        updateScenarios((entries) => entries.map((entry) => entry.id === scenarioId
+          ? { ...entry, revision: entry.revision + 1, status: 'dirty', error: 'Источники обновлялись во время расчёта. Повторите пересчёт.' } : entry))
+        return
+      }
+      applySourceSnapshot({ ...result, sources: result.stockSources }, scenarioId)
+      updateScenarios((entries) => entries.map((entry) => entry.id === scenarioId
+        ? finishLongStockScenarioCalculation(entry, revision, result) : entry))
+    } catch (calculationError) {
+      if (generation !== calculationGeneration.current) return
+      updateScenarios((entries) => entries.map((entry) => entry.id === scenarioId && entry.revision === revision
+        ? { ...entry, status: 'error', error: errorMessage(calculationError, 'Не удалось пересчитать комбинацию') } : entry))
+    }
   }
 
   function selectMaterial(
@@ -429,6 +484,10 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     searchBudget = DEFAULT_LONG_STOCK_SEARCH_BUDGET,
     action: 'calculate' | 'longer' = 'calculate',
   ) {
+    if ((manualMode || scenarios.some((scenario) => scenario.status !== 'ready'))
+      && !window.confirm('Общий расчёт заменит комбинации и их несохранённые правки. Продолжить?')) return
+    invalidateCalculation()
+    const generation = calculationGeneration.current
     setPendingAction(action === 'longer'
       ? 'longer'
       : mode === 'with_nonstandard' ? 'optimal' : mode === 'mixed' ? 'mixed' : 'calculate')
@@ -442,30 +501,29 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       if (prerequisiteError) throw new Error(prerequisiteError)
       const segments = expandLongStockSegmentRows(segmentRows)
       const draft = await prepareDraft(segments)
+      if (generation !== calculationGeneration.current) return
       const result = await calculateLongStockCuttingPlan({
         requestItem: { table: draft.table, id: draft.id },
         segments,
-        stockSelection: selectedStockSources(),
         mode,
         searchBudget,
       })
+      if (generation !== calculationGeneration.current) return
       const nextMixed = mode === 'mixed'
       const nextCandidates = candidatesForLongStockMode(result.candidates, nextMixed)
       setMixedLengths(nextMixed)
       setNonstandardLengths(mode === 'with_nonstandard')
       setCalculation(result)
-      setSelectedCandidateKey(nextCandidates[0]?.key ?? null)
-      if (!sourceSelectionCustomized) {
-        setSourceQuantities(Object.fromEntries(
-          result.recommendedStockSelection.map((entry) => [entry.inventoryId, entry.quantity]),
-        ))
-        setSourceSelectionCustomized(true)
-      }
+      applySourceSnapshot({ ...result, sources: result.stockSources })
+      const nextScenarios = nextCandidates.map((candidate, index) => createLongStockScenario(result, candidate, `scenario-${generation}-${index}`))
+      updateScenarios(() => nextScenarios)
+      setSelectedCandidateKey(nextScenarios[0]?.id ?? null)
       setManualMode(false)
       setShowCuttingMatrix(false)
       setManualBars([])
       if (nextCandidates.length === 0) setError('Для заданных отрезков подходящая раскладка не найдена')
     } catch (calculationError) {
+      if (generation !== calculationGeneration.current) return
       const message = errorMessage(calculationError, 'Не удалось рассчитать раскладку')
       if (isMaterialErrorMessage(message)) setMaterialError(message)
       else setError(message)
@@ -476,23 +534,21 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   }
 
   async function toggleMixedLengths(checked: boolean) {
-    if (!calculation) {
-      setMixedLengths(checked)
-      return
-    }
-    await runCalculation(checked ? 'mixed' : nonstandardLengths ? 'with_nonstandard' : 'standard')
+    if (manualMode && !window.confirm('Смена режима отменит ручную раскладку. Продолжить?')) return
+    setMixedLengths(checked)
+    invalidateCalculation()
   }
 
   async function searchLonger() {
-    if (!calculation) return
-    const mode = mixedLengths ? 'mixed' : nonstandardLengths ? 'with_nonstandard' : 'standard'
-    const searchBudget = calculation.searchBudget < EXTENDED_LONG_STOCK_SEARCH_BUDGET
+    if (!selectedScenario) return
+    const searchBudget = selectedScenario.input.searchBudget < EXTENDED_LONG_STOCK_SEARCH_BUDGET
       ? EXTENDED_LONG_STOCK_SEARCH_BUDGET
-      : Math.min(Number.MAX_SAFE_INTEGER, calculation.searchBudget * 2)
-    await runCalculation(mode, searchBudget, 'longer')
+      : Math.min(Number.MAX_SAFE_INTEGER, selectedScenario.input.searchBudget * 2)
+    await runScenarioCalculation(selectedScenario.id, false, searchBudget)
   }
 
   function chooseCandidate(candidate: LongStockCuttingCandidate) {
+    if (manualMode && !window.confirm('Выбор комбинации отменит ручные изменения резов. Продолжить?')) return
     setSelectedCandidateKey(candidate.key)
     setManualMode(false)
     setManualBars([])
@@ -500,7 +556,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   }
 
   function toggleManualMode() {
-    if (!selectedCandidate) return
+    if (!selectedCandidate || selectedScenario?.status !== 'ready') return
     if (manualMode) {
       setManualMode(false)
       setManualBars([])
@@ -511,21 +567,19 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   }
 
   async function approve() {
-    if (!calculation || !selectedCandidate || !draftRef.current) return
+    if (!calculation || !selectedCandidate || !draftRef.current || selectedScenario?.status !== 'ready' || sourceLoading || sourceError) return
     setPendingAction('approve')
     setError(null)
     try {
       const input: LongStockPlanCalculationInput = {
+        ...selectedScenario.input,
         requestItem: { table: draftRef.current.table, id: draftRef.current.id },
         segments: expandLongStockSegmentRows(segmentRows),
-        stockSelection: selectedStockSources(),
-        mode: mixedLengths ? 'mixed' : nonstandardLengths ? 'with_nonstandard' : 'standard',
-        searchBudget: calculation.searchBudget,
       }
       let version: { id: string }
       if (manualMode) {
         const reason = manualReasonValue(manualReason, manualReasonText)
-        version = await createManualLongStockCuttingPlanVersion({ ...input, bars: manualBars, reason })
+        version = await createManualLongStockCuttingPlanVersion({ ...input, expectedCalculationFingerprint: undefined, bars: manualBars, reason })
       } else {
         version = await createLongStockCuttingPlanVersion({
           ...input,
@@ -544,6 +598,8 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
       onOpenChange(false)
     } catch (approvalError) {
       const message = errorMessage(approvalError, 'Не удалось утвердить позицию')
+      updateScenarios((current) => current.map((scenario) => scenario.id === selectedScenario.id
+        ? { ...scenario, revision: scenario.revision + 1, status: 'error', error: message } : scenario))
       await refreshSources()
       setError(`${message}. Проверьте обновлённые источники и выполните расчёт заново.`)
       toast.error(message)
@@ -579,6 +635,9 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
   }
 
   function reset() {
+    calculationGeneration.current += 1
+    sourceLoadGeneration.current += 1
+    updateScenarios(() => [])
     nextSegmentRow.current = 2
     setMaterial(null)
     setVariant(null)
@@ -596,8 +655,8 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     setError(null)
     setMaterialError(null)
     setSourceOptions([])
-    setSourceQuantities({})
-    setSourceSelectionCustomized(false)
+    sourcesRef.current = []
+    sourceContextRef.current = null
     setSourceLoading(false)
     setSourceError(null)
   }
@@ -617,7 +676,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
+        <div inert={pendingAction === 'approve' || pendingAction === 'close'} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
           <section aria-labelledby={`${category}-material-title`} className="grid gap-4 rounded-xl border bg-white p-4 lg:grid-cols-[minmax(300px,1fr)_minmax(320px,1fr)]">
             <div className="space-y-2">
               <Label id={`${category}-material-title`}>Материал и точный вариант</Label>
@@ -690,20 +749,6 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
             )}
           </section>
 
-          <LongStockSourcesSection
-            titleId={`${category}-sources-title`}
-            exactVariantReady={exactVariantReady}
-            loading={sourceLoading}
-            error={sourceError}
-            options={sourceOptions}
-            quantities={sourceQuantities}
-            customized={sourceSelectionCustomized}
-            disabled={Boolean(pendingAction)}
-            onQuantityChange={updateSourceQuantity}
-            onRefresh={() => void refreshSources()}
-            onUseRecommendation={resetSourceRecommendation}
-          />
-
           <section aria-labelledby={`${category}-segments-title`} className="rounded-xl border bg-white p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -756,6 +801,8 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
               ))}
             </div>
             {segmentValidation.error && <p className="mt-3 text-xs text-amber-700">{segmentValidation.error}</p>}
+            {sourceLoading && <p className="mt-3 flex items-center gap-2 text-xs text-slate-600" role="status"><Loader2 className="size-3 animate-spin" />Загружаем данные для автоматического подбора хлыстов…</p>}
+            {sourceError && !calculation && <div className="mt-3 text-sm text-red-700" role="alert">{sourceError}<Button type="button" variant="link" onClick={() => void refreshSources()}>Повторить загрузку</Button></div>}
             <div className="mt-4 flex flex-wrap items-center gap-3 border-t pt-4">
               <Button type="button" disabled={!canCalculate} onClick={() => void runCalculation(mixedLengths ? 'mixed' : nonstandardLengths ? 'with_nonstandard' : 'standard')}>
                 {pendingAction === 'calculate' || pendingAction === 'mixed' ? <Loader2 className="size-4 animate-spin" /> : <Calculator className="size-4" />}
@@ -817,29 +864,34 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
                   id={`${category}-cutting-matrix`}
                   calculation={calculation}
                   candidates={visibleCandidates}
+                  scenarioStates={Object.fromEntries(scenarios.map((scenario) => [scenario.id, scenario.status]))}
                   selectedKey={manualMode ? null : selectedCandidateKey}
                   bestKey={bestCandidateKey}
                   onSelect={chooseCandidate}
                 />
               )}
 
-              {visibleCandidates.length > 0 ? mixedLengths ? (
-                <MixedCandidateList
+              {visibleCandidates.length > 0 ? (
+                <LongStockCandidateList
                   candidates={visibleCandidates}
                   selectedKey={manualMode ? null : selectedCandidateKey}
                   bestKey={bestCandidateKey}
                   weightPerMeterKg={calculation.weightPerMeterKg}
-                  calculation={calculation}
-                  onSelect={chooseCandidate}
-                />
-              ) : (
-                <CandidateMatrix
-                  candidates={visibleCandidates}
-                  selectedKey={manualMode ? null : selectedCandidateKey}
-                  bestKey={bestCandidateKey}
-                  weightPerMeterKg={calculation.weightPerMeterKg}
-                  calculation={calculation}
                   minimumUsefulLengthMm={minimumUsefulLengthMm}
+                  sources={sourceOptions}
+                  factoryName={factoryName}
+                  newBarOrigin={longStockNewBarOrigin(calculation)}
+                  scenarioStates={Object.fromEntries(scenarios.map((scenario) => [scenario.id, scenario.status]))}
+                  renderSourceEditor={(candidate) => {
+                    const scenario = scenarios.find((entry) => entry.id === candidate.key)!
+                    return <LongStockScenarioSources scenario={scenario} sources={sourceOptions} factoryName={factoryName}
+                      loading={sourceLoading} loadError={sourceError} disabled={Boolean(pendingAction)}
+                      readOnly={longStockNewBarOrigin(scenario.calculation) !== 'purchase'}
+                      onQuantityChange={(inventoryId, value) => updateSourceQuantity(scenario.id, inventoryId, value)}
+                      onRefresh={() => void refreshSources()}
+                      onRecommend={() => void runScenarioCalculation(scenario.id, true)}
+                      onRecalculate={() => void runScenarioCalculation(scenario.id)} />
+                  }}
                   onSelect={chooseCandidate}
                 />
               ) : (
@@ -869,10 +921,11 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
                       <h4 className="font-semibold text-slate-900">Раскладка по хлыстам</h4>
                       <p className="mt-1 text-sm text-slate-500">Полоса показывает длины пропорционально; номера совпадают с последовательностью резов.</p>
                     </div>
-                    <Button type="button" variant={manualMode ? 'secondary' : 'outline'} onClick={toggleManualMode}>
+                    <Button type="button" disabled={selectedScenario?.status !== 'ready' || Boolean(pendingAction)} variant={manualMode ? 'secondary' : 'outline'} onClick={toggleManualMode}>
                       <Wrench className="size-4" />{manualMode ? 'Отменить ручную правку' : 'Ручная корректировка'}
                     </Button>
                   </div>
+                  {selectedScenario?.status !== 'ready' && <p className="text-sm text-amber-800" role="status">Предыдущая раскладка: перед утверждением пересчитайте источники в выбранной комбинации.</p>}
                   {manualMode ? (
                     <ManualLayoutEditor
                       bars={manualBars}
@@ -896,7 +949,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
                         variant="link"
                         size="sm"
                         className="h-auto p-0 text-xs"
-                        disabled={Boolean(pendingAction)}
+                        disabled={Boolean(pendingAction) || selectedScenario?.status === 'calculating'}
                         onClick={() => void searchLonger()}
                       >
                         {pendingAction === 'longer' && <Loader2 className="size-3 animate-spin" />}
@@ -924,7 +977,7 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
           </Button>
           <Button
             type="button"
-            disabled={!selectedCandidate || Boolean(pendingAction) || (manualMode && !manualReasonReady(manualReason, manualReasonText))}
+            disabled={!selectedCandidate || selectedScenario?.status !== 'ready' || sourceLoading || Boolean(sourceError) || Boolean(pendingAction) || (manualMode && !manualReasonReady(manualReason, manualReasonText))}
             onClick={() => void approve()}
           >
             {pendingAction === 'approve' ? <Loader2 className="size-4 animate-spin" /> : <BadgeCheck className="size-4" />}
@@ -1682,190 +1735,6 @@ export function LongStockRecalculationDialog({
   )
 }
 
-function LongStockSourcesSection({
-  titleId,
-  exactVariantReady,
-  loading,
-  error,
-  options,
-  quantities,
-  customized,
-  disabled,
-  onQuantityChange,
-  onRefresh,
-  onUseRecommendation,
-}: {
-  titleId: string
-  exactVariantReady: boolean
-  loading: boolean
-  error: string | null
-  options: LongStockSourceOption[]
-  quantities: Record<string, number>
-  customized: boolean
-  disabled: boolean
-  onQuantityChange: (option: LongStockSourceOption, value: string) => void
-  onRefresh: () => void
-  onUseRecommendation: () => void
-}) {
-  const groups = [
-    {
-      key: 'own',
-      title: 'На заводе машины',
-      description: 'Свободные хлысты и доступные деловые остатки без перевода.',
-      icon: <Boxes className="size-4" />,
-      options: options.filter((option) => option.source !== 'future_business_remnant' && !option.requiresTransfer),
-    },
-    {
-      key: 'future',
-      title: 'Будущие остатки',
-      description: 'Можно выбрать только когда исходная порезка строго раньше потребляющей.',
-      icon: <CalendarClock className="size-4" />,
-      options: options.filter((option) => option.source === 'future_business_remnant'),
-    },
-    {
-      key: 'transfer',
-      title: 'Другой завод',
-      description: 'При утверждении будет создан резерв и межзаводской перевод.',
-      icon: <Truck className="size-4" />,
-      options: options.filter((option) => option.source !== 'future_business_remnant' && option.requiresTransfer),
-    },
-  ]
-  const selectedCount = Object.values(quantities).reduce((sum, quantity) => sum + quantity, 0)
-
-  return (
-    <section aria-labelledby={titleId} className="rounded-xl border bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 id={titleId} className="font-semibold text-slate-900">Источники хлыстов</h3>
-          <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            Выбранное количество обязательно: каждый физический хлыст получит хотя бы один рез.
-            Недостающее система добавит как закупку.
-          </p>
-        </div>
-        {exactVariantReady && (
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm" disabled={disabled || loading} onClick={onRefresh}>
-              <RotateCcw className="size-4" />Обновить источники
-            </Button>
-            {!loading && !error && (
-              <Button type="button" variant="outline" size="sm" disabled={disabled || !customized} onClick={onUseRecommendation}>
-                Рекомендовать заново
-              </Button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {!exactVariantReady && (
-        <p className="mt-4 text-sm text-slate-500">Сначала выберите точный вариант материала.</p>
-      )}
-      {loading && (
-        <div className="mt-4 flex min-h-20 items-center justify-center gap-2 rounded-lg border border-dashed bg-slate-50 text-sm text-slate-600" role="status">
-          <Loader2 className="size-4 animate-spin" />Проверяем склад, будущие остатки и другие заводы…
-        </div>
-      )}
-      {error && (
-        <Alert variant="destructive" className="mt-4">
-          <CircleAlert className="size-4" />
-          <AlertTitle>Источники не загружены</AlertTitle>
-          <AlertDescription>{error}. Расчёт заблокирован, чтобы не использовать устаревшие остатки.</AlertDescription>
-        </Alert>
-      )}
-
-      {exactVariantReady && !loading && !error && (
-        <div className="mt-4 grid gap-3 xl:grid-cols-2">
-          {groups.map((group) => (
-            <div key={group.key} className="rounded-lg border bg-slate-50/60 p-3">
-              <div className="flex items-center gap-2 font-medium text-slate-900">{group.icon}{group.title}</div>
-              <p className="mt-1 text-xs leading-5 text-slate-500">{group.description}</p>
-              {group.options.length === 0 ? (
-                <p className="mt-3 rounded-md border border-dashed bg-white px-3 py-2 text-xs text-slate-500">Подходящих позиций нет</p>
-              ) : (
-                <div className="mt-3 space-y-2">
-                  {group.options.map((option) => {
-                    const inputId = `long-stock-source-${option.inventoryId}`
-                    return (
-                      <div key={option.inventoryId} className={cn('rounded-md border bg-white p-3', !option.available && 'bg-slate-100 opacity-75')}>
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-900">
-                              {longStockSourceLabel(option)}
-                              <Badge variant="outline">{formatMm(option.lengthMm)} мм</Badge>
-                              {option.requiresTransfer && <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">Перевод</Badge>}
-                            </div>
-                            <p className="mt-1 text-xs leading-5 text-slate-600">
-                              {option.factoryName}
-                              {option.sourceMachineName ? ` · станок ${option.sourceMachineName}` : ''}
-                              {option.sourceVersionNumber ? ` · раскладка №${option.sourceVersionNumber}` : ''}
-                              {option.availableFromDate ? ` · план ${formatLongStockDate(option.availableFromDate)}` : ''}
-                            </p>
-                            {option.unavailableReason && (
-                              <p className="mt-1 flex items-start gap-1 text-xs leading-5 text-amber-700" role="status">
-                                <CircleAlert className="mt-0.5 size-3.5 shrink-0" />{option.unavailableReason}
-                              </p>
-                            )}
-                          </div>
-                          <div className="w-24 space-y-1">
-                            <Label htmlFor={inputId} className="text-xs">Выбрать, шт.</Label>
-                            <Input
-                              id={inputId}
-                              type="number"
-                              inputMode="numeric"
-                              min={0}
-                              max={option.availableQuantity}
-                              step={1}
-                              value={quantities[option.inventoryId] ?? 0}
-                              disabled={disabled || (!option.available && !(quantities[option.inventoryId] > 0))}
-                              aria-invalid={(quantities[option.inventoryId] ?? 0) > option.availableQuantity}
-                              aria-describedby={`${inputId}-available`}
-                              onChange={(event) => onQuantityChange(option, event.target.value)}
-                            />
-                            <p id={`${inputId}-available`} className="text-right text-[11px] text-slate-500">
-                              свободно {option.availableQuantity}
-                            </p>
-                            {(quantities[option.inventoryId] ?? 0) > option.availableQuantity && (
-                              <p className="text-xs text-amber-700" role="alert">Уменьшите выбранное количество.</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          ))}
-
-          <div className="rounded-lg border border-dashed bg-blue-50/50 p-3">
-            <div className="flex items-center gap-2 font-medium text-slate-900"><ShoppingCart className="size-4" />Закупить</div>
-            <p className="mt-1 text-xs leading-5 text-slate-600">
-              Количество и длины закупаемых хлыстов определяются только для отрезков, которые не помещаются в выбранные источники.
-            </p>
-            <div className="mt-3 rounded-md bg-white px-3 py-2 text-sm text-slate-700">
-              {customized
-                ? `Технолог выбрал ${selectedCount} складских хлыстов; закупка будет рассчитана по остатку потребности.`
-                : 'При первом расчёте система сама предложит складские источники с минимальной закупаемой длиной.'}
-            </div>
-          </div>
-        </div>
-      )}
-    </section>
-  )
-}
-
-function longStockSourceLabel(option: LongStockSourceOption) {
-  if (option.source === 'warehouse_stock') return 'Обычный склад'
-  if (option.source === 'business_remnant') return 'Деловой остаток'
-  return option.availableFromDate
-    ? `Будущий остаток до ${formatLongStockDate(option.availableFromDate)}`
-    : 'Будущий остаток'
-}
-
-function formatLongStockDate(value: string) {
-  const date = new Date(`${value}T00:00:00`)
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('ru-RU').format(date)
-}
-
 function NewLongStockMaterialForm({
   draft,
   steelTypes,
@@ -2109,6 +1978,7 @@ function CuttingLayoutsMatrix({
   selectedKey,
   bestKey,
   onSelect,
+  scenarioStates = {},
 }: {
   id: string
   calculation: Calculation
@@ -2116,6 +1986,7 @@ function CuttingLayoutsMatrix({
   selectedKey: string | null
   bestKey: string | null
   onSelect: (candidate: LongStockCuttingCandidate) => void
+  scenarioStates?: Record<string, string>
 }) {
   const newBarOrigin = longStockNewBarOrigin(calculation)
   return (
@@ -2154,6 +2025,7 @@ function CuttingLayoutsMatrix({
                       {newBarOrigin === 'purchase' ? candidatePurchaseLengthLabel(candidate) : 'Без закупки'}
                     </button>
                     <div className="mt-2 flex flex-wrap gap-1.5">
+                      {scenarioStates[candidate.key] && scenarioStates[candidate.key] !== 'ready' && <Badge variant="outline" className="border-amber-300 text-amber-800">Требуется пересчёт</Badge>}
                       {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
                       {selected && <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700">Выбран</Badge>}
                     </div>

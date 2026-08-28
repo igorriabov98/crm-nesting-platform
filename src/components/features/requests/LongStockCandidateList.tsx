@@ -1,6 +1,6 @@
 'use client'
 
-import { useId } from 'react'
+import { useId, type ReactNode } from 'react'
 import { Boxes, Check, ChevronDown, Recycle, ShoppingCart, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import type { LongStockCuttingCandidate } from '@/lib/long-stock-cutting-solver'
@@ -28,16 +28,21 @@ type SummaryProps = {
   minimumUsefulLengthMm: number
   sources?: readonly LongStockSummarySource[]
   newBarOrigin?: LongStockNewBarOrigin
+  factoryName?: string
+  sourceEditor?: ReactNode
+  stale?: boolean
 }
 
 export function LongStockCandidateSummary({
-  candidate, minimumUsefulLengthMm, sources = [], newBarOrigin = 'purchase',
+  candidate, minimumUsefulLengthMm, sources = [], newBarOrigin = 'purchase', factoryName, sourceEditor, stale,
 }: SummaryProps) {
   const breakdown = candidateMaterialBreakdown(candidate, newBarOrigin)
-  const destination = sources.find((source) => source.isOwnFactory)?.factoryName ?? 'завод машины'
+  const destination = factoryName ?? sources.find((source) => source.isOwnFactory)?.factoryName ?? 'завод машины'
   return (
     <section aria-label="Состав выбранной комбинации" className="space-y-4 p-4 text-sm">
       <h4 className="font-semibold text-slate-900">Состав выбранной комбинации</h4>
+      {sourceEditor}
+      {stale && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900" role="status">Предыдущий расчёт — состав закупки, резы и остатки будут обновлены после пересчёта.</p>}
       <div className="grid gap-4 lg:grid-cols-3">
         <section className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/70 p-3" aria-label="Хлысты со склада">
           <h5 className="flex items-center gap-2 font-semibold text-slate-900"><Boxes className="size-4 shrink-0" />Со склада · {breakdown.stockBars.length} шт.</h5>
@@ -94,13 +99,15 @@ export function LongStockCandidateSummary({
 
 export function LongStockCandidateList({
   candidates, selectedKey, bestKey, weightPerMeterKg, minimumUsefulLengthMm,
-  sources, newBarOrigin = 'purchase', onSelect,
-}: Omit<SummaryProps, 'candidate'> & {
+  sources, newBarOrigin = 'purchase', onSelect, factoryName, renderSourceEditor, scenarioStates = {},
+}: Omit<SummaryProps, 'candidate' | 'sourceEditor' | 'stale'> & {
   candidates: LongStockCuttingCandidate[]
   selectedKey: string | null
   bestKey: string | null
   weightPerMeterKg: number | null
   onSelect: (candidate: LongStockCuttingCandidate) => void
+  renderSourceEditor?: (candidate: LongStockCuttingCandidate) => ReactNode
+  scenarioStates?: Record<string, string>
 }) {
   const id = useId()
   return (
@@ -109,6 +116,9 @@ export function LongStockCandidateList({
         const selected = candidate.key === selectedKey
         const best = candidate.key === bestKey
         const breakdown = candidateMaterialBreakdown(candidate, newBarOrigin)
+        const ownBars = breakdown.stockBars.filter((bar) => !bar.requiresTransfer)
+        const otherBars = breakdown.stockBars.filter((bar) => bar.requiresTransfer)
+        const stale = Boolean(scenarioStates[candidate.key] && scenarioStates[candidate.key] !== 'ready')
         const summaryId = `${id}-summary-${index}`
         const remainderWeightKg = weightPerMeterKg !== null && Number.isFinite(weightPerMeterKg) && weightPerMeterKg > 0
           ? candidate.totalRemainderMm / 1000 * weightPerMeterKg : null
@@ -124,13 +134,15 @@ export function LongStockCandidateList({
             >
               <span className="flex flex-wrap items-center gap-2 font-semibold text-slate-900">
                 {breakdown.purchaseBars.length ? `Закупка: ${formatLongStockComposition(breakdown.purchaseGroups)}` : 'Без закупки'}
-                {best && <Badge className="bg-emerald-700 text-white"><Check />Лучший</Badge>}
+                {best && !stale && <Badge className="bg-emerald-700 text-white"><Check />{candidate.searchComplete ? 'Лучший' : 'Лучший найденный'}</Badge>}
                 {selected && <Badge variant="outline" className="border-blue-300 text-blue-800">Выбран</Badge>}
+                {stale && <Badge variant="outline" className="border-amber-300 text-amber-800">{scenarioStates[candidate.key] === 'calculating' ? 'Пересчёт…' : 'Требуется пересчёт'}</Badge>}
                 {candidate.usesNonstandardLength && <Badge variant="outline" className="border-violet-200 text-violet-700"><Sparkles />Есть нестандартная</Badge>}
                 <ChevronDown aria-hidden="true" className={cn('ml-auto size-4 shrink-0 text-slate-500', selected && 'rotate-180')} />
               </span>
-              <span className="grid gap-3 text-sm sm:grid-cols-3">
-                <CompositionMetric label={`Со склада · ${breakdown.stockBars.length} шт.`} value={formatLongStockComposition(breakdown.stockGroups) || 'Не используется'} />
+              <span className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                <CompositionMetric label={`Со своего завода · ${ownBars.length} шт.`} value={formatLongStockComposition(groupLongStockLengths(ownBars.map((bar) => bar.stockLengthMm))) || 'Не используется'} />
+                <CompositionMetric label={`С других заводов · ${otherBars.length} шт.`} value={formatLongStockComposition(groupLongStockLengths(otherBars.map((bar) => bar.stockLengthMm))) || 'Не используется'} />
                 <CompositionMetric label={`В закупку · ${breakdown.purchaseBars.length} шт.`} value={formatLongStockComposition(breakdown.purchaseGroups) || 'Не требуется'} />
                 <CompositionMetric label={`Будущие остатки · ${breakdown.remnantBars.length} шт.`} value={formatLongStockComposition(breakdown.remnantGroups) || 'Без остатка'} />
               </span>
@@ -138,7 +150,8 @@ export function LongStockCandidateList({
             </button>
             {selected && (
               <div id={summaryId} className="border-t border-blue-200">
-                <LongStockCandidateSummary candidate={candidate} minimumUsefulLengthMm={minimumUsefulLengthMm} sources={sources} newBarOrigin={newBarOrigin} />
+                <LongStockCandidateSummary candidate={candidate} minimumUsefulLengthMm={minimumUsefulLengthMm} sources={sources} newBarOrigin={newBarOrigin}
+                  factoryName={factoryName} sourceEditor={renderSourceEditor?.(candidate)} stale={stale} />
               </div>
             )}
           </div>
