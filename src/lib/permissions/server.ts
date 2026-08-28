@@ -125,6 +125,22 @@ function makeFullAdminPermissionDetails(memberships: DepartmentPermissionMembers
   }
 }
 
+function getCurrentContextAdminPermissions(
+  user: Pick<Awaited<ReturnType<typeof getCurrentUserContext>>['user'], 'department_memberships'>,
+) {
+  const memberships = (user.department_memberships || []).map((membership) => ({
+    departmentId: membership.department?.id || '',
+    departmentName: membership.department?.name ?? null,
+    positionId: membership.position?.id ?? null,
+    positionName: membership.position?.name ?? null,
+    positionLevel: membership.position?.level ?? null,
+    isDepartmentHead: Boolean(membership.is_department_head),
+  }))
+
+  if (!memberships.some((membership) => membership.positionName === CRM_ADMIN_POSITION_NAME)) return null
+  return makeFullAdminPermissionDetails(memberships)
+}
+
 export const getRolePermissionMap = cache(async (role: UserRole): Promise<PermissionMap> => {
   const defaults = getDefaultPermissionMap(role)
   const supabase = await createServerSupabaseClient()
@@ -272,7 +288,8 @@ type PermissionRequirement = {
 export async function requireAnyPermission(requirements: readonly PermissionRequirement[]) {
   if (requirements.length === 0) throw new Error('Не задано ни одного требуемого права')
   const context = await getCurrentUserContext()
-  const permissionDetails = await getCurrentUserPermissions(context.user.id)
+  const permissionDetails = getCurrentContextAdminPermissions(context.user)
+    ?? await getCurrentUserPermissions(context.user.id)
 
   if (!requirements.some(({ resourceKey, operation }) =>
     hasPermission(permissionDetails.permissions, resourceKey, operation))) {

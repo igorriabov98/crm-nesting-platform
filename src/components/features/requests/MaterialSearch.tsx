@@ -36,6 +36,24 @@ const MATERIAL_SEARCH_CACHE_LIMIT = 100
 const materialSearchCache = new Map<string, { data: MaterialSearchBundle; expiresAt: number }>()
 const materialSearchInFlight = new Map<string, Promise<MaterialSearchBundle | null>>()
 
+function categoryBrowseQuery(category: MaterialCategory | null | undefined) {
+  if (!category) return null
+  return normalizeMaterialName(MATERIAL_CATEGORY_LABELS[category] ?? category)
+}
+
+function materialSearchCacheKey(
+  query: string,
+  category: MaterialCategory | null | undefined,
+  allowCrossCategoryFallback: boolean,
+) {
+  const categoryQuery = categoryBrowseQuery(category)
+  const usesCategoryBrowse = Boolean(categoryQuery?.includes(query))
+  return {
+    key: `${category ?? 'all'}:${allowCrossCategoryFallback ? 'fallback' : 'strict'}:${usesCategoryBrowse ? '@category' : query}`,
+    effectiveQuery: usesCategoryBrowse ? categoryQuery! : query,
+  }
+}
+
 function clearMaterialSearchCache() {
   materialSearchCache.clear()
   materialSearchInFlight.clear()
@@ -178,6 +196,13 @@ export function MaterialSearch({
   }, [open])
 
   useEffect(() => {
+    const categoryQuery = categoryBrowseQuery(category)
+    if (disabled || !categoryQuery) return
+    const { key, effectiveQuery } = materialSearchCacheKey(categoryQuery, category, allowCrossCategoryFallback)
+    void loadMaterialSearchBundle(key, effectiveQuery, category, allowCrossCategoryFallback)
+  }, [allowCrossCategoryFallback, category, disabled])
+
+  useEffect(() => {
     const normalized = normalizeMaterialName(query)
     if (!open || disabled || normalized.length < 2) return
     if (suppressedQueryRef.current === normalized) {
@@ -185,12 +210,12 @@ export function MaterialSearch({
       return () => window.clearTimeout(timer)
     }
 
-    const key = `${category ?? 'all'}:${allowCrossCategoryFallback ? 'fallback' : 'strict'}:${normalized}`
+    const { key, effectiveQuery } = materialSearchCacheKey(normalized, category, allowCrossCategoryFallback)
     const timer = window.setTimeout(() => {
       if (normalizeMaterialName(queryRef.current) !== normalized) return
       if (suppressedQueryRef.current === normalized) return
       startTransition(async () => {
-        const result = await loadMaterialSearchBundle(key, normalized, category, allowCrossCategoryFallback)
+        const result = await loadMaterialSearchBundle(key, effectiveQuery, category, allowCrossCategoryFallback)
         if (normalizeMaterialName(queryRef.current) !== normalized) return
         if (suppressedQueryRef.current === normalized) return
         if (result) {
