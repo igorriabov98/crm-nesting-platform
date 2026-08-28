@@ -43,11 +43,18 @@ export const getCurrentUserContext = cache(async (): Promise<CurrentUserContext>
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new AuthRequiredError()
 
-  const { data: profile, error } = await supabase
-    .from('users')
-    .select('id, email, full_name, role, factory_id, is_active, created_at')
-    .eq('id', user.id)
-    .maybeSingle()
+  const [profileResult, membershipResult] = await Promise.all([
+    supabase
+      .from('users')
+      .select('id, email, full_name, role, factory_id, is_active, created_at')
+      .eq('id', user.id)
+      .maybeSingle(),
+    supabase
+      .from('department_members')
+      .select('department:departments(id, name), position:positions(id, name, level), is_department_head')
+      .eq('user_id', user.id),
+  ])
+  const { data: profile, error } = profileResult
 
   if (error || !profile) throw new UserProfileMissingError(error?.message)
 
@@ -71,10 +78,7 @@ export const getCurrentUserContext = cache(async (): Promise<CurrentUserContext>
     factory = (factoryData as Factory | null) || null
   }
 
-  const { data: membershipData } = await supabase
-    .from('department_members')
-    .select('department:departments(id, name), position:positions(id, name, level), is_department_head')
-    .eq('user_id', user.id)
+  const { data: membershipData } = membershipResult
 
   const departmentMemberships = Array.isArray(membershipData)
     ? (membershipData as UserDepartmentMembershipSummary[])

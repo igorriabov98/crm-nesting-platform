@@ -14,6 +14,14 @@ const sheetMetalSource = await readFile(
   new URL('../src/components/features/requests/SheetMetalSection.tsx', import.meta.url),
   'utf8',
 )
+const permissionSource = await readFile(
+  new URL('../src/lib/permissions/server.ts', import.meta.url),
+  'utf8',
+)
+const currentUserSource = await readFile(
+  new URL('../src/lib/auth/current-user.ts', import.meta.url),
+  'utf8',
+)
 
 test('material search receives materials and variants in one server action', () => {
   assert.match(materialSearchSource, /searchMaterialsWithVariants/)
@@ -26,6 +34,17 @@ test('identical searches share completed and in-flight results', () => {
   assert.match(materialSearchSource, /const materialSearchCache = new Map/)
   assert.match(materialSearchSource, /const materialSearchInFlight = new Map/)
   assert.match(materialSearchSource, /if \(running\) return running/)
+})
+
+test('the active category is prefetched once and reused for category-label searches', () => {
+  assert.match(materialSearchSource, /usesCategoryBrowse \? '@category' : query/)
+  assert.match(materialSearchSource, /void loadMaterialSearchBundle\(key, effectiveQuery, category, allowCrossCategoryFallback\)/)
+})
+
+test('trusted CRM admin context skips duplicate permission queries', () => {
+  assert.match(permissionSource, /getCurrentContextAdminPermissions\(context\.user\)/)
+  assert.match(permissionSource, /\?\? await getCurrentUserPermissions\(context\.user\.id\)/)
+  assert.match(currentUserSource, /const \[profileResult, membershipResult\] = await Promise\.all/)
 })
 
 test('search debounce is short enough for interactive use', () => {
