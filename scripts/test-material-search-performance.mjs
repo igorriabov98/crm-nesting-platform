@@ -34,6 +34,11 @@ test('search debounce is short enough for interactive use', () => {
   assert.ok(Number(debounce[1]) <= 100, `search debounce is too long: ${debounce[1]} ms`)
 })
 
+test('selected and hidden material inputs do not search in the background', () => {
+  assert.match(materialSearchSource, /if \(!open \|\| disabled \|\| normalized\.length < 2\) return/)
+  assert.match(materialSearchSource, /localSelection\?\.name, open, openDropdown/)
+})
+
 test('adding a sheet row gives immediate feedback and rejects duplicate clicks', () => {
   assert.match(sheetMetalSource, /if \(isAdding\) return/)
   assert.match(sheetMetalSource, /Добавляю позицию…/)

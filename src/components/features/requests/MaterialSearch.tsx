@@ -179,7 +179,7 @@ export function MaterialSearch({
 
   useEffect(() => {
     const normalized = normalizeMaterialName(query)
-    if (disabled || normalized.length < 2) return
+    if (!open || disabled || normalized.length < 2) return
     if (suppressedQueryRef.current === normalized) {
       const timer = window.setTimeout(() => setOpen(false), 0)
       return () => window.clearTimeout(timer)
@@ -202,7 +202,7 @@ export function MaterialSearch({
     }, 100)
 
     return () => window.clearTimeout(timer)
-  }, [allowCrossCategoryFallback, category, disabled, localSelection?.name, openDropdown, query, selectedMaterialId, value])
+  }, [allowCrossCategoryFallback, category, disabled, localSelection?.name, open, openDropdown, query, selectedMaterialId, value])
 
   const normalizedQuery = normalizeMaterialName(query)
   const selectedMatchesQuery = Boolean(
