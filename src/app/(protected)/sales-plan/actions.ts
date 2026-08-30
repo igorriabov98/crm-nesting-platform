@@ -1946,26 +1946,14 @@ export async function archiveMachine(id: string, reason?: string) {
 
     await cleanupMachineAgendaReferences(supabase as unknown as RpcClient, id)
 
-    const { error: updateError } = await db
-      .from('machines')
-      .update({
-        is_archived: true,
-        archived_at: new Date().toISOString(),
-        archived_by: user.id,
-        archive_reason: reason?.trim() || null,
-        updated_at: new Date().toISOString(),
-      } satisfies MachineUpdate)
-      .eq('id', id)
+    const admin = createAdminClient() as unknown as RpcClient
+    const { error: archiveError } = await admin.rpc('archive_machine_and_compact_production_queue', {
+      p_machine_id: id,
+      p_archived_by: user.id,
+      p_archive_reason: reason?.trim() || null,
+    })
 
-    if (updateError) throw updateError
-
-    const { error: taskError } = await db
-      .from('tasks')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('machine_id', id)
-      .in('status', ['pending', 'in_progress'])
-
-    if (taskError) throw taskError
+    if (archiveError) throw archiveError
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${id}`)
