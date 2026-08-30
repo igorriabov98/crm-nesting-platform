@@ -12,6 +12,7 @@ import { DIRECTOR_ACCESS_ROLES, type PermissionOperation } from '@/lib/permissio
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
+import { summarizeDisplayedStockCoverage } from '@/lib/supply-request-stock-coverage'
 import type {
   Machine,
   RequestChainCord,
@@ -653,29 +654,33 @@ function withStock<T extends { id: string; material_id: string | null; material_
 
 function summarize(rows: Array<Record<string, unknown>>, table: RequestItemTable, unit?: string): SupplyRequestSectionSummary {
   const needed = rows.reduce((sum, row) => sum + getNeededForRow(table, row), 0)
-  const reserved = rows.reduce((sum, row) => sum + getReservedForRow(table, row), 0)
-  const covered = rows.reduce((sum, row) => sum + asNumber(row.covered_quantity ?? getReservedForRow(table, row)), 0)
+  const coverage = summarizeDisplayedStockCoverage(needed, rows.map((row) => ({
+    reservedQuantity: getReservedForRow(table, row),
+    coveredQuantity: row.covered_quantity,
+  })))
   return {
     positions: rows.length,
     needed,
-    reserved,
-    toOrder: Math.max(needed - covered, 0),
+    reserved: coverage.reserved,
+    toOrder: coverage.toOrder,
     unit,
   }
 }
 
 function summarizeComponents(rows: RequestComponents[]): SupplyRequestSectionSummary {
   const needed = rows.reduce((sum, row) => sum + getNeededForRow('request_components', row as unknown as Record<string, unknown>), 0)
-  const reserved = rows.reduce((sum, row) => sum + getReservedForRow('request_components', row as unknown as Record<string, unknown>), 0)
-  const covered = rows.reduce((sum, row) => {
+  const coverage = summarizeDisplayedStockCoverage(needed, rows.map((row) => {
     const rowRecord = row as unknown as Record<string, unknown>
-    return sum + asNumber(rowRecord.covered_quantity ?? getReservedForRow('request_components', rowRecord))
-  }, 0)
+    return {
+      reservedQuantity: getReservedForRow('request_components', rowRecord),
+      coveredQuantity: rowRecord.covered_quantity,
+    }
+  }))
   return {
     positions: rows.length,
     needed,
-    reserved,
-    toOrder: Math.max(needed - covered, 0),
+    reserved: coverage.reserved,
+    toOrder: coverage.toOrder,
     unit: 'шт',
   }
 }

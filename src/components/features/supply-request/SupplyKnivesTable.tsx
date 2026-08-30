@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { ReserveButton } from './ReserveButton'
 import { UnreserveButton } from './UnreserveButton'
+import { StockCoverageValue } from './StockCoverageValue'
 import { EmptyRows, OrderStatusCell, formatAmount, stockText, stickyCellClass, tableClass, tdClass, thClass } from './SupplyRequestTableShared'
 import type { SupplyRequestRow } from '@/lib/actions/supply-request'
 import type { RequestKnives } from '@/lib/types'
@@ -45,7 +46,7 @@ export function SupplyKnivesTable({ rows, machineId, canManageOrders = true }: P
                     </div>
                   )}
                 </td>
-                <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
+                <td className={tdClass}><StockCoverageValue reserved={reserved} covered={row.covered_quantity} unit={unit} /></td>
                 <td className={tdClass}><OrderStatusCell table="request_knives" id={row.id} status={row.order_status} canEdit={canManageOrders} receivingTable="request_knives" itemName={row.materials?.name || row.knife_type || 'Нож'} /></td>
                 <td className={tdClass}>
                   <div className="flex items-center gap-2">
