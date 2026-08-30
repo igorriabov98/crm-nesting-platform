@@ -40,8 +40,13 @@ const dashboard = source('src/lib/dashboard/planning-director/data.ts')
 const taskNotifications = source('src/lib/services/task-notifications.ts')
 const departmentRequests = source('src/lib/actions/department-requests.ts')
 const sidebarQueues = source('src/lib/actions/sidebar-work-queues.ts')
+const archiveQueueMigration = source('supabase/migrations/20260830120000_archive_machine_compact_production_queue.sql')
 
-assert.match(archiveAction, /\.from\('tasks'\)[\s\S]*?\.update\(\{ status: 'cancelled'[\s\S]*?\.in\('status', \['pending', 'in_progress'\]\)/)
+assert.match(archiveAction, /admin\.rpc\('archive_machine_and_compact_production_queue'/)
+assert.match(archiveQueueMigration, /UPDATE public\.tasks[\s\S]*?status = 'cancelled'[\s\S]*?status IN \('pending', 'in_progress'\)/)
+assert.match(archiveQueueMigration, /PARTITION BY m\.production_month, m\.factory_id, m\.production_workshop/)
+assert.match(archiveQueueMigration, /COALESCE\(m\.is_archived, false\) = false/)
+assert.match(archiveQueueMigration, /GRANT EXECUTE ON FUNCTION public\.archive_machine_and_compact_production_queue\(uuid, uuid, text\) TO service_role/)
 for (const route of [
   'SUPPLY_TRANSPORT',
   'SUPPLY_OUTSOURCING_REQUESTS',
