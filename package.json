@@ -29,7 +29,7 @@
     "test:mail": "tsx scripts/test-mail-integration.ts",
     "test:supply-order-view": "tsx scripts/test-supply-order-view.ts",
     "test:supply-long-stock-plan-return": "tsx --test src/lib/supply-orders/long-stock-purchase-plan.test.ts && node scripts/test-supply-long-stock-plan-return.mjs",
-    "test:supply-request-flow": "tsx scripts/test-supply-request-flow.ts",
+    "test:supply-request-flow": "tsx --test src/lib/supply-request-stock-coverage.test.ts src/components/features/supply-request/StockCoverageValue.test.tsx && tsx scripts/test-supply-request-flow.ts",
     "test:user-impersonation": "tsx scripts/test-user-impersonation.ts",
     "test:supply-receiving": "node --test src/lib/supply-orders/receiving-quantity.test.mjs && tsx --test src/lib/supply-orders/manual-allocation.test.ts src/lib/supply-orders/single-length-receipt.test.ts && node scripts/test-supply-partial-receiving.mjs",
     "test:knife-profile": "tsx --test src/lib/materials/knife-profile.test.ts src/lib/inventory/long-stock-piece-length-summary.test.ts && node scripts/test-knife-profile-without-length.mjs && node scripts/test-knife-reset-safety.mjs",

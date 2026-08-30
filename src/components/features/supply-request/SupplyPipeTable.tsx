@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import { ReserveButton } from './ReserveButton'
 import { UnreserveButton } from './UnreserveButton'
+import { StockCoverageValue } from './StockCoverageValue'
 import { EmptyRows, OrderStatusCell, formatAmount, stockText, stickyCellClass, tableClass, tdClass, thClass } from './SupplyRequestTableShared'
 import type { SupplyRequestRow } from '@/lib/actions/supply-request'
 import type { RequestPipe } from '@/lib/types'
@@ -41,7 +42,7 @@ export function SupplyPipeTable({ rows, machineId, canManageOrders = true }: Pro
                 <td className={tdClass}>{isWire ? formatAmount(row.remainder_kg) : '—'}</td>
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
                 <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockBreakdown(row.stock_items, unit) || stockText(row.available_stock, unit)}</td>
-                <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
+                <td className={tdClass}><StockCoverageValue reserved={reserved} covered={row.covered_quantity} unit={unit} showLayoutSource={!isWire} /></td>
                 <td className={tdClass}><OrderStatusCell table="request_pipe" id={row.id} status={row.order_status} canEdit={canManageOrders} receivingTable={isWire ? undefined : 'request_pipe'} itemName={row.materials?.name || row.size || 'Труба'} /></td>
                 <td className={tdClass}>
                   <div className="flex items-center gap-2">
