@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, ClipboardList, Edit, Factory, FileText, MoreHorizontal, Package, Trash2, Truck, WalletCards, Wrench } from 'lucide-react'
+import { AlertTriangle, Archive, ArrowLeft, CheckCircle2, ClipboardList, Edit, Factory, FileText, Grid3X3, MoreHorizontal, Package, Trash2, Truck, WalletCards, Wrench } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -42,6 +42,7 @@ import type { MachineLayoutPayload } from '@/lib/actions/machine-layout'
 import type { MachineCuttingPayload } from '@/lib/actions/machine-cutting'
 import type { MachineActivityPayload } from '@/lib/actions/machine-activity'
 import type { MachineOutsourcingData } from '@/lib/actions/outsourcing'
+import type { VrbMeshStatus } from '@/lib/vrb/status'
 import { ROUTES } from '@/lib/constants/routes'
 import { updateMachineConfirmation } from '@/app/(protected)/sales-plan/actions'
 import { cn } from '@/lib/utils'
@@ -81,6 +82,7 @@ interface MachineDetailProps {
   nestingStates?: MachineItemNestingState[]
   activity: MachineActivityPayload
   outsourcingData?: MachineOutsourcingData | null
+  vrbStatus?: VrbMeshStatus | null
   canManageTechnologistRequests?: boolean
   canViewSupplyRequest?: boolean
   canManageNesting?: boolean
@@ -137,6 +139,7 @@ export function MachineDetail({
   nestingStates = [],
   activity,
   outsourcingData = null,
+  vrbStatus = null,
   canManageTechnologistRequests = false,
   canViewSupplyRequest = false,
   canManageNesting = false,
@@ -255,6 +258,26 @@ export function MachineDetail({
                   <Badge variant="outline" className="border-amber-300/40 bg-amber-300/15 text-amber-100">
                     <AlertTriangle className="mr-1 h-3 w-3" />
                     Предварительная
+                  </Badge>
+                )}
+                {vrbStatus && (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'border-white/30 bg-white/10 text-white',
+                      vrbStatus.key === 'order_changed' && 'border-red-200/60 bg-red-400/20 text-red-50',
+                      vrbStatus.key === 'received' && 'border-emerald-200/60 bg-emerald-400/20 text-emerald-50',
+                      vrbStatus.key === 'partially_received' && 'border-cyan-200/60 bg-cyan-400/20 text-cyan-50',
+                    )}
+                    title="Информационный риск: не блокирует производство"
+                  >
+                    <Grid3X3 className="mr-1 h-3 w-3" />
+                    {vrbStatus.label}
+                    {vrbStatus.receivedQuantity > 0 && (
+                      <span className="ml-1 tabular-nums">
+                        {vrbStatus.receivedQuantity}/{vrbStatus.requestedQuantity}
+                      </span>
+                    )}
                   </Badge>
                 )}
               </div>

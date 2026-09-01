@@ -90,6 +90,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   transport_trip_date_approval: 'Согласование дат рейса',
   production_plan_preparation: 'Подготовка плана',
   outsourcing_transport: 'Транспорт аутсорсинга',
+  vrb_outsourcing_approval: 'Заказ сетки VRB',
   product_version_incomplete: 'Дозаполнить карточку товара',
   business_scrap_correction_approval: 'Корректировка делового остатка',
   detailing_transfer: 'Перемещение деталировки',
@@ -216,6 +217,9 @@ function getTaskTarget(task: TaskWithRelations) {
   if (task.task_type === 'transport_trip_date_approval') {
     return { href: ROUTES.SUPPLY_TRANSPORT, label: 'Транспорт снабжения', kind: 'Рейс' }
   }
+  if (task.task_type === 'vrb_outsourcing_approval') {
+    return { href: ROUTES.SUPPLY_OUTSOURCING_REQUESTS, label: 'Согласование аутсорсинга', kind: 'VRB' }
+  }
   if (task.machine) {
     const tabQuery = task.task_type === 'machine_layout' || task.task_type === 'material_type_selection'
       ? '?tab=technologist'
@@ -274,6 +278,7 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (taskType === 'material_type_selection') return 'border-cyan-200 bg-cyan-50 text-cyan-700 shadow-sm'
   if (taskType === 'machine_layout') return 'border-indigo-200 bg-indigo-50 text-indigo-800 shadow-sm'
   if (taskType === 'outsourcing_transport') return 'border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm'
+  if (taskType === 'vrb_outsourcing_approval') return 'border-blue-200 bg-blue-50 text-blue-800 shadow-sm'
   if (taskType === 'detailing_transfer') return 'border-blue-200 bg-blue-50 text-blue-800 shadow-sm'
   if (taskType === 'inventory_transfer') return 'border-cyan-200 bg-cyan-50 text-cyan-800 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'

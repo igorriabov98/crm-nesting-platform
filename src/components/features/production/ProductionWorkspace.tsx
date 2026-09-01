@@ -196,6 +196,7 @@ export function ProductionWorkspace({
         is_outsourcing: true,
         outsourcing_operation_id: operation.id,
         source_machine_id: operation.machine_id,
+        vrb_status: null,
       }))
 
     return {

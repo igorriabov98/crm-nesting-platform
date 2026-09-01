@@ -7,6 +7,8 @@ import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
 import { knifeBevelLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { loadVrbMeshStatuses, type VrbMeshStatus } from '@/lib/vrb/status'
 import type { StageType } from '@/lib/types'
 
 export type GanttStageStatus = 'not_planned' | 'active' | 'completed' | 'overdue'
@@ -74,6 +76,7 @@ export interface GanttMachine {
   is_outsourcing?: boolean
   outsourcing_operation_id?: string | null
   source_machine_id?: string | null
+  vrb_status: VrbMeshStatus | null
 }
 
 export interface GanttData {
@@ -710,6 +713,10 @@ export async function getGanttData(
   const today = new Date()
   const selectedMachines = (machines as SelectedGanttMachine[] | null) || []
   const supplyOrderMaterialMap = await loadSupplyOrderMaterialMarkers(supabase as unknown as LooseGanttDb, selectedMachines)
+  const vrbStatusByMachine = await loadVrbMeshStatuses(
+    createAdminClient(),
+    selectedMachines.map((machine) => machine.id),
+  )
 
   const result: GanttMachine[] = []
 
@@ -838,6 +845,7 @@ export async function getGanttData(
       stages: ganttStages,
       supply_deadlines,
       material_items,
+      vrb_status: vrbStatusByMachine.get(m.id) || null,
     })
   }
 

@@ -14,6 +14,7 @@ import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
 import { syncMaterialTypeTask } from '@/lib/actions/material-type-tasks'
 import { syncTransportCostTask } from '@/lib/actions/transport-cost-tasks'
 import { ensureProductVersionCompletionTask, type ProductVersionCompletionSnapshot } from '@/lib/actions/product-version-completion-tasks'
+import { ensureVrbApprovalTasksForMachine } from '@/lib/actions/vrb-outsourcing'
 import { isMachineInConfirmedProductionPlan, notifyMachineEnteredReadyProductionPlan } from '@/lib/actions/production-plan'
 import { promoteShippedProjectSamplesToProducts } from '@/lib/actions/products'
 import { loadMachineProgressContexts, resolveMachineProgressWithContext } from '@/lib/actions/machine-progress'
@@ -1340,6 +1341,7 @@ export async function createMachine(data: CreateMachineInput) {
     await notifyMachineEnteredReadyProductionPlan(machineId, user.id)
     await syncTransportCostTask(db, machineId)
     await syncMaterialTypeTask(db, machineId)
+    await ensureVrbApprovalTasksForMachine(machineId)
     await refreshMaterialUndefinedAgenda(supabase, 'undefined')
     await dispatchPendingTelegramDeliveries({ machineId })
 
@@ -1883,6 +1885,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
       data.material_type !== undefined
     ) {
       await syncMaterialTypeTask(db, id)
+      await ensureVrbApprovalTasksForMachine(id)
       await notifyNewTasks(id)
     }
 
@@ -1993,6 +1996,7 @@ export async function addMachineItem(machineId: string, data: unknown) {
       if (error) throw error
       await syncCoatingDependentProductionStages(db, machineId)
       await syncMaterialTypeTask(db, machineId)
+      await ensureVrbApprovalTasksForMachine(machineId)
       await notifyNewTasks(machineId)
       revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
       revalidatePath(ROUTES.PRODUCTION)
@@ -2030,6 +2034,7 @@ export async function addMachineItem(machineId: string, data: unknown) {
     })
     await syncCoatingDependentProductionStages(db, machineId)
     await syncMaterialTypeTask(db, machineId)
+    await ensureVrbApprovalTasksForMachine(machineId)
     await notifyNewTasks(machineId)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
     revalidatePath(ROUTES.PRODUCTION)
@@ -2071,6 +2076,8 @@ export async function updateMachineConfirmation(id: string, isConfirmed: boolean
       .eq('id', id)
 
     if (error) throw error
+
+    await ensureVrbApprovalTasksForMachine(id)
 
     after(async () => {
       await notifyNewTasks(id).catch((notificationError) => {
@@ -2211,6 +2218,7 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
     }
     await syncCoatingDependentProductionStages(db, machineId)
     await syncMaterialTypeTask(db, machineId)
+    await ensureVrbApprovalTasksForMachine(machineId)
     await notifyNewTasks(machineId)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
     revalidatePath(ROUTES.PRODUCTION)
@@ -2240,6 +2248,7 @@ export async function deleteMachineItem(itemId: string, machineId: string) {
     if (error) throw error
     await syncCoatingDependentProductionStages(db, machineId)
     await syncMaterialTypeTask(db, machineId)
+    await ensureVrbApprovalTasksForMachine(machineId)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
     revalidatePath(ROUTES.PRODUCTION)
     revalidatePath(ROUTES.GANTT)

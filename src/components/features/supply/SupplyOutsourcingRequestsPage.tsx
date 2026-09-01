@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Building2, CalendarDays, CheckCircle2, Clock3, ExternalLink, FileText, Filter, Hand, Info, Loader2, PackageOpen, RotateCcw } from 'lucide-react'
+import { AlertTriangle, Building2, CalendarDays, CheckCircle2, Clock3, ExternalLink, FileText, Filter, Hand, Info, Loader2, PackageOpen, RotateCcw, Send } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -18,12 +18,17 @@ import {
   type SupplyOutsourcingAgreement,
 } from '@/lib/actions/outsourcing'
 import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
+import { markVrbCarrierDispatched, resolveVrbOrderChange } from '@/lib/actions/vrb-outsourcing'
 
 type AgreementDraft = {
   supplierId: string
   plannedSendDate: string
   plannedReturnDate: string
   serviceCostPlanned: string
+  deliveryMethod: 'own_transport' | 'carrier' | ''
+  deliveryCarrierSupplierId: string
+  deliveryCostPlanned: string
+  trackingNumber: string
 }
 
 type RequestStatusFilter = 'all' | 'awaiting' | 'in_work' | 'confirmed'
@@ -37,9 +42,11 @@ function formatDate(value: string | null) {
 export function SupplyOutsourcingRequestsPage({
   agreements,
   suppliers,
+  carriers,
 }: {
   agreements: SupplyOutsourcingAgreement[]
   suppliers: OutsourcingSupplierOption[]
+  carriers: OutsourcingSupplierOption[]
 }) {
   const router = useRouter()
   const [pendingOperationId, setPendingOperationId] = useState<string | null>(null)
@@ -54,6 +61,10 @@ export function SupplyOutsourcingRequestsPage({
       plannedSendDate: agreement.planned_send_date || '',
       plannedReturnDate: agreement.planned_return_date || '',
       serviceCostPlanned: agreement.service_cost_planned == null ? '' : String(agreement.service_cost_planned),
+      deliveryMethod: agreement.delivery_method || '',
+      deliveryCarrierSupplierId: agreement.delivery_carrier_supplier_id || '',
+      deliveryCostPlanned: agreement.delivery_cost_planned == null ? '' : String(agreement.delivery_cost_planned),
+      trackingNumber: agreement.delivery_tracking_number || '',
     }]),
   ))
   const visibleAgreements = useMemo(() => agreements.filter((agreement) => {
@@ -98,7 +109,13 @@ export function SupplyOutsourcingRequestsPage({
 
   function confirmAgreement(agreement: SupplyOutsourcingAgreement) {
     const draft = drafts[agreement.operation_id]
-    if (!draft?.supplierId || !draft.plannedSendDate || !draft.plannedReturnDate || !draft.serviceCostPlanned) return
+    const isVrb = agreement.operation_kind === 'vrb_mesh'
+    if (!draft?.supplierId || !draft.plannedReturnDate || draft.serviceCostPlanned === '') return
+    if (!isVrb && !draft.plannedSendDate) return
+    if (isVrb && !draft.deliveryMethod) return
+    if (isVrb && draft.deliveryMethod === 'carrier' && (
+      !draft.deliveryCarrierSupplierId || draft.deliveryCostPlanned === ''
+    )) return
 
     setPendingOperationId(agreement.operation_id)
     startTransition(async () => {
@@ -107,7 +124,14 @@ export function SupplyOutsourcingRequestsPage({
         supplierId: draft.supplierId,
         plannedSendDate: draft.plannedSendDate,
         plannedReturnDate: draft.plannedReturnDate,
-        serviceCostPlanned: draft.serviceCostPlanned ? Number(draft.serviceCostPlanned) : null,
+        serviceCostPlanned: Number(draft.serviceCostPlanned),
+        deliveryMethod: isVrb ? draft.deliveryMethod || null : null,
+        deliveryCarrierSupplierId: isVrb && draft.deliveryMethod === 'carrier'
+          ? draft.deliveryCarrierSupplierId
+          : null,
+        deliveryCostPlanned: isVrb && draft.deliveryMethod === 'carrier'
+          ? Number(draft.deliveryCostPlanned)
+          : null,
       })
       setPendingOperationId(null)
 
@@ -122,6 +146,36 @@ export function SupplyOutsourcingRequestsPage({
     })
   }
 
+  function resolveChange(agreement: SupplyOutsourcingAgreement, decision: 'accepted' | 'kept_original') {
+    setPendingOperationId(agreement.operation_id)
+    startTransition(async () => {
+      const result = await resolveVrbOrderChange({ operationId: agreement.operation_id, decision })
+      setPendingOperationId(null)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось сохранить решение')
+        return
+      }
+      toast.success(decision === 'accepted' ? 'Состав VRB обновлён, условия сброшены' : 'Исходный состав VRB сохранён')
+      router.refresh()
+    })
+  }
+
+  function dispatchCarrier(agreement: SupplyOutsourcingAgreement) {
+    const trackingNumber = drafts[agreement.operation_id]?.trackingNumber.trim()
+    if (!trackingNumber) return
+    setPendingOperationId(agreement.operation_id)
+    startTransition(async () => {
+      const result = await markVrbCarrierDispatched({ operationId: agreement.operation_id, trackingNumber })
+      setPendingOperationId(null)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось зафиксировать отправку')
+        return
+      }
+      toast.success('Отправка и трек-номер зафиксированы')
+      router.refresh()
+    })
+  }
+
   return (
     <div className="space-y-4">
       <header className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -132,7 +186,7 @@ export function SupplyOutsourcingRequestsPage({
           <div>
             <h1 className="text-xl font-bold text-blue-950 sm:text-2xl">Согласование аутсорсинга</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Возьмите заявку в работу, выберите исполнителя, подтвердите обе даты и стоимость. После подтверждения она появится в транспорте.
+              Согласуйте исполнителя, срок, стоимость и способ доставки. VRB следует той же очереди, но закрывается только складской приёмкой.
             </p>
           </div>
         </div>
@@ -224,24 +278,84 @@ export function SupplyOutsourcingRequestsPage({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className={agreement.supply_terms_confirmed_at
-                        ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-100'
+                        ? agreement.order_changed_at
+                          ? 'bg-red-100 text-red-800 hover:bg-red-100'
+                          : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-100'
                         : agreement.supply_taken_at
                           ? 'bg-blue-100 text-blue-800 hover:bg-blue-100'
                           : 'bg-amber-100 text-amber-800 hover:bg-amber-100'}>
-                        {agreement.supply_terms_confirmed_at
-                          ? 'Подтверждено'
+                        {agreement.order_changed_at
+                          ? 'Заказ изменён'
+                          : agreement.supply_terms_confirmed_at
+                            ? agreement.delivery_dispatched_at ? 'Доставка' : 'Подтверждено'
                           : agreement.supply_taken_at
                             ? 'В работе'
                             : 'Ожидает снабжение'}
                       </Badge>
                       <span className="font-semibold text-blue-950">{agreement.machine_name}</span>
                       <span className="text-sm font-medium text-slate-700">{agreement.work_type_name}</span>
+                      {agreement.parent_operation_id && (
+                        <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-800">Дозаказ</Badge>
+                      )}
                     </div>
                     <div className="mt-2 grid gap-1 text-sm text-slate-600 sm:grid-cols-2">
-                      <span>Маршрут: {agreement.source_factory_name || 'завод не указан'} → {agreement.supplier_name || 'компания не указана'}</span>
-                      <span>Желаемая отправка: <b>{formatDate(agreement.planned_send_date)}</b></span>
+                      {agreement.operation_kind === 'vrb_mesh' ? (
+                        <>
+                          <span>Изготовитель: {agreement.supplier_name || 'компания не указана'}</span>
+                          <span>Доставка на завод: <b>{formatDate(agreement.planned_return_date)}</b></span>
+                          <span>Способ: <b>{agreement.delivery_method === 'own_transport' ? 'Наш транспорт' : agreement.delivery_method === 'carrier' ? 'Служба доставки' : 'не выбран'}</b></span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Маршрут: {agreement.source_factory_name || 'завод не указан'} → {agreement.supplier_name || 'компания не указана'}</span>
+                          <span>Желаемая отправка: <b>{formatDate(agreement.planned_send_date)}</b></span>
+                        </>
+                      )}
                       <span>Запрос создан: <b>{formatDate(agreement.created_at.slice(0, 10))}</b></span>
                     </div>
+                    {agreement.order_changed_at && agreement.operation_kind === 'vrb_mesh' && (
+                      <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-950" role="alert">
+                        <div className="flex items-start gap-2 font-semibold">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          Состав подтверждённого заказа изменился
+                        </div>
+                        {agreement.change_diff.length > 0 && (
+                          <ul className="mt-2 space-y-1 text-red-900">
+                            {agreement.change_diff.map((item) => (
+                              <li key={`${item.source_machine_item_id || item.drawing_number}-${item.product_name}`}>
+                                {item.product_name}: было {item.requested_quantity}, сейчас {item.current_quantity}
+                                {' '}({item.delta > 0 ? '+' : ''}{item.delta})
+                                {item.details.length > 0 && (
+                                  <span className="block text-xs text-red-800">{item.details.join(' · ')}</span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={isPending || Boolean(agreement.delivery_dispatched_at)}
+                            onClick={() => resolveChange(agreement, 'accepted')}
+                          >
+                            Принять изменения
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={isPending}
+                            onClick={() => resolveChange(agreement, 'kept_original')}
+                          >
+                            Оставить исходное
+                          </Button>
+                        </div>
+                        {agreement.delivery_dispatched_at && (
+                          <p className="mt-2 text-xs">После отправки увеличение оформляется отдельным дозаказом; уменьшение требует ручного решения.</p>
+                        )}
+                      </div>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
@@ -264,6 +378,143 @@ export function SupplyOutsourcingRequestsPage({
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Hand className="h-4 w-4" />}
                       Взять в работу
                     </Button>
+                  ) : agreement.operation_kind === 'vrb_mesh' ? (
+                  <div className="grid w-full gap-3 sm:grid-cols-2 xl:max-w-4xl xl:grid-cols-4">
+                    <Label className="grid gap-1.5 text-sm text-slate-700">
+                      Изготовитель
+                      <Select
+                        value={draft?.supplierId || ''}
+                        onValueChange={(value) => value && updateDraft(agreement.operation_id, { supplierId: value })}
+                      >
+                        <SelectTrigger className="h-10 w-full">
+                          <SelectValue>
+                            {suppliers.find((supplier) => supplier.id === draft?.supplierId)?.name || 'Выберите компанию'}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {suppliers.map((supplier) => (
+                            <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Label>
+                    <Label className="grid gap-1.5 text-sm text-slate-700" htmlFor={returnDateId}>
+                      Доставка на завод
+                      <Input
+                        id={returnDateId}
+                        type="date"
+                        value={draft?.plannedReturnDate || ''}
+                        onChange={(event) => updateDraft(agreement.operation_id, { plannedReturnDate: event.target.value })}
+                      />
+                    </Label>
+                    <Label className="grid gap-1.5 text-sm text-slate-700" htmlFor={serviceCostId}>
+                      Цена сетки
+                      <Input
+                        id={serviceCostId}
+                        type="number"
+                        min={0}
+                        inputMode="decimal"
+                        value={draft?.serviceCostPlanned || ''}
+                        onChange={(event) => updateDraft(agreement.operation_id, { serviceCostPlanned: event.target.value })}
+                      />
+                    </Label>
+                    <Label className="grid gap-1.5 text-sm text-slate-700">
+                      Способ доставки
+                      <Select
+                        value={draft?.deliveryMethod || ''}
+                        onValueChange={(value) => updateDraft(agreement.operation_id, {
+                          deliveryMethod: value as AgreementDraft['deliveryMethod'],
+                        })}
+                      >
+                        <SelectTrigger className="h-10 w-full">
+                          <SelectValue>
+                            {draft?.deliveryMethod === 'own_transport'
+                              ? 'Наш транспорт'
+                              : draft?.deliveryMethod === 'carrier'
+                                ? 'Служба доставки'
+                                : 'Выберите способ'}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="own_transport">Наш транспорт</SelectItem>
+                          <SelectItem value="carrier">Служба доставки</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </Label>
+                    {draft?.deliveryMethod === 'carrier' && (
+                      <>
+                        <Label className="grid gap-1.5 text-sm text-slate-700">
+                          Служба доставки
+                          <Select
+                            value={draft.deliveryCarrierSupplierId}
+                            onValueChange={(value) => updateDraft(agreement.operation_id, { deliveryCarrierSupplierId: value || '' })}
+                          >
+                            <SelectTrigger className="h-10 w-full">
+                              <SelectValue>
+                                {carriers.find((carrier) => carrier.id === draft.deliveryCarrierSupplierId)?.name || 'Выберите компанию'}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {carriers.map((carrier) => (
+                                <SelectItem key={carrier.id} value={carrier.id}>{carrier.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Label>
+                        <Label className="grid gap-1.5 text-sm text-slate-700">
+                          Цена доставки
+                          <Input
+                            type="number"
+                            min={0}
+                            inputMode="decimal"
+                            value={draft.deliveryCostPlanned}
+                            onChange={(event) => updateDraft(agreement.operation_id, { deliveryCostPlanned: event.target.value })}
+                          />
+                        </Label>
+                      </>
+                    )}
+                    <Button
+                      type="button"
+                      disabled={isPending
+                        || !draft?.supplierId
+                        || !draft.plannedReturnDate
+                        || draft.serviceCostPlanned === ''
+                        || !draft.deliveryMethod
+                        || (draft.deliveryMethod === 'carrier' && (
+                          !draft.deliveryCarrierSupplierId || draft.deliveryCostPlanned === ''
+                        ))}
+                      onClick={() => confirmAgreement(agreement)}
+                      className="min-h-11 gap-2 sm:self-end"
+                    >
+                      {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : agreement.supply_terms_confirmed_at
+                        ? <CheckCircle2 className="h-4 w-4" />
+                        : <Clock3 className="h-4 w-4" />}
+                      {agreement.supply_terms_confirmed_at ? 'Сохранить' : 'Подтвердить'}
+                    </Button>
+                    {agreement.supply_terms_confirmed_at && draft?.deliveryMethod === 'carrier' && (
+                      <div className="grid gap-1.5 sm:col-span-2 xl:col-span-3">
+                        <Label htmlFor={`request-track-${agreement.operation_id}`} className="text-sm text-slate-700">Трек-номер после отправки</Label>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <Input
+                            id={`request-track-${agreement.operation_id}`}
+                            value={draft.trackingNumber}
+                            onChange={(event) => updateDraft(agreement.operation_id, { trackingNumber: event.target.value })}
+                            placeholder="Введите трек-номер"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={isPending || !draft.trackingNumber.trim()}
+                            onClick={() => dispatchCarrier(agreement)}
+                            className="min-h-11 shrink-0 gap-2"
+                          >
+                            <Send className="h-4 w-4" />
+                            Зафиксировать отправку
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   ) : (
                   <div className="grid w-full gap-3 sm:grid-cols-2 xl:max-w-3xl xl:grid-cols-5">
                     <Label className="grid gap-1.5 text-sm text-slate-700">
@@ -286,41 +537,23 @@ export function SupplyOutsourcingRequestsPage({
                     </Label>
                     <Label className="grid gap-1.5 text-sm text-slate-700">
                       Готовы отправить
-                      <Input
-                        type="date"
-                        value={draft?.plannedSendDate || ''}
-                        onChange={(event) => updateDraft(agreement.operation_id, { plannedSendDate: event.target.value })}
-                      />
+                      <Input type="date" value={draft?.plannedSendDate || ''} onChange={(event) => updateDraft(agreement.operation_id, { plannedSendDate: event.target.value })} />
                     </Label>
                     <Label className="grid gap-1.5 text-sm text-slate-700" htmlFor={returnDateId}>
                       Ожидаем возврат
-                      <Input
-                        id={returnDateId}
-                        type="date"
-                        value={draft?.plannedReturnDate || ''}
-                        onChange={(event) => updateDraft(agreement.operation_id, { plannedReturnDate: event.target.value })}
-                      />
+                      <Input id={returnDateId} type="date" value={draft?.plannedReturnDate || ''} onChange={(event) => updateDraft(agreement.operation_id, { plannedReturnDate: event.target.value })} />
                     </Label>
                     <Label className="grid gap-1.5 text-sm text-slate-700" htmlFor={serviceCostId}>
                       Цена аутсорсинга
-                      <Input
-                        id={serviceCostId}
-                        type="number"
-                        min={0}
-                        inputMode="decimal"
-                        value={draft?.serviceCostPlanned || ''}
-                        onChange={(event) => updateDraft(agreement.operation_id, { serviceCostPlanned: event.target.value })}
-                      />
+                      <Input id={serviceCostId} type="number" min={0} inputMode="decimal" value={draft?.serviceCostPlanned || ''} onChange={(event) => updateDraft(agreement.operation_id, { serviceCostPlanned: event.target.value })} />
                     </Label>
                     <Button
                       type="button"
-                      disabled={isPending || !draft?.supplierId || !draft.plannedSendDate || !draft.plannedReturnDate || !draft.serviceCostPlanned}
+                      disabled={isPending || !draft?.supplierId || !draft.plannedSendDate || !draft.plannedReturnDate || draft.serviceCostPlanned === ''}
                       onClick={() => confirmAgreement(agreement)}
                       className="min-h-11 gap-2 sm:self-end"
                     >
-                      {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : agreement.supply_terms_confirmed_at
-                        ? <CheckCircle2 className="h-4 w-4" />
-                        : <Clock3 className="h-4 w-4" />}
+                      {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : agreement.supply_terms_confirmed_at ? <CheckCircle2 className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}
                       {agreement.supply_terms_confirmed_at ? 'Сохранить' : 'Подтвердить'}
                     </Button>
                   </div>
@@ -362,14 +595,46 @@ export function SupplyOutsourcingRequestsPage({
                     Сроки и примечание
                   </div>
                   <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                    {detailsAgreement.operation_kind !== 'vrb_mesh' && (
+                      <div>
+                        <dt className="text-slate-500">Готовы отправить</dt>
+                        <dd className="mt-1 font-semibold text-slate-900">{formatDate(detailsAgreement.planned_send_date)}</dd>
+                      </div>
+                    )}
                     <div>
-                      <dt className="text-slate-500">Готовы отправить</dt>
-                      <dd className="mt-1 font-semibold text-slate-900">{formatDate(detailsAgreement.planned_send_date)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-slate-500">Ожидаем возврат</dt>
+                      <dt className="text-slate-500">{detailsAgreement.operation_kind === 'vrb_mesh' ? 'Доставка на завод' : 'Ожидаем возврат'}</dt>
                       <dd className="mt-1 font-semibold text-slate-900">{formatDate(detailsAgreement.planned_return_date)}</dd>
                     </div>
+                    {detailsAgreement.operation_kind === 'vrb_mesh' && (
+                      <>
+                        <div>
+                          <dt className="text-slate-500">Способ доставки</dt>
+                          <dd className="mt-1 font-semibold text-slate-900">
+                            {detailsAgreement.delivery_method === 'own_transport'
+                              ? 'Наш транспорт'
+                              : detailsAgreement.delivery_method === 'carrier'
+                                ? `Служба доставки${detailsAgreement.delivery_carrier_name ? ` · ${detailsAgreement.delivery_carrier_name}` : ''}`
+                                : 'Не выбран'}
+                          </dd>
+                        </div>
+                        {detailsAgreement.delivery_method === 'carrier' && (
+                          <div>
+                            <dt className="text-slate-500">Стоимость доставки</dt>
+                            <dd className="mt-1 font-semibold text-slate-900">
+                              {detailsAgreement.delivery_cost_planned == null
+                                ? 'Не указана'
+                                : detailsAgreement.delivery_cost_planned.toLocaleString('ru-RU')}
+                            </dd>
+                          </div>
+                        )}
+                        {detailsAgreement.delivery_tracking_number && (
+                          <div>
+                            <dt className="text-slate-500">Трек-номер</dt>
+                            <dd className="mt-1 font-mono font-semibold text-slate-900">{detailsAgreement.delivery_tracking_number}</dd>
+                          </div>
+                        )}
+                      </>
+                    )}
                     <div className="sm:col-span-2">
                       <dt className="text-slate-500">Примечание</dt>
                       <dd className="mt-1 whitespace-pre-wrap text-slate-800">
@@ -427,7 +692,8 @@ export function SupplyOutsourcingRequestsPage({
                               </td>
                               <td className="px-3 py-3 text-right text-slate-700">{item.quantity} шт.</td>
                               <td className="px-3 py-3 text-right font-medium text-slate-900">
-                                {item.weight.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} т
+                                {item.weight.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 3 })}
+                                {' '}{detailsAgreement.operation_kind === 'vrb_mesh' ? 'кг' : 'т'}
                               </td>
                             </tr>
                           ))}

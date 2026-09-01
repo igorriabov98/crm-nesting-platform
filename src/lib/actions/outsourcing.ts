@@ -16,6 +16,7 @@ import { formatProductionMonth, normalizeProductionMonthValue } from '@/lib/util
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { formatCompanyLocation } from '@/lib/transport/company-location'
 import { createSystemMachineChatMessage } from '@/lib/actions/machine-activity'
+import { ensureVrbApprovalTasksForMachine } from '@/lib/actions/vrb-outsourcing'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import type { CoatingType, ProductionMonthPlanStatus, StageType, UserRole } from '@/lib/types'
 
@@ -41,6 +42,8 @@ type LooseDb = { from: (table: string) => LooseQuery }
 
 type ExecutorType = 'supplier' | 'factory'
 type OutsourcingResponsible = 'production' | 'supply'
+type OutsourcingOperationKind = 'standard' | 'vrb_mesh'
+type VrbDeliveryMethod = 'own_transport' | 'carrier'
 type TransportDirection = 'outbound' | 'return'
 type TransportPlanState = 'preliminary' | 'confirmed'
 type TransportNeedStatus = 'open' | 'linked' | 'completed' | 'cancelled'
@@ -159,6 +162,15 @@ export type MachineOutsourcingOperation = {
   responsible: OutsourcingResponsible
   supply_taken_at: string | null
   supply_taken_by: string | null
+  operation_kind: OutsourcingOperationKind
+  parent_operation_id: string | null
+  approval_task_id: string | null
+  delivery_method: VrbDeliveryMethod | null
+  delivery_carrier_supplier_id: string | null
+  delivery_tracking_number: string | null
+  delivery_cost_planned: number | null
+  delivery_dispatched_at: string | null
+  order_changed_at: string | null
   incoming_production_month: string | null
   incoming_workshop: number | null
   incoming_queue_number: number | null
@@ -227,6 +239,8 @@ export type SupplyOutsourcingAgreement = {
   machine_name: string
   source_factory_name: string | null
   work_type_name: string
+  operation_kind: OutsourcingOperationKind
+  parent_operation_id: string | null
   supplier_id: string | null
   supplier_name: string | null
   planned_send_date: string | null
@@ -235,6 +249,15 @@ export type SupplyOutsourcingAgreement = {
   supply_terms_confirmed_at: string | null
   responsible: OutsourcingResponsible
   supply_taken_at: string | null
+  approval_task_id: string | null
+  delivery_method: VrbDeliveryMethod | null
+  delivery_carrier_supplier_id: string | null
+  delivery_carrier_name: string | null
+  delivery_tracking_number: string | null
+  delivery_cost_planned: number | null
+  delivery_dispatched_at: string | null
+  order_changed_at: string | null
+  order_change_decision: 'accepted' | 'kept_original' | null
   note: string | null
   items: Array<{
     id: string
@@ -243,6 +266,15 @@ export type SupplyOutsourcingAgreement = {
     quantity: number
     weight: number
     drawing_url: string | null
+  }>
+  change_diff: Array<{
+    source_machine_item_id: string | null
+    product_name: string
+    drawing_number: string
+    requested_quantity: number
+    current_quantity: number
+    delta: number
+    details: string[]
   }>
 }
 
@@ -315,6 +347,9 @@ const supplyTermsSchema = z.object({
   plannedSendDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   plannedReturnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   serviceCostPlanned: z.number().min(0).nullable().optional(),
+  deliveryMethod: z.enum(['own_transport', 'carrier']).nullable().optional(),
+  deliveryCarrierSupplierId: z.string().uuid().nullable().optional(),
+  deliveryCostPlanned: z.number().min(0).nullable().optional(),
 })
 
 const takeSupplyRequestSchema = z.object({
@@ -654,7 +689,7 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
   const factoryIds = Array.from(new Set(rawOperations.map((operation) => operation.executor_factory_id).filter((id): id is string => typeof id === 'string')))
   const machineIds = Array.from(new Set(rawOperations.map((operation) => operation.machine_id)))
 
-  const [workTypesRes, suppliersRes, factoriesRes, itemLinksRes, needsRes, itemsRes] = await Promise.all([
+  const [workTypesRes, suppliersRes, factoriesRes, itemLinksRes, needsRes, itemsRes, vrbItemsRes] = await Promise.all([
     workTypeIds.length > 0 ? db.from('outsourcing_work_types').select('id, name, code, is_zinc, is_active').in('id', workTypeIds) : Promise.resolve({ data: [], error: null }),
     loadSuppliersByIds(db, supplierIds),
     factoryIds.length > 0 ? db.from('factories').select('id, name, city, address').in('id', factoryIds) : Promise.resolve({ data: [], error: null }),
@@ -665,9 +700,13 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
       .select('id, machine_id, drawing_number, product_name, quantity, weight, coating, ral_number, sort_order')
       .in('machine_id', machineIds)
       .order('sort_order', { ascending: true }),
+    db
+      .from('machine_outsourcing_vrb_items')
+      .select('operation_id, id, drawing_number, product_name, requested_quantity, requested_weight_kg, sort_order')
+      .in('operation_id', operationIds),
   ])
 
-  for (const result of [workTypesRes, suppliersRes, factoriesRes, itemLinksRes, needsRes, itemsRes]) {
+  for (const result of [workTypesRes, suppliersRes, factoriesRes, itemLinksRes, needsRes, itemsRes, vrbItemsRes]) {
     if (result.error) throw new Error(result.error.message || 'Не удалось загрузить данные аутсорсинга')
   }
 
@@ -686,6 +725,28 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
   const needsByOperation = new Map<string, MachineOutsourcingTransportNeed[]>()
   for (const need of (needsRes.data || []) as MachineOutsourcingTransportNeed[]) {
     needsByOperation.set(need.operation_id, [...(needsByOperation.get(need.operation_id) || []), need])
+  }
+  const vrbItemsByOperation = new Map<string, OutsourcingMachineItem[]>()
+  for (const item of (vrbItemsRes.data || []) as Array<{
+    operation_id: string
+    id: string
+    drawing_number: string
+    product_name: string
+    requested_quantity: number
+    requested_weight_kg: number
+    sort_order: number
+  }>) {
+    const mapped: OutsourcingMachineItem = {
+      id: item.id,
+      drawing_number: item.drawing_number,
+      product_name: item.product_name,
+      quantity: Number(item.requested_quantity || 0),
+      weight: Number(item.requested_weight_kg || 0),
+      coating: 'none',
+      ral_number: null,
+      sort_order: item.sort_order,
+    }
+    vrbItemsByOperation.set(item.operation_id, [...(vrbItemsByOperation.get(item.operation_id) || []), mapped])
   }
 
   return rawOperations.map((operation) => {
@@ -721,12 +782,23 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
       responsible: (operation.responsible as OutsourcingResponsible | null) || 'production',
       supply_taken_at: operation.supply_taken_at as string | null,
       supply_taken_by: operation.supply_taken_by as string | null,
+      operation_kind: (operation.operation_kind as OutsourcingOperationKind | null) || 'standard',
+      parent_operation_id: operation.parent_operation_id as string | null,
+      approval_task_id: operation.approval_task_id as string | null,
+      delivery_method: operation.delivery_method as VrbDeliveryMethod | null,
+      delivery_carrier_supplier_id: operation.delivery_carrier_supplier_id as string | null,
+      delivery_tracking_number: operation.delivery_tracking_number as string | null,
+      delivery_cost_planned: operation.delivery_cost_planned == null ? null : Number(operation.delivery_cost_planned),
+      delivery_dispatched_at: operation.delivery_dispatched_at as string | null,
+      order_changed_at: operation.order_changed_at as string | null,
       incoming_production_month: dateOnly(operation.incoming_production_month as string | null),
       incoming_workshop: operation.incoming_workshop == null ? null : Number(operation.incoming_workshop),
       incoming_queue_number: operation.incoming_queue_number == null ? null : Number(operation.incoming_queue_number),
       incoming_date_start: dateOnly(operation.incoming_date_start as string | null),
       incoming_date_end: dateOnly(operation.incoming_date_end as string | null),
-      items: itemIds.map((id) => itemById.get(id)).filter((item): item is OutsourcingMachineItem => Boolean(item)),
+      items: ((operation.operation_kind as OutsourcingOperationKind | null) || 'standard') === 'vrb_mesh'
+        ? (vrbItemsByOperation.get(operation.id) || []).sort((left, right) => left.sort_order - right.sort_order)
+        : itemIds.map((id) => itemById.get(id)).filter((item): item is OutsourcingMachineItem => Boolean(item)),
       needs: (needsByOperation.get(operation.id) || []).sort((a, b) => a.direction.localeCompare(b.direction)),
     } satisfies MachineOutsourcingOperation
   })
@@ -1040,7 +1112,25 @@ async function syncConfirmedTransportForSupplierOperation(db: LooseDb, operation
     machine_name: machine.name,
     source_factory_name: sourceFactoryName,
   }
+
+  if (operation.operation_kind === 'vrb_mesh' && operation.delivery_method === 'carrier') {
+    await cancelActiveTransportNeed(db, operation.id, 'outbound', 'confirmed')
+    await cancelActiveTransportNeed(db, operation.id, 'return', 'confirmed')
+    return
+  }
+
   const supplyHeadId = await findSupplyDepartmentHead(db)
+
+  if (operation.operation_kind === 'vrb_mesh') {
+    await cancelActiveTransportNeed(db, operation.id, 'outbound', 'confirmed')
+    if (operation.planned_return_date) {
+      await createNeedAndTask(db, enrichedOperation, 'return', 'confirmed', supplyHeadId)
+    } else {
+      await cancelActiveTransportNeed(db, operation.id, 'return', 'confirmed')
+    }
+    await dispatchPendingTelegramDeliveries({ userId: supplyHeadId })
+    return
+  }
 
   if (operation.planned_send_date) {
     await createNeedAndTask(db, enrichedOperation, 'outbound', 'confirmed', supplyHeadId)
@@ -1060,7 +1150,7 @@ async function reconcileConfirmedSupplierTransportNeeds(db: LooseDb) {
   const [{ data: operationData, error: operationError }, { data: needData, error: needError }] = await Promise.all([
     db
       .from('machine_outsourcing_operations')
-      .select('id, planned_send_date, planned_return_date, machine:machines!inner(id)')
+      .select('id, planned_send_date, planned_return_date, operation_kind, delivery_method, machine:machines!inner(id)')
       .eq('executor_type', 'supplier')
       .eq('responsible', 'supply')
       .eq('machines.is_archived', false)
@@ -1088,10 +1178,15 @@ async function reconcileConfirmedSupplierTransportNeeds(db: LooseDb) {
     id: string
     planned_send_date: string | null
     planned_return_date: string | null
+    operation_kind: OutsourcingOperationKind
+    delivery_method: VrbDeliveryMethod | null
   }>
   for (const operation of operations) {
+    if (operation.operation_kind === 'vrb_mesh' && operation.delivery_method === 'carrier') continue
     const directions = directionsByOperation.get(operation.id)
-    const outboundMissing = Boolean(operation.planned_send_date) && !directions?.has('outbound')
+    const outboundMissing = operation.operation_kind !== 'vrb_mesh'
+      && Boolean(operation.planned_send_date)
+      && !directions?.has('outbound')
     const returnMissing = Boolean(operation.planned_return_date) && !directions?.has('return')
     if (outboundMissing || returnMissing) {
       await syncConfirmedTransportForSupplierOperation(db, operation.id)
@@ -1110,9 +1205,10 @@ export async function syncOutsourcingTransportForProductionPlan(
   const db = dbFrom(createAdminClient())
   const loadedOperations = await loadOperationsForSourcePlan(db, factoryId, productionMonth)
   const planState: TransportPlanState = planStatus === 'confirmed' ? 'confirmed' : 'preliminary'
-  const operations = planState === 'preliminary'
+  const operations = (planState === 'preliminary'
     ? loadedOperations.filter((operation) => operation.executor_type === 'supplier')
-    : loadedOperations
+    : loadedOperations)
+    .filter((operation) => operation.operation_kind !== 'vrb_mesh')
   const transportReadyOperations = operations.filter((operation) => (
     operation.executor_type !== 'supplier'
     || operation.responsible === 'production'
@@ -1175,12 +1271,12 @@ export async function getMachineOutsourcingData(machineId: string): Promise<{ da
         planStatus,
         canManage,
         canManageDatesDirectly: planStatus !== 'confirmed' || isDirector(context.role) || context.role === 'sales_manager',
-        workTypes,
+        workTypes: workTypes.filter((workType) => workType.code !== 'vrb_mesh'),
         suppliers: suppliers.filter((supplier) => supplier.can_outsource || supplier.can_transport),
         transportSuppliers: suppliers.filter((supplier) => supplier.can_transport),
         factories,
         items,
-        operations,
+        operations: operations.filter((operation) => operation.operation_kind !== 'vrb_mesh'),
         zincDefault,
       },
       error: null,
@@ -1541,6 +1637,7 @@ export async function getProductionOutsourcingSummary(factoryId: string): Promis
     const outgoingMachines = (outgoingMachinesData || []) as Array<{ id: string; name: string; factory_id: string | null }>
     const outgoingByMachine = new Map(outgoingMachines.map((machine) => [machine.id, machine]))
     const outgoing = (await loadOperationsByMachineIds(db, outgoingMachines.map((machine) => machine.id)))
+      .filter((operation) => operation.operation_kind !== 'vrb_mesh')
       .map((operation) => ({
         ...operation,
         machine_name: outgoingByMachine.get(operation.machine_id)?.name || 'Машина',
@@ -1780,7 +1877,7 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
 async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = false) {
   let query = db
     .from('machine_outsourcing_operations')
-    .select('id, created_at, machine_id, work_type_id, supplier_id, planned_send_date, planned_return_date, service_cost_planned, supply_terms_confirmed_at, responsible, supply_taken_at, note')
+    .select('id, created_at, machine_id, work_type_id, supplier_id, planned_send_date, planned_return_date, service_cost_planned, supply_terms_confirmed_at, responsible, supply_taken_at, note, operation_kind, parent_operation_id, approval_task_id, delivery_method, delivery_carrier_supplier_id, delivery_tracking_number, delivery_cost_planned, delivery_dispatched_at, order_changed_at, order_change_decision')
     .eq('executor_type', 'supplier')
     .eq('responsible', 'supply')
     .is('archived_at', null)
@@ -1803,19 +1900,34 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
     responsible: OutsourcingResponsible
     supply_taken_at: string | null
     note: string | null
+    operation_kind: OutsourcingOperationKind
+    parent_operation_id: string | null
+    approval_task_id: string | null
+    delivery_method: VrbDeliveryMethod | null
+    delivery_carrier_supplier_id: string | null
+    delivery_tracking_number: string | null
+    delivery_cost_planned: number | null
+    delivery_dispatched_at: string | null
+    order_changed_at: string | null
+    order_change_decision: 'accepted' | 'kept_original' | null
   }>
   if (operations.length === 0) return [] as SupplyOutsourcingAgreement[]
 
   const machineIds = Array.from(new Set(operations.map((operation) => operation.machine_id)))
   const workTypeIds = Array.from(new Set(operations.map((operation) => operation.work_type_id)))
-  const supplierIds = Array.from(new Set(operations.map((operation) => operation.supplier_id).filter((id): id is string => Boolean(id))))
-  const [machinesRes, workTypesRes, suppliersRes, itemLinksRes] = await Promise.all([
+  const supplierIds = Array.from(new Set(operations.flatMap((operation) => [
+    operation.supplier_id,
+    operation.delivery_carrier_supplier_id,
+  ]).filter((id): id is string => Boolean(id))))
+  const [machinesRes, workTypesRes, suppliersRes, itemLinksRes, vrbItemsRes, liveMachineItemsRes] = await Promise.all([
     db.from('machines').select('id, name, factory_id, is_archived').in('id', machineIds),
     db.from('outsourcing_work_types').select('id, name').in('id', workTypeIds),
     loadSuppliersByIds(db, supplierIds),
     db.from('machine_outsourcing_operation_items').select('operation_id, machine_item_id').in('operation_id', operations.map((operation) => operation.id)),
+    db.from('machine_outsourcing_vrb_items').select('id, operation_id, source_machine_item_id, product_id, product_name, drawing_number, drawing_source, drawing_file_id, requested_quantity, requested_weight_kg, sort_order').in('operation_id', operations.map((operation) => operation.id)),
+    db.from('machine_items').select('id, machine_id, product_id, product_name, drawing_number, quantity, weight').in('machine_id', machineIds),
   ])
-  for (const result of [machinesRes, workTypesRes, suppliersRes, itemLinksRes]) {
+  for (const result of [machinesRes, workTypesRes, suppliersRes, itemLinksRes, vrbItemsRes, liveMachineItemsRes]) {
     if (result.error) throw new Error(result.error.message || 'Не удалось дополнить условия аутсорсинга')
   }
 
@@ -1837,6 +1949,37 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
     weight: number
     sort_order: number
   }>
+
+  const vrbItems = (vrbItemsRes.data || []) as Array<{
+    id: string
+    operation_id: string
+    source_machine_item_id: string | null
+    product_id: string | null
+    product_name: string
+    drawing_number: string
+    drawing_source: 'product' | 'project' | null
+    drawing_file_id: string | null
+    requested_quantity: number
+    requested_weight_kg: number
+    sort_order: number
+  }>
+  const liveMachineItems = (liveMachineItemsRes.data || []) as Array<{
+    id: string
+    machine_id: string
+    product_id: string | null
+    product_name: string
+    drawing_number: string
+    quantity: number
+    weight: number
+  }>
+  const liveProductIds = Array.from(new Set(liveMachineItems.map((item) => item.product_id).filter((id): id is string => Boolean(id))))
+  const liveProductsRes = liveProductIds.length > 0
+    ? await db.from('products').select('id, requires_vrb_mesh').in('id', liveProductIds)
+    : { data: [], error: null }
+  if (liveProductsRes.error) throw new Error(liveProductsRes.error.message || 'Не удалось сравнить состав заявки VRB')
+  const vrbProductIds = new Set(((liveProductsRes.data || []) as Array<{ id: string; requires_vrb_mesh: boolean }>)
+    .filter((product) => product.requires_vrb_mesh)
+    .map((product) => product.id))
 
   const productIds = Array.from(new Set(machineItems.map((item) => item.product_id).filter((id): id is string => Boolean(id))))
   const versionIds = Array.from(new Set(machineItems.map((item) => item.product_project_version_id).filter((id): id is string => Boolean(id))))
@@ -1884,6 +2027,58 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
   return operations.flatMap((operation): SupplyOutsourcingAgreement[] => {
     const machine = machineById.get(operation.machine_id)
     if (!machine || machine.is_archived) return []
+    const operationVrbItems = vrbItems
+      .filter((item) => item.operation_id === operation.id)
+      .sort((left, right) => left.sort_order - right.sort_order)
+    const liveVrbItems = liveMachineItems.filter((item) => (
+      item.machine_id === operation.machine_id
+      && Boolean(item.product_id && vrbProductIds.has(item.product_id))
+    ))
+    const liveBySourceId = new Map(liveVrbItems.map((item) => [item.id, item]))
+    const snapshotSourceIds = new Set(operationVrbItems.map((item) => item.source_machine_item_id).filter(Boolean))
+    const changeDiff = operation.order_changed_at && operation.operation_kind === 'vrb_mesh'
+      ? [
+          ...operationVrbItems.map((item) => {
+            const current = item.source_machine_item_id ? liveBySourceId.get(item.source_machine_item_id) : null
+            const currentQuantity = Number(current?.quantity || 0)
+            const requestedQuantity = Number(item.requested_quantity || 0)
+            const currentWeight = Number(current?.weight || 0) * currentQuantity
+            const requestedWeight = Number(item.requested_weight_kg || 0)
+            const details = [
+              current && current.product_name !== item.product_name
+                ? `Название: ${item.product_name} → ${current.product_name}`
+                : null,
+              current && current.drawing_number !== item.drawing_number
+                ? `Чертёж: ${item.drawing_number} → ${current.drawing_number}`
+                : null,
+              current && Math.abs(currentWeight - requestedWeight) > 0.000001
+                ? `Вес: ${requestedWeight} кг → ${currentWeight} кг`
+                : null,
+            ].filter((value): value is string => Boolean(value))
+            return {
+              source_machine_item_id: item.source_machine_item_id,
+              product_name: item.product_name,
+              drawing_number: item.drawing_number,
+              requested_quantity: requestedQuantity,
+              current_quantity: currentQuantity,
+              delta: currentQuantity - requestedQuantity,
+              details,
+            }
+          }),
+          ...liveVrbItems
+            .filter((item) => !snapshotSourceIds.has(item.id))
+            .map((item) => ({
+              source_machine_item_id: item.id,
+              product_name: item.product_name,
+              drawing_number: item.drawing_number,
+              requested_quantity: 0,
+              current_quantity: Number(item.quantity || 0),
+              delta: Number(item.quantity || 0),
+              details: ['Новая VRB-позиция'],
+            })),
+        ].filter((item) => item.delta !== 0 || item.details.length > 0)
+      : []
+
     return [{
       operation_id: operation.id,
       created_at: operation.created_at,
@@ -1891,6 +2086,8 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
       machine_name: machine?.name || 'Машина',
       source_factory_name: machine?.factory_id ? factoryById.get(machine.factory_id) || null : null,
       work_type_name: workTypeById.get(operation.work_type_id) || 'Аутсорсинг',
+      operation_kind: operation.operation_kind || 'standard',
+      parent_operation_id: operation.parent_operation_id,
       supplier_id: operation.supplier_id,
       supplier_name: operation.supplier_id ? supplierById.get(operation.supplier_id) || null : null,
       planned_send_date: dateOnly(operation.planned_send_date),
@@ -1899,8 +2096,30 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
       supply_terms_confirmed_at: operation.supply_terms_confirmed_at,
       responsible: operation.responsible,
       supply_taken_at: operation.supply_taken_at,
+      approval_task_id: operation.approval_task_id,
+      delivery_method: operation.delivery_method,
+      delivery_carrier_supplier_id: operation.delivery_carrier_supplier_id,
+      delivery_carrier_name: operation.delivery_carrier_supplier_id
+        ? supplierById.get(operation.delivery_carrier_supplier_id) || null
+        : null,
+      delivery_tracking_number: operation.delivery_tracking_number,
+      delivery_cost_planned: operation.delivery_cost_planned == null ? null : Number(operation.delivery_cost_planned),
+      delivery_dispatched_at: operation.delivery_dispatched_at,
+      order_changed_at: operation.order_changed_at,
+      order_change_decision: operation.order_change_decision,
       note: operation.note,
-      items: (itemIdsByOperation.get(operation.id) || [])
+      items: operation.operation_kind === 'vrb_mesh'
+        ? operationVrbItems.map((item) => ({
+            id: item.id,
+            product_name: item.product_name,
+            drawing_number: item.drawing_number,
+            quantity: Number(item.requested_quantity || 0),
+            weight: Number(item.requested_weight_kg || 0),
+            drawing_url: item.drawing_source && item.drawing_file_id
+              ? `/api/supply/outsourcing/${operation.id}/drawings/${item.drawing_source}/${item.drawing_file_id}`
+              : null,
+          }))
+        : (itemIdsByOperation.get(operation.id) || [])
         .map((id) => machineItemById.get(id))
         .filter((item): item is NonNullable<typeof item> => Boolean(item))
         .sort((left, right) => left.sort_order - right.sort_order)
@@ -1922,24 +2141,37 @@ async function loadSupplyOutsourcingAgreements(db: LooseDb, confirmedOnly = fals
               : null,
           }
         }),
+      change_diff: changeDiff,
     } satisfies SupplyOutsourcingAgreement]
   })
 }
 
 export async function getSupplyOutsourcingRequests(): Promise<{
-  data: { agreements: SupplyOutsourcingAgreement[]; suppliers: OutsourcingSupplierOption[] }
+  data: {
+    agreements: SupplyOutsourcingAgreement[]
+    suppliers: OutsourcingSupplierOption[]
+    carriers: OutsourcingSupplierOption[]
+  }
   error: string | null
 }> {
   try {
     await requirePermission('supply_transport', 'view')
     const db = dbFrom(createAdminClient())
+    await ensureVrbApprovalTasksForMachine()
     const [agreements, suppliers] = await Promise.all([
       loadSupplyOutsourcingAgreements(db),
       loadSuppliers(db),
     ])
-    return { data: { agreements, suppliers: suppliers.filter((supplier) => supplier.can_outsource) }, error: null }
+    return {
+      data: {
+        agreements,
+        suppliers: suppliers.filter((supplier) => supplier.can_outsource),
+        carriers: suppliers.filter((supplier) => supplier.can_transport),
+      },
+      error: null,
+    }
   } catch (error) {
-    return { data: { agreements: [], suppliers: [] }, error: getErrorMessage(error) }
+    return { data: { agreements: [], suppliers: [], carriers: [] }, error: getErrorMessage(error) }
   }
 }
 
@@ -1957,9 +2189,17 @@ export async function takeOutsourcingSupplyRequest(input: z.infer<typeof takeSup
       .eq('responsible', 'supply')
       .is('archived_at', null)
       .is('supply_taken_at', null)
-      .select('id')
+      .select('id, approval_task_id')
       .maybeSingle()
     if (error || !data) throw new Error(error?.message || 'Запрос аутсорсинга не найден')
+    const operation = data as { id: string; approval_task_id: string | null }
+    if (operation.approval_task_id) {
+      const { error: taskError } = await db
+        .from('tasks')
+        .update({ assigned_to: context.userId, status: 'in_progress', updated_at: now })
+        .eq('id', operation.approval_task_id)
+      if (taskError) throw new Error(taskError.message || 'Не удалось закрепить задачу VRB')
+    }
     revalidatePath(ROUTES.SUPPLY_OUTSOURCING_REQUESTS)
     return { success: true, error: null }
   } catch (error) {
@@ -2067,7 +2307,7 @@ export async function confirmOutsourcingServiceTerms(input: z.infer<typeof suppl
     const db = dbFrom(createAdminClient())
     const { data, error } = await db
       .from('machine_outsourcing_operations')
-      .select('id, machine_id, executor_type, supplier_id, responsible, planned_send_date, supply_taken_at, archived_at')
+      .select('id, machine_id, executor_type, supplier_id, responsible, planned_send_date, actual_sent_at, supply_taken_at, supply_terms_confirmed_at, archived_at, operation_kind, approval_task_id, delivery_dispatched_at')
       .eq('id', parsed.operationId)
       .maybeSingle()
     if (error || !data) throw new Error(error?.message || 'Операция аутсорсинга не найдена')
@@ -2079,35 +2319,106 @@ export async function confirmOutsourcingServiceTerms(input: z.infer<typeof suppl
       supplier_id: string | null
       responsible: OutsourcingResponsible
       planned_send_date: string | null
+      actual_sent_at: string | null
       supply_taken_at: string | null
+      supply_terms_confirmed_at: string | null
       archived_at: string | null
+      operation_kind: OutsourcingOperationKind
+      approval_task_id: string | null
+      delivery_dispatched_at: string | null
     }
     if (operation.archived_at) throw new Error('Операция аутсорсинга архивирована')
     if (operation.executor_type !== 'supplier') throw new Error('Снабжение подтверждает только внешний аутсорсинг')
     if (operation.responsible === 'supply' && !operation.supply_taken_at) throw new Error('Сначала возьмите запрос в работу')
+    const isVrb = operation.operation_kind === 'vrb_mesh'
+    if (isVrb && operation.supply_terms_confirmed_at) {
+      const { data: needsData, error: needsError } = await db
+        .from('machine_outsourcing_transport_needs')
+        .select('transport_order_id')
+        .eq('operation_id', operation.id)
+        .not('transport_order_id', 'is', null)
+      if (needsError) throw new Error(needsError.message || 'Не удалось проверить доставку VRB')
+      const orderIds = Array.from(new Set(((needsData || []) as Array<{ transport_order_id: string | null }>)
+        .map((need) => need.transport_order_id)
+        .filter((id): id is string => Boolean(id))))
+      let ownTripStarted = false
+      if (orderIds.length > 0) {
+        const { data: ordersData, error: ordersError } = await db
+          .from('machine_outsourcing_transport_orders')
+          .select('id')
+          .in('id', orderIds)
+          .in('status', ['in_transit', 'completed'])
+        if (ordersError) throw new Error(ordersError.message || 'Не удалось проверить рейс VRB')
+        ownTripStarted = Boolean(((ordersData || []) as Array<{ id: string }>).length)
+      }
+      if (operation.delivery_dispatched_at || operation.actual_sent_at || ownTripStarted) {
+        throw new Error('После отправки условия VRB нельзя изменить')
+      }
+    }
     const supplierId = operation.responsible === 'supply' ? parsed.supplierId : operation.supplier_id
-    const plannedSendDate = operation.responsible === 'supply' ? parsed.plannedSendDate : dateOnly(operation.planned_send_date)
+    const plannedSendDate = isVrb
+      ? null
+      : operation.responsible === 'supply' ? parsed.plannedSendDate : dateOnly(operation.planned_send_date)
     if (!supplierId) throw new Error('Выберите компанию-исполнителя')
-    if (!plannedSendDate) throw new Error('Укажите дату отправки')
-    if (parsed.plannedReturnDate < plannedSendDate) {
+    if (!isVrb && !plannedSendDate) throw new Error('Укажите дату отправки')
+    if (plannedSendDate && parsed.plannedReturnDate < plannedSendDate) {
       throw new Error('Дата возврата не может быть раньше даты отправки')
     }
 
+    if (isVrb && !parsed.deliveryMethod) throw new Error('Выберите способ доставки сетки VRB')
+    if (isVrb && parsed.serviceCostPlanned == null) throw new Error('Укажите стоимость сетки VRB')
+    if (isVrb && parsed.deliveryMethod === 'carrier') {
+      if (!parsed.deliveryCarrierSupplierId) throw new Error('Выберите службу доставки')
+      if (parsed.deliveryCostPlanned == null) throw new Error('Укажите стоимость доставки')
+      const { data: carrierData, error: carrierError } = await db
+        .from('suppliers')
+        .select('id, can_transport, is_active')
+        .eq('id', parsed.deliveryCarrierSupplierId)
+        .maybeSingle()
+      const carrier = carrierData as { id: string; can_transport: boolean; is_active: boolean } | null
+      if (carrierError || !carrier?.can_transport || carrier.is_active === false) {
+        throw new Error('Выбранная компания недоступна как перевозчик')
+      }
+    }
+
     const now = new Date().toISOString()
+    const updatePayload: Record<string, unknown> = {
+      supplier_id: supplierId,
+      planned_send_date: plannedSendDate,
+      planned_return_date: parsed.plannedReturnDate,
+      service_cost_planned: parsed.serviceCostPlanned ?? null,
+      supply_terms_confirmed_at: now,
+      supply_terms_confirmed_by: context.userId,
+      updated_by: context.userId,
+      updated_at: now,
+    }
+    if (isVrb) {
+      Object.assign(updatePayload, {
+        delivery_method: parsed.deliveryMethod,
+        delivery_carrier_supplier_id: parsed.deliveryMethod === 'carrier'
+          ? parsed.deliveryCarrierSupplierId
+          : null,
+        delivery_cost_planned: parsed.deliveryMethod === 'carrier'
+          ? parsed.deliveryCostPlanned ?? null
+          : null,
+        delivery_tracking_number: null,
+        delivery_dispatched_at: null,
+        delivery_dispatched_by: null,
+      })
+    }
     const { error: updateError } = await db
       .from('machine_outsourcing_operations')
-      .update({
-        supplier_id: supplierId,
-        planned_send_date: plannedSendDate,
-        planned_return_date: parsed.plannedReturnDate,
-        service_cost_planned: parsed.serviceCostPlanned ?? null,
-        supply_terms_confirmed_at: now,
-        supply_terms_confirmed_by: context.userId,
-        updated_by: context.userId,
-        updated_at: now,
-      })
+      .update(updatePayload)
       .eq('id', operation.id)
     if (updateError) throw new Error(updateError.message || 'Не удалось подтвердить условия аутсорсинга')
+
+    if (isVrb && operation.approval_task_id) {
+      const { error: taskError } = await db
+        .from('tasks')
+        .update({ status: 'completed', completed_at: now, updated_at: now })
+        .eq('id', operation.approval_task_id)
+      if (taskError) throw new Error(taskError.message || 'Не удалось завершить задачу согласования VRB')
+    }
 
     if (operation.responsible === 'supply') {
       await syncConfirmedTransportForSupplierOperation(db, operation.id)

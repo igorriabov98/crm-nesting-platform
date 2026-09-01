@@ -381,6 +381,7 @@ function productionRowToGanttMachine(row: ProductionRow, fallback?: GanttMachine
     stages: fallback?.stages || [],
     supply_deadlines: fallback?.supply_deadlines || [],
     material_items: fallback?.material_items || [],
+    vrb_status: row.machine.vrb_status || fallback?.vrb_status || null,
   }
 }
 
@@ -910,6 +911,21 @@ function PlannerVirtualRow({
                   не подтв.
                 </span>
               )}
+              {machine.vrb_status && (
+                <span
+                  className={cn(
+                    'shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold',
+                    machine.vrb_status.key === 'order_changed'
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : machine.vrb_status.key === 'received'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                        : 'border-blue-200 bg-blue-50 text-blue-700',
+                  )}
+                  title={`${machine.vrb_status.label}. Производство не блокируется`}
+                >
+                  VRB
+                </span>
+              )}
             </span>
             <span className="mt-1 flex w-full min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-slate-600">
               <span>{Number(machine.total_weight || 0).toFixed(1)} т</span>
@@ -1109,6 +1125,21 @@ function UnscheduledMachinesPanel({
                     )}>
                       {machine.is_confirmed ? 'подтверждена' : 'не подтверждена'}
                     </span>
+                    {machine.vrb_status && (
+                      <span
+                        className={cn(
+                          'rounded border px-1.5 py-0.5 text-[10px] font-semibold',
+                          machine.vrb_status.key === 'order_changed'
+                            ? 'border-red-200 bg-red-50 text-red-700'
+                            : machine.vrb_status.key === 'received'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border-blue-200 bg-blue-50 text-blue-700',
+                        )}
+                        title="Информационный риск, производство не блокируется"
+                      >
+                        {machine.vrb_status.label}
+                      </span>
+                    )}
                   </span>
                 </span>
 
@@ -1651,6 +1682,21 @@ function ProductionMachineInspector({
             )}>
               {machine.is_confirmed ? 'подтверждена' : 'не подтверждена'}
             </span>
+            {machine.vrb_status && (
+              <span
+                className={cn(
+                  'rounded border px-1.5 py-0.5 text-[10px] font-semibold',
+                  machine.vrb_status.key === 'order_changed'
+                    ? 'border-red-200 bg-red-50 text-red-700'
+                    : machine.vrb_status.key === 'received'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-blue-200 bg-blue-50 text-blue-700',
+                )}
+                title="Информационный риск, производство не блокируется"
+              >
+                {machine.vrb_status.label}
+              </span>
+            )}
             {machine.coatings.map((coating) => (
               <span key={coating} className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
                 {formatCoatingLabel(coating)}

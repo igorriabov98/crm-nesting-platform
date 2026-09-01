@@ -2,12 +2,13 @@
 
 import { useRef, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
-import { Barcode, Edit3, Euro, FileText, Languages, Package2, Save, Weight, X } from 'lucide-react'
+import { Barcode, Edit3, Euro, FileText, Grid3X3, Languages, Package2, Save, Weight, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { createProduct, updateProduct } from '@/lib/actions/products'
 import { completeCurrentVersionFiles } from '@/lib/actions/product-versions'
 import { ROUTES } from '@/lib/constants/routes'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { LoadingButton } from '@/components/ui/loading-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,6 +28,7 @@ type ProductFormState = {
   characteristics: string
   unit_weight_kg: string
   base_price_eur: string
+  requires_vrb_mesh: boolean
   status: ProductInput['status']
 }
 
@@ -39,6 +41,7 @@ function initialState(product?: Product | null): ProductFormState {
     characteristics: product?.characteristics || '',
     unit_weight_kg: product ? String(product.unit_weight_kg) : '',
     base_price_eur: product ? String(product.base_price_eur) : '0',
+    requires_vrb_mesh: product?.requires_vrb_mesh || false,
     status: product?.status || 'draft',
   }
 }
@@ -100,6 +103,7 @@ export function ProductForm({ product }: { product?: Product | null }) {
         characteristics: values.characteristics,
         unit_weight_kg: Number(values.unit_weight_kg),
         base_price_eur: Number(values.base_price_eur || 0),
+        requires_vrb_mesh: values.requires_vrb_mesh,
         status: values.status,
       }
 
@@ -168,6 +172,11 @@ export function ProductForm({ product }: { product?: Product | null }) {
           <DetailItem icon={<FileText className="h-4 w-4" />} label="Чертёж" value={product?.drawing_number} />
           <DetailItem icon={<Weight className="h-4 w-4" />} label="Вес" value={`${product?.unit_weight_kg || 0} кг`} />
           <DetailItem icon={<Euro className="h-4 w-4" />} label="Базовая цена" value={`${product?.base_price_eur || 0} EUR`} />
+          <DetailItem
+            icon={<Grid3X3 className="h-4 w-4" />}
+            label="Сетка VRB"
+            value={product?.requires_vrb_mesh ? 'Требуется' : 'Не требуется'}
+          />
         </div>
 
         <div className="mt-3 rounded-2xl border border-slate-200 p-4">
@@ -238,6 +247,26 @@ export function ProductForm({ product }: { product?: Product | null }) {
       <div className="mt-4 space-y-1.5">
         <Label htmlFor="characteristics">Описание изделия</Label>
         <Textarea id="characteristics" rows={5} value={values.characteristics} onChange={(event) => setField('characteristics', event.target.value)} className="min-h-28" />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
+        <div className="flex min-h-11 items-start gap-3">
+          <Checkbox
+            id="requires_vrb_mesh"
+            aria-describedby="requires_vrb_mesh_help"
+            checked={values.requires_vrb_mesh}
+            onCheckedChange={(checked) => setField('requires_vrb_mesh', checked === true)}
+            className="mt-1"
+          />
+          <div className="min-w-0">
+            <Label htmlFor="requires_vrb_mesh" className="cursor-pointer text-sm font-semibold text-blue-950">
+              Требуется сетка VRB
+            </Label>
+            <p id="requires_vrb_mesh_help" className="mt-1 text-sm leading-5 text-blue-800">
+              После полного подтверждения заказа система автоматически создаст одну заявку снабжению со всеми VRB-позициями.
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

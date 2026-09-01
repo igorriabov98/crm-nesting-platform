@@ -165,6 +165,7 @@ export const productSchema = z.object({
   characteristics: z.string().optional().default(''),
   unit_weight_kg: z.coerce.number().positive('Вес должен быть больше 0'),
   base_price_eur: z.coerce.number().min(0, 'Цена не может быть отрицательной').default(0),
+  requires_vrb_mesh: z.boolean().default(false),
   status: productStatusSchema.default('draft'),
 })
 
