@@ -677,6 +677,11 @@ LANGUAGE plpgsql
 SET search_path = ''
 AS $$
 BEGIN
+  IF TG_TABLE_NAME = 'machines' THEN
+    PERFORM public.sync_vrb_mesh_for_machine(NEW.id);
+    RETURN NEW;
+  END IF;
+
   IF TG_OP = 'DELETE' THEN
     PERFORM public.sync_vrb_mesh_for_machine(OLD.machine_id);
     RETURN OLD;
