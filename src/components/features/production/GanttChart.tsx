@@ -255,6 +255,21 @@ const GanttVirtualRow = React.memo(function GanttVirtualRow({
             <div className="mt-0.5 truncate text-xs text-[#6B7280]" title={monthLabel ? `${monthLabel} · ${queueLabel}` : queueLabel}>
               {monthLabel ? `${monthLabel} · ${queueLabel}` : queueLabel}
             </div>
+            {row.machine.vrb_status && (
+              <div
+                className={cn(
+                  'mt-1 truncate text-[10px] font-semibold',
+                  row.machine.vrb_status.key === 'order_changed'
+                    ? 'text-red-700'
+                    : row.machine.vrb_status.key === 'received'
+                      ? 'text-emerald-700'
+                      : 'text-blue-700',
+                )}
+                title={`${row.machine.vrb_status.label}. Производство не блокируется`}
+              >
+                {row.machine.vrb_status.label}
+              </div>
+            )}
           </div>
         )}
       </div>

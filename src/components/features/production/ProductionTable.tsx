@@ -805,6 +805,21 @@ export function ProductionTable({
                             Не подтв.
                           </span>
                         )}
+                        {row.machine.vrb_status && (
+                          <span
+                            className={cn(
+                              'mt-1 inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold',
+                              row.machine.vrb_status.key === 'order_changed'
+                                ? 'border-red-200 bg-red-50 text-red-700'
+                                : row.machine.vrb_status.key === 'received'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : 'border-blue-200 bg-blue-50 text-blue-700',
+                            )}
+                            title="Информационный риск, производство не блокируется"
+                          >
+                            {row.machine.vrb_status.label}
+                          </span>
+                        )}
                       </div>
                       {onSelectMachine && (
                         <button

@@ -1321,6 +1321,7 @@ export type Database = {
           characteristics: string
           unit_weight_kg: number
           base_price_eur: number
+          requires_vrb_mesh: boolean
           status: 'draft' | 'active' | 'archived'
           source_project_id: string | null
           source_version_id: string | null
@@ -1338,6 +1339,7 @@ export type Database = {
           characteristics?: string
           unit_weight_kg: number
           base_price_eur?: number
+          requires_vrb_mesh?: boolean
           status?: 'draft' | 'active' | 'archived'
           source_project_id?: string | null
           source_version_id?: string | null
@@ -1355,6 +1357,7 @@ export type Database = {
           characteristics?: string
           unit_weight_kg?: number
           base_price_eur?: number
+          requires_vrb_mesh?: boolean
           status?: 'draft' | 'active' | 'archived'
           source_project_id?: string | null
           source_version_id?: string | null
@@ -2353,6 +2356,20 @@ export type Database = {
           responsible: Database['public']['Enums']['outsourcing_responsible']
           supply_taken_at: string | null
           supply_taken_by: string | null
+          operation_kind: 'standard' | 'vrb_mesh'
+          parent_operation_id: string | null
+          approval_task_id: string | null
+          delivery_method: 'own_transport' | 'carrier' | null
+          delivery_carrier_supplier_id: string | null
+          delivery_tracking_number: string | null
+          delivery_cost_planned: number | null
+          delivery_dispatched_at: string | null
+          delivery_dispatched_by: string | null
+          order_changed_at: string | null
+          order_change_decision: 'accepted' | 'kept_original' | null
+          order_change_resolved_at: string | null
+          order_change_resolved_by: string | null
+          order_change_ignored_fingerprint: string | null
           incoming_production_month: string | null
           incoming_workshop: number | null
           incoming_queue_number: number | null
@@ -2387,6 +2404,20 @@ export type Database = {
           responsible?: Database['public']['Enums']['outsourcing_responsible']
           supply_taken_at?: string | null
           supply_taken_by?: string | null
+          operation_kind?: 'standard' | 'vrb_mesh'
+          parent_operation_id?: string | null
+          approval_task_id?: string | null
+          delivery_method?: 'own_transport' | 'carrier' | null
+          delivery_carrier_supplier_id?: string | null
+          delivery_tracking_number?: string | null
+          delivery_cost_planned?: number | null
+          delivery_dispatched_at?: string | null
+          delivery_dispatched_by?: string | null
+          order_changed_at?: string | null
+          order_change_decision?: 'accepted' | 'kept_original' | null
+          order_change_resolved_at?: string | null
+          order_change_resolved_by?: string | null
+          order_change_ignored_fingerprint?: string | null
           incoming_production_month?: string | null
           incoming_workshop?: number | null
           incoming_queue_number?: number | null
@@ -2421,6 +2452,20 @@ export type Database = {
           responsible?: Database['public']['Enums']['outsourcing_responsible']
           supply_taken_at?: string | null
           supply_taken_by?: string | null
+          operation_kind?: 'standard' | 'vrb_mesh'
+          parent_operation_id?: string | null
+          approval_task_id?: string | null
+          delivery_method?: 'own_transport' | 'carrier' | null
+          delivery_carrier_supplier_id?: string | null
+          delivery_tracking_number?: string | null
+          delivery_cost_planned?: number | null
+          delivery_dispatched_at?: string | null
+          delivery_dispatched_by?: string | null
+          order_changed_at?: string | null
+          order_change_decision?: 'accepted' | 'kept_original' | null
+          order_change_resolved_at?: string | null
+          order_change_resolved_by?: string | null
+          order_change_ignored_fingerprint?: string | null
           incoming_production_month?: string | null
           incoming_workshop?: number | null
           incoming_queue_number?: number | null
@@ -2452,6 +2497,79 @@ export type Database = {
           operation_id?: string
           machine_item_id?: string
           created_at?: string
+        }
+      }
+      machine_outsourcing_vrb_items: {
+        Row: {
+          id: string
+          operation_id: string
+          source_machine_item_id: string | null
+          product_id: string | null
+          product_name: string
+          drawing_number: string
+          drawing_source: 'product' | 'project' | null
+          drawing_file_id: string | null
+          requested_quantity: number
+          requested_weight_kg: number
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          operation_id: string
+          source_machine_item_id?: string | null
+          product_id?: string | null
+          product_name: string
+          drawing_number: string
+          drawing_source?: 'product' | 'project' | null
+          drawing_file_id?: string | null
+          requested_quantity: number
+          requested_weight_kg?: number
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          operation_id?: string
+          source_machine_item_id?: string | null
+          product_id?: string | null
+          product_name?: string
+          drawing_number?: string
+          drawing_source?: 'product' | 'project' | null
+          drawing_file_id?: string | null
+          requested_quantity?: number
+          requested_weight_kg?: number
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      machine_outsourcing_vrb_receipts: {
+        Row: {
+          id: string
+          vrb_item_id: string
+          factory_id: string
+          quantity: number
+          received_by: string | null
+          received_at: string
+        }
+        Insert: {
+          id?: string
+          vrb_item_id: string
+          factory_id: string
+          quantity: number
+          received_by?: string | null
+          received_at?: string
+        }
+        Update: {
+          id?: string
+          vrb_item_id?: string
+          factory_id?: string
+          quantity?: number
+          received_by?: string | null
+          received_at?: string
         }
       }
       machine_outsourcing_transport_orders: {
@@ -5019,7 +5137,7 @@ export type Database = {
       inventory_transfer_status: InventoryTransferStatus
       detailing_movement_type: DetailingMovementType
       employee_assignment_status: EmployeeAssignmentStatus
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'long_stock_cutting_recalculation' | 'long_stock_cutting_supply_shortage' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
+      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'production_cutting_rollback_review' | 'long_stock_cutting_recalculation' | 'long_stock_cutting_supply_shortage' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'vrb_outsourcing_approval' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'

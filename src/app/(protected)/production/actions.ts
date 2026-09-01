@@ -5,6 +5,8 @@ import type { StageType } from '@/lib/types'
 import { STAGE_ORDER, stageHasSingleDate } from '@/lib/constants/stages'
 import { normalizeNightShiftDates } from '@/lib/utils/night-shift-dates'
 import { getStageIntervals, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { loadVrbMeshStatuses, type VrbMeshStatus } from '@/lib/vrb/status'
 
 export type StageStatus = 'not_planned' | 'active' | 'completed' | 'overdue' | 'skipped'
 
@@ -45,6 +47,7 @@ export type ProductionRow = {
     actual_shipping_date: string | null
     delivery_to_client_date: string | null
     is_fully_paid: boolean
+    vrb_status: VrbMeshStatus | null
   }
   stages: ProductionStageRow[]
 }
@@ -265,6 +268,9 @@ export async function getProductionData(factoryFilter?: string | null) {
   const machineRows = ((machines as SelectedProductionMachine[] | null) || [])
   const machineIds = machineRows.map((machine) => machine.id).filter(Boolean)
   const fullyPaidMachineIds = new Set<string>()
+  const vrbStatusByMachine = machineIds.length > 0
+    ? await loadVrbMeshStatuses(createAdminClient(), machineIds)
+    : new Map<string, VrbMeshStatus>()
 
   if (machineIds.length > 0) {
     const { data: invoices, error: invoicesError } = await supabase
@@ -336,6 +342,7 @@ export async function getProductionData(factoryFilter?: string | null) {
         actual_shipping_date: m.actual_shipping_date || null,
         delivery_to_client_date: m.delivery_to_client_date || null,
         is_fully_paid: false,
+        vrb_status: vrbStatusByMachine.get(m.id) || null,
       },
       stages,
     }

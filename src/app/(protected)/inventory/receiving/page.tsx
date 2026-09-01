@@ -4,6 +4,8 @@ import { getDetailingReceivingItems } from '@/lib/actions/detailing'
 import { DetailingReceivingPanel } from '@/components/features/inventory/DetailingReceivingPanel'
 import { InventoryTransferReceivingPanel } from '@/components/features/inventory/InventoryTransferReceivingPanel'
 import { getInventoryTransferReceivingItems } from '@/lib/actions/inventory-transfers'
+import { VrbReceivingPanel } from '@/components/features/inventory/VrbReceivingPanel'
+import { getVrbReceivingCards } from '@/lib/actions/vrb-outsourcing'
 
 export const metadata = {
   title: 'Прием материала - CRM Завода',
@@ -15,10 +17,11 @@ export default async function InventoryReceivingRoute({
   searchParams?: Promise<{ factory?: string }>
 }) {
   const resolvedSearchParams = await searchParams
-  const [{ data, error }, detailingResult, inventoryTransferResult] = await Promise.all([
-    getMaterialReceivingPageData(resolvedSearchParams?.factory || null),
+  const { data, error } = await getMaterialReceivingPageData(resolvedSearchParams?.factory || null)
+  const [detailingResult, inventoryTransferResult, vrbResult] = await Promise.all([
     getDetailingReceivingItems(),
     getInventoryTransferReceivingItems(),
+    getVrbReceivingCards(data?.activeFactoryId || null),
   ])
 
   if (error || !data) {
@@ -36,6 +39,7 @@ export default async function InventoryReceivingRoute({
   const inventoryTransferCards = (inventoryTransferResult.data || []).filter((card) => !data.activeFactoryId || card.destinationFactoryId === data.activeFactoryId)
   return (
     <div className="space-y-5">
+      <VrbReceivingPanel cards={vrbResult.data} error={vrbResult.error} />
       <InventoryTransferReceivingPanel cards={inventoryTransferCards} />
       <DetailingReceivingPanel cards={detailingCards} />
       <MaterialReceivingPage data={data} />

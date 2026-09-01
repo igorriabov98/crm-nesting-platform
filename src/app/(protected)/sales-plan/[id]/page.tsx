@@ -12,6 +12,7 @@ import { getCurrentUserContext } from '@/lib/auth/current-user'
 import { getCurrentUserPermissions } from '@/lib/permissions/server'
 import { hasPermission } from '@/lib/permissions/resources'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { getMachineVrbMeshStatus } from '@/lib/actions/vrb-outsourcing'
 
 export const metadata = {
   title: 'Карточка машины | CRM Завода',
@@ -39,6 +40,7 @@ export default async function MachineDetailPage({
     { data: factories },
     { data: tasks },
     cuttingResult,
+    vrbStatus,
   ] = await Promise.all([
     getMachine(id),
     getRequest(id),
@@ -51,6 +53,7 @@ export default async function MachineDetailPage({
     canViewMachineCutting
       ? getMachineCutting(id)
       : Promise.resolve({ success: true as const, data: null, error: null }),
+    getMachineVrbMeshStatus(id),
   ])
 
   if (error || !machine) {
@@ -78,6 +81,7 @@ export default async function MachineDetailPage({
         nestingStates={nestingStatesResult.success ? nestingStatesResult.data || [] : []}
         activity={activity}
         outsourcingData={outsourcingResult.data}
+        vrbStatus={vrbStatus}
         canManageTechnologistRequests={hasPermission(permissions, 'technologist_requests', 'manage')}
         canViewSupplyRequest={hasPermission(permissions, 'supply', 'view')}
         canManageNesting={hasPermission(permissions, 'nesting', 'manage')}

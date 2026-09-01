@@ -48,31 +48,41 @@ export async function GET(
       return NextResponse.json({ error: 'File not found' }, { status: 404 })
     }
 
-    const { data: linksData, error: linksError } = await admin
-      .from('machine_outsourcing_operation_items')
-      .select('machine_item_id')
-      .eq('operation_id', operationId)
-    if (linksError) return NextResponse.json({ error: 'File not found' }, { status: 404 })
-
-    const links = (linksData || []) as Array<{ machine_item_id: string }>
-    const machineItemIds = links.map((link) => link.machine_item_id)
-    if (machineItemIds.length === 0) {
+    const [linksResult, vrbItemsResult] = await Promise.all([
+      admin
+        .from('machine_outsourcing_operation_items')
+        .select('machine_item_id')
+        .eq('operation_id', operationId),
+      admin
+        .from('machine_outsourcing_vrb_items')
+        .select('drawing_source, drawing_file_id')
+        .eq('operation_id', operationId)
+        .eq('drawing_source', source)
+        .eq('drawing_file_id', fileId),
+    ])
+    if (linksResult.error || vrbItemsResult.error) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 })
     }
 
-    const { data: itemsData, error: itemsError } = await admin
-      .from('machine_items')
-      .select('product_id, product_project_version_id')
-      .in('id', machineItemIds)
+    const links = (linksResult.data || []) as Array<{ machine_item_id: string }>
+    const machineItemIds = links.map((link) => link.machine_item_id)
+    const { data: itemsData, error: itemsError } = machineItemIds.length > 0
+      ? await admin
+        .from('machine_items')
+        .select('product_id, product_project_version_id')
+        .in('id', machineItemIds)
+      : { data: [], error: null }
     if (itemsError) return NextResponse.json({ error: 'File not found' }, { status: 404 })
 
     const items = (itemsData || []) as Array<{
       product_id: string | null
       product_project_version_id: string | null
     }>
-    const belongsToRequest = source === 'product'
+    const belongsToStandardRequest = source === 'product'
       ? Boolean(file.product_id) && items.some((item) => item.product_id === file.product_id)
       : Boolean(file.version_id) && items.some((item) => item.product_project_version_id === file.version_id)
+    const belongsToVrbRequest = (vrbItemsResult.data || []).length > 0
+    const belongsToRequest = belongsToStandardRequest || belongsToVrbRequest
     if (!belongsToRequest) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 })
     }

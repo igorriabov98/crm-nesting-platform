@@ -238,9 +238,11 @@ async function loadOutsourcingContexts(db: LooseDb, machineIds: string[]) {
       planned_send_date,
       planned_return_date,
       actual_sent_at,
-      actual_returned_at
+      actual_returned_at,
+      operation_kind
     `)
     .in('machine_id', machineIds)
+    .eq('operation_kind', 'standard')
     .is('archived_at', null)
     .order('created_at', { ascending: true })
 
