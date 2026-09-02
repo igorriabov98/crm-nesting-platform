@@ -159,6 +159,8 @@ export type DetailingTransferItem = {
   id: string
   reservationId: string
   partId: string
+  productId: string | null
+  productVersionId: string | null
   partName: string
   drawingNumber: string
   unitWeightKg: number
@@ -546,12 +548,33 @@ async function loadTransferCards(db: DetailingDb, activeOnly: boolean): Promise<
   for (const result of [itemsResult, machinesResult, factoriesResult, tasksResult]) if (result.error) throw new Error(result.error.message || 'Не удалось загрузить перевозки деталировки')
   const itemRows = (itemsResult.data || []) as Array<Record<string, unknown>>
   const partIds = Array.from(new Set(itemRows.map((row) => String(row.part_id))))
-  const partsResult = partIds.length > 0
-    ? await db.from('detailing_parts').select('id, name, drawing_number, unit_weight_kg').in('id', partIds)
+  const reservationIds = Array.from(new Set(itemRows.map((row) => String(row.reservation_id))))
+  const [partsResult, reservationsResult] = await Promise.all([
+    partIds.length > 0
+      ? db.from('detailing_parts').select('id, name, drawing_number, unit_weight_kg').in('id', partIds)
+      : Promise.resolve({ data: [], error: null }),
+    reservationIds.length > 0
+      ? db.from('detailing_reservations').select('id, machine_item_id').in('id', reservationIds)
+      : Promise.resolve({ data: [], error: null }),
+  ])
+  if (partsResult.error || reservationsResult.error) {
+    throw new Error(partsResult.error?.message || reservationsResult.error?.message || 'Не удалось загрузить детали перевозки')
+  }
+  const reservations = new Map(((reservationsResult.data || []) as Array<{ id: string; machine_item_id: string | null }>).map((row) => [row.id, row]))
+  const machineItemIds = Array.from(new Set(
+    [...reservations.values()].map((row) => row.machine_item_id).filter((id): id is string => Boolean(id)),
+  ))
+  const machineItemsResult = machineItemIds.length > 0
+    ? await db.from('machine_items').select('id, product_id, product_version_id').in('id', machineItemIds)
     : { data: [], error: null }
-  if (partsResult.error) throw new Error(partsResult.error.message || 'Не удалось загрузить детали перевозки')
+  if (machineItemsResult.error) throw new Error(machineItemsResult.error.message || 'Не удалось загрузить изделия деталировки')
 
   const parts = new Map(((partsResult.data || []) as RawPart[]).map((part) => [part.id, part]))
+  const machineItems = new Map(((machineItemsResult.data || []) as Array<{
+    id: string
+    product_id: string | null
+    product_version_id: string | null
+  }>).map((row) => [row.id, row]))
   const machines = new Map(((machinesResult.data || []) as Array<{ id: string; name: string; is_archived: boolean | null }>).map((row) => [row.id, row]))
   const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>).map((row) => [row.id, row]))
   const tasks = (tasksResult.data || []) as Array<{ id: string; detailing_transfer_id: string; status: string; deadline: string | null }>
@@ -577,11 +600,14 @@ async function loadTransferCards(db: DetailingDb, activeOnly: boolean): Promise<
     if (!isMachineWorkVisible(machine?.is_archived, String(row.status), ACTIVE_TRANSFER_STATUSES)) return []
     const items = (itemsByTransfer.get(String(row.id)) || []).map((item): DetailingTransferItem => {
       const part = parts.get(String(item.part_id))
+      const reservation = reservations.get(String(item.reservation_id))
+      const machineItem = reservation?.machine_item_id ? machineItems.get(reservation.machine_item_id) : null
       const requested = numberValue(item.requested_quantity)
       const received = numberValue(item.received_quantity)
       const weight = numberValue(part?.unit_weight_kg)
       return {
         id: String(item.id), reservationId: String(item.reservation_id), partId: String(item.part_id),
+        productId: machineItem?.product_id || null, productVersionId: machineItem?.product_version_id || null,
         partName: part?.name || 'Деталь', drawingNumber: part?.drawing_number || '—', unitWeightKg: weight,
         requestedQuantity: requested, receivedQuantity: received, remainingQuantity: Math.max(requested - received, 0),
         requestedWeightKg: requested * weight, receivedWeightKg: received * weight,

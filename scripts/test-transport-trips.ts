@@ -172,6 +172,10 @@ assert.match(transportActions, /getSupplyTransportNeeds/)
 assert.match(transportActions, /supplyResult\.data\.map\(mapSupplyNeed\)/)
 assert.match(transportActions, /sourcePointKey: `supplier:\$\{need\.supplierId\}`/)
 assert.match(transportActions, /itemDetails: need\.item_details\.map/)
+assert.match(transportActions, /productHref: item\.product_id \? `\$\{ROUTES\.PRODUCTS\}\/\$\{item\.product_id\}` : null/)
+assert.match(transportActions, /\.from\('product_files'\)/)
+assert.match(transportActions, /\.eq\('status', 'current'\)/)
+assert.match(transportActions, /`\/api\/supply\/transport\/drawings\/\$\{need\.source\}\/\$\{need\.id\}\/\$\{drawingFileId\}`/)
 assert.match(transportActions, /К перевозке:/)
 assert.match(transportActions, /remainingSecondaryQuantity/)
 assert.match(transportActions, /quantityLabel: `\$\{numberLabel\(need\.quantity\)\} \$\{need\.unit\}`/)
@@ -179,6 +183,19 @@ assert.match(transportActions, /quantityLabel: `\$\{numberLabel\(need\.quantity\
 const outsourcingActions = readFileSync(resolve('src/lib/actions/outsourcing.ts'), 'utf8')
 assert.match(outsourcingActions, /item_details: \(operation\?\.items \|\| \[\]\)\.map/)
 assert.match(outsourcingActions, /drawing_number: item\.drawing_number \|\| null/)
+assert.match(outsourcingActions, /product_id: item\.product_id \|\| null/)
+assert.match(outsourcingActions, /product_version_id: item\.product_version_id \|\| null/)
+assert.match(outsourcingActions, /weight_unit: operation\?\.operation_kind === 'vrb_mesh' \? 'kg' : 'т'/)
+
+const transportDrawingRoute = readFileSync(
+  resolve('src/app/api/supply/transport/drawings/[needSource]/[needId]/[fileId]/route.ts'),
+  'utf8',
+)
+assert.match(transportDrawingRoute, /requirePermission\('supply_transport', 'view'\)/)
+assert.match(transportDrawingRoute, /machine_outsourcing_transport_needs/)
+assert.match(transportDrawingRoute, /detailing_transfer_items/)
+assert.match(transportDrawingRoute, /belongsToNeed/)
+assert.match(transportDrawingRoute, /resolveFileResponse/)
 
 const multiStopMigration = readFileSync(
   resolve('supabase/migrations/20260728120000_transport_multistop_routes.sql'),
@@ -228,6 +245,10 @@ assert.match(transportWorkspace, /Подробнее о потребности/)
 assert.match(transportWorkspace, /function NeedDetailsDialog/)
 assert.match(transportWorkspace, /Полная информация о потребности в перевозке/)
 assert.match(transportWorkspace, /Состав перевозки/)
+assert.match(transportWorkspace, /href=\{item\.productHref\}/)
+assert.match(transportWorkspace, /href=\{item\.drawingHref\}/)
+assert.match(transportWorkspace, /открыть актуальный сборочный чертёж/)
+assert.match(transportWorkspace, /target="_blank"/)
 assert.match(transportWorkspace, /locationDetails\(need\.sourcePointCity, need\.sourcePointAddress\)/)
 assert.match(transportWorkspace, /locationDetails\(need\.destinationPointCity, need\.destinationPointAddress\)/)
 assert.match(transportWorkspace, /Отменить рейс/)
