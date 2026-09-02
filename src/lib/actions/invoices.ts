@@ -1,14 +1,13 @@
 "use server"
 
 import { revalidatePath } from 'next/cache'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import type { CurrentUser } from '@/lib/types'
+import { calculateInvoiceAmount, calculateInvoiceDueDate } from '@/lib/invoices/calculations'
 
-type SupabaseServerClient = Awaited<ReturnType<typeof createServerSupabaseClient>>
-type DbMutationResult = { error: { message?: string } | null }
+type DbMutationResult = { error: { code?: string; message?: string } | null }
 type DbUpdateChain = {
   eq: (column: string, value: unknown) => Promise<DbMutationResult>
 }
@@ -17,8 +16,8 @@ type InvoiceMutationTable = {
   update: (values: Record<string, unknown>) => DbUpdateChain
 }
 
-function invoiceMutations(supabase: SupabaseServerClient) {
-  return supabase.from('invoices') as unknown as InvoiceMutationTable
+function invoiceMutations(admin: ReturnType<typeof createAdminClient>) {
+  return admin.from('invoices') as unknown as InvoiceMutationTable
 }
 
 function todayDateOnly() {
@@ -29,62 +28,17 @@ function todayDateOnly() {
   return `${year}-${month}-${day}`
 }
 
-function addDays(dateString: string, days: number) {
-  const [year, month, day] = dateString.split('-').map(Number)
-  const date = new Date(year, month - 1, day)
-  date.setDate(date.getDate() + days)
-  const nextYear = date.getFullYear()
-  const nextMonth = String(date.getMonth() + 1).padStart(2, '0')
-  const nextDay = String(date.getDate()).padStart(2, '0')
-  return `${nextYear}-${nextMonth}-${nextDay}`
-}
-
-function invoiceDueDate(machine: {
-  payment_terms_type?: string | null
-  payment_due_days?: number | null
-  final_payment_due_days?: number | null
-  delivery_to_client_date?: string | null
-}, invoiceDate: string) {
-  const fallbackDays = Number(machine.payment_due_days || 0)
-  const deliveryDate = machine.delivery_to_client_date || null
-
-  if (machine.payment_terms_type === 'delivery_days' && deliveryDate) {
-    return addDays(deliveryDate, fallbackDays)
-  }
-
-  if (machine.payment_terms_type === 'prepayment_full' && deliveryDate) {
-    return addDays(deliveryDate, Number(machine.final_payment_due_days || fallbackDays))
-  }
-
-  return addDays(invoiceDate, fallbackDays)
-}
-
-async function requireAuth() {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Не авторизован')
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile) throw new Error('Профиль не найден')
-  return { supabase, user: profile as unknown as CurrentUser }
-}
-
 export async function updateInvoiceStatus(invoiceId: string, status: 'paid' | 'not_paid', machineId?: string) {
   try {
-    await requirePermission('invoices', 'manage')
-    const { supabase, user } = await requireAuth()
+    const { user } = await requirePermission('invoices', 'manage')
+    const admin = createAdminClient()
 
     // В ТЗ: overdue устанавливается автоматически. Ручной выбор только paid/not_paid.
     if (status !== 'paid' && status !== 'not_paid') {
       throw new Error('Некорректный статус. Допустимы только paid и not_paid')
     }
 
-    const { error } = await invoiceMutations(supabase)
+    const { error } = await invoiceMutations(admin)
       .update({ 
         status,
         updated_by: user.id
@@ -105,10 +59,10 @@ export async function updateInvoiceStatus(invoiceId: string, status: 'paid' | 'n
 
 export async function createMachineInvoice(machineId: string) {
   try {
-    await requirePermission('invoices', 'manage')
-    const { supabase, user } = await requireAuth()
+    const { user } = await requirePermission('invoices', 'manage')
+    const admin = createAdminClient()
 
-    const { data: machineData, error: machineError } = await supabase
+    const { data: machineData, error: machineError } = await admin
       .from('machines')
       .select('id, is_archived, payment_terms_type, payment_due_days, final_payment_due_days, delivery_to_client_date')
       .eq('id', machineId)
@@ -125,7 +79,7 @@ export async function createMachineInvoice(machineId: string) {
     }
     if (machine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
 
-    const { data: existingInvoice, error: existingError } = await supabase
+    const { data: existingInvoice, error: existingError } = await admin
       .from('invoices')
       .select('id')
       .eq('machine_id', machineId)
@@ -135,22 +89,21 @@ export async function createMachineInvoice(machineId: string) {
     if (existingInvoice) throw new Error('Инвойс уже создан')
 
     const [{ data: itemsData, error: itemsError }, { data: expensesData, error: expensesError }] = await Promise.all([
-      supabase.from('machine_items').select('price, quantity').eq('machine_id', machineId),
-      supabase.from('machine_expenses').select('amount').eq('machine_id', machineId),
+      admin.from('machine_items').select('price, quantity').eq('machine_id', machineId),
+      admin.from('machine_expenses').select('amount').eq('machine_id', machineId),
     ])
 
     if (itemsError) throw itemsError
     if (expensesError) throw expensesError
 
-    const totalItems = ((itemsData || []) as Array<{ price: number | null; quantity: number | null }>)
-      .reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0)
-    const totalExpenses = ((expensesData || []) as Array<{ amount: number | null }>)
-      .reduce((sum, item) => sum + Number(item.amount || 0), 0)
-    const amount = totalItems + totalExpenses
+    const amount = calculateInvoiceAmount(
+      (itemsData || []) as Array<{ price: number | null; quantity: number | null }>,
+      (expensesData || []) as Array<{ amount: number | null }>,
+    )
     const invoiceDate = todayDateOnly()
-    const dueDate = invoiceDueDate(machine, invoiceDate)
+    const dueDate = calculateInvoiceDueDate(machine, invoiceDate)
 
-    const { error: insertError } = await invoiceMutations(supabase).insert({
+    const { error: insertError } = await invoiceMutations(admin).insert({
       machine_id: machineId,
       amount,
       invoice_date: invoiceDate,
@@ -162,6 +115,7 @@ export async function createMachineInvoice(machineId: string) {
       updated_by: user.id,
     })
 
+    if (insertError?.code === '23505') throw new Error('Инвойс уже создан')
     if (insertError) throw insertError
 
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
@@ -176,9 +130,9 @@ export async function createMachineInvoice(machineId: string) {
 export async function deleteMachineInvoice(machineId: string, invoiceId: string) {
   try {
     await requirePermission('invoices', 'manage')
-    const { supabase } = await requireAuth()
+    const admin = createAdminClient()
 
-    const { data: existingInvoice, error: existingError } = await supabase
+    const { data: existingInvoice, error: existingError } = await admin
       .from('invoices')
       .select('id, machine_id')
       .eq('id', invoiceId)
@@ -188,7 +142,7 @@ export async function deleteMachineInvoice(machineId: string, invoiceId: string)
     if (existingError) throw existingError
     if (!existingInvoice) throw new Error('Инвойс не найден')
 
-    const { error } = await supabase
+    const { error } = await admin
       .from('invoices')
       .delete()
       .eq('id', invoiceId)
@@ -211,10 +165,10 @@ export async function recordInvoicePayment(
   machineId?: string,
 ) {
   try {
-    await requirePermission('invoices', 'manage')
-    const { supabase, user } = await requireAuth()
+    const { user } = await requirePermission('invoices', 'manage')
+    const admin = createAdminClient()
 
-    const { data: invoiceData, error: invoiceError } = await supabase
+    const { data: invoiceData, error: invoiceError } = await admin
       .from('invoices')
       .select('amount')
       .eq('id', invoiceId)
@@ -231,7 +185,7 @@ export async function recordInvoicePayment(
     }
 
     const status = amount > 0 && paidAmount >= amount ? 'paid' : 'not_paid'
-    const { error } = await invoiceMutations(supabase)
+    const { error } = await invoiceMutations(admin)
       .update({
         paid_amount: paidAmount,
         balance_due_date: status === 'paid' ? null : input.balance_due_date || null,

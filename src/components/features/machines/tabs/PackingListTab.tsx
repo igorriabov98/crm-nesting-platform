@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useEffect, useMemo, useState, useTransition } from 'react'
-import { FileText, PackageCheck, Plus, Save, Trash2, Truck } from 'lucide-react'
+import { CircleDollarSign, FileText, PackageCheck, Plus, Save, Trash2, Truck } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
@@ -161,6 +161,10 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
   const [deliveryBasisType, setDeliveryBasisType] = useState<MachineDeliveryBasisType | ''>(
     () => machine.delivery_basis_type || '',
   )
+  const [customsClearanceDate, setCustomsClearanceDate] = useState(() => machine.customs_clearance_date || '')
+  const [deliveryToClientDate, setDeliveryToClientDate] = useState(() => machine.delivery_to_client_date || '')
+  const [freightCost, setFreightCost] = useState(() => Number(machine.freight_cost || 0) > 0 ? String(machine.freight_cost) : '')
+  const [freightCostDirty, setFreightCostDirty] = useState(false)
   const [boxesCount, setBoxesCount] = useState(() => String(machine.packing_boxes_count || 0))
   const calculated = useMemo(() => {
     const netWeight = goods.reduce(
@@ -243,6 +247,16 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
 
     const parsedGroups = parseDraftGroups(groups)
     const parsedBoxesCount = Number(boxesCount)
+    const normalizedFreightCost = freightCost.trim().replace(',', '.')
+    const parsedFreightCost = normalizedFreightCost ? Number(normalizedFreightCost) : null
+    if (normalizedFreightCost && (!/^\d+(?:\.\d{1,2})?$/.test(normalizedFreightCost) || !parsedFreightCost || parsedFreightCost <= 0)) {
+      toast.error('Реальная стоимость транспорта должна быть положительной суммой с двумя знаками после запятой')
+      return
+    }
+    if (parsedFreightCost !== null && parsedFreightCost > 9999999999.99) {
+      toast.error('Слишком большая стоимость транспорта')
+      return
+    }
     if (!Number.isInteger(parsedBoxesCount) || parsedBoxesCount < 0 || parsedBoxesCount > 999) {
       toast.error('Количество коробок должно быть от 0 до 999')
       return
@@ -276,6 +290,9 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
         contract_id: contractId,
         specification_number: documentNumber,
         specification_date: documentDate,
+        customs_clearance_date: customsClearanceDate,
+        delivery_to_client_date: deliveryToClientDate,
+        freight_cost: freightCostDirty ? parsedFreightCost : undefined,
         delivery_basis_type: deliveryBasisType,
         packing_boxes_count: parsedBoxesCount,
         groups: parsedGroups,
@@ -306,6 +323,59 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
             Сохранить
           </Button>
         )}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-950">
+          <Truck className="h-4 w-4 text-blue-950" aria-hidden="true" />
+          Логистика и доставка
+        </div>
+        <p className="mb-4 text-sm text-slate-500">
+          Фактические даты и внутренняя стоимость перевозки для управленческой отчётности.
+        </p>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <label className="grid gap-2 text-sm font-medium text-slate-700">
+            Дата затаможивания
+            <DatePicker
+              value={customsClearanceDate ? new Date(customsClearanceDate) : undefined}
+              onChange={(date) => setCustomsClearanceDate(dateOnly(date))}
+              disabled={!canEdit || isPending}
+              placeholder="Не указана"
+              displayFormat="dd.MM.yyyy"
+            />
+          </label>
+          <label className="grid gap-2 text-sm font-medium text-slate-700">
+            <span className="flex items-center gap-1.5">
+              <CircleDollarSign className="h-4 w-4 text-slate-500" aria-hidden="true" />
+              Реальная стоимость транспорта, EUR
+            </span>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={freightCost}
+              onChange={(event) => {
+                setFreightCost(event.target.value)
+                setFreightCostDirty(true)
+              }}
+              disabled={!canEdit || isPending}
+              placeholder="Не указана"
+              aria-describedby="freight-cost-help"
+            />
+            <span id="freight-cost-help" className="text-xs font-normal leading-relaxed text-slate-500">
+              Внутренняя сумма: не включается в инвойсы и документы.
+            </span>
+          </label>
+          <label className="grid gap-2 text-sm font-medium text-slate-700">
+            Дата доставки клиенту
+            <DatePicker
+              value={deliveryToClientDate ? new Date(deliveryToClientDate) : undefined}
+              onChange={(date) => setDeliveryToClientDate(dateOnly(date))}
+              disabled={!canEdit || isPending}
+              placeholder="Не указана"
+              displayFormat="dd.MM.yyyy"
+            />
+          </label>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

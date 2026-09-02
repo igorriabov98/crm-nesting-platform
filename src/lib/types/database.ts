@@ -683,6 +683,7 @@ export type Database = {
           planned_material_date: string | null
           actual_material_date: string | null
           actual_shipping_date: string | null
+          customs_clearance_date: string | null
           delivery_to_client_date: string | null
           production_month: string | null
           production_workshop: number | null
@@ -721,6 +722,7 @@ export type Database = {
           planned_material_date?: string | null
           actual_material_date?: string | null
           actual_shipping_date?: string | null
+          customs_clearance_date?: string | null
           delivery_to_client_date?: string | null
           production_month?: string | null
           production_workshop?: number | null
@@ -759,6 +761,7 @@ export type Database = {
           planned_material_date?: string | null
           actual_material_date?: string | null
           actual_shipping_date?: string | null
+          customs_clearance_date?: string | null
           delivery_to_client_date?: string | null
           production_month?: string | null
           production_workshop?: number | null
@@ -3011,7 +3014,9 @@ export type Database = {
           paid_amount: number
           balance_due_date: string | null
           payment_note: string | null
+          original_planned_date: string | null
           status: Database['public']['Enums']['invoice_status']
+          updated_by: string | null
           created_at: string
           updated_at: string
         }
@@ -3025,7 +3030,9 @@ export type Database = {
           paid_amount?: number
           balance_due_date?: string | null
           payment_note?: string | null
+          original_planned_date?: string | null
           status?: Database['public']['Enums']['invoice_status']
+          updated_by?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -3039,7 +3046,9 @@ export type Database = {
           paid_amount?: number
           balance_due_date?: string | null
           payment_note?: string | null
+          original_planned_date?: string | null
           status?: Database['public']['Enums']['invoice_status']
+          updated_by?: string | null
           created_at?: string
           updated_at?: string
         }

@@ -93,8 +93,19 @@ export function InvoiceTab({ machine }: InvoiceTabProps) {
     try {
       const res = await createMachineInvoice(machine.id)
       if (!res.success) throw new Error(res.error || 'Не удалось создать инвойс')
-      toast.success('Инвойс создан')
-      await downloadInvoiceDocument({ quiet: true })
+      const hasDocumentDetails = Boolean(
+        machine.specification_number?.trim()
+        && machine.specification_date?.trim()
+        && machine.delivery_basis_type,
+      )
+      if (hasDocumentDetails) {
+        toast.success('Инвойс создан')
+        const downloaded = await downloadInvoiceDocument({ quiet: true })
+        if (!downloaded) toast.info('Инвойс создан, но PDF не удалось скачать. Повторите загрузку из карточки инвойса.')
+      } else {
+        toast.success('Инвойс создан без PDF')
+        toast.info('Для PDF заполните номер, дату документов и базис доставки во вкладке «Настройки машины».', { duration: 7000 })
+      }
       router.refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось создать инвойс')

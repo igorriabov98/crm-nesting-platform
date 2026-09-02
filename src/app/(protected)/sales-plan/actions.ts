@@ -1417,6 +1417,9 @@ export async function updateMachinePackingSettings(machineId: string, data: Mach
         contract_id: parsed.contract_id || null,
         specification_number: parsed.specification_number?.trim() || null,
         specification_date: parsed.specification_date?.trim() || null,
+        customs_clearance_date: parsed.customs_clearance_date?.trim() || null,
+        delivery_to_client_date: parsed.delivery_to_client_date?.trim() || null,
+        ...(parsed.freight_cost !== undefined ? { freight_cost: parsed.freight_cost } : {}),
         delivery_basis_type: parsed.delivery_basis_type,
         packing_boxes_count: parsed.packing_boxes_count,
       } satisfies MachineUpdate)
