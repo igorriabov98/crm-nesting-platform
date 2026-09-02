@@ -34,6 +34,13 @@ export type TransportTripStopStatus = 'planned' | 'arrived' | 'completed'
 export type TransportTripDateChangeState = 'not_required' | 'pending' | 'approved' | 'rejected' | 'conflicted'
 export type TransportNeedPlanState = 'preliminary' | 'confirmed'
 
+export type TransportNeedItemDetail = {
+  id: string
+  title: string
+  description: string | null
+  quantityLabel: string | null
+}
+
 export type UnifiedTransportNeed = {
   key: string
   id: string
@@ -55,6 +62,7 @@ export type UnifiedTransportNeed = {
   neededDate: string | null
   deadline: string | null
   itemLabels: string[]
+  itemDetails: TransportNeedItemDetail[]
   volumeLabel: string | null
   deliveryRisk: boolean
   selectable: boolean
@@ -63,7 +71,7 @@ export type UnifiedTransportNeed = {
 
 export type TransportTripNeed = Omit<
   UnifiedTransportNeed,
-  'planState' | 'status' | 'deadline' | 'itemLabels' | 'volumeLabel' | 'deliveryRisk' | 'selectable' | 'unavailableReason'
+  'planState' | 'status' | 'deadline' | 'itemLabels' | 'itemDetails' | 'volumeLabel' | 'deliveryRisk' | 'selectable' | 'unavailableReason'
 > & {
   linkId: string | null
   pickupStopId: string | null
@@ -319,6 +327,12 @@ function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed 
     neededDate: need.needed_date,
     deadline: need.needed_date,
     itemLabels: need.item_labels,
+    itemDetails: need.item_details.map((item) => ({
+      id: item.id,
+      title: item.product_name,
+      description: item.drawing_number ? `Чертёж ${item.drawing_number}` : null,
+      quantityLabel: `${numberLabel(item.quantity, 0)} шт.`,
+    })),
     volumeLabel: need.item_labels.length > 0 ? `${need.item_labels.length} поз.` : null,
     deliveryRisk: false,
     selectable: need.plan_state === 'confirmed'
@@ -355,6 +369,17 @@ function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
     neededDate: card.expectedArrivalDate || card.deadline,
     deadline: card.deadline,
     itemLabels: card.items.map((item) => `${item.partName} · ${item.drawingNumber}`),
+    itemDetails: card.items.map((item) => ({
+      id: item.id,
+      title: item.partName,
+      description: [
+        item.drawingNumber !== '—' ? `Чертёж ${item.drawingNumber}` : null,
+        item.receivedQuantity > 0
+          ? `Получено ${numberLabel(item.receivedQuantity, 0)} из ${numberLabel(item.requestedQuantity, 0)} шт.`
+          : null,
+      ].filter(Boolean).join(' · ') || null,
+      quantityLabel: `К перевозке: ${numberLabel(item.remainingQuantity, 0)} шт. · ${numberLabel(item.remainingQuantity * item.unitWeightKg)} кг`,
+    })),
     volumeLabel: `${numberLabel(card.totalQuantity, 0)} шт. · ${numberLabel(card.totalWeightKg)} кг`,
     deliveryRisk: card.deliveryRisk,
     selectable: Boolean(card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim()),
@@ -384,6 +409,21 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
     neededDate: card.expectedArrivalDate || card.deadline,
     deadline: card.deadline,
     itemLabels: card.items.map((item) => item.materialName),
+    itemDetails: card.items.map((item) => ({
+      id: item.id,
+      title: item.materialName,
+      description: [
+        item.materialCategory,
+        item.pieceLengthMm ? `Длина ${numberLabel(item.pieceLengthMm, 0)} мм` : null,
+        item.isBusinessScrap ? 'Деловой остаток' : null,
+      ].filter(Boolean).join(' · ') || null,
+      quantityLabel: [
+        `${numberLabel(item.remainingQuantity)} ${item.unit}`,
+        item.remainingSecondaryQuantity !== null && item.secondaryUnit
+          ? `${numberLabel(item.remainingSecondaryQuantity)} ${item.secondaryUnit}`
+          : null,
+      ].filter(Boolean).join(' · '),
+    })),
     volumeLabel: `${card.items.length} поз.`,
     deliveryRisk: card.deliveryRisk,
     selectable: Boolean(card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim()),
@@ -413,6 +453,12 @@ function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
     neededDate: need.deliveryDate,
     deadline: need.deliveryDate,
     itemLabels: [need.itemName],
+    itemDetails: [{
+      id: need.id,
+      title: need.itemName,
+      description: null,
+      quantityLabel: `${numberLabel(need.quantity)} ${need.unit}`,
+    }],
     volumeLabel: `${numberLabel(need.quantity)} ${need.unit}`,
     deliveryRisk: false,
     selectable: Boolean(need.supplierCity?.trim() && need.factoryCity?.trim()),
@@ -500,6 +546,7 @@ function tripNeedForEditing(trip: TransportTrip, need: TransportTripNeed): Unifi
     neededDate: need.neededDate,
     deadline: need.neededDate,
     itemLabels: [],
+    itemDetails: [],
     volumeLabel: null,
     deliveryRisk: false,
     selectable: true,

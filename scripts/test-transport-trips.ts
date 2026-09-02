@@ -171,6 +171,14 @@ const transportActions = readFileSync(resolve('src/lib/actions/transport-trips.t
 assert.match(transportActions, /getSupplyTransportNeeds/)
 assert.match(transportActions, /supplyResult\.data\.map\(mapSupplyNeed\)/)
 assert.match(transportActions, /sourcePointKey: `supplier:\$\{need\.supplierId\}`/)
+assert.match(transportActions, /itemDetails: need\.item_details\.map/)
+assert.match(transportActions, /К перевозке:/)
+assert.match(transportActions, /remainingSecondaryQuantity/)
+assert.match(transportActions, /quantityLabel: `\$\{numberLabel\(need\.quantity\)\} \$\{need\.unit\}`/)
+
+const outsourcingActions = readFileSync(resolve('src/lib/actions/outsourcing.ts'), 'utf8')
+assert.match(outsourcingActions, /item_details: \(operation\?\.items \|\| \[\]\)\.map/)
+assert.match(outsourcingActions, /drawing_number: item\.drawing_number \|\| null/)
 
 const multiStopMigration = readFileSync(
   resolve('supabase/migrations/20260728120000_transport_multistop_routes.sql'),
@@ -216,6 +224,12 @@ assert.match(pickupStartMigration, /'planned', NULL/)
 const transportWorkspace = readFileSync(resolve('src/components/features/supply/TransportWorkspacePage.tsx'), 'utf8')
 assert.doesNotMatch(transportWorkspace, />Точка выезда</)
 assert.match(transportWorkspace, /aria-label=\{title\}/)
+assert.match(transportWorkspace, /Подробнее о потребности/)
+assert.match(transportWorkspace, /function NeedDetailsDialog/)
+assert.match(transportWorkspace, /Полная информация о потребности в перевозке/)
+assert.match(transportWorkspace, /Состав перевозки/)
+assert.match(transportWorkspace, /locationDetails\(need\.sourcePointCity, need\.sourcePointAddress\)/)
+assert.match(transportWorkspace, /locationDetails\(need\.destinationPointCity, need\.destinationPointAddress\)/)
 assert.match(transportWorkspace, /Отменить рейс/)
 assert.match(transportWorkspace, /Причина исключения/)
 assert.match(transportWorkspace, /reconcileTransportStopPlan/)

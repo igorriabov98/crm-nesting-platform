@@ -53,6 +53,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -233,6 +234,7 @@ function editableTripNeed(trip: TransportTrip, need: TransportTrip['needs'][numb
     neededDate: need.neededDate,
     deadline: need.neededDate,
     itemLabels: [],
+    itemDetails: [],
     volumeLabel: null,
     deliveryRisk: false,
     selectable: true,
@@ -301,16 +303,38 @@ function tripRouteLabel(trip: TransportTrip) {
     : trip.route || trip.routeStart || 'Маршрут не указан'
 }
 
+const needStatusLabels: Record<string, string> = {
+  open: 'Открыта',
+  linked: 'Добавлена в рейс',
+  completed: 'Завершена',
+  cancelled: 'Отменена',
+  needs_date: 'Требуется дата',
+  scheduled: 'Запланирована',
+  partially_received: 'Получена частично',
+  planned: 'Запланирована',
+}
+
+function needStatusLabel(need: UnifiedTransportNeed) {
+  if (need.planState === 'preliminary') return 'Ожидает подтверждения'
+  return needStatusLabels[need.status] || 'Активна'
+}
+
+function locationDetails(city: string | null, address: string | null) {
+  return [city, address].filter(Boolean).join(', ') || 'Город и адрес не указаны'
+}
+
 const NeedCard = memo(function NeedCard({
   need,
   selected,
   compatible,
   onToggle,
+  onDetails,
 }: {
   need: UnifiedTransportNeed
   selected: boolean
   compatible: boolean
   onToggle: (need: UnifiedTransportNeed) => void
+  onDetails?: (need: UnifiedTransportNeed) => void
 }) {
   const meta = categoryMeta[need.kind]
   const Icon = meta.icon
@@ -322,38 +346,128 @@ const NeedCard = memo(function NeedCard({
       : null
 
   return (
-    <button
-      type="button"
-      data-focus-id={need.key}
-      aria-pressed={selected}
-      disabled={disabled}
-      onClick={() => onToggle(need)}
+    <article
       className={cn(
-        'group w-full rounded-2xl border bg-white p-4 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[border-color,box-shadow,transform] motion-reduce:transition-none',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2',
+        'group w-full rounded-2xl border bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[border-color,box-shadow,transform] motion-reduce:transform-none motion-reduce:transition-none',
         !disabled && 'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md',
         selected && 'border-blue-600 bg-blue-50/40 ring-1 ring-blue-600',
-        disabled && 'cursor-not-allowed border-slate-200 bg-slate-50/80 opacity-65',
+        disabled && 'border-slate-200 bg-slate-50/80',
       )}
     >
-      <span className="flex gap-3">
-        <span
-          aria-hidden
-          className={cn(
-            'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition-colors',
-            selected
-              ? 'border-blue-700 bg-blue-700 text-white'
-              : 'border-slate-300 bg-white text-transparent',
-          )}
-        >
-          <Check className="h-4 w-4" strokeWidth={3} />
-        </span>
+      <button
+        type="button"
+        data-focus-id={need.key}
+        aria-pressed={selected}
+        disabled={disabled}
+        onClick={() => onToggle(need)}
+        className={cn(
+          'w-full rounded-t-2xl p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2',
+          !onDetails && 'rounded-b-2xl',
+          disabled && 'cursor-not-allowed opacity-65',
+        )}
+      >
+        <span className="flex gap-3">
+          <span
+            aria-hidden
+            className={cn(
+              'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition-colors',
+              selected
+                ? 'border-blue-700 bg-blue-700 text-white'
+                : 'border-slate-300 bg-white text-transparent',
+            )}
+          >
+            <Check className="h-4 w-4" strokeWidth={3} />
+          </span>
 
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold', meta.chip)}>
+                <Icon className="h-3.5 w-3.5" />
+                {meta.shortLabel}
+              </span>
+              {need.deliveryRisk && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700">
+                  <CircleAlert className="h-3.5 w-3.5" />
+                  Риск срока
+                </span>
+              )}
+              {disabledReason && (
+                <span className="text-xs font-medium text-slate-500">{disabledReason}</span>
+              )}
+            </span>
+
+            <span className="mt-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+              <span className="min-w-0">
+                <span className="block truncate text-base font-semibold text-slate-950">{need.title}</span>
+                <span className="block truncate text-sm text-slate-600">{need.subtitle}</span>
+              </span>
+              <span className="shrink-0 text-right text-xs text-slate-500">
+                Требуется перевезти
+                <span className="mt-0.5 block text-sm font-semibold text-slate-700">{formatDate(need.neededDate)}</span>
+              </span>
+            </span>
+
+            <span className="mt-3 flex min-w-0 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+              <span className="truncate">{need.sourcePointLabel}</span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
+              <span className="truncate">{need.destinationPointLabel}</span>
+            </span>
+
+            {(need.volumeLabel || need.itemLabels.length > 0) && (
+              <span className="mt-2 block truncate text-xs text-slate-500">
+                {[need.volumeLabel, ...need.itemLabels.slice(0, 2)].filter(Boolean).join(' · ')}
+              </span>
+            )}
+          </span>
+        </span>
+      </button>
+
+      {onDetails && (
+        <div className="flex min-h-11 items-center justify-between gap-3 border-t border-slate-100 px-4 py-1.5">
+          <span className="min-w-0 truncate text-xs text-slate-500">Полный состав и маршрут</span>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onDetails(need)}
+            className="h-11 shrink-0 rounded-xl px-3 font-semibold text-blue-800 hover:bg-blue-50 hover:text-blue-900"
+            aria-label={`Подробнее о потребности «${need.title}»`}
+          >
+            Подробнее
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+    </article>
+  )
+})
+
+function NeedDetailsDialog({
+  need,
+  onOpenChange,
+}: {
+  need: UnifiedTransportNeed | null
+  onOpenChange: (open: boolean) => void
+}) {
+  if (!need) return null
+  const meta = categoryMeta[need.kind]
+  const Icon = meta.icon
+  const items = need.itemDetails.length > 0
+    ? need.itemDetails
+    : need.itemLabels.map((label, index) => ({
+        id: `${need.key}:${index}`,
+        title: label,
+        description: null,
+        quantityLabel: null,
+      }))
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90dvh] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <DialogHeader className="border-b border-slate-100 bg-[linear-gradient(135deg,#f8fbff_0%,#eef5ff_100%)] p-5 pr-14 text-left">
+          <div className="flex flex-wrap items-center gap-2">
             <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold', meta.chip)}>
               <Icon className="h-3.5 w-3.5" />
-              {meta.shortLabel}
+              {meta.label}
             </span>
             {need.deliveryRisk && (
               <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700">
@@ -361,38 +475,115 @@ const NeedCard = memo(function NeedCard({
                 Риск срока
               </span>
             )}
-            {disabledReason && (
-              <span className="text-xs font-medium text-slate-500">{disabledReason}</span>
-            )}
-          </span>
+          </div>
+          <DialogTitle className="text-xl font-bold leading-tight text-slate-950 sm:text-2xl">
+            {need.title}
+          </DialogTitle>
+          <DialogDescription className="text-sm leading-6 text-slate-600">
+            {need.subtitle}. Полная информация о потребности в перевозке.
+          </DialogDescription>
+        </DialogHeader>
 
-          <span className="mt-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-            <span className="min-w-0">
-              <span className="block truncate text-base font-semibold text-slate-950">{need.title}</span>
-              <span className="block truncate text-sm text-slate-600">{need.subtitle}</span>
-            </span>
-            <span className="shrink-0 text-right text-xs text-slate-500">
-              Требуется перевезти
-              <span className="mt-0.5 block text-sm font-semibold text-slate-700">{formatDate(need.neededDate)}</span>
-            </span>
-          </span>
-
-          <span className="mt-3 flex min-w-0 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
-            <span className="truncate">{need.sourcePointLabel}</span>
-            <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
-            <span className="truncate">{need.destinationPointLabel}</span>
-          </span>
-
-          {(need.volumeLabel || need.itemLabels.length > 0) && (
-            <span className="mt-2 block truncate text-xs text-slate-500">
-              {[need.volumeLabel, ...need.itemLabels.slice(0, 2)].filter(Boolean).join(' · ')}
-            </span>
+        <div className="grid min-h-0 gap-5 overflow-y-auto p-4 sm:p-5">
+          {!need.selectable && need.unavailableReason && (
+            <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span><strong>Пока нельзя добавить в рейс.</strong> {need.unavailableReason}.</span>
+            </div>
           )}
-        </span>
-      </span>
-    </button>
+
+          <section aria-labelledby="need-summary-title">
+            <h3 id="need-summary-title" className="text-sm font-bold text-slate-950">Параметры перевозки</h3>
+            <dl className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <dt className="text-xs text-slate-500">Статус</dt>
+                <dd className="mt-1 font-semibold text-slate-900">{needStatusLabel(need)}</dd>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <dt className="text-xs text-slate-500">Направление</dt>
+                <dd className="mt-1 font-semibold text-slate-900">{need.direction === 'return' ? 'Возврат' : 'Отправка'}</dd>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <dt className="text-xs text-slate-500">Требуется перевезти</dt>
+                <dd className="mt-1 font-semibold text-slate-900">{formatDate(need.neededDate)}</dd>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <dt className="text-xs text-slate-500">Объём</dt>
+                <dd className="mt-1 font-semibold text-slate-900">{need.volumeLabel || `${items.length} поз.`}</dd>
+              </div>
+            </dl>
+            {need.deadline && need.deadline !== need.neededDate && (
+              <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
+                <CalendarDays className="h-4 w-4 text-slate-400" />
+                Крайний срок: <strong className="text-slate-900">{formatDate(need.deadline)}</strong>
+              </div>
+            )}
+          </section>
+
+          <section aria-labelledby="need-route-title">
+            <h3 id="need-route-title" className="text-sm font-bold text-slate-950">Маршрут</h3>
+            <div className="mt-3 grid items-stretch gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <MapPin className="h-4 w-4 text-blue-700" /> Забор
+                </div>
+                <div className="mt-2 font-semibold text-slate-950">{need.sourcePointLabel}</div>
+                <div className="mt-1 text-sm leading-5 text-slate-600">
+                  {locationDetails(need.sourcePointCity, need.sourcePointAddress)}
+                </div>
+              </div>
+              <ArrowRight className="mx-auto h-5 w-5 rotate-90 text-slate-400 sm:rotate-0" aria-hidden />
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <MapPin className="h-4 w-4 text-emerald-700" /> Доставка
+                </div>
+                <div className="mt-2 font-semibold text-slate-950">{need.destinationPointLabel}</div>
+                <div className="mt-1 text-sm leading-5 text-slate-600">
+                  {locationDetails(need.destinationPointCity, need.destinationPointAddress)}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section aria-labelledby="need-items-title">
+            <div className="flex items-center justify-between gap-3">
+              <h3 id="need-items-title" className="text-sm font-bold text-slate-950">Состав перевозки</h3>
+              <Badge variant="outline" className="rounded-full bg-slate-50 text-slate-700">{items.length} поз.</Badge>
+            </div>
+            {items.length > 0 ? (
+              <ol className="mt-3 grid gap-2">
+                {items.map((item, index) => (
+                  <li key={item.id} className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-xs font-bold text-slate-500 ring-1 ring-slate-200">
+                      {index + 1}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block font-semibold text-slate-950">{item.title}</span>
+                      {item.description && <span className="mt-0.5 block text-xs leading-5 text-slate-500">{item.description}</span>}
+                    </span>
+                    {item.quantityLabel && (
+                      <span className="text-sm font-semibold tabular-nums text-slate-800 sm:text-right">{item.quantityLabel}</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+                Состав этой перевозки пока не указан.
+              </div>
+            )}
+          </section>
+        </div>
+
+        <DialogFooter className="m-0 rounded-b-xl px-4 py-3 sm:px-5">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="h-11 rounded-xl px-5">
+            Закрыть
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
-})
+}
 
 export function TransportWorkspacePage({ workspace: initialWorkspace }: { workspace: TransportWorkspace }) {
   const [workspace, setWorkspace] = useState(initialWorkspace)
@@ -402,6 +593,7 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [needFilter, setNeedFilter] = useState<NeedFilter>('all')
   const [search, setSearch] = useState('')
+  const [detailsNeed, setDetailsNeed] = useState<UnifiedTransportNeed | null>(null)
   const deferredSearch = useDeferredValue(search.trim().toLocaleLowerCase('ru'))
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
@@ -986,6 +1178,7 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
                     selected={selectedKeys.includes(need.key)}
                     compatible
                     onToggle={toggleNeed}
+                    onDetails={setDetailsNeed}
                   />
                 ))}
               </div>
@@ -1631,6 +1824,13 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
           )}
         </SheetContent>
       </Sheet>
+
+      <NeedDetailsDialog
+        need={detailsNeed}
+        onOpenChange={(open) => {
+          if (!open) setDetailsNeed(null)
+        }}
+      />
 
       <Dialog open={needPickerOpen} onOpenChange={setNeedPickerOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
