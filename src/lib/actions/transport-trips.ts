@@ -36,7 +36,12 @@ export type TransportNeedPlanState = 'preliminary' | 'confirmed'
 
 export type TransportNeedItemDetail = {
   id: string
+  productId: string | null
+  productVersionId: string | null
+  productHref: string | null
+  drawingHref: string | null
   title: string
+  drawingLabel: string | null
   description: string | null
   quantityLabel: string | null
 }
@@ -329,9 +334,14 @@ function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed 
     itemLabels: need.item_labels,
     itemDetails: need.item_details.map((item) => ({
       id: item.id,
+      productId: item.product_id,
+      productVersionId: item.product_version_id,
+      productHref: item.product_id ? `${ROUTES.PRODUCTS}/${item.product_id}` : null,
+      drawingHref: null,
       title: item.product_name,
-      description: item.drawing_number ? `Чертёж ${item.drawing_number}` : null,
-      quantityLabel: `${numberLabel(item.quantity, 0)} шт.`,
+      drawingLabel: item.drawing_number ? `Чертёж ${item.drawing_number}` : null,
+      description: null,
+      quantityLabel: `${numberLabel(item.quantity, 0)} шт. · ${numberLabel(item.weight)} ${item.weight_unit}`,
     })),
     volumeLabel: need.item_labels.length > 0 ? `${need.item_labels.length} поз.` : null,
     deliveryRisk: false,
@@ -371,16 +381,18 @@ function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
     itemLabels: card.items.map((item) => `${item.partName} · ${item.drawingNumber}`),
     itemDetails: card.items.map((item) => ({
       id: item.id,
+      productId: item.productId,
+      productVersionId: item.productVersionId,
+      productHref: item.productId ? `${ROUTES.PRODUCTS}/${item.productId}` : null,
+      drawingHref: null,
       title: item.partName,
-      description: [
-        item.drawingNumber !== '—' ? `Чертёж ${item.drawingNumber}` : null,
-        item.receivedQuantity > 0
-          ? `Получено ${numberLabel(item.receivedQuantity, 0)} из ${numberLabel(item.requestedQuantity, 0)} шт.`
-          : null,
-      ].filter(Boolean).join(' · ') || null,
+      drawingLabel: item.drawingNumber !== '—' ? `Чертёж ${item.drawingNumber}` : null,
+      description: item.receivedQuantity > 0
+        ? `Получено ${numberLabel(item.receivedQuantity, 0)} из ${numberLabel(item.requestedQuantity, 0)} шт.`
+        : null,
       quantityLabel: `К перевозке: ${numberLabel(item.remainingQuantity, 0)} шт. · ${numberLabel(item.remainingQuantity * item.unitWeightKg)} кг`,
     })),
-    volumeLabel: `${numberLabel(card.totalQuantity, 0)} шт. · ${numberLabel(card.totalWeightKg)} кг`,
+    volumeLabel: `${numberLabel(card.items.reduce((sum, item) => sum + item.remainingQuantity, 0), 0)} шт. · ${numberLabel(card.items.reduce((sum, item) => sum + item.remainingQuantity * item.unitWeightKg, 0))} кг`,
     deliveryRisk: card.deliveryRisk,
     selectable: Boolean(card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim()),
     unavailableReason: card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim() ? null : 'У площадки не указан город',
@@ -411,7 +423,12 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
     itemLabels: card.items.map((item) => item.materialName),
     itemDetails: card.items.map((item) => ({
       id: item.id,
+      productId: null,
+      productVersionId: null,
+      productHref: null,
+      drawingHref: null,
       title: item.materialName,
+      drawingLabel: null,
       description: [
         item.materialCategory,
         item.pieceLengthMm ? `Длина ${numberLabel(item.pieceLengthMm, 0)} мм` : null,
@@ -455,7 +472,12 @@ function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
     itemLabels: [need.itemName],
     itemDetails: [{
       id: need.id,
+      productId: null,
+      productVersionId: null,
+      productHref: null,
+      drawingHref: null,
       title: need.itemName,
+      drawingLabel: null,
       description: null,
       quantityLabel: `${numberLabel(need.quantity)} ${need.unit}`,
     }],
@@ -492,6 +514,79 @@ function mapLink(link: TripLinkRow): TransportTripNeed {
     releasedReason: link.released_reason,
     releasedByName: relationName(link.released_by_user),
   }
+}
+
+async function attachProductNavigation(
+  db: TransportDb,
+  needs: UnifiedTransportNeed[],
+): Promise<UnifiedTransportNeed[]> {
+  const items = needs.flatMap((need) => need.itemDetails)
+  const productIds = Array.from(new Set(
+    items.map((item) => item.productId).filter((id): id is string => Boolean(id)),
+  ))
+  const requestedVersionIds = Array.from(new Set(
+    items.map((item) => item.productVersionId).filter((id): id is string => Boolean(id)),
+  ))
+  if (productIds.length === 0 && requestedVersionIds.length === 0) return needs
+
+  const currentVersionsResult = productIds.length > 0
+    ? await db.from('product_versions').select('id, product_id').in('product_id', productIds).eq('status', 'current')
+    : { data: [], error: null }
+  if (currentVersionsResult.error) {
+    throw new Error(currentVersionsResult.error.message || 'Не удалось загрузить актуальные версии изделий')
+  }
+  const currentVersionByProduct = new Map(
+    ((currentVersionsResult.data || []) as Array<{ id: string; product_id: string }>).map((row) => [row.product_id, row.id]),
+  )
+  const candidateVersionIds = Array.from(new Set([
+    ...requestedVersionIds,
+    ...currentVersionByProduct.values(),
+  ]))
+  const drawingsResult = candidateVersionIds.length > 0
+    ? await db
+      .from('product_files')
+      .select('id, product_version_id, file_kind, file_name, created_at')
+      .in('product_version_id', candidateVersionIds)
+      .order('created_at', { ascending: false })
+    : { data: [], error: null }
+  if (drawingsResult.error) {
+    throw new Error(drawingsResult.error.message || 'Не удалось загрузить сборочные чертежи')
+  }
+  const drawingRows = ((drawingsResult.data || []) as Array<{
+    id: string
+    product_version_id: string
+    file_kind: string
+    file_name: string
+    created_at: string
+  }>).filter((row) => (
+    row.file_kind === 'drawing'
+    || row.file_kind === 'pdf'
+    || row.file_name.toLocaleLowerCase('ru').endsWith('.pdf')
+  )).sort((left, right) => {
+    const rank = (row: { file_kind: string }) => row.file_kind === 'drawing' ? 0 : row.file_kind === 'pdf' ? 1 : 2
+    return rank(left) - rank(right) || right.created_at.localeCompare(left.created_at)
+  })
+  const drawingByVersion = new Map<string, string>()
+  for (const row of drawingRows) {
+    if (!drawingByVersion.has(row.product_version_id)) drawingByVersion.set(row.product_version_id, row.id)
+  }
+
+  return needs.map((need) => ({
+    ...need,
+    itemDetails: need.itemDetails.map((item) => {
+      const currentVersionId = item.productId ? currentVersionByProduct.get(item.productId) || null : null
+      const drawingFileId = (item.productVersionId && drawingByVersion.get(item.productVersionId))
+        || (currentVersionId && drawingByVersion.get(currentVersionId))
+        || null
+      return {
+        ...item,
+        productVersionId: item.productVersionId || currentVersionId,
+        drawingHref: drawingFileId
+          ? `/api/supply/transport/drawings/${need.source}/${need.id}/${drawingFileId}`
+          : null,
+      }
+    }),
+  }))
 }
 
 function mapLegacyOutsourcingNeed(need: TransportWorkspaceNeed): TransportTripNeed {
@@ -712,7 +807,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       .filter((link) => !link.released_at)
       .map((link) => needKey(link.need_source, link.need_id)),
   )
-  const needs = [
+  const needs = (await attachProductNavigation(db, [
     ...outsourcingResult.data.needs.map(mapOutsourcingNeed),
     ...(detailingResult.data || [])
       .filter((card) => isActiveTransfer(card.status))
@@ -721,7 +816,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       .filter((card) => isActiveTransfer(card.status))
       .map(mapMaterialNeed),
     ...supplyResult.data.map(mapSupplyNeed),
-  ]
+  ]))
     .filter((need) => !activeLinkedNeeds.has(need.key))
     .sort((left, right) => {
       const leftDate = left.neededDate || '9999-12-31'

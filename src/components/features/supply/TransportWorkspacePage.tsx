@@ -9,6 +9,7 @@ import {
   useState,
   useTransition,
 } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import {
   ArrowRight,
@@ -23,6 +24,7 @@ import {
   ChevronRight,
   CircleAlert,
   Clock3,
+  ExternalLink,
   GripVertical,
   Layers3,
   Loader2,
@@ -455,7 +457,12 @@ function NeedDetailsDialog({
     ? need.itemDetails
     : need.itemLabels.map((label, index) => ({
         id: `${need.key}:${index}`,
+        productId: null,
+        productVersionId: null,
+        productHref: null,
+        drawingHref: null,
         title: label,
+        drawingLabel: null,
         description: null,
         quantityLabel: null,
       }))
@@ -558,7 +565,34 @@ function NeedDetailsDialog({
                       {index + 1}
                     </span>
                     <span className="min-w-0">
-                      <span className="block font-semibold text-slate-950">{item.title}</span>
+                      {item.productHref ? (
+                        <Link
+                          href={item.productHref}
+                          onClick={() => onOpenChange(false)}
+                          className="-mx-2 flex min-h-11 w-fit max-w-full items-center gap-1.5 rounded-lg px-2 font-semibold text-blue-800 underline decoration-blue-300 underline-offset-4 transition-colors hover:text-blue-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2"
+                        >
+                          <span className="truncate">{item.title}</span>
+                          <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
+                        </Link>
+                      ) : (
+                        <span className="block font-semibold text-slate-950">{item.title}</span>
+                      )}
+                      {item.drawingLabel && (
+                        item.drawingHref ? (
+                          <a
+                            href={item.drawingHref}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="-mx-2 -mt-1 flex min-h-11 w-fit items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-blue-800 underline decoration-blue-300 underline-offset-4 transition-colors hover:text-blue-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2"
+                            aria-label={`${item.drawingLabel}: открыть актуальный сборочный чертёж`}
+                          >
+                            {item.drawingLabel}
+                            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                          </a>
+                        ) : (
+                          <span className="mt-0.5 block text-xs leading-5 text-slate-500">{item.drawingLabel}</span>
+                        )
+                      )}
                       {item.description && <span className="mt-0.5 block text-xs leading-5 text-slate-500">{item.description}</span>}
                     </span>
                     {item.quantityLabel && (

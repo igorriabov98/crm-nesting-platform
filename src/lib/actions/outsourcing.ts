@@ -76,6 +76,8 @@ export type OutsourcingWorkType = {
 
 export type OutsourcingMachineItem = {
   id: string
+  product_id?: string | null
+  product_version_id?: string | null
   drawing_number: string
   product_name: string
   quantity: number
@@ -228,9 +230,13 @@ export type TransportWorkspaceNeed = MachineOutsourcingTransportNeed & {
   item_labels: string[]
   item_details: Array<{
     id: string
+    product_id: string | null
+    product_version_id: string | null
     product_name: string
     drawing_number: string | null
     quantity: number
+    weight: number
+    weight_unit: 'kg' | 'т'
   }>
 }
 
@@ -655,7 +661,7 @@ async function loadFactories(db: LooseDb) {
 async function loadMachineItems(db: LooseDb, machineId: string) {
   const { data, error } = await db
     .from('machine_items')
-    .select('id, drawing_number, product_name, quantity, weight, coating, ral_number, sort_order')
+    .select('id, product_id, product_version_id, drawing_number, product_name, quantity, weight, coating, ral_number, sort_order')
     .eq('machine_id', machineId)
     .order('sort_order', { ascending: true })
   if (error) throw new Error(error.message || 'Не удалось загрузить товары машины')
@@ -703,12 +709,12 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
     db.from('machine_outsourcing_transport_needs').select('*').in('operation_id', operationIds),
     db
       .from('machine_items')
-      .select('id, machine_id, drawing_number, product_name, quantity, weight, coating, ral_number, sort_order')
+      .select('id, machine_id, product_id, product_version_id, drawing_number, product_name, quantity, weight, coating, ral_number, sort_order')
       .in('machine_id', machineIds)
       .order('sort_order', { ascending: true }),
     db
       .from('machine_outsourcing_vrb_items')
-      .select('operation_id, id, drawing_number, product_name, requested_quantity, requested_weight_kg, sort_order')
+      .select('operation_id, id, source_machine_item_id, product_id, drawing_number, product_name, requested_quantity, requested_weight_kg, sort_order')
       .in('operation_id', operationIds),
   ])
 
@@ -736,14 +742,19 @@ async function hydrateOperations(db: LooseDb, rawOperations: Array<Record<string
   for (const item of (vrbItemsRes.data || []) as Array<{
     operation_id: string
     id: string
+    source_machine_item_id: string | null
+    product_id: string | null
     drawing_number: string
     product_name: string
     requested_quantity: number
     requested_weight_kg: number
     sort_order: number
   }>) {
+    const sourceItem = item.source_machine_item_id ? itemById.get(item.source_machine_item_id) : null
     const mapped: OutsourcingMachineItem = {
       id: item.id,
+      product_id: sourceItem?.product_id || item.product_id || null,
+      product_version_id: sourceItem?.product_version_id || null,
       drawing_number: item.drawing_number,
       product_name: item.product_name,
       quantity: Number(item.requested_quantity || 0),
@@ -1878,9 +1889,13 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
       item_labels: (operation?.items || []).map((item) => `${item.product_name} (${item.quantity} шт.)`),
       item_details: (operation?.items || []).map((item) => ({
         id: item.id,
+        product_id: item.product_id || null,
+        product_version_id: item.product_version_id || null,
         product_name: item.product_name,
         drawing_number: item.drawing_number || null,
         quantity: item.quantity,
+        weight: item.weight,
+        weight_unit: operation?.operation_kind === 'vrb_mesh' ? 'kg' : 'т',
       })),
     }]
   })
