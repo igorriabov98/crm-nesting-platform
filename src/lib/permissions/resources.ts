@@ -19,6 +19,7 @@ export type ResourceKey =
   | 'invoices'
   | 'finance_calendar'
   | 'supply_finance'
+  | 'complex_reports'
   | 'tasks'
   | 'department_requests'
   | 'production'
@@ -60,7 +61,7 @@ export type ResourceKey =
   | 'long_stock_layout_settings'
   | 'access_settings'
 
-export type SidebarSection = 'primary' | 'sales' | 'finance' | 'workflow' | 'technologist' | 'production' | 'supply' | 'inventory' | 'meetings' | 'tools' | 'settings'
+export type SidebarSection = 'primary' | 'sales' | 'finance' | 'reports' | 'workflow' | 'technologist' | 'production' | 'supply' | 'inventory' | 'meetings' | 'tools' | 'settings'
 
 export type SidebarIconKey =
   | 'dashboard'
@@ -72,6 +73,7 @@ export type SidebarIconKey =
   | 'contracts'
   | 'invoices'
   | 'finance'
+  | 'reports'
   | 'tasks'
   | 'materialRequests'
   | 'production'
@@ -315,6 +317,17 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: FINANCE_MANAGE_ROLES,
     routes: [{ path: ROUTES.SUPPLY_FINANCE, match: 'prefix', operation: 'view', priority: 90 }],
     sidebar: { section: 'finance', icon: 'finance', order: 30 },
+  },
+  {
+    key: 'complex_reports',
+    label: 'Комплексные отчёты',
+    description: 'Управленческие отчёты по отгрузкам, оплатам и логистике',
+    group: 'Отчёты',
+    defaultHref: ROUTES.REPORTS_COMPLEX,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.REPORTS_COMPLEX, match: 'prefix', operation: 'view', priority: 120 }],
+    sidebar: { section: 'reports', icon: 'reports', order: 10 },
   },
   {
     key: 'tasks',

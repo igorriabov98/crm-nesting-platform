@@ -32,6 +32,7 @@ import {
   Tags,
   Database,
   Mail,
+  FileBarChart,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -133,6 +134,7 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   contracts: FileText,
   invoices: Receipt,
   finance: Landmark,
+  reports: FileBarChart,
   tasks: ListChecks,
   materialRequests: FileText,
   production: FactoryIcon,
@@ -179,6 +181,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isSalesMenuOpen, setIsSalesMenuOpen] = useState(false)
   const [isFinanceMenuOpen, setIsFinanceMenuOpen] = useState(false)
+  const [isReportsMenuOpen, setIsReportsMenuOpen] = useState(false)
   const [isTechnologistMenuOpen, setIsTechnologistMenuOpen] = useState(false)
   const [isProductionMenuOpen, setIsProductionMenuOpen] = useState(false)
   const [isSupplyMenuOpen, setIsSupplyMenuOpen] = useState(false)
@@ -238,6 +241,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const primaryItems = sectionItems(user, permissions, 'primary')
   const salesItems = sectionItems(user, permissions, 'sales')
   const financeItems = sectionItems(user, permissions, 'finance')
+  const reportsItems = sectionItems(user, permissions, 'reports')
   const workflowItems = sectionItems(user, permissions, 'workflow')
   const requestMemberships = (user.department_memberships || []).map((membership) => ({
     departmentName: membership.department?.name || null,
@@ -316,6 +320,8 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const isSalesExpanded = !collapsed && (isSalesMenuOpen || isSalesActive)
   const isFinanceActive = financeItems.some(isActiveItem)
   const isFinanceExpanded = !collapsed && (isFinanceMenuOpen || isFinanceActive)
+  const isReportsActive = reportsItems.some(isActiveItem)
+  const isReportsExpanded = !collapsed && (isReportsMenuOpen || isReportsActive)
   const isTechnologistActive = technologistItems.some(isActiveItem)
   const isTechnologistExpanded = !collapsed && (isTechnologistMenuOpen || isTechnologistActive)
   const isProductionActive = productionItems.some(isActiveItem)
@@ -479,6 +485,16 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
           isExpanded: isFinanceExpanded,
           toggle: () => setIsFinanceMenuOpen((current) => !current),
           icon: Landmark,
+        })}
+
+        {renderMenu({
+          items: reportsItems,
+          label: 'Отчёты',
+          collapsedTitle: 'Отчёты',
+          isActive: isReportsActive,
+          isExpanded: isReportsExpanded,
+          toggle: () => setIsReportsMenuOpen((current) => !current),
+          icon: FileBarChart,
         })}
 
         {workflowItems.map((item) => renderNavItem(item))}

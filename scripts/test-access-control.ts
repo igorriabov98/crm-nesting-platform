@@ -6,6 +6,7 @@ import {
   getDefaultPermissionMap,
   getFullPermissionMap,
   getPermissionRequirementForPath,
+  getSidebarResources,
   hasPermission,
   type PermissionResource,
 } from '../src/lib/permissions/resources'
@@ -41,8 +42,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 54, 'Реестр должен содержать все 54 ресурса')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 54, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 55, 'Реестр должен содержать все 55 ресурсов')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 55, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -65,6 +66,16 @@ assert(!hasPermission(supplyManagerPermissions, 'product_production_drawings', '
 assert(hasPermission(engineerPermissions, 'products', 'view'), 'Инженер должен видеть карточки изделий')
 assert(!hasPermission(engineerPermissions, 'product_production_drawings', 'view'), 'products.view не должен раскрывать комплектные чертежи')
 assert(hasPermission(getFullPermissionMap(), 'product_production_drawings', 'manage'), 'CRM-администратор должен получать полный доступ')
+assert(!hasPermission(getDefaultPermissionMap('financial_director'), 'complex_reports', 'view'), 'Комплексные отчёты по умолчанию выдаются только через матрицу доступа')
+assert(!hasPermission(getDefaultPermissionMap('sales_manager'), 'complex_reports', 'view'), 'Роль не должна автоматически открывать комплексные отчёты')
+assert(hasPermission(getFullPermissionMap(), 'complex_reports', 'view'), 'CRM-администратор должен видеть комплексные отчёты')
+assert.equal(getSidebarResources('financial_director', getDefaultPermissionMap('financial_director'), 'reports').length, 0, 'Раздел отчётов должен быть скрыт без права')
+assert.equal(getSidebarResources('financial_director', getFullPermissionMap(), 'reports')[0]?.key, 'complex_reports', 'Раздел отчётов должен появляться с правом')
+assert.equal(
+  getPermissionRequirementForPath('/reports/complex')?.resourceKey,
+  'complex_reports',
+  'Маршрут комплексных отчётов должен использовать отдельное право',
+)
 const longStockLayoutSettings = PERMISSION_RESOURCES.find((resource) => resource.key === 'long_stock_layout_settings')
 assert(longStockLayoutSettings?.locked, 'Настройки раскладки хлыстов должны быть закрытым ресурсом администратора')
 assert(!hasPermission(technologistPermissions, 'long_stock_layout_settings', 'view'), 'Технолог не должен видеть настройки раскладки хлыстов')
@@ -192,6 +203,16 @@ const productionDrawingManage = resolveDepartmentPermissions(
 )
 assert(hasPermission(productionDrawingManage.permissions, 'product_production_drawings', 'view'), 'manage должен включать view')
 assert(hasPermission(productionDrawingManage.permissions, 'product_production_drawings', 'manage'))
+
+const complexReportOnly = resolveDepartmentPermissions(
+  [{ departmentId: 'finance', departmentName: 'Финансы', isDepartmentHead: false }],
+  [
+    { department_id: 'finance', subject_scope: 'member', resource_key: 'complex_reports', can_view: true, can_manage: false },
+    { department_id: 'finance', subject_scope: 'member', resource_key: 'invoices', can_view: false, can_manage: false },
+  ],
+)
+assert(hasPermission(complexReportOnly.permissions, 'complex_reports', 'view'), 'Матрица должна независимо открывать комплексные отчёты')
+assert(!hasPermission(complexReportOnly.permissions, 'invoices', 'view'), 'Доступ к отчёту не должен автоматически открывать инвойсы')
 
 const nestingRoutes = walk(join(root, 'src/app/api/nesting'), 'route.ts')
 assert(nestingRoutes.length > 0, 'Не найдены API-маршруты nesting')

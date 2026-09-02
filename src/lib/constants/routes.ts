@@ -35,6 +35,7 @@ export const ROUTES = {
   CLIENTS:        '/clients',
   CONTRACTS:      '/contracts',
   FINANCE_CALENDAR:'/finance/calendar',
+  REPORTS_COMPLEX: '/reports/complex',
   TASKS:          '/tasks',
   REQUESTS:       '/requests',
   TECHNOLOGIST_DEPARTMENT_REQUESTS: '/requests/technologist',
