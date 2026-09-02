@@ -226,6 +226,12 @@ export type TransportWorkspaceNeed = MachineOutsourcingTransportNeed & {
   destination_point_city: string | null
   destination_point_address: string | null
   item_labels: string[]
+  item_details: Array<{
+    id: string
+    product_name: string
+    drawing_number: string | null
+    quantity: number
+  }>
 }
 
 export type TransportWorkspaceOrder = MachineOutsourcingTransportOrder & {
@@ -1870,6 +1876,12 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
       destination_point_city: isOutbound ? executorCity || null : factory?.city || null,
       destination_point_address: isOutbound ? executorAddress || null : factory?.address || null,
       item_labels: (operation?.items || []).map((item) => `${item.product_name} (${item.quantity} шт.)`),
+      item_details: (operation?.items || []).map((item) => ({
+        id: item.id,
+        product_name: item.product_name,
+        drawing_number: item.drawing_number || null,
+        quantity: item.quantity,
+      })),
     }]
   })
 }
