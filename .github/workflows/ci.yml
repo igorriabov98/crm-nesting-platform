@@ -34,6 +34,8 @@ jobs:
         run: node --test scripts/prod-crm-smoke.test.mjs
       - name: Access control registry and policies
         run: npm run test:access-control
+      - name: Client UI localization
+        run: npm run test:client-ui-localization
       - name: Material search authorization and performance
         run: npm run test:material-search-performance
       - name: Product PDF and STEP upload rules
