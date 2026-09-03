@@ -27,6 +27,7 @@ import {
   invoiceDisplayStatus,
   todayDateOnly,
 } from '@/lib/invoices/payment-schedule'
+import { paymentTermsLabel } from '@/lib/payments/terms'
 import { useRole } from '@/lib/hooks/useRole'
 import type { Invoice, MachineDetails } from '@/lib/types'
 
@@ -186,11 +187,27 @@ export function InvoiceTab({ machine, canManage }: InvoiceTabProps) {
     prepaymentPercent: invoice.prepayment_percent_snapshot,
     finalPaymentDueDays: invoice.final_payment_due_days_snapshot,
     estimatedDeliveryDays: invoice.estimated_delivery_days_snapshot,
+    scheduledPaymentWeekdays: invoice.scheduled_payment_weekdays_snapshot,
+    scheduledPaymentMonthDays: invoice.scheduled_payment_month_days_snapshot,
+    scheduledPaymentAmountMode: invoice.scheduled_payment_amount_mode_snapshot,
+    scheduledPaymentMinimumAmount: invoice.scheduled_payment_minimum_amount_snapshot,
     deliveryToClientDate: machine.delivery_to_client_date,
     actualShippingDate: machine.actual_shipping_date,
     desiredShippingDate: machine.desired_shipping_date,
   })
   const status = invoiceDisplayStatus({ amount, paidAmount, schedule })
+  const overdueAmount = schedule.filter((part) => part.isOverdue).reduce((sum, part) => sum + part.remainingAmount, 0)
+  const nextPayment = schedule.find((part) => part.remainingAmount > 0) || null
+  const termsDescription = paymentTermsLabel({
+    type: invoice.payment_terms_type_snapshot || 'invoice_days',
+    days: invoice.payment_due_days_snapshot,
+    prepaymentPercent: invoice.prepayment_percent_snapshot,
+    finalDays: invoice.final_payment_due_days_snapshot,
+    scheduledWeekdays: invoice.scheduled_payment_weekdays_snapshot,
+    scheduledMonthDays: invoice.scheduled_payment_month_days_snapshot,
+    scheduledAmountMode: invoice.scheduled_payment_amount_mode_snapshot,
+    scheduledMinimumAmount: invoice.scheduled_payment_minimum_amount_snapshot,
+  })
 
   return (
     <>
@@ -217,18 +234,21 @@ export function InvoiceTab({ machine, canManage }: InvoiceTabProps) {
           </div>
         </div>
 
-        <div className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6 lg:grid-cols-4">
+        <div className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6 lg:grid-cols-3 xl:grid-cols-6">
           <div><p className="text-sm text-slate-500">Сумма</p><p className="mt-1 text-xl font-semibold text-slate-950">{currency.format(amount)}</p></div>
           <div><p className="text-sm text-slate-500">Дата выставления</p><p className="mt-1 font-medium text-slate-900">{formatDate(invoice.invoice_date)}</p></div>
           <div><p className="text-sm text-slate-500">Оплачено</p><p className="mt-1 font-medium text-slate-900">{currency.format(paidAmount)}</p></div>
           <div><p className="text-sm text-slate-500">Остаток</p><p className="mt-1 font-medium text-slate-900">{currency.format(Math.max(0, amount - paidAmount))}</p></div>
+          <div><p className="text-sm text-slate-500">Просрочено</p><p className={`mt-1 font-medium ${overdueAmount > 0 ? 'text-red-700' : 'text-slate-900'}`}>{currency.format(overdueAmount)}</p></div>
+          <div><p className="text-sm text-slate-500">Ближайшее обязательство</p><p className="mt-1 font-medium text-slate-900">{nextPayment?.dueDate ? `${formatDate(nextPayment.dueDate)} · ${currency.format(nextPayment.remainingAmount)}` : '—'}{nextPayment?.isForecast ? ' · прогноз' : ''}</p></div>
         </div>
 
         <div className="border-t border-slate-200 px-5 py-5 sm:px-6">
           <h4 className="flex items-center gap-2 font-medium text-slate-950"><CalendarDays className="h-4 w-4 text-blue-800" />Ожидаемые оплаты</h4>
+          <p className="mt-2 text-sm text-slate-600"><span className="font-medium text-slate-800">Условия: </span>{termsDescription}</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {schedule.map((part) => (
-              <div key={part.part} className="rounded-xl border border-slate-200 p-3">
+              <div key={part.key} className="rounded-xl border border-slate-200 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div><p className="font-medium text-slate-900">{part.label}</p><p className="mt-1 text-sm text-slate-600">{currency.format(part.remainingAmount)} осталось</p></div>
                   {part.isOverdue && <AlertTriangle className="h-4 w-4 shrink-0 text-red-700" aria-label="Просрочено" />}

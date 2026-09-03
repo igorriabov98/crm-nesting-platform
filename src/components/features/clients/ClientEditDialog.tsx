@@ -29,6 +29,10 @@ function paymentChanged(client: Client, values: ClientInput) {
     || Number(client.prepayment_percent || 0) !== Number(values.prepayment_percent || 0)
     || Number(client.final_payment_due_days || 0) !== Number(values.final_payment_due_days || 0)
     || Number(client.estimated_delivery_days ?? 7) !== Number(values.estimated_delivery_days ?? 7)
+    || JSON.stringify(client.scheduled_payment_weekdays || []) !== JSON.stringify(values.scheduled_payment_weekdays || [])
+    || JSON.stringify(client.scheduled_payment_month_days || []) !== JSON.stringify(values.scheduled_payment_month_days || [])
+    || client.scheduled_payment_amount_mode !== values.scheduled_payment_amount_mode
+    || Number(client.scheduled_payment_minimum_amount || 0) !== Number(values.scheduled_payment_minimum_amount || 0)
 }
 
 export function ClientEditDialog({ client, open, onOpenChange, canManageInvoices = false }: ClientEditDialogProps) {
@@ -67,6 +71,10 @@ export function ClientEditDialog({ client, open, onOpenChange, canManageInvoices
       final_payment_due_days: client.final_payment_due_days ?? 0,
       responsible_user_id: client.responsible_user_id,
       estimated_delivery_days: client.estimated_delivery_days ?? 7,
+      scheduled_payment_weekdays: client.scheduled_payment_weekdays || [],
+      scheduled_payment_month_days: client.scheduled_payment_month_days || [],
+      scheduled_payment_amount_mode: client.scheduled_payment_amount_mode || 'full_balance',
+      scheduled_payment_minimum_amount: client.scheduled_payment_minimum_amount,
     },
   })
 
@@ -141,7 +149,16 @@ export function ClientEditDialog({ client, open, onOpenChange, canManageInvoices
               Будущие инвойсы уже получат новые условия. Ниже можно явно выбрать существующие неоплаченные инвойсы для пересчёта графика; по умолчанию ничего не выбрано.
             </p>
             <div className="rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-3 text-sm text-[#1B3A6B]">
-              {paymentTermsLabel(form.getValues('payment_terms_type'), form.getValues('payment_due_days'), form.getValues('prepayment_percent'), form.getValues('final_payment_due_days'))}
+              {paymentTermsLabel({
+                type: form.getValues('payment_terms_type'),
+                days: form.getValues('payment_due_days'),
+                prepaymentPercent: form.getValues('prepayment_percent'),
+                finalDays: form.getValues('final_payment_due_days'),
+                scheduledWeekdays: form.getValues('scheduled_payment_weekdays'),
+                scheduledMonthDays: form.getValues('scheduled_payment_month_days'),
+                scheduledAmountMode: form.getValues('scheduled_payment_amount_mode'),
+                scheduledMinimumAmount: form.getValues('scheduled_payment_minimum_amount'),
+              })}
             </div>
             <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-[#E8ECF0] p-3">
               {eligibleInvoices.map(({ machine, invoice }) => {

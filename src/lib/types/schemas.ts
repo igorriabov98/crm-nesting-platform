@@ -233,7 +233,8 @@ export const promoteProductVersionSchema = z.object({
   status: productStatusSchema.default('active'),
 })
 
-export const paymentTermsTypeSchema = z.enum(['invoice_days', 'delivery_days', 'prepayment_full'])
+export const paymentTermsTypeSchema = z.enum(['invoice_days', 'delivery_days', 'prepayment_full', 'scheduled_after_delivery'])
+export const scheduledPaymentAmountModeSchema = z.enum(['full_balance', 'fixed_amount'])
 
 export const clientSchema = z.object({
   name: z.string().min(1, 'Введите название клиента'),
@@ -252,6 +253,31 @@ export const clientSchema = z.object({
   final_payment_due_days: z.coerce.number().int().min(0).optional().nullable(),
   responsible_user_id: z.string().uuid('Выберите ответственного менеджера').optional().nullable(),
   estimated_delivery_days: z.coerce.number().int().min(0, 'Норматив доставки не может быть отрицательным').max(365, 'Норматив доставки не может быть больше 365 дней').default(7),
+  scheduled_payment_weekdays: z.array(z.coerce.number().int().min(1).max(7)).default([]),
+  scheduled_payment_month_days: z.array(z.coerce.number().int().min(1).max(31)).default([]),
+  scheduled_payment_amount_mode: scheduledPaymentAmountModeSchema.default('full_balance'),
+  scheduled_payment_minimum_amount: z.coerce.number()
+    .positive('Минимальная сумма должна быть больше нуля')
+    .multipleOf(0.01, 'Укажите сумму с точностью до центов')
+    .max(999999999999.99, 'Слишком большая сумма')
+    .optional()
+    .nullable(),
+}).superRefine((value, context) => {
+  if (value.payment_terms_type !== 'scheduled_after_delivery') return
+  if (value.scheduled_payment_weekdays.length + value.scheduled_payment_month_days.length === 0) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Выберите хотя бы один день недели или число месяца',
+      path: ['scheduled_payment_weekdays'],
+    })
+  }
+  if (value.scheduled_payment_amount_mode === 'fixed_amount' && !value.scheduled_payment_minimum_amount) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Укажите минимальную сумму оплаты',
+      path: ['scheduled_payment_minimum_amount'],
+    })
+  }
 })
 
 export const clientContactSchema = z.object({

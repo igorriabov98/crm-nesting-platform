@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { format } from 'date-fns'
 import { Building2 } from 'lucide-react'
 import { ROUTES } from '@/lib/constants/routes'
-import { paymentTermsLabel } from './ClientFormFields'
+import { paymentTermsLabel } from '@/lib/payments/terms'
 
 export type ClientListRow = {
   id: string
@@ -17,6 +17,10 @@ export type ClientListRow = {
   payment_due_days: number
   prepayment_percent: number | null
   final_payment_due_days: number | null
+  scheduled_payment_weekdays: number[]
+  scheduled_payment_month_days: number[]
+  scheduled_payment_amount_mode: string
+  scheduled_payment_minimum_amount: number | null
   active_machines_count: number
   current_invoice_amount: number | null
   overdue_invoice_amount: number | null
@@ -61,7 +65,16 @@ export function ClientList({ clients, resultLimit }: { clients: ClientListRow[];
                     {client.name}
                   </Link>
                   <div className="mt-1 text-xs text-[#9CA3AF]">
-                    {client.country_city || 'Локация не указана'} · {paymentTermsLabel(client.payment_terms_type, client.payment_due_days, client.prepayment_percent, client.final_payment_due_days)}
+                    {client.country_city || 'Локация не указана'} · {paymentTermsLabel({
+                      type: client.payment_terms_type,
+                      days: client.payment_due_days,
+                      prepaymentPercent: client.prepayment_percent,
+                      finalDays: client.final_payment_due_days,
+                      scheduledWeekdays: client.scheduled_payment_weekdays,
+                      scheduledMonthDays: client.scheduled_payment_month_days,
+                      scheduledAmountMode: client.scheduled_payment_amount_mode,
+                      scheduledMinimumAmount: client.scheduled_payment_minimum_amount,
+                    })}
                   </div>
                 </td>
                 <td className="px-4 py-3 text-[#374151]">

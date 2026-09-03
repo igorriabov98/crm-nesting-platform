@@ -66,6 +66,10 @@ type MachineInvoiceSource = {
     prepayment_percent: number | null
     final_payment_due_days: number | null
     estimated_delivery_days: number
+    scheduled_payment_weekdays: number[]
+    scheduled_payment_month_days: number[]
+    scheduled_payment_amount_mode: Database['public']['Enums']['scheduled_payment_amount_mode']
+    scheduled_payment_minimum_amount: number | null
   } | null
 }
 
@@ -94,6 +98,10 @@ type RecalculationInvoiceRow = {
   prepayment_percent_snapshot: number | null
   final_payment_due_days_snapshot: number | null
   estimated_delivery_days_snapshot: number | null
+  scheduled_payment_weekdays_snapshot: number[]
+  scheduled_payment_month_days_snapshot: number[]
+  scheduled_payment_amount_mode_snapshot: Database['public']['Enums']['scheduled_payment_amount_mode']
+  scheduled_payment_minimum_amount_snapshot: number | null
   machine: RecalculationMachineRow | RecalculationMachineRow[] | null
 }
 
@@ -153,7 +161,9 @@ export async function issueMachineInvoice(input: InvoiceIssueInput) {
         actual_shipping_date, desired_shipping_date, delivery_to_client_date,
         client:clients(
           id, payment_terms_type, payment_due_days, prepayment_percent,
-          final_payment_due_days, estimated_delivery_days
+          final_payment_due_days, estimated_delivery_days,
+          scheduled_payment_weekdays, scheduled_payment_month_days,
+          scheduled_payment_amount_mode, scheduled_payment_minimum_amount
         )
       `)
       .eq('id', parsed.machineId)
@@ -200,6 +210,10 @@ export async function issueMachineInvoice(input: InvoiceIssueInput) {
       prepaymentPercent: machine.client.prepayment_percent,
       finalPaymentDueDays: machine.client.final_payment_due_days,
       estimatedDeliveryDays: machine.client.estimated_delivery_days,
+      scheduledPaymentWeekdays: machine.client.scheduled_payment_weekdays,
+      scheduledPaymentMonthDays: machine.client.scheduled_payment_month_days,
+      scheduledPaymentAmountMode: machine.client.scheduled_payment_amount_mode,
+      scheduledPaymentMinimumAmount: machine.client.scheduled_payment_minimum_amount,
       deliveryToClientDate: machine.delivery_to_client_date,
       actualShippingDate: machine.actual_shipping_date,
       desiredShippingDate: machine.desired_shipping_date,
@@ -231,6 +245,13 @@ export async function issueMachineInvoice(input: InvoiceIssueInput) {
           ? machine.client.final_payment_due_days ?? machine.client.payment_due_days
           : null,
         estimated_delivery_days_snapshot: machine.client.estimated_delivery_days,
+        scheduled_payment_weekdays_snapshot: machine.client.scheduled_payment_weekdays,
+        scheduled_payment_month_days_snapshot: machine.client.scheduled_payment_month_days,
+        scheduled_payment_amount_mode_snapshot: machine.client.scheduled_payment_amount_mode,
+        scheduled_payment_minimum_amount_snapshot: machine.client.payment_terms_type === 'scheduled_after_delivery'
+          && machine.client.scheduled_payment_amount_mode === 'fixed_amount'
+          ? machine.client.scheduled_payment_minimum_amount
+          : null,
         document_snapshot: snapshot as unknown as Database['public']['Tables']['invoices']['Insert']['document_snapshot'],
       })
       .select('id, invoice_number')
@@ -334,7 +355,7 @@ export async function recalculateSelectedInvoiceTerms(clientId: string, invoiceI
     const admin = trustedDb(createAdminClient())
     const { data: clientData, error: clientError } = await admin
       .from('clients')
-      .select('id, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, estimated_delivery_days')
+      .select('id, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, estimated_delivery_days, scheduled_payment_weekdays, scheduled_payment_month_days, scheduled_payment_amount_mode, scheduled_payment_minimum_amount')
       .eq('id', parsed.clientId)
       .single()
     if (clientError || !clientData) throw new Error('Компания не найдена')
@@ -344,6 +365,10 @@ export async function recalculateSelectedInvoiceTerms(clientId: string, invoiceI
       prepayment_percent: number | null
       final_payment_due_days: number | null
       estimated_delivery_days: number
+      scheduled_payment_weekdays: number[]
+      scheduled_payment_month_days: number[]
+      scheduled_payment_amount_mode: Database['public']['Enums']['scheduled_payment_amount_mode']
+      scheduled_payment_minimum_amount: number | null
     }
     const { data: invoiceData, error: invoiceError } = await admin
       .from('invoices')
@@ -351,7 +376,9 @@ export async function recalculateSelectedInvoiceTerms(clientId: string, invoiceI
         id, amount, paid_amount, invoice_date, status,
         payment_terms_type_snapshot, payment_due_days_snapshot,
         prepayment_percent_snapshot, final_payment_due_days_snapshot,
-        estimated_delivery_days_snapshot,
+        estimated_delivery_days_snapshot, scheduled_payment_weekdays_snapshot,
+        scheduled_payment_month_days_snapshot, scheduled_payment_amount_mode_snapshot,
+        scheduled_payment_minimum_amount_snapshot,
         machine:machines!inner(id, client_id, actual_shipping_date, desired_shipping_date, delivery_to_client_date)
       `)
       .in('id', parsed.invoiceIds)
@@ -369,6 +396,10 @@ export async function recalculateSelectedInvoiceTerms(clientId: string, invoiceI
         prepaymentPercent: invoice.prepayment_percent_snapshot,
         finalPaymentDueDays: invoice.final_payment_due_days_snapshot,
         estimatedDeliveryDays: invoice.estimated_delivery_days_snapshot,
+        scheduledPaymentWeekdays: invoice.scheduled_payment_weekdays_snapshot,
+        scheduledPaymentMonthDays: invoice.scheduled_payment_month_days_snapshot,
+        scheduledPaymentAmountMode: invoice.scheduled_payment_amount_mode_snapshot,
+        scheduledPaymentMinimumAmount: invoice.scheduled_payment_minimum_amount_snapshot,
       }
       const newTerms = {
         paymentTermsType: client.payment_terms_type,
@@ -376,6 +407,13 @@ export async function recalculateSelectedInvoiceTerms(clientId: string, invoiceI
         prepaymentPercent: client.payment_terms_type === 'prepayment_full' ? client.prepayment_percent ?? 50 : null,
         finalPaymentDueDays: client.payment_terms_type === 'prepayment_full' ? client.final_payment_due_days ?? client.payment_due_days : null,
         estimatedDeliveryDays: client.estimated_delivery_days,
+        scheduledPaymentWeekdays: client.scheduled_payment_weekdays,
+        scheduledPaymentMonthDays: client.scheduled_payment_month_days,
+        scheduledPaymentAmountMode: client.scheduled_payment_amount_mode,
+        scheduledPaymentMinimumAmount: client.payment_terms_type === 'scheduled_after_delivery'
+          && client.scheduled_payment_amount_mode === 'fixed_amount'
+          ? client.scheduled_payment_minimum_amount
+          : null,
       }
       const schedule = buildInvoicePaymentSchedule({
         amount: Number(invoice.amount || 0),
@@ -396,6 +434,10 @@ export async function recalculateSelectedInvoiceTerms(clientId: string, invoiceI
           prepayment_percent_snapshot: newTerms.prepaymentPercent,
           final_payment_due_days_snapshot: newTerms.finalPaymentDueDays,
           estimated_delivery_days_snapshot: newTerms.estimatedDeliveryDays,
+          scheduled_payment_weekdays_snapshot: newTerms.scheduledPaymentWeekdays,
+          scheduled_payment_month_days_snapshot: newTerms.scheduledPaymentMonthDays,
+          scheduled_payment_amount_mode_snapshot: newTerms.scheduledPaymentAmountMode,
+          scheduled_payment_minimum_amount_snapshot: newTerms.scheduledPaymentMinimumAmount,
           payment_date: exactDueDate,
           due_date: exactDueDate,
           original_planned_date: exactDueDate,

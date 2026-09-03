@@ -17,7 +17,7 @@ import type { CurrentUser, UserRole } from '@/lib/types'
 type FinanceEventType = 'income' | 'expense'
 type FinanceExpenseStatus = 'planned' | 'partially_paid' | 'paid' | 'overdue' | 'rejected'
 type FinanceRecurrenceFrequency = 'weekly' | 'monthly' | 'quarterly'
-type FinancePaymentPart = 'full' | 'prepayment' | 'final'
+type FinancePaymentPart = string
 type FinanceCurrency = 'UAH' | 'EUR'
 
 export type FinanceCalendarFilters = {
@@ -99,6 +99,10 @@ type FinanceInvoiceRow = {
   prepayment_percent_snapshot: number | null
   final_payment_due_days_snapshot: number | null
   estimated_delivery_days_snapshot: number | null
+  scheduled_payment_weekdays_snapshot: number[]
+  scheduled_payment_month_days_snapshot: number[]
+  scheduled_payment_amount_mode_snapshot: string
+  scheduled_payment_minimum_amount_snapshot: number | null
   machine: Relation<{
     id: string
     name: string
@@ -339,9 +343,15 @@ function buildInvoiceFinanceEvents(invoice: FinanceInvoiceRow, range: { start: s
     prepaymentPercent: invoice.prepayment_percent_snapshot,
     finalPaymentDueDays: invoice.final_payment_due_days_snapshot,
     estimatedDeliveryDays: invoice.estimated_delivery_days_snapshot,
+    scheduledPaymentWeekdays: invoice.scheduled_payment_weekdays_snapshot,
+    scheduledPaymentMonthDays: invoice.scheduled_payment_month_days_snapshot,
+    scheduledPaymentAmountMode: invoice.scheduled_payment_amount_mode_snapshot,
+    scheduledPaymentMinimumAmount: invoice.scheduled_payment_minimum_amount_snapshot,
     deliveryToClientDate: machine?.delivery_to_client_date,
     actualShippingDate: machine?.actual_shipping_date,
     desiredShippingDate: machine?.desired_shipping_date,
+    scheduleRangeStart: format(addDays(parseISO(range.start), -3), 'yyyy-MM-dd'),
+    scheduleRangeEnd: range.end,
   })
 
   return schedule.flatMap((part): FinanceEvent[] => {
@@ -363,7 +373,13 @@ function buildInvoiceFinanceEvents(invoice: FinanceInvoiceRow, range: { start: s
       id: invoice.id,
       seriesId: null,
       type: 'income',
-      title: part.part === 'prepayment' ? `${baseTitle} (предоплата)` : part.part === 'final' ? `${baseTitle} (остаток)` : baseTitle,
+      title: part.part === 'prepayment'
+        ? `${baseTitle} (предоплата)`
+        : part.part === 'final'
+          ? `${baseTitle} (остаток)`
+          : part.part === 'scheduled' && part.sequence
+            ? `${baseTitle} (платёж №${part.sequence})`
+            : baseTitle,
       amount: part.amount,
       amountUah,
       paidAmount: part.paidAmount,
@@ -388,7 +404,7 @@ function buildInvoiceFinanceEvents(invoice: FinanceInvoiceRow, range: { start: s
       bankProcessingStartDate: paymentDates.bankProcessingStartDate,
       bankProcessingEndDate: paymentDates.bankProcessingEndDate,
       cashArrivalDate: paymentDates.cashArrivalDate,
-      paymentPart: part.part,
+      paymentPart: part.key,
       isForecast: part.isForecast,
       comment: invoice.finance_comment || invoice.payment_note,
       sourceHref: invoice.machine_id ? `${ROUTES.SALES_PLAN}/${invoice.machine_id}` : ROUTES.INVOICES,
@@ -430,6 +446,10 @@ export async function getFinanceCalendarData(
         prepayment_percent_snapshot,
         final_payment_due_days_snapshot,
         estimated_delivery_days_snapshot,
+        scheduled_payment_weekdays_snapshot,
+        scheduled_payment_month_days_snapshot,
+        scheduled_payment_amount_mode_snapshot,
+        scheduled_payment_minimum_amount_snapshot,
         machine:machines(
           id,
           name,

@@ -40,6 +40,10 @@ export function ClientCreateDialog({ open, onOpenChange, onCreated }: ClientCrea
       final_payment_due_days: 0,
       responsible_user_id: null,
       estimated_delivery_days: 7,
+      scheduled_payment_weekdays: [],
+      scheduled_payment_month_days: [],
+      scheduled_payment_amount_mode: 'full_balance',
+      scheduled_payment_minimum_amount: null,
     },
   })
 

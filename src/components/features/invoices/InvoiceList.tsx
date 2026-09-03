@@ -83,11 +83,15 @@ export function InvoiceList({ data, resultLimit }: { data: InvoiceRegistryData; 
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <SummaryCard label="Выставлено" value={money.format(data.summary.issuedAmount)} />
         <SummaryCard label="Оплачено" value={money.format(data.summary.paidAmount)} />
         <SummaryCard label="Остаток" value={money.format(data.summary.debtAmount)} />
         <SummaryCard label="Просрочено" value={money.format(data.summary.overdueDebtAmount)} danger />
+        <SummaryCard
+          label="Ближайшее обязательство"
+          value={data.summary.nearestPaymentDate ? `${date(data.summary.nearestPaymentDate)} · ${money.format(data.summary.nearestPaymentAmount)}${data.summary.nearestPaymentIsForecast ? ' · прогноз' : ''}` : '—'}
+        />
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm" aria-labelledby="invoice-filters-title">
@@ -135,6 +139,10 @@ export function InvoiceList({ data, resultLimit }: { data: InvoiceRegistryData; 
                     <Value label="Сумма" value={money.format(invoice.amount)} />
                     <Value label="Оплачено" value={money.format(invoice.paidAmount)} />
                     <Value label="Ответственный" value={invoice.responsibleName || 'не назначен'} />
+                  </div>
+                  <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/50 p-3 text-sm text-slate-700">
+                    <span className="font-medium text-blue-950">Условия инвойса: </span>
+                    {invoice.paymentTermsDescription}
                   </div>
                   <div className="mt-5 flex flex-col gap-2 sm:flex-row">
                     <Button type="button" variant="outline" onClick={() => void downloadPdf(invoice)} disabled={downloadingId === invoice.id}>{downloadingId === invoice.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}PDF</Button>

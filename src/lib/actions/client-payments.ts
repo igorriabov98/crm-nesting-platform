@@ -12,6 +12,7 @@ import {
   invoiceDisplayStatus,
   nextPaymentSchedulePart,
 } from '@/lib/invoices/payment-schedule'
+import { paymentTermsLabel } from '@/lib/payments/terms'
 import type {
   ClientPaymentDetails,
   ClientPaymentsInvoice,
@@ -32,6 +33,10 @@ type ClientRow = {
   prepayment_percent: number | null
   final_payment_due_days: number | null
   estimated_delivery_days: number
+  scheduled_payment_weekdays: number[]
+  scheduled_payment_month_days: number[]
+  scheduled_payment_amount_mode: string
+  scheduled_payment_minimum_amount: number | null
 }
 
 type MachineRow = {
@@ -58,6 +63,10 @@ type InvoiceRow = {
   prepayment_percent_snapshot: number | null
   final_payment_due_days_snapshot: number | null
   estimated_delivery_days_snapshot: number | null
+  scheduled_payment_weekdays_snapshot: number[]
+  scheduled_payment_month_days_snapshot: number[]
+  scheduled_payment_amount_mode_snapshot: string
+  scheduled_payment_minimum_amount_snapshot: number | null
   cancelled_at: string | null
   cancellation_reason: string | null
 }
@@ -87,6 +96,7 @@ const emptySummary = (): ClientPaymentsSummary => ({
   invoiceCount: 0,
   overdueInvoiceCount: 0,
   nearestPaymentDate: null,
+  nearestPaymentAmount: 0,
   nearestPaymentIsForecast: false,
 })
 
@@ -103,14 +113,20 @@ function addInvoiceToSummary(summary: ClientPaymentsSummary, invoice: ClientPaym
       .reduce((total, part) => total + part.remainingAmount, 0)
   }
   const nextPart = nextPaymentSchedulePart(invoice.schedule)
-  if (nextPart?.dueDate && (!summary.nearestPaymentDate || nextPart.dueDate < summary.nearestPaymentDate)) {
-    summary.nearestPaymentDate = nextPart.dueDate
-    summary.nearestPaymentIsForecast = nextPart.isForecast
+  if (nextPart?.dueDate) {
+    if (!summary.nearestPaymentDate || nextPart.dueDate < summary.nearestPaymentDate) {
+      summary.nearestPaymentDate = nextPart.dueDate
+      summary.nearestPaymentAmount = nextPart.remainingAmount
+      summary.nearestPaymentIsForecast = nextPart.isForecast
+    } else if (nextPart.dueDate === summary.nearestPaymentDate) {
+      summary.nearestPaymentAmount += nextPart.remainingAmount
+      summary.nearestPaymentIsForecast = summary.nearestPaymentIsForecast && nextPart.isForecast
+    }
   }
 }
 
 function finishSummary(summary: ClientPaymentsSummary) {
-  for (const key of ['issuedAmount', 'paidAmount', 'debtAmount', 'overdueDebtAmount'] as const) {
+  for (const key of ['issuedAmount', 'paidAmount', 'debtAmount', 'overdueDebtAmount', 'nearestPaymentAmount'] as const) {
     summary[key] = Math.round((summary[key] + Number.EPSILON) * 100) / 100
   }
   return summary
@@ -135,6 +151,10 @@ function mapInvoices(
       prepaymentPercent: invoice.prepayment_percent_snapshot,
       finalPaymentDueDays: invoice.final_payment_due_days_snapshot,
       estimatedDeliveryDays: invoice.estimated_delivery_days_snapshot,
+      scheduledPaymentWeekdays: invoice.scheduled_payment_weekdays_snapshot,
+      scheduledPaymentMonthDays: invoice.scheduled_payment_month_days_snapshot,
+      scheduledPaymentAmountMode: invoice.scheduled_payment_amount_mode_snapshot,
+      scheduledPaymentMinimumAmount: invoice.scheduled_payment_minimum_amount_snapshot,
       deliveryToClientDate: machine?.delivery_to_client_date,
       actualShippingDate: machine?.actual_shipping_date,
       desiredShippingDate: machine?.desired_shipping_date,
@@ -149,6 +169,16 @@ function mapInvoices(
       paidAmount,
       remainingAmount: Math.max(0, amount - paidAmount),
       invoiceDate: invoice.invoice_date,
+      paymentTermsDescription: paymentTermsLabel({
+        type: invoice.payment_terms_type_snapshot || 'invoice_days',
+        days: invoice.payment_due_days_snapshot,
+        prepaymentPercent: invoice.prepayment_percent_snapshot,
+        finalDays: invoice.final_payment_due_days_snapshot,
+        scheduledWeekdays: invoice.scheduled_payment_weekdays_snapshot,
+        scheduledMonthDays: invoice.scheduled_payment_month_days_snapshot,
+        scheduledAmountMode: invoice.scheduled_payment_amount_mode_snapshot,
+        scheduledMinimumAmount: invoice.scheduled_payment_minimum_amount_snapshot,
+      }),
       status: invoiceDisplayStatus({ amount, paidAmount, cancelled: isCancelled, schedule }),
       isCancelled,
       cancelledAt: invoice.cancelled_at,
@@ -190,7 +220,7 @@ async function loadBase(resourceKey: CompanyScopedResource) {
   const db = trustedDb(createAdminClient())
   let clientQuery = db
     .from('clients')
-    .select('id, name, responsible_user_id, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, estimated_delivery_days')
+    .select('id, name, responsible_user_id, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, estimated_delivery_days, scheduled_payment_weekdays, scheduled_payment_month_days, scheduled_payment_amount_mode, scheduled_payment_minimum_amount')
     .order('name')
   if (context.companyScope === 'own') clientQuery = clientQuery.eq('responsible_user_id', context.userId)
   const { data: clientData, error: clientError } = await clientQuery
@@ -210,7 +240,7 @@ async function loadBase(resourceKey: CompanyScopedResource) {
 
   const { data: invoiceData, error: invoiceError } = await db
     .from('invoices')
-    .select('id, machine_id, invoice_number, invoice_revision, amount, paid_amount, invoice_date, status, actual_paid_date, payment_terms_type_snapshot, payment_due_days_snapshot, prepayment_percent_snapshot, final_payment_due_days_snapshot, estimated_delivery_days_snapshot, cancelled_at, cancellation_reason')
+    .select('id, machine_id, invoice_number, invoice_revision, amount, paid_amount, invoice_date, status, actual_paid_date, payment_terms_type_snapshot, payment_due_days_snapshot, prepayment_percent_snapshot, final_payment_due_days_snapshot, estimated_delivery_days_snapshot, scheduled_payment_weekdays_snapshot, scheduled_payment_month_days_snapshot, scheduled_payment_amount_mode_snapshot, scheduled_payment_minimum_amount_snapshot, cancelled_at, cancellation_reason')
     .in('machine_id', machineIds)
   if (invoiceError) throw new Error(invoiceError.message)
   return { context, db, clients, machines, invoices: (invoiceData || []) as InvoiceRow[] }
@@ -262,9 +292,15 @@ export const getPaymentCompanies = cache(async (): Promise<PaymentCompaniesData>
     summary.overdueDebtAmount += company.overdueDebtAmount
     summary.invoiceCount += company.invoiceCount
     summary.overdueInvoiceCount += company.overdueInvoiceCount
-    if (company.nearestPaymentDate && (!summary.nearestPaymentDate || company.nearestPaymentDate < summary.nearestPaymentDate)) {
-      summary.nearestPaymentDate = company.nearestPaymentDate
-      summary.nearestPaymentIsForecast = company.nearestPaymentIsForecast
+    if (company.nearestPaymentDate) {
+      if (!summary.nearestPaymentDate || company.nearestPaymentDate < summary.nearestPaymentDate) {
+        summary.nearestPaymentDate = company.nearestPaymentDate
+        summary.nearestPaymentAmount = company.nearestPaymentAmount
+        summary.nearestPaymentIsForecast = company.nearestPaymentIsForecast
+      } else if (company.nearestPaymentDate === summary.nearestPaymentDate) {
+        summary.nearestPaymentAmount += company.nearestPaymentAmount
+        summary.nearestPaymentIsForecast = summary.nearestPaymentIsForecast && company.nearestPaymentIsForecast
+      }
     }
   }
   return {
@@ -325,7 +361,7 @@ export async function getClientPaymentDetails(
   const db = trustedDb(createAdminClient())
   const { data: clientData, error: clientError } = await db
     .from('clients')
-    .select('id, name, responsible_user_id, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, estimated_delivery_days')
+    .select('id, name, responsible_user_id, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, estimated_delivery_days, scheduled_payment_weekdays, scheduled_payment_month_days, scheduled_payment_amount_mode, scheduled_payment_minimum_amount')
     .eq('id', clientId)
     .single()
   if (clientError || !clientData) throw new Error('Компания не найдена')
@@ -340,7 +376,7 @@ export async function getClientPaymentDetails(
   const { data: invoiceData, error: invoiceError } = machineIds.length
     ? await db
         .from('invoices')
-        .select('id, machine_id, invoice_number, invoice_revision, amount, paid_amount, invoice_date, status, actual_paid_date, payment_terms_type_snapshot, payment_due_days_snapshot, prepayment_percent_snapshot, final_payment_due_days_snapshot, estimated_delivery_days_snapshot, cancelled_at, cancellation_reason')
+        .select('id, machine_id, invoice_number, invoice_revision, amount, paid_amount, invoice_date, status, actual_paid_date, payment_terms_type_snapshot, payment_due_days_snapshot, prepayment_percent_snapshot, final_payment_due_days_snapshot, estimated_delivery_days_snapshot, scheduled_payment_weekdays_snapshot, scheduled_payment_month_days_snapshot, scheduled_payment_amount_mode_snapshot, scheduled_payment_minimum_amount_snapshot, cancelled_at, cancellation_reason')
         .in('machine_id', machineIds)
     : { data: [], error: null }
   if (invoiceError) throw new Error(invoiceError.message)
@@ -379,6 +415,10 @@ export async function getClientPaymentDetails(
       prepaymentPercent: client.prepayment_percent,
       finalPaymentDueDays: client.final_payment_due_days,
       estimatedDeliveryDays: client.estimated_delivery_days,
+      scheduledPaymentWeekdays: client.scheduled_payment_weekdays,
+      scheduledPaymentMonthDays: client.scheduled_payment_month_days,
+      scheduledPaymentAmountMode: client.scheduled_payment_amount_mode,
+      scheduledPaymentMinimumAmount: client.scheduled_payment_minimum_amount,
     },
     invoices: mappedInvoices,
     summary: finishSummary(summary),

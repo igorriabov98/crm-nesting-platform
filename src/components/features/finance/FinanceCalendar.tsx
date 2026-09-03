@@ -462,7 +462,7 @@ export function FinanceCalendar({ data, mode = 'general' }: { data: FinanceCalen
           </div>
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {attentionEvents.slice(0, 9).map((event) => (
-              <div key={`${event.type}-${event.id}`} className="rounded-md border border-red-100 bg-white px-3 py-2 text-sm">
+              <div key={eventActionKey(event)} className="rounded-md border border-red-100 bg-white px-3 py-2 text-sm">
                 <div className="font-medium text-[#1B3A6B]">{event.title}</div>
                 <div className="text-[#6B7280]">{dateLabel(eventTimelineDate(event))} · {formatUah(event.remainingAmountUah)}</div>
               </div>
