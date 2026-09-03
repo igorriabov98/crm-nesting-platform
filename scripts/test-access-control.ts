@@ -23,6 +23,15 @@ import {
 
 const root = process.cwd()
 
+const accessSettingsSource = readFileSync(
+  join(root, 'src/components/features/settings/RolePermissionsPage.tsx'),
+  'utf8',
+)
+assert(
+  /timeZone: 'Europe\/Uzhgorod'/u.test(accessSettingsSource),
+  'Даты аудита прав должны форматироваться в фиксированной зоне CRM без hydration mismatch',
+)
+
 function walk(directory: string, fileName: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name)
