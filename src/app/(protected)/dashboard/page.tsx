@@ -312,7 +312,13 @@ async function getMonthlyDirectorTonnage(factoryFilter: string | null, role: str
   }
 }
 
-async function getDashboardData(factoryFilter: string | null, role: string, userId: string, showInvoices: boolean) {
+async function getDashboardData(
+  factoryFilter: string | null,
+  role: string,
+  userId: string,
+  showInvoices: boolean,
+  invoiceCompanyScope: 'own' | 'all',
+) {
   const supabase = await createServerSupabaseClient()
 
   // Supabase query builders carry table-specific generic constraints that are not useful here.
@@ -331,6 +337,16 @@ async function getDashboardData(factoryFilter: string | null, role: string, user
   }
 
   const today = new Date().toISOString()
+  let overdueInvoicesQuery = supabase
+    .from('invoices')
+    .select('id, machines!inner(id, clients!inner(responsible_user_id))', { count: 'exact', head: true })
+    .eq('machines.is_archived', false)
+    .neq('status', 'paid')
+    .neq('status', 'cancelled')
+    .lt('payment_date', today)
+  if (invoiceCompanyScope === 'own') {
+    overdueInvoicesQuery = overdueInvoicesQuery.eq('machines.clients.responsible_user_id', userId)
+  }
   const [
     salesPlanRes,
     overdueProductionRes,
@@ -357,12 +373,7 @@ async function getDashboardData(factoryFilter: string | null, role: string, user
         .in('status', ['not_ordered', 'ordered'])
     ),
     showInvoices
-      ? applyFactoryFilter(
-          supabase.from('invoices').select('id, machines!inner(id)', { count: 'exact', head: true })
-            .eq('machines.is_archived', false)
-            .neq('status', 'paid')
-            .lt('payment_date', today)
-        )
+      ? applyFactoryFilter(overdueInvoicesQuery)
       : Promise.resolve({ count: 0 }),
     supabase.from('machines').select('id', { count: 'exact', head: true }).eq('is_archived', false).is('factory_id', null),
     supabase
@@ -405,8 +416,9 @@ export default async function DashboardPage({
 }: {
   searchParams?: Promise<{ factory?: string; month?: string }>
 }) {
-  const { user: currentUser, permissions, factoryId: userFactoryId } = await requirePermission('dashboard', 'view')
+  const { user: currentUser, permissions, permissionDetails, factoryId: userFactoryId } = await requirePermission('dashboard', 'view')
   const showInvoices = hasPermission(permissions, 'invoices', 'view')
+  const invoiceCompanyScope = permissionDetails.companyScopes.invoices?.view || 'own'
   const resolvedSearchParams = await searchParams
   if (currentUser.role === 'planning_director') {
     const today = todayInUzhgorod()
@@ -450,7 +462,7 @@ export default async function DashboardPage({
   const isDirector = DIRECTOR_ROLES.includes(currentUser.role)
 
   const [stats, monthlyTonnage] = await Promise.all([
-    getDashboardData(factoryFilter, currentUser.role, currentUser.id, showInvoices),
+    getDashboardData(factoryFilter, currentUser.role, currentUser.id, showInvoices, invoiceCompanyScope),
     isDirector ? getMonthlyDirectorTonnage(factoryFilter, currentUser.role, monthFilter) : Promise.resolve(null),
   ])
 

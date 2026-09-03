@@ -3,6 +3,7 @@ import {
   getEmptyPermissionMap,
   type PermissionMap,
   type FactoryAccessScope,
+  type CompanyAccessScope,
   type ResourceKey,
 } from '@/lib/permissions/resources'
 
@@ -15,6 +16,8 @@ export type DepartmentAccessPermissionRow = {
   can_view: boolean
   can_manage: boolean
   factory_scope?: FactoryAccessScope | null
+  company_view_scope?: CompanyAccessScope | null
+  company_manage_scope?: CompanyAccessScope | null
 }
 
 export type DepartmentPermissionMembershipInput = {
@@ -28,10 +31,16 @@ export type FactoryAccessOperationScopes = {
   manage: FactoryAccessScope
 }
 
+export type CompanyAccessOperationScopes = {
+  view: CompanyAccessScope
+  manage: CompanyAccessScope
+}
+
 export type ResolvedDepartmentPermissions = {
   permissions: PermissionMap
   sources: Partial<Record<ResourceKey, string[]>>
   factoryScopes: Partial<Record<ResourceKey, FactoryAccessOperationScopes>>
+  companyScopes: Partial<Record<ResourceKey, CompanyAccessOperationScopes>>
   appliedDepartmentRows: number
 }
 
@@ -54,6 +63,7 @@ export function resolveDepartmentPermissions(
   const permissions = getEmptyPermissionMap()
   const sources: Partial<Record<ResourceKey, string[]>> = {}
   const factoryScopes: Partial<Record<ResourceKey, FactoryAccessOperationScopes>> = {}
+  const companyScopes: Partial<Record<ResourceKey, CompanyAccessOperationScopes>> = {}
   let appliedDepartmentRows = 0
 
   for (const membership of memberships) {
@@ -80,9 +90,20 @@ export function resolveDepartmentPermissions(
           ? 'all'
           : currentFactoryScopes.manage,
       }
+      const currentCompanyScopes = companyScopes[resourceKey] || { view: 'own', manage: 'own' }
+      const rowCanViewAll = (row.can_view || row.can_manage) && row.company_view_scope === 'all'
+      const rowCanManageAll = row.can_manage && row.company_manage_scope === 'all'
+      companyScopes[resourceKey] = {
+        view: rowCanViewAll || rowCanManageAll
+          ? 'all'
+          : currentCompanyScopes.view,
+        manage: rowCanManageAll
+          ? 'all'
+          : currentCompanyScopes.manage,
+      }
       appliedDepartmentRows += 1
     }
   }
 
-  return { permissions, sources, factoryScopes, appliedDepartmentRows }
+  return { permissions, sources, factoryScopes, companyScopes, appliedDepartmentRows }
 }

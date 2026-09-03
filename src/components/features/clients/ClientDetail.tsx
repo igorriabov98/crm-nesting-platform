@@ -30,8 +30,12 @@ type ClientDetailData = Client & {
 const money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'EUR' })
 
 function normalizeInvoice(invoice: MachineDetails['invoice']) {
-  if (Array.isArray(invoice)) return invoice[0] || null
-  return invoice || null
+  const invoices = Array.isArray(invoice) ? invoice : invoice ? [invoice] : []
+  return [...invoices]
+    .sort((a, b) => Number(b.invoice_revision || 0) - Number(a.invoice_revision || 0))
+    .find((item) => item.status !== 'cancelled')
+    || [...invoices].sort((a, b) => Number(b.invoice_revision || 0) - Number(a.invoice_revision || 0))[0]
+    || null
 }
 
 function paymentTermTitle(type: Client['payment_terms_type']) {
@@ -51,10 +55,12 @@ export function ClientDetail({
   client,
   contractsError,
   clientPrices,
+  canManageInvoices = false,
 }: {
   client: ClientDetailData
   contractsError?: string | null
   clientPrices?: { rows: ClientPriceProductRow[]; canManage: boolean } | null
+  canManageInvoices?: boolean
 }) {
   const router = useRouter()
   const [isEditOpen, setIsEditOpen] = useState(false)
@@ -71,7 +77,7 @@ export function ClientDetail({
   const invoices = machines
     .map((machine) => ({ machine, invoice: normalizeInvoice(machine.invoice) }))
     .filter((item) => item.invoice)
-  const currentInvoices = invoices.filter(({ invoice }) => invoice && invoice.status !== 'paid')
+  const currentInvoices = invoices.filter(({ invoice }) => invoice && invoice.status !== 'paid' && invoice.status !== 'cancelled')
   const overdueInvoices = currentInvoices.filter(({ invoice }) => {
     const dueDate = invoice?.due_date || invoice?.payment_date
     return dueDate && new Date(dueDate) < new Date()
@@ -287,7 +293,7 @@ export function ClientDetail({
         </div>
       </section>
 
-      <ClientEditDialog client={client} open={isEditOpen} onOpenChange={setIsEditOpen} />
+      <ClientEditDialog client={client} open={isEditOpen} onOpenChange={setIsEditOpen} canManageInvoices={canManageInvoices} />
     </div>
   )
 }

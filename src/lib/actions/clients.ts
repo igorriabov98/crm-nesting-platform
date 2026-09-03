@@ -3,11 +3,10 @@
 import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { CLIENTS_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
-import type { PermissionOperation } from '@/lib/permissions/resources'
+import { DIRECTOR_ACCESS_ROLES, hasPermission, type PermissionOperation } from '@/lib/permissions/resources'
 import { clientContactSchema, clientSchema, type ClientContactInput, type ClientInput } from '@/lib/types/schemas'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { Client, ClientContact, CurrentUser, MachineDetails } from '@/lib/types'
@@ -29,6 +28,7 @@ type LooseQuery = PromiseLike<LooseDbResult> & {
   update: (values: unknown) => LooseQuery
   delete: () => LooseQuery
   single: () => Promise<LooseDbResult>
+  maybeSingle: () => Promise<LooseDbResult>
 }
 type LooseDb = {
   from: (table: string) => LooseQuery
@@ -47,6 +47,7 @@ type ClientPaymentTermsRow = {
 type ClientListSummaryRow = {
   id: string
   name: string
+  responsible_user_id: string | null
   primary_contact_name: string | null
   phone: string | null
   email: string | null
@@ -65,24 +66,53 @@ function looseDb(supabase: unknown): LooseDb {
   return supabase as LooseDb
 }
 
-async function requireAuth() {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Не авторизован')
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile) throw new Error('Профиль не найден')
-  return { supabase, user: profile as unknown as CurrentUser }
-}
-
 async function requireClientPermission(operation: PermissionOperation) {
   const context = await requirePermission('clients', operation)
-  return { supabase: context.supabase, user: context.user }
+  return context
+}
+
+function canAssignResponsible(context: Awaited<ReturnType<typeof requireClientPermission>>) {
+  return context.permissionDetails.isAdminPosition
+    || (DIRECTOR_ACCESS_ROLES as readonly string[]).includes(context.role)
+}
+
+async function assertResponsibleManager(userId: string | null | undefined) {
+  if (!userId) return null
+  const { data, error } = await looseDb(createAdminClient())
+    .from('users')
+    .select('id')
+    .eq('id', userId)
+    .eq('role', 'sales_manager')
+    .eq('is_active', true)
+    .maybeSingle()
+  if (error || !data) throw new Error('Выбранный ответственный не является активным менеджером Sales')
+  return userId
+}
+
+export async function getClientManagerOptions() {
+  try {
+    const context = await requireClientPermission('view')
+    const { data, error } = await looseDb(createAdminClient())
+      .from('users')
+      .select('id, full_name, is_active')
+      .eq('role', 'sales_manager')
+      .order('full_name')
+    if (error) throw error
+    return {
+      success: true,
+      canAssign: canAssignResponsible(context),
+      currentUserId: context.userId,
+      currentUserName: context.user.full_name || 'Текущий пользователь',
+      managers: ((data || []) as Array<{ id: string; full_name: string | null; is_active: boolean | null }>).map((user) => ({
+        id: user.id,
+        name: user.full_name || 'Без имени',
+        isActive: user.is_active !== false,
+      })),
+      error: null,
+    }
+  } catch (error) {
+    return { success: false, canAssign: false, currentUserId: null, currentUserName: null, managers: [], error: getErrorMessage(error) }
+  }
 }
 
 function fileExtension(file: File) {
@@ -127,7 +157,7 @@ export async function getClientOptions() {
     const { supabase } = await requireClientPermission('view')
 
     const { data, error } = await looseDb(supabase).from('clients')
-      .select('id, name, primary_contact_name, phone, email, country_city, address, delivery_basis_location_en, delivery_basis_location_ua, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days')
+      .select('id, name, primary_contact_name, phone, email, country_city, address, delivery_basis_location_en, delivery_basis_location_ua, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, responsible_user_id, estimated_delivery_days')
       .order('name', { ascending: true })
 
     if (error) throw error
@@ -139,30 +169,38 @@ export async function getClientOptions() {
 
 export async function getClients() {
   try {
-    const { supabase } = await requireClientPermission('view')
+    const context = await requireClientPermission('view')
+    const { supabase } = context
     const { data: clients, error } = await looseDb(supabase).from('client_list_summary')
-      .select('id, name, primary_contact_name, phone, email, country_city, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, active_machines_count, current_invoice_amount, overdue_invoice_amount, last_activity')
+      .select('id, name, responsible_user_id, primary_contact_name, phone, email, country_city, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, active_machines_count, current_invoice_amount, overdue_invoice_amount, last_activity')
       .order('updated_at', { ascending: false })
       .limit(CLIENTS_LIST_LIMIT)
 
     if (error) throw error
 
-    const rows = ((clients || []) as ClientListSummaryRow[]).map((client) => ({
-      id: client.id,
-      name: client.name,
-      primary_contact_name: client.primary_contact_name,
-      phone: client.phone,
-      email: client.email,
-      country_city: client.country_city,
-      payment_terms_type: client.payment_terms_type,
-      payment_due_days: Number(client.payment_due_days || 0),
-      prepayment_percent: client.prepayment_percent === null ? null : Number(client.prepayment_percent),
-      final_payment_due_days: client.final_payment_due_days === null ? null : Number(client.final_payment_due_days),
-      active_machines_count: Number(client.active_machines_count || 0),
-      current_invoice_amount: Number(client.current_invoice_amount || 0),
-      overdue_invoice_amount: Number(client.overdue_invoice_amount || 0),
-      last_activity: client.last_activity,
-    }))
+    const invoiceViewScope = context.permissionDetails.companyScopes.invoices?.view || 'own'
+    const canViewInvoices = hasPermission(context.permissions, 'invoices', 'view')
+    const rows = ((clients || []) as ClientListSummaryRow[]).map((client) => {
+      const canViewClientInvoices = canViewInvoices
+        && (invoiceViewScope === 'all' || client.responsible_user_id === context.userId)
+      return {
+        id: client.id,
+        name: client.name,
+        primary_contact_name: client.primary_contact_name,
+        phone: client.phone,
+        email: client.email,
+        country_city: client.country_city,
+        payment_terms_type: client.payment_terms_type,
+        payment_due_days: Number(client.payment_due_days || 0),
+        prepayment_percent: client.prepayment_percent === null ? null : Number(client.prepayment_percent),
+        final_payment_due_days: client.final_payment_due_days === null ? null : Number(client.final_payment_due_days),
+        active_machines_count: Number(client.active_machines_count || 0),
+        current_invoice_amount: canViewClientInvoices ? Number(client.current_invoice_amount || 0) : null,
+        overdue_invoice_amount: canViewClientInvoices ? Number(client.overdue_invoice_amount || 0) : null,
+        can_view_invoices: canViewClientInvoices,
+        last_activity: client.last_activity,
+      }
+    })
 
     return { data: rows, error: null }
   } catch (error) {
@@ -172,7 +210,8 @@ export async function getClients() {
 
 export async function getClient(id: string) {
   try {
-    const { supabase } = await requireClientPermission('view')
+    const context = await requireClientPermission('view')
+    const { supabase } = context
     const { data, error } = await looseDb(supabase).from('clients')
       .select(`
         *,
@@ -191,9 +230,18 @@ export async function getClient(id: string) {
       client_contacts: ClientContact[]
       machines: MachineDetails[]
     }
-    return { data: client, error: null }
+    const viewScope = context.permissionDetails.companyScopes.invoices?.view || 'own'
+    const manageScope = context.permissionDetails.companyScopes.invoices?.manage || 'own'
+    const canViewInvoices = hasPermission(context.permissions, 'invoices', 'view')
+      && (viewScope === 'all' || client.responsible_user_id === context.userId)
+    const canManageInvoices = hasPermission(context.permissions, 'invoices', 'manage')
+      && (manageScope === 'all' || client.responsible_user_id === context.userId)
+    if (!canViewInvoices) {
+      client.machines = client.machines.map((machine) => ({ ...machine, invoice: null }))
+    }
+    return { data: client, invoiceAccess: { canView: canViewInvoices, canManage: canManageInvoices }, error: null }
   } catch (error) {
-    return { data: null, error: getErrorMessage(error) }
+    return { data: null, invoiceAccess: { canView: false, canManage: false }, error: getErrorMessage(error) }
   }
 }
 
@@ -220,12 +268,20 @@ export async function getClientImageUrls(id: string) {
 
 export async function createClient(input: ClientInput) {
   try {
-    const { supabase, user } = await requireClientPermission('manage')
+    const context = await requireClientPermission('manage')
+    const { user } = context
     assertCanManageClients(user)
 
     const parsed = clientSchema.parse(input)
+    const clientValues = { ...parsed }
+    delete clientValues.responsible_user_id
+    const responsibleUserId = context.role === 'sales_manager'
+      ? context.userId
+      : canAssignResponsible(context)
+        ? await assertResponsibleManager(parsed.responsible_user_id)
+        : null
     const payload: ClientInsert = {
-      ...parsed,
+      ...clientValues,
       primary_contact_name: parsed.primary_contact_name || null,
       phone: parsed.phone || null,
       email: parsed.email || null,
@@ -237,9 +293,11 @@ export async function createClient(input: ClientInput) {
       notes: parsed.notes || null,
       prepayment_percent: parsed.payment_terms_type === 'prepayment_full' ? parsed.prepayment_percent ?? 50 : null,
       final_payment_due_days: parsed.payment_terms_type === 'prepayment_full' ? parsed.final_payment_due_days ?? parsed.payment_due_days : null,
+      responsible_user_id: responsibleUserId,
+      estimated_delivery_days: parsed.estimated_delivery_days,
     }
 
-    const { data, error } = await looseDb(supabase).from('clients')
+    const { data, error } = await looseDb(createAdminClient()).from('clients')
       .insert(payload)
       .select('*')
       .single()
@@ -256,12 +314,15 @@ export async function createClient(input: ClientInput) {
 
 export async function updateClient(id: string, input: ClientInput) {
   try {
-    const { supabase, user } = await requireClientPermission('manage')
+    const context = await requireClientPermission('manage')
+    const { user } = context
     assertCanManageClients(user)
 
     const parsed = clientSchema.parse(input)
+    const clientValues = { ...parsed }
+    delete clientValues.responsible_user_id
     const payload: ClientUpdate = {
-      ...parsed,
+      ...clientValues,
       primary_contact_name: parsed.primary_contact_name || null,
       phone: parsed.phone || null,
       email: parsed.email || null,
@@ -273,10 +334,15 @@ export async function updateClient(id: string, input: ClientInput) {
       notes: parsed.notes || null,
       prepayment_percent: parsed.payment_terms_type === 'prepayment_full' ? parsed.prepayment_percent ?? 50 : null,
       final_payment_due_days: parsed.payment_terms_type === 'prepayment_full' ? parsed.final_payment_due_days ?? parsed.payment_due_days : null,
+      estimated_delivery_days: parsed.estimated_delivery_days,
       updated_at: new Date().toISOString(),
     }
 
-    const { error } = await looseDb(supabase).from('clients').update(payload).eq('id', id)
+    if (canAssignResponsible(context)) {
+      payload.responsible_user_id = await assertResponsibleManager(parsed.responsible_user_id)
+    }
+
+    const { error } = await looseDb(createAdminClient()).from('clients').update(payload).eq('id', id)
     if (error) throw error
 
     revalidatePath(ROUTES.CLIENTS)

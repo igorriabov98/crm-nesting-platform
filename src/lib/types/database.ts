@@ -464,6 +464,8 @@ export type Database = {
           payment_due_days: number
           prepayment_percent: number | null
           final_payment_due_days: number | null
+          responsible_user_id: string | null
+          estimated_delivery_days: number
           created_at: string
           updated_at: string
         }
@@ -485,6 +487,8 @@ export type Database = {
           payment_due_days?: number
           prepayment_percent?: number | null
           final_payment_due_days?: number | null
+          responsible_user_id?: string | null
+          estimated_delivery_days?: number
           created_at?: string
           updated_at?: string
         }
@@ -506,6 +510,8 @@ export type Database = {
           payment_due_days?: number
           prepayment_percent?: number | null
           final_payment_due_days?: number | null
+          responsible_user_id?: string | null
+          estimated_delivery_days?: number
           created_at?: string
           updated_at?: string
         }
@@ -3003,6 +3009,79 @@ export type Database = {
           updated_at?: string
         }
       }
+      invoice_payments: {
+        Row: {
+          id: string
+          invoice_id: string
+          amount: number
+          paid_on: string | null
+          note: string | null
+          source: 'crm' | 'legacy'
+          created_by: string | null
+          created_at: string
+          voided_at: string | null
+          voided_by: string | null
+          void_reason: string | null
+          replacement_payment_id: string | null
+        }
+        Insert: {
+          id?: string
+          invoice_id: string
+          amount: number
+          paid_on?: string | null
+          note?: string | null
+          source?: 'crm' | 'legacy'
+          created_by?: string | null
+          created_at?: string
+          voided_at?: string | null
+          voided_by?: string | null
+          void_reason?: string | null
+          replacement_payment_id?: string | null
+        }
+        Update: {
+          id?: string
+          invoice_id?: string
+          amount?: number
+          paid_on?: string | null
+          note?: string | null
+          source?: 'crm' | 'legacy'
+          created_by?: string | null
+          created_at?: string
+          voided_at?: string | null
+          voided_by?: string | null
+          void_reason?: string | null
+          replacement_payment_id?: string | null
+        }
+      }
+      invoice_terms_audit: {
+        Row: {
+          id: string
+          invoice_id: string
+          client_id: string | null
+          old_terms: Json
+          new_terms: Json
+          changed_by: string | null
+          changed_at: string
+        }
+        Insert: {
+          id?: string
+          invoice_id: string
+          client_id?: string | null
+          old_terms: Json
+          new_terms: Json
+          changed_by?: string | null
+          changed_at?: string
+        }
+        Update: {
+          id?: string
+          invoice_id?: string
+          client_id?: string | null
+          old_terms?: Json
+          new_terms?: Json
+          changed_by?: string | null
+          changed_at?: string
+        }
+      }
       invoices: {
         Row: {
           id: string
@@ -3019,6 +3098,17 @@ export type Database = {
           updated_by: string | null
           created_at: string
           updated_at: string
+          invoice_number: string
+          invoice_revision: number
+          payment_terms_type_snapshot: Database['public']['Enums']['payment_terms_type'] | null
+          payment_due_days_snapshot: number | null
+          prepayment_percent_snapshot: number | null
+          final_payment_due_days_snapshot: number | null
+          estimated_delivery_days_snapshot: number | null
+          document_snapshot: Json | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancellation_reason: string | null
         }
         Insert: {
           id?: string
@@ -3035,6 +3125,17 @@ export type Database = {
           updated_by?: string | null
           created_at?: string
           updated_at?: string
+          invoice_number: string
+          invoice_revision?: number
+          payment_terms_type_snapshot?: Database['public']['Enums']['payment_terms_type'] | null
+          payment_due_days_snapshot?: number | null
+          prepayment_percent_snapshot?: number | null
+          final_payment_due_days_snapshot?: number | null
+          estimated_delivery_days_snapshot?: number | null
+          document_snapshot?: Json | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
         Update: {
           id?: string
@@ -3051,6 +3152,17 @@ export type Database = {
           updated_by?: string | null
           created_at?: string
           updated_at?: string
+          invoice_number?: string
+          invoice_revision?: number
+          payment_terms_type_snapshot?: Database['public']['Enums']['payment_terms_type'] | null
+          payment_due_days_snapshot?: number | null
+          prepayment_percent_snapshot?: number | null
+          final_payment_due_days_snapshot?: number | null
+          estimated_delivery_days_snapshot?: number | null
+          document_snapshot?: Json | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
       }
       notifications: {
@@ -5108,7 +5220,7 @@ export type Database = {
           | 'shipping'
           | 'actual_shipping'
       supply_status: 'received' | 'ordered' | 'not_ordered'
-      invoice_status: 'paid' | 'not_paid' | 'overdue'
+      invoice_status: 'paid' | 'not_paid' | 'overdue' | 'partially_paid' | 'cancelled'
       payment_terms_type: 'invoice_days' | 'delivery_days' | 'prepayment_full'
       production_fact_shift: 'day' | 'night'
       machine_status:
@@ -5157,6 +5269,35 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {
+      fn_record_invoice_payment: {
+        Args: {
+          p_invoice_id: string
+          p_amount: number
+          p_paid_on: string
+          p_note: string | null
+          p_actor: string
+        }
+        Returns: string
+      }
+      fn_correct_invoice_payment: {
+        Args: {
+          p_payment_id: string
+          p_amount: number
+          p_paid_on: string
+          p_note: string | null
+          p_reason: string
+          p_actor: string
+        }
+        Returns: string
+      }
+      fn_cancel_invoice: {
+        Args: {
+          p_invoice_id: string
+          p_reason: string
+          p_actor: string
+        }
+        Returns: undefined
+      }
       fn_mutate_production_stage_interval: {
         Args: {
           p_operation: string

@@ -309,7 +309,11 @@ export function FinanceCalendar({ data, mode = 'general' }: { data: FinanceCalen
     startTransition(async () => {
       const payload = {
         action,
-        amount: form.amount ? parseAmount(form.amount) : undefined,
+        amount: action === 'paid' && event.type === 'income'
+          ? event.remainingAmount
+          : form.amount
+            ? parseAmount(form.amount)
+            : undefined,
         date: form.date,
         comment: form.comment || undefined,
         applyToFuture: event.type === 'expense' ? form.applyToFuture : false,
@@ -652,7 +656,7 @@ export function FinanceCalendar({ data, mode = 'general' }: { data: FinanceCalen
                         )}
                         <div className="mt-1 text-xs text-[#6B7280]">
                           {event.type === 'income'
-                            ? <>Дата оплаты клиентом: {dateLabel(event.paymentObligationDate || event.plannedDate)}</>
+                            ? <>Дата оплаты клиентом: {dateLabel(event.paymentObligationDate || event.plannedDate)}{event.isForecast ? ' · прогноз' : ''}</>
                             : <>Плановая дата оплаты: {dateLabel(event.plannedDate)}</>
                           }
                         </div>
@@ -708,8 +712,8 @@ export function FinanceCalendar({ data, mode = 'general' }: { data: FinanceCalen
                             <div className="mt-2 flex flex-wrap gap-2">
                               <Button size="sm" onClick={() => updateEvent(event, 'paid')} disabled={isPending}><Check className="mr-1 h-3.5 w-3.5" />Оплачено</Button>
                               <Button size="sm" variant="outline" onClick={() => updateEvent(event, 'partial')} disabled={isPending}>Частично</Button>
-                              <Button size="sm" variant="outline" onClick={() => updateEvent(event, 'postpone')} disabled={isPending}><RefreshCw className="mr-1 h-3.5 w-3.5" />Перенести</Button>
-                              <Button size="sm" variant="outline" onClick={() => updateEvent(event, 'reject')} disabled={isPending}>Не подтвердить</Button>
+                              {event.type === 'expense' && <Button size="sm" variant="outline" onClick={() => updateEvent(event, 'postpone')} disabled={isPending}><RefreshCw className="mr-1 h-3.5 w-3.5" />Перенести</Button>}
+                              {event.type === 'expense' && <Button size="sm" variant="outline" onClick={() => updateEvent(event, 'reject')} disabled={isPending}>Не подтвердить</Button>}
                             </div>
                           </div>
                         )}

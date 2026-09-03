@@ -1,3 +1,5 @@
+import 'server-only'
+
 import { z } from 'zod'
 import { getMachineDeliveryBasisOption } from '@/lib/constants/machine-delivery-basis'
 import { documentGrossWeight, documentLineNetWeight, documentUnitWeight, totalPackingPlaces } from '@/lib/packing-summary'
@@ -122,6 +124,8 @@ export type DocumentData = {
     specification_number: string
     specification_date: string
     packing_boxes_count: number
+    invoice_number?: string
+    invoice_date?: string
   }
   contract: {
     number: string
@@ -172,6 +176,8 @@ export type DocumentData = {
   clientStampUrl: string | null
 }
 
+export type InvoiceDocumentSnapshot = DocumentData
+
 const FALLBACK_COMPANY = {
   name_en: 'LEDA WEST LLC',
   name_ua: 'ТОВ «ЛЕДА ВЕСТ»',
@@ -190,9 +196,11 @@ const FALLBACK_COMPANY = {
 } satisfies Omit<DocumentData['company'], 'signature_image_path' | 'stamp_image_path'>
 
 type LooseQueryResult = { data: unknown; error: { message?: string } | null }
-type LooseSingleQuery = {
+type LooseSingleQuery = PromiseLike<LooseQueryResult> & {
   select: (columns?: string) => LooseSingleQuery
   eq: (column: string, value: unknown) => LooseSingleQuery
+  is: (column: string, value: unknown) => LooseSingleQuery
+  update: (values: unknown) => LooseSingleQuery
   single: () => Promise<LooseQueryResult>
 }
 type LooseDb = {
@@ -238,21 +246,23 @@ async function createSignedImageUrl(
   return data.signedUrl
 }
 
-export async function getDocumentData(machineId: string): Promise<DocumentData> {
+async function loadDocumentData(machineId: string, enforceSessionVisibility: boolean): Promise<DocumentData> {
   const parsedMachineId = machineIdSchema.parse(machineId)
-  const supabase = await createServerSupabaseClient()
-  const sessionDb = dbFrom(supabase)
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Unauthorized')
+  if (enforceSessionVisibility) {
+    const supabase = await createServerSupabaseClient()
+    const sessionDb = dbFrom(supabase)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) throw new Error('Unauthorized')
 
-  const { data: visibleMachine, error: visibilityError } = await sessionDb
-    .from('machines')
-    .select('id')
-    .eq('id', parsedMachineId)
-    .single()
+    const { data: visibleMachine, error: visibilityError } = await sessionDb
+      .from('machines')
+      .select('id')
+      .eq('id', parsedMachineId)
+      .single()
 
-  if (visibilityError || !visibleMachine) {
-    throw new Error(visibilityError?.message || 'Заказ не найден')
+    if (visibilityError || !visibleMachine) {
+      throw new Error(visibilityError?.message || 'Заказ не найден')
+    }
   }
 
   const adminSupabase = createAdminClient()
@@ -478,4 +488,95 @@ export async function getDocumentData(machineId: string): Promise<DocumentData> 
     clientSignatureUrl,
     clientStampUrl,
   }
+}
+
+export async function getDocumentData(machineId: string): Promise<DocumentData> {
+  return loadDocumentData(machineId, true)
+}
+
+export async function getTrustedDocumentData(machineId: string): Promise<DocumentData> {
+  return loadDocumentData(machineId, false)
+}
+
+export function createInvoiceDocumentSnapshot(
+  data: DocumentData,
+  invoice: { number: string; date: string },
+): InvoiceDocumentSnapshot {
+  return {
+    ...data,
+    machine: {
+      ...data.machine,
+      invoice_number: invoice.number,
+      invoice_date: invoice.date,
+    },
+    // Signed links expire and therefore must never be persisted in a snapshot.
+    signatureUrl: null,
+    stampUrl: null,
+    clientSignatureUrl: null,
+    clientStampUrl: null,
+  }
+}
+
+export function invoiceDocumentMissingFields(data: DocumentData) {
+  const requirements: Array<[unknown, string]> = [
+    [data.machine.specification_number, 'Укажите номер инвойса / спецификации'],
+    [data.machine.specification_date, 'Укажите дату спецификации'],
+    [data.client.name, 'Укажите компанию клиента'],
+    [data.client.address, 'Укажите адрес клиента'],
+    [data.company.name_en, 'Укажите юридическое название продавца EN'],
+    [data.company.address_en, 'Укажите адрес продавца EN'],
+    [data.company.director_name_en, 'Укажите директора продавца EN'],
+    [data.company.enterprise_code, 'Укажите код предприятия продавца'],
+    [data.company.iban, 'Укажите IBAN продавца'],
+    [data.company.swift, 'Укажите SWIFT продавца'],
+    [data.company.bank_name, 'Укажите банк продавца'],
+    [data.company.bank_address, 'Укажите адрес банка продавца'],
+    [data.company.delivery_basis_en, 'Укажите базис доставки'],
+    [data.items.length > 0, 'Добавьте товарные позиции'],
+  ]
+  return requirements.filter(([value]) => !value).map(([, message]) => message)
+}
+
+export async function getInvoiceDocumentData(invoiceId: string): Promise<InvoiceDocumentSnapshot> {
+  const parsedInvoiceId = z.string().uuid('Некорректный ID инвойса').parse(invoiceId)
+  const adminSupabase = createAdminClient()
+  const admin = dbFrom(adminSupabase)
+  const { data: invoiceData, error } = await admin
+    .from('invoices')
+    .select('id, machine_id, invoice_number, invoice_date, document_snapshot')
+    .eq('id', parsedInvoiceId)
+    .single()
+
+  if (error || !invoiceData) throw new Error(error?.message || 'Инвойс не найден')
+
+  const invoice = invoiceData as {
+    id: string
+    machine_id: string
+    invoice_number: string
+    invoice_date: string
+    document_snapshot: unknown
+  }
+  let snapshot = invoice.document_snapshot as InvoiceDocumentSnapshot | null
+  if (!snapshot) {
+    const currentData = await getTrustedDocumentData(invoice.machine_id)
+    snapshot = createInvoiceDocumentSnapshot(currentData, {
+      number: invoice.invoice_number,
+      date: invoice.invoice_date,
+    })
+    const { error: snapshotError } = await admin
+      .from('invoices')
+      .update({ document_snapshot: snapshot as unknown as Database['public']['Tables']['invoices']['Update']['document_snapshot'] })
+      .eq('id', invoice.id)
+      .is('document_snapshot', null)
+    if (snapshotError) throw new Error(snapshotError.message)
+  }
+
+  const [signatureUrl, stampUrl, clientSignatureUrl, clientStampUrl] = await Promise.all([
+    createSignedImageUrl(adminSupabase, snapshot.company.signature_image_path),
+    createSignedImageUrl(adminSupabase, snapshot.company.stamp_image_path),
+    createSignedImageUrl(adminSupabase, snapshot.client.signature_image_path),
+    createSignedImageUrl(adminSupabase, snapshot.client.stamp_image_path),
+  ])
+
+  return { ...snapshot, signatureUrl, stampUrl, clientSignatureUrl, clientStampUrl }
 }

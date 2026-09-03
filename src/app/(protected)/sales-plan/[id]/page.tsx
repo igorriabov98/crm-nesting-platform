@@ -31,7 +31,7 @@ export default async function MachineDetailPage({
   const canViewMachineCutting = hasPermission(permissions, 'machine_cutting', 'view')
   const canManageMachineCutting = hasPermission(permissions, 'machine_cutting', 'manage')
   const [
-    { data: machine, error },
+    { data: machine, error, invoiceAccess },
     { data: requestData },
     layoutResult,
     nestingStatesResult,
@@ -87,6 +87,8 @@ export default async function MachineDetailPage({
         canManageNesting={hasPermission(permissions, 'nesting', 'manage')}
         canViewMachineCutting={canViewMachineCutting}
         canManageMachineCutting={canManageMachineCutting}
+        canViewInvoice={invoiceAccess.canView}
+        canManageInvoice={invoiceAccess.canManage}
       />
     </div>
   )

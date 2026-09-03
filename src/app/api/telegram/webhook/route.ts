@@ -152,39 +152,11 @@ async function updateFinanceEvent(
     return
   }
 
-  const { data: current, error: currentError } = await supabase.from('invoices').select('*').eq('id', eventId).single()
-  if (currentError || !current) throw new Error('Приход не найден')
-  const totalAmount = Number(current.amount || 0)
-  const update: Record<string, unknown> = { updated_by: performedBy }
-
-  if (action === 'paid') {
-    update.status = 'paid'
-    update.paid_amount = totalAmount
-    update.actual_paid_date = values.date || format(new Date(), 'yyyy-MM-dd')
-  } else if (action === 'partial') {
-    const paidAmount = Number(values.amount || 0)
-    update.status = paidAmount >= totalAmount ? 'paid' : 'not_paid'
-    update.paid_amount = paidAmount
-    update.actual_paid_date = paidAmount >= totalAmount ? (values.date || format(new Date(), 'yyyy-MM-dd')) : null
-  } else if (action === 'postpone') {
-    update.rescheduled_date = values.date
-    update.due_date = values.date
-    update.payment_date = values.date
-    update.status = 'not_paid'
-    update.finance_comment = values.comment || current.finance_comment
-  } else {
-    update.status = current.status === 'paid' ? 'paid' : 'not_paid'
-    update.finance_comment = values.comment || current.finance_comment || 'Не подтверждено через Telegram'
-  }
-
-  const { error } = await supabase.from('invoices').update(update).eq('id', eventId)
-  if (error) throw new Error(error.message)
-  await logAction(supabase, eventType, eventId, action, performedBy, {
-    previous_planned_date: current.rescheduled_date || current.due_date || current.payment_date,
-    new_planned_date: action === 'postpone' ? values.date : null,
-    amount: values.amount ?? null,
-    comment: values.comment ?? null,
-  })
+  void eventId
+  void action
+  void performedBy
+  void values
+  throw new Error('Платежи по инвойсам теперь добавляются только в защищённом журнале CRM')
 }
 
 async function setDialogState(

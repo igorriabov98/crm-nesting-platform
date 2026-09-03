@@ -62,6 +62,8 @@ export type ShipmentInvoiceRow = {
   amount: number | null
   paid_amount: number | null
   invoice_date: string | null
+  status: string
+  invoice_revision: number
 }
 
 export function defaultShipmentReportFilters(date = new Date()): ShipmentReportFilters {
@@ -97,7 +99,14 @@ export function mapShipmentReportRows(
   invoices: readonly ShipmentInvoiceRow[],
 ): ShipmentReportRow[] {
   const clientNames = new Map(clients.map((client) => [client.id, client.name]))
-  const invoicesByMachine = new Map(invoices.map((invoice) => [invoice.machine_id, invoice]))
+  const invoicesByMachine = new Map<string, ShipmentInvoiceRow>()
+  for (const invoice of invoices) {
+    if (invoice.status === 'cancelled') continue
+    const current = invoicesByMachine.get(invoice.machine_id)
+    if (!current || invoice.invoice_revision > current.invoice_revision) {
+      invoicesByMachine.set(invoice.machine_id, invoice)
+    }
+  }
 
   return machines.map((machine) => {
     const invoice = invoicesByMachine.get(machine.id)

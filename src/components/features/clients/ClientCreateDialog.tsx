@@ -38,6 +38,8 @@ export function ClientCreateDialog({ open, onOpenChange, onCreated }: ClientCrea
       payment_due_days: 14,
       prepayment_percent: 50,
       final_payment_due_days: 0,
+      responsible_user_id: null,
+      estimated_delivery_days: 7,
     },
   })
 

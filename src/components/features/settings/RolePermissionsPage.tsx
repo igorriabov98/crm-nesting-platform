@@ -28,7 +28,7 @@ import {
   type RolePermissionsPageData,
 } from '@/lib/actions/role-permissions'
 import { startUserImpersonation } from '@/lib/actions/impersonation'
-import type { FactoryAccessScope, ResourceKey } from '@/lib/permissions/resources'
+import type { CompanyAccessScope, FactoryAccessScope, ResourceKey } from '@/lib/permissions/resources'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -60,6 +60,8 @@ type PermissionState = {
   canView: boolean
   canManage: boolean
   factoryScope: FactoryAccessScope
+  companyViewScope: CompanyAccessScope
+  companyManageScope: CompanyAccessScope
 }
 
 type PermissionStateMap = Record<string, PermissionState>
@@ -67,7 +69,13 @@ type PermissionField = 'view' | 'manage'
 type Resource = RolePermissionsPageData['resources'][number]
 
 const SUBJECT_SCOPES = ['head', 'member'] as const satisfies readonly DepartmentAccessSubjectScope[]
-const EMPTY_PERMISSION: PermissionState = { canView: false, canManage: false, factoryScope: 'own' }
+const EMPTY_PERMISSION: PermissionState = {
+  canView: false,
+  canManage: false,
+  factoryScope: 'own',
+  companyViewScope: 'own',
+  companyManageScope: 'own',
+}
 
 function permissionKey(departmentId: string, subjectScope: DepartmentAccessSubjectScope, resourceKey: ResourceKey) {
   return `${departmentId}:${subjectScope}:${resourceKey}`
@@ -89,6 +97,10 @@ function factoryScopeLabel(scope: FactoryAccessScope) {
   return scope === 'all' ? 'Все заводы' : 'Свой завод'
 }
 
+function companyScopeLabel(scope: CompanyAccessScope) {
+  return scope === 'all' ? 'Все компании' : 'Свои компании'
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',
@@ -104,6 +116,8 @@ function buildState(permissions: DepartmentAccessPermissionInput[]) {
       canView: permission.canView || permission.canManage,
       canManage: permission.canManage,
       factoryScope: permission.factoryScope,
+      companyViewScope: permission.companyViewScope,
+      companyManageScope: permission.companyManageScope,
     }])
   ) as PermissionStateMap
 }
@@ -233,7 +247,9 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
           const current = permissions[key] || EMPTY_PERMISSION
           if (before.canView !== current.canView
             || before.canManage !== current.canManage
-            || before.factoryScope !== current.factoryScope) count += 1
+            || before.factoryScope !== current.factoryScope
+            || before.companyViewScope !== current.companyViewScope
+            || before.companyManageScope !== current.companyManageScope) count += 1
         }
       }
     }
@@ -278,13 +294,41 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
         if (!checked) {
           next.canManage = false
           next.factoryScope = 'own'
+          next.companyViewScope = 'own'
+          next.companyManageScope = 'own'
         }
       } else {
         next.canManage = checked
         if (checked) next.canView = true
+        if (!checked) next.companyManageScope = 'own'
       }
 
       return { ...current, [key]: next }
+    })
+  }
+
+  function updateCompanyScope(
+    departmentId: string,
+    subjectScope: DepartmentAccessSubjectScope,
+    resourceKey: ResourceKey,
+    field: PermissionField,
+    companyScope: CompanyAccessScope,
+  ) {
+    setPermissions((current) => {
+      const key = permissionKey(departmentId, subjectScope, resourceKey)
+      const previous = current[key] || EMPTY_PERMISSION
+      const next = { ...previous }
+      if (field === 'view') {
+        next.companyViewScope = companyScope
+        if (companyScope === 'own') next.companyManageScope = 'own'
+      } else {
+        next.companyManageScope = companyScope
+        if (companyScope === 'all') next.companyViewScope = 'all'
+      }
+      return {
+        ...current,
+        [key]: next,
+      }
     })
   }
 
@@ -320,6 +364,8 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
               canView: state.canView || state.canManage,
               canManage: state.canManage,
               factoryScope: state.factoryScope,
+              companyViewScope: state.companyViewScope,
+              companyManageScope: state.companyManageScope,
             }
           })
         )
@@ -402,6 +448,49 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
           <SelectContent>
             <SelectItem value="own">Свой завод</SelectItem>
             <SelectItem value="all">Все заводы</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    )
+  }
+
+  function renderCompanyScopeSelect(
+    resource: Resource,
+    scope: DepartmentAccessSubjectScope,
+    field: PermissionField,
+    placement: 'desktop' | 'mobile',
+  ) {
+    if (!selectedDepartment || !resource.supportsCompanyScope) return null
+    const state = getState(permissions, selectedDepartment.id, scope, resource.key)
+    const value = field === 'view' ? state.companyViewScope : state.companyManageScope
+    const enabled = field === 'view' ? state.canView : state.canManage
+    const id = `${placement}-${resource.key}-${scope}-${field}-company-scope`
+    return (
+      <div className="space-y-1.5 text-left">
+        <label htmlFor={id} className="text-xs font-medium text-muted-foreground">
+          {field === 'view' ? 'Просмотр' : 'Управление'}
+        </label>
+        <Select
+          value={value}
+          disabled={isSaving || !enabled}
+          onValueChange={(nextValue) => updateCompanyScope(
+            selectedDepartment.id,
+            scope,
+            resource.key,
+            field,
+            nextValue === 'all' ? 'all' : 'own',
+          )}
+        >
+          <SelectTrigger
+            id={id}
+            className="h-11 w-full bg-background text-foreground"
+            aria-label={`${resource.label}: ${subjectLabel(scope)}, компании для ${operationLabel(field)}`}
+          >
+            <SelectValue>{companyScopeLabel(value)}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="own">Свои компании</SelectItem>
+            <SelectItem value="all">Все компании</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -694,6 +783,28 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                                   </TableCell>
                                 </TableRow>
                               )}
+                              {resource.supportsCompanyScope && (
+                                <TableRow className="bg-muted/20 hover:bg-muted/30">
+                                  <TableCell className="whitespace-normal px-4 py-3 align-top">
+                                    <div className="font-medium text-foreground">Компании в разделе</div>
+                                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                                      Область просмотра и изменения настраивается отдельно.
+                                    </p>
+                                  </TableCell>
+                                  <TableCell colSpan={2} className="border-l bg-primary/[0.018] px-4 py-3">
+                                    <div className="grid gap-3 lg:grid-cols-2">
+                                      {renderCompanyScopeSelect(resource, 'head', 'view', 'desktop')}
+                                      {renderCompanyScopeSelect(resource, 'head', 'manage', 'desktop')}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell colSpan={2} className="border-l bg-primary/[0.045] px-4 py-3">
+                                    <div className="grid gap-3 lg:grid-cols-2">
+                                      {renderCompanyScopeSelect(resource, 'member', 'view', 'desktop')}
+                                      {renderCompanyScopeSelect(resource, 'member', 'manage', 'desktop')}
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              )}
                             </Fragment>
                           ))}
                         </Fragment>
@@ -735,6 +846,19 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                             <div className="mt-3 grid gap-3 rounded-lg border bg-muted/25 p-3 sm:grid-cols-2">
                               <div>{renderFactoryScopeSelect(resource, 'head', 'mobile')}</div>
                               <div>{renderFactoryScopeSelect(resource, 'member', 'mobile')}</div>
+                            </div>
+                          )}
+                          {resource.supportsCompanyScope && (
+                            <div className="mt-3 space-y-3 rounded-lg border bg-muted/25 p-3">
+                              {SUBJECT_SCOPES.map((scope) => (
+                                <div key={`${resource.key}-${scope}-company`} className="space-y-2">
+                                  <div className="text-xs font-semibold text-foreground">{subjectShortLabel(scope)}</div>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    {renderCompanyScopeSelect(resource, scope, 'view', 'mobile')}
+                                    {renderCompanyScopeSelect(resource, scope, 'manage', 'mobile')}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </article>
@@ -827,9 +951,12 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                   {visibleAudit.map((item) => {
                     const resource = data.resources.find((candidate) => candidate.key === item.resourceKey)
                     const scopeExpanded = (item.oldFactoryScope || 'own') === 'own' && item.newFactoryScope === 'all'
+                    const companyScopeExpanded = (item.oldCompanyViewScope || 'own') === 'own' && item.newCompanyViewScope === 'all'
+                      || (item.oldCompanyManageScope || 'own') === 'own' && item.newCompanyManageScope === 'all'
                     const permissionGranted = (!item.oldCanView && item.newCanView)
                       || (!item.oldCanManage && item.newCanManage)
                       || scopeExpanded
+                      || companyScopeExpanded
                     return (
                       <article key={item.id} className="relative pl-5">
                         <span className={cn(
@@ -850,6 +977,16 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                           {(item.oldFactoryScope || 'own') !== item.newFactoryScope && (
                             <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
                               Заводы: {factoryScopeLabel(item.oldFactoryScope || 'own')} → {factoryScopeLabel(item.newFactoryScope)}
+                            </Badge>
+                          )}
+                          {(item.oldCompanyViewScope || 'own') !== item.newCompanyViewScope && (
+                            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                              Компании, вид: {companyScopeLabel(item.oldCompanyViewScope || 'own')} → {companyScopeLabel(item.newCompanyViewScope)}
+                            </Badge>
+                          )}
+                          {(item.oldCompanyManageScope || 'own') !== item.newCompanyManageScope && (
+                            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                              Компании, упр: {companyScopeLabel(item.oldCompanyManageScope || 'own')} → {companyScopeLabel(item.newCompanyManageScope)}
                             </Badge>
                           )}
                         </div>

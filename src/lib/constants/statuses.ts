@@ -14,6 +14,8 @@ export const INVOICE_STATUSES: Record<
   { label: string; color: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }
 > = {
   paid: { label: 'Оплачено', color: 'green', variant: 'default' },
+  partially_paid: { label: 'Частично оплачено', color: 'blue', variant: 'outline' },
   not_paid: { label: 'Не оплачено', color: 'yellow', variant: 'secondary' },
   overdue: { label: 'Просрочено', color: 'red', variant: 'destructive' },
+  cancelled: { label: 'Аннулировано', color: 'gray', variant: 'outline' },
 }

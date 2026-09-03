@@ -8,6 +8,9 @@ import { getAppUrl } from '@/lib/config'
 import { GENERAL_FINANCE_EXPENSE_CATEGORIES, SUPPLY_FINANCE_CATEGORIES, type GeneralFinanceExpenseCategory, type SupplyFinanceCategory } from '@/lib/constants/finance'
 import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
+import { recordInvoicePayment } from '@/lib/actions/invoices'
+import { buildInvoicePaymentSchedule } from '@/lib/invoices/payment-schedule'
+import type { TrustedDb } from '@/lib/supabase/trusted-db'
 import type { PermissionOperation, ResourceKey } from '@/lib/permissions/resources'
 import type { CurrentUser, UserRole } from '@/lib/types'
 
@@ -52,6 +55,7 @@ export type FinanceEvent = {
   bankProcessingEndDate: string | null
   cashArrivalDate: string
   paymentPart: FinancePaymentPart
+  isForecast: boolean
   comment: string | null
   sourceHref: string | null
 }
@@ -78,9 +82,85 @@ export type FinanceCalendarData = {
   range: { start: string; end: string }
 }
 
-type LooseDb = {
-  from: (table: string) => any
-  rpc: (fn: string, args?: Record<string, unknown>) => any
+type LooseDb = TrustedDb
+type Relation<T> = T | T[] | null
+
+type FinanceInvoiceRow = {
+  id: string
+  machine_id: string | null
+  amount: number | null
+  paid_amount: number | null
+  invoice_date: string
+  actual_paid_date: string | null
+  payment_note: string | null
+  finance_comment: string | null
+  payment_terms_type_snapshot: string | null
+  payment_due_days_snapshot: number | null
+  prepayment_percent_snapshot: number | null
+  final_payment_due_days_snapshot: number | null
+  estimated_delivery_days_snapshot: number | null
+  machine: Relation<{
+    id: string
+    name: string
+    actual_shipping_date: string | null
+    desired_shipping_date: string | null
+    delivery_to_client_date: string | null
+    factory_id: string | null
+    factory: Relation<{ id: string; name: string }>
+  }>
+  updated_by_user: Relation<{ full_name: string | null }>
+}
+
+type FinanceExpenseRow = {
+  id: string
+  series_id: string | null
+  title: string
+  amount: number | null
+  amount_uah: number | null
+  category: string
+  counterparty: string
+  currency: string | null
+  exchange_rate: number | null
+  factory_id: string | null
+  is_supply_plan: boolean | null
+  responsible_user_id: string | null
+  planned_date: string
+  original_planned_date: string | null
+  rescheduled_date: string | null
+  actual_paid_date: string | null
+  status: FinanceExpenseStatus
+  paid_amount: number | null
+  paid_amount_uah: number | null
+  comment: string | null
+  responsible: Relation<{ full_name: string | null }>
+}
+
+type ScrapIncomeRow = {
+  id: string
+  amount_uah: number | null
+  payment_date: string
+  status: string
+  metal_scrap_sales: Relation<{
+    factory_id: string | null
+    buyer: string | null
+    document_number: string | null
+  }>
+}
+
+type FinanceExpenseMutationRow = {
+  amount: number | null
+  amount_uah: number | null
+  currency: string | null
+  exchange_rate: number | null
+  is_supply_plan: boolean | null
+  comment: string | null
+  series_id: string | null
+  planned_date: string
+}
+
+function relationOne<T>(value: Relation<T> | undefined): T | null {
+  if (Array.isArray(value)) return value[0] || null
+  return value || null
 }
 
 function isSupplyFinanceCategory(value: string): value is SupplyFinanceCategory {
@@ -115,6 +195,9 @@ function formatTelegramMoney(amount: number, currency: FinanceCurrency = 'UAH') 
 
 function buildFinanceTelegramKeyboard(eventType: 'i' | 'e', eventId: string, href: string) {
   const appUrl = getAppUrl()
+  if (eventType === 'i') {
+    return { inline_keyboard: [[{ text: 'Открыть оплаты в CRM', url: `${appUrl}${href}` }]] }
+  }
   return {
     inline_keyboard: [
       [
@@ -190,11 +273,7 @@ async function resolveSupplyExpenseResponsibleUserId(db: LooseDb, currentUser: C
     .limit(1)
     .maybeSingle()
 
-  return data?.id || currentUser.id
-}
-
-function normalizeDate(value: string | null | undefined) {
-  return value || format(new Date(), 'yyyy-MM-dd')
+  return (data as { id?: string } | null)?.id || currentUser.id
 }
 
 function nextYearRange(filters?: FinanceCalendarFilters) {
@@ -205,13 +284,6 @@ function nextYearRange(filters?: FinanceCalendarFilters) {
     start: format(start, 'yyyy-MM-dd'),
     end: format(end, 'yyyy-MM-dd'),
   }
-}
-
-function invoiceStatus(status: string, paidAmount: number, amount: number, cashArrivalDate: string): FinanceEvent['status'] {
-  if (status === 'paid') return 'paid'
-  if (paidAmount > 0 && paidAmount < amount) return 'partially_paid'
-  if (differenceInCalendarDays(new Date(), parseISO(cashArrivalDate)) > 0) return 'overdue'
-  return 'planned'
 }
 
 function expenseStatus(status: FinanceExpenseStatus, plannedDate: string): FinanceEvent['status'] {
@@ -240,15 +312,6 @@ function addCalendarDays(value: string, days: number) {
   return format(addDays(parseISO(value), days), 'yyyy-MM-dd')
 }
 
-function invoiceShippingBaseDate(machine: any) {
-  return machine?.actual_shipping_date || machine?.desired_shipping_date || null
-}
-
-function invoiceDeliveryDate(machine: any) {
-  const shippingBaseDate = invoiceShippingBaseDate(machine)
-  return shippingBaseDate ? addCalendarDays(shippingBaseDate, 7) : null
-}
-
 function paymentWindow(paymentObligationDate: string | null) {
   const bankProcessingStartDate = paymentObligationDate ? addCalendarDays(paymentObligationDate, 1) : null
   const bankProcessingEndDate = paymentObligationDate ? addCalendarDays(paymentObligationDate, 3) : null
@@ -260,107 +323,77 @@ function paymentWindow(paymentObligationDate: string | null) {
   }
 }
 
-function allocatedPaidAmount(totalPaidAmount: number, partAmount: number, priorPartAmount: number) {
-  return Math.max(0, Math.min(partAmount, totalPaidAmount - priorPartAmount))
-}
-
-function buildInvoiceFinanceEvents(invoice: any, range: { start: string; end: string }, eurRate: number | null): FinanceEvent[] {
+function buildInvoiceFinanceEvents(invoice: FinanceInvoiceRow, range: { start: string; end: string }, eurRate: number | null): FinanceEvent[] {
   const amount = Number(invoice.amount || 0)
   const totalPaidAmount = Number(invoice.paid_amount || 0)
-  const machine = invoice.machine || {}
-  const paymentTermsType = machine.payment_terms_type || 'invoice_days'
-  const paymentDueDays = Number(machine.payment_due_days ?? 0)
-  const finalPaymentDueDays = Number(machine.final_payment_due_days ?? paymentDueDays)
-  const prepaymentPercent = Math.min(100, Math.max(0, Number(machine.prepayment_percent ?? 50)))
-  const invoiceDate = normalizeDate(invoice.invoice_date || invoice.original_planned_date || invoice.due_date || invoice.payment_date)
-  const deliveryDate = invoiceDeliveryDate(machine)
-  const fallbackPlannedDate = normalizeDate(invoice.rescheduled_date || invoice.due_date || invoice.payment_date)
-  const baseTitle = invoice.machine?.name ? `Приход: ${invoice.machine.name}` : 'Планируемый приход'
+  const machine = relationOne(invoice.machine)
+  const factory = relationOne(machine?.factory)
+  const updatedBy = relationOne(invoice.updated_by_user)
+  const baseTitle = machine?.name ? `Приход: ${machine.name}` : 'Планируемый приход'
+  const schedule = buildInvoicePaymentSchedule({
+    amount,
+    paidAmount: totalPaidAmount,
+    invoiceDate: invoice.invoice_date,
+    paymentTermsType: invoice.payment_terms_type_snapshot,
+    paymentDueDays: invoice.payment_due_days_snapshot,
+    prepaymentPercent: invoice.prepayment_percent_snapshot,
+    finalPaymentDueDays: invoice.final_payment_due_days_snapshot,
+    estimatedDeliveryDays: invoice.estimated_delivery_days_snapshot,
+    deliveryToClientDate: machine?.delivery_to_client_date,
+    actualShippingDate: machine?.actual_shipping_date,
+    desiredShippingDate: machine?.desired_shipping_date,
+  })
 
-  const makeIncomeEvent = (part: {
-    paymentPart: FinancePaymentPart
-    titleSuffix?: string
-    amount: number
-    priorAmount: number
-    paymentObligationDate: string | null
-  }): FinanceEvent | null => {
-    const paymentDates = paymentWindow(part.paymentObligationDate || fallbackPlannedDate)
-    const plannedDate = part.paymentObligationDate || fallbackPlannedDate
-    if (isBefore(parseISO(paymentDates.cashArrivalDate), parseISO(range.start)) || isAfter(parseISO(paymentDates.cashArrivalDate), parseISO(range.end))) return null
-
-    const paidAmount = allocatedPaidAmount(totalPaidAmount, part.amount, part.priorAmount)
+  return schedule.flatMap((part): FinanceEvent[] => {
+    if (!part.dueDate) return []
+    const paymentDates = paymentWindow(part.dueDate)
+    const plannedDate = part.dueDate
+    if (isBefore(parseISO(paymentDates.cashArrivalDate), parseISO(range.start)) || isAfter(parseISO(paymentDates.cashArrivalDate), parseISO(range.end))) return []
     const amountUah = eurRate ? convertToUah(part.amount, 'EUR', eurRate) : part.amount
-    const paidAmountUah = eurRate ? convertToUah(paidAmount, 'EUR', eurRate) : paidAmount
+    const paidAmountUah = eurRate ? convertToUah(part.paidAmount, 'EUR', eurRate) : part.paidAmount
+    const status: FinanceEvent['status'] = part.remainingAmount <= 0
+      ? 'paid'
+      : part.isOverdue
+        ? 'overdue'
+        : part.paidAmount > 0
+          ? 'partially_paid'
+          : 'planned'
 
-    return {
+    return [{
       id: invoice.id,
       seriesId: null,
       type: 'income',
-      title: part.titleSuffix ? `${baseTitle} (${part.titleSuffix})` : baseTitle,
+      title: part.part === 'prepayment' ? `${baseTitle} (предоплата)` : part.part === 'final' ? `${baseTitle} (остаток)` : baseTitle,
       amount: part.amount,
       amountUah,
-      paidAmount,
+      paidAmount: part.paidAmount,
       paidAmountUah,
-      remainingAmount: Math.max(0, part.amount - paidAmount),
+      remainingAmount: part.remainingAmount,
       remainingAmountUah: Math.max(0, amountUah - paidAmountUah),
-      status: invoiceStatus(invoice.status, paidAmount, part.amount, paymentDates.cashArrivalDate),
+      status,
       category: 'Инвойс',
-      counterparty: invoice.machine?.name || 'Клиент',
+      counterparty: machine?.name || 'Клиент',
       currency: 'EUR',
       exchangeRate: eurRate,
-      factoryId: invoice.machine?.factory_id || null,
-      factoryName: invoice.machine?.factory?.name || null,
+      factoryId: machine?.factory_id || null,
+      factoryName: factory?.name || null,
       isSupplyPlan: false,
       responsibleUserId: null,
-      responsibleName: invoice.updated_by_user?.full_name || null,
+      responsibleName: updatedBy?.full_name || null,
       plannedDate,
-      originalPlannedDate: invoice.original_planned_date || invoice.due_date || invoice.payment_date,
-      rescheduledDate: invoice.rescheduled_date,
+      originalPlannedDate: part.dueDate,
+      rescheduledDate: null,
       actualPaidDate: invoice.actual_paid_date,
-      paymentObligationDate: part.paymentObligationDate,
+      paymentObligationDate: part.dueDate,
       bankProcessingStartDate: paymentDates.bankProcessingStartDate,
       bankProcessingEndDate: paymentDates.bankProcessingEndDate,
       cashArrivalDate: paymentDates.cashArrivalDate,
-      paymentPart: part.paymentPart,
+      paymentPart: part.part,
+      isForecast: part.isForecast,
       comment: invoice.finance_comment || invoice.payment_note,
       sourceHref: invoice.machine_id ? `${ROUTES.SALES_PLAN}/${invoice.machine_id}` : ROUTES.INVOICES,
-    }
-  }
-
-  if (paymentTermsType === 'prepayment_full') {
-    const prepaymentAmount = Math.round(amount * prepaymentPercent) / 100
-    const finalAmount = Math.max(0, amount - prepaymentAmount)
-    const prepaymentDate = addCalendarDays(invoiceDate, paymentDueDays)
-    const finalPaymentDate = deliveryDate ? addCalendarDays(deliveryDate, finalPaymentDueDays) : fallbackPlannedDate
-
-    return [
-      makeIncomeEvent({
-        paymentPart: 'prepayment',
-        titleSuffix: 'предоплата',
-        amount: prepaymentAmount,
-        priorAmount: 0,
-        paymentObligationDate: prepaymentDate,
-      }),
-      makeIncomeEvent({
-        paymentPart: 'final',
-        titleSuffix: 'остаток',
-        amount: finalAmount,
-        priorAmount: prepaymentAmount,
-        paymentObligationDate: finalPaymentDate,
-      }),
-    ].filter(Boolean) as FinanceEvent[]
-  }
-
-  const paymentBaseDate = deliveryDate || invoiceDate
-  const paymentObligationDate = paymentBaseDate ? addCalendarDays(paymentBaseDate, paymentDueDays) : fallbackPlannedDate
-  const event = makeIncomeEvent({
-    paymentPart: 'full',
-    amount,
-    priorAmount: 0,
-    paymentObligationDate,
+    }]
   })
-
-  return event ? [event] : []
 }
 
 export async function getFinanceCalendarData(
@@ -373,7 +406,6 @@ export async function getFinanceCalendarData(
   const range = nextYearRange(filters)
   const currentMonthStart = startOfMonth(new Date())
   const currentMonthEnd = endOfMonth(currentMonthStart)
-  const invoiceLookbackStart = format(addDays(parseISO(range.start), -120), 'yyyy-MM-dd')
   const nbuEurRatePromise = getNbuEurRate()
   const [invoicesResult, expensesResult, scrapIncomeResult, usersResult, factoriesResult, budgetsResult, settingsResult, nbuEurRate] = await Promise.all([
     db
@@ -393,21 +425,23 @@ export async function getFinanceCalendarData(
         rescheduled_date,
         actual_paid_date,
         finance_comment,
+        payment_terms_type_snapshot,
+        payment_due_days_snapshot,
+        prepayment_percent_snapshot,
+        final_payment_due_days_snapshot,
+        estimated_delivery_days_snapshot,
         machine:machines(
           id,
           name,
           actual_shipping_date,
           desired_shipping_date,
-          payment_terms_type,
-          payment_due_days,
-          prepayment_percent,
-          final_payment_due_days,
+          delivery_to_client_date,
           factory_id,
           factory:factories(id, name)
         ),
         updated_by_user:users!invoices_updated_by_fkey(full_name)
       `)
-      .or(`due_date.gte.${invoiceLookbackStart},payment_date.gte.${invoiceLookbackStart},rescheduled_date.gte.${invoiceLookbackStart},invoice_date.gte.${invoiceLookbackStart}`)
+      .neq('status', 'cancelled')
       .order('due_date', { ascending: true }),
     db
       .from('finance_expenses')
@@ -471,11 +505,12 @@ export async function getFinanceCalendarData(
   if (budgetsResult.error) throw new Error(budgetsResult.error.message)
   if (settingsResult.error) throw new Error(settingsResult.error.message)
 
-  const invoices = ((invoicesResult.data || []) as any[])
+  const invoices = ((invoicesResult.data || []) as FinanceInvoiceRow[])
     .flatMap((invoice) => buildInvoiceFinanceEvents(invoice, range, nbuEurRate))
 
-  const factoryNameById = new Map(((factoriesResult.data || []) as any[]).map((factory) => [factory.id, factory.name]))
-  const expenses = ((expensesResult.data || []) as any[]).map((expense): FinanceEvent => {
+  const factoryNameById = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string }>).map((factory) => [factory.id, factory.name]))
+  const expenses = ((expensesResult.data || []) as FinanceExpenseRow[]).map((expense): FinanceEvent => {
+    const responsible = relationOne(expense.responsible)
     const amount = Number(expense.amount || 0)
     const currency = (expense.currency || 'EUR') as FinanceCurrency
     const expenseRate = Number(expense.exchange_rate || 0) || nbuEurRate
@@ -502,7 +537,7 @@ export async function getFinanceCalendarData(
       factoryName: expense.factory_id ? factoryNameById.get(expense.factory_id) || null : null,
       isSupplyPlan: expense.is_supply_plan === true || isSupplyFinanceCategory(expense.category),
       responsibleUserId: expense.responsible_user_id,
-      responsibleName: expense.responsible?.full_name || null,
+      responsibleName: responsible?.full_name || null,
       plannedDate: expense.planned_date,
       originalPlannedDate: expense.original_planned_date,
       rescheduledDate: expense.rescheduled_date,
@@ -512,25 +547,29 @@ export async function getFinanceCalendarData(
       bankProcessingEndDate: null,
       cashArrivalDate: expense.planned_date,
       paymentPart: 'full',
+      isForecast: false,
       comment: expense.comment,
       sourceHref: null,
     }
   })
 
-  const scrapIncomes = ((scrapIncomeResult.data || []) as any[])
+  const scrapIncomes = ((scrapIncomeResult.data || []) as ScrapIncomeRow[])
     .filter((income) => income.status === 'paid')
-    .map((income): FinanceEvent => ({
+    .map((income): FinanceEvent => {
+      const sale = relationOne(income.metal_scrap_sales)
+      return ({
       id: `scrap-${income.id}`, seriesId: null, type: 'income', title: 'Сдача металлолома',
       amount: Number(income.amount_uah), amountUah: Number(income.amount_uah), paidAmount: Number(income.amount_uah), paidAmountUah: Number(income.amount_uah),
-      remainingAmount: 0, remainingAmountUah: 0, status: 'paid', category: 'Металлолом', counterparty: income.metal_scrap_sales?.buyer || 'Покупатель металлолома',
-      currency: 'UAH', exchangeRate: null, factoryId: income.metal_scrap_sales?.factory_id || null,
-      factoryName: income.metal_scrap_sales?.factory_id ? factoryNameById.get(income.metal_scrap_sales.factory_id) || null : null,
+      remainingAmount: 0, remainingAmountUah: 0, status: 'paid', category: 'Металлолом', counterparty: sale?.buyer || 'Покупатель металлолома',
+      currency: 'UAH', exchangeRate: null, factoryId: sale?.factory_id || null,
+      factoryName: sale?.factory_id ? factoryNameById.get(sale.factory_id) || null : null,
       isSupplyPlan: false, responsibleUserId: null, responsibleName: null, plannedDate: income.payment_date,
       originalPlannedDate: null, rescheduledDate: null, actualPaidDate: income.payment_date, paymentObligationDate: income.payment_date,
       bankProcessingStartDate: null, bankProcessingEndDate: null, cashArrivalDate: income.payment_date, paymentPart: 'full',
-      comment: income.metal_scrap_sales?.document_number ? `Документ: ${income.metal_scrap_sales.document_number}` : null,
+      isForecast: false,
+      comment: sale?.document_number ? `Документ: ${sale.document_number}` : null,
       sourceHref: ROUTES.INVENTORY_METAL_SCRAP,
-    }))
+    })})
 
   const events = [...invoices, ...scrapIncomes, ...expenses].sort((a, b) => {
     const aDate = a.type === 'income' ? a.cashArrivalDate : a.plannedDate
@@ -539,12 +578,12 @@ export async function getFinanceCalendarData(
   })
   const users = (usersResult.data || []) as FinanceCalendarData['users']
   const factories = (factoriesResult.data || []) as FinanceCalendarData['factories']
-  const budgetMap = new Map(((budgetsResult.data || []) as any[]).map((row) => [row.category, row.monthly_limit_uah === null ? null : Number(row.monthly_limit_uah)]))
+  const budgetMap = new Map(((budgetsResult.data || []) as Array<{ category: string; monthly_limit_uah: number | null }>).map((row) => [row.category, row.monthly_limit_uah === null ? null : Number(row.monthly_limit_uah)]))
   const budgetLimits = SUPPLY_FINANCE_CATEGORIES.map((category) => ({
     category,
     monthlyLimitUah: budgetMap.has(category) ? budgetMap.get(category) ?? null : null,
   }))
-  const currentBalanceUah = Number((settingsResult.data as any)?.value_numeric || 0)
+  const currentBalanceUah = Number((settingsResult.data as { value_numeric?: number | null } | null)?.value_numeric || 0)
   const forecast = buildForecast(events, range.start, range.end, currentBalanceUah)
   const supplyMonthEvents = events.filter((event) =>
     event.type === 'expense' &&
@@ -723,7 +762,7 @@ export async function createFinanceExpense(input: {
         created_by: user.id,
       }).select('id').single()
       if (seriesResult.error) throw new Error(seriesResult.error.message)
-      seriesId = seriesResult.data.id
+      seriesId = (seriesResult.data as { id: string }).id
     }
 
     const rows = dates.map((plannedDate) => ({
@@ -815,7 +854,7 @@ export async function updateFinanceExpense(
     const { db, user } = await requireFinanceAccess('manage')
     const currentResult = await db.from('finance_expenses').select('*').eq('id', expenseId).single()
     if (currentResult.error || !currentResult.data) throw new Error('Расход не найден')
-    const current = currentResult.data as any
+    const current = currentResult.data as FinanceExpenseMutationRow
     if (user.role === 'supply_manager' && current.is_supply_plan !== true) {
       throw new Error('Снабжение может менять только свои плановые расходы')
     }
@@ -862,7 +901,7 @@ export async function updateFinanceExpense(
 
       if (futureResult.error) throw new Error(futureResult.error.message)
 
-      for (const row of (futureResult.data || []) as any[]) {
+      for (const row of (futureResult.data || []) as Array<{ id: string; planned_date: string }>) {
         const nextDate = format(addDays(parseISO(row.planned_date), deltaDays), 'yyyy-MM-dd')
         await db
           .from('finance_expenses')
@@ -903,42 +942,35 @@ export async function updateFinanceIncome(
     const { db, user } = await requireFinanceAccess('manage')
     const currentResult = await db.from('invoices').select('*').eq('id', invoiceId).single()
     if (currentResult.error || !currentResult.data) throw new Error('Приход не найден')
-    const current = currentResult.data as any
-    const amount = Number(current.amount || 0)
-
-    const update: Record<string, unknown> = { updated_by: user.id }
-    if (input.action === 'paid') {
-      update.status = 'paid'
-      update.paid_amount = amount
-      update.actual_paid_date = input.date || format(new Date(), 'yyyy-MM-dd')
-    } else if (input.action === 'partial') {
-      const paidAmount = Number(input.amount || 0)
-      if (paidAmount <= 0 || paidAmount > amount) throw new Error('Некорректная сумма частичной оплаты')
-      update.status = paidAmount >= amount ? 'paid' : 'not_paid'
-      update.paid_amount = paidAmount
-      update.actual_paid_date = paidAmount >= amount ? (input.date || format(new Date(), 'yyyy-MM-dd')) : null
-    } else if (input.action === 'postpone') {
-      if (!input.date) throw new Error('Выберите дату переноса')
-      update.rescheduled_date = input.date
-      update.due_date = input.date
-      update.payment_date = input.date
-      update.finance_comment = input.comment || current.finance_comment
-      update.status = 'not_paid'
-    } else if (input.action === 'reject') {
-      update.finance_comment = input.comment || current.finance_comment || 'Не подтверждено'
-      update.status = current.status === 'paid' ? 'paid' : 'not_paid'
+    const current = currentResult.data as {
+      amount: number | null
+      paid_amount: number | null
+      rescheduled_date: string | null
+      due_date: string | null
+      payment_date: string | null
     }
-
-    const { error } = await db.from('invoices').update(update).eq('id', invoiceId)
-    if (error) throw new Error(error.message)
+    const amount = Number(current.amount || 0)
+    const remainingAmount = Math.max(0, amount - Number(current.paid_amount || 0))
+    if (input.action === 'postpone' || input.action === 'reject') {
+      throw new Error('Срок и статус инвойса рассчитываются автоматически по зафиксированным условиям оплаты')
+    }
+    const paymentAmount = Number(input.amount || (input.action === 'paid' ? remainingAmount : 0))
+    if (paymentAmount <= 0 || paymentAmount > remainingAmount) throw new Error('Некорректная сумма оплаты')
+    const paymentResult = await recordInvoicePayment({
+      invoiceId,
+      amount: paymentAmount,
+      paidOn: input.date || format(new Date(), 'yyyy-MM-dd'),
+      note: input.comment || 'Добавлено из финансового календаря',
+    })
+    if (!paymentResult.success) throw new Error(paymentResult.error || 'Не удалось сохранить оплату')
 
     await logFinanceAction(db, {
       event_type: 'income',
       event_id: invoiceId,
       action: input.action,
       previous_planned_date: current.rescheduled_date || current.due_date || current.payment_date,
-      new_planned_date: input.action === 'postpone' ? input.date : null,
-      amount: input.amount ?? null,
+      new_planned_date: null,
+      amount: paymentAmount,
       comment: input.comment ?? null,
       performed_by: user.id,
       performed_via: 'crm',
@@ -985,7 +1017,17 @@ export async function sendFinanceTelegramTestMessage(input?: { eventType?: Finan
         .eq('id', input.eventId)
         .single()
       if (error || !data) throw new Error('Приход не найден')
-      const invoice = data as any
+      const invoice = data as {
+        id: string
+        machine_id: string | null
+        amount: number | null
+        paid_amount: number | null
+        payment_date: string
+        due_date: string | null
+        rescheduled_date: string | null
+        machine: Relation<{ name: string }>
+      }
+      const machine = relationOne(invoice.machine)
       const amount = Number(invoice.amount || 0) - Number(invoice.paid_amount || 0)
       event = {
         eventType: 'income',
@@ -993,7 +1035,7 @@ export async function sendFinanceTelegramTestMessage(input?: { eventType?: Finan
         id: invoice.id,
         href: invoice.machine_id ? `${ROUTES.SALES_PLAN}/${invoice.machine_id}` : ROUTES.INVOICES,
         plannedDate: invoice.rescheduled_date || invoice.due_date || invoice.payment_date,
-        title: invoice.machine?.name || 'Планируемый приход',
+        title: machine?.name || 'Планируемый приход',
         amount,
         currency: 'EUR',
       }
@@ -1004,7 +1046,15 @@ export async function sendFinanceTelegramTestMessage(input?: { eventType?: Finan
         .eq('id', input.eventId)
         .single()
       if (error || !data) throw new Error('Расход не найден')
-      const expense = data as any
+      const expense = data as {
+        id: string
+        title: string
+        amount: number | null
+        paid_amount: number | null
+        currency: string | null
+        planned_date: string
+        counterparty: string | null
+      }
       const amount = Number(expense.amount || 0) - Number(expense.paid_amount || 0)
       event = {
         eventType: 'expense',

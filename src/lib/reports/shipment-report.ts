@@ -65,7 +65,11 @@ async function loadRows(admin: ReturnType<typeof createAdminClient>, filters: Sh
     Promise.all(chunks(clientIds, RELATED_IDS_CHUNK_SIZE).map((ids) =>
       admin.from('clients').select('id, name').in('id', ids))),
     Promise.all(chunks(machineIds, RELATED_IDS_CHUNK_SIZE).map((ids) =>
-      admin.from('invoices').select('machine_id, amount, paid_amount, invoice_date').in('machine_id', ids))),
+      admin
+        .from('invoices')
+        .select('machine_id, amount, paid_amount, invoice_date, status, invoice_revision')
+        .in('machine_id', ids)
+        .neq('status', 'cancelled'))),
   ])
 
   const relationError = [...clientResults, ...invoiceResults].find((result) => result.error)?.error
