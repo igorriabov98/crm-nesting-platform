@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ClientInput } from '@/lib/types/schemas'
+import type { PaymentTermsType } from '@/lib/types'
 import type { UseFormReturn } from 'react-hook-form'
 import { getClientManagerOptions } from '@/lib/actions/clients'
 
@@ -14,6 +15,12 @@ type ManagerAccess = {
   currentUserId: string | null
   currentUserName: string | null
   managers: Array<{ id: string; name: string; isActive: boolean }>
+}
+
+export const PAYMENT_TERMS_TYPE_LABELS: Record<PaymentTermsType, string> = {
+  invoice_days: 'От даты инвойса',
+  delivery_days: 'От даты доставки',
+  prepayment_full: 'Предоплата + полная оплата',
 }
 
 export function paymentTermsLabel(type: string, days: number, prepayment?: number | null, finalDays?: number | null) {
@@ -46,9 +53,13 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
 
   const responsibleName = useMemo(() => {
     if (!managerAccess) return 'Загрузка…'
-    return managerAccess.managers.find((manager) => manager.id === responsibleUserId)?.name
-      || managerAccess.currentUserName
-      || 'Не назначен'
+    if (responsibleUserId) {
+      return managerAccess.managers.find((manager) => manager.id === responsibleUserId)?.name
+        || (responsibleUserId === managerAccess.currentUserId ? managerAccess.currentUserName : null)
+        || 'Ответственный не найден'
+    }
+    if (!managerAccess.canAssign && managerAccess.currentUserName) return managerAccess.currentUserName
+    return 'Не назначен'
   }, [managerAccess, responsibleUserId])
 
   return (
@@ -104,7 +115,7 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
             <FormLabel>Ответственный менеджер</FormLabel>
             {managerAccess?.canAssign ? (
               <Select value={field.value || 'unassigned'} onValueChange={(value) => field.onChange(value === 'unassigned' ? null : value)}>
-                <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                <FormControl><SelectTrigger><SelectValue>{responsibleName}</SelectValue></SelectTrigger></FormControl>
                 <SelectContent>
                   <SelectItem value="unassigned">Не назначен</SelectItem>
                   {managerAccess.managers.map((manager) => (
@@ -175,7 +186,11 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
                 }
               }}
             >
-              <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue>{PAYMENT_TERMS_TYPE_LABELS[field.value]}</SelectValue>
+                </SelectTrigger>
+              </FormControl>
               <SelectContent>
                 <SelectItem value="invoice_days">От даты инвойса</SelectItem>
                 <SelectItem value="delivery_days">От даты доставки</SelectItem>

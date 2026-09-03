@@ -6,11 +6,12 @@ import { useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { ImageIcon, Pencil, Upload } from 'lucide-react'
 import { toast } from 'sonner'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { MachineStatusBadge } from '@/components/features/machines/MachineStatusBadge'
 import { uploadClientImage } from '@/lib/actions/clients'
 import { ROUTES } from '@/lib/constants/routes'
-import { paymentTermsLabel } from './ClientFormFields'
+import { INVOICE_STATUSES } from '@/lib/constants/statuses'
+import { PAYMENT_TERMS_TYPE_LABELS, paymentTermsLabel } from './ClientFormFields'
 import { ClientContactsSection } from './ClientContactsSection'
 import { ClientContractsSection } from './ClientContractsSection'
 import { ClientEditDialog } from './ClientEditDialog'
@@ -36,12 +37,6 @@ function normalizeInvoice(invoice: MachineDetails['invoice']) {
     .find((item) => item.status !== 'cancelled')
     || [...invoices].sort((a, b) => Number(b.invoice_revision || 0) - Number(a.invoice_revision || 0))[0]
     || null
-}
-
-function paymentTermTitle(type: Client['payment_terms_type']) {
-  if (type === 'delivery_days') return 'От даты доставки'
-  if (type === 'prepayment_full') return 'Предоплата + полная оплата'
-  return 'От даты инвойса'
 }
 
 function isPngOrJpg(file: File) {
@@ -170,7 +165,7 @@ export function ClientDetail({
         <div className="mt-6 rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-4">
           <div className="text-xs font-semibold uppercase text-[#9CA3AF]">Как оплачивает клиент</div>
           <div className="mt-2 text-lg font-semibold text-[#1B3A6B]">
-            {paymentTermTitle(client.payment_terms_type)}
+            {PAYMENT_TERMS_TYPE_LABELS[client.payment_terms_type]}
           </div>
           <div className="mt-1 text-sm text-[#374151]">
             {paymentTermsLabel(client.payment_terms_type, client.payment_due_days, client.prepayment_percent, client.final_payment_due_days)}
@@ -281,9 +276,15 @@ export function ClientDetail({
                     <td className="px-4 py-3 text-[#374151]">
                       {(machine.machine_items || []).map((item) => item.product_name).filter(Boolean).join(', ') || '—'}
                     </td>
-                    <td className="px-4 py-3"><Badge variant="outline">{machine.status}</Badge></td>
+                    <td className="px-4 py-3"><MachineStatusBadge status={machine.status} /></td>
                     <td className="px-4 py-3 text-[#374151]">
-                      {invoice ? `${money.format(Number(invoice.amount || 0) - Number(invoice.paid_amount || 0))} · ${invoice.status}` : '—'}
+                      {invoice ? (
+                        <>
+                          {money.format(Number(invoice.amount || 0) - Number(invoice.paid_amount || 0))}
+                          {' · '}
+                          {INVOICE_STATUSES[invoice.status]?.label || 'Статус не указан'}
+                        </>
+                      ) : '—'}
                     </td>
                   </tr>
                 )
