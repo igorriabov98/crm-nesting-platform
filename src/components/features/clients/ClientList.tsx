@@ -18,8 +18,9 @@ export type ClientListRow = {
   prepayment_percent: number | null
   final_payment_due_days: number | null
   active_machines_count: number
-  current_invoice_amount: number
-  overdue_invoice_amount: number
+  current_invoice_amount: number | null
+  overdue_invoice_amount: number | null
+  can_view_invoices: boolean
   last_activity: string | null
 }
 
@@ -68,8 +69,8 @@ export function ClientList({ clients, resultLimit }: { clients: ClientListRow[];
                   <div className="text-xs text-[#9CA3AF]">{client.phone || client.email || 'Контакты не указаны'}</div>
                 </td>
                 <td className="px-4 py-3 font-medium text-[#1B3A6B]">{client.active_machines_count}</td>
-                <td className="px-4 py-3 font-medium text-[#374151]">{money.format(client.current_invoice_amount)}</td>
-                <td className="px-4 py-3 font-semibold text-[#DC2626]">{money.format(client.overdue_invoice_amount)}</td>
+                <td className="px-4 py-3 font-medium text-[#374151]">{client.can_view_invoices ? money.format(client.current_invoice_amount || 0) : 'Скрыто доступом'}</td>
+                <td className="px-4 py-3 font-semibold text-[#DC2626]">{client.can_view_invoices ? money.format(client.overdue_invoice_amount || 0) : '—'}</td>
                 <td className="px-4 py-3 text-[#6B7280]">
                   {client.last_activity ? format(new Date(client.last_activity), 'dd.MM.yyyy') : '—'}
                 </td>

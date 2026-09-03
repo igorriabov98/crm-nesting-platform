@@ -4,16 +4,10 @@ import { INVOICES_LIST_LIMIT } from '@/lib/constants/performance-limits'
 
 export const metadata = { title: 'Инвойсы — CRM Завода' }
 
-export default async function InvoicesPage({
-  searchParams
-}: {
-  searchParams?: Promise<{ factory?: string }>
-}) {
-  const resolvedSearchParams = await searchParams
-  const factoryFilter = resolvedSearchParams?.factory || 'all'
+export default async function InvoicesPage() {
   let data
   try {
-    data = await getInvoices(factoryFilter)
+    data = await getInvoices()
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'Неизвестная ошибка'
     return (

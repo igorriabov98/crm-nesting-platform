@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm, type Resolver } from 'react-hook-form'
 import { toast } from 'sonner'
-import { applyClientPaymentTermsToMachines, updateClient } from '@/lib/actions/clients'
+import { updateClient } from '@/lib/actions/clients'
+import { recalculateSelectedInvoiceTerms } from '@/lib/actions/invoices'
 import { clientSchema, type ClientInput } from '@/lib/types/schemas'
 import type { Client, MachineDetails } from '@/lib/types'
 import { Form } from '@/components/ui/form'
@@ -19,6 +20,7 @@ type ClientEditDialogProps = {
   client: Client & { machines?: MachineDetails[] }
   open: boolean
   onOpenChange: (open: boolean) => void
+  canManageInvoices?: boolean
 }
 
 function paymentChanged(client: Client, values: ClientInput) {
@@ -26,17 +28,23 @@ function paymentChanged(client: Client, values: ClientInput) {
     || Number(client.payment_due_days || 0) !== Number(values.payment_due_days || 0)
     || Number(client.prepayment_percent || 0) !== Number(values.prepayment_percent || 0)
     || Number(client.final_payment_due_days || 0) !== Number(values.final_payment_due_days || 0)
+    || Number(client.estimated_delivery_days ?? 7) !== Number(values.estimated_delivery_days ?? 7)
 }
 
-export function ClientEditDialog({ client, open, onOpenChange }: ClientEditDialogProps) {
+export function ClientEditDialog({ client, open, onOpenChange, canManageInvoices = false }: ClientEditDialogProps) {
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isApplying, setIsApplying] = useState(false)
   const [isApplyOpen, setIsApplyOpen] = useState(false)
-  const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([])
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([])
 
-  const activeMachines = useMemo(
-    () => (client.machines || []).filter((machine) => !machine.is_archived),
+  const eligibleInvoices = useMemo(
+    () => (client.machines || []).flatMap((machine) => {
+      const invoices = Array.isArray(machine.invoice) ? machine.invoice : machine.invoice ? [machine.invoice] : []
+      return invoices
+        .filter((invoice) => invoice.status !== 'cancelled' && Number(invoice.paid_amount || 0) < Number(invoice.amount || 0))
+        .map((invoice) => ({ invoice, machine }))
+    }),
     [client.machines],
   )
 
@@ -57,20 +65,22 @@ export function ClientEditDialog({ client, open, onOpenChange }: ClientEditDialo
       payment_due_days: client.payment_due_days || 14,
       prepayment_percent: client.prepayment_percent ?? 50,
       final_payment_due_days: client.final_payment_due_days ?? 0,
+      responsible_user_id: client.responsible_user_id,
+      estimated_delivery_days: client.estimated_delivery_days ?? 7,
     },
   })
 
   async function onSubmit(values: ClientInput) {
     setIsSubmitting(true)
     try {
-      const shouldAskMachines = paymentChanged(client, values) && activeMachines.length > 0
+      const shouldAskInvoices = canManageInvoices && paymentChanged(client, values) && eligibleInvoices.length > 0
       const result = await updateClient(client.id, values)
       if (!result.success) throw new Error(result.error || 'Не удалось обновить клиента')
 
       toast.success('Клиент обновлен')
       onOpenChange(false)
-      if (shouldAskMachines) {
-        setSelectedMachineIds([])
+      if (shouldAskInvoices) {
+        setSelectedInvoiceIds([])
         setIsApplyOpen(true)
       } else {
         router.refresh()
@@ -85,10 +95,10 @@ export function ClientEditDialog({ client, open, onOpenChange }: ClientEditDialo
   async function applyTerms() {
     setIsApplying(true)
     try {
-      const result = await applyClientPaymentTermsToMachines(client.id, selectedMachineIds)
-      if (!result.success) throw new Error(result.error || 'Не удалось применить условия оплаты')
+      const result = await recalculateSelectedInvoiceTerms(client.id, selectedInvoiceIds)
+      if (!result.success) throw new Error(result.error || 'Не удалось пересчитать условия оплаты')
 
-      toast.success(`Условия оплаты применены к машинам: ${result.updated_count}`)
+      toast.success(`Условия оплаты пересчитаны для инвойсов: ${result.updatedCount}`)
       setIsApplyOpen(false)
       router.refresh()
     } catch (error) {
@@ -124,30 +134,30 @@ export function ClientEditDialog({ client, open, onOpenChange }: ClientEditDialo
       <Dialog open={isApplyOpen} onOpenChange={setIsApplyOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Применить новые условия оплаты к машинам</DialogTitle>
+            <DialogTitle>Применить новые условия к неоплаченным инвойсам</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-[#6B7280]">
-              Выберите машины, где нужно заменить условия оплаты на текущие условия клиента. Инвойсы и даты оплат не будут пересчитаны.
+              Будущие инвойсы уже получат новые условия. Ниже можно явно выбрать существующие неоплаченные инвойсы для пересчёта графика; по умолчанию ничего не выбрано.
             </p>
             <div className="rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-3 text-sm text-[#1B3A6B]">
               {paymentTermsLabel(form.getValues('payment_terms_type'), form.getValues('payment_due_days'), form.getValues('prepayment_percent'), form.getValues('final_payment_due_days'))}
             </div>
             <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-[#E8ECF0] p-3">
-              {activeMachines.map((machine) => {
-                const checked = selectedMachineIds.includes(machine.id)
+              {eligibleInvoices.map(({ machine, invoice }) => {
+                const checked = selectedInvoiceIds.includes(invoice.id)
                 return (
-                  <label key={machine.id} className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 hover:bg-[#F8F9FA]">
+                  <label key={invoice.id} className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 hover:bg-[#F8F9FA]">
                     <Checkbox
                       checked={checked}
                       onCheckedChange={(value) => {
-                        setSelectedMachineIds((current) => value
-                          ? [...current, machine.id]
-                          : current.filter((id) => id !== machine.id))
+                        setSelectedInvoiceIds((current) => value
+                          ? [...current, invoice.id]
+                          : current.filter((id) => id !== invoice.id))
                       }}
                     />
-                    <span className="font-medium text-[#1B3A6B]">{machine.name}</span>
-                    <span className="text-xs text-[#6B7280]">{machine.status}</span>
+                    <span className="font-medium text-[#1B3A6B]">{invoice.invoice_number || machine.specification_number || machine.name}</span>
+                    <span className="text-xs text-[#6B7280]">{machine.name} · остаток €{Math.max(0, Number(invoice.amount || 0) - Number(invoice.paid_amount || 0)).toLocaleString('ru-RU')}</span>
                   </label>
                 )
               })}
@@ -160,8 +170,8 @@ export function ClientEditDialog({ client, open, onOpenChange }: ClientEditDialo
             }}>
               Не применять
             </Button>
-            <LoadingButton type="button" loading={isApplying} disabled={selectedMachineIds.length === 0} onClick={applyTerms}>
-              Применить к выбранным
+            <LoadingButton type="button" loading={isApplying} disabled={selectedInvoiceIds.length === 0} onClick={applyTerms}>
+              Пересчитать выбранные
             </LoadingButton>
           </DialogFooter>
         </DialogContent>

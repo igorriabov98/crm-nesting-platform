@@ -1,11 +1,20 @@
 "use client"
 
+import { useEffect, useMemo, useState } from 'react'
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ClientInput } from '@/lib/types/schemas'
 import type { UseFormReturn } from 'react-hook-form'
+import { getClientManagerOptions } from '@/lib/actions/clients'
+
+type ManagerAccess = {
+  canAssign: boolean
+  currentUserId: string | null
+  currentUserName: string | null
+  managers: Array<{ id: string; name: string; isActive: boolean }>
+}
 
 export function paymentTermsLabel(type: string, days: number, prepayment?: number | null, finalDays?: number | null) {
   if (type === 'delivery_days') return `Через ${days} дн. от доставки клиенту`
@@ -15,6 +24,32 @@ export function paymentTermsLabel(type: string, days: number, prepayment?: numbe
 
 export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> }) {
   const termsType = form.watch('payment_terms_type')
+  const responsibleUserId = form.watch('responsible_user_id')
+  const [managerAccess, setManagerAccess] = useState<ManagerAccess | null>(null)
+
+  useEffect(() => {
+    let active = true
+    void getClientManagerOptions().then((result) => {
+      if (!active || !result.success) return
+      setManagerAccess({
+        canAssign: result.canAssign,
+        currentUserId: result.currentUserId,
+        currentUserName: result.currentUserName,
+        managers: result.managers,
+      })
+      if (!result.canAssign && !form.getValues('responsible_user_id') && result.currentUserId) {
+        form.setValue('responsible_user_id', result.currentUserId)
+      }
+    })
+    return () => { active = false }
+  }, [form])
+
+  const responsibleName = useMemo(() => {
+    if (!managerAccess) return 'Загрузка…'
+    return managerAccess.managers.find((manager) => manager.id === responsibleUserId)?.name
+      || managerAccess.currentUserName
+      || 'Не назначен'
+  }, [managerAccess, responsibleUserId])
 
   return (
     <div className="grid gap-4">
@@ -58,6 +93,41 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
           <FormItem>
             <FormLabel>Юридический / общий адрес</FormLabel>
             <FormControl><Input {...field} value={field.value || ''} /></FormControl>
+            <FormMessage />
+          </FormItem>
+        )} />
+      </div>
+
+      <div className="grid gap-4 rounded-lg border border-[#E8ECF0] bg-[#F8F9FA] p-4 md:grid-cols-2">
+        <FormField control={form.control} name="responsible_user_id" render={({ field }) => (
+          <FormItem>
+            <FormLabel>Ответственный менеджер</FormLabel>
+            {managerAccess?.canAssign ? (
+              <Select value={field.value || 'unassigned'} onValueChange={(value) => field.onChange(value === 'unassigned' ? null : value)}>
+                <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                <SelectContent>
+                  <SelectItem value="unassigned">Не назначен</SelectItem>
+                  {managerAccess.managers.map((manager) => (
+                    <SelectItem key={manager.id} value={manager.id} disabled={!manager.isActive}>
+                      {manager.name}{manager.isActive ? '' : ' (неактивен)'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input value={responsibleName} disabled aria-label="Ответственный менеджер" />
+            )}
+            <p className="text-xs text-[#6B7280]">
+              {managerAccess?.canAssign ? 'Назначение могут менять директора и Администратор CRM.' : 'При создании компании вы назначаетесь ответственным автоматически.'}
+            </p>
+            <FormMessage />
+          </FormItem>
+        )} />
+        <FormField control={form.control} name="estimated_delivery_days" render={({ field }) => (
+          <FormItem>
+            <FormLabel>Норматив доставки, календарных дней</FormLabel>
+            <FormControl><Input type="number" min={0} max={365} {...field} value={field.value ?? 7} /></FormControl>
+            <p className="text-xs text-[#6B7280]">Используется только для прогноза срока оплаты до фактической доставки.</p>
             <FormMessage />
           </FormItem>
         )} />

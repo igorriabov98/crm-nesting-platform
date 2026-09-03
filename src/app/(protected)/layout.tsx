@@ -26,7 +26,7 @@ export default async function ProtectedLayout({
   const impersonation = await getImpersonationContext(currentUser.id)
 
   return (
-    <PermissionProvider permissions={permissions}>
+    <PermissionProvider permissions={permissions} isAdminPosition={permissionDetails.isAdminPosition}>
       <Suspense fallback={null}><FocusTargetScroller /></Suspense>
       {/* Keep the fixed shell non-scrollable; the sidebar nav and main own their scrolling. */}
       <div className="fixed inset-0 flex flex-col overflow-clip bg-[#F4F6F9]">

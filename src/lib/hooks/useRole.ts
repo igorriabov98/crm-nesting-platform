@@ -16,7 +16,7 @@ import type { UserRole } from '@/lib/types'
  */
 export function useRole() {
   const { user, loading } = useUser()
-  const { can } = usePermissions()
+  const { can, isAdminPosition } = usePermissions()
 
   const role = user?.role as UserRole | undefined
 
@@ -26,6 +26,7 @@ export function useRole() {
 
     // Является ли пользователь директором (любым из трёх)
     isDirector: role ? isDirector(role) : false,
+    isAdminPosition,
 
     // Может ли управлять пользователями системы (только planning_director)
     canManageUsers: can('admin_users', 'manage'),

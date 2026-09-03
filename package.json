@@ -15,6 +15,7 @@
     "test:supply-reservation-scope": "tsx scripts/test-supply-reservation-scope.ts",
     "test:access-control": "tsx scripts/test-access-control.ts",
     "test:complex-reports": "NODE_OPTIONS=--conditions=react-server NODE_PATH=./node_modules/next/dist/compiled tsx scripts/test-complex-reports.ts",
+    "test:invoice-payments": "tsx --test src/lib/invoices/payment-schedule.test.ts && NODE_OPTIONS=--conditions=react-server NODE_PATH=./node_modules/next/dist/compiled tsx scripts/test-invoice-payments.ts",
     "test:supplier-directory": "tsx scripts/test-supplier-directory.ts",
     "test:product-file-uploads": "tsx scripts/test-product-file-uploads.ts",
     "test:product-production-drawings": "tsx scripts/test-product-production-drawings.ts",

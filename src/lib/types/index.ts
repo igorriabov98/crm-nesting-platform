@@ -213,7 +213,8 @@ export type MachineListItem = MachineWithTotals & {
   machine_items?: Pick<MachineItem, 'id' | 'product_id' | 'product_project_id' | 'product_project_version_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'weight' | 'price' | 'quantity' | 'coating' | 'ral_number' | 'is_sample'>[]
   production_stages?: Pick<ProductionStage, 'stage_type' | 'date_start' | 'date_end' | 'is_skipped'>[]
   supply_items?: Pick<SupplyItem, 'id' | 'status'>[]
-  invoice?: Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount'> | Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount'>[] | null
+  invoice?: Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount' | 'invoice_revision'> | Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount' | 'invoice_revision'>[] | null
+  can_view_invoice?: boolean
   production_progress: { completed: number; total: number }
   supply_progress: { completed: number; total: number }
   uniqueCoatings: CoatingType[]

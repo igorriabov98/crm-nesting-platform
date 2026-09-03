@@ -88,6 +88,8 @@ interface MachineDetailProps {
   canManageNesting?: boolean
   canViewMachineCutting?: boolean
   canManageMachineCutting?: boolean
+  canViewInvoice?: boolean
+  canManageInvoice?: boolean
 }
 
 const machineTabTriggerClassName = 'min-h-11 w-full min-w-0 gap-1.5 whitespace-normal rounded-xl px-2 text-center text-xs font-medium leading-tight text-slate-600 transition-colors hover:bg-white hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-blue-600 data-[state=active]:bg-blue-950 data-[state=active]:text-white data-[state=active]:shadow-sm sm:text-sm'
@@ -145,6 +147,8 @@ export function MachineDetail({
   canManageNesting = false,
   canViewMachineCutting = false,
   canManageMachineCutting = false,
+  canViewInvoice = false,
+  canManageInvoice = false,
 }: MachineDetailProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -160,7 +164,7 @@ export function MachineDetail({
   const canEdit = !isArchived && can('sales_plan', 'manage')
   const canEditConfirmation = canEdit
   const canDelete = can('sales_plan', 'manage')
-  const showInvoiceTab = can('invoices', 'view')
+  const showInvoiceTab = canViewInvoice
   const tabParam = searchParams.get('tab')
   const defaultTab = tabParam && MACHINE_TAB_VALUES.includes(tabParam) && (tabParam !== 'invoice' || showInvoiceTab)
     ? tabParam
@@ -516,7 +520,7 @@ export function MachineDetail({
           </TabsContent>
           {showInvoiceTab && (
             <TabsContent value="invoice" className="outline-none">
-              <InvoiceTab machine={machine} />
+              <InvoiceTab machine={machine} canManage={canManageInvoice} />
             </TabsContent>
           )}
         </div>

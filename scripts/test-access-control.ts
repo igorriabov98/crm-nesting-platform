@@ -42,8 +42,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 55, 'Реестр должен содержать все 55 ресурсов')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 55, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 56, 'Реестр должен содержать все 56 ресурсов')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 56, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -69,6 +69,9 @@ assert(hasPermission(getFullPermissionMap(), 'product_production_drawings', 'man
 assert(!hasPermission(getDefaultPermissionMap('financial_director'), 'complex_reports', 'view'), 'Комплексные отчёты по умолчанию выдаются только через матрицу доступа')
 assert(!hasPermission(getDefaultPermissionMap('sales_manager'), 'complex_reports', 'view'), 'Роль не должна автоматически открывать комплексные отчёты')
 assert(hasPermission(getFullPermissionMap(), 'complex_reports', 'view'), 'CRM-администратор должен видеть комплексные отчёты')
+assert(hasPermission(getDefaultPermissionMap('sales_manager'), 'client_payments', 'manage'), 'Sales-менеджер должен вести оплаты своих компаний')
+assert(hasPermission(getDefaultPermissionMap('commercial_director'), 'client_payments', 'manage'), 'Директор должен вести оплаты всех компаний')
+assert(hasPermission(getDefaultPermissionMap('commercial_director'), 'invoices', 'manage'), 'Коммерческий директор должен управлять инвойсами в своей области')
 assert.equal(getSidebarResources('financial_director', getDefaultPermissionMap('financial_director'), 'reports').length, 0, 'Раздел отчётов должен быть скрыт без права')
 assert.equal(getSidebarResources('financial_director', getFullPermissionMap(), 'reports')[0]?.key, 'complex_reports', 'Раздел отчётов должен появляться с правом')
 assert.equal(
@@ -213,6 +216,18 @@ const complexReportOnly = resolveDepartmentPermissions(
 )
 assert(hasPermission(complexReportOnly.permissions, 'complex_reports', 'view'), 'Матрица должна независимо открывать комплексные отчёты')
 assert(!hasPermission(complexReportOnly.permissions, 'invoices', 'view'), 'Доступ к отчёту не должен автоматически открывать инвойсы')
+
+const paymentScopes = resolveDepartmentPermissions(
+  [{ departmentId: 'sales', departmentName: 'Sales', isDepartmentHead: false }],
+  [
+    { department_id: 'sales', subject_scope: 'member', resource_key: 'client_payments', can_view: true, can_manage: true, company_view_scope: 'all', company_manage_scope: 'own' },
+    { department_id: 'sales', subject_scope: 'member', resource_key: 'invoices', can_view: true, can_manage: false, company_view_scope: 'own', company_manage_scope: 'own' },
+  ],
+)
+assert.equal(paymentScopes.companyScopes.client_payments?.view, 'all', 'Охват просмотра оплат должен настраиваться независимо')
+assert.equal(paymentScopes.companyScopes.client_payments?.manage, 'own', 'Охват управления оплатами должен настраиваться независимо')
+assert.equal(paymentScopes.companyScopes.invoices?.view, 'own', 'Охват инвойсов не должен наследоваться от оплат')
+assert.equal(getPermissionRequirementForPath('/sales/payments/sample-id')?.resourceKey, 'client_payments')
 
 const nestingRoutes = walk(join(root, 'src/app/api/nesting'), 'route.ts')
 assert(nestingRoutes.length > 0, 'Не найдены API-маршруты nesting')

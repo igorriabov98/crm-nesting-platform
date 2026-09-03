@@ -10,7 +10,7 @@ export const metadata = {
 
 export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const [{ data, error }, { data: contracts, error: contractsError }, { data: imageUrls }, { data: clientPrices }] = await Promise.all([
+  const [{ data, error, invoiceAccess }, { data: contracts, error: contractsError }, { data: imageUrls }, { data: clientPrices }] = await Promise.all([
     getClient(id),
     getContractsByClient(id),
     getClientImageUrls(id),
@@ -29,6 +29,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
       }}
       contractsError={contractsError}
       clientPrices={clientPrices}
+      canManageInvoices={invoiceAccess.canManage}
     />
   )
 }

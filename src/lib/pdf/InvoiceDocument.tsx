@@ -346,8 +346,9 @@ function InvoiceItemsTable({ data }: { data: DocumentData }) {
 }
 
 export function InvoiceDocument({ data }: { data: DocumentData }) {
-  const number = data.machine.specification_number || data.machine.name
-  const date = formatDate(data.machine.specification_date)
+  const number = data.machine.invoice_number || data.machine.specification_number || data.machine.name
+  const invoiceDate = formatDate(data.machine.invoice_date || data.machine.specification_date)
+  const specificationDate = formatDate(data.machine.specification_date)
   const contractNumber = data.contract?.number || ''
   const contractDate = formatDate(data.contract?.date)
   const deliveryBasisEn = data.company.delivery_basis_en
@@ -364,7 +365,7 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
               <Text style={styles.topBlockText}>{data.company.address_en}</Text>
             </View>
             <View style={styles.topCellRight}>
-              <Text style={[styles.topBlockText, styles.invoiceDate]}>Date/Дата {date}</Text>
+              <Text style={[styles.topBlockText, styles.invoiceDate]}>Date/Дата {invoiceDate}</Text>
               <Text style={[styles.topBlockText, styles.invoiceTitle]}>INVOICE № {number}</Text>
               <View style={styles.invoiceTitleGap} />
               <Text style={[styles.topBlockText, styles.title]}>РАХУНОК-ФАКТУРА № {number}</Text>
@@ -383,7 +384,7 @@ export function InvoiceDocument({ data }: { data: DocumentData }) {
             <View style={styles.detailsCell}>
               <View style={styles.detailsCellTop}>
                 <Text style={styles.topBlockText}>Contract / Контракт {contractNumber} від {contractDate}</Text>
-                <Text style={styles.topBlockText}>Specification/ Специфікація {number} від {date}</Text>
+                <Text style={styles.topBlockText}>Specification/ Специфікація {data.machine.specification_number || number} від {specificationDate}</Text>
               </View>
               <View style={styles.detailsCellBottom}>
                 <Text style={styles.topBlockText}>{deliveryBasisEn}</Text>

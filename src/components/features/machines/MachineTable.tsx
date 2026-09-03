@@ -58,7 +58,7 @@ const MachineArchiveDialog = dynamic(() => import('./MachineArchiveDialog').then
 const MachineDeleteDialog = dynamic(() => import('./MachineDeleteDialog').then((mod) => mod.MachineDeleteDialog))
 const AssignFactoryDialog = dynamic(() => import('@/components/features/meetings/AssignFactoryDialog').then((mod) => mod.AssignFactoryDialog))
 
-type MachineTableInvoice = Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount'>
+type MachineTableInvoice = Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount' | 'invoice_revision'>
 
 type SalesPlanFilters = {
   search: string
@@ -117,7 +117,11 @@ const sortLabels: Record<SalesPlanSort, string> = {
 const filterTriggerClassName = 'h-10 w-full justify-between border-slate-200 bg-white text-slate-700'
 
 function invoiceRows(invoice: MachineListItem['invoice']): MachineTableInvoice[] {
-  return Array.isArray(invoice) ? invoice : invoice ? [invoice] : []
+  const rows = Array.isArray(invoice) ? invoice : invoice ? [invoice] : []
+  return [...rows].sort((a, b) => {
+    const activeOrder = Number(a.status === 'cancelled') - Number(b.status === 'cancelled')
+    return activeOrder || Number(b.invoice_revision || 0) - Number(a.invoice_revision || 0)
+  })
 }
 
 function getGoodsAndSamples(machine: MachineListItem) {
@@ -165,11 +169,20 @@ function InvoiceBadge({ invoice }: { invoice: MachineListItem['invoice'] }) {
   const invoices = invoiceRows(invoice)
   if (invoices.length === 0) return <span className="text-sm text-slate-400">Нет</span>
   const item = invoices[0]
-  if (item.status === 'paid') {
+  const amount = Number(item.amount || 0)
+  const paidAmount = Number(item.paid_amount || 0)
+  if (item.status === 'cancelled') {
+    return <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">Аннулирован</Badge>
+  }
+  if (paidAmount >= amount && amount > 0) {
     return <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Оплачено</Badge>
   }
-  if (item.status === 'overdue') {
+  const dueDate = item.due_date || item.payment_date
+  if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) {
     return <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">Просрочено</Badge>
+  }
+  if (paidAmount > 0) {
+    return <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">Частично</Badge>
   }
   return <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Ожидает</Badge>
 }
@@ -880,7 +893,7 @@ export function MachineTable({
                             </div>
                           </td>
                           <td className="border-b border-slate-100 px-3 py-4 align-top group-hover:bg-slate-50/70">
-                            {canViewInvoice ? <InvoiceBadge invoice={machine.invoice} /> : <span className="text-xs text-slate-400">Скрыто ролью</span>}
+                            {canViewInvoice && machine.can_view_invoice !== false ? <InvoiceBadge invoice={machine.invoice} /> : <span className="text-xs text-slate-400">Скрыто доступом</span>}
                           </td>
                           <td className="border-b border-slate-100 px-3 py-4 align-top group-hover:bg-slate-50/70">
                             <div className="font-medium text-slate-700">{machine.created_by_user?.full_name || 'Неизвестно'}</div>

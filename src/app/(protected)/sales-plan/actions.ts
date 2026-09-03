@@ -8,6 +8,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { isZincCoating, normalizeRalNumberForCoating } from '@/lib/constants/coatings'
 import { requirePermission } from '@/lib/permissions/server'
+import { hasPermission } from '@/lib/permissions/resources'
 import { dispatchPendingTelegramDeliveries, notifyNewTasks } from '@/lib/services/task-notifications'
 import { createMachineSchema, machineExpenseSchema, machineItemSchema, machinePackingSettingsSchema } from '@/lib/types/schemas'
 import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
@@ -1022,7 +1023,7 @@ export async function moveMachineInProductionQueue(input: unknown) {
 
 export async function getMachines(factoryFilter?: string | null, productionMonthFilter?: string | null) {
   try {
-    const { supabase, db, user } = await requireSalesPlanPermission('view')
+    const { supabase, db, user, permissions, permissionDetails } = await requireSalesPlanPermission('view')
     const normalizedProductionMonth = normalizeProductionMonthValue(productionMonthFilter)
 
     let query = supabase
@@ -1033,12 +1034,12 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
         total_cost, item_count, production_month, production_workshop, production_queue_number,
         contract_id, specification_number, specification_date,
         factory:factories(name),
-        client:clients(id, name, primary_contact_name),
+        client:clients(id, name, primary_contact_name, responsible_user_id),
         created_by_user:users!machines_created_by_fkey(full_name),
         machine_items(id, product_id, product_version_id, product_project_id, product_project_version_id, drawing_number, product_name, product_name_uk, product_name_en, product_uktzed, product_drawing_number, weight, price, quantity, coating, ral_number, is_sample),
         production_stages(stage_type, date_start, date_end, is_skipped),
         supply_items(id, status),
-        invoice:invoices(status, payment_date, due_date, amount, paid_amount)
+        invoice:invoices(status, payment_date, due_date, amount, paid_amount, invoice_revision)
       `)
       .eq('is_archived', false)
 
@@ -1060,8 +1061,15 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
       loadSupplyOrderActualMaterialDates(db, rows.filter((machine) => !machine.actual_material_date).map((machine) => machine.id)),
     ])
     const mappedData: MachineListItem[] = rows.map((m) => {
+      const rawClient = m.client as (MachineListItem['client'] & { responsible_user_id?: string | null }) | Array<MachineListItem['client'] & { responsible_user_id?: string | null }> | null
+      const client = Array.isArray(rawClient) ? rawClient[0] || null : rawClient
+      const invoiceViewScope = permissionDetails.companyScopes.invoices?.view || 'own'
+      const canViewInvoice = hasPermission(permissions, 'invoices', 'view')
+        && (invoiceViewScope === 'all' || client?.responsible_user_id === user.id)
       const machine = {
         ...m,
+        invoice: canViewInvoice ? m.invoice : null,
+        can_view_invoice: canViewInvoice,
         actual_material_date: m.actual_material_date || actualMaterialDateFallbacks.get(m.id) || null,
       }
       // Производство
@@ -1103,7 +1111,7 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
 // === Получение одной машины ===
 export async function getMachine(id: string) {
   try {
-    const { supabase, db, user } = await requireSalesPlanPermission('view')
+    const { supabase, db, user, permissions, permissionDetails } = await requireSalesPlanPermission('view')
 
     let query = supabase
       .from('machines')
@@ -1116,7 +1124,7 @@ export async function getMachine(id: string) {
         supply_items(*),
         invoice:invoices(*),
         created_by_user:users!machines_created_by_fkey(full_name),
-        client:clients(id, name, primary_contact_name, phone, email, country_city),
+        client:clients(id, name, primary_contact_name, phone, email, country_city, responsible_user_id),
         factory:factories(name)
       `)
       .eq('id', id)
@@ -1131,6 +1139,16 @@ export async function getMachine(id: string) {
     
     // Sort items
     const machineData = data as unknown as MachineDetails
+    const rawClient = machineData.client as (MachineDetails['client'] & { responsible_user_id?: string | null }) | Array<MachineDetails['client'] & { responsible_user_id?: string | null }> | null
+    const client = Array.isArray(rawClient) ? rawClient[0] || null : rawClient
+    const invoiceViewScope = permissionDetails.companyScopes.invoices?.view || 'own'
+    const invoiceManageScope = permissionDetails.companyScopes.invoices?.manage || 'own'
+    const canViewInvoice = hasPermission(permissions, 'invoices', 'view')
+      && (invoiceViewScope === 'all' || client?.responsible_user_id === user.id)
+    const canManageInvoice = hasPermission(permissions, 'invoices', 'manage')
+      && (invoiceManageScope === 'all' || client?.responsible_user_id === user.id)
+    if (!canViewInvoice) machineData.invoice = null
+    if (client) delete client.responsible_user_id
     if (machineData.machine_items) {
       machineData.machine_items.sort((a, b) => a.sort_order - b.sort_order)
       machineData.machine_items = await markOutdatedProductVersions(db, machineData.machine_items)
@@ -1180,9 +1198,9 @@ export async function getMachine(id: string) {
       progress: resolveMachineProgressWithContext(machineWithActualMaterialDate, progressContexts.get(machineData.id)),
     }
 
-    return { data: enrichedData, error: null }
+    return { data: enrichedData, invoiceAccess: { canView: canViewInvoice, canManage: canManageInvoice }, error: null }
   } catch (error: unknown) {
-    return { data: null, error: getErrorMessage(error) }
+    return { data: null, invoiceAccess: { canView: false, canManage: false }, error: getErrorMessage(error) }
   }
 }
 

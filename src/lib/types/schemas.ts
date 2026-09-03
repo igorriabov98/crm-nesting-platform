@@ -250,6 +250,8 @@ export const clientSchema = z.object({
   payment_due_days: z.coerce.number().int().min(0, 'Срок оплаты не может быть отрицательным').default(14),
   prepayment_percent: z.coerce.number().min(0).max(100).optional().nullable(),
   final_payment_due_days: z.coerce.number().int().min(0).optional().nullable(),
+  responsible_user_id: z.string().uuid('Выберите ответственного менеджера').optional().nullable(),
+  estimated_delivery_days: z.coerce.number().int().min(0, 'Норматив доставки не может быть отрицательным').max(365, 'Норматив доставки не может быть больше 365 дней').default(7),
 })
 
 export const clientContactSchema = z.object({

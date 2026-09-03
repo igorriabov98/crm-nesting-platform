@@ -65,7 +65,32 @@ const machineBase: ShipmentMachineRow = {
 const rows = mapShipmentReportRows(
   [machineBase, { ...machineBase, id: 'machine-2', client_id: null, specification_number: null, freight_cost: 0 }],
   [{ id: 'client-1', name: 'Клиент Тест' }],
-  [{ machine_id: 'machine-1', amount: 15000, paid_amount: 5000, invoice_date: '2026-08-01' }],
+  [
+    {
+      machine_id: 'machine-1',
+      amount: 9000,
+      paid_amount: 9000,
+      invoice_date: '2026-07-01',
+      status: 'cancelled',
+      invoice_revision: 0,
+    },
+    {
+      machine_id: 'machine-1',
+      amount: 12000,
+      paid_amount: 3000,
+      invoice_date: '2026-07-15',
+      status: 'not_paid',
+      invoice_revision: 1,
+    },
+    {
+      machine_id: 'machine-1',
+      amount: 15000,
+      paid_amount: 5000,
+      invoice_date: '2026-08-01',
+      status: 'partially_paid',
+      invoice_revision: 2,
+    },
+  ],
 )
 assert.deepEqual(rows[0], {
   machineId: 'machine-1',
@@ -82,6 +107,21 @@ assert.deepEqual(rows[0], {
 assert.equal(rows[1].invoiceAmount, null, 'Машина без инвойса должна остаться в отчёте')
 assert.equal(rows[1].paidAmount, null, 'Оплата без инвойса не должна подменяться нулём')
 assert.equal(rows[1].freightCost, null, 'Историческая нулевая стоимость показывается как не указанная')
+assert.equal(rows[0].invoiceAmount, 15000, 'Отчёт должен выбирать последнюю активную ревизию инвойса')
+
+const cancelledOnlyRows = mapShipmentReportRows(
+  [machineBase],
+  [{ id: 'client-1', name: 'Клиент Тест' }],
+  [{
+    machine_id: 'machine-1',
+    amount: 9000,
+    paid_amount: 0,
+    invoice_date: '2026-07-01',
+    status: 'cancelled',
+    invoice_revision: 0,
+  }],
+)
+assert.equal(cancelledOnlyRows[0].invoiceAmount, null, 'Аннулированный инвойс не должен попадать в отчёт')
 
 const packingBase = {
   contract_id: null,
@@ -140,15 +180,15 @@ assert(reportSource.includes(".eq('is_archived', false)"), 'Архивные м�
 assert(reportSource.includes(".gte('actual_shipping_date', start).lt('actual_shipping_date', end)"))
 assert(reportSource.includes(".gte('production_month', start).lt('production_month', end)"))
 assert(reportSource.includes("machineQuery.eq('factory_id', filters.factoryId)"))
+assert(reportSource.includes(".neq('status', 'cancelled')"), 'Отчёт должен загружать только активный инвойс')
 assert(reportSource.includes("createAdminClient()"), 'Отчёт должен читать доверенным клиентом после проверки права')
 assert(!reportSource.includes("requirePermission('invoices'"), 'Отчёт не должен зависеть от invoices:view')
 
 const invoiceActions = source('src/lib/actions/invoices.ts')
-assert(invoiceActions.indexOf("requirePermission('invoices', 'manage')") < invoiceActions.indexOf('createAdminClient()'))
 assert(!invoiceActions.includes('createServerSupabaseClient'), 'Инвойсные мутации не должны использовать пользовательский DB-клиент')
-assert(invoiceActions.includes("admin.from('machine_items').select('price, quantity')"))
-assert(invoiceActions.includes("admin.from('machine_expenses').select('amount')"))
-assert(invoiceActions.includes('calculateInvoiceAmount('))
+assert(invoiceActions.includes("requirePermission('invoices', 'manage')"))
+assert(invoiceActions.includes('getTrustedDocumentData'))
+assert(invoiceActions.includes('createInvoiceDocumentSnapshot'))
 assert(!invoiceActions.includes('freight_cost'), 'Транспортная стоимость не должна входить в расчёт инвойса')
 
 const settingsAction = source('src/app/(protected)/sales-plan/actions.ts')

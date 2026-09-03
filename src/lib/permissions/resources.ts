@@ -3,6 +3,7 @@ import type { UserRole } from '@/lib/types'
 
 export type PermissionOperation = 'view' | 'manage'
 export type FactoryAccessScope = 'own' | 'all'
+export type CompanyAccessScope = 'own' | 'all'
 
 export type ResourceKey =
   | 'dashboard'
@@ -17,6 +18,7 @@ export type ResourceKey =
   | 'clients'
   | 'contracts'
   | 'invoices'
+  | 'client_payments'
   | 'finance_calendar'
   | 'supply_finance'
   | 'complex_reports'
@@ -119,6 +121,7 @@ export type PermissionResource = {
   }
   locked?: boolean
   supportsFactoryScope?: boolean
+  supportsCompanyScope?: boolean
 }
 
 export type PermissionState = {
@@ -289,14 +292,27 @@ export const PERMISSION_RESOURCES = [
     sidebar: { section: 'sales', icon: 'contracts', order: 50 },
   },
   {
+    key: 'client_payments',
+    label: 'Оплаты',
+    description: 'Задолженность компаний и история оплат по инвойсам',
+    group: 'Sales',
+    defaultHref: ROUTES.SALES_PAYMENTS,
+    defaultViewRoles: SALES_AND_DIRECTORS,
+    defaultManageRoles: SALES_AND_DIRECTORS,
+    routes: [{ path: ROUTES.SALES_PAYMENTS, match: 'prefix', operation: 'view', priority: 120 }],
+    sidebar: { section: 'sales', icon: 'invoices', order: 60 },
+    supportsCompanyScope: true,
+  },
+  {
     key: 'invoices',
     label: 'Инвойсы',
     group: 'Финансы',
     defaultHref: ROUTES.INVOICES,
     defaultViewRoles: SALES_AND_DIRECTORS,
-    defaultManageRoles: ['financial_director', 'planning_director', 'sales_manager'],
+    defaultManageRoles: SALES_AND_DIRECTORS,
     routes: [{ path: ROUTES.INVOICES, match: 'prefix', operation: 'view' }],
     sidebar: { section: 'finance', icon: 'invoices', order: 10 },
+    supportsCompanyScope: true,
   },
   {
     key: 'finance_calendar',

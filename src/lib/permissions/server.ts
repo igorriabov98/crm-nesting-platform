@@ -7,11 +7,13 @@ import {
   resolveDepartmentPermissions,
   shouldUseLegacyPermissionFallback,
   type DepartmentAccessPermissionRow,
+  type CompanyAccessOperationScopes,
   type FactoryAccessOperationScopes,
 } from '@/lib/permissions/resolve'
 import {
   PERMISSION_RESOURCES,
   RESOURCE_BY_KEY,
+  DIRECTOR_ACCESS_ROLES,
   getDefaultPermission,
   getDefaultPermissionMap,
   getEmptyPermissionMap,
@@ -54,6 +56,7 @@ export type UserPermissionDetails = {
   memberships: DepartmentPermissionMembership[]
   sources: Partial<Record<ResourceKey, string[]>>
   factoryScopes: Partial<Record<ResourceKey, FactoryAccessOperationScopes>>
+  companyScopes: Partial<Record<ResourceKey, CompanyAccessOperationScopes>>
 }
 
 type PermissionQueryResult<T> = {
@@ -122,6 +125,7 @@ function makeFullAdminPermissionDetails(memberships: DepartmentPermissionMembers
     memberships,
     sources,
     factoryScopes: Object.fromEntries(PERMISSION_RESOURCES.map((resource) => [resource.key, { view: 'all', manage: 'all' }])) as Partial<Record<ResourceKey, FactoryAccessOperationScopes>>,
+    companyScopes: Object.fromEntries(PERMISSION_RESOURCES.map((resource) => [resource.key, { view: 'all', manage: 'all' }])) as Partial<Record<ResourceKey, CompanyAccessOperationScopes>>,
   }
 }
 
@@ -192,6 +196,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
       memberships: [],
       sources: {},
       factoryScopes: {},
+      companyScopes: {},
     }
   }
 
@@ -215,7 +220,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
   if (departmentIds.length > 0) {
     const { data: accessData, error: accessError } = await db
       .from('department_access_permissions')
-      .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope')
+      .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope, company_view_scope, company_manage_scope')
       .in('department_id', departmentIds)
 
     if (accessError) {
@@ -225,7 +230,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
     accessRows = Array.isArray(accessData) ? (accessData as DepartmentAccessPermissionRow[]) : []
   }
 
-  const { permissions, sources, factoryScopes, appliedDepartmentRows } = resolveDepartmentPermissions(memberships, accessRows)
+  const { permissions, sources, factoryScopes, companyScopes, appliedDepartmentRows } = resolveDepartmentPermissions(memberships, accessRows)
 
   if (shouldUseLegacyPermissionFallback(appliedDepartmentRows) && userRow.role) {
     const legacyPermissions = await getRolePermissionMap(userRow.role)
@@ -242,6 +247,9 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
       memberships,
       sources: legacySources,
       factoryScopes: {},
+      companyScopes: userRow.role && (DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(userRow.role)
+        ? { invoices: { view: 'all', manage: 'all' }, client_payments: { view: 'all', manage: 'all' } }
+        : {},
     }
   }
 
@@ -252,6 +260,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
     memberships,
     sources,
     factoryScopes,
+    companyScopes,
   }
 })
 
