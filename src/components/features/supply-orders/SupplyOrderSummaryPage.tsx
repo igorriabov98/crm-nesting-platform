@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
@@ -12,7 +12,6 @@ import {
   Cog,
   CreditCard,
   ExternalLink,
-  Factory,
   PackageCheck,
   Plus,
   RotateCcw,
@@ -47,6 +46,7 @@ import {
 import {
   deliveryScheduleBelongsToScope,
   deliveryScheduleScopeForDateSlice,
+  type SupplyOrderDeliveryScheduleScope,
 } from '@/lib/supply-orders/delivery-schedule-scope'
 import {
   buildInitialSupplyOrderScheduleDrafts,
@@ -54,6 +54,7 @@ import {
 } from '@/lib/supply-orders/delivery-schedule-drafts'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
+import { SupplyOrderFactoryToggle } from './SupplyOrderFactoryToggle'
 import {
   filterAndSortAggregates,
   getSupplyOrderItemOrderProgress,
@@ -143,7 +144,7 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
 
   return (
     <div className="space-y-5">
-      <FactoryToggle factories={factories} activeFactoryId={activeFactoryId} />
+      <SupplyOrderFactoryToggle factories={factories} activeFactoryId={activeFactoryId} view="summary" />
 
       <DeliveryStateTabs
         value={filters.status}
@@ -303,6 +304,16 @@ function MaterialOrderCard({
     .filter((plan): plan is LongStockPurchasePlan => plan !== null) ?? []
   const longStockPurchase = mergeLongStockPurchasePlans(longStockPlans)
   const requiresRecalculation = longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
+  const hasMixedPlannedAndUnscheduled = Boolean(
+    dateSlice && dateSlice.plannedScheduleCount > 0 && dateSlice.unscheduledQuantity > 0,
+  )
+  const plannedOnlyDateSlice = hasMixedPlannedAndUnscheduled && dateSlice
+    ? {
+      ...dateSlice,
+      quantity: dateSlice.plannedQuantity + dateSlice.deliveredQuantity,
+      unscheduledQuantity: 0,
+    }
+    : dateSlice
 
   return (
     <article className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
@@ -505,8 +516,24 @@ function MaterialOrderCard({
       {isExpanded && factory && <MachineItems id={detailsId} factory={factory} />}
 
       {factory && (
-        <div id={deliveryId} hidden={!deliveryOpen} className="border-t border-border bg-muted/15 p-3 sm:p-4">
-          <FactoryDeliveryEditor aggregate={aggregate} factory={factory} suppliers={suppliers} dateSlice={dateSlice} />
+        <div id={deliveryId} hidden={!deliveryOpen} className="space-y-3 border-t border-border bg-muted/15 p-3 sm:p-4">
+          <FactoryDeliveryEditor
+            aggregate={aggregate}
+            factory={factory}
+            suppliers={suppliers}
+            dateSlice={plannedOnlyDateSlice}
+            appendUnscheduled={attentionKind === 'redelivery'}
+          />
+          {hasMixedPlannedAndUnscheduled && (
+            <FactoryDeliveryEditor
+              aggregate={aggregate}
+              factory={factory}
+              suppliers={suppliers}
+              dateSlice={dateSlice}
+              appendUnscheduled
+              allowFinance={false}
+            />
+          )}
         </div>
       )}
     </article>
@@ -643,74 +670,83 @@ function SummaryFilterSelect({ label, value, display, items, onValueChange, clas
   )
 }
 
-function FactoryToggle({ factories, activeFactoryId }: { factories: MaterialReceivingFactory[]; activeFactoryId: string | null }) {
-  if (factories.length === 0) {
-    return (
-      <div className="rounded-2xl border border-border/70 bg-card p-4 text-sm text-muted-foreground shadow-sm">
-        В справочнике нет заводов для переключателя Берегово / Ужгород.
-      </div>
-    )
-  }
-
-  return (
-    <section className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm" aria-label="Выбор завода">
-      <div className="mb-3 flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><Factory className="h-4 w-4" /></div>
-        <div>
-          <div className="text-sm font-semibold text-foreground">Завод поставки</div>
-          <div className="text-xs text-muted-foreground">Сводка рассчитывается отдельно для каждого завода</div>
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {factories.map((factory) => {
-          const active = factory.id === activeFactoryId
-          return (
-            <Link
-              key={factory.id}
-              href={`${ROUTES.SUPPLY_ORDERS}?view=summary&factory=${factory.id}`}
-              aria-current={active ? 'page' : undefined}
-              className={[
-                'inline-flex min-h-11 items-center rounded-xl border px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                active
-                  ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-                  : 'border-border bg-background text-primary hover:bg-muted',
-              ].join(' ')}
-            >
-              {factory.name}
-            </Link>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
-
-function FactoryDeliveryEditor({
-  aggregate,
-  factory,
-  suppliers,
-  dateSlice,
-}: {
+type FactoryDeliveryEditorProps = {
   aggregate: SupplyOrderAggregate
   factory: SupplyOrderAggregateFactory
   suppliers: SupplierWithRelations[]
   dateSlice?: SupplyOrderDateSlice
-}) {
+  appendUnscheduled?: boolean
+  allowFinance?: boolean
+  mutationItems?: Array<{ table: string; id: string }>
+  mutationScope?: SupplyOrderDeliveryScheduleScope
+}
+
+export function FactoryDeliveryEditor(props: FactoryDeliveryEditorProps) {
+  const resetKey = JSON.stringify({
+    dateSlice: props.dateSlice && {
+      id: props.dateSlice.id,
+      dateKey: props.dateSlice.dateKey,
+      quantity: props.dateSlice.quantity,
+      plannedQuantity: props.dateSlice.plannedQuantity,
+      deliveredQuantity: props.dateSlice.deliveredQuantity,
+      unscheduledQuantity: props.dateSlice.unscheduledQuantity,
+      plannedScheduleCount: props.dateSlice.plannedScheduleCount,
+      deliveredScheduleCount: props.dateSlice.deliveredScheduleCount,
+    },
+    appendUnscheduled: props.appendUnscheduled,
+    mutationScope: props.mutationScope,
+    unscheduledQuantity: props.factory.unscheduled_quantity,
+    schedules: props.factory.items.flatMap((item) => item.delivery_schedules.map((schedule) => ({
+      id: schedule.id,
+      status: schedule.status,
+      quantity: schedule.quantity,
+      supplierId: schedule.supplier_id,
+      deliveryDate: schedule.delivery_date,
+      updatedAt: schedule.updated_at,
+    }))),
+  })
+  return <FactoryDeliveryEditorForm key={resetKey} {...props} />
+}
+
+function FactoryDeliveryEditorForm({
+  aggregate,
+  factory,
+  suppliers,
+  dateSlice,
+  appendUnscheduled = false,
+  allowFinance = true,
+  mutationItems,
+  mutationScope,
+}: FactoryDeliveryEditorProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
+  const draftDateSlice = appendUnscheduled
+    ? { dateKey: 'no_supply_date', unscheduledQuantity: factory.unscheduled_quantity }
+    : dateSlice
   const [scheduleDrafts, setScheduleDrafts] = useState<ScheduleDraft[]>(() => (
-    buildInitialSupplyOrderScheduleDrafts(factory, todayIsoDate(), dateSlice)
+    buildInitialSupplyOrderScheduleDrafts(factory, todayIsoDate(), draftDateSlice)
   ))
   const [financeOpen, setFinanceOpen] = useState(false)
   const [financeDrafts, setFinanceDrafts] = useState<Record<string, FinanceDraft>>({})
-  const itemKeys = useMemo(() => factory.items.map((item) => ({ table: item.table, id: item.id })), [factory.items])
+  const itemKeys = useMemo(
+    () => mutationItems || factory.items.map((item) => ({ table: item.table, id: item.id })),
+    [factory.items, mutationItems],
+  )
   const deliveredGroups = useMemo(
     () => makeDeliveredScheduleGroups(factory, dateSlice?.dateKey),
     [dateSlice?.dateKey, factory],
   )
-  const scheduleScope = dateSlice ? deliveryScheduleScopeForDateSlice(dateSlice.dateKey) : undefined
+  const scheduleScope = mutationScope || (draftDateSlice
+    ? deliveryScheduleScopeForDateSlice(
+      appendUnscheduled || (dateSlice?.plannedScheduleCount === 0 && dateSlice.unscheduledQuantity > 0)
+        ? 'no_supply_date'
+        : draftDateSlice.dateKey,
+    )
+    : undefined)
   const plannedTotal = scheduleDrafts.reduce((sum, draft) => sum + parseQuantity(draft.quantity), 0)
-  const remainingQuantity = dateSlice
+  const remainingQuantity = appendUnscheduled
+    ? factory.unscheduled_quantity
+    : dateSlice
     ? Math.max(dateSlice.quantity - dateSlice.deliveredQuantity, 0)
     : Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
   const isClosed = factory.delivered_count === factory.item_count && factory.unscheduled_quantity <= 0
@@ -736,10 +772,6 @@ function FactoryDeliveryEditor({
     .filter((plan): plan is LongStockPurchasePlan => plan !== null)
   const requiresRecalculation = longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
   const isBarMaterial = isSupplyOrderBarMaterial(aggregate) || longStockPlans.length > 0
-
-  useEffect(() => {
-    setScheduleDrafts(buildInitialSupplyOrderScheduleDrafts(factory, todayIsoDate(), dateSlice))
-  }, [dateSlice, factory])
 
   const markOrderedWithPayments = () => {
     const targetKeys = new Set(financePayments.flatMap((payment) => payment.itemKeys))
@@ -921,17 +953,19 @@ function FactoryDeliveryEditor({
           </span>
         </div>
         {!isClosed && !requiresRecalculation && <div className="flex flex-wrap gap-1.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={isPending || financeGroups.length === 0 || missingFinanceSuppliers}
-            onClick={openFinance}
-            title={missingFinanceSuppliers ? 'Для платежа поставщик должен быть назначен в позиции' : undefined}
-          >
-            <CreditCard className="h-3.5 w-3.5" />
-            С платежом
-          </Button>
+          {allowFinance && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={isPending || financeGroups.length === 0 || missingFinanceSuppliers}
+              onClick={openFinance}
+              title={missingFinanceSuppliers ? 'Для платежа поставщик должен быть назначен в позиции' : undefined}
+            >
+              <CreditCard className="h-3.5 w-3.5" />
+              С платежом
+            </Button>
+          )}
           {hasPlannedSchedules && (
             <Button
               type="button"
@@ -946,7 +980,7 @@ function FactoryDeliveryEditor({
         </div>}
       </div>
 
-      {financeOpen && !requiresRecalculation && (
+      {allowFinance && financeOpen && !requiresRecalculation && (
         <div className="mt-3 rounded-md border border-[#E8ECF0] bg-white p-3">
           <div className="mb-2 text-sm font-semibold text-[#1B3A6B]">Плановые платежи</div>
           {financeGroups.length === 0 ? (
@@ -1021,6 +1055,8 @@ function FactoryDeliveryEditor({
               <div className="text-xs text-[#64748B]">
                 {dateSlice
                   ? 'Изменения относятся только к этой поставке и не затрагивают графики на другие даты.'
+                  : appendUnscheduled
+                    ? 'Новая поставка покрывает только остаток без графика и сохраняет существующие даты.'
                   : 'Изменения сохраняют график целиком и сразу отмечают материал как заказанный.'}
               </div>
             </div>

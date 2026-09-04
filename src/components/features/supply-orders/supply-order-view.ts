@@ -1,11 +1,14 @@
 import { addDays, endOfWeek, isWithinInterval, startOfWeek } from 'date-fns'
 import type {
   SupplyOrderAggregate,
+  SupplyOrderAggregateFactory,
   SupplyOrderAggregateSourceItem,
+  SupplyOrderDeliverySchedule,
   SupplyOrderHistoryItem,
   SupplyOrderItem,
 } from '@/lib/actions/supply-orders'
 import type { MaterialCategory, OrderItemStatus } from '@/lib/types'
+import type { SupplyOrderDeliveryScheduleScope } from '@/lib/supply-orders/delivery-schedule-scope'
 
 export type OrderPeriodFilter = 'this_week' | 'next_week' | 'all'
 export type OrderAttentionFilter = 'all' | 'needs_supplier' | 'needs_schedule' | 'stock_covered'
@@ -110,6 +113,334 @@ export type SupplyOrderDateSlice = {
   unscheduledQuantity: number
   plannedScheduleCount: number
   deliveredScheduleCount: number
+}
+
+export type SupplyOrderDetailScheduleScope = {
+  id: string
+  kind: 'item_date' | 'unscheduled'
+  label: string
+  affectedItemCount: number
+  sharedItemCount: number
+  aggregate: SupplyOrderAggregate
+  factory: SupplyOrderAggregateFactory
+  dateSlice: SupplyOrderDateSlice
+  mutationItems: Array<{ table: string; id: string }>
+  mutationScope: SupplyOrderDeliveryScheduleScope
+}
+
+export type SupplyOrderDetailContext = {
+  item: SupplyOrderItem
+  plannedQuantity: number
+  deliveredQuantity: number
+  unscheduledQuantity: number
+  redeliveryQuantity: number
+  scopes: SupplyOrderDetailScheduleScope[]
+}
+
+type PlannedCoverage = {
+  schedule: SupplyOrderDeliverySchedule
+  quantity: number
+}
+
+type SourceCoverageState = {
+  source: SupplyOrderAggregateSourceItem
+  deliveredQuantity: number
+  planned: PlannedCoverage[]
+}
+
+export function buildSupplyOrderDetailContexts(
+  items: SupplyOrderItem[],
+  aggregates: SupplyOrderAggregate[],
+) {
+  const sourceContexts = new Map<string, {
+    aggregate: SupplyOrderAggregate
+    factory: SupplyOrderAggregateFactory
+    source: SupplyOrderAggregateSourceItem
+    planned: PlannedCoverage[]
+    deliveredQuantity: number
+    unscheduledQuantity: number
+  }>()
+
+  for (const aggregate of aggregates) {
+    for (const factory of aggregate.factories) {
+      const orderedSources = [...factory.items].sort((left, right) => (
+        left.machine_name.localeCompare(right.machine_name, 'ru') || left.id.localeCompare(right.id)
+      ))
+      const state = new Map<string, SourceCoverageState>(orderedSources.map((source) => {
+        const deliveredQuantity = source.delivery_schedules
+          .filter((schedule) => schedule.status === 'delivered')
+          .reduce((sum, schedule) => sum + deliveredScheduleQuantity(schedule), 0)
+        return [`${source.table}:${source.id}`, {
+          source,
+          deliveredQuantity: Math.min(deliveredQuantity, Math.max(source.quantity, 0)),
+          planned: [] as PlannedCoverage[],
+        }] as const
+      }))
+      const plannedSchedules = orderedSources.flatMap((source) => source.delivery_schedules
+        .filter((schedule) => schedule.status === 'planned')
+        .map((schedule) => ({ ownerKey: `${source.table}:${source.id}`, schedule })))
+        .sort((left, right) => (
+          left.schedule.delivery_date.localeCompare(right.schedule.delivery_date)
+          || left.schedule.id.localeCompare(right.schedule.id)
+        ))
+
+      for (const { ownerKey, schedule } of plannedSchedules) {
+        let remainingScheduleQuantity = Math.max(Number(schedule.quantity || 0), 0)
+        const candidates = [
+          state.get(ownerKey),
+          ...orderedSources
+            .map((source) => state.get(`${source.table}:${source.id}`))
+            .filter((candidate) => candidate && `${candidate.source.table}:${candidate.source.id}` !== ownerKey),
+        ].filter((candidate): candidate is SourceCoverageState => Boolean(candidate))
+
+        for (const candidate of candidates) {
+          if (remainingScheduleQuantity <= 0.000001) break
+          const alreadyPlanned = candidate.planned.reduce((sum, entry) => sum + entry.quantity, 0)
+          const totalAvailableDemand = Math.max(
+            candidate.source.quantity - candidate.deliveredQuantity - alreadyPlanned,
+            0,
+          )
+          const pieceLength = Number(schedule.planned_piece_length_mm || 0)
+          const hasPiecePlan = pieceLength > 0 && candidate.source.long_stock_purchase_plan !== null
+          const componentQuantity = pieceLength > 0
+            ? candidate.source.long_stock_purchase_plan?.components
+              .filter((component) => component.length_mm === pieceLength)
+              .reduce((sum, component) => sum + component.length_mm * component.piece_count, 0) || 0
+            : 0
+          const deliveredForLength = componentQuantity > 0
+            ? candidate.source.delivery_schedules
+              .filter((entry) => entry.status === 'delivered')
+              .filter((entry) => Number(entry.received_piece_length_mm || entry.planned_piece_length_mm || 0) === pieceLength)
+              .reduce((sum, entry) => sum + (
+                Number(entry.allocated_piece_count || 0) > 0
+                  ? Number(entry.allocated_piece_count) * pieceLength
+                  : deliveredScheduleQuantity(entry)
+              ), 0)
+            : 0
+          const plannedForLength = componentQuantity > 0
+            ? candidate.planned
+              .filter((entry) => Number(entry.schedule.planned_piece_length_mm || 0) === pieceLength)
+              .reduce((sum, entry) => sum + entry.quantity, 0)
+            : 0
+          const availableDemand = hasPiecePlan
+            ? Math.min(
+              totalAvailableDemand,
+              Math.max(componentQuantity - deliveredForLength - plannedForLength, 0),
+            )
+            : totalAvailableDemand
+          const allocatedQuantity = Math.min(availableDemand, remainingScheduleQuantity)
+          if (allocatedQuantity <= 0.000001) continue
+          candidate.planned.push({ schedule, quantity: allocatedQuantity })
+          remainingScheduleQuantity -= allocatedQuantity
+        }
+      }
+
+      for (const [key, coverage] of state) {
+        const plannedQuantity = coverage.planned.reduce((sum, entry) => sum + entry.quantity, 0)
+        sourceContexts.set(key, {
+          aggregate,
+          factory,
+          source: coverage.source,
+          planned: coverage.planned,
+          deliveredQuantity: coverage.deliveredQuantity,
+          unscheduledQuantity: Math.max(
+            coverage.source.quantity - coverage.deliveredQuantity - plannedQuantity,
+            0,
+          ),
+        })
+      }
+    }
+  }
+
+  const contexts = new Map<string, SupplyOrderDetailContext>()
+  for (const originalItem of items) {
+    const key = `${originalItem.table}:${originalItem.id}`
+    const context = sourceContexts.get(key)
+    if (!context) continue
+
+    const plannedQuantity = context.planned.reduce((sum, entry) => sum + entry.quantity, 0)
+    const plannedDates = Array.from(new Set(context.planned.map((entry) => entry.schedule.delivery_date))).sort()
+    const plannedSuppliers = Array.from(new Map(context.planned
+      .filter((entry) => entry.schedule.supplier_id)
+      .map((entry) => [entry.schedule.supplier_id as string, entry.schedule.supplier_name])).entries())
+    const item = {
+      ...originalItem,
+      target_delivery_date: plannedDates[0] || originalItem.target_delivery_date,
+      supplier_id: plannedSuppliers.length === 1 ? plannedSuppliers[0][0] : originalItem.supplier_id,
+      supplier_name: plannedSuppliers.length === 1 ? plannedSuppliers[0][1] || 'Поставщик' : originalItem.supplier_name,
+      order_status: originalItem.order_status === 'delivered' || originalItem.order_status === 'cancelled'
+        ? originalItem.order_status
+        : plannedQuantity + context.deliveredQuantity > 0.000001
+          ? 'ordered' as const
+          : 'pending' as const,
+    }
+    const projectedSchedules = context.planned.map((entry) => projectPlannedSchedule(entry.schedule, entry.quantity))
+    const projectedSource: SupplyOrderAggregateSourceItem = {
+      ...context.source,
+      supplier_id: item.supplier_id,
+      supplier_name: item.supplier_name,
+      supply_delivery_date: item.target_delivery_date,
+      planned_schedule_quantity: plannedQuantity,
+      delivered_schedule_quantity: context.deliveredQuantity,
+      unscheduled_quantity: context.unscheduledQuantity,
+      delivery_schedules: [
+        ...projectedSchedules,
+        ...context.source.delivery_schedules.filter((schedule) => schedule.status === 'delivered'),
+      ],
+    }
+    const itemProjection = projectDetailAggregate(
+      context.aggregate,
+      context.factory,
+      projectedSource,
+      item,
+    )
+    const scopes: SupplyOrderDetailScheduleScope[] = []
+    for (const dateKey of plannedDates) {
+      const plannedOnDate = projectedSchedules.filter((schedule) => schedule.delivery_date === dateKey)
+      const deliveredOnDate = projectedSource.delivery_schedules.filter((schedule) => (
+        schedule.status === 'delivered' && schedule.delivery_date === dateKey
+      ))
+      const dateSlice: SupplyOrderDateSlice = {
+        id: `${itemProjection.aggregate.id}|detail-date:${dateKey}`,
+        dateKey,
+        aggregate: itemProjection.aggregate,
+        quantity: plannedOnDate.reduce((sum, schedule) => sum + Number(schedule.quantity || 0), 0)
+          + deliveredOnDate.reduce((sum, schedule) => sum + deliveredScheduleQuantity(schedule), 0),
+        plannedQuantity: plannedOnDate.reduce((sum, schedule) => sum + Number(schedule.quantity || 0), 0),
+        deliveredQuantity: deliveredOnDate.reduce((sum, schedule) => sum + deliveredScheduleQuantity(schedule), 0),
+        unscheduledQuantity: 0,
+        plannedScheduleCount: plannedOnDate.length,
+        deliveredScheduleCount: deliveredOnDate.length,
+      }
+      scopes.push({
+        id: `item:${dateKey}`,
+        kind: 'item_date',
+        label: `График · ${formatShortDate(dateKey)}`,
+        affectedItemCount: 1,
+        sharedItemCount: Array.from(sourceContexts.values()).filter((candidate) => (
+          candidate.aggregate.id === context.aggregate.id
+          && candidate.factory.factory_id === context.factory.factory_id
+          && candidate.planned.some((entry) => entry.schedule.delivery_date === dateKey)
+        )).length,
+        aggregate: itemProjection.aggregate,
+        factory: itemProjection.factory,
+        dateSlice,
+        mutationItems: context.factory.items.map((source) => ({ table: source.table, id: source.id })),
+        mutationScope: {
+          mode: 'item',
+          replace_delivery_date: dateKey,
+          target_item: { table: item.table, id: item.id },
+        },
+      })
+    }
+
+    if (context.unscheduledQuantity > 0.000001) {
+      const dateSlice: SupplyOrderDateSlice = {
+        id: `${itemProjection.aggregate.id}|detail-unscheduled`,
+        dateKey: 'no_supply_date',
+        aggregate: itemProjection.aggregate,
+        quantity: context.unscheduledQuantity,
+        plannedQuantity: 0,
+        deliveredQuantity: 0,
+        unscheduledQuantity: context.unscheduledQuantity,
+        plannedScheduleCount: 0,
+        deliveredScheduleCount: 0,
+      }
+      scopes.push({
+        id: 'item:unscheduled',
+        kind: 'unscheduled',
+        label: 'Остаток без графика',
+        affectedItemCount: 1,
+        sharedItemCount: 1,
+        aggregate: itemProjection.aggregate,
+        factory: itemProjection.factory,
+        dateSlice,
+        mutationItems: context.factory.items.map((source) => ({ table: source.table, id: source.id })),
+        mutationScope: {
+          mode: 'item',
+          replace_delivery_date: null,
+          target_item: { table: item.table, id: item.id },
+        },
+      })
+    }
+
+    const redeliverySource = { ...projectedSource, unscheduled_quantity: context.unscheduledQuantity }
+    contexts.set(key, {
+      item,
+      plannedQuantity,
+      deliveredQuantity: context.deliveredQuantity,
+      unscheduledQuantity: context.unscheduledQuantity,
+      redeliveryQuantity: isSupplyOrderRedeliveryItem(redeliverySource) ? context.unscheduledQuantity : 0,
+      scopes,
+    })
+  }
+
+  return contexts
+}
+
+function projectPlannedSchedule(schedule: SupplyOrderDeliverySchedule, quantity: number) {
+  const pieceLength = Number(schedule.planned_piece_length_mm || 0)
+  const projectedPieceCount = pieceLength > 0 && Number.isInteger(quantity / pieceLength)
+    ? quantity / pieceLength
+    : schedule.planned_piece_count
+  return {
+    ...schedule,
+    quantity,
+    planned_piece_count: projectedPieceCount,
+  }
+}
+
+function projectDetailAggregate(
+  aggregate: SupplyOrderAggregate,
+  factory: SupplyOrderAggregateFactory,
+  source: SupplyOrderAggregateSourceItem,
+  item: SupplyOrderItem,
+) {
+  const projectedFactory: SupplyOrderAggregateFactory = {
+    ...factory,
+    quantity: source.quantity,
+    requested_quantity: item.requested_quantity,
+    reserved_quantity: item.reserved_quantity,
+    weight_kg: item.calculated_weight_kg,
+    item_count: 1,
+    machine_count: 1,
+    pending_count: source.order_status === 'pending' ? 1 : 0,
+    ordered_count: source.order_status === 'ordered' ? 1 : 0,
+    delivered_count: source.order_status === 'delivered' ? 1 : 0,
+    planned_schedule_quantity: source.planned_schedule_quantity,
+    delivered_schedule_quantity: source.delivered_schedule_quantity,
+    unscheduled_quantity: source.unscheduled_quantity,
+    delivery_schedule_count: new Set(source.delivery_schedules
+      .filter((schedule) => schedule.status !== 'cancelled')
+      .map((schedule) => schedule.delivery_date)).size,
+    has_delivery_schedules: source.delivery_schedules.some((schedule) => schedule.status !== 'cancelled'),
+    supply_delivery_date: source.supply_delivery_date,
+    has_mixed_supply_delivery_dates: false,
+    items: [source],
+  }
+  const projectedAggregate: SupplyOrderAggregate = {
+    ...aggregate,
+    id: `${aggregate.id}|detail:${item.table}:${item.id}`,
+    quantity: source.quantity,
+    requested_quantity: item.requested_quantity,
+    reserved_quantity: item.reserved_quantity,
+    weight_kg: item.calculated_weight_kg,
+    item_count: 1,
+    machine_count: 1,
+    pending_count: projectedFactory.pending_count,
+    ordered_count: projectedFactory.ordered_count,
+    delivered_count: projectedFactory.delivered_count,
+    planned_schedule_quantity: source.planned_schedule_quantity,
+    delivered_schedule_quantity: source.delivered_schedule_quantity,
+    unscheduled_quantity: source.unscheduled_quantity,
+    factories: [projectedFactory],
+  }
+  return { aggregate: projectedAggregate, factory: projectedFactory }
+}
+
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit' })
+    .format(new Date(`${value}T00:00:00`))
 }
 
 export function filterSupplyOrderItems(

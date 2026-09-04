@@ -6,17 +6,16 @@ import { AlertTriangle, CalendarDays } from 'lucide-react'
 import { SupplierGroup } from './SupplierGroup'
 import type { SupplyOrderItem } from '@/lib/actions/supply-orders'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
+import type { SupplyOrderDetailContext } from './supply-order-view'
 
 type OrderDateGroupProps = {
  dateKey: string
  groups: Array<{ supplierKey: string; supplierName: string; items: SupplyOrderItem[] }>
  suppliers: SupplierWithRelations[]
- selected: Set<string>
- onToggle: (item: SupplyOrderItem) => void
- readOnly?: boolean
+ detailContexts: Map<string, SupplyOrderDetailContext>
 }
 
-export function OrderDateGroup({ dateKey, groups, suppliers, selected, onToggle, readOnly = false }: OrderDateGroupProps) {
+export function OrderDateGroup({ dateKey, groups, suppliers, detailContexts }: OrderDateGroupProps) {
  const noSupplier = dateKey === 'no_supplier'
  const noDate = dateKey === 'no_date'
  const title = noSupplier
@@ -43,9 +42,7 @@ export function OrderDateGroup({ dateKey, groups, suppliers, selected, onToggle,
       supplierName={group.supplierName}
       items={group.items}
       suppliers={suppliers}
-      selected={selected}
-      onToggle={onToggle}
-      readOnly={readOnly}
+      detailContexts={detailContexts}
      />
     ))}
    </div>

@@ -7,6 +7,7 @@ import type {
   SupplyOrderItem,
 } from '@/lib/actions/supply-orders'
 import {
+  buildSupplyOrderDetailContexts,
   filterAndSortAggregates,
   filterAndSortHistory,
   filterSupplyOrderItems,
@@ -317,7 +318,7 @@ assert.equal(
 const julyScheduleScope = deliveryScheduleScopeForDateSlice('2026-07-31')
 assert.deepEqual(
   julyScheduleScope,
-  { replace_delivery_date: '2026-07-31' },
+  { mode: 'date', replace_delivery_date: '2026-07-31' },
   'a dated card must carry its own server-side replacement scope',
 )
 assert.equal(deliveryScheduleBelongsToScope('2026-07-31', julyScheduleScope), true)
@@ -335,6 +336,11 @@ assert.equal(
   deliveryScheduleBelongsToScope('2026-08-02', deliveryScheduleScopeForDateSlice('no_supply_date')),
   false,
   'creating a schedule for an uncovered no-date card must preserve every existing dated schedule',
+)
+assert.deepEqual(
+  deliveryScheduleScopeForDateSlice('no_supply_date'),
+  { mode: 'unscheduled', replace_delivery_date: null },
+  'the uncovered remainder must use an explicit append-only server scope',
 )
 
 assert.deepEqual(
@@ -433,7 +439,7 @@ const summaryPageSource = readFileSync(
 )
 assert.match(
   summaryPageSource,
-  /FactoryDeliveryEditor aggregate=\{aggregate\} factory=\{factory\} suppliers=\{suppliers\} dateSlice=\{dateSlice\}/u,
+  /FactoryDeliveryEditor[\s\S]*aggregate=\{aggregate\}[\s\S]*factory=\{factory\}[\s\S]*suppliers=\{suppliers\}[\s\S]*dateSlice=\{dateSlice\}/u,
   'each delivery editor must receive the date slice rendered by its card',
 )
 assert.match(
@@ -443,7 +449,7 @@ assert.match(
 )
 assert.match(
   summaryPageSource,
-  /buildInitialSupplyOrderScheduleDrafts\(factory, todayIsoDate\(\), dateSlice\)/u,
+  /buildInitialSupplyOrderScheduleDrafts\(factory, todayIsoDate\(\), draftDateSlice\)/u,
   'a date card must initialize drafts through the date-scoped builder',
 )
 assert.match(
@@ -455,6 +461,39 @@ assert.match(
   supplyOrdersAction,
   /schedule\.status === 'planned'[\s\S]*deliveryScheduleBelongsToScope\(schedule\.delivery_date, normalizedScope\)/u,
   'the server must delete only planned schedules inside the requested date scope',
+)
+assert.match(
+  supplyOrdersAction,
+  /syncOrderStatusesWithScheduleCoverage[\s\S]*nextStatus: OrderItemStatus = isCovered \? 'ordered' : 'pending'/u,
+  'saving a graph must derive order status from virtual schedule coverage',
+)
+assert.match(
+  supplyOrdersAction,
+  /normalizedScope\?\.mode === 'item'[\s\S]*rowsFromRetainedAllocations\(retained, userId\)[\s\S]*plannedScheduleIds = allPlannedScheduleIds/u,
+  'editing one request must split its planned coverage while retaining other planned dates and positions',
+)
+assert.match(
+  supplyOrdersAction,
+  /schedule\.status !== 'delivered'[\s\S]*return \{ coverage, allocations \}/u,
+  'the virtual projection must leave delivered schedule facts outside planned schedule rewrites',
+)
+assert.match(
+  summaryPageSource,
+  /hasMixedPlannedAndUnscheduled[\s\S]*appendUnscheduled[\s\S]*allowFinance=\{false\}/u,
+  'a mixed date card must expose a separate append-only editor for its unscheduled remainder',
+)
+
+const detailsPageSource = readFileSync(
+  new URL('../src/components/features/supply-orders/OrderItemRow.tsx', import.meta.url),
+  'utf8',
+)
+assert.match(detailsPageSource, /FactoryDeliveryEditor/u, 'request details must reuse the summary schedule editor')
+assert.match(detailsPageSource, /ReturnLongStockPositionButton/u, 'request details must expose the atomic return-to-technologist action')
+assert.match(detailsPageSource, /План и факт поставки/u, 'request details must show read-only delivery plan and fact')
+assert.doesNotMatch(
+  detailsPageSource,
+  /reserveForMachine|unreserveItem|markOrderDelivered|LongStockReceivingDialog/u,
+  'request details must not expose reservation or warehouse receiving mutations',
 )
 
 const mergedDateGroups = groupSupplyOrderAggregatesBySupplyDate([
@@ -575,6 +614,162 @@ assert.deepEqual(
   })),
   [{ quantity: 16_000, planned: 16_000, unscheduled: 0 }],
   'the aggregate schedule date must remain fully covered when one anchor row represents several requests',
+)
+
+const aggregateBatchDetailContexts = buildSupplyOrderDetailContexts([
+  makeItem({
+    id: 'aggregate-anchor', machine_id: 'machine-a', machine_name: 'Машина А', category: 'circle',
+    to_order: 8_000, requested_quantity: 8_000, unit: 'мм', order_status: 'ordered',
+  }),
+  makeItem({
+    id: 'aggregate-follower', machine_id: 'machine-b', machine_name: 'Машина Б', category: 'circle',
+    to_order: 8_000, requested_quantity: 8_000, unit: 'мм', order_status: 'ordered',
+  }),
+], [aggregateBatchSchedule])
+const anchorDetail = aggregateBatchDetailContexts.get('request_sheet:aggregate-anchor')
+const followerDetail = aggregateBatchDetailContexts.get('request_sheet:aggregate-follower')
+assert.ok(anchorDetail && followerDetail, 'both request rows must receive a virtual projection of the shared graph')
+assert.deepEqual(
+  [anchorDetail.plannedQuantity, followerDetail.plannedQuantity],
+  [8_000, 8_000],
+  'an anchor schedule must be allocated across both request rows instead of leaving a false follower remainder',
+)
+assert.deepEqual(
+  [anchorDetail.unscheduledQuantity, followerDetail.unscheduledQuantity],
+  [0, 0],
+  'a fully covered shared graph must remove the unscheduled remainder in both request views',
+)
+assert.equal(anchorDetail.item.target_delivery_date, '2026-08-24')
+assert.equal(followerDetail.item.target_delivery_date, '2026-08-24')
+assert.equal(
+  followerDetail.scopes[0]?.sharedItemCount,
+  2,
+  'details must show how many requests belong to the shared schedule before splitting one position',
+)
+assert.equal(followerDetail.scopes[0]?.affectedItemCount, 1, 'the item editor must mutate only the current request row')
+assert.deepEqual(
+  followerDetail.scopes[0]?.mutationScope,
+  {
+    mode: 'item',
+    replace_delivery_date: '2026-08-24',
+    target_item: { table: 'request_sheet', id: 'aggregate-follower' },
+  },
+  'a shared aggregate schedule must be split through an explicit one-item server scope',
+)
+
+const sixMeterPlan = {
+  plan_id: 'plan-6000',
+  plan_number: 1,
+  version_id: 'version-6000',
+  version_number: 1,
+  version_status: 'approved' as const,
+  cutting_status: 'plan_approved' as const,
+  components: [{ length_mm: 6_000, piece_count: 1, is_nonstandard: false }],
+  total_piece_count: 1,
+  total_length_mm: 6_000,
+  uses_nonstandard_length: false,
+}
+const twelveMeterPlan = {
+  ...sixMeterPlan,
+  plan_id: 'plan-12000',
+  version_id: 'version-12000',
+  components: [{ length_mm: 12_000, piece_count: 1, is_nonstandard: false }],
+  total_length_mm: 12_000,
+}
+const twelveMeterSchedule = makeDeliverySchedule({
+  id: 'schedule-12000',
+  delivery_date: '2026-08-23',
+  quantity: 12_000,
+  status: 'planned',
+  received_quantity: null,
+  allocated_quantity: null,
+  allocated_physical_quantity: null,
+  planned_piece_length_mm: 12_000,
+  planned_piece_count: 1,
+  delivered_at: null,
+})
+const sixMeterSchedule = makeDeliverySchedule({
+  id: 'schedule-6000',
+  delivery_date: '2026-08-24',
+  quantity: 6_000,
+  status: 'planned',
+  received_quantity: null,
+  allocated_quantity: null,
+  allocated_physical_quantity: null,
+  planned_piece_length_mm: 6_000,
+  planned_piece_count: 1,
+  delivered_at: null,
+})
+const mixedLengthAggregate: SupplyOrderAggregate = {
+  ...aggregateBatchSchedule,
+  id: 'mixed-length-aggregate',
+  quantity: 18_000,
+  requested_quantity: 18_000,
+  planned_schedule_quantity: 18_000,
+  factories: [{
+    ...aggregateBatchSchedule.factories[0],
+    quantity: 18_000,
+    requested_quantity: 18_000,
+    planned_schedule_quantity: 18_000,
+    items: [
+      makeAggregateSourceItem({
+        table: 'request_circle',
+        id: 'needs-6000',
+        machine_id: 'machine-a',
+        machine_name: 'Машина А',
+        quantity: 6_000,
+        unit: 'мм',
+        order_status: 'ordered',
+        planned_schedule_quantity: 18_000,
+        unscheduled_quantity: 0,
+        delivery_schedules: [twelveMeterSchedule, sixMeterSchedule],
+        long_stock_purchase_plan: sixMeterPlan,
+      }),
+      makeAggregateSourceItem({
+        table: 'request_circle',
+        id: 'needs-12000',
+        machine_id: 'machine-b',
+        machine_name: 'Машина Б',
+        quantity: 12_000,
+        unit: 'мм',
+        order_status: 'ordered',
+        planned_schedule_quantity: 0,
+        unscheduled_quantity: 12_000,
+        delivery_schedules: [],
+        long_stock_purchase_plan: twelveMeterPlan,
+      }),
+    ],
+  }],
+}
+const mixedLengthContexts = buildSupplyOrderDetailContexts([
+  makeItem({
+    table: 'request_circle', id: 'needs-6000', machine_id: 'machine-a', machine_name: 'Машина А',
+    category: 'circle', to_order: 6_000, requested_quantity: 6_000, unit: 'мм',
+    order_status: 'ordered', long_stock_purchase_plan: sixMeterPlan,
+  }),
+  makeItem({
+    table: 'request_circle', id: 'needs-12000', machine_id: 'machine-b', machine_name: 'Машина Б',
+    category: 'circle', to_order: 12_000, requested_quantity: 12_000, unit: 'мм',
+    order_status: 'ordered', long_stock_purchase_plan: twelveMeterPlan,
+  }),
+], [mixedLengthAggregate])
+const sixMeterContext = mixedLengthContexts.get('request_circle:needs-6000')
+const twelveMeterContext = mixedLengthContexts.get('request_circle:needs-12000')
+assert.ok(sixMeterContext && twelveMeterContext, 'both long-stock requests must receive their shared graph projection')
+assert.deepEqual(
+  [sixMeterContext.plannedQuantity, twelveMeterContext.plannedQuantity],
+  [6_000, 12_000],
+  'shared long-stock schedules must be projected only onto requests whose approved plan contains that bar length',
+)
+assert.deepEqual(
+  [sixMeterContext.item.target_delivery_date, twelveMeterContext.item.target_delivery_date],
+  ['2026-08-24', '2026-08-23'],
+  'each request must inherit the date of the matching bar length rather than the aggregate anchor date',
+)
+assert.match(
+  supplyOrdersAction,
+  /remainingByPieceLength[\s\S]*remainingForLength[\s\S]*availablePieces/u,
+  'server-side schedule distribution must enforce remaining capacity for each approved bar length',
 )
 
 assert.equal(isSupplyOrderBarMaterial({ category: 'knives', unit: 'мм' }), true)
