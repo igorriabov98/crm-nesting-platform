@@ -466,6 +466,10 @@ export type Database = {
           final_payment_due_days: number | null
           responsible_user_id: string | null
           estimated_delivery_days: number
+          scheduled_payment_weekdays: number[]
+          scheduled_payment_month_days: number[]
+          scheduled_payment_amount_mode: Database['public']['Enums']['scheduled_payment_amount_mode']
+          scheduled_payment_minimum_amount: number | null
           created_at: string
           updated_at: string
         }
@@ -489,6 +493,10 @@ export type Database = {
           final_payment_due_days?: number | null
           responsible_user_id?: string | null
           estimated_delivery_days?: number
+          scheduled_payment_weekdays?: number[]
+          scheduled_payment_month_days?: number[]
+          scheduled_payment_amount_mode?: Database['public']['Enums']['scheduled_payment_amount_mode']
+          scheduled_payment_minimum_amount?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -512,6 +520,10 @@ export type Database = {
           final_payment_due_days?: number | null
           responsible_user_id?: string | null
           estimated_delivery_days?: number
+          scheduled_payment_weekdays?: number[]
+          scheduled_payment_month_days?: number[]
+          scheduled_payment_amount_mode?: Database['public']['Enums']['scheduled_payment_amount_mode']
+          scheduled_payment_minimum_amount?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -3105,6 +3117,10 @@ export type Database = {
           prepayment_percent_snapshot: number | null
           final_payment_due_days_snapshot: number | null
           estimated_delivery_days_snapshot: number | null
+          scheduled_payment_weekdays_snapshot: number[]
+          scheduled_payment_month_days_snapshot: number[]
+          scheduled_payment_amount_mode_snapshot: Database['public']['Enums']['scheduled_payment_amount_mode']
+          scheduled_payment_minimum_amount_snapshot: number | null
           document_snapshot: Json | null
           cancelled_at: string | null
           cancelled_by: string | null
@@ -3132,6 +3148,10 @@ export type Database = {
           prepayment_percent_snapshot?: number | null
           final_payment_due_days_snapshot?: number | null
           estimated_delivery_days_snapshot?: number | null
+          scheduled_payment_weekdays_snapshot?: number[]
+          scheduled_payment_month_days_snapshot?: number[]
+          scheduled_payment_amount_mode_snapshot?: Database['public']['Enums']['scheduled_payment_amount_mode']
+          scheduled_payment_minimum_amount_snapshot?: number | null
           document_snapshot?: Json | null
           cancelled_at?: string | null
           cancelled_by?: string | null
@@ -3159,6 +3179,10 @@ export type Database = {
           prepayment_percent_snapshot?: number | null
           final_payment_due_days_snapshot?: number | null
           estimated_delivery_days_snapshot?: number | null
+          scheduled_payment_weekdays_snapshot?: number[]
+          scheduled_payment_month_days_snapshot?: number[]
+          scheduled_payment_amount_mode_snapshot?: Database['public']['Enums']['scheduled_payment_amount_mode']
+          scheduled_payment_minimum_amount_snapshot?: number | null
           document_snapshot?: Json | null
           cancelled_at?: string | null
           cancelled_by?: string | null
@@ -5221,7 +5245,8 @@ export type Database = {
           | 'actual_shipping'
       supply_status: 'received' | 'ordered' | 'not_ordered'
       invoice_status: 'paid' | 'not_paid' | 'overdue' | 'partially_paid' | 'cancelled'
-      payment_terms_type: 'invoice_days' | 'delivery_days' | 'prepayment_full'
+      payment_terms_type: 'invoice_days' | 'delivery_days' | 'prepayment_full' | 'scheduled_after_delivery'
+      scheduled_payment_amount_mode: 'full_balance' | 'fixed_amount'
       production_fact_shift: 'day' | 'night'
       machine_status:
         | 'created'
@@ -5296,6 +5321,52 @@ export type Database = {
           p_reason: string
           p_actor: string
         }
+        Returns: undefined
+      }
+      fn_next_scheduled_payment_date: {
+        Args: {
+          p_after_date: string
+          p_weekdays: number[]
+          p_month_days: number[]
+        }
+        Returns: string | null
+      }
+      fn_scheduled_payment_date_at: {
+        Args: {
+          p_after_date: string
+          p_weekdays: number[]
+          p_month_days: number[]
+          p_sequence: number
+        }
+        Returns: string | null
+      }
+      fn_scheduled_payment_due_date: {
+        Args: {
+          p_delivery_date: string | null
+          p_weekdays: number[]
+          p_month_days: number[]
+          p_amount: number
+          p_paid_amount: number
+          p_amount_mode: Database['public']['Enums']['scheduled_payment_amount_mode']
+          p_minimum_amount: number | null
+        }
+        Returns: string | null
+      }
+      fn_scheduled_payment_overdue_amount: {
+        Args: {
+          p_delivery_date: string | null
+          p_weekdays: number[]
+          p_month_days: number[]
+          p_amount: number
+          p_paid_amount: number
+          p_amount_mode: Database['public']['Enums']['scheduled_payment_amount_mode']
+          p_minimum_amount: number | null
+          p_as_of?: string
+        }
+        Returns: number
+      }
+      fn_sync_invoice_payment_totals: {
+        Args: { p_invoice_id: string }
         Returns: undefined
       }
       fn_mutate_production_stage_interval: {

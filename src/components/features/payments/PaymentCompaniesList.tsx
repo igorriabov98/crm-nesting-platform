@@ -86,7 +86,7 @@ export function PaymentCompaniesList({ data }: { data: PaymentCompaniesData }) {
               <div><dt className="text-slate-500">Выставлено</dt><dd className="mt-1 font-medium text-slate-950">{money.format(company.issuedAmount)}</dd></div>
               <div><dt className="text-slate-500">Общий долг</dt><dd className="mt-1 font-semibold text-slate-950">{money.format(company.debtAmount)}</dd></div>
               <div><dt className="text-slate-500">Просрочено</dt><dd className={company.overdueDebtAmount > 0 ? 'mt-1 font-semibold text-red-700' : 'mt-1 font-medium text-slate-950'}>{money.format(company.overdueDebtAmount)}</dd></div>
-              <div><dt className="text-slate-500">Ближайшая оплата</dt><dd className="mt-1 font-medium text-slate-950">{date(company.nearestPaymentDate)}{company.nearestPaymentIsForecast && company.nearestPaymentDate ? ' · прогноз' : ''}</dd></div>
+              <div><dt className="text-slate-500">Ближайшая оплата</dt><dd className="mt-1 font-medium text-slate-950">{date(company.nearestPaymentDate)}{company.nearestPaymentDate ? ` · ${money.format(company.nearestPaymentAmount)}` : ''}{company.nearestPaymentIsForecast && company.nearestPaymentDate ? ' · прогноз' : ''}</dd></div>
             </dl>
           </Link>
         ))}
@@ -94,7 +94,7 @@ export function PaymentCompaniesList({ data }: { data: PaymentCompaniesData }) {
       {companies.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-14 text-center text-slate-500">По выбранным фильтрам компаний нет.</div>}
 
       <div className="flex flex-wrap gap-4 rounded-xl bg-slate-100 px-4 py-3 text-sm text-slate-600">
-        <span className="inline-flex items-center gap-1.5"><CalendarClock className="h-4 w-4" />Ближайшая ожидаемая оплата: {date(data.summary.nearestPaymentDate)}{data.summary.nearestPaymentIsForecast && data.summary.nearestPaymentDate ? ' · прогноз' : ''}</span>
+        <span className="inline-flex items-center gap-1.5"><CalendarClock className="h-4 w-4" />Ближайшая ожидаемая оплата: {date(data.summary.nearestPaymentDate)}{data.summary.nearestPaymentDate ? ` · ${money.format(data.summary.nearestPaymentAmount)}` : ''}{data.summary.nearestPaymentIsForecast && data.summary.nearestPaymentDate ? ' · прогноз' : ''}</span>
         {data.summary.overdueInvoiceCount > 0 && <span className="inline-flex items-center gap-1.5 text-red-700"><AlertTriangle className="h-4 w-4" />Просроченных инвойсов: {data.summary.overdueInvoiceCount}</span>}
       </div>
     </div>

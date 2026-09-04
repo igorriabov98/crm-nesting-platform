@@ -83,6 +83,7 @@ export type SupplyStatus = Database['public']['Enums']['supply_status']
 export type InvoiceStatus = Database['public']['Enums']['invoice_status']
 export type MachineStatus = Database['public']['Enums']['machine_status']
 export type PaymentTermsType = Database['public']['Enums']['payment_terms_type']
+export type ScheduledPaymentAmountMode = Database['public']['Enums']['scheduled_payment_amount_mode']
 export type ProductionFactShift = Database['public']['Enums']['production_fact_shift']
 export type EmployeeAssignmentStatus = Database['public']['Enums']['employee_assignment_status']
 export type MaterialType = Database['public']['Enums']['material_type']
@@ -161,6 +162,10 @@ export type ClientSummary = Pick<Client,
   | 'payment_due_days'
   | 'prepayment_percent'
   | 'final_payment_due_days'
+  | 'scheduled_payment_weekdays'
+  | 'scheduled_payment_month_days'
+  | 'scheduled_payment_amount_mode'
+  | 'scheduled_payment_minimum_amount'
 >
 
 export type MachineRelation = Pick<Machine,

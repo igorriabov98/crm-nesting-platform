@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { ROUTES } from '@/lib/constants/routes'
 import type { ClientPaymentDetails, ClientPaymentsInvoice, InvoicePaymentEntry, PaymentDisplayStatus } from '@/lib/payments/types'
 import { PaymentDialog } from './PaymentDialog'
+import { PAYMENT_TERMS_TYPE_LABELS, paymentTermsLabel } from '@/lib/payments/terms'
 
 const money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'EUR' })
 const date = (value: string | null) => value ? value.slice(0, 10).split('-').reverse().join('.') : 'дата не указана'
@@ -21,12 +22,6 @@ const statusLabels: Record<PaymentDisplayStatus, string> = {
   paid: 'Оплачен',
   overdue: 'Просрочен',
   cancelled: 'Аннулирован',
-}
-
-const paymentTermsLabels: Record<string, string> = {
-  invoice_days: 'Оплата после выставления инвойса',
-  delivery_days: 'Оплата после доставки',
-  prepayment_full: 'Предоплата и окончательный платёж',
 }
 
 function statusBadge(status: PaymentDisplayStatus) {
@@ -80,19 +75,32 @@ export function ClientPaymentsDetail({ data }: { data: ClientPaymentDetails }) {
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <SummaryCard label="Выставлено" value={money.format(data.summary.issuedAmount)} />
         <SummaryCard label="Оплачено" value={money.format(data.summary.paidAmount)} />
         <SummaryCard label="Общий долг" value={money.format(data.summary.debtAmount)} />
         <SummaryCard label="Просроченный долг" value={money.format(data.summary.overdueDebtAmount)} danger />
+        <SummaryCard
+          label="Ближайшее обязательство"
+          value={data.summary.nearestPaymentDate ? `${date(data.summary.nearestPaymentDate)} · ${money.format(data.summary.nearestPaymentAmount)}${data.summary.nearestPaymentIsForecast ? ' · прогноз' : ''}` : '—'}
+        />
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="client-payment-terms">
         <h2 id="client-payment-terms" className="font-semibold text-blue-950">Условия компании</h2>
         <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <div><dt className="text-slate-500">Ответственный</dt><dd className="mt-1 font-medium text-slate-900">{data.client.responsibleName || 'не назначен'}</dd></div>
-          <div><dt className="text-slate-500">Тип оплаты</dt><dd className="mt-1 font-medium text-slate-900">{paymentTermsLabels[data.client.paymentTermsType] || data.client.paymentTermsType}</dd></div>
-          <div><dt className="text-slate-500">Срок</dt><dd className="mt-1 font-medium text-slate-900">{data.client.paymentDueDays} календ. дн.</dd></div>
+          <div><dt className="text-slate-500">Тип оплаты</dt><dd className="mt-1 font-medium text-slate-900">{PAYMENT_TERMS_TYPE_LABELS[data.client.paymentTermsType as keyof typeof PAYMENT_TERMS_TYPE_LABELS] || 'Условия не указаны'}</dd></div>
+          <div className="sm:col-span-2"><dt className="text-slate-500">Условия</dt><dd className="mt-1 font-medium text-slate-900">{paymentTermsLabel({
+            type: data.client.paymentTermsType,
+            days: data.client.paymentDueDays,
+            prepaymentPercent: data.client.prepaymentPercent,
+            finalDays: data.client.finalPaymentDueDays,
+            scheduledWeekdays: data.client.scheduledPaymentWeekdays,
+            scheduledMonthDays: data.client.scheduledPaymentMonthDays,
+            scheduledAmountMode: data.client.scheduledPaymentAmountMode,
+            scheduledMinimumAmount: data.client.scheduledPaymentMinimumAmount,
+          })}</dd></div>
           <div><dt className="text-slate-500">Норматив доставки</dt><dd className="mt-1 font-medium text-slate-900">{data.client.estimatedDeliveryDays} календ. дн.</dd></div>
         </dl>
       </section>
@@ -118,10 +126,14 @@ export function ClientPaymentsDetail({ data }: { data: ClientPaymentDetails }) {
                     <Value label="Оплачено" value={money.format(invoice.paidAmount)} />
                     <Value label="Остаток" value={money.format(invoice.remainingAmount)} />
                   </div>
+                  <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/50 p-3 text-sm text-slate-700">
+                    <span className="font-medium text-blue-950">Условия инвойса: </span>
+                    {invoice.paymentTermsDescription}
+                  </div>
 
                   <div className="mt-5 grid gap-3 sm:grid-cols-2">
                     {invoice.schedule.map((part) => (
-                      <div key={part.part} className="rounded-xl border border-slate-200 p-3">
+                      <div key={part.key} className="rounded-xl border border-slate-200 p-3">
                         <div className="flex items-start justify-between gap-3"><p className="font-medium text-slate-900">{part.label}</p>{part.isOverdue && <AlertTriangle className="h-4 w-4 text-red-700" aria-label="Просрочено" />}</div>
                         <p className="mt-1 text-sm text-slate-600">{money.format(part.remainingAmount)} до {part.dueDate ? date(part.dueDate) : '—'}</p>
                         {part.isForecast && <p className="mt-1 text-xs text-blue-700">Прогноз; официальная просрочка не рассчитывается</p>}

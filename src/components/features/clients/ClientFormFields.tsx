@@ -3,12 +3,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ClientInput } from '@/lib/types/schemas'
-import type { PaymentTermsType } from '@/lib/types'
 import type { UseFormReturn } from 'react-hook-form'
 import { getClientManagerOptions } from '@/lib/actions/clients'
+import {
+  PAYMENT_TERMS_TYPE_LABELS,
+  SCHEDULED_PAYMENT_AMOUNT_MODE_LABELS,
+  SCHEDULED_WEEKDAYS,
+} from '@/lib/payments/terms'
+
+export { PAYMENT_TERMS_TYPE_LABELS, paymentTermsLabel } from '@/lib/payments/terms'
 
 type ManagerAccess = {
   canAssign: boolean
@@ -17,20 +24,9 @@ type ManagerAccess = {
   managers: Array<{ id: string; name: string; isActive: boolean }>
 }
 
-export const PAYMENT_TERMS_TYPE_LABELS: Record<PaymentTermsType, string> = {
-  invoice_days: 'От даты инвойса',
-  delivery_days: 'От даты доставки',
-  prepayment_full: 'Предоплата + полная оплата',
-}
-
-export function paymentTermsLabel(type: string, days: number, prepayment?: number | null, finalDays?: number | null) {
-  if (type === 'delivery_days') return `Через ${days} дн. от доставки клиенту`
-  if (type === 'prepayment_full') return `Предоплата ${prepayment ?? 50}%, остаток через ${finalDays ?? days} дн. от доставки`
-  return `Через ${days} дн. от даты инвойса`
-}
-
 export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> }) {
   const termsType = form.watch('payment_terms_type')
+  const scheduledAmountMode = form.watch('scheduled_payment_amount_mode')
   const responsibleUserId = form.watch('responsible_user_id')
   const [managerAccess, setManagerAccess] = useState<ManagerAccess | null>(null)
 
@@ -184,6 +180,9 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
                 if (value === 'prepayment_full' && !form.getValues('prepayment_percent')) {
                   form.setValue('prepayment_percent', 50)
                 }
+                if (value === 'scheduled_after_delivery' && !form.getValues('scheduled_payment_amount_mode')) {
+                  form.setValue('scheduled_payment_amount_mode', 'full_balance')
+                }
               }}
             >
               <FormControl>
@@ -195,18 +194,21 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
                 <SelectItem value="invoice_days">От даты инвойса</SelectItem>
                 <SelectItem value="delivery_days">От даты доставки</SelectItem>
                 <SelectItem value="prepayment_full">Предоплата + полная оплата</SelectItem>
+                <SelectItem value="scheduled_after_delivery">По расписанию после доставки</SelectItem>
               </SelectContent>
             </Select>
             <FormMessage />
           </FormItem>
         )} />
-        <FormField control={form.control} name="payment_due_days" render={({ field }) => (
-          <FormItem>
-            <FormLabel>{termsType === 'delivery_days' ? 'Дней от доставки' : 'Дней от инвойса'}</FormLabel>
-            <FormControl><Input type="number" min={0} {...field} value={field.value ?? 14} /></FormControl>
-            <FormMessage />
-          </FormItem>
-        )} />
+        {termsType !== 'scheduled_after_delivery' && (
+          <FormField control={form.control} name="payment_due_days" render={({ field }) => (
+            <FormItem>
+              <FormLabel>{termsType === 'delivery_days' ? 'Дней от доставки' : 'Дней от инвойса'}</FormLabel>
+              <FormControl><Input type="number" min={0} {...field} value={field.value ?? 14} /></FormControl>
+              <FormMessage />
+            </FormItem>
+          )} />
+        )}
         {termsType === 'prepayment_full' && (
           <>
             <FormField control={form.control} name="prepayment_percent" render={({ field }) => (
@@ -226,6 +228,104 @@ export function ClientFormFields({ form }: { form: UseFormReturn<ClientInput> })
           </>
         )}
       </div>
+
+      {termsType === 'scheduled_after_delivery' && (
+        <fieldset className="space-y-5 rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+          <legend className="px-1 text-sm font-semibold text-[#1B3A6B]">Расписание после доставки</legend>
+          <p className="text-xs leading-5 text-[#6B7280]">
+            Первая дата всегда позже даты получения клиентом. Если доставка совпала с выбранным днём, используется следующая дата.
+          </p>
+
+          <FormField control={form.control} name="scheduled_payment_weekdays" render={({ field }) => (
+            <FormItem>
+              <FormLabel>Дни недели</FormLabel>
+              <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                {SCHEDULED_WEEKDAYS.map((day) => {
+                  const checked = (field.value || []).includes(day.value)
+                  return (
+                    <div key={day.value} className={`flex min-h-11 items-center justify-center gap-2 rounded-lg border px-2 text-sm text-slate-700 transition-colors hover:border-blue-300 focus-within:ring-2 focus-within:ring-blue-600 ${checked ? 'border-blue-700 bg-blue-50' : 'border-slate-200 bg-white'}`}>
+                      <Checkbox
+                        id={`scheduled-weekday-${day.value}`}
+                        checked={checked}
+                        onCheckedChange={(selected) => field.onChange(selected
+                          ? [...(field.value || []), day.value].sort((left, right) => left - right)
+                          : (field.value || []).filter((value) => value !== day.value))}
+                        aria-label={day.label}
+                      />
+                      <label htmlFor={`scheduled-weekday-${day.value}`} className="cursor-pointer">{day.shortLabel}</label>
+                    </div>
+                  )
+                })}
+              </div>
+              <FormMessage />
+            </FormItem>
+          )} />
+
+          <FormField control={form.control} name="scheduled_payment_month_days" render={({ field }) => (
+            <FormItem>
+              <FormLabel>Числа месяца</FormLabel>
+              <div className="grid grid-cols-7 gap-2 sm:grid-cols-11">
+                {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => {
+                  const checked = (field.value || []).includes(day)
+                  return (
+                    <div key={day} className={`relative flex min-h-11 items-center justify-center rounded-lg border text-sm text-slate-700 transition-colors hover:border-blue-300 focus-within:ring-2 focus-within:ring-blue-600 ${checked ? 'border-blue-700 bg-blue-50' : 'border-slate-200 bg-white'}`}>
+                      <Checkbox
+                        id={`scheduled-month-day-${day}`}
+                        checked={checked}
+                        onCheckedChange={(selected) => field.onChange(selected
+                          ? [...(field.value || []), day].sort((left, right) => left - right)
+                          : (field.value || []).filter((value) => value !== day))}
+                        aria-label={`${day}-е число месяца`}
+                        className="sr-only"
+                      />
+                      <label htmlFor={`scheduled-month-day-${day}`} className="absolute inset-0 flex cursor-pointer items-center justify-center rounded-lg">{day}</label>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-[#6B7280]">Для 29–31 числа в коротком месяце используется последний день месяца. Совпавшие даты считаются один раз.</p>
+              <FormMessage />
+            </FormItem>
+          )} />
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormField control={form.control} name="scheduled_payment_amount_mode" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Сумма на дату</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl><SelectTrigger><SelectValue>{SCHEDULED_PAYMENT_AMOUNT_MODE_LABELS[field.value]}</SelectValue></SelectTrigger></FormControl>
+                  <SelectContent>
+                    <SelectItem value="full_balance">Весь остаток</SelectItem>
+                    <SelectItem value="fixed_amount">Минимальная сумма</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-[#6B7280]">Ранние и повышенные оплаты засчитываются в следующие даты.</p>
+                <FormMessage />
+              </FormItem>
+            )} />
+            {scheduledAmountMode === 'fixed_amount' && (
+              <FormField control={form.control} name="scheduled_payment_minimum_amount" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Минимальная сумма, EUR *</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={0.01}
+                      step="0.01"
+                      inputMode="decimal"
+                      {...field}
+                      value={field.value ?? ''}
+                      onChange={(event) => field.onChange(event.target.value === '' ? null : event.target.value)}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-[#6B7280]">Просрочкой считается только недостающая часть обязательной суммы.</p>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            )}
+          </div>
+        </fieldset>
+      )}
 
       <FormField control={form.control} name="notes" render={({ field }) => (
         <FormItem>

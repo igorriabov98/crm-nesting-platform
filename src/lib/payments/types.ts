@@ -34,6 +34,7 @@ export type ClientPaymentsInvoice = {
   paidAmount: number
   remainingAmount: number
   invoiceDate: string
+  paymentTermsDescription: string
   status: PaymentDisplayStatus
   isCancelled: boolean
   cancelledAt: string | null
@@ -63,6 +64,7 @@ export type ClientPaymentsSummary = {
   invoiceCount: number
   overdueInvoiceCount: number
   nearestPaymentDate: string | null
+  nearestPaymentAmount: number
   nearestPaymentIsForecast: boolean
 }
 
@@ -92,6 +94,10 @@ export type ClientPaymentDetails = {
     prepaymentPercent: number | null
     finalPaymentDueDays: number | null
     estimatedDeliveryDays: number
+    scheduledPaymentWeekdays: number[]
+    scheduledPaymentMonthDays: number[]
+    scheduledPaymentAmountMode: string
+    scheduledPaymentMinimumAmount: number | null
   }
   invoices: ClientPaymentsInvoice[]
   summary: ClientPaymentsSummary

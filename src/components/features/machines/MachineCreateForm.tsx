@@ -16,7 +16,7 @@ import type { ProductOption, ProductProjectSampleOption } from '@/lib/actions/pr
 import type { OrderClientPriceLookup } from '@/lib/client-prices/types'
 import type { Client, CoatingType, FactorySummary } from '@/lib/types'
 import { ClientCreateDialog } from '@/components/features/clients/ClientCreateDialog'
-import { paymentTermsLabel } from '@/components/features/clients/ClientFormFields'
+import { paymentTermsLabel } from '@/lib/payments/terms'
 import { getFactoryWorkshopOptionsById } from '@/lib/constants/factory-workshops'
 import { getProductionMonthOptions, monthStartValue } from '@/lib/utils/production-months'
 import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
@@ -405,7 +405,16 @@ export function MachineCreateForm({
                     </Select>
                     {selectedClient && (
                       <p className="text-xs text-[#6B7280]">
-                        {selectedClient.primary_contact_name || 'Контакт не указан'} · {paymentTermsLabel(selectedClient.payment_terms_type, selectedClient.payment_due_days, selectedClient.prepayment_percent, selectedClient.final_payment_due_days)}
+                        {selectedClient.primary_contact_name || 'Контакт не указан'} · {paymentTermsLabel({
+                          type: selectedClient.payment_terms_type,
+                          days: selectedClient.payment_due_days,
+                          prepaymentPercent: selectedClient.prepayment_percent,
+                          finalDays: selectedClient.final_payment_due_days,
+                          scheduledWeekdays: selectedClient.scheduled_payment_weekdays,
+                          scheduledMonthDays: selectedClient.scheduled_payment_month_days,
+                          scheduledAmountMode: selectedClient.scheduled_payment_amount_mode,
+                          scheduledMinimumAmount: selectedClient.scheduled_payment_minimum_amount,
+                        })}
                       </p>
                     )}
                     <FormMessage className="text-[#DC2626]" />

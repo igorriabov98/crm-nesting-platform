@@ -11,6 +11,7 @@ import { clientContactSchema, clientSchema, type ClientContactInput, type Client
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { Client, ClientContact, CurrentUser, MachineDetails } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
+import { normalizeScheduledDays } from '@/lib/payments/terms'
 
 type ClientInsert = Database['public']['Tables']['clients']['Insert']
 type ClientUpdate = Database['public']['Tables']['clients']['Update']
@@ -56,6 +57,10 @@ type ClientListSummaryRow = {
   payment_due_days: NumericLike
   prepayment_percent: NumericLike
   final_payment_due_days: NumericLike
+  scheduled_payment_weekdays: number[]
+  scheduled_payment_month_days: number[]
+  scheduled_payment_amount_mode: string
+  scheduled_payment_minimum_amount: NumericLike
   active_machines_count: NumericLike
   current_invoice_amount: NumericLike
   overdue_invoice_amount: NumericLike
@@ -157,7 +162,7 @@ export async function getClientOptions() {
     const { supabase } = await requireClientPermission('view')
 
     const { data, error } = await looseDb(supabase).from('clients')
-      .select('id, name, primary_contact_name, phone, email, country_city, address, delivery_basis_location_en, delivery_basis_location_ua, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, responsible_user_id, estimated_delivery_days')
+      .select('id, name, primary_contact_name, phone, email, country_city, address, delivery_basis_location_en, delivery_basis_location_ua, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, responsible_user_id, estimated_delivery_days, scheduled_payment_weekdays, scheduled_payment_month_days, scheduled_payment_amount_mode, scheduled_payment_minimum_amount')
       .order('name', { ascending: true })
 
     if (error) throw error
@@ -172,7 +177,7 @@ export async function getClients() {
     const context = await requireClientPermission('view')
     const { supabase } = context
     const { data: clients, error } = await looseDb(supabase).from('client_list_summary')
-      .select('id, name, responsible_user_id, primary_contact_name, phone, email, country_city, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, active_machines_count, current_invoice_amount, overdue_invoice_amount, last_activity')
+      .select('id, name, responsible_user_id, primary_contact_name, phone, email, country_city, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, scheduled_payment_weekdays, scheduled_payment_month_days, scheduled_payment_amount_mode, scheduled_payment_minimum_amount, active_machines_count, current_invoice_amount, overdue_invoice_amount, last_activity')
       .order('updated_at', { ascending: false })
       .limit(CLIENTS_LIST_LIMIT)
 
@@ -194,6 +199,10 @@ export async function getClients() {
         payment_due_days: Number(client.payment_due_days || 0),
         prepayment_percent: client.prepayment_percent === null ? null : Number(client.prepayment_percent),
         final_payment_due_days: client.final_payment_due_days === null ? null : Number(client.final_payment_due_days),
+        scheduled_payment_weekdays: client.scheduled_payment_weekdays || [],
+        scheduled_payment_month_days: client.scheduled_payment_month_days || [],
+        scheduled_payment_amount_mode: client.scheduled_payment_amount_mode || 'full_balance',
+        scheduled_payment_minimum_amount: client.scheduled_payment_minimum_amount === null ? null : Number(client.scheduled_payment_minimum_amount),
         active_machines_count: Number(client.active_machines_count || 0),
         current_invoice_amount: canViewClientInvoices ? Number(client.current_invoice_amount || 0) : null,
         overdue_invoice_amount: canViewClientInvoices ? Number(client.overdue_invoice_amount || 0) : null,
@@ -295,6 +304,12 @@ export async function createClient(input: ClientInput) {
       final_payment_due_days: parsed.payment_terms_type === 'prepayment_full' ? parsed.final_payment_due_days ?? parsed.payment_due_days : null,
       responsible_user_id: responsibleUserId,
       estimated_delivery_days: parsed.estimated_delivery_days,
+      scheduled_payment_weekdays: normalizeScheduledDays(parsed.scheduled_payment_weekdays, 1, 7),
+      scheduled_payment_month_days: normalizeScheduledDays(parsed.scheduled_payment_month_days, 1, 31),
+      scheduled_payment_amount_mode: parsed.scheduled_payment_amount_mode,
+      scheduled_payment_minimum_amount: parsed.payment_terms_type === 'scheduled_after_delivery' && parsed.scheduled_payment_amount_mode === 'fixed_amount'
+        ? parsed.scheduled_payment_minimum_amount
+        : null,
     }
 
     const { data, error } = await looseDb(createAdminClient()).from('clients')
@@ -335,6 +350,12 @@ export async function updateClient(id: string, input: ClientInput) {
       prepayment_percent: parsed.payment_terms_type === 'prepayment_full' ? parsed.prepayment_percent ?? 50 : null,
       final_payment_due_days: parsed.payment_terms_type === 'prepayment_full' ? parsed.final_payment_due_days ?? parsed.payment_due_days : null,
       estimated_delivery_days: parsed.estimated_delivery_days,
+      scheduled_payment_weekdays: normalizeScheduledDays(parsed.scheduled_payment_weekdays, 1, 7),
+      scheduled_payment_month_days: normalizeScheduledDays(parsed.scheduled_payment_month_days, 1, 31),
+      scheduled_payment_amount_mode: parsed.scheduled_payment_amount_mode,
+      scheduled_payment_minimum_amount: parsed.payment_terms_type === 'scheduled_after_delivery' && parsed.scheduled_payment_amount_mode === 'fixed_amount'
+        ? parsed.scheduled_payment_minimum_amount
+        : null,
       updated_at: new Date().toISOString(),
     }
 
@@ -491,6 +512,8 @@ export async function applyClientPaymentTermsToMachines(clientId: string, machin
     const ids = Array.from(new Set(machineIds.filter(Boolean)))
     if (!ids.length) return { success: true, updated_count: 0, error: null }
 
+    // Legacy machine columns keep the three historical term shapes only.
+    // Recurring schedule settings live on the company and invoice snapshot.
     const { data: client, error: clientError } = await looseDb(supabase).from('clients')
       .select('payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days')
       .eq('id', clientId)

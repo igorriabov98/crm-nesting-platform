@@ -3,46 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { ChevronRight, Home } from "lucide-react"
-
-const routeMap: Record<string, string> = {
-  "dashboard": "Дашборд",
-  "sales-plan": "План продаж",
-  "product-projects": "Проекты продукции",
-  "products": "Продукция",
-  "mail": "Почта",
-  "new": "Создание",
-  "production": "Производство",
-  "cutting-area": "Участок заготовки",
-  "request": "Заявка на материалы",
-  "requests": "Запросы",
-  "technologist": "Технолог",
-  "gantt": "Гант-график",
-  "consumables": "Расходники",
-  "consumable-requests": "Заявки на расходники",
-  "supply": "Снабжение",
-  "production-requests": "Надобности производства",
-  "transport": "Транспорт",
-  "inventory": "Склад",
-  "metal-scrap": "Металлолом",
-  "receiving": "Прием материала",
-  "invoices": "Инвойсы",
-  "reports": "Отчёты",
-  "complex": "Комплексные отчёты",
-  "contracts": "Контракты",
-  "notifications": "Уведомления",
-  "admin": "Админ",
-  "settings": "Настройки",
-  "production-fact": "Факт производства",
-  "access": "Управление доступом",
-  "departments": "Отделы и структура",
-  "users": "Пользователи",
-  "materials": "Материалы",
-  "suppliers": "Поставщики",
-  "database": "База данных",
-  "all": "Все компании",
-  "metal": "Поставщики металла",
-  "outsourcing": "Аутсорсинговые компании",
-}
+import { breadcrumbLabelForSegment } from '@/lib/navigation/breadcrumbs'
 
 export function Breadcrumbs() {
   const pathname = usePathname()
@@ -52,10 +13,10 @@ export function Breadcrumbs() {
   const segments = pathname.split("/").filter((s) => s.length > 0)
 
   return (
-    <nav className="flex items-center text-[10px] sm:text-xs text-[#6B7280] mt-0.5 px-1 pb-1" aria-label="Breadcrumb">
+    <nav className="flex items-center text-[10px] sm:text-xs text-[#6B7280] mt-0.5 px-1 pb-1" aria-label="Навигационная цепочка">
       <ol className="flex items-center space-x-1.5">
         <li>
-          <Link href="/dashboard" aria-label="Go to dashboard" className="hover:text-[#1B3A6B] transition-colors flex items-center">
+          <Link href="/dashboard" aria-label="На дашборд" className="hover:text-[#1B3A6B] transition-colors flex items-center">
             <Home className="w-3.5 h-3.5" />
           </Link>
         </li>
@@ -64,8 +25,7 @@ export function Breadcrumbs() {
           const href = "/" + segments.slice(0, index + 1).join("/")
           const isLast = index === segments.length - 1
 
-          const isId = segment.length > 20 && segment.includes("-")
-          const label = isId ? "Детали" : (routeMap[segment] || segment)
+          const label = breadcrumbLabelForSegment(segment)
 
           return (
             <li key={href} className="flex items-center space-x-2">

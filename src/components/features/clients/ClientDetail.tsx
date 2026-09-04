@@ -11,13 +11,14 @@ import { MachineStatusBadge } from '@/components/features/machines/MachineStatus
 import { uploadClientImage } from '@/lib/actions/clients'
 import { ROUTES } from '@/lib/constants/routes'
 import { INVOICE_STATUSES } from '@/lib/constants/statuses'
-import { PAYMENT_TERMS_TYPE_LABELS, paymentTermsLabel } from './ClientFormFields'
+import { PAYMENT_TERMS_TYPE_LABELS, paymentTermsLabel } from '@/lib/payments/terms'
 import { ClientContactsSection } from './ClientContactsSection'
 import { ClientContractsSection } from './ClientContractsSection'
 import { ClientEditDialog } from './ClientEditDialog'
 import { ClientProductPricesTable } from '@/components/features/client-prices/ClientProductPricesTable'
 import type { ClientPriceProductRow } from '@/lib/client-prices/types'
 import type { Client, ClientContact, Contract, MachineDetails } from '@/lib/types'
+import { buildInvoicePaymentSchedule, invoiceDisplayStatus, nextPaymentSchedulePart } from '@/lib/invoices/payment-schedule'
 
 type ClientImageType = 'signature' | 'stamp'
 type ClientDetailData = Client & {
@@ -69,14 +70,56 @@ export function ClientDetail({
   const machines = client.machines || []
   const contacts = client.client_contacts || []
   const contracts = client.contracts || []
-  const invoices = machines
-    .map((machine) => ({ machine, invoice: normalizeInvoice(machine.invoice) }))
-    .filter((item) => item.invoice)
-  const currentInvoices = invoices.filter(({ invoice }) => invoice && invoice.status !== 'paid' && invoice.status !== 'cancelled')
-  const overdueInvoices = currentInvoices.filter(({ invoice }) => {
-    const dueDate = invoice?.due_date || invoice?.payment_date
-    return dueDate && new Date(dueDate) < new Date()
-  })
+  const invoiceSummaries = new Map(machines.flatMap((machine) => {
+    const invoice = normalizeInvoice(machine.invoice)
+    if (!invoice) return []
+    const amount = Number(invoice.amount || 0)
+    const paidAmount = Number(invoice.paid_amount || 0)
+    const schedule = buildInvoicePaymentSchedule({
+      amount,
+      paidAmount,
+      invoiceDate: invoice.invoice_date,
+      paymentTermsType: invoice.payment_terms_type_snapshot,
+      paymentDueDays: invoice.payment_due_days_snapshot,
+      prepaymentPercent: invoice.prepayment_percent_snapshot,
+      finalPaymentDueDays: invoice.final_payment_due_days_snapshot,
+      estimatedDeliveryDays: invoice.estimated_delivery_days_snapshot,
+      scheduledPaymentWeekdays: invoice.scheduled_payment_weekdays_snapshot,
+      scheduledPaymentMonthDays: invoice.scheduled_payment_month_days_snapshot,
+      scheduledPaymentAmountMode: invoice.scheduled_payment_amount_mode_snapshot,
+      scheduledPaymentMinimumAmount: invoice.scheduled_payment_minimum_amount_snapshot,
+      deliveryToClientDate: machine.delivery_to_client_date,
+      actualShippingDate: machine.actual_shipping_date,
+      desiredShippingDate: machine.desired_shipping_date,
+    })
+    const status = invoiceDisplayStatus({ amount, paidAmount, cancelled: invoice.status === 'cancelled', schedule })
+    return [[machine.id, {
+      invoice,
+      status,
+      schedule,
+      remainingAmount: Math.max(0, amount - paidAmount),
+      overdueAmount: schedule.filter((part) => part.isOverdue).reduce((sum, part) => sum + part.remainingAmount, 0),
+    }] as const]
+  }))
+  const currentInvoices = Array.from(invoiceSummaries.values()).filter(({ status }) => status !== 'paid' && status !== 'cancelled')
+  const overdueInvoices = currentInvoices.filter(({ status }) => status === 'overdue')
+  const nearestPayments = currentInvoices
+    .flatMap(({ schedule }) => {
+      const part = nextPaymentSchedulePart(schedule)
+      return part?.dueDate ? [part] : []
+    })
+    .sort((left, right) => (left.dueDate || '').localeCompare(right.dueDate || ''))
+  const nearestPayment = nearestPayments[0]
+    ? {
+        ...nearestPayments[0],
+        remainingAmount: nearestPayments
+          .filter((part) => part.dueDate === nearestPayments[0].dueDate)
+          .reduce((sum, part) => sum + part.remainingAmount, 0),
+        isForecast: nearestPayments
+          .filter((part) => part.dueDate === nearestPayments[0].dueDate)
+          .every((part) => part.isForecast),
+      }
+    : null
 
   useEffect(() => {
     return () => {
@@ -130,7 +173,16 @@ export function ClientDetail({
           <div>
             <h1 className="text-3xl font-bold text-[#1B3A6B]">{client.name}</h1>
             <p className="mt-2 text-sm text-[#6B7280]">
-              {paymentTermsLabel(client.payment_terms_type, client.payment_due_days, client.prepayment_percent, client.final_payment_due_days)}
+              {paymentTermsLabel({
+                type: client.payment_terms_type,
+                days: client.payment_due_days,
+                prepaymentPercent: client.prepayment_percent,
+                finalDays: client.final_payment_due_days,
+                scheduledWeekdays: client.scheduled_payment_weekdays,
+                scheduledMonthDays: client.scheduled_payment_month_days,
+                scheduledAmountMode: client.scheduled_payment_amount_mode,
+                scheduledMinimumAmount: client.scheduled_payment_minimum_amount,
+              })}
             </p>
           </div>
           <div className="flex flex-col items-start gap-3 text-sm text-[#6B7280] md:items-end">
@@ -168,7 +220,16 @@ export function ClientDetail({
             {PAYMENT_TERMS_TYPE_LABELS[client.payment_terms_type]}
           </div>
           <div className="mt-1 text-sm text-[#374151]">
-            {paymentTermsLabel(client.payment_terms_type, client.payment_due_days, client.prepayment_percent, client.final_payment_due_days)}
+            {paymentTermsLabel({
+              type: client.payment_terms_type,
+              days: client.payment_due_days,
+              prepaymentPercent: client.prepayment_percent,
+              finalDays: client.final_payment_due_days,
+              scheduledWeekdays: client.scheduled_payment_weekdays,
+              scheduledMonthDays: client.scheduled_payment_month_days,
+              scheduledAmountMode: client.scheduled_payment_amount_mode,
+              scheduledMinimumAmount: client.scheduled_payment_minimum_amount,
+            })}
           </div>
           {client.payment_terms_type === 'prepayment_full' && (
             <div className="mt-3 grid gap-3 text-sm md:grid-cols-2">
@@ -229,7 +290,7 @@ export function ClientDetail({
         />
       )}
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-xl border border-[#E8ECF0] bg-white p-5">
           <div className="text-sm text-[#6B7280]">Машин / изделий</div>
           <div className="mt-2 text-3xl font-bold text-[#1B3A6B]">{machines.length}</div>
@@ -237,14 +298,21 @@ export function ClientDetail({
         <div className="rounded-xl border border-[#E8ECF0] bg-white p-5">
           <div className="text-sm text-[#6B7280]">Актуальные инвойсы</div>
           <div className="mt-2 text-3xl font-bold text-[#1B3A6B]">
-            {money.format(currentInvoices.reduce((sum, item) => sum + Number(item.invoice?.amount || 0) - Number(item.invoice?.paid_amount || 0), 0))}
+            {money.format(currentInvoices.reduce((sum, item) => sum + item.remainingAmount, 0))}
           </div>
         </div>
         <div className="rounded-xl border border-red-200 bg-white p-5">
           <div className="text-sm text-[#DC2626]">Просроченные инвойсы</div>
           <div className="mt-2 text-3xl font-bold text-[#DC2626]">
-            {money.format(overdueInvoices.reduce((sum, item) => sum + Number(item.invoice?.amount || 0) - Number(item.invoice?.paid_amount || 0), 0))}
+            {money.format(overdueInvoices.reduce((sum, item) => sum + item.overdueAmount, 0))}
           </div>
+        </div>
+        <div className="rounded-xl border border-[#E8ECF0] bg-white p-5">
+          <div className="text-sm text-[#6B7280]">Ближайшее обязательство</div>
+          <div className="mt-2 text-2xl font-bold text-[#1B3A6B]">
+            {nearestPayment?.dueDate ? `${nearestPayment.dueDate.split('-').reverse().join('.')} · ${money.format(nearestPayment.remainingAmount)}` : '—'}
+          </div>
+          {nearestPayment?.isForecast && <div className="mt-1 text-xs text-[#2563EB]">Прогноз до фактической доставки</div>}
         </div>
       </div>
 
@@ -265,6 +333,7 @@ export function ClientDetail({
                 <tr><td colSpan={4} className="px-4 py-10 text-center text-[#9CA3AF]">Машин по клиенту пока нет.</td></tr>
               ) : machines.map((machine) => {
                 const invoice = normalizeInvoice(machine.invoice)
+                const invoiceSummary = invoiceSummaries.get(machine.id)
                 return (
                   <tr key={machine.id}>
                     <td className="px-4 py-3">
@@ -280,9 +349,9 @@ export function ClientDetail({
                     <td className="px-4 py-3 text-[#374151]">
                       {invoice ? (
                         <>
-                          {money.format(Number(invoice.amount || 0) - Number(invoice.paid_amount || 0))}
+                          {money.format(invoiceSummary?.remainingAmount || 0)}
                           {' · '}
-                          {INVOICE_STATUSES[invoice.status]?.label || 'Статус не указан'}
+                          {INVOICE_STATUSES[invoiceSummary?.status || invoice.status]?.label || 'Статус не указан'}
                         </>
                       ) : '—'}
                     </td>
