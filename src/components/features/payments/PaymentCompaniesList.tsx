@@ -12,11 +12,21 @@ import type { PaymentCompaniesData } from '@/lib/payments/types'
 
 const money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'EUR' })
 const date = (value: string | null) => value ? value.split('-').reverse().join('.') : '—'
+const debtFilterLabels = {
+  all: 'Все компании',
+  debt: 'Есть долг',
+  overdue: 'Есть просрочка',
+} as const
 
 export function PaymentCompaniesList({ data }: { data: PaymentCompaniesData }) {
   const [search, setSearch] = useState('')
   const [debtFilter, setDebtFilter] = useState<'all' | 'debt' | 'overdue'>('all')
   const [managerId, setManagerId] = useState('all')
+  const managerFilterLabel = managerId === 'all'
+    ? 'Все ответственные'
+    : managerId === 'unassigned'
+      ? 'Не назначен'
+      : data.managers.find((manager) => manager.id === managerId)?.name || 'Все ответственные'
   const companies = useMemo(() => data.companies.filter((company) => {
     if (search && !company.name.toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru'))) return false
     if (debtFilter === 'debt' && company.debtAmount <= 0) return false
@@ -48,7 +58,7 @@ export function PaymentCompaniesList({ data }: { data: PaymentCompaniesData }) {
           <div>
             <Label htmlFor="payment-debt-filter">Задолженность</Label>
             <Select value={debtFilter} onValueChange={(value) => setDebtFilter(value as typeof debtFilter)}>
-              <SelectTrigger id="payment-debt-filter" className="mt-2 w-full"><SelectValue /></SelectTrigger>
+              <SelectTrigger id="payment-debt-filter" className="mt-2 w-full"><SelectValue>{debtFilterLabels[debtFilter]}</SelectValue></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Все компании</SelectItem>
                 <SelectItem value="debt">Есть долг</SelectItem>
@@ -60,7 +70,7 @@ export function PaymentCompaniesList({ data }: { data: PaymentCompaniesData }) {
             <div>
               <Label htmlFor="payment-manager-filter">Ответственный</Label>
               <Select value={managerId} onValueChange={(value) => setManagerId(value || 'all')}>
-                <SelectTrigger id="payment-manager-filter" className="mt-2 w-full"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="payment-manager-filter" className="mt-2 w-full"><SelectValue>{managerFilterLabel}</SelectValue></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Все ответственные</SelectItem>
                   <SelectItem value="unassigned">Не назначен</SelectItem>

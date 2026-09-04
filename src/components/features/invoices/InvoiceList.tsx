@@ -24,6 +24,14 @@ const statusLabels: Record<PaymentDisplayStatus, string> = {
   overdue: 'Просрочен',
   cancelled: 'Аннулирован',
 }
+const statusFilterLabels: Record<'all' | PaymentDisplayStatus, string> = {
+  all: 'Все статусы',
+  not_paid: 'Не оплачены',
+  partially_paid: 'Частично оплачены',
+  paid: 'Оплачены',
+  overdue: 'Просрочены',
+  cancelled: 'Аннулированы',
+}
 
 function statusBadge(status: PaymentDisplayStatus) {
   return <Badge className={cn(
@@ -104,7 +112,7 @@ export function InvoiceList({ data, resultLimit }: { data: InvoiceRegistryData; 
           <div>
             <Label htmlFor="invoice-status">Статус</Label>
             <Select value={status} onValueChange={(value) => setStatus(value as typeof status)}>
-              <SelectTrigger id="invoice-status" className="mt-2 w-full"><SelectValue /></SelectTrigger>
+              <SelectTrigger id="invoice-status" className="mt-2 w-full"><SelectValue>{statusFilterLabels[status]}</SelectValue></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Все статусы</SelectItem>
                 <SelectItem value="not_paid">Не оплачены</SelectItem>
