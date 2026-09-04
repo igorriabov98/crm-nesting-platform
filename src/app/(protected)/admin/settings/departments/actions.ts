@@ -101,6 +101,74 @@ type SubordinateMember = DepartmentMember & {
   depth: number
 }
 
+const BROKER_DEPARTMENT_NAME = 'Брокерский'
+const BROKER_HEAD_POSITION_NAME = 'Начальник Брокерского отдела'
+
+async function syncBrokerDepartmentHeadMembership(
+  db: LooseDb,
+  departmentId: string,
+  headUserId: string | null,
+  createdBy: string,
+) {
+  const { data: department, error: departmentError } = await db
+    .from('departments')
+    .select('id, name')
+    .eq('id', departmentId)
+    .single()
+
+  if (departmentError) throw departmentError
+  if ((department as { name?: string } | null)?.name?.trim() !== BROKER_DEPARTMENT_NAME) return
+
+  const { error: clearHeadError } = await db
+    .from('department_members')
+    .update({ is_department_head: false })
+    .eq('department_id', departmentId)
+    .eq('is_department_head', true)
+
+  if (clearHeadError) throw clearHeadError
+  if (!headUserId) return
+
+  const { data: position, error: positionError } = await db
+    .from('positions')
+    .select('id')
+    .eq('name', BROKER_HEAD_POSITION_NAME)
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (positionError) throw positionError
+  if (!position) throw new Error(`Должность «${BROKER_HEAD_POSITION_NAME}» не найдена`)
+
+  const { data: membership, error: membershipError } = await db
+    .from('department_members')
+    .select('id')
+    .eq('department_id', departmentId)
+    .eq('user_id', headUserId)
+    .maybeSingle()
+
+  if (membershipError) throw membershipError
+
+  if (membership) {
+    const { error: updateError } = await db
+      .from('department_members')
+      .update({
+        position_id: (position as { id: string }).id,
+        is_department_head: true,
+      })
+      .eq('id', (membership as { id: string }).id)
+    if (updateError) throw updateError
+    return
+  }
+
+  const { error: insertError } = await db.from('department_members').insert({
+    department_id: departmentId,
+    user_id: headUserId,
+    position_id: (position as { id: string }).id,
+    is_department_head: true,
+    created_by: createdBy,
+  })
+  if (insertError) throw insertError
+}
+
 type SubordinatesResult = {
   data: SubordinateMember[] | null
   error: string | null
@@ -376,10 +444,18 @@ export async function createDepartment(data: CreateDepartmentInput): Promise<Cre
     if (error) throw error
     if (!createdDepartment) throw new Error('Не удалось создать отдел')
 
+    const createdDepartmentId = (createdDepartment as { id: string }).id
+    await syncBrokerDepartmentHeadMembership(
+      db,
+      createdDepartmentId,
+      parsed.head_user_id ?? null,
+      context.user.id,
+    )
+
     revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
     return {
       success: true,
-      data: { id: (createdDepartment as { id: string }).id },
+      data: { id: createdDepartmentId },
       error: null,
     }
   } catch (error: unknown) {
@@ -395,7 +471,7 @@ export async function updateDepartment(
   data: UpdateDepartmentInput
 ): Promise<DepartmentActionResult> {
   try {
-    await requirePermission('departments', 'manage')
+    const context = await requirePermission('departments', 'manage')
     const parsed = updateDepartmentSchema.parse(data)
     const db = getOrganizationDb()
 
@@ -419,6 +495,10 @@ export async function updateDepartment(
       .eq('id', id)
 
     if (error) throw error
+
+    if (parsed.head_user_id !== undefined) {
+      await syncBrokerDepartmentHeadMembership(db, id, parsed.head_user_id, context.user.id)
+    }
 
     revalidatePath(ROUTES.ADMIN_DEPARTMENTS)
     return { success: true, error: null }

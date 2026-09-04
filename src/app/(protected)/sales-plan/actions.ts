@@ -1404,6 +1404,7 @@ export async function updateMachineDocumentFields(machineId: string, data: Machi
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${parsedMachineId}`)
+    revalidatePath(ROUTES.CUSTOMS_CLEARANCE)
 
     return { success: true, error: null }
   } catch (error: unknown) {

@@ -78,6 +78,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   technologist_request_exception: 'Причина без заявки',
   transport_cost: 'Транспорт',
   shipping_documents: 'Документы к отгрузке',
+  customs_clearance: 'Затамаживание',
   product_project_engineering: 'Проект изделия',
   product_project_sales_review: 'Согласование изделия',
   consumable_request_review: 'Заявка на расходники',
@@ -214,6 +215,13 @@ function formatTaskDeadline(value: string | null | undefined) {
 }
 
 function getTaskTarget(task: TaskWithRelations) {
+  if (task.task_type === 'customs_clearance' && task.machine) {
+    return {
+      href: `${ROUTES.CUSTOMS_CLEARANCE}?focus=${task.machine.id}`,
+      label: task.machine.name,
+      kind: 'Машина',
+    }
+  }
   if (task.task_type === 'transport_trip_date_approval') {
     return { href: ROUTES.SUPPLY_TRANSPORT, label: 'Транспорт снабжения', kind: 'Рейс' }
   }
@@ -809,6 +817,42 @@ export function TaskCards({
           >
             Открыть запрос
           </Link>
+        </div>
+      )
+    }
+
+    if (task.task_type === 'customs_clearance' && task.machine_id) {
+      return (
+        <div className={groupClass}>
+          {nextStatus === 'in_progress' && actionLabel && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleStatusChange(task.id, nextStatus)}
+              disabled={updatingId === task.id}
+              className={buttonClass}
+            >
+              {actionLabel}
+            </Button>
+          )}
+          <Link
+            href={`${ROUTES.CUSTOMS_CLEARANCE}?focus=${task.machine_id}`}
+            className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-[#1B3A6B] px-4 text-sm font-medium text-white hover:bg-[#152f59]')}
+          >
+            Открыть затамаживание
+          </Link>
+          {context === 'standard' && task.can_delegate && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => openDelegationDialog(task)}
+              disabled={updatingId === task.id}
+              className={cn(buttonClass, 'border-cyan-200 text-cyan-700 hover:bg-cyan-50')}
+            >
+              <Send className="h-4 w-4" />
+              Делегировать
+            </Button>
+          )}
         </div>
       )
     }

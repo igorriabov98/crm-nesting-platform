@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   Trash2,
+  TriangleAlert,
   UserRound,
   Users,
 } from 'lucide-react'
@@ -171,6 +172,12 @@ export function DepartmentTree({
                             <UserRound className="h-4 w-4 text-[#6B7280]" />
                             Начальник: <span className="font-medium">{node.head.full_name}</span>
                           </p>
+                        )}
+                        {node.name.trim().toLocaleLowerCase('ru-RU') === 'брокерский' && !node.head_user_id && (
+                          <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                            <span>Автозадачи затамаживания не создаются. Назначьте начальника Брокерского отдела.</span>
+                          </div>
                         )}
                       </div>
                     </div>

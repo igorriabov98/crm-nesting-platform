@@ -64,6 +64,7 @@ export const BREADCRUMB_SEGMENT_LABELS: Record<string, string> = {
   profile: 'Профиль',
   sales: 'Продажи',
   tasks: 'Задачи',
+  'customs-clearance': 'Затамаживание',
   telegram: 'Telegram',
   workers: 'Работники',
   parts: 'Детали',

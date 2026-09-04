@@ -23,6 +23,7 @@ export type ResourceKey =
   | 'supply_finance'
   | 'complex_reports'
   | 'tasks'
+  | 'customs_clearance'
   | 'department_requests'
   | 'production'
   | 'production_fact'
@@ -77,6 +78,7 @@ export type SidebarIconKey =
   | 'finance'
   | 'reports'
   | 'tasks'
+  | 'customsClearance'
   | 'materialRequests'
   | 'production'
   | 'consumableRequests'
@@ -354,6 +356,18 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: ALL,
     routes: [{ path: ROUTES.TASKS, match: 'prefix', operation: 'view' }],
     sidebar: { section: 'workflow', icon: 'tasks', order: 10 },
+  },
+  {
+    key: 'customs_clearance',
+    label: 'Затамаживание',
+    description: 'Подготовка машин и документов к таможенному оформлению',
+    group: 'Работа',
+    defaultHref: ROUTES.CUSTOMS_CLEARANCE,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.CUSTOMS_CLEARANCE, match: 'prefix', operation: 'view', priority: 160 }],
+    sidebar: { section: 'workflow', icon: 'customsClearance', order: 15 },
+    supportsFactoryScope: true,
   },
   {
     key: 'department_requests',
