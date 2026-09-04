@@ -23,6 +23,14 @@ const invoiceStatuses = readFileSync(
   join(root, 'src/lib/constants/statuses.ts'),
   'utf8'
 )
+const invoiceList = readFileSync(
+  join(root, 'src/components/features/invoices/InvoiceList.tsx'),
+  'utf8'
+)
+const paymentCompaniesList = readFileSync(
+  join(root, 'src/components/features/payments/PaymentCompaniesList.tsx'),
+  'utf8'
+)
 
 assert.match(
   clientDetail,
@@ -67,6 +75,12 @@ for (const label of ['Назначен завод', 'Материал получ
 for (const label of ['Не оплачено', 'Частично оплачено', 'Оплачено', 'Аннулировано']) {
   assert.ok(invoiceStatuses.includes(label), `Нет русской подписи статуса инвойса: ${label}`)
 }
+
+assert.match(invoiceList, /<SelectValue>\{statusFilterLabels\[status\]\}<\/SelectValue>/u)
+assert.match(paymentCompaniesList, /<SelectValue>\{debtFilterLabels\[debtFilter\]\}<\/SelectValue>/u)
+assert.match(paymentCompaniesList, /<SelectValue>\{managerFilterLabel\}<\/SelectValue>/u)
+assert.doesNotMatch(invoiceList, /<SelectValue\s*\/>/u, 'Фильтр статусов не должен показывать техническое значение all')
+assert.doesNotMatch(paymentCompaniesList, /<SelectValue\s*\/>/u, 'Фильтры оплат не должны показывать технические значения all/unassigned')
 
 for (const label of ['Не назначен', 'От даты инвойса', 'От даты доставки', 'Предоплата + полная оплата', 'По расписанию после доставки']) {
   assert.ok(clientFormFields.includes(label), `Нет русской подписи поля клиента: ${label}`)
