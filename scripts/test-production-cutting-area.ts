@@ -87,9 +87,9 @@ assert(requestPage.includes('TechnologistRequestPage'))
 assert(requestPage.includes('canManage={false}'), 'Производственная страница заявки должна быть строго read-only')
 assert(requestPage.includes('Назад к участку заготовки'))
 
-const breadcrumbs = read('src/components/features/layout/Breadcrumbs.tsx')
-assert(breadcrumbs.includes('"cutting-area": "Участок заготовки"'))
-assert(breadcrumbs.includes('"request": "Заявка на материалы"'))
+const breadcrumbs = read('src/lib/navigation/breadcrumbs.ts')
+assert(breadcrumbs.includes("'cutting-area': 'Участок заготовки'"))
+assert(breadcrumbs.includes("request: 'Заявка на материалы'"))
 
 const archiveRoute = read('src/app/api/production/cutting-area/archives/[id]/route.ts')
 const fileRoute = read('src/app/api/production/cutting-area/files/[kind]/[id]/route.ts')
