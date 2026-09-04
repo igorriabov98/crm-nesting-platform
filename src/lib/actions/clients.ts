@@ -368,6 +368,7 @@ export async function updateClient(id: string, input: ClientInput) {
 
     revalidatePath(ROUTES.CLIENTS)
     revalidatePath(`${ROUTES.CLIENTS}/${id}`)
+    revalidatePath(ROUTES.TASKS)
     return { success: true, error: null }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }

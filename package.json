@@ -78,6 +78,7 @@
     "test:task-on-conflict": "node scripts/test-task-on-conflict.mjs",
     "test:shipping-factory": "node scripts/test-shipping-and-factory-source.mjs",
     "test:customs-clearance": "tsx --test src/lib/customs-clearance.test.ts && node scripts/test-customs-clearance.mjs && tsx scripts/test-customs-clearance-pdfs.tsx && node scripts/test-customs-clearance-db.mjs",
+    "test:client-delivery-date-tasks": "node scripts/test-client-delivery-date-tasks.mjs && node scripts/test-client-delivery-date-tasks-db.mjs",
     "smoke:prod": "tsx scripts/prod-smoke.ts",
     "smoke:user:create": "tsx scripts/create-smoke-user.ts",
     "supabase:migrate": "tsx scripts/apply-supabase-migrations.ts"

@@ -281,6 +281,7 @@ async function enrichTasksWithDelegationState(
         task.assigned_to === userId &&
         isActiveTaskStatus(task.status) &&
         task.task_type !== MACHINE_LAYOUT_TASK_TYPE &&
+        task.task_type !== 'client_delivery_date' &&
         !pendingDelegation &&
         canDelegateFromAnyDepartment
       ),
@@ -700,6 +701,9 @@ async function assertTaskCanBeDelegated(db: LooseSupabaseClient, taskId: string,
   if (task.task_type === MACHINE_LAYOUT_TASK_TYPE) {
     throw new Error('Задача расстановки закреплена за сотрудником, который взял заявку в работу')
   }
+  if (task.task_type === 'client_delivery_date') {
+    throw new Error('Задача по дате доставки закреплена за ответственным менеджером клиента')
+  }
 
   const pendingDelegation = await getPendingDelegationForTask(db, taskId)
   if (pendingDelegation) throw new Error('По задаче уже есть делегирование, ожидающее ответа')
@@ -1118,6 +1122,9 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
     }
     if (taskRow.task_type === 'customs_clearance' && (status === 'completed' || status === 'cancelled')) {
       throw new Error('Задача затамаживания закрывается автоматически после загрузки документа')
+    }
+    if (taskRow.task_type === 'client_delivery_date' && (status === 'completed' || status === 'cancelled')) {
+      throw new Error('Задача по дате доставки закрывается автоматически после внесения даты доставки клиенту')
     }
     if (
       taskRow.task_type === MACHINE_LAYOUT_TASK_TYPE

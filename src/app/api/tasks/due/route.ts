@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { syncDueTransportCostTasks } from '@/lib/actions/transport-cost-tasks'
 import { syncDueCustomsClearanceTasks } from '@/lib/actions/customs-clearance-tasks'
+import { syncDueClientDeliveryDateTasks } from '@/lib/actions/client-delivery-date-tasks'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import { createAdminClient } from '@/lib/supabase/admin'
 
@@ -26,16 +27,26 @@ async function syncDueTasks(request: Request) {
 
   try {
     const admin = createAdminClient()
-    const [shipping, customs] = await Promise.all([
+    const [shipping, customs, clientDelivery] = await Promise.all([
       syncDueTransportCostTasks(admin),
       syncDueCustomsClearanceTasks(admin),
+      syncDueClientDeliveryDateTasks(admin),
     ])
-    const machineIds = Array.from(new Set([...shipping.machineIds, ...customs.machineIds]))
+    const machineIds = Array.from(new Set([
+      ...shipping.machineIds,
+      ...customs.machineIds,
+      ...clientDelivery.machineIds,
+    ]))
     for (const machineId of machineIds) {
       await dispatchPendingTelegramDeliveries({ machineId, limit: 50 })
     }
     // Keep the existing `result` response shape for current cron consumers.
-    return NextResponse.json({ ok: true, result: shipping, customsResult: customs })
+    return NextResponse.json({
+      ok: true,
+      result: shipping,
+      customsResult: customs,
+      clientDeliveryResult: clientDelivery,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error('[Due tasks] Sync failed:', error)

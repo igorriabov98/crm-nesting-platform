@@ -79,6 +79,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   transport_cost: 'Транспорт',
   shipping_documents: 'Документы к отгрузке',
   customs_clearance: 'Затамаживание',
+  client_delivery_date: 'Дата доставки клиенту',
   product_project_engineering: 'Проект изделия',
   product_project_sales_review: 'Согласование изделия',
   consumable_request_review: 'Заявка на расходники',
@@ -222,6 +223,13 @@ function getTaskTarget(task: TaskWithRelations) {
       kind: 'Машина',
     }
   }
+  if (task.task_type === 'client_delivery_date' && task.machine) {
+    return {
+      href: `${ROUTES.SALES_PLAN}/${task.machine.id}?tab=packing`,
+      label: task.machine.name,
+      kind: 'Машина',
+    }
+  }
   if (task.task_type === 'transport_trip_date_approval') {
     return { href: ROUTES.SUPPLY_TRANSPORT, label: 'Транспорт снабжения', kind: 'Рейс' }
   }
@@ -289,6 +297,7 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (taskType === 'vrb_outsourcing_approval') return 'border-blue-200 bg-blue-50 text-blue-800 shadow-sm'
   if (taskType === 'detailing_transfer') return 'border-blue-200 bg-blue-50 text-blue-800 shadow-sm'
   if (taskType === 'inventory_transfer') return 'border-cyan-200 bg-cyan-50 text-cyan-800 shadow-sm'
+  if (taskType === 'client_delivery_date') return 'border-rose-200 bg-rose-50 text-rose-800 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
@@ -853,6 +862,30 @@ export function TaskCards({
               Делегировать
             </Button>
           )}
+        </div>
+      )
+    }
+
+    if (task.task_type === 'client_delivery_date' && task.machine_id) {
+      return (
+        <div className={groupClass}>
+          {nextStatus === 'in_progress' && actionLabel && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleStatusChange(task.id, nextStatus)}
+              disabled={updatingId === task.id}
+              className={buttonClass}
+            >
+              {actionLabel}
+            </Button>
+          )}
+          <Link
+            href={`${ROUTES.SALES_PLAN}/${task.machine_id}?tab=packing`}
+            className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-[#1B3A6B] px-4 text-sm font-medium text-white hover:bg-[#152f59]')}
+          >
+            Внести дату доставки
+          </Link>
         </div>
       )
     }
