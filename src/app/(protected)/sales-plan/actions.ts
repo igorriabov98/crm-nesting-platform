@@ -1474,6 +1474,7 @@ export async function updateMachinePackingSettings(machineId: string, data: Mach
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${parsedMachineId}`)
+    revalidatePath(ROUTES.TASKS)
 
     return { success: true, error: null }
   } catch (error: unknown) {
