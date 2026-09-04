@@ -100,7 +100,7 @@ assert.ok(!table.includes('bg-blue-900/30'), 'legacy purple-blue status fill mus
 assert.ok(!table.includes('aria-label="Sort by date"'), 'table controls must use Russian accessible labels')
 assert.ok(approval.includes("target_type: 'stage_interval'"))
 assert.ok(approval.includes("db.rpc('fn_apply_production_plan_date_change_items'"))
-assert.ok(dashboard.includes('prorateStageIntervalsForPeriod'))
+assert.ok(dashboard.includes('prorateStageIntervalsForWorkingPeriod'))
 assert.ok(stages.includes("assembly:    { label: 'Сборка/Сварка'"))
 
 console.log('Production stage interval contracts: OK')

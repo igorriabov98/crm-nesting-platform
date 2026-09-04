@@ -22,6 +22,7 @@ export type ResourceKey =
   | 'finance_calendar'
   | 'supply_finance'
   | 'complex_reports'
+  | 'production_reports'
   | 'tasks'
   | 'customs_clearance'
   | 'department_requests'
@@ -346,6 +347,21 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: [],
     routes: [{ path: ROUTES.REPORTS_COMPLEX, match: 'prefix', operation: 'view', priority: 120 }],
     sidebar: { section: 'reports', icon: 'reports', order: 10 },
+  },
+  {
+    key: 'production_reports',
+    label: 'Производственная аналитика',
+    description: 'План, точный факт, прогресс, загрузка и производственные мощности',
+    group: 'Отчёты',
+    defaultHref: ROUTES.REPORTS_PRODUCTION,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [
+      { path: ROUTES.REPORTS_PRODUCTION_SETTINGS, match: 'prefix', operation: 'manage', priority: 180 },
+      { path: ROUTES.REPORTS_PRODUCTION, match: 'prefix', operation: 'view', priority: 170 },
+    ],
+    sidebar: { section: 'reports', icon: 'production', order: 20 },
+    supportsFactoryScope: true,
   },
   {
     key: 'tasks',

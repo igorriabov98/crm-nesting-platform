@@ -13,6 +13,11 @@ export type ProductionStageIntervalValue = {
   updated_at?: string | null
 }
 
+export type FactoryCalendarExceptionValue = {
+  work_date: string
+  is_working: boolean
+}
+
 type StageWithIntervals = {
   id: string
   stage_type: string
@@ -76,6 +81,76 @@ export function prorateStageIntervalsForPeriod(
     overlapDays,
     tons: totalDays > 0 ? weight * overlapDays / totalDays : 0,
   }
+}
+
+function dateOnlyUtc(value: string) {
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day))
+}
+
+function formatDateOnlyUtc(value: Date) {
+  return value.toISOString().slice(0, 10)
+}
+
+export function isFactoryWorkingDay(
+  date: string,
+  exceptions: readonly FactoryCalendarExceptionValue[] = [],
+) {
+  const override = exceptions.find((item) => item.work_date === date)
+  if (override) return override.is_working
+  const day = dateOnlyUtc(date).getUTCDay()
+  return day >= 1 && day <= 5
+}
+
+export function factoryWorkingDates(
+  start: string,
+  end: string,
+  exceptions: readonly FactoryCalendarExceptionValue[] = [],
+) {
+  if (!start || !end || end < start) return []
+  const dates: string[] = []
+  const cursor = dateOnlyUtc(start)
+  const last = dateOnlyUtc(end)
+  while (cursor <= last) {
+    const date = formatDateOnlyUtc(cursor)
+    if (isFactoryWorkingDay(date, exceptions)) dates.push(date)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return dates
+}
+
+export function prorateStageIntervalsForWorkingPeriod(
+  weight: number,
+  intervals: Array<Pick<ProductionStageIntervalValue, 'date_start' | 'date_end'>>,
+  periodStart: string,
+  periodEnd: string,
+  exceptions: readonly FactoryCalendarExceptionValue[] = [],
+) {
+  const intervalWorkingDates = intervals.map((interval) => (
+    interval.date_start && interval.date_end
+      ? factoryWorkingDates(interval.date_start, interval.date_end, exceptions)
+      : []
+  ))
+  const totalWorkingDays = intervalWorkingDates.reduce((total, dates) => total + dates.length, 0)
+  const overlapWorkingDays = intervalWorkingDates.reduce(
+    (total, dates) => total + dates.filter((date) => date >= periodStart && date <= periodEnd).length,
+    0,
+  )
+  return {
+    totalWorkingDays,
+    overlapWorkingDays,
+    tons: totalWorkingDays > 0 ? weight * overlapWorkingDays / totalWorkingDays : 0,
+  }
+}
+
+export function isoWeekKey(value: string) {
+  const date = dateOnlyUtc(value)
+  const day = date.getUTCDay() || 7
+  date.setUTCDate(date.getUTCDate() + 4 - day)
+  const isoYear = date.getUTCFullYear()
+  const yearStart = new Date(Date.UTC(isoYear, 0, 1))
+  const week = Math.ceil((((date.getTime() - yearStart.getTime()) / 86_400_000) + 1) / 7)
+  return `${isoYear}-W${String(week).padStart(2, '0')}`
 }
 
 export function dateBelongsToStageInterval(stage: StageWithIntervals, date: string) {

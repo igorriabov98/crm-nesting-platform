@@ -627,6 +627,42 @@ export type Database = {
           updated_at?: string
         }
       }
+      factory_work_calendar_exceptions: {
+        Row: {
+          id: string
+          factory_id: string
+          work_date: string
+          is_working: boolean
+          reason: string
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          factory_id: string
+          work_date: string
+          is_working: boolean
+          reason: string
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          factory_id?: string
+          work_date?: string
+          is_working?: boolean
+          reason?: string
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       factories: {
         Row: {
           id: string
@@ -2032,6 +2068,102 @@ export type Database = {
           updated_by?: string | null
         }
       }
+      production_machine_item_facts: {
+        Row: {
+          id: string
+          production_machine_fact_id: string
+          machine_item_id: string | null
+          machine_item_snapshot_id: string
+          stage_type: Database['public']['Enums']['stage_type']
+          product_name: string
+          drawing_number: string
+          coating: Database['public']['Enums']['coating_type']
+          ordered_quantity: number
+          quantity: number
+          unit_weight_kg: number
+          total_weight_kg: number
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          production_machine_fact_id: string
+          machine_item_id?: string | null
+          machine_item_snapshot_id: string
+          stage_type: Database['public']['Enums']['stage_type']
+          product_name: string
+          drawing_number: string
+          coating: Database['public']['Enums']['coating_type']
+          ordered_quantity: number
+          quantity: number
+          unit_weight_kg: number
+          total_weight_kg?: number
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          production_machine_fact_id?: string
+          machine_item_id?: string | null
+          machine_item_snapshot_id?: string
+          stage_type?: Database['public']['Enums']['stage_type']
+          product_name?: string
+          drawing_number?: string
+          coating?: Database['public']['Enums']['coating_type']
+          ordered_quantity?: number
+          quantity?: number
+          unit_weight_kg?: number
+          total_weight_kg?: number
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      production_section_capacity_periods: {
+        Row: {
+          id: string
+          factory_id: string
+          section_id: string
+          valid_from: string
+          valid_to: string | null
+          tons_per_workday: number
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          factory_id: string
+          section_id: string
+          valid_from: string
+          valid_to?: string | null
+          tons_per_workday: number
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          factory_id?: string
+          section_id?: string
+          valid_from?: string
+          valid_to?: string | null
+          tons_per_workday?: number
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       production_fact_sections: {
         Row: {
           id: string
@@ -2937,6 +3069,7 @@ export type Database = {
           fact_date: string
           section_id: string
           tonnage: number
+          source: 'legacy_manual' | 'itemized'
           comment: string | null
           created_by: string | null
           updated_by: string | null
@@ -2949,6 +3082,7 @@ export type Database = {
           fact_date: string
           section_id: string
           tonnage?: number
+          source?: 'legacy_manual' | 'itemized'
           comment?: string | null
           created_by?: string | null
           updated_by?: string | null
@@ -2961,6 +3095,7 @@ export type Database = {
           fact_date?: string
           section_id?: string
           tonnage?: number
+          source?: 'legacy_manual' | 'itemized'
           comment?: string | null
           created_by?: string | null
           updated_by?: string | null

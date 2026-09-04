@@ -17,6 +17,16 @@ function stageStatusLabel(missingCount: number) {
   return missingCount === 0 ? 'Готово' : `Не хватает: ${missingCount}`
 }
 
+function productionStageLabel(value: string | null) {
+  if (value === 'cutting') return 'Заготовка'
+  if (value === 'assembly') return 'Сборка/Сварка'
+  if (value === 'cleaning') return 'Слесарка/Зачистка'
+  if (value === 'painting') return 'Малярка'
+  if (value === 'packaging') return 'Упаковка'
+  if (value === 'actual_shipping') return 'Отгрузка'
+  return '—'
+}
+
 export function ProductionFactSettingsPage({ data }: { data: ProductionFactSettingsData }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -93,7 +103,7 @@ export function ProductionFactSettingsPage({ data }: { data: ProductionFactSetti
                 <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-[#12315F]">
                   <span className="flex items-center gap-2">
                     <Factory className="size-4 text-[#1E40AF]" />
-                    {stage.definition.label}
+                    {stage.definition.displayLabel || stage.definition.label}
                   </span>
                   <Badge
                     variant="outline"
@@ -143,7 +153,7 @@ export function ProductionFactSettingsPage({ data }: { data: ProductionFactSetti
                 <tr>
                   <th className="px-3 py-2">Участок</th>
                   <th className="px-3 py-2">Подучасток</th>
-                  <th className="px-3 py-2">Складская привязка</th>
+                  <th className="px-3 py-2">Тип этапа</th>
                   <th className="px-3 py-2">Статус</th>
                 </tr>
               </thead>
@@ -159,11 +169,9 @@ export function ProductionFactSettingsPage({ data }: { data: ProductionFactSetti
                       <td className="px-3 py-2 font-medium text-[#111827]">{parent?.name || section.name}</td>
                       <td className="px-3 py-2 text-[#334155]">{parent ? section.name : '—'}</td>
                       <td className="px-3 py-2">
-                        {section.production_stage_type === 'cutting' ? (
-                          <Badge variant="outline" className="border-[#BBF7D0] bg-[#F0FDF4] text-[#15803D]">Заготовка</Badge>
-                        ) : (
-                          <span className="text-[#94A3B8]">—</span>
-                        )}
+                        <Badge variant="outline" className="border-[#DBEAFE] bg-[#EFF6FF] text-[#1E40AF]">
+                          {productionStageLabel(section.production_stage_type)}
+                        </Badge>
                       </td>
                       <td className="px-3 py-2">
                         {section.is_active && !section.archived_at ? (
