@@ -38,6 +38,7 @@ export const ROUTES = {
   FINANCE_CALENDAR:'/finance/calendar',
   REPORTS_COMPLEX: '/reports/complex',
   TASKS:          '/tasks',
+  CUSTOMS_CLEARANCE: '/customs-clearance',
   REQUESTS:       '/requests',
   TECHNOLOGIST_DEPARTMENT_REQUESTS: '/requests/technologist',
   SUPPLY_DEPARTMENT_REQUESTS: '/requests/supply',

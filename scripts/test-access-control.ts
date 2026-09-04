@@ -51,8 +51,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 56, 'Реестр должен содержать все 56 ресурсов')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 56, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 57, 'Реестр должен содержать все 57 ресурсов')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 57, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')

@@ -33,6 +33,7 @@ import {
   Database,
   Mail,
   FileBarChart,
+  FileCheck2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -136,6 +137,7 @@ const iconMap: Record<SidebarIconKey, React.ElementType> = {
   finance: Landmark,
   reports: FileBarChart,
   tasks: ListChecks,
+  customsClearance: FileCheck2,
   materialRequests: FileText,
   production: FactoryIcon,
   consumableRequests: ClipboardList,

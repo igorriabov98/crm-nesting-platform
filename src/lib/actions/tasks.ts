@@ -127,8 +127,8 @@ const MATERIAL_TYPE_SELECTION_TASK_TYPE = 'material_type_selection' as const
 const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
 
 async function getCurrentUser(operation: PermissionOperation = 'view') {
-  const { supabase, userId, user, role, factoryId } = await requirePermission('tasks', operation)
-  return { supabase, userId, user, role, factoryId }
+  const { supabase, userId, user, role, factoryId, permissionDetails } = await requirePermission('tasks', operation)
+  return { supabase, userId, user, role, factoryId, permissionDetails }
 }
 
 function getAdminTaskDb() {
@@ -148,7 +148,12 @@ function isOpenDelegationStatus(status: TaskDelegationStatus) {
   return status === 'pending'
 }
 
-function filterVisibleMachineTasks(tasks: TaskWithRelations[], role: UserRole, factoryId: string | null) {
+function filterVisibleMachineTasks(
+  tasks: TaskWithRelations[],
+  role: UserRole,
+  factoryId: string | null,
+  customsFactoryScope: 'own' | 'all' = 'own',
+) {
   return tasks.filter((task) => {
     if (!task.machine_id) return true
     if (!task.machine) return false
@@ -156,6 +161,7 @@ function filterVisibleMachineTasks(tasks: TaskWithRelations[], role: UserRole, f
     // concurrently-created work can never return to an active queue. Terminal
     // tasks remain visible as history.
     if (!isMachineWorkVisible(task.machine.is_archived, task.status, ACTIVE_TASK_STATUSES)) return false
+    if (task.task_type === 'customs_clearance' && customsFactoryScope === 'all') return true
     if (role !== 'production_manager') return true
     return task.machine.factory_id === null || task.machine.factory_id === factoryId
   })
@@ -254,8 +260,9 @@ async function enrichTasksWithDelegationState(
   userId: string,
   role: UserRole,
   factoryId: string | null,
+  customsFactoryScope: 'own' | 'all' = 'own',
 ) {
-  const visibleTasks = filterVisibleMachineTasks(tasks, role, factoryId)
+  const visibleTasks = filterVisibleMachineTasks(tasks, role, factoryId, customsFactoryScope)
   if (visibleTasks.length === 0) return visibleTasks
 
   const adminDb = getAdminTaskDb()
@@ -552,7 +559,7 @@ async function createPlanningDirectorReasonTasks(
 }
 
 export async function getTasks(filters: TaskFilters = {}) {
-  const { supabase, userId, role, factoryId } = await getCurrentUser()
+  const { supabase, userId, role, factoryId, permissionDetails } = await getCurrentUser()
   const db = supabase as unknown as LooseSupabaseClient
 
   let query = db
@@ -578,13 +585,19 @@ export async function getTasks(filters: TaskFilters = {}) {
   if (error) return { data: null, error: error.message }
 
   return {
-    data: sortTasksForDeadlineQueue(await enrichTasksWithDelegationState((data || []) as unknown as TaskWithRelations[], userId, role, factoryId)),
+    data: sortTasksForDeadlineQueue(await enrichTasksWithDelegationState(
+      (data || []) as unknown as TaskWithRelations[],
+      userId,
+      role,
+      factoryId,
+      permissionDetails.factoryScopes.customs_clearance?.view,
+    )),
     error: null,
   }
 }
 
 export async function getMyTasks() {
-  const { supabase, userId, role, factoryId } = await getCurrentUser()
+  const { supabase, userId, role, factoryId, permissionDetails } = await getCurrentUser()
   const db = supabase as unknown as LooseSupabaseClient
 
   const { data, error } = await db
@@ -604,7 +617,13 @@ export async function getMyTasks() {
   if (error) return { data: null, error: error.message }
 
   return {
-    data: sortTasksForDeadlineQueue(await enrichTasksWithDelegationState((data || []) as unknown as TaskWithRelations[], userId, role, factoryId)),
+    data: sortTasksForDeadlineQueue(await enrichTasksWithDelegationState(
+      (data || []) as unknown as TaskWithRelations[],
+      userId,
+      role,
+      factoryId,
+      permissionDetails.factoryScopes.customs_clearance?.view,
+    )),
     error: null,
   }
 }
@@ -809,7 +828,7 @@ export async function getTaskDelegationOverview(): Promise<{
   error: string | null
 }> {
   try {
-    const { userId, role, factoryId } = await getCurrentUser()
+    const { userId, role, factoryId, permissionDetails } = await getCurrentUser()
     const db = getAdminTaskDb()
     const select = `
       *,
@@ -846,7 +865,12 @@ export async function getTaskDelegationOverview(): Promise<{
 
     const isVisible = (item: TaskDelegationWithTask) => {
       if (!item.task) return false
-      return filterVisibleMachineTasks([item.task], role, factoryId).length > 0
+      return filterVisibleMachineTasks(
+        [item.task],
+        role,
+        factoryId,
+        permissionDetails.factoryScopes.customs_clearance?.view,
+      ).length > 0
     }
 
     return {
@@ -1049,7 +1073,7 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
   }
 
   try {
-    const { supabase, userId, role, factoryId } = await getCurrentUser('manage')
+    const { supabase, userId, role, factoryId, permissionDetails } = await getCurrentUser('manage')
     const db = supabase as unknown as LooseSupabaseClient
 
     const { data: task, error: fetchError } = await db
@@ -1092,6 +1116,9 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
     if (taskRow.task_type === 'department_request') {
       throw new Error('Задача рабочего запроса меняется автоматически на странице запроса')
     }
+    if (taskRow.task_type === 'customs_clearance' && (status === 'completed' || status === 'cancelled')) {
+      throw new Error('Задача затамаживания закрывается автоматически после загрузки документа')
+    }
     if (
       taskRow.task_type === MACHINE_LAYOUT_TASK_TYPE
       && (status === 'completed' || status === 'cancelled')
@@ -1100,6 +1127,7 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
     }
     if (
       role === 'production_manager' &&
+      !(taskRow.task_type === 'customs_clearance' && permissionDetails.factoryScopes.customs_clearance?.manage === 'all') &&
       taskRow.machine_id &&
       (!taskRow.machine || (taskRow.machine.factory_id !== null && taskRow.machine.factory_id !== factoryId))
     ) {
