@@ -1,377 +1,285 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useMemo, useState, useTransition } from 'react'
-import { toast } from 'sonner'
+import { useState } from 'react'
+import {
+  CalendarDays,
+  CalendarX2,
+  Check,
+  FileText,
+  PackageCheck,
+  TriangleAlert,
+  Warehouse,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { CalendarDays, FileText, Plus, Save, Trash2, Warehouse } from 'lucide-react'
 import { MATERIAL_CATEGORY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
 import { ROUTES } from '@/lib/constants/routes'
-import {
- addOrderDeliverySchedule,
- deleteOrderDeliverySchedule,
- updateOrderCustomDeliveryDate,
- updateOrderDeliverySchedule,
- updateOrderSupplier,
- type SupplyOrderDeliverySchedule,
- type SupplyOrderItem,
-} from '@/lib/actions/supply-orders'
-import { reserveForMachine } from '@/lib/actions/inventory'
-import { unreserveItem } from '@/lib/actions/supply-request'
+import type { SupplyOrderDeliverySchedule, SupplyOrderItem } from '@/lib/actions/supply-orders'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
+import { formatLongStockPurchaseComposition } from '@/lib/supply-orders/long-stock-purchase-plan'
+import { FactoryDeliveryEditor } from './SupplyOrderSummaryPage'
+import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
+import type { SupplyOrderDetailContext } from './supply-order-view'
 
 type OrderItemRowProps = {
- item: SupplyOrderItem
- suppliers: SupplierWithRelations[]
- checked: boolean
- onToggle: () => void
- readOnly?: boolean
+  item: SupplyOrderItem
+  suppliers: SupplierWithRelations[]
+  detailContext?: SupplyOrderDetailContext
 }
 
 const statusVariant = {
- pending: 'secondary',
- ordered: 'default',
- delivered: 'outline',
- cancelled: 'outline',
+  pending: 'secondary',
+  ordered: 'default',
+  delivered: 'outline',
+  cancelled: 'outline',
 } as const
 
-export function OrderItemRow({ item, suppliers, checked, onToggle, readOnly = false }: OrderItemRowProps) {
- const router = useRouter()
- const [isPending, startTransition] = useTransition()
- const canSelect = !readOnly && item.to_order > 0
- const isCoveredByStock = item.to_order <= 0 && item.reserved_quantity > 0
- const plannedLengths = useMemo(() => new Set(
-  item.long_stock_purchase_plan?.components.map((component) => component.length_mm) || [],
- ), [item.long_stock_purchase_plan])
- const lengthStockItems = useMemo(() => item.stock_items.filter((row) => (
-  row.piece_length_mm !== null
-  && (plannedLengths.size === 0 || plannedLengths.has(Number(row.piece_length_mm)))
- )), [item.stock_items, plannedLengths])
- const lengthStockKey = useMemo(() => lengthStockItems.map((row) => `${row.id}:${row.piece_length_mm}:${row.available_quantity}`).join('|'), [lengthStockItems])
- const defaultInventoryRowId = useMemo(() => {
-  if (lengthStockItems.length !== 1) return ''
-  return lengthStockItems[0]?.id || ''
- }, [lengthStockItems])
- const [inventoryRowState, setInventoryRowState] = useState(() => ({ key: lengthStockKey, value: defaultInventoryRowId }))
- const inventoryRowId = inventoryRowState.key === lengthStockKey ? inventoryRowState.value : defaultInventoryRowId
- const setInventoryRowId = (value: string) => setInventoryRowState({ key: lengthStockKey, value })
- const lengthRequiresChoice = lengthStockItems.length > 1
- const requiresMeasuredStockRow = item.long_stock_purchase_plan?.version_status === 'approved'
- const [newSchedule, setNewSchedule] = useState({
-  delivery_date: item.target_delivery_date || '',
-  quantity: '',
-  supplier_id: item.supplier_id || '',
- })
- const scheduleKey = useMemo(() => item.delivery_schedules.map((schedule) => `${schedule.id}:${schedule.delivery_date}:${schedule.quantity}:${schedule.supplier_id || ''}:${schedule.change_reason || ''}:${schedule.status}`).join('|'), [item.delivery_schedules])
- const defaultScheduleDrafts = useMemo(() => makeScheduleDrafts(item.delivery_schedules), [item.delivery_schedules])
- const [scheduleDraftState, setScheduleDraftState] = useState(() => ({ key: scheduleKey, drafts: defaultScheduleDrafts }))
- const scheduleDrafts = scheduleDraftState.key === scheduleKey ? scheduleDraftState.drafts : defaultScheduleDrafts
- const setScheduleDrafts = (updater: (drafts: ReturnType<typeof makeScheduleDrafts>) => ReturnType<typeof makeScheduleDrafts>) => {
-  setScheduleDraftState((current) => ({
-   key: scheduleKey,
-   drafts: updater(current.key === scheduleKey ? current.drafts : defaultScheduleDrafts),
-  }))
- }
+export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowProps) {
+  const plan = item.long_stock_purchase_plan
+  const requiresRecalculation = plan?.cutting_status === 'requires_recalculation'
+  const plannedQuantity = detailContext?.plannedQuantity ?? sumSchedules(item.delivery_schedules, 'planned')
+  const deliveredQuantity = detailContext?.deliveredQuantity ?? sumSchedules(item.delivery_schedules, 'delivered')
+  const unscheduledQuantity = detailContext?.unscheduledQuantity
+    ?? Math.max(item.to_order - plannedQuantity - deliveredQuantity, 0)
+  const redeliveryQuantity = detailContext?.redeliveryQuantity || 0
+  const orderedQuantity = Math.max(item.to_order - unscheduledQuantity, 0)
+  const isPartiallyOrdered = item.order_status === 'ordered'
+    && orderedQuantity > 0.000001
+    && unscheduledQuantity > 0.000001
+  const isCoveredByStock = item.to_order <= 0 && item.reserved_quantity > 0
+  const scopes = detailContext?.scopes || []
+  const scopeKey = scopes.map((scope) => scope.id).join('|')
+  const defaultScopeId = scopes[0]?.id || ''
+  const [scopeState, setScopeState] = useState({ key: scopeKey, value: defaultScopeId })
+  const activeScopeId = scopeState.key === scopeKey && scopes.some((scope) => scope.id === scopeState.value)
+    ? scopeState.value
+    : defaultScopeId
+  const activeScope = scopes.find((scope) => scope.id === activeScopeId) || null
 
- const saveSupplier = (supplierId: string) => {
-  startTransition(async () => {
-   const result = await updateOrderSupplier({ table: item.table, id: item.id, material_id: item.material_id }, supplierId === 'none' ? null : supplierId)
-   if (!result.success) toast.error(result.error || 'Не удалось назначить поставщика')
-  })
- }
+  return (
+    <article
+      data-focus-id={item.id}
+      tabIndex={-1}
+      className="border-t border-border/60 p-4 text-sm transition-colors duration-200 hover:bg-muted/20 focus:outline-none data-[focus-active=true]:bg-blue-50 data-[focus-active=true]:ring-2 data-[focus-active=true]:ring-inset data-[focus-active=true]:ring-blue-600 motion-reduce:transition-none"
+    >
+      <div className="grid gap-3 lg:grid-cols-[minmax(240px,1.25fr)_112px_minmax(180px,0.8fr)_minmax(190px,0.9fr)_170px] lg:items-start">
+        <div className="min-w-0 rounded-xl bg-muted/25 p-3 lg:bg-transparent lg:p-0">
+          <Link
+            href={`${ROUTES.SALES_PLAN}/${item.machine_id}`}
+            className="font-semibold text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {item.machine_name}
+          </Link>
+          <div className="mt-1 break-words font-medium text-foreground">{item.item_name}</div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Badge variant="outline" className="border-border bg-background text-muted-foreground">
+              {MATERIAL_CATEGORY_LABELS[item.category]}
+            </Badge>
+            {item.supplier_name && (
+              <Badge variant="outline" className="max-w-full truncate border-sky-200 bg-sky-50 text-sky-800">
+                {item.supplier_name}
+              </Badge>
+            )}
+          </div>
+        </div>
 
- const saveDate = (date: string) => {
-  startTransition(async () => {
-   const result = await updateOrderCustomDeliveryDate({ table: item.table, id: item.id }, date || null)
-   if (!result.success) toast.error(result.error || 'Не удалось обновить дату')
-  })
- }
+        <Link
+          href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`}
+          className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-border bg-background px-3 text-xs font-medium text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+          title="Открыть заявку для снабжения"
+        >
+          <FileText className="h-4 w-4" aria-hidden="true" />
+          Заявка
+        </Link>
 
- const addSchedule = () => {
-  const quantity = Number(newSchedule.quantity)
-  startTransition(async () => {
-   const result = await addOrderDeliverySchedule(
-    { table: item.table, id: item.id },
-    {
-     delivery_date: newSchedule.delivery_date,
-     quantity,
-     supplier_id: newSchedule.supplier_id || null,
-    }
-   )
-   if (!result.success) {
-    toast.error(result.error || 'Не удалось добавить дату поставки')
-    return
-   }
-   toast.success('Дата поставки добавлена')
-   setNewSchedule({ delivery_date: '', quantity: '', supplier_id: item.supplier_id || '' })
-   router.refresh()
-  })
- }
+        <div className="rounded-xl border border-border/60 bg-background p-3 text-xs">
+          <div className="text-muted-foreground">Потребность</div>
+          <div className="mt-1 font-semibold tabular-nums text-foreground">
+            {formatAmount(item.to_order)} {item.unit}
+          </div>
+          {item.calculated_weight_kg && (
+            <div className="mt-0.5 text-muted-foreground">Вес: {formatAmount(item.calculated_weight_kg)} кг</div>
+          )}
+          {plan?.components.length ? (
+            <div className="mt-2 leading-5 text-sky-800">
+              К закупке: {formatLongStockPurchaseComposition(plan.components)}
+            </div>
+          ) : null}
+        </div>
 
- const updateSchedule = (schedule: SupplyOrderDeliverySchedule) => {
-  const draft = scheduleDrafts[schedule.id]
-  if (!draft) return
-  startTransition(async () => {
-   const result = await updateOrderDeliverySchedule(schedule.id, {
-    delivery_date: draft.delivery_date,
-    quantity: Number(draft.quantity),
-    supplier_id: draft.supplier_id || null,
-    change_reason: draft.change_reason,
-   })
-   if (!result.success) {
-    toast.error(result.error || 'Не удалось обновить дату поставки')
-    return
-   }
-   toast.success('Дата поставки обновлена')
-   router.refresh()
-  })
- }
+        <div className="rounded-xl border border-border/60 bg-background p-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1">
+            <Warehouse className="h-3.5 w-3.5" aria-hidden="true" />
+            На складе доступно
+          </div>
+          {item.stock_available !== null
+            ? stockBreakdown(item) || (
+              <div className="mt-1 font-semibold tabular-nums text-foreground">
+                {formatAmount(item.stock_available)} {item.stock_unit || item.unit}
+              </div>
+            )
+            : <div className="mt-1 text-foreground">Нет остатка</div>}
+          <div className="mt-2 leading-5">Доступные остатки и длины показаны только справочно.</div>
+        </div>
 
- const deleteSchedule = (schedule: SupplyOrderDeliverySchedule) => {
-  startTransition(async () => {
-   const result = await deleteOrderDeliverySchedule(schedule.id)
-   if (!result.success) {
-    toast.error(result.error || 'Не удалось удалить дату поставки')
-    return
-   }
-   toast.success('Дата поставки удалена')
-   router.refresh()
-  })
- }
+        <div className="flex flex-wrap items-start gap-1.5 lg:justify-end">
+          {requiresRecalculation ? (
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Требует пересчёта</Badge>
+          ) : isCoveredByStock ? (
+            <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Закрыто складом</Badge>
+          ) : isPartiallyOrdered ? (
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-950">
+              Заказано частично — {formatAmount(orderedQuantity)} из {formatAmount(item.to_order)} {item.unit}
+            </Badge>
+          ) : orderedQuantity <= 0.000001 && unscheduledQuantity > 0.000001 ? (
+            <Badge variant="secondary">Не заказано</Badge>
+          ) : (
+            <Badge variant={statusVariant[item.order_status]}>{ORDER_STATUS_LABELS[item.order_status]}</Badge>
+          )}
+          {redeliveryQuantity > 0 && (
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-950">Нужно довезти</Badge>
+          )}
+        </div>
+      </div>
 
- const reserve = () => {
-  if (!item.material_id) {
-   toast.error('Материал не привязан к справочнику')
-   return
-  }
-  if ((lengthRequiresChoice || requiresMeasuredStockRow) && !inventoryRowId) {
-   toast.error('Выберите точную складскую позицию')
-   return
-  }
-  startTransition(async () => {
-   const selectedStockItem = inventoryRowId
-    ? lengthStockItems.find((row) => row.id === inventoryRowId) || null
-    : null
-   const result = await reserveForMachine({
-    inventory_id: selectedStockItem?.id || null,
-    material_id: item.material_id!,
-    material_variant_id: item.material_variant_id,
-    piece_length_mm: selectedStockItem?.piece_length_mm ?? null,
-    machine_id: item.machine_id,
-    quantity: item.to_order,
-    secondary_quantity: item.secondary_requested_quantity !== null
-     ? Math.max((item.secondary_requested_quantity || 0) - (item.secondary_reserved_quantity || 0), 0)
-     : null,
-    request_item_table: item.table,
-    request_item_id: item.id,
-    use_cut_reservation: false,
-    use_whole_bar_reservation: selectedStockItem !== null,
-   })
-   if (!result.success) toast.error(result.error || 'Не удалось забронировать материал')
-   else toast.success('Материал забронирован')
-  })
- }
+      {!isCoveredByStock && (
+        <section className="mt-4 overflow-hidden rounded-2xl border border-border/70 bg-muted/15" aria-label={`График поставок: ${item.item_name}`}>
+          <div className="flex flex-col gap-3 border-b border-border/60 bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <CalendarDays className="h-4 w-4 text-primary" aria-hidden="true" />
+                План и факт поставки
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">Приёмка выполняется только на странице склада.</p>
+            </div>
+            {plan?.cutting_status === 'plan_approved' && (
+              <ReturnLongStockPositionButton
+                requestItemTable={item.table}
+                requestItemId={item.id}
+                planNumber={plan.plan_number}
+                versionNumber={plan.version_number}
+              />
+            )}
+          </div>
 
- const unreserve = () => {
-  if (!item.reservation_id) return
-  startTransition(async () => {
-   const result = await unreserveItem({
-    request_item_table: item.table as Parameters<typeof unreserveItem>[0]['request_item_table'],
-    request_item_id: item.id,
-   })
-   if (!result.success) toast.error(result.error || 'Не удалось снять бронь')
-   else toast.success('Бронь снята')
-  })
- }
+          <div className="grid gap-2 p-3 sm:grid-cols-3">
+            <StatusBox icon={<Check className="h-4 w-4" />} label="План" value={`${formatAmount(plannedQuantity)} ${item.unit}`} tone="info" />
+            <StatusBox icon={<PackageCheck className="h-4 w-4" />} label="Факт" value={`${formatAmount(deliveredQuantity)} ${item.unit}`} tone="success" />
+            <StatusBox
+              icon={<CalendarX2 className="h-4 w-4" />}
+              label={redeliveryQuantity > 0 ? 'Нужно довезти' : 'Остаток без графика'}
+              value={`${formatAmount(unscheduledQuantity)} ${item.unit}`}
+              tone={unscheduledQuantity > 0 ? 'warning' : 'default'}
+            />
+          </div>
 
- return (
-  <article
-   data-focus-id={item.id}
-   tabIndex={-1}
-   className="relative grid grid-cols-1 items-start gap-3 border-t border-border/60 p-4 text-sm transition-colors duration-200 hover:bg-muted/20 focus:outline-none data-[focus-active=true]:bg-blue-50 data-[focus-active=true]:ring-2 data-[focus-active=true]:ring-inset data-[focus-active=true]:ring-blue-600 motion-reduce:transition-none sm:grid-cols-2 xl:grid-cols-[44px_minmax(210px,1.2fr)_96px_170px_170px_190px_200px_132px] xl:items-center"
-  >
-   <label className="flex h-11 w-11 items-center justify-center rounded-xl hover:bg-muted max-xl:absolute max-xl:ml-1 max-xl:mt-1">
-    <input
-     type="checkbox"
-     checked={canSelect && checked}
-     disabled={!canSelect}
-     onChange={onToggle}
-     className="h-5 w-5 rounded border-border accent-primary disabled:cursor-not-allowed disabled:opacity-40"
-    />
-    <span className="sr-only">Выбрать {item.item_name} для машины {item.machine_name}</span>
-   </label>
-   <div className="min-w-0 rounded-xl bg-muted/25 p-3 pl-10 xl:bg-transparent xl:p-0">
-    <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-semibold text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-     {item.machine_name}
-    </Link>
-    <div className="mt-1 break-words font-medium text-foreground">{item.item_name}</div>
-    <Badge variant="outline" className="mt-2 border-border bg-background text-muted-foreground">{MATERIAL_CATEGORY_LABELS[item.category]}</Badge>
-   </div>
-   <Link
-    href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`}
-    className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-border bg-background px-3 text-xs font-medium text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    title="Открыть заявку для снабжения"
-   >
-    <FileText className="h-4 w-4" />
-    Заявка
-   </Link>
-   <select
-   value={item.supplier_id || 'none'}
-    aria-label={`Поставщик для ${item.item_name}`}
-    disabled={isPending || readOnly || isCoveredByStock}
-    onChange={(event) => saveSupplier(event.target.value)}
-    className="h-11 min-w-0 rounded-xl border border-border bg-background px-3 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-   >
-    <option value="none">Не назначен</option>
-    {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-   </select>
-   {isCoveredByStock ? (
-    <div className="flex min-h-11 items-center rounded-xl bg-emerald-500/10 px-3 text-xs font-medium text-emerald-700">Поставка не нужна</div>
-   ) : item.delivery_schedules.length === 0 ? (
-    <label className="grid gap-1 text-[11px] font-medium text-muted-foreground">
-     Дата поставки
-     <input
-      type="date"
-      defaultValue={item.target_delivery_date || ''}
-      disabled={isPending || readOnly}
-      onBlur={(event) => saveDate(event.target.value)}
-      className="h-11 min-w-0 rounded-xl border border-border bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-     />
-     {item.is_custom_delivery_date && <span className="text-[11px] text-amber-700">Ручная дата</span>}
-    </label>
-   ) : (
-    <div className="flex min-h-11 flex-col justify-center rounded-xl bg-sky-500/10 px-3 text-xs text-sky-800">
-     <div>По графику</div>
-     <div className="font-semibold">{item.delivery_schedules.length} дат</div>
-    </div>
-   )}
-   <div className="rounded-xl border border-border/60 bg-background p-3 font-medium text-foreground xl:border-0 xl:bg-transparent xl:p-0">
-    <div className="text-xs font-normal text-muted-foreground">К заказу</div>
-    <div className="mt-1 font-semibold tabular-nums">{formatAmount(item.to_order)} {item.unit}</div>
-    {item.calculated_weight_kg && <div className="text-xs font-normal text-muted-foreground">Вес: {formatAmount(item.calculated_weight_kg)} кг</div>}
-    <div className="text-xs font-normal text-muted-foreground">Заявка: {formatAmount(item.requested_quantity)} {item.unit}</div>
-    {item.reserved_quantity > 0 && <div className="text-xs font-normal text-emerald-700">Бронь: {formatAmount(item.reserved_quantity)} {item.unit}</div>}
-   </div>
-   <div className="rounded-xl border border-border/60 bg-background p-3 text-xs text-muted-foreground xl:border-0 xl:bg-transparent xl:p-0">
-    {item.stock_available !== null ? (
-     <>
-      <div className="flex items-center gap-1"><Warehouse className="h-3.5 w-3.5" />На складе доступно</div>
-      {stockBreakdown(item) || <div className="mt-1 font-semibold tabular-nums text-foreground">{formatAmount(item.stock_available)} {item.stock_unit || item.unit}</div>}
-      {lengthRequiresChoice && !item.reservation_id && (
-       <select
-        value={inventoryRowId}
-        disabled={isPending || readOnly}
-        onChange={(event) => setInventoryRowId(event.target.value)}
-        aria-label={`Складская позиция для ${item.item_name}`}
-        className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-2 text-xs text-foreground"
-       >
-        <option value="">Выберите длину</option>
-        {lengthStockItems.map((row) => (
-         <option key={row.id} value={row.id}>
-          {formatAmount(row.piece_length_mm ?? 0)} мм · {formatAmount(row.available_secondary_quantity ?? 0)} шт
-         </option>
-        ))}
-       </select>
+          {requiresRecalculation ? (
+            <div className="mx-3 mb-3 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+              <span><strong>Редактирование заблокировано.</strong> Сначала технолог должен утвердить новую версию карты раскроя.</span>
+            </div>
+          ) : scopes.length > 0 ? (
+            <div className="border-t border-border/60 p-3">
+              {scopes.length > 1 && (
+                <div className="mb-3 flex gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1" aria-label="Область графика поставки">
+                  {scopes.map((scope) => (
+                    <button
+                      key={scope.id}
+                      type="button"
+                      aria-pressed={scope.id === activeScopeId}
+                      onClick={() => setScopeState({ key: scopeKey, value: scope.id })}
+                      className={`min-h-11 shrink-0 rounded-lg px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none ${
+                        scope.id === activeScopeId
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      }`}
+                    >
+                      {scope.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {activeScope && activeScope.sharedItemCount > 1 && (
+                <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950">
+                  <strong>Общий график: {activeScope.sharedItemCount} заявок.</strong>{' '}
+                  Это изменение затронет только текущую заявку: её плановая часть будет отделена, а другие даты, заявки и принятые поставки сохранятся.
+                </div>
+              )}
+
+              {activeScope && (
+                <FactoryDeliveryEditor
+                  key={`${item.table}:${item.id}:${activeScope.id}`}
+                  aggregate={activeScope.aggregate}
+                  factory={activeScope.factory}
+                  suppliers={suppliers}
+                  dateSlice={activeScope.dateSlice}
+                  allowFinance={activeScope.kind !== 'unscheduled'}
+                  mutationItems={activeScope.mutationItems}
+                  mutationScope={activeScope.mutationScope}
+                />
+              )}
+            </div>
+          ) : (
+            <div className="mx-3 mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              Поставка полностью принята или не требует нового графика. План и факт доступны только для просмотра.
+            </div>
+          )}
+        </section>
       )}
-     </>
-    ) : (
-     <span>Нет остатка</span>
-    )}
-    {item.reservation_id ? (
-     <button type="button" disabled={isPending || readOnly} onClick={unreserve} className="mt-2 min-h-8 font-medium text-orange-700 hover:underline disabled:text-muted-foreground">Снять бронь</button>
-    ) : (
-     <button type="button" disabled={isPending || readOnly || !item.material_id || item.to_order <= 0 || ((lengthRequiresChoice || requiresMeasuredStockRow) && !inventoryRowId)} onClick={reserve} className="mt-2 min-h-8 font-medium text-primary hover:underline disabled:text-muted-foreground">Забронировать</button>
-    )}
-   </div>
-   {isCoveredByStock ? (
-    <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Закрыто складом</Badge>
-   ) : item.supplier_id ? (
-    <Badge variant={statusVariant[item.order_status]}>{ORDER_STATUS_LABELS[item.order_status]}</Badge>
-   ) : (
-    <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">Не назначен</Badge>
-   )}
-   {!isCoveredByStock && <div className="col-span-full rounded-xl border border-border/70 bg-muted/25 p-3">
-    <div className="mb-2 flex items-center justify-between gap-3">
-     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-foreground"><CalendarDays className="h-4 w-4 text-primary" />График поставок</div>
-     <div className="text-xs text-muted-foreground">
-      Запланировано: {formatAmount(item.delivery_schedules.reduce((sum, schedule) => sum + Number(schedule.quantity || 0), 0))} / {formatAmount(item.to_order)} {item.unit}
-     </div>
+    </article>
+  )
+}
+
+function StatusBox({ icon, label, value, tone }: {
+  icon: React.ReactNode
+  label: string
+  value: string
+  tone: 'default' | 'info' | 'success' | 'warning'
+}) {
+  const toneClass = {
+    default: 'bg-muted text-muted-foreground',
+    info: 'bg-sky-500/10 text-sky-700',
+    success: 'bg-emerald-500/10 text-emerald-700',
+    warning: 'bg-amber-500/10 text-amber-800',
+  }[tone]
+  return (
+    <div className="rounded-xl border border-border/60 bg-card p-3">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${toneClass}`}>{icon}</span>
+        {label}
+      </div>
+      <div className="mt-2 font-semibold tabular-nums text-foreground">{value}</div>
     </div>
-    <div className="space-y-2">
-     {item.delivery_schedules.map((schedule) => {
-      const draft = scheduleDrafts[schedule.id] || {
-       delivery_date: schedule.delivery_date,
-       quantity: String(schedule.quantity),
-       supplier_id: schedule.supplier_id || '',
-       change_reason: '',
-      }
-      const dateChanged = draft.delivery_date !== schedule.delivery_date
-      return (
-       <div key={schedule.id} data-focus-id={schedule.id} tabIndex={-1} className="grid gap-2 rounded-xl border border-border/70 bg-background p-3 text-xs focus:outline-none data-[focus-active=true]:ring-2 data-[focus-active=true]:ring-blue-600 sm:grid-cols-2 xl:grid-cols-[100px_150px_130px_190px_minmax(180px,1fr)_260px] xl:items-end">
-        <Badge variant={schedule.status === 'delivered' ? 'outline' : 'secondary'}>{schedule.status === 'delivered' ? 'Принято' : 'План'}</Badge>
-        <input aria-label="Дата в графике" type="date" value={draft.delivery_date} disabled={isPending || readOnly || schedule.status === 'delivered'} onChange={(event) => setScheduleDrafts((prev) => ({ ...prev, [schedule.id]: { ...draft, delivery_date: event.target.value } }))} className="h-11 rounded-lg border border-border bg-background px-2" />
-        <input aria-label={`Количество в графике, ${item.unit}`} type="number" min="0" step="0.01" value={draft.quantity} disabled={isPending || readOnly || schedule.status === 'delivered'} onChange={(event) => setScheduleDrafts((prev) => ({ ...prev, [schedule.id]: { ...draft, quantity: event.target.value } }))} className="h-11 rounded-lg border border-border bg-background px-2" />
-        <select aria-label="Поставщик в графике" value={draft.supplier_id} disabled={isPending || readOnly || schedule.status === 'delivered'} onChange={(event) => setScheduleDrafts((prev) => ({ ...prev, [schedule.id]: { ...draft, supplier_id: event.target.value } }))} className="h-11 min-w-0 rounded-lg border border-border bg-background px-2">
-         <option value="">Поставщик позиции</option>
-         {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-        </select>
-        <input aria-label="Комментарий к изменению графика" type="text" value={draft.change_reason} disabled={isPending || readOnly || schedule.status === 'delivered'} onChange={(event) => setScheduleDrafts((prev) => ({ ...prev, [schedule.id]: { ...draft, change_reason: event.target.value } }))} placeholder={dateChanged ? 'Причина изменения даты' : 'Комментарий к изменению'} className="h-11 min-w-0 rounded-lg border border-border bg-background px-2" />
-        {schedule.status === 'delivered' ? (
-         <div className="text-[#64748B]">{schedule.delivered_at ? `Приход: ${new Date(schedule.delivered_at).toLocaleDateString('ru-RU')}` : 'Принято'}</div>
-        ) : (
-         <div className="grid grid-cols-2 gap-1">
-          <Button type="button" variant="outline" size="sm" className="min-h-10 px-2" disabled={isPending || readOnly || (dateChanged && !draft.change_reason.trim())} onClick={() => updateSchedule(schedule)}><Save className="h-3.5 w-3.5" /><span className="sr-only sm:not-sr-only">Сохранить</span></Button>
-          <Button type="button" variant="outline" size="sm" className="min-h-10 border-destructive/30 px-2 text-destructive" disabled={isPending || readOnly} onClick={() => deleteSchedule(schedule)}><Trash2 className="h-3.5 w-3.5" /><span className="sr-only sm:not-sr-only">Удалить</span></Button>
-         </div>
-        )}
-       </div>
-      )
-     })}
-     <div className="grid gap-2 rounded-xl border border-dashed border-border bg-background/70 p-3 text-xs sm:grid-cols-2 xl:grid-cols-[150px_130px_200px_130px] xl:items-end">
-      <input aria-label="Новая дата поставки" type="date" value={newSchedule.delivery_date} disabled={isPending || readOnly || item.order_status === 'delivered'} onChange={(event) => setNewSchedule((prev) => ({ ...prev, delivery_date: event.target.value }))} className="h-11 rounded-lg border border-border bg-background px-2" />
-      <input aria-label={`Новое количество, ${item.unit}`} type="number" min="0" step="0.01" value={newSchedule.quantity} disabled={isPending || readOnly || item.order_status === 'delivered'} onChange={(event) => setNewSchedule((prev) => ({ ...prev, quantity: event.target.value }))} placeholder={`Кол-во, ${item.unit}`} className="h-11 rounded-lg border border-border bg-background px-2" />
-      <select aria-label="Поставщик новой поставки" value={newSchedule.supplier_id} disabled={isPending || readOnly || item.order_status === 'delivered'} onChange={(event) => setNewSchedule((prev) => ({ ...prev, supplier_id: event.target.value }))} className="h-11 min-w-0 rounded-lg border border-border bg-background px-2">
-       <option value="">Поставщик позиции</option>
-       {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-      </select>
-      <Button type="button" disabled={isPending || readOnly || item.order_status === 'delivered' || !newSchedule.delivery_date || !newSchedule.quantity} onClick={addSchedule} className="min-h-11"><Plus className="h-4 w-4" />Добавить</Button>
-     </div>
-    </div>
-   </div>}
-  </article>
- )
+  )
+}
+
+function sumSchedules(schedules: SupplyOrderDeliverySchedule[], status: 'planned' | 'delivered') {
+  return schedules
+    .filter((schedule) => schedule.status === status)
+    .reduce((sum, schedule) => sum + Number(
+      status === 'delivered'
+        ? schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0
+        : schedule.quantity || 0,
+    ), 0)
 }
 
 function formatAmount(value: number) {
- return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)
-}
-
-function makeScheduleDrafts(schedules: SupplyOrderDeliverySchedule[]) {
- return Object.fromEntries(schedules.map((schedule) => [
-  schedule.id,
-  {
-   delivery_date: schedule.delivery_date,
-   quantity: String(schedule.quantity),
-   supplier_id: schedule.supplier_id || '',
-   change_reason: '',
-  },
- ]))
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)
 }
 
 function stockBreakdown(item: SupplyOrderItem) {
- const isPieceCategory = item.category === 'pipe' || item.category === 'knives'
- const lengthItems = isPieceCategory ? item.stock_items.filter((row) => row.piece_length_mm !== null) : []
- if (lengthItems.length === 0) return null
- return (
-  <div className="mt-1 space-y-1 font-medium text-foreground">
-   {lengthItems.map((row) => (
-    <div key={row.id}>
-     {formatAmount(row.piece_length_mm ?? 0)} мм × {formatAmount(row.total_quantity)} {row.unit || item.unit}
-     <span className="font-normal text-muted-foreground"> (доступно: {formatAmount(row.available_quantity)} {row.unit || item.unit})</span>
+  const isPieceCategory = item.category === 'pipe' || item.category === 'circle' || item.category === 'knives'
+  const lengthItems = isPieceCategory ? item.stock_items.filter((row) => row.piece_length_mm !== null) : []
+  if (lengthItems.length === 0) return null
+  return (
+    <div className="mt-1 space-y-1 font-medium text-foreground">
+      {lengthItems.map((row) => (
+        <div key={row.id}>
+          {formatAmount(row.piece_length_mm ?? 0)} мм × {formatAmount(row.total_quantity)} {row.unit || item.unit}
+          <span className="font-normal text-muted-foreground"> (доступно: {formatAmount(row.available_quantity)} {row.unit || item.unit})</span>
+        </div>
+      ))}
     </div>
-   ))}
-  </div>
- )
+  )
 }

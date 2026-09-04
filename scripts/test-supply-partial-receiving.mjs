@@ -227,7 +227,7 @@ assert.match(
 )
 assert.match(
   supplyOrderActions,
-  /planned_piece_length_mm: schedule\.piece_length_mm[\s\S]*planned_piece_count: schedule\.piece_count/,
+  /const pieceLengthMm = schedule\.piece_length_mm[\s\S]*planned_piece_length_mm: pieceLengthMm[\s\S]*planned_piece_count: pieceCount/,
   'delivery planning must write the ordered bar composition to planned fields',
 )
 assert.match(

@@ -17,9 +17,10 @@ type SupplyOrderHistoryPageProps = {
   page: number
   pageSize: number
   total: number
+  factoryId: string | null
 }
 
-export function SupplyOrderHistoryPage({ items, page, pageSize, total }: SupplyOrderHistoryPageProps) {
+export function SupplyOrderHistoryPage({ items, page, pageSize, total, factoryId }: SupplyOrderHistoryPageProps) {
   const defaultFilters = useMemo<HistoryFiltersState>(() => ({ query: '', supplier: 'all', category: 'all', sort: 'accepted_desc' }), [])
   const [filters, setFilters] = useState<HistoryFiltersState>(defaultFilters)
   const visibleItems = useMemo(() => filterAndSortHistory(items, filters), [filters, items])
@@ -103,10 +104,10 @@ export function SupplyOrderHistoryPage({ items, page, pageSize, total }: SupplyO
           Показано {currentFrom}-{currentTo} из {total}. Страница {page + 1} из {pageCount}.
         </span>
         <div className="flex gap-2">
-          <PaginationLink page={page - 1} disabled={page <= 0}>
+          <PaginationLink page={page - 1} disabled={page <= 0} factoryId={factoryId}>
             Назад
           </PaginationLink>
-          <PaginationLink page={page + 1} disabled={page + 1 >= pageCount}>
+          <PaginationLink page={page + 1} disabled={page + 1 >= pageCount} factoryId={factoryId}>
             Вперед
           </PaginationLink>
         </div>
@@ -322,13 +323,20 @@ function DataPoint({ label, value, icon }: { label: string; value: string; icon?
   )
 }
 
-function PaginationLink({ page, disabled, children }: { page: number; disabled: boolean; children: ReactNode }) {
+function PaginationLink({ page, disabled, children, factoryId }: {
+  page: number
+  disabled: boolean
+  children: ReactNode
+  factoryId: string | null
+}) {
   const className = 'inline-flex min-h-9 items-center justify-center rounded-md border border-slate-200 px-3 text-sm font-medium text-[#1B3A6B]'
   if (disabled) {
     return <span className={`${className} cursor-not-allowed opacity-50`}>{children}</span>
   }
+  const params = new URLSearchParams({ view: 'history', page: String(page + 1) })
+  if (factoryId) params.set('factory', factoryId)
   return (
-    <Link href={`${ROUTES.SUPPLY_ORDERS}?view=history&page=${page + 1}`} className={`${className} hover:bg-slate-50`}>
+    <Link href={`${ROUTES.SUPPLY_ORDERS}?${params.toString()}`} className={`${className} hover:bg-slate-50`}>
       {children}
     </Link>
   )

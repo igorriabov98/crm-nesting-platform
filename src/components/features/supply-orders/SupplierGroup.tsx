@@ -4,6 +4,7 @@ import { Building2, PackageOpen } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import type { SupplyOrderItem } from '@/lib/actions/supply-orders'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
+import type { SupplyOrderDetailContext } from './supply-order-view'
 
 const OrderItemRow = dynamic(() => import('./OrderItemRow').then((mod) => mod.OrderItemRow), {
  loading: () => <div className="h-36 animate-pulse border-t border-border bg-muted/30 motion-reduce:animate-none" />,
@@ -13,12 +14,10 @@ type SupplierGroupProps = {
  supplierName: string
  items: SupplyOrderItem[]
  suppliers: SupplierWithRelations[]
- selected: Set<string>
- onToggle: (item: SupplyOrderItem) => void
- readOnly?: boolean
+ detailContexts: Map<string, SupplyOrderDetailContext>
 }
 
-export function SupplierGroup({ supplierName, items, suppliers, selected, onToggle, readOnly = false }: SupplierGroupProps) {
+export function SupplierGroup({ supplierName, items, suppliers, detailContexts }: SupplierGroupProps) {
  const total = items.reduce((sum, item) => sum + item.to_order, 0)
  const unit = items.every((item) => item.unit === items[0]?.unit) ? items[0]?.unit : 'ед.'
 
@@ -45,9 +44,7 @@ export function SupplierGroup({ supplierName, items, suppliers, selected, onTogg
      key={`${item.table}:${item.id}`}
      item={item}
      suppliers={suppliers}
-     checked={selected.has(`${item.table}:${item.id}`)}
-     onToggle={() => onToggle(item)}
-     readOnly={readOnly}
+     detailContext={detailContexts.get(`${item.table}:${item.id}`)}
     />
    ))}
   </div>

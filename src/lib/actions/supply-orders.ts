@@ -1008,7 +1008,10 @@ async function getPlannedScheduleTotal(db: LooseDb, table: string, id: string, e
     .reduce((sum, row) => sum + committedScheduleQuantity(row), 0)
 }
 
-async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, string[]>): Promise<RawOrderItem[]> {
+async function loadSelectedOrderItems(
+  db: LooseDb,
+  groupedItems: Map<string, string[]>,
+): Promise<SupplyOrderAggregateInputItem[]> {
   const selectedRows = await Promise.all(Array.from(groupedItems.entries()).map(async ([table, ids]) => ({
     table,
     rows: await loadRowsByIds(db, table, ids),
@@ -1024,9 +1027,17 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
   const requests = (requestsData || []) as RequestRow[]
   const requestMap = new Map(requests.map((request) => [request.id, request]))
 
-  const makeItem = (table: string, category: MaterialCategory, row: RequestItemRow, name: unknown, supplierId: string | null = null): RawOrderItem => {
+  const makeItem = (
+    table: string,
+    category: MaterialCategory,
+    row: RequestItemRow,
+    name: unknown,
+    supplierId: string | null = null,
+  ): SupplyOrderAggregateInputItem => {
     const request = requestMap.get(row.request_id)
     if (!request || request.machines?.is_archived) throw new Error('Позиция относится к архивной или недоступной машине')
+    const machine = request.machines
+    if (!machine) throw new Error('Для позиции не найдена машина')
     const requested = requestedQuantity(table, row)
     const reserved = reservedQuantity(table, row)
     return {
@@ -1051,10 +1062,16 @@ async function loadSelectedOrderItems(db: LooseDb, groupedItems: Map<string, str
       selected_piece_length_mm: selectedPieceLength(table, row),
       pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
       long_stock_purchase_plan: null,
+      raw: row,
+      machine_id: machine.id || request.machine_id,
+      machine_name: machine.name || 'Машина',
+      machine_specification_number: machine.specification_number || null,
+      factory_id: machine.factory_id || null,
+      planned_material_date: machine.planned_material_date || null,
     }
   }
 
-  const rawItems: RawOrderItem[] = selectedRows.flatMap(({ table, rows }) => {
+  const rawItems: SupplyOrderAggregateInputItem[] = selectedRows.flatMap(({ table, rows }) => {
     if (table === 'request_sheet_metal') return rows.map((row) => makeItem(table, 'sheet_metal', row, row.material_name, supplierForRow(row)))
     if (table === 'request_round_tube') return rows.map((row) => makeItem(table, 'round_tube', row, row.material_name, supplierForRow(row)))
     if (table === 'request_circle') return rows.map((row) => makeItem(table, 'circle', row, row.steel_grade, supplierForRow(row)))
@@ -1845,6 +1862,29 @@ export async function getSupplyOrderFactories(): Promise<{
     return { data: (data || []) as MaterialReceivingFactory[], error: null }
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заводы' }
+  }
+}
+
+export async function getSupplyOrderRequestFactoryId(requestId: string): Promise<{
+  data: string | null
+  error: string | null
+}> {
+  try {
+    const { db } = await requireAccess()
+    const normalizedRequestId = String(requestId || '').trim()
+    if (!normalizedRequestId) return { data: null, error: null }
+
+    const { data, error } = await db
+      .from('technologist_requests')
+      .select('machines!inner(factory_id)')
+      .eq('id', normalizedRequestId)
+      .maybeSingle()
+    if (error) throw new Error(error.message || 'Не удалось определить завод заявки')
+
+    const row = data as { machines?: { factory_id?: string | null } | null } | null
+    return { data: row?.machines?.factory_id || null, error: null }
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Не удалось определить завод заявки' }
   }
 }
 
@@ -3368,7 +3408,7 @@ function normalizeScheduleInputs(schedules: SupplyOrderAggregateScheduleInput[])
     if (!deliveryDate) throw new Error('Укажите дату поставки')
     if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Количество поставки должно быть больше 0')
     if ((pieceLengthMm === null) !== (pieceCount === null)) {
-      throw new Error('Укажите длину и количество брусков')
+      throw new Error('Укажите длину и количество хлыстов')
     }
     if (pieceLengthMm !== null && (
       !Number.isFinite(pieceLengthMm) || pieceLengthMm <= 0 ||
@@ -3391,6 +3431,48 @@ function roundScheduleQuantity(value: number) {
   return Math.round(value * 1_000_000) / 1_000_000
 }
 
+function normalizeDeliveryScheduleScope(scope?: SupplyOrderDeliveryScheduleScope) {
+  if (!scope) return undefined
+  if (scope.mode === 'unscheduled') {
+    if (scope.replace_delivery_date !== null) throw new Error('Некорректная область остатка без графика')
+    return { mode: 'unscheduled' as const, replace_delivery_date: null }
+  }
+
+  if (scope.mode === 'item') {
+    const targetTable = String(scope.target_item?.table || '')
+    const targetId = String(scope.target_item?.id || '')
+    assertOrderTable(targetTable)
+    if (!targetId) throw new Error('Не указана позиция для изменения графика')
+    const replaceDeliveryDate = scope.replace_delivery_date === null
+      ? null
+      : assertDateOrNull(scope.replace_delivery_date)
+    if (scope.replace_delivery_date !== null && !replaceDeliveryDate) {
+      throw new Error('Для изменения позиции укажите исходную дату')
+    }
+    return {
+      mode: 'item' as const,
+      replace_delivery_date: replaceDeliveryDate,
+      target_item: { table: targetTable, id: targetId },
+    }
+  }
+
+  const replaceDeliveryDate = assertDateOrNull(scope.replace_delivery_date)
+  if (!replaceDeliveryDate) throw new Error('Для изменения графика укажите исходную дату')
+  return { mode: 'date' as const, replace_delivery_date: replaceDeliveryDate }
+}
+
+function assertSingleAggregateScheduleSelection(items: SupplyOrderAggregateInputItem[]) {
+  if (items.length <= 1) return
+  const aggregateKeys = new Set(items.map((item) => [
+    factoryKey(item.factory_id),
+    plannedDateKey(item.planned_material_date),
+    getAggregateIdentityKey(item.table, item.raw, item),
+  ].join('|')))
+  if (aggregateKeys.size !== 1) {
+    throw new Error('Общий график можно изменить только для одного материала, завода и Мат.плана')
+  }
+}
+
 function scheduleSupplierIdsByItem(schedules: ReceivingScheduleRow[]) {
   const map = new Map<string, Set<string>>()
   for (const schedule of schedules) {
@@ -3399,6 +3481,147 @@ function scheduleSupplierIdsByItem(schedules: ReceivingScheduleRow[]) {
     map.set(key, new Set([...(map.get(key) || []), schedule.supplier_id]))
   }
   return map
+}
+
+type ScheduleCoverageState = {
+  item: SupplyOrderAggregateInputItem
+  delivered: number
+  planned: number
+}
+
+type PlannedScheduleAllocation = {
+  item: SupplyOrderAggregateInputItem
+  schedule: ReceivingScheduleRow
+  quantity: number
+  isExcess: boolean
+}
+
+function projectPlannedScheduleAllocations(
+  items: SupplyOrderAggregateInputItem[],
+  schedules: ReceivingScheduleRow[],
+) {
+  const orderedItems = [...items].sort((left, right) => (
+    left.machine_name.localeCompare(right.machine_name, 'ru') || left.id.localeCompare(right.id)
+  ))
+  const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
+  for (const schedule of schedules) {
+    const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+    schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+  }
+  const coverage = new Map<string, ScheduleCoverageState>(orderedItems.map((item) => {
+    const key = `${item.table}:${item.id}`
+    const delivered = (schedulesByItem.get(key) || [])
+      .filter((schedule) => schedule.status === 'delivered')
+      .reduce((sum, schedule) => sum + Number(
+        schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0,
+      ), 0)
+    return [key, {
+      item,
+      delivered: Math.min(Math.max(delivered, 0), item.to_order),
+      planned: 0,
+    }] as const
+  }))
+  const plannedSchedules = schedules
+    .filter((schedule) => schedule.status === 'planned')
+    .sort((left, right) => (
+      left.delivery_date.localeCompare(right.delivery_date) || left.id.localeCompare(right.id)
+    ))
+  const allocations: PlannedScheduleAllocation[] = []
+
+  for (const schedule of plannedSchedules) {
+    let remaining = Math.max(Number(schedule.quantity || 0), 0)
+    const ownerKey = `${schedule.request_item_table}:${schedule.request_item_id}`
+    const candidates = [
+      coverage.get(ownerKey),
+      ...orderedItems
+        .map((item) => coverage.get(`${item.table}:${item.id}`))
+        .filter((candidate) => candidate && `${candidate.item.table}:${candidate.item.id}` !== ownerKey),
+    ].filter((candidate): candidate is ScheduleCoverageState => Boolean(candidate))
+
+    for (const candidate of candidates) {
+      if (remaining <= 0.000001) break
+      const totalDemand = Math.max(candidate.item.to_order - candidate.delivered - candidate.planned, 0)
+      const pieceLength = Number(schedule.planned_piece_length_mm || 0)
+      const hasPiecePlan = pieceLength > 0 && candidate.item.long_stock_purchase_plan !== null
+      const componentQuantity = pieceLength > 0
+        ? candidate.item.long_stock_purchase_plan?.components
+          .filter((component) => component.length_mm === pieceLength)
+          .reduce((sum, component) => sum + component.length_mm * component.piece_count, 0) || 0
+        : 0
+      const deliveredForLength = componentQuantity > 0
+        ? (schedulesByItem.get(itemKey(candidate.item)) || [])
+          .filter((entry) => entry.status === 'delivered')
+          .filter((entry) => Number(entry.received_piece_length_mm || entry.planned_piece_length_mm || 0) === pieceLength)
+          .reduce((sum, entry) => sum + (
+            Number(entry.allocated_piece_count || 0) > 0
+              ? Number(entry.allocated_piece_count) * pieceLength
+              : Number(entry.allocated_quantity ?? entry.received_quantity ?? entry.quantity ?? 0)
+          ), 0)
+        : 0
+      const plannedForLength = componentQuantity > 0
+        ? allocations
+          .filter((entry) => (
+            itemKey(entry.item) === itemKey(candidate.item)
+            && !entry.isExcess
+            && Number(entry.schedule.planned_piece_length_mm || 0) === pieceLength
+          ))
+          .reduce((sum, entry) => sum + entry.quantity, 0)
+        : 0
+      const demand = hasPiecePlan
+        ? Math.min(
+          totalDemand,
+          Math.max(componentQuantity - deliveredForLength - plannedForLength, 0),
+        )
+        : totalDemand
+      const allocated = Math.min(demand, remaining)
+      if (allocated <= 0.000001) continue
+      candidate.planned += allocated
+      allocations.push({ item: candidate.item, schedule, quantity: allocated, isExcess: false })
+      remaining -= allocated
+    }
+    if (remaining > 0.000001) {
+      const owner = coverage.get(ownerKey)?.item || orderedItems[0]
+      if (owner) allocations.push({ item: owner, schedule, quantity: remaining, isExcess: true })
+    }
+  }
+
+  return { coverage, allocations }
+}
+
+async function syncOrderStatusesWithScheduleCoverage(
+  db: RpcDb,
+  items: SupplyOrderAggregateInputItem[],
+) {
+  const schedules = await loadReceivingSchedules(db, items)
+  const { coverage, allocations } = projectPlannedScheduleAllocations(items, schedules)
+  const suppliersByItem = new Map<string, Set<string>>()
+  for (const allocation of allocations) {
+    if (!allocation.schedule.supplier_id) continue
+    const key = itemKey(allocation.item)
+    suppliersByItem.set(key, new Set([
+      ...(suppliersByItem.get(key) || []),
+      allocation.schedule.supplier_id,
+    ]))
+  }
+  const orderedAt = new Date().toISOString()
+
+  await Promise.all(items
+    .filter((item) => item.order_status !== 'delivered' && item.order_status !== 'cancelled')
+    .map(async (item) => {
+      const itemCoverage = coverage.get(`${item.table}:${item.id}`)
+      const isCovered = Boolean(itemCoverage && itemCoverage.delivered + itemCoverage.planned > 0.000001)
+      const nextStatus: OrderItemStatus = isCovered ? 'ordered' : 'pending'
+      const itemSupplierIds = suppliersByItem.get(`${item.table}:${item.id}`) || new Set<string>()
+      const supplierId = itemSupplierIds.size === 1 ? Array.from(itemSupplierIds)[0] : null
+      if (item.order_status === nextStatus && !(isCovered && supplierId && item.supplier_id !== supplierId)) return
+
+      const values: Record<string, unknown> = { order_status: nextStatus }
+      if (nextStatus === 'ordered' && item.order_status !== 'ordered') values.ordered_at = orderedAt
+      if (nextStatus === 'pending') values.ordered_at = null
+      if (isCovered && supplierId) values.supplier_id = supplierId
+      const { error } = await db.from(item.table).update(values).eq('id', item.id)
+      if (error) throw new Error(error.message || 'Не удалось синхронизировать статус позиции с графиком')
+    }))
 }
 
 async function deletePlannedDeliverySchedules(db: RpcDb, scheduleIds: string[]) {
@@ -3417,6 +3640,121 @@ function proportionalWeight(totalWeight: number | null, totalQuantity: number, q
   return (totalWeight * quantity) / totalQuantity
 }
 
+type NormalizedScheduleInput = ReturnType<typeof normalizeScheduleInputs>[number] & {
+  supplier_id: string
+}
+
+type ScheduleCapacity = {
+  item: SupplyOrderAggregateInputItem
+  remaining: number
+  remainingByPieceLength: Map<number, number>
+}
+
+function makePlannedScheduleRow(
+  item: SupplyOrderAggregateInputItem,
+  schedule: Pick<NormalizedScheduleInput, 'delivery_date' | 'supplier_id' | 'piece_length_mm'>,
+  quantity: number,
+  userId: string,
+) {
+  const pieceLengthMm = schedule.piece_length_mm
+  const pieceCount = pieceLengthMm === null ? null : quantity / pieceLengthMm
+  if (pieceCount !== null && (!Number.isInteger(pieceCount) || pieceCount <= 0)) {
+    throw new Error(`График длинномера для «${item.item_name}» нельзя распределить целыми хлыстами`)
+  }
+  return {
+    request_item_table: item.table,
+    request_item_id: item.id,
+    delivery_date: schedule.delivery_date,
+    quantity: roundScheduleQuantity(quantity),
+    unit: item.unit,
+    supplier_id: schedule.supplier_id,
+    planned_piece_length_mm: pieceLengthMm,
+    planned_piece_count: pieceCount,
+    created_by: userId,
+    updated_by: userId,
+  }
+}
+
+function rowsFromRetainedAllocations(
+  allocations: PlannedScheduleAllocation[],
+  userId: string,
+) {
+  return allocations.map((allocation) => {
+    const supplierId = allocation.schedule.supplier_id
+    if (!supplierId) throw new Error('В сохранённом графике не указан поставщик')
+    return makePlannedScheduleRow(allocation.item, {
+      delivery_date: allocation.schedule.delivery_date,
+      supplier_id: supplierId,
+      piece_length_mm: allocation.schedule.planned_piece_length_mm,
+    }, allocation.quantity, userId)
+  })
+}
+
+function distributeScheduleRows(
+  schedules: NormalizedScheduleInput[],
+  capacities: ScheduleCapacity[],
+  userId: string,
+) {
+  const available = capacities
+    .filter((entry) => entry.remaining > 0.000001)
+    .sort((left, right) => (
+      left.item.machine_name.localeCompare(right.item.machine_name, 'ru')
+      || left.item.id.localeCompare(right.item.id)
+    ))
+    .map((entry) => ({
+      ...entry,
+      remainingByPieceLength: new Map(entry.remainingByPieceLength),
+    }))
+  const rows: Record<string, unknown>[] = []
+
+  for (const schedule of schedules) {
+    let remainingQuantity = schedule.quantity
+    for (const target of available) {
+      if (remainingQuantity <= 0.000001) break
+      if (target.remaining <= 0.000001) continue
+      let allocation = Math.min(target.remaining, remainingQuantity)
+      if (schedule.piece_length_mm !== null) {
+        const remainingForLength = target.remainingByPieceLength.get(schedule.piece_length_mm) || 0
+        const availablePieces = Math.floor((Math.min(target.remaining, remainingForLength) + 0.000001) / schedule.piece_length_mm)
+        const remainingPieces = Math.round(remainingQuantity / schedule.piece_length_mm)
+        allocation = Math.min(availablePieces, remainingPieces) * schedule.piece_length_mm
+      }
+      if (allocation <= 0.000001) continue
+      rows.push(makePlannedScheduleRow(target.item, schedule, allocation, userId))
+      target.remaining = Math.max(target.remaining - allocation, 0)
+      if (schedule.piece_length_mm !== null) {
+        target.remainingByPieceLength.set(
+          schedule.piece_length_mm,
+          Math.max(
+            (target.remainingByPieceLength.get(schedule.piece_length_mm) || 0) - allocation,
+            0,
+          ),
+        )
+      }
+      remainingQuantity = Math.max(remainingQuantity - allocation, 0)
+    }
+    if (remainingQuantity > 0.000001) {
+      const excessTarget = available[0]?.item || capacities[0]?.item
+      if (!excessTarget) throw new Error('Не найдена позиция для излишка поставки')
+      rows.push(makePlannedScheduleRow(excessTarget, schedule, remainingQuantity, userId))
+    }
+  }
+
+  return rows
+}
+
+async function assertActiveScheduleSuppliers(db: RpcDb, schedules: NormalizedScheduleInput[]) {
+  const supplierIds = Array.from(new Set(schedules.map((schedule) => schedule.supplier_id)))
+  const { data, error } = await db.from('suppliers').select('id, is_active').in('id', supplierIds)
+  if (error) throw new Error(error.message || 'Не удалось проверить поставщиков графика')
+  const activeIds = new Set(((data || []) as Array<{ id: string; is_active: boolean }>)
+    .filter((supplier) => supplier.is_active)
+    .map((supplier) => supplier.id))
+  if (supplierIds.some((supplierId) => !activeIds.has(supplierId))) {
+    throw new Error('Выбранный поставщик не найден или отключён')
+  }
+}
+
 export async function saveAggregateDeliverySchedule(
   items: { table: string; id: string }[],
   schedules: SupplyOrderAggregateScheduleInput[],
@@ -3430,6 +3768,7 @@ export async function saveAggregateDeliverySchedule(
     const normalizedSchedules = normalizeScheduleInputs(schedules)
     const selectedItems = await loadSelectedOrderItems(db, groupedItems)
     if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
+    assertSingleAggregateScheduleSelection(selectedItems)
     const openItems = selectedItems.filter((item) => (
       item.order_status !== 'delivered' && item.order_status !== 'cancelled'
     ))
@@ -3447,62 +3786,155 @@ export async function saveAggregateDeliverySchedule(
       throw new Error('Длина и количество хлыстов применяются только для ножей, круга и непроволочной трубы')
     }
 
-    const existingSchedules = await loadReceivingSchedules(db, selectedItems)
-    const existingDeliveredByItem = new Map<string, number>()
-    const normalizedScope = scope
-      ? { replace_delivery_date: assertDateOrNull(scope.replace_delivery_date) }
-      : undefined
-    const plannedScheduleIds = existingSchedules
-      .filter((schedule) => (
-        schedule.status === 'planned'
-        && deliveryScheduleBelongsToScope(schedule.delivery_date, normalizedScope)
-      ))
-      .map((schedule) => schedule.id)
-
-    for (const schedule of existingSchedules) {
-      if (schedule.status !== 'delivered') continue
-      const key = `${schedule.request_item_table}:${schedule.request_item_id}`
-      existingDeliveredByItem.set(key, (existingDeliveredByItem.get(key) || 0) + Number(
-        schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0,
-      ))
-    }
-
-    const remainingItems = openItems
-      .map((item) => {
-        const delivered = existingDeliveredByItem.get(`${item.table}:${item.id}`) || 0
-        return {
-          item,
-          remaining: Math.max(item.to_order - delivered, 0),
-        }
-      })
-      .filter((entry) => entry.remaining > 0)
-
-    const totalRemaining = remainingItems.reduce((sum, entry) => sum + entry.remaining, 0)
+    const normalizedScope = normalizeDeliveryScheduleScope(scope)
     const totalScheduled = normalizedSchedules.reduce((sum, schedule) => sum + schedule.quantity, 0)
     if (normalizedSchedules.length === 0 || totalScheduled <= 0) throw new Error('Добавьте хотя бы одну дату поставки')
-    if (totalRemaining <= 0) throw new Error('Вся потребность уже закрыта принятыми поставками')
+    const existingSchedules = await loadReceivingSchedules(db, selectedItems)
+    const { coverage, allocations } = projectPlannedScheduleAllocations(selectedItems, existingSchedules)
+    const allPlannedScheduleIds = existingSchedules
+      .filter((schedule) => schedule.status === 'planned')
+      .map((schedule) => schedule.id)
+    const resolvedSchedules: NormalizedScheduleInput[] = normalizedSchedules.map((schedule) => {
+      const supplierId = schedule.supplier_id
+      if (!supplierId) throw new Error('Выберите поставщика для каждой строки графика')
+      return { ...schedule, supplier_id: supplierId }
+    })
+    await assertActiveScheduleSuppliers(db, resolvedSchedules)
 
-    const insertRows: Record<string, unknown>[] = []
-    const anchor = remainingItems
-      .sort((left, right) => left.item.id.localeCompare(right.item.id))[0]?.item
-    if (!anchor) throw new Error('Не найдена открытая позиция для графика поставки')
-    const supplierIds = new Set<string>()
-    for (const schedule of normalizedSchedules) {
-      const resolvedSupplierId = schedule.supplier_id || anchor.supplier_id
-      if (!resolvedSupplierId) throw new Error('Выберите поставщика для каждой строки графика')
-      supplierIds.add(resolvedSupplierId)
-      insertRows.push({
-        request_item_table: anchor.table,
-        request_item_id: anchor.id,
-        delivery_date: schedule.delivery_date,
-        quantity: roundScheduleQuantity(schedule.quantity),
-        unit: anchor.unit,
-        supplier_id: resolvedSupplierId,
-        planned_piece_length_mm: schedule.piece_length_mm,
-        planned_piece_count: schedule.piece_count,
-        created_by: userId,
-        updated_by: userId,
+    const retainedPlannedByItem = (retained: PlannedScheduleAllocation[]) => {
+      const totals = new Map<string, number>()
+      for (const allocation of retained) {
+        if (allocation.isExcess) continue
+        totals.set(itemKey(allocation.item), (totals.get(itemKey(allocation.item)) || 0) + allocation.quantity)
+      }
+      return totals
+    }
+    const makeCapacities = (
+      targetItems: SupplyOrderAggregateInputItem[],
+      retained: PlannedScheduleAllocation[],
+    ) => {
+      const retainedTotals = retainedPlannedByItem(retained)
+      return targetItems.map((item) => {
+        const itemCoverage = coverage.get(itemKey(item))
+        const deliveredByPieceLength = new Map<number, number>()
+        for (const schedule of existingSchedules) {
+          if (schedule.status !== 'delivered' || itemKey(item) !== `${schedule.request_item_table}:${schedule.request_item_id}`) continue
+          const pieceLength = Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0)
+          if (pieceLength <= 0) continue
+          const deliveredQuantity = Number(schedule.allocated_piece_count || 0) > 0
+            ? Number(schedule.allocated_piece_count) * pieceLength
+            : Number(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0)
+          deliveredByPieceLength.set(
+            pieceLength,
+            (deliveredByPieceLength.get(pieceLength) || 0) + deliveredQuantity,
+          )
+        }
+        const retainedByPieceLength = new Map<number, number>()
+        for (const allocation of retained) {
+          if (allocation.isExcess || itemKey(allocation.item) !== itemKey(item)) continue
+          const pieceLength = Number(allocation.schedule.planned_piece_length_mm || 0)
+          if (pieceLength <= 0) continue
+          retainedByPieceLength.set(
+            pieceLength,
+            (retainedByPieceLength.get(pieceLength) || 0) + allocation.quantity,
+          )
+        }
+        const remainingByPieceLength = new Map<number, number>()
+        for (const component of item.long_stock_purchase_plan?.components || []) {
+          const componentQuantity = component.length_mm * component.piece_count
+          remainingByPieceLength.set(
+            component.length_mm,
+            (remainingByPieceLength.get(component.length_mm) || 0) + componentQuantity,
+          )
+        }
+        for (const [pieceLength, componentQuantity] of remainingByPieceLength) {
+          remainingByPieceLength.set(
+            pieceLength,
+            Math.max(
+              componentQuantity
+                - (deliveredByPieceLength.get(pieceLength) || 0)
+                - (retainedByPieceLength.get(pieceLength) || 0),
+              0,
+            ),
+          )
+        }
+        return {
+          item,
+          remaining: Math.max(
+            item.to_order - (itemCoverage?.delivered || 0) - (retainedTotals.get(itemKey(item)) || 0),
+            0,
+          ),
+          remainingByPieceLength,
+        }
       })
+    }
+
+    let insertRows: Record<string, unknown>[]
+    let plannedScheduleIds: string[]
+    if (normalizedScope?.mode === 'item') {
+      const target = selectedItems.find((item) => (
+        item.table === normalizedScope.target_item.table && item.id === normalizedScope.target_item.id
+      ))
+      if (!target) throw new Error('Выбранная позиция не входит в изменяемый материал')
+      if (target.order_status === 'delivered' || target.order_status === 'cancelled') {
+        throw new Error('Нельзя изменять график закрытой позиции')
+      }
+      const retained = allocations.filter((allocation) => !(
+        !allocation.isExcess
+        &&
+        itemKey(allocation.item) === itemKey(target)
+        && normalizedScope.replace_delivery_date !== null
+        && allocation.schedule.delivery_date === normalizedScope.replace_delivery_date
+      ))
+      const targetCapacities = makeCapacities([target], retained)
+      if (normalizedScope.replace_delivery_date === null) {
+        insertRows = distributeScheduleRows(resolvedSchedules, targetCapacities, userId)
+        plannedScheduleIds = []
+      } else {
+        const replacedQuantity = allocations
+          .filter((allocation) => (
+            !allocation.isExcess
+            &&
+            itemKey(allocation.item) === itemKey(target)
+            && allocation.schedule.delivery_date === normalizedScope.replace_delivery_date
+          ))
+          .reduce((sum, allocation) => sum + allocation.quantity, 0)
+        if (replacedQuantity <= 0.000001) throw new Error('У позиции нет плановой поставки на выбранную дату')
+        insertRows = [
+          ...rowsFromRetainedAllocations(retained, userId),
+          ...distributeScheduleRows(resolvedSchedules, targetCapacities, userId),
+        ]
+        plannedScheduleIds = allPlannedScheduleIds
+      }
+    } else if (normalizedScope?.mode === 'date') {
+      const replacedAllocations = allocations.filter((allocation) => (
+        allocation.schedule.delivery_date === normalizedScope.replace_delivery_date
+      ))
+      if (replacedAllocations.length === 0) throw new Error('На выбранную дату нет планового графика')
+      const retained = allocations.filter((allocation) => (
+        allocation.schedule.delivery_date !== normalizedScope.replace_delivery_date
+      ))
+      const targetKeys = new Set(replacedAllocations.map((allocation) => itemKey(allocation.item)))
+      const targetItems = selectedItems.filter((item) => targetKeys.has(itemKey(item)))
+      insertRows = [
+        ...rowsFromRetainedAllocations(retained, userId),
+        ...distributeScheduleRows(resolvedSchedules, makeCapacities(targetItems, retained), userId),
+      ]
+      plannedScheduleIds = allPlannedScheduleIds
+    } else if (normalizedScope?.mode === 'unscheduled') {
+      insertRows = distributeScheduleRows(
+        resolvedSchedules,
+        makeCapacities(selectedItems, allocations),
+        userId,
+      )
+      plannedScheduleIds = []
+    } else {
+      insertRows = distributeScheduleRows(
+        resolvedSchedules,
+        makeCapacities(selectedItems, []),
+        userId,
+      )
+      plannedScheduleIds = allPlannedScheduleIds
     }
 
     if (insertRows.length > 0) {
@@ -3514,20 +3946,7 @@ export async function saveAggregateDeliverySchedule(
       await deletePlannedDeliverySchedules(db, plannedScheduleIds)
     }
 
-    const orderedAt = new Date().toISOString()
-    await Promise.all(openItems
-      .filter((item) => item.order_status === 'pending')
-      .map(async (item) => {
-        const values: Record<string, unknown> = {
-          order_status: 'ordered',
-          ordered_at: orderedAt,
-        }
-        if (supplierIds.size === 1) {
-          values.supplier_id = Array.from(supplierIds)[0]
-        }
-        const { error } = await db.from(item.table).update(values).eq('id', item.id)
-        if (error) throw new Error(error.message || 'Не удалось отметить позиции заказанными')
-      }))
+    await syncOrderStatusesWithScheduleCoverage(db, selectedItems)
 
     const machineIds = await getAffectedMachineIds(db, groupedItems)
     revalidateSupplyOrderPaths(machineIds)
@@ -3542,27 +3961,62 @@ export async function clearAggregateDeliverySchedule(
   scope?: SupplyOrderDeliveryScheduleScope,
 ) {
   try {
-    const { db } = await requireAccess('manage')
+    const { db, userId } = await requireAccess('manage')
     const groupedItems = groupItemsByTable(items)
     if (groupedItems.size === 0) throw new Error('Нет позиций для сброса графика поставки')
 
     const selectedItems = await loadSelectedOrderItems(db, groupedItems)
     if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
+    assertSingleAggregateScheduleSelection(selectedItems)
 
     const existingSchedules = await loadReceivingSchedules(db, selectedItems)
-    const normalizedScope = scope
-      ? { replace_delivery_date: assertDateOrNull(scope.replace_delivery_date) }
-      : undefined
-    const plannedScheduleIds = existingSchedules
-      .filter((schedule) => (
-        schedule.status === 'planned'
-        && deliveryScheduleBelongsToScope(schedule.delivery_date, normalizedScope)
+    const normalizedScope = normalizeDeliveryScheduleScope(scope)
+    let plannedScheduleIds: string[]
+    let retainedRows: Record<string, unknown>[] = []
+    if (normalizedScope?.mode === 'item') {
+      if (normalizedScope.replace_delivery_date === null) {
+        return { success: true }
+      }
+      const targetKey = `${normalizedScope.target_item.table}:${normalizedScope.target_item.id}`
+      if (!selectedItems.some((item) => itemKey(item) === targetKey)) {
+        throw new Error('Выбранная позиция не входит в изменяемый материал')
+      }
+      const { allocations } = projectPlannedScheduleAllocations(selectedItems, existingSchedules)
+      const removedAllocations = allocations.filter((allocation) => (
+        !allocation.isExcess
+        &&
+        itemKey(allocation.item) === targetKey
+        && allocation.schedule.delivery_date === normalizedScope.replace_delivery_date
       ))
-      .map((schedule) => schedule.id)
+      if (removedAllocations.length === 0) throw new Error('У позиции нет плановой поставки на выбранную дату')
+      retainedRows = rowsFromRetainedAllocations(allocations.filter((allocation) => !(
+        !allocation.isExcess
+        &&
+        itemKey(allocation.item) === targetKey
+        && allocation.schedule.delivery_date === normalizedScope.replace_delivery_date
+      )), userId)
+      plannedScheduleIds = existingSchedules
+        .filter((schedule) => schedule.status === 'planned')
+        .map((schedule) => schedule.id)
+    } else {
+      plannedScheduleIds = existingSchedules
+        .filter((schedule) => (
+          schedule.status === 'planned'
+          && deliveryScheduleBelongsToScope(schedule.delivery_date, normalizedScope)
+        ))
+        .map((schedule) => schedule.id)
+    }
+
+    if (retainedRows.length > 0) {
+      const { error } = await db.from('supply_order_delivery_schedules').insert(retainedRows)
+      if (error) throw new Error(error.message || 'Не удалось сохранить остальные даты графика')
+    }
 
     if (plannedScheduleIds.length > 0) {
       await deletePlannedDeliverySchedules(db, plannedScheduleIds)
     }
+
+    await syncOrderStatusesWithScheduleCoverage(db, selectedItems)
 
     const machineIds = await getAffectedMachineIds(db, groupedItems)
     revalidateSupplyOrderPaths(machineIds)

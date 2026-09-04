@@ -1,9 +1,17 @@
 import Link from 'next/link'
 import { ArrowLeft, ChartNoAxesColumnIncreasing, ClipboardList, History, PackageSearch } from 'lucide-react'
 import { SupplyOrderHistoryPage } from '@/components/features/supply-orders/SupplyOrderHistoryPage'
+import { SupplyOrderFactoryToggle } from '@/components/features/supply-orders/SupplyOrderFactoryToggle'
 import { SupplyOrdersPage } from '@/components/features/supply-orders/SupplyOrdersPage'
 import { SupplyOrderSummaryPage } from '@/components/features/supply-orders/SupplyOrderSummaryPage'
-import { getSupplyOrderAggregates, getSupplyOrderFactories, getSupplyOrderHistory, getSupplyOrders } from '@/lib/actions/supply-orders'
+import {
+  getSupplyOrderAggregates,
+  getSupplyOrderFactories,
+  getSupplyOrderHistory,
+  getSupplyOrderRequestFactoryId,
+  getSupplyOrders,
+  type MaterialReceivingFactory,
+} from '@/lib/actions/supply-orders'
 import { getSuppliers } from '@/lib/actions/suppliers'
 import { ROUTES } from '@/lib/constants/routes'
 import { normalizeSupplyRequestId } from '@/lib/supply-request-flow'
@@ -25,6 +33,15 @@ export default async function SupplyOrdersRoute({
     : resolvedSearchParams?.view === 'history'
       ? 'history'
       : 'summary'
+  const { data: factories, error: factoriesError } = await getSupplyOrderFactories()
+  const availableFactories = factories || []
+  const requestFactory = activeView === 'details' && requestedRequestId
+    ? await getSupplyOrderRequestFactoryId(requestedRequestId)
+    : { data: null, error: null }
+  const activeFactoryId = resolveActiveFactoryId(
+    availableFactories,
+    requestFactory.data || resolvedSearchParams?.factory || null,
+  )
 
   return (
     <div className="space-y-5 pb-8">
@@ -38,7 +55,7 @@ export default async function SupplyOrdersRoute({
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Управление закупками</div>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Что нужно заказать</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-              Единое рабочее место снабжения: от потребности технолога до поставщика, графика, платежа и приемки на склад.
+              Единое рабочее место снабжения: от потребности технолога до поставщика, графика, платежа и контроля плана/факта.
             </p>
           </div>
           <Link href={ROUTES.SUPPLY} className="inline-flex min-h-11 w-fit items-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-medium text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -49,7 +66,7 @@ export default async function SupplyOrdersRoute({
 
       <nav className="grid grid-cols-1 gap-2 rounded-2xl border border-border/70 bg-card p-2 shadow-sm sm:grid-cols-3" aria-label="Режим представления заказов">
         <Link
-          href={`${ROUTES.SUPPLY_ORDERS}?view=details`}
+          href={supplyOrdersViewHref('details', activeFactoryId)}
           className={viewLinkClass(activeView === 'details')}
           aria-current={activeView === 'details' ? 'page' : undefined}
         >
@@ -57,7 +74,7 @@ export default async function SupplyOrdersRoute({
           <span><strong>По заявкам</strong><small>Позиции и действия</small></span>
         </Link>
         <Link
-          href={ROUTES.SUPPLY_ORDERS}
+          href={supplyOrdersViewHref('summary', activeFactoryId)}
           className={viewLinkClass(activeView === 'summary')}
           aria-current={activeView === 'summary' ? 'page' : undefined}
         >
@@ -65,7 +82,7 @@ export default async function SupplyOrdersRoute({
           <span><strong>Итоги по дню</strong><small>Сводка Мат.план</small></span>
         </Link>
         <Link
-          href={`${ROUTES.SUPPLY_ORDERS}?view=history`}
+          href={supplyOrdersViewHref('history', activeFactoryId)}
           className={viewLinkClass(activeView === 'history')}
           aria-current={activeView === 'history' ? 'page' : undefined}
         >
@@ -75,14 +92,16 @@ export default async function SupplyOrdersRoute({
       </nav>
 
       {activeView === 'summary'
-        ? <SummaryView requestedFactoryId={resolvedSearchParams?.factory || null} />
+        ? <SummaryView factories={availableFactories} activeFactoryId={activeFactoryId} factoriesError={factoriesError} />
         : activeView === 'history'
-          ? <HistoryView page={page} />
+          ? <HistoryView page={page} factoryId={activeFactoryId} />
         : <DetailsView
             page={page}
             requestId={requestedRequestId}
-            factoryId={resolvedSearchParams?.factory || null}
+            factoryId={activeFactoryId}
             focusedId={resolvedSearchParams?.focus || null}
+            factories={availableFactories}
+            factoriesError={factoriesError || requestFactory.error}
           />}
     </div>
   )
@@ -97,22 +116,20 @@ function viewLinkClass(isActive: boolean) {
   ].join(' ')
 }
 
-async function SummaryView({ requestedFactoryId }: { requestedFactoryId: string | null }) {
-  const factoriesPromise = getSupplyOrderFactories()
+async function SummaryView({
+  factories,
+  activeFactoryId,
+  factoriesError,
+}: {
+  factories: MaterialReceivingFactory[]
+  activeFactoryId: string | null
+  factoriesError: string | null
+}) {
   const suppliersPromise = getSuppliers({ active_only: true })
-  const { data: factories, error: factoriesError } = await factoriesPromise
 
   if (factoriesError) {
     return <div role="alert" className="rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">{factoriesError}</div>
   }
-
-  const availableFactories = factories || []
-  const requestedFactory = availableFactories.find((factory) => factory.id === requestedFactoryId)
-  const defaultFactory = availableFactories.find((factory) => {
-    const name = factory.name.toLowerCase()
-    return name.includes('берег') || name.includes('bereg')
-  }) || availableFactories[0] || null
-  const activeFactoryId = requestedFactory?.id || defaultFactory?.id || null
 
   const [{ data: aggregates, error }, { data: suppliers }] = await Promise.all([
     getSupplyOrderAggregates(activeFactoryId),
@@ -126,14 +143,14 @@ async function SummaryView({ requestedFactoryId }: { requestedFactoryId: string 
   return (
     <SupplyOrderSummaryPage
       aggregates={aggregates || []}
-      factories={availableFactories}
+      factories={factories}
       activeFactoryId={activeFactoryId}
       suppliers={suppliers || []}
     />
   )
 }
 
-async function HistoryView({ page }: { page: number }) {
+async function HistoryView({ page, factoryId }: { page: number; factoryId: string | null }) {
   const { data: history, error, pagination } = await getSupplyOrderHistory(page, 50)
 
   if (error) {
@@ -146,6 +163,7 @@ async function HistoryView({ page }: { page: number }) {
       page={pagination?.page || page}
       pageSize={pagination?.pageSize || 50}
       total={pagination?.total || 0}
+      factoryId={factoryId}
     />
   )
 }
@@ -155,23 +173,37 @@ async function DetailsView({
   requestId,
   factoryId,
   focusedId,
+  factories,
+  factoriesError,
 }: {
   page: number
   requestId: string | null
   factoryId: string | null
   focusedId: string | null
+  factories: MaterialReceivingFactory[]
+  factoriesError: string | null
 }) {
-  const [{ data: orders, error, pagination }, { data: suppliers }] = await Promise.all([
+  if (factoriesError) {
+    return <div role="alert" className="rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">{factoriesError}</div>
+  }
+
+  const [
+    { data: orders, error, pagination },
+    { data: aggregates, error: aggregatesError },
+    { data: suppliers },
+  ] = await Promise.all([
     getSupplyOrders(page, 50, requestId, factoryId),
+    getSupplyOrderAggregates(factoryId),
     getSuppliers({ active_only: true }),
   ])
 
-  if (error) {
-    return <div role="alert" className="rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">{error}</div>
+  if (error || aggregatesError) {
+    return <div role="alert" className="rounded-2xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">{error || aggregatesError}</div>
   }
 
   return (
     <div className="space-y-4">
+      <SupplyOrderFactoryToggle factories={factories} activeFactoryId={factoryId} view="details" />
       {requestId && (
         <section className="flex flex-col gap-3 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -179,7 +211,7 @@ async function DetailsView({
             <p className="mt-0.5 text-xs text-muted-foreground">На странице оставлены только позиции текущего заказа снабжения.</p>
           </div>
           <Link
-            href={`${ROUTES.SUPPLY_ORDERS}?view=details`}
+            href={supplyOrdersViewHref('details', factoryId)}
             className="w-fit rounded-sm text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Показать все заявки
@@ -188,6 +220,7 @@ async function DetailsView({
       )}
       <SupplyOrdersPage
         items={orders || []}
+        aggregates={aggregates || []}
         suppliers={suppliers || []}
         page={pagination?.page || page}
         pageSize={pagination?.pageSize || 50}
@@ -197,4 +230,19 @@ async function DetailsView({
       />
     </div>
   )
+}
+
+function resolveActiveFactoryId(factories: MaterialReceivingFactory[], requestedFactoryId: string | null) {
+  const requestedFactory = factories.find((factory) => factory.id === requestedFactoryId)
+  const defaultFactory = factories.find((factory) => {
+    const name = factory.name.toLowerCase()
+    return name.includes('берег') || name.includes('bereg')
+  }) || factories[0] || null
+  return requestedFactory?.id || defaultFactory?.id || null
+}
+
+function supplyOrdersViewHref(view: 'details' | 'summary' | 'history', factoryId: string | null) {
+  const params = new URLSearchParams({ view })
+  if (factoryId) params.set('factory', factoryId)
+  return `${ROUTES.SUPPLY_ORDERS}?${params.toString()}`
 }
