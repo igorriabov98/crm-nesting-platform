@@ -25,8 +25,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   deleteProductionMachineFact,
+  deleteProductionTonnageFact,
   getProductionFactCuttingReadiness,
+  getProductionFactMachineItems,
+  saveProductionMachineItemFact,
   saveUnifiedProductionFact,
+  type ProductionFactMachineItemsData,
   type ProductionFactMachineFactRow,
   type ProductionFactMachineOption,
   type ProductionFactWorkspaceData,
@@ -85,10 +89,19 @@ function shiftLabel(shift: ProductionFactShift) {
 function machineSelectionLabel(options: ProductionFactMachineOption[], selectedIds: string[]) {
   if (selectedIds.length === 0) return 'Выбрать машины'
   const names = selectedIds
-    .map((id) => options.find((machine) => machine.id === id)?.name)
+    .map((id) => options.find((machine) => machine.id === id))
+    .map((machine) => machine ? machineOptionLabel(machine) : null)
     .filter(Boolean)
   if (names.length === 1) return names[0] || 'Выбрано: 1'
   return `Выбрано: ${selectedIds.length}`
+}
+
+function machineOptionLabel(machine: ProductionFactMachineOption) {
+  return `${machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}${machine.name}`
+}
+
+function stageDisplayLabel(key: ProductionFactStageKey, label: string) {
+  return key === 'cleaning' ? 'Слесарка/Зачистка' : label
 }
 
 function sectionLabel(section: ProductionFactSection | null | undefined, fallback = 'Участок') {
@@ -133,8 +146,12 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([])
   const [machineDropdownOpen, setMachineDropdownOpen] = useState(false)
   const [shift, setShift] = useState<ProductionFactShift>('day')
-  const [tonnageDrafts, setTonnageDrafts] = useState<Record<string, string>>({})
   const [comment, setComment] = useState('')
+  const [machineItemsState, setMachineItemsState] = useState<{ key: string; data: ProductionFactMachineItemsData } | null>(null)
+  const [itemQuantityDrafts, setItemQuantityDrafts] = useState<Record<string, string>>({})
+  const [machineItemsError, setMachineItemsError] = useState<string | null>(null)
+  const [machineItemsLoading, setMachineItemsLoading] = useState(false)
+  const [machineItemsReload, setMachineItemsReload] = useState(0)
   const [cuttingReadinessCheck, setCuttingReadinessCheck] = useState<CuttingReadinessCheck | null>(null)
 
   const effectiveStageKey = availableStages.some((stage) => stage.definition.key === selectedStageKey)
@@ -144,7 +161,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   const selectedStageDefinition = selectedStage?.definition || getProductionFactStageDefinition(effectiveStageKey)
   const isShippingStage = Boolean(selectedStageDefinition.isShipping)
   const isCuttingStage = selectedStageDefinition.key === 'cutting'
-  const requiresTonnage = !isShippingStage && !isCuttingStage
+  const isItemizedStage = !isShippingStage && !isCuttingStage
   const availableSections = selectedStage?.sections.filter((section) => section.section) || []
   const effectiveSectionId = availableSections.some((section) => section.section?.id === selectedSectionId)
     ? selectedSectionId
@@ -154,12 +171,33 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   const selectedTonnageFact = selectedSection
     ? data.tonnageFacts.find((fact) => fact.section_id === selectedSection.id)
     : null
-  const tonnageValue = selectedSection
-    ? tonnageDrafts[selectedSection.id] ?? (selectedTonnageFact ? String(Number(selectedTonnageFact.tonnage || 0)) : '')
-    : ''
   const canEdit = data.canEditSelectedDate && Boolean(data.selectedFactoryId)
-  const readOnlyLabel = !data.canEditSelectedDate && !data.isDirector ? 'Только просмотр: дата старше 7 дней' : null
-  const selectedMachineText = machineSelectionLabel(data.machineOptions, selectedMachineIds)
+  const readOnlyLabel = !data.canManage
+    ? 'Только просмотр: нет права редактирования'
+    : !data.canEditSelectedDate && !data.isDirector
+      ? 'Только просмотр: дата старше 7 дней'
+      : null
+  const selectedMachineText = selectedMachineIds.length === 0 && isItemizedStage
+    ? 'Выбрать заказ'
+    : machineSelectionLabel(data.machineOptions, selectedMachineIds)
+  const selectedMachineId = selectedMachineIds[0] || null
+  const machineItemsRequestKey = isItemizedStage && data.selectedFactoryId && selectedSection && selectedMachineId
+    ? [data.selectedFactoryId, data.selectedDate, selectedStageDefinition.key, selectedSection.id, selectedMachineId, shift, machineItemsReload].join(':')
+    : null
+  const machineItems = machineItemsState?.key === machineItemsRequestKey ? machineItemsState.data : null
+  const itemizedTotalWeightKg = (machineItems?.items || []).reduce((total, item) => {
+    const quantity = Number(itemQuantityDrafts[item.id] || 0)
+    return total + (Number.isFinite(quantity) ? quantity * item.unitWeightKg : 0)
+  }, 0)
+  const itemizedLines = (machineItems?.items || [])
+    .map((item) => ({ machine_item_id: item.id, quantity: Number(itemQuantityDrafts[item.id] || 0) }))
+    .filter((line) => Number.isInteger(line.quantity) && line.quantity > 0)
+  const hasInvalidItemQuantity = (machineItems?.items || []).some((item) => {
+    const raw = itemQuantityDrafts[item.id] || ''
+    if (!raw) return false
+    const quantity = Number(raw)
+    return !Number.isInteger(quantity) || quantity < 0 || quantity > item.replacementLimit
+  })
   const machineMonthGroups = useMemo<MachineMonthGroup[]>(() => {
     const groups = new Map<string, MachineMonthGroup>()
     for (const machine of data.machineOptions) {
@@ -241,6 +279,60 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
     }
   }, [cuttingReadinessRequestKey, data.selectedFactoryId, selectedMachineIds])
 
+  useEffect(() => {
+    if (!machineItemsRequestKey || !data.selectedFactoryId || !selectedSection || !selectedMachineId) return
+
+    let active = true
+    const loadItems = async () => {
+      await Promise.resolve()
+      if (!active) return
+      setMachineItemsLoading(true)
+      setMachineItemsError(null)
+      try {
+        const result = await getProductionFactMachineItems({
+          factory_id: data.selectedFactoryId!,
+          fact_date: data.selectedDate,
+          stage_key: selectedStageDefinition.key,
+          section_id: selectedSection.id,
+          machine_id: selectedMachineId,
+          shift,
+        })
+        if (!active) return
+        if (!result.success || !result.data) {
+          setMachineItemsState(null)
+          setItemQuantityDrafts({})
+          setMachineItemsError(result.error || 'Не удалось загрузить номенклатуру заказа')
+          return
+        }
+        setMachineItemsState({ key: machineItemsRequestKey, data: result.data })
+        setComment(result.data.comment || '')
+        setItemQuantityDrafts(Object.fromEntries(
+          result.data.items.map((item) => [item.id, item.currentQuantity > 0 ? String(item.currentQuantity) : '']),
+        ))
+      } catch (loadError: unknown) {
+        if (!active) return
+        setMachineItemsState(null)
+        setItemQuantityDrafts({})
+        setMachineItemsError(loadError instanceof Error ? loadError.message : 'Не удалось загрузить номенклатуру заказа')
+      } finally {
+        if (active) setMachineItemsLoading(false)
+      }
+    }
+    void loadItems()
+
+    return () => {
+      active = false
+    }
+  }, [
+    data.selectedDate,
+    data.selectedFactoryId,
+    machineItemsRequestKey,
+    selectedMachineId,
+    selectedSection,
+    selectedStageDefinition.key,
+    shift,
+  ])
+
   const dayOverviewRows = useMemo<DayOverviewRow[]>(() => {
     const rows: DayOverviewRow[] = []
     for (const stage of resolvedStages) {
@@ -251,7 +343,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
         const tonnageFact = data.tonnageFacts.find((fact) => fact.section_id === item.section!.id)
         rows.push({
           key: item.section.id,
-          stageLabel: stage.definition.label,
+          stageLabel: stageDisplayLabel(stage.definition.key, stage.definition.label),
           sectionLabel: item.label,
           facts,
           tonnage: Number(tonnageFact?.tonnage || 0),
@@ -284,6 +376,14 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
   }
 
   function toggleMachine(machineId: string) {
+    if (isItemizedStage) {
+      setSelectedMachineIds((current) => current[0] === machineId ? [] : [machineId])
+      setMachineItemsState(null)
+      setItemQuantityDrafts({})
+      setMachineItemsError(null)
+      setMachineDropdownOpen(false)
+      return
+    }
     setSelectedMachineIds((current) => (
       current.includes(machineId)
         ? current.filter((id) => id !== machineId)
@@ -296,6 +396,9 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
     setSelectedMachineIds([])
     setMachineDropdownOpen(false)
     setComment('')
+    setMachineItemsState(null)
+    setItemQuantityDrafts({})
+    setMachineItemsError(null)
   }
 
   function handleSave() {
@@ -318,15 +421,48 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
       )
       return
     }
-    if (requiresTonnage) {
-      const value = Number(tonnageValue || 0)
-      if (!Number.isFinite(value) || value < 0) {
-        toast.error('Тоннаж должен быть числом от 0')
+    if (isItemizedStage) {
+      if (selectedMachineIds.length !== 1) {
+        toast.error('Выберите один заказ')
+        return
+      }
+      if (machineItems?.legacyManualTonnage !== null && machineItems?.legacyManualTonnage !== undefined) {
+        toast.error('На эту дату уже сохранён исторический ручной тоннаж')
+        return
+      }
+      if (hasInvalidItemQuantity) {
+        toast.error('Количество должно быть целым и не превышать остаток')
+        return
+      }
+      if (itemizedLines.length === 0) {
+        toast.error('Укажите изготовленное количество')
         return
       }
     }
 
     startTransition(async () => {
+      if (isItemizedStage) {
+        const result = await saveProductionMachineItemFact({
+          factory_id: data.selectedFactoryId!,
+          fact_date: data.selectedDate,
+          stage_key: selectedStageDefinition.key,
+          section_id: selectedSection.id,
+          machine_id: selectedMachineIds[0],
+          shift,
+          lines: itemizedLines,
+          comment,
+        })
+        if (!result.success) {
+          toast.error(result.error || 'Не удалось сохранить факт по номенклатуре')
+          return
+        }
+        toast.success(`Сохранено позиций: ${result.data?.lineCount || 0}; ${formatNumber(result.data?.tonnage || 0, 3)} т`)
+        setComment('')
+        setMachineItemsReload((current) => current + 1)
+        router.refresh()
+        return
+      }
+
       const result = await saveUnifiedProductionFact({
         factory_id: data.selectedFactoryId!,
         fact_date: data.selectedDate,
@@ -334,7 +470,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
         section_id: selectedSection.id,
         machine_ids: selectedMachineIds,
         shift,
-        tonnage: requiresTonnage ? Number(tonnageValue || 0) : null,
+        tonnage: null,
         comment,
       })
 
@@ -353,6 +489,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
       setSelectedMachineIds([])
       setMachineDropdownOpen(false)
       setComment('')
+      router.refresh()
     })
   }
 
@@ -365,6 +502,22 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
         return
       }
       toast.success('Запись удалена')
+      setMachineItemsReload((current) => current + 1)
+      router.refresh()
+    })
+  }
+
+  function handleDeleteLegacyTonnage(id: string) {
+    if (!window.confirm('Удалить исторический ручной тоннаж участка за эту дату?')) return
+    startTransition(async () => {
+      const result = await deleteProductionTonnageFact(id)
+      if (!result.success) {
+        toast.error(result.error || 'Не удалось удалить ручной тоннаж')
+        return
+      }
+      toast.success('Исторический ручной тоннаж удалён')
+      setMachineItemsReload((current) => current + 1)
+      router.refresh()
     })
   }
 
@@ -442,7 +595,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                     : 'border-[#DBEAFE] bg-white text-[#334155] hover:bg-[#F8FAFC]',
                 )}
               >
-                {stage.definition.label}
+                {stageDisplayLabel(stage.definition.key, stage.definition.label)}
               </button>
             ))}
           </div>
@@ -465,8 +618,10 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
 
           <div className="space-y-1 text-sm font-medium text-[#334155]">
             <div className="flex items-center justify-between gap-2">
-              <span>Машины</span>
-              <span className="text-xs font-normal text-[#64748B]">{selectedMachineIds.length} выбрано</span>
+              <span>{isItemizedStage ? 'Заказ' : 'Машины'}</span>
+              <span className="text-xs font-normal text-[#64748B]">
+                {selectedMachineIds.length > 0 ? `${selectedMachineIds.length} выбрано` : 'не выбран'}
+              </span>
             </div>
             <div className="relative">
               <button
@@ -484,7 +639,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                 <ChevronDown className="ml-2 size-4 shrink-0 text-[#64748B]" />
               </button>
               {machineDropdownOpen ? (
-                <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-[#E2E8F0] bg-white p-1 shadow-lg" role="group" aria-label="Машины">
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-[#E2E8F0] bg-white p-1 shadow-lg" role="group" aria-label={isItemizedStage ? 'Заказы' : 'Машины'}>
                   {machineMonthGroups.map((group) => (
                     <div key={group.key} className="py-1 first:pt-0 last:pb-0">
                       <div className="sticky top-0 z-10 rounded-sm bg-[#F8FAFC] px-2 py-1 text-xs font-semibold uppercase text-[#64748B]">
@@ -498,7 +653,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                             <button
                               key={machine.id}
                               type="button"
-                              role="checkbox"
+                              role={isItemizedStage ? 'radio' : 'checkbox'}
                               aria-checked={checked}
                               className={cn(
                                 'flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[#334155] transition-colors hover:bg-[#F8FAFC] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#1E40AF]',
@@ -516,7 +671,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                                 {checked ? <Check className="size-3" /> : null}
                               </span>
                               <span className="min-w-0 flex-1 truncate">
-                                {machine.production_queue_number ? `${machine.production_queue_number}. ` : ''}{machine.name}
+                                {machineOptionLabel(machine)}
                               </span>
                               <span className="flex shrink-0 items-center gap-1.5 text-xs text-[#64748B]">
                                 {isCuttingStage && checked && readiness ? (
@@ -552,24 +707,16 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
             </select>
           </label>
 
-          {requiresTonnage ? (
-            <label className="space-y-1 text-sm font-medium text-[#334155]">
-              <span>Тоннаж, т</span>
-              <Input
-                type="number"
-                min="0"
-                step="0.001"
-                value={tonnageValue}
-                onChange={(event) => {
-                  if (!selectedSection) return
-                  setTonnageDrafts((current) => ({ ...current, [selectedSection.id]: event.target.value }))
-                }}
-                disabled={!canEdit}
-              />
-            </label>
+          {isItemizedStage ? (
+            <div className="space-y-1 text-sm font-medium text-[#334155]">
+              <span>Рассчитано</span>
+              <div className="flex h-9 items-center rounded-md border border-[#BFDBFE] bg-[#EFF6FF] px-3 font-semibold text-[#1E3A8A]">
+                {formatNumber(itemizedTotalWeightKg / 1000, 3)} т
+              </div>
+            </div>
           ) : (
             <div className="rounded-md border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-2 text-sm text-[#1E3A8A]">
-              Для этого участка тоннаж не нужен
+              {isShippingStage ? 'Тоннаж берётся из заказа' : 'Тоннаж по номенклатуре не учитывается'}
             </div>
           )}
 
@@ -581,13 +728,149 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
           <Button
             type="button"
             onClick={handleSave}
-            disabled={!canEdit || isPending || selectedMachineIds.length === 0 || !selectedSection || cuttingSaveBlocked}
+            disabled={
+              !canEdit
+              || isPending
+              || selectedMachineIds.length === 0
+              || !selectedSection
+              || cuttingSaveBlocked
+              || (isItemizedStage && (
+                machineItemsLoading
+                || !machineItems
+                || machineItems.legacyManualTonnage !== null
+                || hasInvalidItemQuantity
+                || itemizedLines.length === 0
+              ))
+            }
             className="min-w-28"
           >
             {isCuttingStage && cuttingReadinessPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             {isCuttingStage && cuttingReadinessPending ? 'Проверка карт…' : 'Сохранить'}
           </Button>
         </div>
+
+        {isItemizedStage ? (
+          <div className="overflow-hidden rounded-lg border border-[#E2E8F0]">
+            {!selectedMachineId ? (
+              <div className="px-4 py-8 text-center text-sm text-[#64748B]">
+                Выберите один заказ, чтобы ввести фактическое количество изделий.
+              </div>
+            ) : machineItemsLoading ? (
+              <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-[#64748B]" role="status">
+                <Loader2 className="size-4 animate-spin" /> Загружаем номенклатуру заказа…
+              </div>
+            ) : machineItemsError ? (
+              <Alert variant="destructive" className="rounded-none border-0">
+                <XCircle />
+                <AlertTitle>Номенклатура недоступна</AlertTitle>
+                <AlertDescription>{machineItemsError}</AlertDescription>
+              </Alert>
+            ) : machineItems?.legacyManualTonnage !== null && machineItems?.legacyManualTonnage !== undefined ? (
+              <Alert className="rounded-none border-0 border-l-4 border-[#F59E0B] bg-[#FFFBEB] text-[#92400E]">
+                <AlertTitle>Исторический агрегат — детализация недоступна</AlertTitle>
+                <AlertDescription>
+                  На участке сохранён ручной факт {formatNumber(machineItems.legacyManualTonnage, 3)} т. Его можно удалить отдельной операцией, но нельзя искусственно распределить по позициям.
+                </AlertDescription>
+                {selectedTonnageFact?.source === 'legacy_manual' ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+                    onClick={() => handleDeleteLegacyTonnage(selectedTonnageFact.id)}
+                    disabled={!selectedTonnageFact.canEdit || isPending}
+                  >
+                    <Trash2 /> Удалить ручной тоннаж
+                  </Button>
+                ) : null}
+              </Alert>
+            ) : !machineItems || machineItems.items.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-[#64748B]">
+                Для этого этапа в заказе нет применимой номенклатуры.
+              </div>
+            ) : (
+              <>
+                <div className="border-b border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+                  <div className="font-semibold text-[#12315F]">Номенклатура заказа</div>
+                  <div className="mt-1 text-xs text-[#64748B]">
+                    Сохранение заменяет факт выбранной даты, смены, участка и заказа.
+                  </div>
+                </div>
+                <div className="max-w-full overflow-x-auto">
+                  <table className="w-full min-w-[920px] text-left text-sm">
+                    <thead className="border-b border-[#E2E8F0] bg-white text-xs uppercase text-[#64748B]">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Чертёж</th>
+                        <th className="px-3 py-2 font-medium">Наименование</th>
+                        <th className="px-3 py-2 text-right font-medium">Заказано</th>
+                        <th className="px-3 py-2 text-right font-medium">Выполнено</th>
+                        <th className="px-3 py-2 text-right font-medium">Остаток</th>
+                        <th className="w-32 px-3 py-2 font-medium">За смену</th>
+                        <th className="px-3 py-2 text-right font-medium">Вес ед., кг</th>
+                        <th className="px-3 py-2 text-right font-medium">Вес, кг</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {machineItems.items.map((item) => {
+                        const rawQuantity = itemQuantityDrafts[item.id] || ''
+                        const quantity = Number(rawQuantity || 0)
+                        const invalid = rawQuantity !== '' && (
+                          !Number.isInteger(quantity) || quantity < 0 || quantity > item.replacementLimit
+                        )
+                        return (
+                          <tr key={item.id} className="align-middle">
+                            <td className="px-3 py-2 font-medium text-[#12315F]">{item.drawingNumber || '—'}</td>
+                            <td className="max-w-[260px] px-3 py-2 text-[#334155]">{item.productName}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{item.orderedQuantity}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{item.completedQuantity}</td>
+                            <td className="px-3 py-2 text-right font-medium tabular-nums text-[#12315F]">{item.remainingQuantity}</td>
+                            <td className="px-3 py-2">
+                              <label>
+                                <span className="sr-only">Количество за смену: {item.productName}</span>
+                                <Input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min="0"
+                                  max={item.replacementLimit}
+                                  step="1"
+                                  value={rawQuantity}
+                                  aria-invalid={invalid}
+                                  onChange={(event) => setItemQuantityDrafts((current) => ({
+                                    ...current,
+                                    [item.id]: event.target.value,
+                                  }))}
+                                  disabled={!canEdit}
+                                  className={cn('h-8', invalid && 'border-[#DC2626] focus-visible:ring-[#DC2626]')}
+                                />
+                              </label>
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">{formatNumber(item.unitWeightKg, 3)}</td>
+                            <td className="px-3 py-2 text-right font-medium tabular-nums text-[#12315F]">
+                              {formatNumber(Math.max(0, quantity || 0) * item.unitWeightKg, 3)}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                    <tfoot className="border-t border-[#BFDBFE] bg-[#EFF6FF] font-semibold text-[#12315F]">
+                      <tr>
+                        <td colSpan={7} className="px-3 py-2 text-right">Итого</td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {formatNumber(itemizedTotalWeightKg, 3)} кг / {formatNumber(itemizedTotalWeightKg / 1000, 3)} т
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                {hasInvalidItemQuantity ? (
+                  <div className="border-t border-[#FECACA] bg-[#FEF2F2] px-4 py-2 text-sm text-[#B91C1C]" role="alert">
+                    Количество должно быть целым и не превышать остаток по позиции.
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
 
         {isCuttingStage && selectedMachineIds.length > 0 && cuttingReadinessPending ? (
           <Alert className="border-[#BFDBFE] bg-[#EFF6FF] text-[#1E3A8A]" role="status" aria-live="polite">
@@ -648,7 +931,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
           <div className="rounded-md border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-sm text-[#1E3A8A]">
             По {duplicateSelectedCount} выбранным машинам факт заготовки уже есть. Система проверит и спишет только новые складские резервы.
           </div>
-        ) : duplicateSelectedCount > 0 && !isShippingStage ? (
+        ) : duplicateSelectedCount > 0 && !isShippingStage && !isItemizedStage ? (
           <div className="rounded-md border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2 text-sm text-[#92400E]">
             {duplicateSelectedCount} выбранных машин уже есть в этом участке и смене. При сохранении они будут пропущены.
           </div>
@@ -660,7 +943,7 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
           <div className="border-b border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
             <div className="text-sm font-semibold text-[#12315F]">Записи выбранного участка</div>
             <div className="mt-1 text-xs text-[#64748B]">
-              {selectedStageDefinition.label} · {sectionLabel(selectedSection, selectedStageDefinition.label)}
+              {stageDisplayLabel(selectedStageDefinition.key, selectedStageDefinition.label)} · {sectionLabel(selectedSection, selectedStageDefinition.label)}
             </div>
           </div>
 
@@ -695,7 +978,10 @@ export function ProductionFactPage({ data }: { data: ProductionFactWorkspaceData
                 <div className="grid gap-3 px-4 py-3 md:grid-cols-3">
                   <Metric label="Тоннаж участка" value={`${formatNumber(Number(selectedTonnageFact?.tonnage || 0), 3)} т`} />
                   <Metric label="Вчера" value={`${formatNumber(Number(selectedTonnageFact?.previousTonnage || 0), 3)} т`} />
-                  <Metric label="Изменено" value={selectedTonnageFact ? formatDateTime(selectedTonnageFact.updated_at) : '—'} />
+                  <Metric
+                    label={selectedTonnageFact?.source === 'legacy_manual' ? 'Исторический ручной факт' : 'Изменено'}
+                    value={selectedTonnageFact ? formatDateTime(selectedTonnageFact.updated_at) : '—'}
+                  />
                 </div>
               )}
             </div>

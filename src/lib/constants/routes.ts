@@ -37,6 +37,8 @@ export const ROUTES = {
   SALES_PAYMENTS: '/sales/payments',
   FINANCE_CALENDAR:'/finance/calendar',
   REPORTS_COMPLEX: '/reports/complex',
+  REPORTS_PRODUCTION: '/reports/production',
+  REPORTS_PRODUCTION_SETTINGS: '/reports/production/settings',
   TASKS:          '/tasks',
   CUSTOMS_CLEARANCE: '/customs-clearance',
   REQUESTS:       '/requests',

@@ -42,6 +42,8 @@ const PAGE_TITLES: Record<string, string> = {
   [ROUTES.INVOICES]: 'Инвойсы',
   [ROUTES.FINANCE_CALENDAR]: 'Финансовый план',
   [ROUTES.REPORTS_COMPLEX]: 'Комплексные отчёты',
+  [ROUTES.REPORTS_PRODUCTION]: 'Производственная аналитика',
+  [ROUTES.REPORTS_PRODUCTION_SETTINGS]: 'Настройки производственной аналитики',
   [ROUTES.ADMIN_SETTINGS]: 'Настройки',
   [ROUTES.ADMIN_DATABASE]: 'База данных',
   [ROUTES.ADMIN_DATABASE_ALL]: 'Все компании',

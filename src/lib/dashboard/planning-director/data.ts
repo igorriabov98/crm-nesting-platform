@@ -10,7 +10,12 @@ import {
   sortPersonalItems,
   splitSupplyRisks,
 } from './calculations'
-import { getStageIntervals, prorateStageIntervalsForPeriod, type ProductionStageIntervalValue } from '@/lib/production-stage-intervals'
+import {
+  getStageIntervals,
+  prorateStageIntervalsForWorkingPeriod,
+  type FactoryCalendarExceptionValue,
+  type ProductionStageIntervalValue,
+} from '@/lib/production-stage-intervals'
 import type {
   PlanningAssemblyTonnage,
   PlanningDashboardFactory,
@@ -177,7 +182,7 @@ export async function getPlanningAssemblyTonnage(
 ): Promise<PlanningAssemblyTonnage> {
   const admin = db()
   const bounds = monthBounds(month)
-  const [machinesResult, sectionsResult] = await Promise.all([
+  const [machinesResult, sectionsResult, calendarResult] = await Promise.all([
     admin.from('machines_with_totals')
       .select('id, total_weight, production_stages(id, stage_type, workshop, date_start, date_end, planned_date_end, is_skipped, production_stage_intervals(id, production_stage_id, position, date_start, date_end, workshop))')
       .eq('factory_id', factoryId)
@@ -187,9 +192,14 @@ export async function getPlanningAssemblyTonnage(
       .eq('factory_id', factoryId)
       .eq('is_active', true)
       .is('archived_at', null),
+    admin.from('factory_work_calendar_exceptions')
+      .select('work_date, is_working')
+      .eq('factory_id', factoryId),
   ])
   throwOnError(machinesResult, 'Не удалось загрузить план тоннажа')
   throwOnError(sectionsResult, 'Не удалось загрузить участки факта')
+  throwOnError(calendarResult, 'Не удалось загрузить календарь завода')
+  const calendar = (calendarResult.data || []) as FactoryCalendarExceptionValue[]
 
   type Stage = {
     id: string
@@ -214,8 +224,8 @@ export async function getPlanningAssemblyTonnage(
       intervals: assembly.production_stage_intervals,
     })
     const weight = Number(machine.total_weight || 0)
-    monthPlan += prorateStageIntervalsForPeriod(weight, intervals, bounds.start, bounds.end).tons
-    todayPlan += prorateStageIntervalsForPeriod(weight, intervals, today, today).tons
+    monthPlan += prorateStageIntervalsForWorkingPeriod(weight, intervals, bounds.start, bounds.end, calendar).tons
+    todayPlan += prorateStageIntervalsForWorkingPeriod(weight, intervals, today, today, calendar).tons
   }
 
   type SectionRow = { id: string; parent_id: string | null; name: string }

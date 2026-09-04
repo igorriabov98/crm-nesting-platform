@@ -51,8 +51,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 57, 'Реестр должен содержать все 57 ресурсов')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 57, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 58, 'Реестр должен содержать все 58 ресурсов')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 58, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -78,6 +78,9 @@ assert(hasPermission(getFullPermissionMap(), 'product_production_drawings', 'man
 assert(!hasPermission(getDefaultPermissionMap('financial_director'), 'complex_reports', 'view'), 'Комплексные отчёты по умолчанию выдаются только через матрицу доступа')
 assert(!hasPermission(getDefaultPermissionMap('sales_manager'), 'complex_reports', 'view'), 'Роль не должна автоматически открывать комплексные отчёты')
 assert(hasPermission(getFullPermissionMap(), 'complex_reports', 'view'), 'CRM-администратор должен видеть комплексные отчёты')
+assert(!hasPermission(getDefaultPermissionMap('planning_director'), 'production_reports', 'view'), 'Производственная аналитика по умолчанию закрыта')
+assert(!hasPermission(getDefaultPermissionMap('production_manager'), 'production_reports', 'manage'), 'Роль производства не должна автоматически управлять отчётом')
+assert(hasPermission(getFullPermissionMap(), 'production_reports', 'manage'), 'CRM-администратор должен управлять производственной аналитикой')
 assert(hasPermission(getDefaultPermissionMap('sales_manager'), 'client_payments', 'manage'), 'Sales-менеджер должен вести оплаты своих компаний')
 assert(hasPermission(getDefaultPermissionMap('commercial_director'), 'client_payments', 'manage'), 'Директор должен вести оплаты всех компаний')
 assert(hasPermission(getDefaultPermissionMap('commercial_director'), 'invoices', 'manage'), 'Коммерческий директор должен управлять инвойсами в своей области')
@@ -87,6 +90,16 @@ assert.equal(
   getPermissionRequirementForPath('/reports/complex')?.resourceKey,
   'complex_reports',
   'Маршрут комплексных отчётов должен использовать отдельное право',
+)
+assert.equal(
+  getPermissionRequirementForPath('/reports/production')?.operation,
+  'view',
+  'Основной производственный отчёт должен требовать production_reports.view',
+)
+assert.equal(
+  getPermissionRequirementForPath('/reports/production/settings')?.operation,
+  'manage',
+  'Настройки производственного отчёта должны требовать production_reports.manage',
 )
 const longStockLayoutSettings = PERMISSION_RESOURCES.find((resource) => resource.key === 'long_stock_layout_settings')
 assert(longStockLayoutSettings?.locked, 'Настройки раскладки хлыстов должны быть закрытым ресурсом администратора')

@@ -11,6 +11,7 @@ export type ProductionFactStageKey =
 export type ProductionFactStageDefinition = {
   key: ProductionFactStageKey
   label: string
+  displayLabel?: string
   stageType: StageType
   sortOrder: number
   isShipping?: boolean
@@ -46,7 +47,7 @@ export const PRODUCTION_FACT_STANDARD_STAGES: readonly ProductionFactStageDefini
     label: 'Сборка/Сварка',
     stageType: 'assembly',
     sortOrder: 20,
-    productionStageType: null,
+    productionStageType: 'assembly',
     children: [
       { key: 'workshop_1', label: 'Цех 1', sortOrder: 10 },
       { key: 'workshop_2', label: 'Цех 2', sortOrder: 20 },
@@ -55,9 +56,10 @@ export const PRODUCTION_FACT_STANDARD_STAGES: readonly ProductionFactStageDefini
   {
     key: 'cleaning',
     label: 'Зачистка',
+    displayLabel: 'Слесарка/Зачистка',
     stageType: 'cleaning',
     sortOrder: 30,
-    productionStageType: null,
+    productionStageType: 'cleaning',
     children: [{ key: 'cleaning', label: 'Зачистка', sortOrder: 10 }],
   },
   {
@@ -65,7 +67,7 @@ export const PRODUCTION_FACT_STANDARD_STAGES: readonly ProductionFactStageDefini
     label: 'Малярка',
     stageType: 'painting',
     sortOrder: 40,
-    productionStageType: null,
+    productionStageType: 'painting',
     children: [{ key: 'painting', label: 'Малярка', sortOrder: 10 }],
   },
   {
@@ -73,7 +75,7 @@ export const PRODUCTION_FACT_STANDARD_STAGES: readonly ProductionFactStageDefini
     label: 'Упаковка',
     stageType: 'packaging',
     sortOrder: 50,
-    productionStageType: null,
+    productionStageType: 'packaging',
     children: [{ key: 'packaging', label: 'Упаковка', sortOrder: 10 }],
   },
   {
@@ -82,7 +84,7 @@ export const PRODUCTION_FACT_STANDARD_STAGES: readonly ProductionFactStageDefini
     stageType: 'actual_shipping',
     sortOrder: 60,
     isShipping: true,
-    productionStageType: null,
+    productionStageType: 'actual_shipping',
     children: [{ key: 'actual_shipping', label: 'Отгрузка', sortOrder: 10 }],
   },
 ] as const
