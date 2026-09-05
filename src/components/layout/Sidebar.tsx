@@ -491,8 +491,8 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
 
         {renderMenu({
           items: reportsItems,
-          label: 'Отчёты',
-          collapsedTitle: 'Отчёты',
+          label: 'Аналитика',
+          collapsedTitle: 'Аналитика',
           isActive: isReportsActive,
           isExpanded: isReportsExpanded,
           toggle: () => setIsReportsMenuOpen((current) => !current),

@@ -66,6 +66,16 @@ export function isPersonalOpenOrder(
     || Boolean(order.client_id && responsibleClientIds.has(order.client_id))
 }
 
+export function isOpenOrderVisibleForCompanyScope(
+  order: PersonalOpenOrderInput,
+  userId: string,
+  responsibleClientIds: ReadonlySet<string>,
+  canViewAllCompanies: boolean,
+) {
+  if (canViewAllCompanies) return !order.is_archived && !order.delivery_to_client_date
+  return isPersonalOpenOrder(order, userId, responsibleClientIds)
+}
+
 export function calculateMyOrderProductionProgress(input: {
   stages: readonly MyOrderStage[]
   items: readonly ProgressItem[]

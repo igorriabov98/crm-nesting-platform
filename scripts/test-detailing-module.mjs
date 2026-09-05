@@ -21,6 +21,7 @@ const [
   warehousePage,
   inventoryPage,
   detailingRoute,
+  machineCleanupActorMigration,
 ] = await Promise.all([
   read('supabase/migrations/20260719163223_detailing_module.sql'),
   read('supabase/migrations/20260719163222_detailing_task_type.sql'),
@@ -35,6 +36,7 @@ const [
   read('src/components/features/inventory/DetailingWarehousePage.tsx'),
   read('src/components/features/inventory/InventoryPage.tsx'),
   read('src/app/(protected)/inventory/detailing/page.tsx'),
+  read('supabase/migrations/20260905100000_fix_detailing_actor_during_machine_cleanup.sql'),
 ])
 
 assert.match(taskTypeMigration, /ADD VALUE IF NOT EXISTS 'detailing_transfer'/)
@@ -92,6 +94,8 @@ assert.match(warehousePage, /INVENTORY_DETAILING\}\?factory=/)
 assert.match(inventoryPage, /INVENTORY_DETAILING\}\$\{historyFactoryQuery\}/)
 assert.match(detailingRoute, /searchParams\?: Promise<\{ factory\?: string \}>/)
 assert.match(detailingRoute, /activeFactoryId=\{activeFactory\?\.id \|\| null\}/)
+assert.match(machineCleanupActorMigration, /SELECT COALESCE\([\s\S]*auth\.uid\(\)[\s\S]*SELECT COALESCE\(machine\.archived_by, machine\.created_by\)/)
+assert.doesNotMatch(machineCleanupActorMigration, /SELECT COALESCE\(auth\.uid\(\), machine\.archived_by, machine\.created_by\)[\s\S]*FROM public\.machines machine/)
 
 if (process.env.DETAILING_TEST_DATABASE_URL) {
   const result = spawnSync('psql', [
