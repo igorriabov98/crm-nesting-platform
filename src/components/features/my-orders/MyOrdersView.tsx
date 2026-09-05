@@ -1,7 +1,8 @@
 import Link from 'next/link'
-import { CalendarDays, ClipboardList, PackageCheck, Rows3 } from 'lucide-react'
+import { Archive, CalendarDays, ClipboardList, PackageCheck, Rows3 } from 'lucide-react'
 
 import { MachineProgressBadge } from '@/components/features/machines/MachineStatusBadge'
+import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ROUTES } from '@/lib/constants/routes'
@@ -76,13 +77,25 @@ function ProductionProgress({
   )
 }
 
+function OrderStatus({ order }: { order: MyOrderSummary }) {
+  if (order.isArchived) {
+    return (
+      <Badge variant="outline" className="h-auto min-h-5 max-w-full gap-1 border-slate-300 bg-slate-100 py-1 text-slate-700">
+        <Archive className="h-3 w-3 shrink-0" aria-hidden="true" />
+        В архиве
+      </Badge>
+    )
+  }
+  return <MachineProgressBadge progress={order.status} className="h-auto min-h-5 max-w-full overflow-visible whitespace-normal py-1 text-left leading-4" />
+}
+
 function MobileOrderCard({ order }: { order: MyOrderSummary }) {
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="min-w-0">
         <OrderName order={order} />
         <p className="mt-1 break-words text-sm text-slate-500">{order.clientName || 'Клиент не указан'}</p>
-        <MachineProgressBadge progress={order.status} className="mt-3 h-auto min-h-5 max-w-full overflow-visible whitespace-normal py-1 text-left leading-4" />
+        <div className="mt-3"><OrderStatus order={order} /></div>
       </div>
 
       <div className="mt-4 border-t border-slate-100 pt-4">
@@ -143,7 +156,7 @@ export function MyOrdersView({ orders }: { orders: MyOrderSummary[] }) {
 
           <section className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm md:block" aria-labelledby="my-orders-table-title" data-testid="my-orders-table">
             <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
-              <h2 id="my-orders-table-title" className="text-base font-semibold text-slate-950">Заказы в работе</h2>
+              <h2 id="my-orders-table-title" className="text-base font-semibold text-slate-950">Заказы без даты получения</h2>
               <p className="mt-0.5 text-xs text-slate-500">Сначала ближайшие плановые даты отгрузки</p>
             </div>
             <Table className="w-full table-fixed">
@@ -162,7 +175,7 @@ export function MyOrdersView({ orders }: { orders: MyOrderSummary[] }) {
                     <TableCell className="whitespace-normal break-words py-3"><OrderName order={order} /></TableCell>
                     <TableCell className="whitespace-normal break-words py-3 text-slate-600">{order.clientName || 'Не указан'}</TableCell>
                     <TableCell className="whitespace-normal py-3">
-                      <MachineProgressBadge progress={order.status} className="h-auto min-h-5 overflow-visible whitespace-normal py-1 leading-4" />
+                      <OrderStatus order={order} />
                     </TableCell>
                     <TableCell className="whitespace-normal py-3">
                       <ProductionProgress orderName={order.name} progress={order.productionProgress} />

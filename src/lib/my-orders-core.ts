@@ -41,7 +41,7 @@ export type MyOrderProductionProgress =
       applicableKg: 0
     }
 
-export type PersonalOpenOrderInput = {
+export type UndeliveredOrderInput = {
   created_by: string
   client_id: string | null
   is_archived: boolean
@@ -56,24 +56,24 @@ export function mergePersonalOrderIds(...groups: readonly (readonly string[])[])
   return Array.from(new Set(groups.flat()))
 }
 
-export function isPersonalOpenOrder(
-  order: PersonalOpenOrderInput,
+export function isPersonalUndeliveredOrder(
+  order: UndeliveredOrderInput,
   userId: string,
   responsibleClientIds: ReadonlySet<string>,
 ) {
-  if (order.is_archived || order.delivery_to_client_date) return false
+  if (order.delivery_to_client_date) return false
   return order.created_by === userId
     || Boolean(order.client_id && responsibleClientIds.has(order.client_id))
 }
 
-export function isOpenOrderVisibleForCompanyScope(
-  order: PersonalOpenOrderInput,
+export function isUndeliveredOrderVisibleForCompanyScope(
+  order: UndeliveredOrderInput,
   userId: string,
   responsibleClientIds: ReadonlySet<string>,
   canViewAllCompanies: boolean,
 ) {
-  if (canViewAllCompanies) return !order.is_archived && !order.delivery_to_client_date
-  return isPersonalOpenOrder(order, userId, responsibleClientIds)
+  if (canViewAllCompanies) return !order.delivery_to_client_date
+  return isPersonalUndeliveredOrder(order, userId, responsibleClientIds)
 }
 
 export function calculateMyOrderProductionProgress(input: {
