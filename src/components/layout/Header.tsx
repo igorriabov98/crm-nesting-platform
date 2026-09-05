@@ -31,6 +31,7 @@ const PAGE_TITLES: Record<string, string> = {
   [ROUTES.SALES_PLAN]: 'План продаж',
   [ROUTES.SALES_PLAN + '/new']: 'Новая машина',
   [ROUTES.SALES_PLAN_PRICES]: 'Цены клиентов',
+  [ROUTES.SALES_MY_ORDERS]: 'Мои заказы',
   [ROUTES.PRODUCTS]: 'База продукции',
   [ROUTES.PRODUCTS_NEW]: 'Новый продукт',
   [ROUTES.PRODUCT_PROJECTS]: 'Проекты изделий',

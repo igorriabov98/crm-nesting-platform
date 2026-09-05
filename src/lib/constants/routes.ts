@@ -28,6 +28,7 @@ export const ROUTES = {
   SALES_PLAN:          '/sales-plan',
   SALES_PLAN_NEW:      '/sales-plan/new',
   SALES_PLAN_PRICES:   '/sales-plan/prices',
+  SALES_MY_ORDERS:     '/sales/my-orders',
   PRODUCTS:       '/products',
   PRODUCTS_NEW:   '/products/new',
   PRODUCT_PROJECTS:     '/product-projects',

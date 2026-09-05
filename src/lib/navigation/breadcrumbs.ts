@@ -1,6 +1,7 @@
 export const BREADCRUMB_SEGMENT_LABELS: Record<string, string> = {
   dashboard: 'Дашборд',
   'sales-plan': 'План продаж',
+  'my-orders': 'Мои заказы',
   'product-projects': 'Проекты продукции',
   products: 'Продукция',
   mail: 'Почта',
