@@ -172,6 +172,8 @@ jobs:
         run: npm run test:machine-archive-queue
       - name: Machine detailing cleanup actor
         run: npm run test:machine-detailing-cleanup
+      - name: Machine operational dependency cleanup
+        run: npm run test:machine-operational-cleanup
       - name: Long-stock layout settings
         run: npm run test:long-stock-layout-settings
       - name: Long-stock cutting fact
