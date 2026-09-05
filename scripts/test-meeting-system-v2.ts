@@ -38,6 +38,10 @@ const cronAuthorization = readFileSync(
   resolve(root, "src/lib/meetings-v2/cron-auth.ts"),
   "utf8",
 );
+const meetingActions = readFileSync(
+  resolve(root, "src/app/(protected)/meetings/v2-actions.ts"),
+  "utf8",
+);
 
 for (const table of [
   "meeting_templates",
@@ -134,5 +138,18 @@ assert.match(workerMigration, /'\*\/5 \* \* \* \*'/);
 assert.match(workerMigration, /vault\.decrypted_secrets/);
 assert.match(workerMigration, /verify_meeting_system_v2_cron_secret/);
 assert.match(cronAuthorization, /verify_meeting_system_v2_cron_secret/);
+assert.equal(
+  meetingActions.match(
+    /meeting_questions!meeting_questions_assigned_meeting_id_fkey/g,
+  )?.length,
+  2,
+  "Meeting dashboards must select the direct question assignment relationship",
+);
+assert.match(
+  meetingActions,
+  /meeting:meetings!meeting_questions_assigned_meeting_id_fkey/,
+);
+assert.doesNotMatch(meetingActions, /questions:meeting_questions\(/);
+assert.doesNotMatch(meetingActions, /meeting:meetings\(/);
 
 console.log("Meeting system v2 contracts: OK");
