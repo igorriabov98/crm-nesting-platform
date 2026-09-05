@@ -60,6 +60,18 @@ BEGIN
   IF position('SKIP LOCKED' IN upper(pg_get_functiondef('public.claim_meeting_rule_events_v2(integer)'::regprocedure))) = 0 THEN
     RAISE EXCEPTION 'Rule event claim must use SKIP LOCKED';
   END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM cron.job
+    WHERE jobname = 'meeting-rules-worker-v2' AND schedule = '* * * * *'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM cron.job
+    WHERE jobname = 'meeting-reminders-worker-v2' AND schedule = '*/5 * * * *'
+  ) THEN
+    RAISE EXCEPTION 'Supabase meeting worker schedules are missing';
+  END IF;
+  IF has_function_privilege('authenticated', 'public.verify_meeting_system_v2_cron_secret(text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Meeting cron secret verifier must be service-role only';
+  END IF;
 
   BEGIN
     UPDATE public.meeting_rule_versions

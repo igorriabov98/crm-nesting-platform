@@ -50,6 +50,15 @@ SELECT jsonb_build_object(
       FROM public.meeting_rule_events event
       WHERE event.processed_at IS NULL
         AND event.created_at < now() - interval '15 minutes'
+    ),
+    'ruleWorkerSchedule', COALESCE((
+      SELECT schedule FROM cron.job WHERE jobname = 'meeting-rules-worker-v2'
+    ), 'missing'),
+    'reminderWorkerSchedule', COALESCE((
+      SELECT schedule FROM cron.job WHERE jobname = 'meeting-reminders-worker-v2'
+    ), 'missing'),
+    'workerSecretConfigured', EXISTS (
+      SELECT 1 FROM vault.secrets WHERE name = 'meeting_system_v2_cron_secret'
     )
   ),
   'catalog', jsonb_build_object(
