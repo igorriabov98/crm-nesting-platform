@@ -39,6 +39,13 @@ try {
       SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid;
     $$;
 
+    CREATE TYPE public.detailing_reservation_status AS ENUM (
+      'active', 'partially_consumed', 'consumed', 'released', 'cancelled'
+    );
+    CREATE TYPE public.detailing_transfer_status AS ENUM (
+      'needs_date', 'scheduled', 'partially_received', 'completed', 'cancelled'
+    );
+
     CREATE TABLE public.machines (
       id uuid PRIMARY KEY,
       created_by uuid NOT NULL,
@@ -62,18 +69,86 @@ try {
 
     CREATE TABLE public.detailing_reservations (
       id uuid PRIMARY KEY,
+      request_id uuid NOT NULL DEFAULT gen_random_uuid(),
       machine_id uuid NOT NULL,
       machine_item_id uuid NOT NULL,
       part_id uuid NOT NULL,
-      status text NOT NULL
+      requested_quantity integer NOT NULL DEFAULT 100,
+      consumed_quantity integer NOT NULL DEFAULT 0,
+      released_quantity integer NOT NULL DEFAULT 0,
+      status public.detailing_reservation_status NOT NULL
     );
 
     CREATE TABLE public.detailing_reservation_allocations (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       reservation_id uuid NOT NULL,
       factory_id uuid NOT NULL,
-      quantity integer NOT NULL
+      quantity integer NOT NULL,
+      released_quantity integer NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE public.detailing_request_checks (
+      request_id uuid PRIMARY KEY,
+      decision text NOT NULL
+    );
+
+    CREATE TABLE public.detailing_transfers (
+      id uuid PRIMARY KEY,
+      source_factory_id uuid NOT NULL,
+      status public.detailing_transfer_status NOT NULL,
+      updated_by uuid NOT NULL,
+      completed_at timestamptz
+    );
+
+    CREATE TABLE public.detailing_transfer_items (
+      id uuid PRIMARY KEY,
+      transfer_id uuid NOT NULL REFERENCES public.detailing_transfers(id) ON DELETE CASCADE,
+      reservation_id uuid NOT NULL,
+      part_id uuid NOT NULL,
+      requested_quantity integer NOT NULL CHECK (requested_quantity > 0),
+      received_quantity integer NOT NULL DEFAULT 0 CHECK (received_quantity >= 0),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT detailing_transfer_item_received_limit CHECK (received_quantity <= requested_quantity)
+    );
+
+    CREATE FUNCTION public.detailing_refresh_transfer_status(
+      p_transfer_id uuid,
+      p_actor uuid
+    ) RETURNS public.detailing_transfer_status
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = public
+    AS $$
+    DECLARE
+      v_requested integer;
+      v_received integer;
+      v_status public.detailing_transfer_status;
+    BEGIN
+      SELECT
+        COALESCE(sum(requested_quantity), 0)::integer,
+        COALESCE(sum(received_quantity), 0)::integer
+      INTO v_requested, v_received
+      FROM public.detailing_transfer_items
+      WHERE transfer_id = p_transfer_id;
+
+      v_status := CASE
+        WHEN v_requested = 0 OR v_received >= v_requested
+          THEN 'completed'::public.detailing_transfer_status
+        WHEN v_received > 0
+          THEN 'partially_received'::public.detailing_transfer_status
+        ELSE 'scheduled'::public.detailing_transfer_status
+      END;
+
+      UPDATE public.detailing_transfers
+      SET status = v_status,
+          completed_at = CASE WHEN v_status = 'completed' THEN now() ELSE NULL END,
+          updated_by = p_actor
+      WHERE id = p_transfer_id;
+
+      RETURN v_status;
+    END;
+    $$;
 
     CREATE TYPE public.detailing_movement_type AS ENUM ('unreserve');
 
@@ -240,6 +315,8 @@ try {
     path.join(root, 'supabase/migrations/20260905100000_fix_detailing_actor_during_machine_cleanup.sql'),
     '-f',
     path.join(root, 'supabase/migrations/20260905110000_fix_detailing_movement_during_machine_cleanup.sql'),
+    '-f',
+    path.join(root, 'supabase/migrations/20260905120000_fix_detailing_transfer_release_zero_quantity.sql'),
   ])
 
   psql(String.raw`
@@ -276,6 +353,23 @@ try {
       '40000000-0000-0000-0000-000000000001',
       5
     );
+    INSERT INTO public.detailing_transfers(id, source_factory_id, status, updated_by)
+    VALUES (
+      '60000000-0000-0000-0000-000000000001',
+      '40000000-0000-0000-0000-000000000001',
+      'scheduled',
+      '90000000-0000-0000-0000-000000000001'
+    );
+    INSERT INTO public.detailing_transfer_items(
+      id, transfer_id, reservation_id, part_id, requested_quantity, received_quantity
+    ) VALUES (
+      '70000000-0000-0000-0000-000000000001',
+      '60000000-0000-0000-0000-000000000001',
+      '50000000-0000-0000-0000-000000000001',
+      '30000000-0000-0000-0000-000000000001',
+      5,
+      0
+    );
 
     SELECT set_config('request.jwt.claim.sub', '90000000-0000-0000-0000-000000000002', false);
     DELETE FROM public.machines WHERE id = '10000000-0000-0000-0000-000000000001';
@@ -299,6 +393,18 @@ try {
       END IF;
       IF (SELECT performed_by FROM public.detailing_movements) <> '90000000-0000-0000-0000-000000000002'::uuid THEN
         RAISE EXCEPTION 'Delete actor was not preserved on detailing movement';
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM public.detailing_transfer_items
+        WHERE id = '70000000-0000-0000-0000-000000000001'
+      ) THEN
+        RAISE EXCEPTION 'Fully released zero-receipt transfer item was not removed during machine delete';
+      END IF;
+      IF (
+        SELECT status FROM public.detailing_transfers
+        WHERE id = '60000000-0000-0000-0000-000000000001'
+      ) <> 'completed' THEN
+        RAISE EXCEPTION 'Empty detailing transfer was not completed during machine delete';
       END IF;
     END;
     $assertions$;
@@ -325,6 +431,40 @@ try {
       '40000000-0000-0000-0000-000000000001',
       3
     );
+    INSERT INTO public.detailing_transfers(id, source_factory_id, status, updated_by)
+    VALUES (
+      '60000000-0000-0000-0000-000000000002',
+      '40000000-0000-0000-0000-000000000001',
+      'partially_received',
+      '90000000-0000-0000-0000-000000000001'
+    );
+    INSERT INTO public.detailing_transfer_items(
+      id, transfer_id, reservation_id, part_id, requested_quantity, received_quantity
+    ) VALUES (
+      '70000000-0000-0000-0000-000000000002',
+      '60000000-0000-0000-0000-000000000002',
+      '50000000-0000-0000-0000-000000000002',
+      '30000000-0000-0000-0000-000000000001',
+      5,
+      2
+    );
+    INSERT INTO public.detailing_transfers(id, source_factory_id, status, updated_by)
+    VALUES (
+      '60000000-0000-0000-0000-000000000003',
+      '40000000-0000-0000-0000-000000000001',
+      'scheduled',
+      '90000000-0000-0000-0000-000000000001'
+    );
+    INSERT INTO public.detailing_transfer_items(
+      id, transfer_id, reservation_id, part_id, requested_quantity, received_quantity
+    ) VALUES (
+      '70000000-0000-0000-0000-000000000003',
+      '60000000-0000-0000-0000-000000000003',
+      '50000000-0000-0000-0000-000000000002',
+      '30000000-0000-0000-0000-000000000001',
+      3,
+      0
+    );
 
     SELECT set_config('request.jwt.claim.sub', '90000000-0000-0000-0000-000000000003', false);
     UPDATE public.machines
@@ -340,6 +480,30 @@ try {
           AND performed_by = '90000000-0000-0000-0000-000000000003'
       ) THEN
         RAISE EXCEPTION 'Existing machine must remain linked on archive movement';
+      END IF;
+      IF (
+        SELECT requested_quantity FROM public.detailing_transfer_items
+        WHERE id = '70000000-0000-0000-0000-000000000002'
+      ) <> 2 THEN
+        RAISE EXCEPTION 'Partially received transfer item was not reduced to its received quantity';
+      END IF;
+      IF (
+        SELECT status FROM public.detailing_transfers
+        WHERE id = '60000000-0000-0000-0000-000000000002'
+      ) <> 'completed' THEN
+        RAISE EXCEPTION 'Fully received remainder was not marked completed during machine archive';
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM public.detailing_transfer_items
+        WHERE id = '70000000-0000-0000-0000-000000000003'
+      ) THEN
+        RAISE EXCEPTION 'Fully released zero-receipt transfer item was not removed during machine archive';
+      END IF;
+      IF (
+        SELECT status FROM public.detailing_transfers
+        WHERE id = '60000000-0000-0000-0000-000000000003'
+      ) <> 'completed' THEN
+        RAISE EXCEPTION 'Empty detailing transfer was not completed during machine archive';
       END IF;
     END;
     $archive_assertions$;
