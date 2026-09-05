@@ -78,7 +78,6 @@ export type MyOrderSummary = {
   name: string
   clientName: string | null
   desiredShippingDate: string | null
-  isArchived: boolean
   status: MachineProgress
   productionProgress: MyOrderProductionProgress
   canOpenDetails: boolean
@@ -117,6 +116,7 @@ async function loadCreatedMachineIds(admin: ReturnType<typeof createAdminClient>
     const result = await admin.from('machines')
       .select('id')
       .eq('created_by', userId)
+      .eq('is_archived', false)
       .is('delivery_to_client_date', null)
       .order('id')
       .range(from, to)
@@ -128,6 +128,7 @@ async function loadAllUndeliveredMachineIds(admin: ReturnType<typeof createAdmin
   return loadAllPages<IdRow>(async (from, to) => {
     const result = await admin.from('machines')
       .select('id')
+      .eq('is_archived', false)
       .is('delivery_to_client_date', null)
       .order('id')
       .range(from, to)
@@ -152,6 +153,7 @@ async function loadResponsibleMachineIds(admin: ReturnType<typeof createAdminCli
       const result = await admin.from('machines')
         .select('id')
         .in('client_id', ids)
+        .eq('is_archived', false)
         .is('delivery_to_client_date', null)
         .order('id')
         .range(from, to)
@@ -173,6 +175,7 @@ async function loadMachines(admin: ReturnType<typeof createAdminClient>, machine
           production_stages(id, stage_type, date_start, date_end, is_skipped)
         `)
         .in('id', ids)
+        .eq('is_archived', false)
         .is('delivery_to_client_date', null)
         .order('id')
         .range(from, to)
@@ -363,7 +366,6 @@ async function buildMyOrderSummaries(
       name: machine.name,
       clientName: firstRelation(machine.client)?.name || null,
       desiredShippingDate: machine.desired_shipping_date,
-      isArchived: machine.is_archived,
       status: resolveMachineProgressWithContext({
         is_confirmed: machine.is_confirmed,
         actual_shipping_date: machine.actual_shipping_date,

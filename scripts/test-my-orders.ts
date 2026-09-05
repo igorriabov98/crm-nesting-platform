@@ -27,11 +27,11 @@ assert(isPersonalUndeliveredOrder({ ...baseOrder, created_by: userId }, userId, 
 assert(isPersonalUndeliveredOrder({ ...baseOrder, client_id: 'client-own' }, userId, responsibleClientIds), 'Ответственный за клиента должен видеть заказ')
 assert(isPersonalUndeliveredOrder({ ...baseOrder, created_by: userId, client_id: 'client-own' }, userId, responsibleClientIds), 'Совпадение обоих условий должно сохранять заказ')
 assert(!isPersonalUndeliveredOrder(baseOrder, userId, responsibleClientIds), 'Чужой заказ должен быть исключён')
-assert(isPersonalUndeliveredOrder({ ...baseOrder, created_by: userId, is_archived: true }, userId, responsibleClientIds), 'Архивный заказ без даты получения должен оставаться в списке')
+assert(!isPersonalUndeliveredOrder({ ...baseOrder, created_by: userId, is_archived: true }, userId, responsibleClientIds), 'Архивный заказ должен быть исключён')
 assert(!isPersonalUndeliveredOrder({ ...baseOrder, created_by: userId, delivery_to_client_date: '2026-09-05' }, userId, responsibleClientIds), 'Полученный клиентом заказ должен быть исключён')
 assert(isUndeliveredOrderVisibleForCompanyScope(baseOrder, userId, responsibleClientIds, true), 'Область компаний «Все» должна включать чужой заказ без даты получения')
 assert(!isUndeliveredOrderVisibleForCompanyScope(baseOrder, userId, responsibleClientIds, false), 'Личная область не должна включать чужой заказ')
-assert(isUndeliveredOrderVisibleForCompanyScope({ ...baseOrder, is_archived: true }, userId, responsibleClientIds, true), 'Область «Все» должна включать архивный заказ без даты получения')
+assert(!isUndeliveredOrderVisibleForCompanyScope({ ...baseOrder, is_archived: true }, userId, responsibleClientIds, true), 'Область «Все» не должна включать архивный заказ')
 assert(!isUndeliveredOrderVisibleForCompanyScope({ ...baseOrder, delivery_to_client_date: '2026-09-05' }, userId, responsibleClientIds, true), 'Область «Все» не должна включать полученный заказ')
 assert.deepEqual(mergePersonalOrderIds(['created', 'both'], ['responsible', 'both']), ['created', 'both', 'responsible'], 'Заказ, совпавший по двум условиям, не должен дублироваться')
 assert('supportsCompanyScope' in RESOURCE_BY_KEY.my_orders && RESOURCE_BY_KEY.my_orders.supportsCompanyScope, 'Ресурс «Мои заказы» должен поддерживать область компаний')
@@ -134,7 +134,7 @@ assert.match(serviceSource, /\.eq\('created_by', userId\)/u, 'Личный на�
 assert.match(serviceSource, /\.eq\('responsible_user_id', userId\)/u, 'Личный набор должен включать заказы ответственных клиентов')
 assert.match(serviceSource, /companyScopes\.my_orders\?\.view === 'all'/u, 'Страница должна учитывать область компаний «Все» из матрицы доступа')
 assert.match(serviceSource, /loadAllUndeliveredMachineIds/u, 'Для области «Все» должен загружаться полный разрешённый набор')
-assert.doesNotMatch(serviceSource, /\.eq\('is_archived', false\)/u, 'Архивный статус не должен скрывать заказ без даты получения')
+assert.match(serviceSource, /\.eq\('is_archived', false\)/u, 'Архивные заказы должны отсеиваться серверно')
 assert.match(serviceSource, /\.is\('delivery_to_client_date', null\)/u, 'Заказы с датой получения должны отсеиваться серверно')
 assert.match(serviceSource, /loadMachineProgressContexts/u, 'Статус должен строиться через существующий MachineProgress')
 assert.match(pageSource, /loadMyOrdersPageData/u, 'Страница должна загружать данные на сервере')
@@ -163,7 +163,6 @@ const renderedOrders = renderToStaticMarkup(createElement(MyOrdersView, {
       name: 'Заказ 1',
       clientName: 'Клиент 1',
       desiredShippingDate: '2026-09-20',
-      isArchived: false,
       status,
       productionProgress: fortyFivePercent,
       canOpenDetails: true,
@@ -173,7 +172,6 @@ const renderedOrders = renderToStaticMarkup(createElement(MyOrdersView, {
       name: 'Заказ 2',
       clientName: null,
       desiredShippingDate: null,
-      isArchived: true,
       status,
       productionProgress: legacy,
       canOpenDetails: false,
@@ -185,7 +183,7 @@ assert(!renderedOrders.includes('href="/sales-plan/order-2"'), 'Без sales_pla
 assert.match(renderedOrders, /aria-valuetext="45%, 180 из 400 кг"/u, 'SSR должен сохранять доступное значение прогресса')
 assert.match(renderedOrders, /20\.09\.2026/u, 'Плановая дата должна форматироваться по-русски')
 assert.match(renderedOrders, /Не указана/u, 'SSR должен показывать отсутствие плановой даты')
-assert.match(renderedOrders, /В архиве/u, 'SSR должен явно показывать архивный статус заказа')
+assert.doesNotMatch(renderedOrders, /В архиве/u, 'Страница не должна предлагать архивное состояние заказа')
 
 const emptyOrders = renderToStaticMarkup(createElement(MyOrdersView, { orders: [] }))
 assert.match(emptyOrders, /Нет заказов без даты получения клиентом/u, 'SSR должен показывать пустое состояние')

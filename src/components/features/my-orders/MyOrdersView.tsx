@@ -1,8 +1,7 @@
 import Link from 'next/link'
-import { Archive, CalendarDays, ClipboardList, PackageCheck, Rows3 } from 'lucide-react'
+import { CalendarDays, ClipboardList, PackageCheck, Rows3 } from 'lucide-react'
 
 import { MachineProgressBadge } from '@/components/features/machines/MachineStatusBadge'
-import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ROUTES } from '@/lib/constants/routes'
@@ -78,14 +77,6 @@ function ProductionProgress({
 }
 
 function OrderStatus({ order }: { order: MyOrderSummary }) {
-  if (order.isArchived) {
-    return (
-      <Badge variant="outline" className="h-auto min-h-5 max-w-full gap-1 border-slate-300 bg-slate-100 py-1 text-slate-700">
-        <Archive className="h-3 w-3 shrink-0" aria-hidden="true" />
-        В архиве
-      </Badge>
-    )
-  }
   return <MachineProgressBadge progress={order.status} className="h-auto min-h-5 max-w-full overflow-visible whitespace-normal py-1 text-left leading-4" />
 }
 
@@ -128,7 +119,7 @@ export function MyOrdersView({ orders }: { orders: MyOrderSummary[] }) {
             </div>
             <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">Мои заказы</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">
-              Доступные вам заказы без даты получения клиентом.
+              Доступные вам активные заказы без даты получения клиентом.
             </p>
           </div>
           <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-sm font-medium text-blue-50">

@@ -61,7 +61,7 @@ export function isPersonalUndeliveredOrder(
   userId: string,
   responsibleClientIds: ReadonlySet<string>,
 ) {
-  if (order.delivery_to_client_date) return false
+  if (order.is_archived || order.delivery_to_client_date) return false
   return order.created_by === userId
     || Boolean(order.client_id && responsibleClientIds.has(order.client_id))
 }
@@ -72,7 +72,7 @@ export function isUndeliveredOrderVisibleForCompanyScope(
   responsibleClientIds: ReadonlySet<string>,
   canViewAllCompanies: boolean,
 ) {
-  if (canViewAllCompanies) return !order.delivery_to_client_date
+  if (canViewAllCompanies) return !order.is_archived && !order.delivery_to_client_date
   return isPersonalUndeliveredOrder(order, userId, responsibleClientIds)
 }
 
