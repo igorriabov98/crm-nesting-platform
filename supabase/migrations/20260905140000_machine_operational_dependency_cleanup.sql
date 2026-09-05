@@ -85,6 +85,19 @@ ALTER TABLE public.machine_operational_cleanup_context_v1 ENABLE ROW LEVEL SECUR
 REVOKE ALL ON TABLE public.machine_operational_cleanup_context_v1
   FROM PUBLIC, anon, authenticated, service_role;
 
+-- Reconciliation rows are immutable audit records and already snapshot the
+-- source inventory, type and stock length. When a still-unconsumed historical
+-- reservation is released, retain that audit row and clear only its live FK.
+ALTER TABLE public.long_stock_cutting_reconciled_source_bars
+  DROP CONSTRAINT IF EXISTS long_stock_cutting_reconciled_source_bars_reservation_id_fkey;
+ALTER TABLE public.long_stock_cutting_reconciled_source_bars
+  ALTER COLUMN reservation_id DROP NOT NULL;
+ALTER TABLE public.long_stock_cutting_reconciled_source_bars
+  ADD CONSTRAINT long_stock_cutting_reconciled_source_bars_reservation_id_fkey
+  FOREIGN KEY (reservation_id)
+  REFERENCES public.inventory_reservations(id)
+  ON DELETE SET NULL;
+
 CREATE OR REPLACE FUNCTION public.fn_reject_cancelled_long_stock_request_item_mutation()
 RETURNS trigger
 LANGUAGE plpgsql

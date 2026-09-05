@@ -65,6 +65,7 @@ DECLARE
   v_consumer_bar constant uuid := 'a1000000-0000-0000-0000-000000000005';
   v_consumer_reservation constant uuid := 'a1000000-0000-0000-0000-000000000006';
   v_dependency constant uuid := 'a1000000-0000-0000-0000-000000000007';
+  v_reconciliation constant uuid := 'a2000000-0000-0000-0000-000000000001';
   v_result jsonb;
   v_failed boolean := false;
   v_fact_section uuid;
@@ -375,6 +376,21 @@ BEGIN
     inventory_id, version_id, bar_id, linked_by
   ) VALUES (v_future_scrap_a, v_producer_version, v_producer_bar, v_actor);
 
+  INSERT INTO public.long_stock_cutting_source_reconciliations(
+    id, version_id, plan_id, request_item_table, request_item_id,
+    status, expected_sources, actual_sources, reconciled_by
+  ) VALUES (
+    v_reconciliation, v_producer_version, v_producer_plan,
+    'request_pipe', v_pipe_stock_item, 'matched', '[]'::jsonb, '[]'::jsonb, v_actor
+  );
+  INSERT INTO public.long_stock_cutting_reconciled_source_bars(
+    reconciliation_id, version_id, bar_id, reservation_id,
+    reservation_piece_number, source_inventory_id, source_type, stock_length_mm
+  ) VALUES (
+    v_reconciliation, v_producer_version, v_producer_bar, v_stock_reservation,
+    1, v_stock, 'warehouse_stock', 12000
+  );
+
   UPDATE public.inventory
   SET reserved_quantity = 4688, reserved_secondary_quantity = 1
   WHERE id = v_future_scrap_a;
@@ -440,6 +456,14 @@ BEGIN
     SELECT 1 FROM public.inventory_reservations
     WHERE machine_id = v_machine AND consumed_at IS NULL
   ) THEN RAISE EXCEPTION 'active inventory reservation survived archive'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.long_stock_cutting_reconciled_source_bars
+    WHERE reconciliation_id = v_reconciliation
+      AND bar_id = v_producer_bar
+      AND reservation_id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'reconciled source audit did not survive reservation release';
+  END IF;
   IF EXISTS (
     SELECT 1 FROM public.detailing_reservations
     WHERE machine_id = v_machine AND status IN ('active', 'partially_consumed')
