@@ -27,6 +27,17 @@ const deployWorkflow = readFileSync(
   resolve(root, ".github/workflows/deploy.yml"),
   "utf8",
 );
+const workerMigration = readFileSync(
+  resolve(
+    root,
+    "supabase/migrations/20260905210000_meeting_system_v2_external_cron.sql",
+  ),
+  "utf8",
+);
+const cronAuthorization = readFileSync(
+  resolve(root, "src/lib/meetings-v2/cron-auth.ts"),
+  "utf8",
+);
 
 for (const table of [
   "meeting_templates",
@@ -116,5 +127,12 @@ assert.match(shadowReport, /duplicateActiveEpisodes/);
 assert.match(shadowReport, /stalePendingEvents/);
 assert.match(deployWorkflow, /meeting_system_v2_shadow\.sql/);
 assert.match(deployWorkflow, /meeting-system-v2-shadow-\$\{\{ github\.sha \}\}/);
+assert.match(workerMigration, /meeting-rules-worker-v2/);
+assert.match(workerMigration, /'\* \* \* \* \*'/);
+assert.match(workerMigration, /meeting-reminders-worker-v2/);
+assert.match(workerMigration, /'\*\/5 \* \* \* \*'/);
+assert.match(workerMigration, /vault\.decrypted_secrets/);
+assert.match(workerMigration, /verify_meeting_system_v2_cron_secret/);
+assert.match(cronAuthorization, /verify_meeting_system_v2_cron_secret/);
 
 console.log("Meeting system v2 contracts: OK");
