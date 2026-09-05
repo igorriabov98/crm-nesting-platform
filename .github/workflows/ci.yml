@@ -34,6 +34,8 @@ jobs:
         run: node --test scripts/prod-crm-smoke.test.mjs
       - name: Access control registry and policies
         run: npm run test:access-control
+      - name: Meeting templates, DSL, schedules and lifecycle contracts
+        run: npm run test:meetings-v2
       - name: My orders calculations and UI contracts
         run: npm run test:my-orders
       - name: Production analytics calculations and UI contracts
@@ -210,6 +212,8 @@ jobs:
         run: npm run test:long-stock-cutting-plan-server
       - name: Production item facts and concurrency
         run: npm run test:production-analytics-db
+      - name: Meeting database lifecycle, RLS and queue
+        run: npm run test:meetings-v2-db
 
   real-fixtures:
     name: real fixtures

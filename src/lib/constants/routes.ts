@@ -63,6 +63,7 @@ export const ROUTES = {
   MEETINGS:       '/meetings',
   MEETINGS_NEW:   '/meetings/new',
   MEETINGS_AGENDA_POOL: '/meetings/agenda-pool',
+  ADMIN_MEETINGS_SETTINGS: '/admin/settings/meetings',
   SUPPLY:         '/supply',
   SUPPLY_FINANCE: '/supply/finance',
   SUPPLY_MATERIAL_REQUESTS: '/supply/material-requests',

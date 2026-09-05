@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/meetings/rules/evaluate",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/meetings/reminders",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

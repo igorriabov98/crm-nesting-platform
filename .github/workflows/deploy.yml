@@ -121,8 +121,32 @@ jobs:
         run: npm ci
       - name: Install psql
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Read-only meetings v2 migration preflight
+        run: |
+          psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 -At \
+            -f supabase/reports/meeting_system_v2_preflight.sql \
+            | tee meeting-system-v2-preflight.json
+      - name: Upload meetings v2 preflight report
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-system-v2-preflight-${{ github.sha }}
+          path: meeting-system-v2-preflight.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Apply Supabase migrations through ledger
         run: npm run supabase:migrate
+      - name: Read-only meetings v2 shadow readiness report
+        run: |
+          psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 -At \
+            -f supabase/reports/meeting_system_v2_shadow.sql \
+            | tee meeting-system-v2-shadow.json
+      - name: Upload meetings v2 shadow report
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-system-v2-shadow-${{ github.sha }}
+          path: meeting-system-v2-shadow.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Read-only legacy long-stock reconciliation preflight
         run: |
           psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 <<'SQL'

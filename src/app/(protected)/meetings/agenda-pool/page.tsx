@@ -1,49 +1,60 @@
-import { ListChecks } from 'lucide-react'
-
-import { AccessDenied } from '@/components/ui/AccessDenied'
-import { AgendaPoolManager } from '@/components/features/meetings/AgendaPoolManager'
-import { getAgendaPool, getAgendaPoolMeetingOptions, getMeetingTypes } from '@/app/(protected)/meetings/actions'
-import { requirePermission } from '@/lib/permissions/server'
+import { AccessDenied } from "@/components/ui/AccessDenied";
+import { AgendaPoolWorkspace } from "@/components/features/meetings-v2/AgendaPoolWorkspace";
+import { getAgendaPoolV2 } from "@/app/(protected)/meetings/v2-actions";
+import { requirePermission } from "@/lib/permissions/server";
 
 export const metadata = {
-  title: 'Пул повесток | CRM Завода',
-}
+  title: "Пул повесток | CRM Завода",
+};
 
-export default async function AgendaPoolPage() {
-  const allowed = await requirePermission('meetings_agenda_pool', 'view')
+export default async function AgendaPoolPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const allowed = await requirePermission("meetings_agenda_pool", "view")
     .then(() => true)
-    .catch(() => false)
-  if (!allowed) return <AccessDenied />
+    .catch(() => false);
+  if (!allowed) return <AccessDenied />;
 
-  const [{ data: poolItems, error: poolError }, { data: meetings, error: meetingsError }, { data: meetingTypes }] = await Promise.all([
-    getAgendaPool(),
-    getAgendaPoolMeetingOptions(),
-    getMeetingTypes(),
-  ])
-
-  const error = poolError || meetingsError
-
+  const params = await searchParams;
+  const [data, canManage] = await Promise.all([
+    getAgendaPoolV2({
+      status: params.status as
+        | "new"
+        | "assigned"
+        | "in_meeting"
+        | "on_control"
+        | "deferred"
+        | "resolved"
+        | "auto_closed"
+        | "dismissed"
+        | "closed"
+        | undefined,
+      priority: params.priority,
+      factoryId: params.factoryId,
+      responsibleUserId: params.responsibleUserId,
+      ruleId: params.ruleId,
+      query: params.query,
+      page: Number(params.page || 1),
+      pageSize: 50,
+    }),
+    requirePermission("meetings_agenda_pool", "manage")
+      .then(() => true)
+      .catch(() => false),
+  ]);
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold text-[#1B3A6B]">
-            <ListChecks className="h-6 w-6" />
-            Пул повесток
-          </h1>
-          <p className="mt-1 text-sm text-[#6B7280]">
-            Распределение автоматически найденных пунктов к запланированным собраниям.
-          </p>
-        </div>
-      </div>
-
-      {error ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          Ошибка загрузки пула повесток: {error}
-        </div>
-      ) : (
-        <AgendaPoolManager items={poolItems || []} meetings={meetings || []} meetingTypes={meetingTypes || []} />
-      )}
-    </div>
-  )
+    <AgendaPoolWorkspace
+      data={data}
+      currentStatus={params.status || ""}
+      currentFilters={{
+        priority: params.priority,
+        factoryId: params.factoryId,
+        responsibleUserId: params.responsibleUserId,
+        ruleId: params.ruleId,
+        query: params.query,
+      }}
+      canManage={canManage}
+    />
+  );
 }

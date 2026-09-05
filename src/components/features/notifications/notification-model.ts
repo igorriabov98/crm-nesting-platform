@@ -11,6 +11,7 @@ export type NotificationItem = {
   consumable_request_id: string | null
   related_mail_thread_id?: string | null
   related_department_request_id?: string | null
+  related_meeting_id?: string | null
   machine?: {
     name?: string | null
   } | null
@@ -21,6 +22,13 @@ export function isConsumableNotification(type: string) {
 }
 
 export function getNotificationDestination(notification: NotificationItem) {
+  if (notification.related_meeting_id && notification.type === 'meeting_reminder') {
+    return {
+      href: `${ROUTES.MEETINGS}/${notification.related_meeting_id}`,
+      label: 'Открыть совещание',
+    }
+  }
+
   if (notification.related_department_request_id && notification.type.startsWith('department_request_')) {
     return {
       href: `${ROUTES.REQUESTS}/detail/${notification.related_department_request_id}`,
@@ -44,11 +52,8 @@ export function getNotificationDestination(notification: NotificationItem) {
 
   if (notification.consumable_request_id) {
     const isSupplyNotification =
-      notification.type === 'consumable_request_new' ||
-      notification.type === 'consumable_request_shortage'
-    const route = isSupplyNotification
-      ? ROUTES.SUPPLY_CONSUMABLE_REQUESTS
-      : ROUTES.PRODUCTION_CONSUMABLE_REQUESTS
+      notification.type === 'consumable_request_new' || notification.type === 'consumable_request_shortage'
+    const route = isSupplyNotification ? ROUTES.SUPPLY_CONSUMABLE_REQUESTS : ROUTES.PRODUCTION_CONSUMABLE_REQUESTS
 
     return {
       href: `${route}?request=${notification.consumable_request_id}`,

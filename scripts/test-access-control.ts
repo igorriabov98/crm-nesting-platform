@@ -51,8 +51,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 59, 'Реестр должен содержать все 59 ресурсов')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 59, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 62, 'Реестр должен содержать все 62 ресурса')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 62, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -83,6 +83,11 @@ assert(!hasPermission(getDefaultPermissionMap('production_manager'), 'production
 assert(hasPermission(getFullPermissionMap(), 'production_reports', 'manage'), 'CRM-администратор должен управлять производственной аналитикой')
 assert(!hasPermission(getDefaultPermissionMap('sales_manager'), 'my_orders', 'view'), 'Мои заказы должны открываться только через матрицу доступа')
 assert(hasPermission(getFullPermissionMap(), 'my_orders', 'view'), 'CRM-администратор должен видеть Мои заказы')
+assert(!hasPermission(getDefaultPermissionMap('planning_director'), 'meeting_rules', 'view'), 'Конструктор правил по умолчанию открывается только администратору CRM')
+assert(hasPermission(getFullPermissionMap(), 'meeting_templates', 'manage'), 'CRM-администратор должен управлять шаблонами совещаний')
+assert(hasPermission(getFullPermissionMap(), 'meeting_question_templates', 'manage'), 'CRM-администратор должен управлять шаблонами вопросов')
+assert(hasPermission(getFullPermissionMap(), 'meeting_rules', 'manage'), 'CRM-администратор должен управлять правилами совещаний')
+assert.equal(getPermissionRequirementForPath('/admin/settings/meetings')?.resourceKey, 'meeting_templates', 'Конструктор совещаний должен иметь отдельное право')
 assert.equal(getPermissionRequirementForPath('/sales/my-orders')?.resourceKey, 'my_orders', 'Маршрут Моих заказов должен использовать отдельное право')
 assert.equal(getPermissionRequirementForPath('/sales/my-orders')?.operation, 'view', 'Маршрут Моих заказов должен требовать право просмотра')
 assert(!getSidebarResources('sales_manager', getDefaultPermissionMap('sales_manager'), 'sales').some((resource) => resource.key === 'my_orders'), 'Пункт Моих заказов должен быть скрыт без матричного права')
@@ -284,6 +289,7 @@ const apiRoutesWithDedicatedAuthorization = new Set([
   'src/app/api/mail/pubsub/route.ts',
   'src/app/api/mail/watch/renew/route.ts',
   'src/app/api/meetings/reminders/route.ts',
+  'src/app/api/meetings/rules/evaluate/route.ts',
   'src/app/api/tasks/due/route.ts',
   'src/app/api/telegram/webhook/route.ts',
   'src/app/api/version/route.ts',

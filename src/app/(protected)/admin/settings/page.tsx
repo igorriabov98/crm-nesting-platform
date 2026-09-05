@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Archive, Bot, Building2, Factory, Mail, Ruler, Send, Settings, ShieldCheck, Users } from 'lucide-react'
+import { Archive, Bot, Building2, CalendarClock, Factory, Mail, Ruler, Send, Settings, ShieldCheck, Users } from 'lucide-react'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -42,6 +42,14 @@ export default async function AdminSettingsPage() {
   }
 
   const cards = [
+    canViewResource(permissions, 'meeting_templates') && {
+      key: 'meetings',
+      title: 'Совещания и повестки',
+      description: 'Шаблоны совещаний и вопросов, расписания, правила появления, группировка и маршрутизация повесток.',
+      href: ROUTES.ADMIN_MEETINGS_SETTINGS,
+      buttonLabel: 'Открыть конструктор',
+      icon: CalendarClock,
+    },
     canOpenAccessSettings && {
       key: 'access',
       title: 'Управление доступом',

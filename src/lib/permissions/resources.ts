@@ -53,6 +53,9 @@ export type ResourceKey =
   | 'nesting_settings'
   | 'meetings'
   | 'meetings_agenda_pool'
+  | 'meeting_templates'
+  | 'meeting_question_templates'
+  | 'meeting_rules'
   | 'notifications'
   | 'mail'
   | 'admin_settings'
@@ -701,6 +704,34 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: ['planning_director'],
     routes: [{ path: ROUTES.MEETINGS_AGENDA_POOL, match: 'prefix', operation: 'view', priority: 90 }],
     sidebar: { section: 'meetings', icon: 'agenda', order: 20 },
+  },
+  {
+    key: 'meeting_templates',
+    label: 'Шаблоны совещаний',
+    description: 'Типы, расписания, участники и маршрутизация совещаний',
+    group: 'Совещания',
+    defaultHref: ROUTES.ADMIN_MEETINGS_SETTINGS,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.ADMIN_MEETINGS_SETTINGS, match: 'prefix', operation: 'view', priority: 120 }],
+  },
+  {
+    key: 'meeting_question_templates',
+    label: 'Шаблоны вопросов',
+    description: 'Формулировки, результаты и задачи вопросов повестки',
+    group: 'Совещания',
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [],
+  },
+  {
+    key: 'meeting_rules',
+    label: 'Правила и триггеры совещаний',
+    description: 'Условия, группировка, маршрутизация и уведомления',
+    group: 'Совещания',
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [],
   },
   {
     key: 'mail',

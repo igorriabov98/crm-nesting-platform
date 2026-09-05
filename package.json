@@ -84,6 +84,9 @@
     "test:shipping-factory": "node scripts/test-shipping-and-factory-source.mjs",
     "test:customs-clearance": "tsx --test src/lib/customs-clearance.test.ts && node scripts/test-customs-clearance.mjs && tsx scripts/test-customs-clearance-pdfs.tsx && node scripts/test-customs-clearance-db.mjs",
     "test:client-delivery-date-tasks": "node scripts/test-client-delivery-date-tasks.mjs && node scripts/test-client-delivery-date-tasks-db.mjs",
+    "test:meetings-v2": "tsx --test src/lib/meetings-v2/dsl.test.ts src/lib/meetings-v2/schedule.test.ts && tsx scripts/test-meeting-system-v2.ts",
+    "test:meetings-v2-db": "node scripts/test-meeting-system-v2-db.mjs",
+    "report:meetings-migration": "tsx scripts/report-meeting-migration-readonly.ts",
     "smoke:prod": "tsx scripts/prod-smoke.ts",
     "smoke:user:create": "tsx scripts/create-smoke-user.ts",
     "supabase:migrate": "tsx scripts/apply-supabase-migrations.ts"
