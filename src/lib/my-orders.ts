@@ -3,7 +3,7 @@ import 'server-only'
 import { loadMachineProgressContexts, resolveMachineProgressWithContext } from '@/lib/actions/machine-progress'
 import {
   calculateMyOrderProductionProgress,
-  isPersonalOpenOrder,
+  isOpenOrderVisibleForCompanyScope,
   isQuantitativeStage,
   mergePersonalOrderIds,
   type MyOrderProgressFact,
@@ -122,6 +122,18 @@ async function loadCreatedMachineIds(admin: ReturnType<typeof createAdminClient>
       .range(from, to)
     return { data: (result.data || []) as IdRow[], error: result.error }
   }, 'Не удалось загрузить созданные заказы')
+}
+
+async function loadAllOpenMachineIds(admin: ReturnType<typeof createAdminClient>) {
+  return loadAllPages<IdRow>(async (from, to) => {
+    const result = await admin.from('machines')
+      .select('id')
+      .eq('is_archived', false)
+      .is('delivery_to_client_date', null)
+      .order('id')
+      .range(from, to)
+    return { data: (result.data || []) as IdRow[], error: result.error }
+  }, 'Не удалось загрузить заказы без даты получения')
 }
 
 async function loadResponsibleClients(admin: ReturnType<typeof createAdminClient>, userId: string) {
@@ -295,10 +307,17 @@ function sortMachines(left: MachineRow, right: MachineRow) {
 export async function loadMyOrdersPageData(): Promise<MyOrderSummary[]> {
   const auth = await requirePermission('my_orders', 'view')
   const userId = auth.user.id
+  const canViewAllCompanies = auth.permissionDetails.companyScopes.my_orders?.view === 'all'
 
   // The service-role client is intentionally created only after the explicit
-  // permission check. Detailed rows are loaded only for the personal ID set.
+  // permission check. Detailed rows are loaded only for the authorized ID set.
   const admin = createAdminClient()
+  if (canViewAllCompanies) {
+    const openRows = await loadAllOpenMachineIds(admin)
+    if (openRows.length === 0) return []
+    return buildMyOrderSummaries(admin, auth, openRows.map((row) => row.id), new Set(), true)
+  }
+
   const [createdRows, responsibleClients] = await Promise.all([
     loadCreatedMachineIds(admin, userId),
     loadResponsibleClients(admin, userId),
@@ -313,9 +332,24 @@ export async function loadMyOrdersPageData(): Promise<MyOrderSummary[]> {
   )
   if (personalIds.length === 0) return []
 
-  const responsibleClientIdSet = new Set(responsibleClientIds)
-  const machines = (await loadMachines(admin, personalIds))
-    .filter((machine) => isPersonalOpenOrder(machine, userId, responsibleClientIdSet))
+  return buildMyOrderSummaries(admin, auth, personalIds, new Set(responsibleClientIds), false)
+}
+
+async function buildMyOrderSummaries(
+  admin: ReturnType<typeof createAdminClient>,
+  auth: Awaited<ReturnType<typeof requirePermission>>,
+  machineIdsToLoad: string[],
+  responsibleClientIdSet: ReadonlySet<string>,
+  canViewAllCompanies: boolean,
+): Promise<MyOrderSummary[]> {
+  const userId = auth.user.id
+  const machines = (await loadMachines(admin, machineIdsToLoad))
+    .filter((machine) => isOpenOrderVisibleForCompanyScope(
+      machine,
+      userId,
+      responsibleClientIdSet,
+      canViewAllCompanies,
+    ))
     .sort(sortMachines)
   const machineIds = machines.map((machine) => machine.id)
   const [progressContexts, productionRows] = await Promise.all([

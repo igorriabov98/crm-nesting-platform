@@ -5,8 +5,10 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { MyOrdersView } from '../src/components/features/my-orders/MyOrdersView'
+import { RESOURCE_BY_KEY } from '../src/lib/permissions/resources'
 import {
   calculateMyOrderProductionProgress,
+  isOpenOrderVisibleForCompanyScope,
   isPersonalOpenOrder,
   mergePersonalOrderIds,
   type MyOrderProgressFact,
@@ -27,7 +29,12 @@ assert(isPersonalOpenOrder({ ...baseOrder, created_by: userId, client_id: 'clien
 assert(!isPersonalOpenOrder(baseOrder, userId, responsibleClientIds), 'Чужой заказ должен быть исключён')
 assert(!isPersonalOpenOrder({ ...baseOrder, created_by: userId, is_archived: true }, userId, responsibleClientIds), 'Архивный заказ должен быть исключён')
 assert(!isPersonalOpenOrder({ ...baseOrder, created_by: userId, delivery_to_client_date: '2026-09-05' }, userId, responsibleClientIds), 'Полученный клиентом заказ должен быть исключён')
+assert(isOpenOrderVisibleForCompanyScope(baseOrder, userId, responsibleClientIds, true), 'Область компаний «Все» должна включать чужой открытый заказ')
+assert(!isOpenOrderVisibleForCompanyScope(baseOrder, userId, responsibleClientIds, false), 'Личная область не должна включать чужой заказ')
+assert(!isOpenOrderVisibleForCompanyScope({ ...baseOrder, is_archived: true }, userId, responsibleClientIds, true), 'Область «Все» не должна включать архивный заказ')
+assert(!isOpenOrderVisibleForCompanyScope({ ...baseOrder, delivery_to_client_date: '2026-09-05' }, userId, responsibleClientIds, true), 'Область «Все» не должна включать полученный заказ')
 assert.deepEqual(mergePersonalOrderIds(['created', 'both'], ['responsible', 'both']), ['created', 'both', 'responsible'], 'Заказ, совпавший по двум условиям, не должен дублироваться')
+assert('supportsCompanyScope' in RESOURCE_BY_KEY.my_orders && RESOURCE_BY_KEY.my_orders.supportsCompanyScope, 'Ресурс «Мои заказы» должен поддерживать область компаний')
 
 const stages = [
   { stageType: 'assembly', isSkipped: false },
@@ -125,6 +132,8 @@ assert(permissionCheckIndex >= 0, 'Серверная загрузка долж�
 assert(adminClientIndex > permissionCheckIndex, 'Сервисный клиент можно создавать только после авторизации')
 assert.match(serviceSource, /\.eq\('created_by', userId\)/u, 'Личный набор должен включать созданные пользователем заказы')
 assert.match(serviceSource, /\.eq\('responsible_user_id', userId\)/u, 'Личный набор должен включать заказы ответственных клиентов')
+assert.match(serviceSource, /companyScopes\.my_orders\?\.view === 'all'/u, 'Страница должна учитывать область компаний «Все» из матрицы доступа')
+assert.match(serviceSource, /loadAllOpenMachineIds/u, 'Для области «Все» должен загружаться полный разрешённый набор')
 assert.match(serviceSource, /\.eq\('is_archived', false\)/u, 'Архивные заказы должны отсеиваться серверно')
 assert.match(serviceSource, /\.is\('delivery_to_client_date', null\)/u, 'Заказы с датой получения должны отсеиваться серверно')
 assert.match(serviceSource, /loadMachineProgressContexts/u, 'Статус должен строиться через существующий MachineProgress')

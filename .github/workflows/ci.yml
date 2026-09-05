@@ -168,6 +168,8 @@ jobs:
         run: npm run test:inventory-transfers
       - name: Machine archive production queue compaction
         run: npm run test:machine-archive-queue
+      - name: Machine detailing cleanup actor
+        run: npm run test:machine-detailing-cleanup
       - name: Long-stock layout settings
         run: npm run test:long-stock-layout-settings
       - name: Long-stock cutting fact

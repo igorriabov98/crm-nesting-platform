@@ -115,7 +115,7 @@ export function MyOrdersView({ orders }: { orders: MyOrderSummary[] }) {
             </div>
             <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">Мои заказы</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">
-              Заказы без даты получения клиентом, за которыми вы отвечаете или которые создали.
+              Доступные вам заказы без даты получения клиентом.
             </p>
           </div>
           <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-sm font-medium text-blue-50">
@@ -132,7 +132,7 @@ export function MyOrdersView({ orders }: { orders: MyOrderSummary[] }) {
           </div>
           <h2 className="mt-5 text-lg font-semibold text-slate-950">Нет заказов без даты получения клиентом</h2>
           <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-            Здесь появятся созданные вами заказы и заказы ваших клиентов, пока дата получения не заполнена.
+            Здесь появятся доступные вам заказы, пока дата получения клиентом не заполнена.
           </p>
         </section>
       ) : (

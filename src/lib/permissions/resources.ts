@@ -207,6 +207,7 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: [],
     routes: [{ path: ROUTES.SALES_MY_ORDERS, match: 'prefix', operation: 'view', priority: 130 }],
     sidebar: { section: 'sales', icon: 'orders', order: 12 },
+    supportsCompanyScope: true,
   },
   {
     key: 'client_prices',

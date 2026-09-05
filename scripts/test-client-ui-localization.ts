@@ -31,6 +31,10 @@ const paymentCompaniesList = readFileSync(
   join(root, 'src/components/features/payments/PaymentCompaniesList.tsx'),
   'utf8'
 )
+const sidebar = readFileSync(
+  join(root, 'src/components/layout/Sidebar.tsx'),
+  'utf8'
+)
 
 assert.match(
   clientDetail,
@@ -81,6 +85,7 @@ assert.match(paymentCompaniesList, /<SelectValue>\{debtFilterLabels\[debtFilter\
 assert.match(paymentCompaniesList, /<SelectValue>\{managerFilterLabel\}<\/SelectValue>/u)
 assert.doesNotMatch(invoiceList, /<SelectValue\s*\/>/u, 'Фильтр статусов не должен показывать техническое значение all')
 assert.doesNotMatch(paymentCompaniesList, /<SelectValue\s*\/>/u, 'Фильтры оплат не должны показывать технические значения all/unassigned')
+assert.match(sidebar, /items: reportsItems,[\s\S]*label: 'Аналитика',[\s\S]*collapsedTitle: 'Аналитика'/u, 'Группа отчётов в сайдбаре должна называться «Аналитика»')
 
 for (const label of ['Не назначен', 'От даты инвойса', 'От даты доставки', 'Предоплата + полная оплата', 'По расписанию после доставки']) {
   assert.ok(clientFormFields.includes(label), `Нет русской подписи поля клиента: ${label}`)
