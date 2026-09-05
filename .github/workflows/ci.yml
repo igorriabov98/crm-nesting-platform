@@ -162,6 +162,8 @@ jobs:
         run: npm run test:customs-clearance
       - name: Client delivery date task lifecycle
         run: npm run test:client-delivery-date-tasks
+      - name: VRB trigger permission boundary
+        run: npm run test:vrb-outsourcing
       - name: Inventory stock lifecycle
         run: node scripts/test-inventory-stock-lifecycle.mjs
       - name: Inventory factory transfers
