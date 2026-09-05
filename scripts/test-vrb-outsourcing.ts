@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (relativePath: string) => readFileSync(path.join(root, relativePath), 'utf8')
 
 const migration = read('supabase/migrations/20260831120000_vrb_mesh_outsourcing_workflow.sql')
+const triggerPermissionMigration = read('supabase/migrations/20260905130000_fix_vrb_trigger_permissions.sql')
 const productForm = read('src/components/features/products/ProductForm.tsx')
 const productActions = read('src/lib/actions/products.ts')
 const salesActions = read('src/app/(protected)/sales-plan/actions.ts')
@@ -119,6 +120,32 @@ assert.match(migration, /GRANT SELECT ON public\.machine_outsourcing_vrb_items T
 assert.match(migration, /REVOKE ALL ON FUNCTION public\.sync_vrb_mesh_for_machine\(uuid\)\s+FROM PUBLIC, anon, authenticated/)
 assert.match(migration, /REVOKE ALL ON FUNCTION public\.fn_receive_vrb_mesh\(uuid, jsonb, uuid, uuid\)\s+FROM PUBLIC, anon, authenticated/)
 assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.fn_receive_vrb_mesh\(uuid, jsonb, uuid, uuid\)\s+TO service_role/)
+for (const triggerFunction of [
+  'vrb_machine_change_trigger',
+  'vrb_operation_dispatch_trigger',
+  'vrb_transport_trip_status_trigger',
+]) {
+  assert.match(
+    triggerPermissionMigration,
+    new RegExp(`ALTER FUNCTION public\\.${triggerFunction}\\(\\)\\s+SECURITY DEFINER`),
+  )
+  assert.match(
+    triggerPermissionMigration,
+    new RegExp(`ALTER FUNCTION public\\.${triggerFunction}\\(\\)\\s+SET search_path = ''`),
+  )
+  assert.match(
+    triggerPermissionMigration,
+    new RegExp(`REVOKE ALL ON FUNCTION public\\.${triggerFunction}\\(\\)\\s+FROM PUBLIC, anon, authenticated`),
+  )
+}
+assert.match(
+  triggerPermissionMigration,
+  /REVOKE ALL ON FUNCTION public\.sync_vrb_mesh_for_machine\(uuid\)\s+FROM PUBLIC, anon, authenticated/,
+)
+assert.doesNotMatch(
+  triggerPermissionMigration,
+  /GRANT EXECUTE ON FUNCTION public\.sync_vrb_mesh_for_machine\(uuid\)\s+TO (?:PUBLIC|anon|authenticated)/,
+)
 assert.match(databaseTypes, /operation_kind: 'standard' \| 'vrb_mesh'/)
 assert.match(databaseTypes, /vrb_outsourcing_approval/)
 

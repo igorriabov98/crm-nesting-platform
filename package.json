@@ -59,7 +59,7 @@
     "test:long-stock-position-ui": "tsx --test src/lib/long-stock-position-ui.test.ts src/components/features/requests/LongStockCandidateList.test.tsx src/lib/long-stock-material-draft.test.ts src/lib/long-stock-material-weight.test.ts src/lib/materials/pipe-profile.test.ts && node scripts/test-round-pipe-profile.mjs && node scripts/test-long-stock-position-recovery.mjs",
     "test:long-stock-cutting-plan-pdf": "tsx --test src/lib/long-stock-cutting-plan-pdf.test.tsx",
     "test:outsourcing": "tsx scripts/test-outsourcing-workflow.ts",
-    "test:vrb-outsourcing": "tsx scripts/test-vrb-outsourcing.ts",
+    "test:vrb-outsourcing": "tsx scripts/test-vrb-outsourcing.ts && node scripts/test-vrb-trigger-permissions.mjs",
     "test:transport-trips": "tsx scripts/test-transport-trips.ts",
     "test:transport-date-approval": "node scripts/test-transport-date-approval.mjs",
     "test:department-requests": "tsx scripts/test-department-requests.ts",
