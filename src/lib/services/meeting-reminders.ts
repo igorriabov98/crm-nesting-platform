@@ -2,380 +2,343 @@ import { getAppUrl } from '@/lib/config'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { escapeHtml, sendTelegramMessage } from '@/lib/services/telegram'
 
-const CRM_TIME_ZONE = 'Europe/Chisinau'
-const AGENDA_REMINDER_TYPE = 'agenda_30_min'
-const DEFAULT_LOOK_AHEAD_MINUTES = 30
+const DEFAULT_LOOK_AHEAD_MINUTES = 6
 const MAX_AGENDA_ITEMS_IN_MESSAGE = 15
+const MAX_REMINDER_OFFSET_MINUTES = 10_080
 
-type DbError = { message: string; code?: string } | null
-type DbResult<T = unknown> = { data: T | null; error: DbError }
-type LooseQuery<T = unknown> = PromiseLike<DbResult<T>> & {
-  select: (columns?: string) => LooseQuery<T>
-  insert: (values: unknown) => LooseQuery<T>
-  update: (values: unknown) => LooseQuery<T>
-  eq: (column: string, value: unknown) => LooseQuery<T>
-  gte: (column: string, value: unknown) => LooseQuery<T>
-  lte: (column: string, value: unknown) => LooseQuery<T>
-  not: (column: string, operator: string, value: unknown) => LooseQuery<T>
-  in: (column: string, values: unknown[]) => LooseQuery<T>
-  order: (column: string, options?: { ascending?: boolean }) => LooseQuery<T>
-  maybeSingle: () => Promise<DbResult<T>>
-  single: () => Promise<DbResult<T>>
+type DbError = { message?: string; code?: string } | null
+type DbResult = { data: unknown; error: DbError }
+type LooseQuery = PromiseLike<DbResult> & {
+  select: (columns?: string) => LooseQuery
+  insert: (values: unknown) => LooseQuery
+  update: (values: unknown) => LooseQuery
+  eq: (column: string, value: unknown) => LooseQuery
+  in: (column: string, values: unknown[]) => LooseQuery
+  gte: (column: string, value: unknown) => LooseQuery
+  lte: (column: string, value: unknown) => LooseQuery
+  order: (column: string, options?: Record<string, unknown>) => LooseQuery
+  maybeSingle: () => Promise<DbResult>
+  single: () => Promise<DbResult>
 }
-type LooseDb = {
-  from: <T = unknown>(table: string) => LooseQuery<T>
+type LooseDb = { from: (table: string) => LooseQuery }
+type ReminderDb = LooseDb & {
+  rpc: (fn: string, args: Record<string, unknown>) => Promise<DbResult>
 }
 
 type MeetingReminderMeeting = {
   id: string
-  meeting_type: string
   title: string | null
+  starts_at: string
   meeting_date: string
   meeting_time: string
-}
-
-type MeetingTypeRow = {
-  key: string
-  label: string
+  template: Record<string, unknown> | Record<string, unknown>[] | null
+  attendees: Array<{ user_id: string }>
+  facilitator_user_id: string | null
 }
 
 type AgendaRow = {
   id: string
-  meeting_id: string
+  assigned_meeting_id: string
   title: string
   description: string | null
-  sort_order: number
-  created_at: string | null
+  priority: string
 }
 
-type PlanningDirector = {
+type Recipient = {
   id: string
-  full_name: string
+  full_name: string | null
   telegram_chat_id: string | null
-}
-
-type ReminderRow = {
-  id: string
-  sent_at: string | null
 }
 
 export type MeetingReminderDispatchResult = {
   checkedMeetings: number
   eligibleMeetings: number
   recipients: number
-  sent: number
+  crmSent: number
+  telegramSent: number
   skipped: number
-  errors: Array<{ meetingId: string; userId: string; error: string }>
+  errors: Array<{
+    meetingId: string
+    userId: string
+    channel: 'crm' | 'telegram'
+    error: string
+  }>
 }
 
-type ZonedDateParts = {
-  date: string
-  hour: number
-  minute: number
-  second: number
+function relation(value: MeetingReminderMeeting['template']) {
+  return (Array.isArray(value) ? value[0] : value) || {}
 }
 
-function pad2(value: number) {
-  return String(value).padStart(2, '0')
+function rows(result: DbResult, label: string) {
+  if (result.error) throw new Error(`${label}: ${result.error.message || 'ошибка базы данных'}`)
+  return Array.isArray(result.data) ? (result.data as Record<string, unknown>[]) : []
 }
 
-function getZonedDateParts(date: Date): ZonedDateParts {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: CRM_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
-
-  const parts = formatter.formatToParts(date)
-  const value = (type: string) => parts.find((part) => part.type === type)?.value || '0'
-
-  return {
-    date: `${value('year')}-${value('month')}-${value('day')}`,
-    hour: Number(value('hour')),
-    minute: Number(value('minute')),
-    second: Number(value('second')),
+function formatOffset(minutes: number) {
+  if (minutes % 1440 === 0) {
+    const days = minutes / 1440
+    return days === 1 ? 'через 24 часа' : `через ${days} дн.`
   }
+  if (minutes % 60 === 0) return `через ${minutes / 60} ч.`
+  return `через ${minutes} мин.`
 }
 
-function dateOrdinal(date: string) {
-  return Math.floor(Date.parse(`${date}T00:00:00.000Z`) / 86_400_000)
+function formatMeetingDate(value: string) {
+  return new Intl.DateTimeFormat('ru-RU', {
+    dateStyle: 'long',
+    timeStyle: 'short',
+    timeZone: 'Europe/Uzhgorod',
+  }).format(new Date(value))
 }
 
-function addDays(date: string, days: number) {
-  const result = new Date(`${date}T00:00:00.000Z`)
-  result.setUTCDate(result.getUTCDate() + days)
-  return `${result.getUTCFullYear()}-${pad2(result.getUTCMonth() + 1)}-${pad2(result.getUTCDate())}`
-}
-
-function parseMeetingTime(value: string) {
-  const [hours = '0', minutes = '0'] = value.split(':')
-  return {
-    hour: Number(hours),
-    minute: Number(minutes),
-  }
-}
-
-function getMinutesUntilMeeting(meeting: MeetingReminderMeeting, nowParts: ZonedDateParts) {
-  const meetingTime = parseMeetingTime(meeting.meeting_time)
-  const nowAbsoluteMinutes =
-    dateOrdinal(nowParts.date) * 1440 +
-    nowParts.hour * 60 +
-    nowParts.minute +
-    nowParts.second / 60
-  const meetingAbsoluteMinutes =
-    dateOrdinal(meeting.meeting_date) * 1440 + meetingTime.hour * 60 + meetingTime.minute
-
-  return meetingAbsoluteMinutes - nowAbsoluteMinutes
-}
-
-function formatMeetingDate(date: string) {
-  const [year, month, day] = date.split('-')
-  return `${day}.${month}.${year}`
-}
-
-function formatMeetingTime(time: string) {
-  const [hours = '00', minutes = '00'] = time.split(':')
-  return `${hours}:${minutes}`
-}
-
-function truncateTelegramLine(value: string, maxLength = 260) {
+function truncateLine(value: string, maxLength = 220) {
   const normalized = value.replace(/\s+/g, ' ').trim()
-  if (normalized.length <= maxLength) return normalized
-  return `${normalized.slice(0, maxLength - 1).trimEnd()}...`
+  return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength - 1).trimEnd()}…`
 }
 
-function buildMeetingAgendaReminderMessage(input: {
+export function buildMeetingAgendaReminderMessage(input: {
   meeting: MeetingReminderMeeting
-  meetingLabel: string
   agendaItems: AgendaRow[]
+  offsetMinutes: number
 }) {
-  const meetingName = input.meeting.title?.trim() || input.meetingLabel || input.meeting.meeting_type
-  const visibleItems = input.agendaItems.slice(0, MAX_AGENDA_ITEMS_IN_MESSAGE)
-  const hiddenCount = input.agendaItems.length - visibleItems.length
-
-  const agendaLines = visibleItems.length > 0
-    ? visibleItems.flatMap((item, index) => {
-        const lines = [`${index + 1}. ${escapeHtml(truncateTelegramLine(item.title, 180))}`]
-        if (item.description?.trim()) {
-          lines.push(`   ${escapeHtml(truncateTelegramLine(item.description, 220))}`)
-        }
-        return lines
+  const template = relation(input.meeting.template)
+  const meetingName = input.meeting.title?.trim() || String(template.name || 'Совещание')
+  const visible = input.agendaItems.slice(0, MAX_AGENDA_ITEMS_IN_MESSAGE)
+  const agendaLines = visible.length
+    ? visible.flatMap((item, index) => {
+        const priority = item.priority === 'critical' ? '⚠️ ' : ''
+        const result = [`${index + 1}. ${priority}${escapeHtml(truncateLine(item.title, 180))}`]
+        if (item.description?.trim()) result.push(`   ${escapeHtml(truncateLine(item.description))}`)
+        return result
       })
     : ['Повестка пока пустая.']
-
-  if (hiddenCount > 0) {
-    agendaLines.push(`...и еще ${hiddenCount} пунктов`)
-  }
-
+  const hidden = input.agendaItems.length - visible.length
+  if (hidden > 0) agendaLines.push(`…и ещё ${hidden} вопросов`)
   return [
-    '<b>Собрание через 30 минут</b>',
+    `<b>Совещание ${formatOffset(input.offsetMinutes)}</b>`,
     '',
     `<b>${escapeHtml(meetingName)}</b>`,
-    `Дата: ${formatMeetingDate(input.meeting.meeting_date)}`,
-    `Время: ${formatMeetingTime(input.meeting.meeting_time)}`,
+    formatMeetingDate(input.meeting.starts_at),
     '',
     '<b>Повестка:</b>',
     ...agendaLines,
   ].join('\n')
 }
 
-async function getMeetingTypeLabels(db: LooseDb, meetings: MeetingReminderMeeting[]) {
-  const keys = Array.from(new Set(meetings.map((meeting) => meeting.meeting_type)))
-  if (keys.length === 0) return new Map<string, string>()
-
-  const { data, error } = await db
-    .from('meeting_types')
-    .select('key,label')
-    .in('key', keys)
-
-  if (error) {
-    console.warn('[Meeting reminders] Failed to load meeting type labels:', error.message)
-    return new Map<string, string>()
+async function claimReminderChannel(
+  db: ReminderDb,
+  meetingId: string,
+  userId: string,
+  offsetMinutes: number,
+  channel: 'crm' | 'telegram',
+) {
+  const result = await db.rpc('claim_meeting_reminder_delivery_v2', {
+    p_meeting_id: meetingId,
+    p_user_id: userId,
+    p_reminder_type: `agenda_${offsetMinutes}_min`,
+    p_channel: channel,
+  })
+  if (result.error) return { id: null, error: result.error.message || 'Ошибка резерва' }
+  return {
+    id: typeof result.data === 'string' ? result.data : null,
+    error: null,
   }
-
-  return new Map((data as MeetingTypeRow[] | null || []).map((row) => [row.key, row.label]))
 }
 
 async function getAgendaByMeetingId(db: LooseDb, meetingIds: string[]) {
-  if (meetingIds.length === 0) return new Map<string, AgendaRow[]>()
-
-  const { data, error } = await db
-    .from('meeting_agenda_items')
-    .select('id,meeting_id,title,description,sort_order,created_at')
-    .in('meeting_id', meetingIds)
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true })
-
-  if (error) {
-    console.warn('[Meeting reminders] Failed to load agenda items:', error.message)
-    return new Map<string, AgendaRow[]>()
-  }
-
+  const result = await db
+    .from('meeting_questions')
+    .select('id,assigned_meeting_id,title,description,priority')
+    .in('assigned_meeting_id', meetingIds)
+    .order('is_pinned', { ascending: false })
+    .order('priority_rank', { ascending: false })
+    .order('deadline', { ascending: true, nullsFirst: false })
+    .order('opened_at', { ascending: true })
   const byMeeting = new Map<string, AgendaRow[]>()
-  for (const item of (data as AgendaRow[] | null) || []) {
-    const items = byMeeting.get(item.meeting_id) || []
-    items.push(item)
-    byMeeting.set(item.meeting_id, items)
+  for (const row of rows(result, 'Не удалось загрузить повестки')) {
+    const item = row as unknown as AgendaRow
+    byMeeting.set(item.assigned_meeting_id, [...(byMeeting.get(item.assigned_meeting_id) || []), item])
   }
   return byMeeting
-}
-
-async function reserveReminder(db: LooseDb, meetingId: string, userId: string) {
-  const { data: existing, error: existingError } = await db
-    .from('meeting_telegram_reminders')
-    .select('id,sent_at')
-    .eq('meeting_id', meetingId)
-    .eq('user_id', userId)
-    .eq('reminder_type', AGENDA_REMINDER_TYPE)
-    .maybeSingle()
-
-  if (existingError) {
-    return { ok: false, skipped: false, error: existingError.message as string }
-  }
-
-  if ((existing as ReminderRow | null)?.sent_at) {
-    return { ok: false, skipped: true, error: null }
-  }
-
-  if ((existing as ReminderRow | null)?.id) {
-    return { ok: true, skipped: false, reminderId: (existing as ReminderRow).id, error: null }
-  }
-
-  const { data: inserted, error: insertError } = await db
-    .from('meeting_telegram_reminders')
-    .insert({
-      meeting_id: meetingId,
-      user_id: userId,
-      reminder_type: AGENDA_REMINDER_TYPE,
-    })
-    .select('id')
-    .single()
-
-  if (insertError) {
-    if (insertError.code === '23505') {
-      return { ok: false, skipped: true, error: null }
-    }
-    return { ok: false, skipped: false, error: insertError.message as string }
-  }
-
-  return { ok: true, skipped: false, reminderId: (inserted as { id: string }).id, error: null }
 }
 
 export async function dispatchMeetingAgendaReminders(options?: {
   now?: Date
   lookAheadMinutes?: number
 }): Promise<MeetingReminderDispatchResult> {
-  const db = createAdminClient() as unknown as LooseDb
-  const nowParts = getZonedDateParts(options?.now || new Date())
+  const db = createAdminClient() as unknown as ReminderDb
+  const now = options?.now || new Date()
   const lookAheadMinutes = options?.lookAheadMinutes ?? DEFAULT_LOOK_AHEAD_MINUTES
-  const tomorrow = addDays(nowParts.date, 1)
   const result: MeetingReminderDispatchResult = {
     checkedMeetings: 0,
     eligibleMeetings: 0,
     recipients: 0,
-    sent: 0,
+    crmSent: 0,
+    telegramSent: 0,
     skipped: 0,
     errors: [],
   }
-
-  const { data: meetingsData, error: meetingsError } = await db
+  const meetingsResult = await db
     .from('meetings')
-    .select('id,meeting_type,title,meeting_date,meeting_time')
+    .select(
+      'id,title,starts_at,meeting_date,meeting_time,facilitator_user_id,template:meeting_templates(name,reminder_offsets_minutes,notification_channels),attendees:meeting_attendees(user_id)',
+    )
     .eq('status', 'planned')
-    .gte('meeting_date', nowParts.date)
-    .lte('meeting_date', tomorrow)
-    .order('meeting_date', { ascending: true })
-    .order('meeting_time', { ascending: true })
+    .gte('starts_at', now.toISOString())
+    .lte('starts_at', new Date(now.getTime() + MAX_REMINDER_OFFSET_MINUTES * 60_000).toISOString())
+    .order('starts_at', { ascending: true })
+  const meetings = rows(meetingsResult, 'Не удалось загрузить совещания') as unknown as MeetingReminderMeeting[]
+  result.checkedMeetings = meetings.length
+  const deliveries = meetings.flatMap((meeting) => {
+    const template = relation(meeting.template)
+    const offsets = Array.isArray(template.reminder_offsets_minutes)
+      ? template.reminder_offsets_minutes.map(Number)
+      : [1440, 30]
+    const minutesUntil = (new Date(meeting.starts_at).getTime() - now.getTime()) / 60_000
+    return offsets
+      .filter((offset) => Number.isFinite(offset) && minutesUntil <= offset && minutesUntil > offset - lookAheadMinutes)
+      .map((offsetMinutes) => ({ meeting, offsetMinutes }))
+  })
+  result.eligibleMeetings = new Set(deliveries.map(({ meeting }) => meeting.id)).size
+  if (!deliveries.length) return result
 
-  if (meetingsError) {
-    throw new Error(`Не удалось загрузить собрания: ${meetingsError.message}`)
-  }
-
-  const meetings = ((meetingsData as MeetingReminderMeeting[] | null) || [])
-    .filter((meeting) => {
-      const minutesUntil = getMinutesUntilMeeting(meeting, nowParts)
-      return minutesUntil >= 0 && minutesUntil <= lookAheadMinutes
-    })
-
-  result.checkedMeetings = (meetingsData as MeetingReminderMeeting[] | null)?.length || 0
-  result.eligibleMeetings = meetings.length
-  if (meetings.length === 0) return result
-
-  const { data: usersData, error: usersError } = await db
-    .from('users')
-    .select('id,full_name,telegram_chat_id')
-    .eq('role', 'planning_director')
-    .eq('is_active', true)
-    .not('telegram_chat_id', 'is', null)
-
-  if (usersError) {
-    throw new Error(`Не удалось загрузить директора планирования: ${usersError.message}`)
-  }
-
-  const recipients = ((usersData as PlanningDirector[] | null) || [])
-    .filter((user) => !!user.telegram_chat_id?.trim())
-
-  result.recipients = recipients.length
-  if (recipients.length === 0) return result
-
-  const meetingTypeLabels = await getMeetingTypeLabels(db, meetings)
-  const agendaByMeetingId = await getAgendaByMeetingId(db, meetings.map((meeting) => meeting.id))
+  const meetingIds = [...new Set(deliveries.map(({ meeting }) => meeting.id))]
+  const agendaByMeeting = await getAgendaByMeetingId(db, meetingIds)
+  const recipientIds = [
+    ...new Set(
+      deliveries.flatMap(({ meeting }) => [
+        meeting.facilitator_user_id || '',
+        ...(meeting.attendees || []).map((attendee) => attendee.user_id),
+      ]),
+    ),
+  ].filter(Boolean)
+  const recipientsResult = recipientIds.length
+    ? await db.from('users').select('id,full_name,telegram_chat_id').in('id', recipientIds)
+    : { data: [], error: null }
+  const recipients = new Map(
+    rows(recipientsResult, 'Не удалось загрузить участников').map((row) => [
+      String(row.id),
+      row as unknown as Recipient,
+    ]),
+  )
+  result.recipients = recipients.size
   const baseUrl = getAppUrl()
 
-  for (const meeting of meetings) {
-    const meetingLabel = meetingTypeLabels.get(meeting.meeting_type) || meeting.meeting_type
-    const agendaItems = agendaByMeetingId.get(meeting.id) || []
-    const text = buildMeetingAgendaReminderMessage({ meeting, meetingLabel, agendaItems })
-    const url = `${baseUrl}/meetings/${meeting.id}`
+  for (const { meeting, offsetMinutes } of deliveries) {
+    const template = relation(meeting.template)
+    const channels = Array.isArray(template.notification_channels)
+      ? template.notification_channels.map(String)
+      : ['crm', 'telegram']
+    const userIds = [
+      ...new Set([meeting.facilitator_user_id || '', ...(meeting.attendees || []).map((attendee) => attendee.user_id)]),
+    ].filter(Boolean)
+    const meetingName = meeting.title?.trim() || String(template.name || 'Совещание')
+    const message = `${meetingName} — ${formatMeetingDate(meeting.starts_at)}. Вопросов: ${(agendaByMeeting.get(meeting.id) || []).length}.`
+    const telegramText = buildMeetingAgendaReminderMessage({
+      meeting,
+      agendaItems: agendaByMeeting.get(meeting.id) || [],
+      offsetMinutes,
+    })
 
-    for (const recipient of recipients) {
-      const reservation = await reserveReminder(db, meeting.id, recipient.id)
-      if (reservation.skipped) {
-        result.skipped += 1
-        continue
+    for (const userId of userIds) {
+      if (channels.includes('crm')) {
+        const claim = await claimReminderChannel(db, meeting.id, userId, offsetMinutes, 'crm')
+        if (claim.error) {
+          result.errors.push({
+            meetingId: meeting.id,
+            userId,
+            channel: 'crm',
+            error: claim.error,
+          })
+        } else if (!claim.id) {
+          result.skipped += 1
+        } else {
+          const crmResult = await db.from('notifications').insert({
+            user_id: userId,
+            type: 'meeting_reminder',
+            title: `Совещание ${formatOffset(offsetMinutes)}`,
+            message,
+            related_meeting_id: meeting.id,
+          })
+          if (crmResult.error) {
+            await db
+              .from('meeting_telegram_reminders')
+              .update({
+                crm_locked_at: null,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', claim.id)
+            result.errors.push({
+              meetingId: meeting.id,
+              userId,
+              channel: 'crm',
+              error: crmResult.error.message || 'Не удалось создать уведомление',
+            })
+          } else {
+            await db
+              .from('meeting_telegram_reminders')
+              .update({
+                crm_sent_at: new Date().toISOString(),
+                crm_locked_at: null,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', claim.id)
+            result.crmSent += 1
+          }
+        }
       }
-
-      if (!reservation.ok || !reservation.reminderId) {
-        result.errors.push({
-          meetingId: meeting.id,
-          userId: recipient.id,
-          error: reservation.error || 'Не удалось создать запись напоминания',
+      if (channels.includes('telegram')) {
+        const recipient = recipients.get(userId)
+        if (!recipient?.telegram_chat_id?.trim()) {
+          result.skipped += 1
+          continue
+        }
+        const claim = await claimReminderChannel(db, meeting.id, userId, offsetMinutes, 'telegram')
+        if (claim.error) {
+          result.errors.push({
+            meetingId: meeting.id,
+            userId,
+            channel: 'telegram',
+            error: claim.error,
+          })
+          continue
+        }
+        if (!claim.id) {
+          result.skipped += 1
+          continue
+        }
+        const sent = await sendTelegramMessage(recipient.telegram_chat_id, telegramText, {
+          parseMode: 'HTML',
+          replyMarkup: {
+            inline_keyboard: [
+              [
+                {
+                  text: 'Открыть совещание',
+                  url: `${baseUrl}/meetings/${meeting.id}`,
+                },
+              ],
+            ],
+          },
         })
-        continue
-      }
-
-      const sendResult = await sendTelegramMessage(recipient.telegram_chat_id!, text, {
-        parseMode: 'HTML',
-        replyMarkup: {
-          inline_keyboard: [[{ text: 'Открыть собрание', url }]],
-        },
-      })
-
-      const updatePayload = sendResult.ok
-        ? { sent_at: new Date().toISOString(), telegram_error: null, updated_at: new Date().toISOString() }
-        : { telegram_error: sendResult.error || 'Telegram API вернул ошибку', updated_at: new Date().toISOString() }
-
-      await db
-        .from('meeting_telegram_reminders')
-        .update(updatePayload)
-        .eq('id', reservation.reminderId)
-
-      if (sendResult.ok) {
-        result.sent += 1
-      } else {
-        result.errors.push({
-          meetingId: meeting.id,
-          userId: recipient.id,
-          error: sendResult.error || 'Telegram API вернул ошибку',
-        })
+        await db
+          .from('meeting_telegram_reminders')
+          .update({
+            sent_at: sent.ok ? new Date().toISOString() : null,
+            telegram_locked_at: null,
+            telegram_error: sent.ok ? null : sent.error || 'Ошибка Telegram API',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', claim.id)
+        if (sent.ok) result.telegramSent += 1
+        else
+          result.errors.push({
+            meetingId: meeting.id,
+            userId,
+            channel: 'telegram',
+            error: sent.error || 'Ошибка Telegram API',
+          })
       }
     }
   }
-
   return result
 }
