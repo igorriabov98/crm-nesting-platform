@@ -103,7 +103,7 @@ export async function getMeetingDashboardV2(
     id, title, meeting_date, meeting_time, starts_at, ends_at, status, started_at,
     completed_at, legacy_read_only, template_id,
     template:meeting_templates(id, name, color),
-    questions:meeting_questions(id, status, priority)
+    questions:meeting_questions!meeting_questions_assigned_meeting_id_fkey(id, status, priority)
   `,
     { count: "exact" },
   );
@@ -126,7 +126,7 @@ export async function getMeetingDashboardV2(
     db
       .from("meetings")
       .select(
-        "id, title, meeting_date, meeting_time, starts_at, ends_at, status, template:meeting_templates(id, name, color), questions:meeting_questions(id, priority, status)",
+        "id, title, meeting_date, meeting_time, starts_at, ends_at, status, template:meeting_templates(id, name, color), questions:meeting_questions!meeting_questions_assigned_meeting_id_fkey(id, priority, status)",
       )
       .eq("status", "planned")
       .gte("starts_at", now)
@@ -203,7 +203,7 @@ export async function getAgendaPoolV2(
     `
     *,
     factory:factories(id, name), responsible:users(id, full_name), rule:meeting_rules(id, name),
-    meeting:meetings(id, title, meeting_date, meeting_time, status, starts_at, template:meeting_templates(id, name)),
+    meeting:meetings!meeting_questions_assigned_meeting_id_fkey(id, title, meeting_date, meeting_time, status, starts_at, template:meeting_templates(id, name)),
     members:meeting_question_members(id, source_key, source_type, source_id, title, source_url, condition_active, snapshot, opened_at, cleared_at)
   `,
     { count: "exact" },
