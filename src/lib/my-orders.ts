@@ -3,7 +3,7 @@ import 'server-only'
 import { loadMachineProgressContexts, resolveMachineProgressWithContext } from '@/lib/actions/machine-progress'
 import {
   calculateMyOrderProductionProgress,
-  isOpenOrderVisibleForCompanyScope,
+  isUndeliveredOrderVisibleForCompanyScope,
   isQuantitativeStage,
   mergePersonalOrderIds,
   type MyOrderProgressFact,
@@ -78,6 +78,7 @@ export type MyOrderSummary = {
   name: string
   clientName: string | null
   desiredShippingDate: string | null
+  isArchived: boolean
   status: MachineProgress
   productionProgress: MyOrderProductionProgress
   canOpenDetails: boolean
@@ -116,7 +117,6 @@ async function loadCreatedMachineIds(admin: ReturnType<typeof createAdminClient>
     const result = await admin.from('machines')
       .select('id')
       .eq('created_by', userId)
-      .eq('is_archived', false)
       .is('delivery_to_client_date', null)
       .order('id')
       .range(from, to)
@@ -124,11 +124,10 @@ async function loadCreatedMachineIds(admin: ReturnType<typeof createAdminClient>
   }, 'Не удалось загрузить созданные заказы')
 }
 
-async function loadAllOpenMachineIds(admin: ReturnType<typeof createAdminClient>) {
+async function loadAllUndeliveredMachineIds(admin: ReturnType<typeof createAdminClient>) {
   return loadAllPages<IdRow>(async (from, to) => {
     const result = await admin.from('machines')
       .select('id')
-      .eq('is_archived', false)
       .is('delivery_to_client_date', null)
       .order('id')
       .range(from, to)
@@ -153,7 +152,6 @@ async function loadResponsibleMachineIds(admin: ReturnType<typeof createAdminCli
       const result = await admin.from('machines')
         .select('id')
         .in('client_id', ids)
-        .eq('is_archived', false)
         .is('delivery_to_client_date', null)
         .order('id')
         .range(from, to)
@@ -175,7 +173,6 @@ async function loadMachines(admin: ReturnType<typeof createAdminClient>, machine
           production_stages(id, stage_type, date_start, date_end, is_skipped)
         `)
         .in('id', ids)
-        .eq('is_archived', false)
         .is('delivery_to_client_date', null)
         .order('id')
         .range(from, to)
@@ -313,7 +310,7 @@ export async function loadMyOrdersPageData(): Promise<MyOrderSummary[]> {
   // permission check. Detailed rows are loaded only for the authorized ID set.
   const admin = createAdminClient()
   if (canViewAllCompanies) {
-    const openRows = await loadAllOpenMachineIds(admin)
+    const openRows = await loadAllUndeliveredMachineIds(admin)
     if (openRows.length === 0) return []
     return buildMyOrderSummaries(admin, auth, openRows.map((row) => row.id), new Set(), true)
   }
@@ -344,7 +341,7 @@ async function buildMyOrderSummaries(
 ): Promise<MyOrderSummary[]> {
   const userId = auth.user.id
   const machines = (await loadMachines(admin, machineIdsToLoad))
-    .filter((machine) => isOpenOrderVisibleForCompanyScope(
+    .filter((machine) => isUndeliveredOrderVisibleForCompanyScope(
       machine,
       userId,
       responsibleClientIdSet,
@@ -366,6 +363,7 @@ async function buildMyOrderSummaries(
       name: machine.name,
       clientName: firstRelation(machine.client)?.name || null,
       desiredShippingDate: machine.desired_shipping_date,
+      isArchived: machine.is_archived,
       status: resolveMachineProgressWithContext({
         is_confirmed: machine.is_confirmed,
         actual_shipping_date: machine.actual_shipping_date,
