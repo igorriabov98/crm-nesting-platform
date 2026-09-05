@@ -70,6 +70,7 @@ assert.match(migration, /is_pinned boolean NOT NULL DEFAULT false/);
 assert.match(migration, /priority_rank smallint GENERATED ALWAYS/);
 assert.match(migration, /linked_task_status_changed/);
 assert.match(migration, /meeting_postgres_timezone_v2/);
+assert.match(migration, /row_number\(\) OVER \([\s\S]+PARTITION BY template\.id/);
 assert.match(migration, /execution_mode text NOT NULL DEFAULT 'active'/);
 assert.match(migration, /group_count integer NOT NULL DEFAULT 0/);
 assert.match(migration, /PERFORM public\.enqueue_meeting_rule_reconciliation_v2\(\)/);

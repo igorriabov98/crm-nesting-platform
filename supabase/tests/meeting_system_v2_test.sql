@@ -18,6 +18,16 @@ BEGIN
   IF (SELECT count(*) FROM public.meeting_rules WHERE is_system) <> 10 THEN
     RAISE EXCEPTION 'Expected ten visible system meeting rules';
   END IF;
+  IF (
+    SELECT count(DISTINCT version_no)
+    FROM public.meeting_schedule_versions
+    WHERE id IN (
+      '97000000-0000-4000-8000-000000000001',
+      '97000000-0000-4000-8000-000000000002'
+    )
+  ) <> 2 THEN
+    RAISE EXCEPTION 'Parallel legacy recurrence series were not assigned unique versions';
+  END IF;
   IF (SELECT count(*) FROM public.meeting_rules WHERE is_system AND status = 'published') <> 10 THEN
     RAISE EXCEPTION 'System rules must be published for shadow evaluation';
   END IF;

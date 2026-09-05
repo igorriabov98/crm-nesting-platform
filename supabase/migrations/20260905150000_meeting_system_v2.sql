@@ -1357,21 +1357,32 @@ ON CONFLICT (legacy_type_key) DO UPDATE SET
   color = EXCLUDED.color,
   is_system = EXCLUDED.is_system;
 
--- Existing weekly series become the first immutable schedule version. Reusing the
--- legacy rule UUID gives every future occurrence a stable migration target.
+-- Existing weekly series become immutable schedule versions. Reusing each legacy
+-- rule UUID gives every future occurrence a stable migration target.
+WITH ranked_recurrences AS (
+  SELECT recurrence.*,
+         template.id AS template_id,
+         row_number() OVER (
+           PARTITION BY template.id
+           ORDER BY recurrence.created_at, recurrence.id
+         )::integer AS migrated_version_no
+  FROM public.meeting_recurrence_rules recurrence
+  JOIN public.meeting_templates template
+    ON template.legacy_type_key = recurrence.meeting_type
+)
 INSERT INTO public.meeting_schedule_versions(
   id, template_id, version_no, recurrence_kind, start_date, start_time, timezone,
   duration_minutes, weekdays, end_date, occurrence_count, effective_from,
   effective_to, is_active, created_by, created_at
 )
-SELECT recurrence.id, template.id, 1, 'weekly', recurrence.start_date,
+SELECT recurrence.id, recurrence.template_id, recurrence.migrated_version_no,
+       'weekly', recurrence.start_date,
        recurrence.meeting_time, 'Europe/Uzhgorod', recurrence.duration_minutes,
        recurrence.weekdays, recurrence.end_date,
        CASE WHEN recurrence.end_date IS NULL THEN recurrence.occurrence_count ELSE NULL END,
        recurrence.start_date, recurrence.end_date, recurrence.is_active,
        recurrence.created_by, recurrence.created_at
-FROM public.meeting_recurrence_rules recurrence
-JOIN public.meeting_templates template ON template.legacy_type_key = recurrence.meeting_type
+FROM ranked_recurrences recurrence
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.meeting_template_participants(
