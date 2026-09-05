@@ -64,6 +64,16 @@ const replayPreludes = new Map([
      WHERE NOT EXISTS (SELECT 1 FROM public.factories WHERE name = 'Ужгород');
     `,
   ],
+  [
+    '20260905150000_meeting_system_v2.sql',
+    `INSERT INTO public.meeting_recurrence_rules(
+       id, meeting_type, title, meeting_time, weekdays, start_date, occurrence_count
+     ) VALUES
+       ('97000000-0000-4000-8000-000000000001', 'general', 'Replay series A', '09:00', ARRAY[1]::smallint[], CURRENT_DATE, 3),
+       ('97000000-0000-4000-8000-000000000002', 'general', 'Replay series B', '11:00', ARRAY[3]::smallint[], CURRENT_DATE, 3)
+     ON CONFLICT (id) DO NOTHING;
+    `,
+  ],
 ])
 
 console.log(`[full-schema-test] rebuilding local database ${databaseName}`)
