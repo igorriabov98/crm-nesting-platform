@@ -22,7 +22,6 @@ import { loadMachineProgressContexts, resolveMachineProgressWithContext } from '
 import { loadClientProductPriceLookup, resolveClientProductPrice, type ClientPriceDb, type ClientProductPriceLookup } from '@/lib/client-prices/server'
 import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import { unreserveInventoryReservation } from '@/lib/inventory/secure-rpc'
 import { assertFactoryAccess, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
 import type { CreateMachineInput, MachinePackingSettingsInput, UpdateMachineInput } from '@/lib/types/schemas'
 import type { CoatingType, CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, MaterialType, Product } from '@/lib/types'
@@ -52,7 +51,6 @@ type MachineItemUpdate = Database['public']['Tables']['machine_items']['Update']
 type MachineExpenseInsert = Database['public']['Tables']['machine_expenses']['Insert']
 type MachineExpenseUpdate = Database['public']['Tables']['machine_expenses']['Update']
 type MachinePackingGroupInsert = Database['public']['Tables']['machine_packing_groups']['Insert']
-type InventoryReservation = Database['public']['Tables']['inventory_reservations']['Row']
 type ProductVersionRow = Database['public']['Tables']['product_versions']['Row']
 export type MachineDocumentFieldsInput = z.input<typeof machineDocumentFieldsSchema>
 type ProductSnapshot = Pick<Product, 'id' | 'name_uk' | 'name_en' | 'uktzed' | 'drawing_number' | 'characteristics' | 'unit_weight_kg' | 'base_price_eur' | 'status'>
@@ -201,14 +199,6 @@ async function refreshMaterialUndefinedAgenda(
 
   revalidatePath(ROUTES.MEETINGS)
   revalidatePath(ROUTES.MEETINGS_AGENDA_POOL)
-}
-
-async function cleanupMachineAgendaReferences(supabase: RpcClient, machineId: string) {
-  const { error } = await supabase.rpc('fn_cleanup_machine_agenda_references', {
-    p_machine_id: machineId,
-  })
-
-  if (error) throw error
 }
 
 function requireItemProductId(item: { product_id?: string | null }, context: string) {
@@ -552,14 +542,6 @@ function assertCanConfirmMachine(hasGoods: boolean) {
   }
 }
 
-function isMissingDeleteCleanupRpc(error: { message?: string; code?: string } | null) {
-  const message = error?.message || ''
-  return error?.code === 'PGRST202'
-    || error?.code === '42883'
-    || message.includes('fn_delete_machine_with_inventory_cleanup')
-    || message.includes('Could not find the function')
-}
-
 async function assertSalesPlanMachineAccess(
   db: LooseDb,
   permission: FactoryScopedPermissionContext,
@@ -575,48 +557,8 @@ async function assertSalesPlanMachineAccess(
   if (factoryId) assertFactoryAccess(permission, 'sales_plan', 'manage', factoryId)
 }
 
-async function unreserveMachineInventory(db: LooseDb, machineId: string) {
-  const { data, error } = await db
-    .from('inventory_reservations')
-    .select('id')
-    .eq('machine_id', machineId)
-
-  if (error) throw new Error(error.message || 'Не удалось проверить складские брони машины')
-
-  const reservations = (data || []) as Pick<InventoryReservation, 'id'>[]
-  for (const reservation of reservations) {
-    await unreserveInventoryReservation({
-      reservationId: reservation.id,
-      comment: 'Снятие брони при удалении машины',
-    })
-  }
-}
-
-async function detachMachineInventoryTransactions(machineId: string) {
-  const adminDb = createAdminClient() as unknown as LooseDb
-  const { error } = await adminDb
-    .from('inventory_transactions')
-    .update({ machine_id: null })
-    .eq('machine_id', machineId)
-
-  if (error) throw new Error(error.message || 'Не удалось отвязать складские транзакции от удаляемой машины')
-}
-
-async function deleteMachineRow(db: LooseDb, machineId: string) {
-  const { data, error } = await db
-    .from('machines')
-    .delete()
-    .eq('id', machineId)
-    .select('id')
-    .single()
-
-  if (error) throw error
-  if (!data) throw new Error('Машина не найдена или уже удалена')
-}
-
 async function deleteMachineWithInventoryCleanup(
   supabase: RpcClient,
-  db: LooseDb,
   machineId: string,
   userId: string,
 ) {
@@ -625,12 +567,7 @@ async function deleteMachineWithInventoryCleanup(
     p_performed_by: userId,
   })
 
-  if (!error) return
-  if (!isMissingDeleteCleanupRpc(error)) throw error
-
-  await unreserveMachineInventory(db, machineId)
-  await detachMachineInventoryTransactions(machineId)
-  await deleteMachineRow(db, machineId)
+  if (error) throw error
 }
 
 async function assertMachineNotArchived(db: LooseDb, machineId: string) {
@@ -1936,8 +1873,7 @@ export async function deleteMachine(id: string) {
     const { supabase, db, user } = permission
 
     await assertSalesPlanMachineAccess(db, permission, id)
-    await cleanupMachineAgendaReferences(supabase as unknown as RpcClient, id)
-    await deleteMachineWithInventoryCleanup(supabase as unknown as RpcClient, db, id, user.id)
+    await deleteMachineWithInventoryCleanup(supabase as unknown as RpcClient, id, user.id)
 
     revalidatePath(ROUTES.SALES_PLAN)
     revalidatePath(`${ROUTES.SALES_PLAN}/${id}`)
@@ -1957,7 +1893,7 @@ export async function deleteMachine(id: string) {
 
 export async function archiveMachine(id: string, reason?: string) {
   try {
-    const { supabase, db, user } = await requireSalesPlanPermission('manage')
+    const { db, user } = await requireSalesPlanPermission('manage')
 
     const { data: machineData, error: machineError } = await db
       .from('machines')
@@ -1969,8 +1905,6 @@ export async function archiveMachine(id: string, reason?: string) {
     if ((machineData as { is_archived?: boolean }).is_archived) {
       throw new Error('Машина уже архивирована')
     }
-
-    await cleanupMachineAgendaReferences(supabase as unknown as RpcClient, id)
 
     const admin = createAdminClient() as unknown as RpcClient
     const { error: archiveError } = await admin.rpc('archive_machine_and_compact_production_queue', {

@@ -67,6 +67,7 @@
     "test:machine-archive-work-visibility": "tsx scripts/test-machine-archive-work-visibility.ts",
     "test:machine-archive-queue": "node scripts/test-machine-archive-queue.mjs",
     "test:machine-detailing-cleanup": "node scripts/test-machine-detailing-cleanup.mjs",
+    "test:machine-operational-cleanup": "node scripts/test-machine-operational-cleanup.mjs",
     "test:technologist-request-readiness": "tsx scripts/test-technologist-request-readiness.ts",
     "test:technologist-request-editability": "tsx scripts/test-technologist-request-editability.ts",
     "test:material-request-queue": "tsx scripts/test-material-request-queue.ts",
