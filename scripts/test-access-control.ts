@@ -51,8 +51,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 58, 'Реестр должен содержать все 58 ресурсов')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 58, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 59, 'Реестр должен содержать все 59 ресурсов')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 59, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -81,6 +81,15 @@ assert(hasPermission(getFullPermissionMap(), 'complex_reports', 'view'), 'CRM-а
 assert(!hasPermission(getDefaultPermissionMap('planning_director'), 'production_reports', 'view'), 'Производственная аналитика по умолчанию закрыта')
 assert(!hasPermission(getDefaultPermissionMap('production_manager'), 'production_reports', 'manage'), 'Роль производства не должна автоматически управлять отчётом')
 assert(hasPermission(getFullPermissionMap(), 'production_reports', 'manage'), 'CRM-администратор должен управлять производственной аналитикой')
+assert(!hasPermission(getDefaultPermissionMap('sales_manager'), 'my_orders', 'view'), 'Мои заказы должны открываться только через матрицу доступа')
+assert(hasPermission(getFullPermissionMap(), 'my_orders', 'view'), 'CRM-администратор должен видеть Мои заказы')
+assert.equal(getPermissionRequirementForPath('/sales/my-orders')?.resourceKey, 'my_orders', 'Маршрут Моих заказов должен использовать отдельное право')
+assert.equal(getPermissionRequirementForPath('/sales/my-orders')?.operation, 'view', 'Маршрут Моих заказов должен требовать право просмотра')
+assert(!getSidebarResources('sales_manager', getDefaultPermissionMap('sales_manager'), 'sales').some((resource) => resource.key === 'my_orders'), 'Пункт Моих заказов должен быть скрыт без матричного права')
+const salesSidebarWithFullAccess = getSidebarResources('sales_manager', getFullPermissionMap(), 'sales')
+const salesPlanIndex = salesSidebarWithFullAccess.findIndex((resource) => resource.key === 'sales_plan')
+const myOrdersIndex = salesSidebarWithFullAccess.findIndex((resource) => resource.key === 'my_orders')
+assert.equal(myOrdersIndex, salesPlanIndex + 1, 'Мои заказы должны идти сразу после Плана продаж')
 assert(hasPermission(getDefaultPermissionMap('sales_manager'), 'client_payments', 'manage'), 'Sales-менеджер должен вести оплаты своих компаний')
 assert(hasPermission(getDefaultPermissionMap('commercial_director'), 'client_payments', 'manage'), 'Директор должен вести оплаты всех компаний')
 assert(hasPermission(getDefaultPermissionMap('commercial_director'), 'invoices', 'manage'), 'Коммерческий директор должен управлять инвойсами в своей области')

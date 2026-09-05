@@ -8,6 +8,7 @@ export type CompanyAccessScope = 'own' | 'all'
 export type ResourceKey =
   | 'dashboard'
   | 'sales_plan'
+  | 'my_orders'
   | 'client_prices'
   | 'technologist_requests'
   | 'material_request_queue'
@@ -195,6 +196,17 @@ export const PERMISSION_RESOURCES = [
       { path: ROUTES.SALES_PLAN, match: 'exact', operation: 'view' },
     ],
     sidebar: { section: 'sales', icon: 'salesPlan', order: 10 },
+  },
+  {
+    key: 'my_orders',
+    label: 'Мои заказы',
+    description: 'Личные заказы без даты получения клиентом',
+    group: 'Sales',
+    defaultHref: ROUTES.SALES_MY_ORDERS,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [{ path: ROUTES.SALES_MY_ORDERS, match: 'prefix', operation: 'view', priority: 130 }],
+    sidebar: { section: 'sales', icon: 'orders', order: 12 },
   },
   {
     key: 'client_prices',

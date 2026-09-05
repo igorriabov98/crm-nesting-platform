@@ -34,6 +34,8 @@ jobs:
         run: node --test scripts/prod-crm-smoke.test.mjs
       - name: Access control registry and policies
         run: npm run test:access-control
+      - name: My orders calculations and UI contracts
+        run: npm run test:my-orders
       - name: Production analytics calculations and UI contracts
         run: npm run test:production-analytics
       - name: Client UI localization
