@@ -42,6 +42,7 @@ const meetingActions = readFileSync(
   resolve(root, "src/app/(protected)/meetings/v2-actions.ts"),
   "utf8",
 );
+const proxy = readFileSync(resolve(root, "src/proxy.ts"), "utf8");
 
 for (const table of [
   "meeting_templates",
@@ -138,6 +139,11 @@ assert.match(workerMigration, /'\*\/5 \* \* \* \*'/);
 assert.match(workerMigration, /vault\.decrypted_secrets/);
 assert.match(workerMigration, /verify_meeting_system_v2_cron_secret/);
 assert.match(cronAuthorization, /verify_meeting_system_v2_cron_secret/);
+assert.match(
+  proxy,
+  /pathname\.startsWith\('\/api\/meetings\/rules\/evaluate'\)/,
+  "The rule worker must reach route-level secret authorization before login middleware",
+);
 assert.equal(
   meetingActions.match(
     /meeting_questions!meeting_questions_assigned_meeting_id_fkey/g,
