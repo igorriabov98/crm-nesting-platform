@@ -202,7 +202,7 @@ export async function getAgendaPoolV2(
   let query = db.from("meeting_questions").select(
     `
     *,
-    factory:factories(id, name), responsible:users(id, full_name), rule:meeting_rules(id, name),
+    factory:factories(id, name), responsible:users!meeting_questions_responsible_user_id_fkey(id, full_name), rule:meeting_rules(id, name),
     meeting:meetings!meeting_questions_assigned_meeting_id_fkey(id, title, meeting_date, meeting_time, status, starts_at, template:meeting_templates(id, name)),
     members:meeting_question_members(id, source_key, source_type, source_id, title, source_url, condition_active, snapshot, opened_at, cleared_at)
   `,
@@ -314,7 +314,7 @@ export async function getMeetingDetailV2(meetingId: string) {
           .select(
             `
       *, question_template:meeting_question_templates(allowed_outcomes, expected_outcome, task_sla_days, default_responsible_user_id),
-      members:meeting_question_members(*), outcomes:meeting_question_outcomes(*, responsible:users(id, full_name)),
+      members:meeting_question_members(*), outcomes:meeting_question_outcomes(*, responsible:users!meeting_question_outcomes_responsible_user_id_fkey(id, full_name)),
       task_links:meeting_question_task_links(*, task:tasks(id, title, status, deadline, assigned_to)),
       events:meeting_question_events(*)
     `,

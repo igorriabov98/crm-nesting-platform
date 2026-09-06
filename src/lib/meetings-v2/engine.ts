@@ -184,7 +184,7 @@ async function loadRuntimeRule(
       `
     id, name, question_template_id, current_version_id,
     question_template:meeting_question_templates(*),
-    current_version:meeting_rule_versions(*)
+    current_version:meeting_rule_versions!meeting_rules_current_version_id_fkey(*)
   `,
     )
     .eq("id", ruleId)
@@ -1014,6 +1014,11 @@ export async function processPendingMeetingRuleEvents(limit = 100) {
     "Не удалось забрать события правил",
   ) as unknown as EventRow[];
   const summaries: Array<Record<string, unknown>> = [];
+  const failures: Array<{
+    sourceKey: string;
+    eventIds: number[];
+    message: string;
+  }> = [];
   const batches = new Map<string, EventRow[]>();
   for (const event of events)
     batches.set(event.source_key, [
@@ -1085,6 +1090,13 @@ export async function processPendingMeetingRuleEvents(limit = 100) {
         );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const eventIds = batch.map((event) => event.id);
+      failures.push({ sourceKey, eventIds, message });
+      console.error("[Meeting rules] Event batch failed", {
+        sourceKey,
+        eventIds,
+        message,
+      });
       await db
         .from("meeting_rule_events")
         .update({
@@ -1098,7 +1110,7 @@ export async function processPendingMeetingRuleEvents(limit = 100) {
         );
     }
   }
-  return { claimed: events.length, runs: summaries };
+  return { claimed: events.length, runs: summaries, failures };
 }
 
 export function meetingPriorityRank(priority: MeetingQuestionPriority) {
