@@ -1116,13 +1116,24 @@ export async function getSupplyTransportNeeds(): Promise<{
   try {
     await requirePermission('supply_transport', 'view')
     const db = createAdminClient() as unknown as RpcDb
-    const { data: schedulesData, error: schedulesError } = await db
-      .from('supply_order_delivery_schedules')
-      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, receipt_parent_schedule_id, created_at')
-      .neq('status', 'cancelled')
-      .order('delivery_date', { ascending: true })
-      .order('created_at', { ascending: true })
+    const [schedulesResult, linkedSchedulesResult] = await Promise.all([
+      db
+        .from('supply_order_delivery_schedules')
+        .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, receipt_parent_schedule_id, created_at')
+        .neq('status', 'cancelled')
+        .order('delivery_date', { ascending: true })
+        .order('created_at', { ascending: true }),
+      db
+        .from('transport_trip_need_links')
+        .select('need_id')
+        .eq('need_source', 'supply_schedule')
+        .is('released_at', null),
+    ])
+    const { data: schedulesData, error: schedulesError } = schedulesResult
     if (schedulesError) throw new Error(schedulesError.message || 'Не удалось загрузить подтверждённые поставки')
+    if (linkedSchedulesResult.error) {
+      throw new Error(linkedSchedulesResult.error.message || 'Не удалось загрузить состав транспортных рейсов')
+    }
 
     const schedules = (schedulesData || []) as Array<{
       id: string
@@ -1152,7 +1163,10 @@ export async function getSupplyTransportNeeds(): Promise<{
       id: schedule.request_item_id,
     })))
     const items = await loadSelectedOrderItems(db, groupedItems)
-    const eligibleSchedules = projectSchedulesToPurchasePlans(items, schedules).filter((schedule) => (
+    const preferredScheduleIds = new Set(
+      ((linkedSchedulesResult.data || []) as Array<{ need_id: string }>).map((link) => link.need_id),
+    )
+    const eligibleSchedules = projectSchedulesToPurchasePlans(items, schedules, preferredScheduleIds).filter((schedule) => (
       schedule.status === 'planned' && Boolean(schedule.supplier_id)
     ))
     const itemByKey = new Map(items.map((item) => [`${item.table}:${item.id}`, item]))
@@ -2380,6 +2394,7 @@ function projectSchedulesToPurchasePlans<T extends {
 }>(
   items: Array<Pick<SupplyOrderAggregateInputItem, 'table' | 'id' | 'long_stock_purchase_plan'>>,
   schedules: T[],
+  preferredScheduleIds?: ReadonlySet<string>,
 ) {
   const schedulesByItem = new Map<string, T[]>()
   for (const schedule of schedules) {
@@ -2389,6 +2404,7 @@ function projectSchedulesToPurchasePlans<T extends {
   return items.flatMap((item) => projectPlannedLongStockSchedulesToPurchasePlan(
     schedulesByItem.get(itemKey(item)) || [],
     item.long_stock_purchase_plan,
+    { preferredScheduleIds },
   ))
 }
 

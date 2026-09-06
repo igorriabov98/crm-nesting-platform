@@ -129,6 +129,86 @@ test('для ножей, круга и трубы исключает из пос
   }
 })
 
+test('перенос даты связанной строки не разделяет два закупочных хлыста между рейсом и старым графиком', () => {
+  const plan: LongStockPurchasePlan = {
+    plan_id: 'plan',
+    plan_number: 1,
+    version_id: 'version',
+    version_number: 1,
+    version_status: 'approved',
+    cutting_status: 'plan_approved',
+    components: [{ length_mm: 6_000, piece_count: 2, is_nonstandard: false }],
+    total_piece_count: 2,
+    total_length_mm: 12_000,
+    uses_nonstandard_length: false,
+  }
+  const projected = projectPlannedLongStockSchedulesToPurchasePlan([
+    {
+      id: 'trip-schedule',
+      delivery_date: '2026-09-10',
+      created_at: '2026-09-06T09:00:00Z',
+      status: 'planned',
+      quantity: 12_000,
+      planned_piece_length_mm: 6_000,
+      planned_piece_count: 2,
+    },
+    {
+      id: 'stale-excess',
+      delivery_date: '2026-09-08',
+      created_at: '2026-09-06T09:01:00Z',
+      status: 'planned',
+      quantity: 6_000,
+      planned_piece_length_mm: 6_000,
+      planned_piece_count: 1,
+    },
+  ], plan)
+
+  assert.deepEqual(
+    projected.map((schedule) => ({ id: schedule.id, quantity: schedule.quantity, pieces: schedule.planned_piece_count })),
+    [{ id: 'trip-schedule', quantity: 12_000, pieces: 2 }],
+  )
+})
+
+test('активная связь рейса имеет приоритет над устаревшей строкой независимо от порядка создания', () => {
+  const plan: LongStockPurchasePlan = {
+    plan_id: 'plan',
+    plan_number: 1,
+    version_id: 'version',
+    version_number: 1,
+    version_status: 'approved',
+    cutting_status: 'plan_approved',
+    components: [{ length_mm: 6_000, piece_count: 2, is_nonstandard: false }],
+    total_piece_count: 2,
+    total_length_mm: 12_000,
+    uses_nonstandard_length: false,
+  }
+  const projected = projectPlannedLongStockSchedulesToPurchasePlan([
+    {
+      id: 'stale-excess',
+      delivery_date: '2026-09-08',
+      created_at: '2026-09-05T09:00:00Z',
+      status: 'planned',
+      quantity: 6_000,
+      planned_piece_length_mm: 6_000,
+      planned_piece_count: 1,
+    },
+    {
+      id: 'trip-schedule',
+      delivery_date: '2026-09-10',
+      created_at: '2026-09-06T09:00:00Z',
+      status: 'planned',
+      quantity: 12_000,
+      planned_piece_length_mm: 6_000,
+      planned_piece_count: 2,
+    },
+  ], plan, { preferredScheduleIds: new Set(['trip-schedule']) })
+
+  assert.deepEqual(
+    projected.map((schedule) => ({ id: schedule.id, quantity: schedule.quantity, pieces: schedule.planned_piece_count })),
+    [{ id: 'trip-schedule', quantity: 12_000, pieces: 2 }],
+  )
+})
+
 test('после частичной поставки оставляет к перевозке только непринятые закупочные хлысты', () => {
   const plan: LongStockPurchasePlan = {
     plan_id: 'plan',

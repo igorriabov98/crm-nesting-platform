@@ -14,6 +14,7 @@ import {
 import { formatCompanyLocation } from '../src/lib/transport/company-location'
 import {
   groupTransportNeeds,
+  hasCompleteTransportPositionSelection,
   type GroupableTransportNeed,
 } from '../src/lib/transport/need-groups'
 import { transportTripDisplayName } from '../src/lib/transport/trip-display-name'
@@ -146,6 +147,8 @@ assert.equal(groupedLongStock[0].positions[0].itemDetails[0].quantity, 12_000)
 assert.equal(groupedLongStock[0].positions[0].itemDetails[0].pieceCount, 2)
 assert.equal(groupedLongStock[0].positions[0].itemDetails[0].pieceLengthMm, 6_000)
 assert.equal(groupedLongStock[0].positions[0].volumeLabel, '2 шт. × 6\u00a0000 мм · 66,16 кг')
+assert.equal(hasCompleteTransportPositionSelection(groupedLongStock[0].needs, [groupedLongStock[0].needs[0]]), false)
+assert.equal(hasCompleteTransportPositionSelection(groupedLongStock[0].needs, groupedLongStock[0].needs), true)
 
 const splitBoundaries = groupTransportNeeds([
   supplyNeed({ id: 'date-a', positionKey: 'a', date: '2026-09-08', title: 'A', quantity: 1, required: 1, excess: 0, unit: 'шт.', weightKg: null }),
@@ -442,6 +445,11 @@ assert.match(groupedTransportMigration, /Технические части од�
 assert.match(groupedTransportMigration, /Состав исходного рейса изменился конкурентно/)
 assert.match(groupedTransportMigration, /fn_cancel_transport_trip_v1\(p_source_trip_id/)
 assert.match(transportActions, /groupTransportNeeds\(needs\)/)
+assert.equal(
+  transportActions.match(/hasCompleteTransportPositionSelection\(/gu)?.length,
+  2,
+  'creation and editing must reject partial technical positions on the server',
+)
 assert.match(transportActions, /moveTransportTripPosition/)
 assert.match(transportWorkspace, /role="checkbox"/)
 assert.match(transportWorkspace, /aria-checked=\{partiallySelected \? 'mixed' : allSelected\}/)
