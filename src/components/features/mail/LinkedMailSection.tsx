@@ -69,24 +69,24 @@ export function LinkedMailSection({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-3 overflow-hidden">
       {links.map((link) => {
         const thread = details[link.link_id]
         const isExpanded = expanded === link.link_id
         return (
-          <article key={link.link_id} className="overflow-hidden rounded-xl border bg-card">
+          <article key={link.link_id} className="min-w-0 overflow-hidden rounded-xl border bg-card">
             <div className="flex flex-wrap items-center gap-3 p-4">
               <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
                 {link.kind === 'thread' ? <MessageSquareText className="size-5" /> : <Mail className="size-5" />}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="min-w-0 flex-1 truncate font-medium">{link.preview.subject}</p>
+                  <p className="min-w-0 flex-1 break-words [overflow-wrap:anywhere] font-medium">{link.preview.subject}</p>
                   <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                     {link.kind === 'thread' ? 'Вся цепочка' : 'Одно письмо'}
                   </span>
                 </div>
-                <p className="mt-1 truncate text-sm text-muted-foreground">{link.preview.sender} · {link.preview.snippet}</p>
+                <p className="mt-1 line-clamp-2 break-words [overflow-wrap:anywhere] text-sm text-muted-foreground">{link.preview.sender} · {link.preview.snippet}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {format(new Date(link.preview.received_at), 'd MMMM yyyy, HH:mm', { locale: ru })}
                   {link.kind === 'thread' ? ` · ${link.preview.message_count} сообщений` : ''}
@@ -107,7 +107,7 @@ export function LinkedMailSection({
             {isExpanded && thread && (
               <div className="space-y-3 border-t bg-muted/20 p-4">
                 {thread.messages.map((message) => (
-                  <div key={message.id} className="rounded-xl border bg-background p-4">
+                  <div key={message.id} className="min-w-0 overflow-hidden rounded-xl border bg-background p-4">
                     <div className="flex flex-wrap justify-between gap-2">
                       <div>
                         <p className="font-semibold">{message.from_name || message.from_address}</p>
@@ -116,17 +116,17 @@ export function LinkedMailSection({
                       <time className="text-xs text-muted-foreground">{format(new Date(message.received_at), 'd MMMM yyyy, HH:mm', { locale: ru })}</time>
                     </div>
                     {message.body_text ? (
-                      <div className="mt-4 whitespace-pre-wrap text-sm leading-6">{message.body_text}</div>
+                      <div className="mt-4 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">{message.body_text}</div>
                     ) : message.body_html_sanitized ? (
-                      <div className="mt-4 break-words text-sm leading-6 [&_a]:text-blue-700 [&_a]:underline" dangerouslySetInnerHTML={{ __html: message.body_html_sanitized }} />
+                      <div className="mt-4 max-w-full overflow-hidden break-words [overflow-wrap:anywhere] text-sm leading-6 [&_*]:max-w-full [&_a]:break-all [&_a]:text-blue-700 [&_a]:underline [&_pre]:whitespace-pre-wrap [&_table]:block [&_table]:overflow-x-auto" dangerouslySetInnerHTML={{ __html: message.body_html_sanitized }} />
                     ) : (
                       <p className="mt-4 text-sm">{message.subject}</p>
                     )}
                     {message.attachments.length > 0 && (
                       <div className="mt-4 flex flex-wrap gap-2">
                         {message.attachments.map((attachment) => (
-                          <a key={attachment.id} href={`/api/mail/attachments/${attachment.id}`} className="inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm hover:bg-muted">
-                            <File className="size-4" />{attachment.file_name}
+                          <a key={attachment.id} href={`/api/mail/attachments/${attachment.id}`} className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-lg border px-3 text-sm hover:bg-muted">
+                            <File className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span>
                           </a>
                         ))}
                       </div>

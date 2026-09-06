@@ -1541,6 +1541,7 @@ export type Database = {
           characteristics: string
           client_wishes: string
           assigned_engineer_id: string
+          requires_vrb_mesh: boolean
           status: 'new_project' | 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
           approved_version_id: string | null
           created_by: string | null
@@ -1556,6 +1557,7 @@ export type Database = {
           characteristics?: string
           client_wishes?: string
           assigned_engineer_id: string
+          requires_vrb_mesh?: boolean
           status?: 'new_project' | 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
           approved_version_id?: string | null
           created_by?: string | null
@@ -1571,6 +1573,7 @@ export type Database = {
           characteristics?: string
           client_wishes?: string
           assigned_engineer_id?: string
+          requires_vrb_mesh?: boolean
           status?: 'new_project' | 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
           approved_version_id?: string | null
           created_by?: string | null
@@ -1588,6 +1591,7 @@ export type Database = {
           description: string
           characteristics: string
           client_wishes: string
+          correction_note: string | null
           name_uk: string | null
           name_en: string | null
           uktzed: string | null
@@ -1606,6 +1610,7 @@ export type Database = {
           description?: string
           characteristics?: string
           client_wishes?: string
+          correction_note?: string | null
           name_uk?: string | null
           name_en?: string | null
           uktzed?: string | null
@@ -1624,6 +1629,7 @@ export type Database = {
           description?: string
           characteristics?: string
           client_wishes?: string
+          correction_note?: string | null
           name_uk?: string | null
           name_en?: string | null
           uktzed?: string | null
@@ -1671,6 +1677,70 @@ export type Database = {
           file_size?: number | null
           uploaded_by?: string | null
           created_at?: string
+        }
+      }
+      product_project_mail_threads: {
+        Row: {
+          id: string
+          product_project_id: string
+          version_id: string | null
+          thread_id: string
+          linked_by: string
+          linked_at: string
+          unlinked_at: string | null
+          unlinked_by: string | null
+        }
+        Insert: {
+          id?: string
+          product_project_id: string
+          version_id?: string | null
+          thread_id: string
+          linked_by: string
+          linked_at?: string
+          unlinked_at?: string | null
+          unlinked_by?: string | null
+        }
+        Update: {
+          id?: string
+          product_project_id?: string
+          version_id?: string | null
+          thread_id?: string
+          linked_by?: string
+          linked_at?: string
+          unlinked_at?: string | null
+          unlinked_by?: string | null
+        }
+      }
+      product_project_mail_messages: {
+        Row: {
+          id: string
+          product_project_id: string
+          version_id: string | null
+          message_id: string
+          linked_by: string
+          linked_at: string
+          unlinked_at: string | null
+          unlinked_by: string | null
+        }
+        Insert: {
+          id?: string
+          product_project_id: string
+          version_id?: string | null
+          message_id: string
+          linked_by: string
+          linked_at?: string
+          unlinked_at?: string | null
+          unlinked_by?: string | null
+        }
+        Update: {
+          id?: string
+          product_project_id?: string
+          version_id?: string | null
+          message_id?: string
+          linked_by?: string
+          linked_at?: string
+          unlinked_at?: string | null
+          unlinked_by?: string | null
         }
       }
       meetings: {
@@ -5429,6 +5499,68 @@ export type Database = {
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }
     Functions: {
+      can_view_product_projects: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      can_manage_product_projects: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      current_user_owns_mail_thread: {
+        Args: { p_thread_id: string }
+        Returns: boolean
+      }
+      current_user_owns_mail_message: {
+        Args: { p_message_id: string }
+        Returns: boolean
+      }
+      link_mail_to_product_project_v2: {
+        Args: {
+          p_product_project_id: string
+          p_version_id: string | null
+          p_kind: string
+          p_mail_id: string
+        }
+        Returns: string
+      }
+      create_product_project_with_mail_v2: {
+        Args: {
+          p_project_id: string
+          p_version_id: string
+          p_title: string
+          p_client_id: string | null
+          p_description: string
+          p_characteristics: string
+          p_client_wishes: string
+          p_assigned_engineer_id: string
+          p_requires_vrb_mesh?: boolean
+          p_initial_file?: Json | null
+          p_mail_link?: Json | null
+        }
+        Returns: string
+      }
+      request_product_project_correction_v2: {
+        Args: {
+          p_project_id: string
+          p_version_id: string
+          p_correction_note: string
+          p_files?: Json
+          p_mail_links?: Json
+        }
+        Returns: string
+      }
+      approve_product_project_version_v2: {
+        Args: {
+          p_project_id: string
+          p_version_id: string
+          p_name_uk: string
+          p_name_en: string
+          p_uktzed: string
+          p_base_price_eur: number
+        }
+        Returns: string
+      }
       fn_record_invoice_payment: {
         Args: {
           p_invoice_id: string

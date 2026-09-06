@@ -38,11 +38,11 @@ export function ProductProjectMail({
   }
 
   return (
-    <section className="rounded-xl border border-[#E8ECF0] bg-white p-5">
+    <section className="min-w-0 rounded-xl border border-[#E8ECF0] bg-white p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="flex items-center gap-2 text-lg font-semibold text-[#1B3A6B]"><Mail className="size-5" /> Почтовая переписка</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Привязанную почту видят все пользователи с доступом к проекту.</p>
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-[#1B3A6B]"><Mail className="size-5" /> Общая почтовая переписка</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Эта переписка относится ко всему проекту. Почта конкретных версий находится внутри версии.</p>
         </div>
         {canManage && <Button type="button" variant="outline" className="min-h-11" onClick={() => setOpen(true)}><Plus className="size-4" /> Добавить цепочку</Button>}
       </div>
@@ -50,10 +50,12 @@ export function ProductProjectMail({
         <LinkedMailSection target="product_project" targetId={projectId} links={initialLinks} canUnlink={canManage} />
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader><DialogTitle>Добавить переписку</DialogTitle><DialogDescription>Будет привязана вся Gmail-цепочка, включая новые ответы.</DialogDescription></DialogHeader>
-          <MailThreadPicker selected={selected} onChange={setSelected} />
-          <DialogFooter><Button variant="outline" className="min-h-11" onClick={() => setOpen(false)}>Отмена</Button><Button className="min-h-11" disabled={saving || selected.length === 0} onClick={() => void linkSelected()}>{saving ? 'Добавляем…' : 'Добавить в проект'}</Button></DialogFooter>
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] min-w-0 flex-col overflow-hidden p-0 sm:max-w-2xl">
+          <DialogHeader className="shrink-0 border-b px-5 pb-4 pt-5 pr-14 sm:px-6 sm:pr-14"><DialogTitle>Добавить переписку</DialogTitle><DialogDescription>Будет привязана вся Gmail-цепочка, включая новые ответы.</DialogDescription></DialogHeader>
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden px-5 py-4 sm:px-6">
+            <MailThreadPicker selected={selected} onChange={setSelected} />
+          </div>
+          <DialogFooter className="mx-0 mb-0 shrink-0 border-t bg-background px-5 py-4 sm:px-6"><Button variant="outline" className="min-h-11 w-full sm:w-auto" onClick={() => setOpen(false)}>Отмена</Button><Button className="min-h-11 w-full sm:w-auto" disabled={saving || selected.length === 0} onClick={() => void linkSelected()}>{saving ? 'Добавляем…' : 'Добавить в проект'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </section>

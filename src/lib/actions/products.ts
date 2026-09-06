@@ -15,6 +15,10 @@ import {
   validateProductUploadRequest,
   type DirectProductUpload,
 } from '@/lib/products/product-file-upload'
+import {
+  validateProductProjectUploads,
+  type DirectProductProjectUpload,
+} from '@/lib/products/product-project-file-upload'
 import type { ResourceKey } from '@/lib/permissions/resources'
 import {
   productFileKindSchema,
@@ -54,18 +58,21 @@ type LooseQuery = PromiseLike<LooseDbResult> & {
   maybeSingle: () => Promise<LooseDbResult>
 }
 type LooseDb = { from: (table: string) => LooseQuery }
+type RpcClient = {
+  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{
+    data: unknown
+    error: DbError | null
+  }>
+}
 type ProductInsert = Database['public']['Tables']['products']['Insert']
 type ProductUpdate = Database['public']['Tables']['products']['Update']
 type ProductFileInsert = Database['public']['Tables']['product_files']['Insert']
 type ProductVersion = Database['public']['Tables']['product_versions']['Row']
 type ProductVersionInsert = Database['public']['Tables']['product_versions']['Insert']
-type ProductProjectInsert = Database['public']['Tables']['product_projects']['Insert']
 type ProductProjectUpdate = Database['public']['Tables']['product_projects']['Update']
 type ProductProjectVersionInsert = Database['public']['Tables']['product_project_versions']['Insert']
 type ProductProjectVersionUpdate = Database['public']['Tables']['product_project_versions']['Update']
 type ProductProjectFileInsert = Database['public']['Tables']['product_project_files']['Insert']
-type TaskInsert = Database['public']['Tables']['tasks']['Insert']
-type TaskUpdate = Database['public']['Tables']['tasks']['Update']
 type MachineItemUpdate = Database['public']['Tables']['machine_items']['Update']
 type DepartmentRow = {
   id: string
@@ -105,6 +112,10 @@ export type ProductProjectSampleOption = ProductOption & {
   version_id: string
   client_id: string | null
   title: string
+}
+
+export type CorrectableProductProjectOption = Pick<ProductProject, 'id' | 'title' | 'status'> & {
+  latest_version_number: number
 }
 
 export type ProductProjectApprovalInput = z.infer<typeof productProjectApprovalSchema>
@@ -270,15 +281,25 @@ const productProjectApprovalSchema = z.object({
   base_price_eur: z.coerce.number().min(0, 'Цена не может быть отрицательной'),
 })
 
-const productProjectCorrectionSchema = z.object({
-  client_wishes: z.string().trim().min(1, 'Опишите замечания клиента'),
+const mailLinkInputSchema = z.object({
+  kind: z.enum(['thread', 'message']),
+  id: z.string().uuid('Некорректная ссылка на письмо'),
 })
 
-function datePlusDays(days: number) {
-  const date = new Date()
-  date.setDate(date.getDate() + days)
-  return date.toISOString().slice(0, 10)
-}
+const directProductProjectUploadSchema = z.object({
+  objectPath: z.string().min(1).max(700),
+  fileKind: productFileKindSchema,
+  fileName: z.string().min(1).max(240),
+  mimeType: z.string().max(160).nullable(),
+  fileSize: z.number().int().positive(),
+})
+
+const productProjectCorrectionSchema = z.object({
+  versionId: z.string().uuid('Некорректный идентификатор версии'),
+  correctionNote: z.string().trim().min(1, 'Опишите замечания клиента').max(5000, 'Не больше 5000 символов'),
+  files: z.array(directProductProjectUploadSchema).max(10, 'Можно прикрепить не больше 10 файлов').default([]),
+  mailLinks: z.array(mailLinkInputSchema).max(10, 'Можно прикрепить не больше 10 переписок').default([]),
+})
 
 function drawingNumberFromFileName(name: string) {
   return name.replace(/\.[^/.]+$/, '').trim()
@@ -302,73 +323,9 @@ async function loadLatestProjectVersion(db: LooseDb, projectId: string) {
   return version
 }
 
-async function ensureProductProjectTask(
-  db: LooseDb,
-  projectId: string,
-  taskType: 'product_project_engineering' | 'product_project_sales_review',
-  assignedTo: string,
-  title: string,
-  description: string,
-  deadlineDays: number,
-) {
-  const { data: existingTasks, error: existingError } = await db
-    .from('tasks')
-    .select('id')
-    .eq('product_project_id', projectId)
-    .eq('task_type', taskType)
-    .in('status', ['pending', 'in_progress'])
-    .limit(1)
-
-  if (existingError) throw existingError
-  if (((existingTasks || []) as Array<{ id: string }>).length > 0) return
-
-  const payload: TaskInsert = {
-    product_project_id: projectId,
-    machine_id: null,
-    assigned_to: assignedTo,
-    task_type: taskType,
-    title,
-    description,
-    status: 'pending',
-    start_date: new Date().toISOString().slice(0, 10),
-    deadline: datePlusDays(deadlineDays),
-  }
-  const { error } = await db.from('tasks').insert(payload)
-  if (error) throw error
-}
-
-async function cancelActiveProjectTasks(
-  db: LooseDb,
-  projectId: string,
-  taskType: 'product_project_engineering' | 'product_project_sales_review',
-) {
-  const { data, error } = await db
-    .from('tasks')
-    .select('id')
-    .eq('product_project_id', projectId)
-    .eq('task_type', taskType)
-    .in('status', ['pending', 'in_progress'])
-
-  if (error) throw error
-  const ids = ((data || []) as Array<{ id: string }>).map((task) => task.id)
-  if (ids.length === 0) return
-
-  const update: TaskUpdate = {
-    status: 'cancelled',
-    updated_at: new Date().toISOString(),
-  }
-  const { error: updateError } = await db.from('tasks').update(update).in('id', ids)
-  if (updateError) throw updateError
-}
-
 function assertProjectEngineerAccess(project: ProductProject, user: { id: string; role: string }) {
   if (project.assigned_engineer_id === user.id || isDirectorRole(user.role)) return
   throw new Error('Заполнить инженерные данные может назначенный инженер или директор')
-}
-
-function assertVersionReadyForApproval(version: ProductProjectVersion) {
-  if (!version.drawing_number?.trim()) throw new Error('Инженер еще не загрузил чертеж')
-  if (!Number(version.unit_weight_kg || 0)) throw new Error('Инженер еще не указал вес изделия')
 }
 
 function productPayload(parsed: ProductInput, userId: string): ProductInsert {
@@ -419,52 +376,6 @@ function buildInitialProductFilePayloads(
     fileSize: file.size,
     uploadedBy: userId,
   }))
-}
-
-async function insertProductProjectWithInitialVersion(
-  db: LooseDb,
-  userId: string,
-  input: ProductProjectInput,
-) {
-  const parsed = productProjectSchema.parse(input)
-  await assertTechnicalDepartmentUser(db, parsed.assigned_engineer_id)
-
-  const payload: ProductProjectInsert = {
-    title: parsed.title.trim(),
-    client_id: cleanNullableId(parsed.client_id),
-    description: parsed.description?.trim() || '',
-    characteristics: parsed.characteristics?.trim() || '',
-    client_wishes: parsed.client_wishes?.trim() || '',
-    assigned_engineer_id: parsed.assigned_engineer_id,
-    status: 'new_project',
-    created_by: userId,
-    updated_by: userId,
-  }
-  const { data, error } = await db.from('product_projects').insert(payload).select('*').single()
-  if (error) throw error
-  const project = data as ProductProject
-  const versionPayload: ProductProjectVersionInsert = {
-    project_id: project.id,
-    version_number: 1,
-    version_label: '1',
-    description: payload.description,
-    characteristics: payload.characteristics,
-    client_wishes: payload.client_wishes,
-    status: 'draft',
-    created_by: userId,
-  }
-  const { error: versionError } = await db.from('product_project_versions').insert(versionPayload)
-  if (versionError) throw versionError
-  await ensureProductProjectTask(
-    db,
-    project.id,
-    'product_project_engineering',
-    project.assigned_engineer_id,
-    `Создать чертеж и фото: ${project.title}`,
-    'Загрузите чертеж, фото изделия и укажите вес изделия.',
-    2,
-  )
-  return project
 }
 
 export async function getProductOptions() {
@@ -921,6 +832,33 @@ export async function getProductProjects() {
   }
 }
 
+export async function getCorrectableProductProjectOptions() {
+  try {
+    const { db } = await requireProductManageAccess('product_projects')
+    const { data, error } = await db
+      .from('product_projects')
+      .select('id, title, status, versions:product_project_versions!product_project_versions_project_id_fkey(version_number)')
+      .in('status', ['new_project', 'draft', 'engineering', 'client_review', 'approved'])
+      .order('updated_at', { ascending: false })
+      .limit(100)
+    if (error) throw error
+    const options = ((data || []) as Array<{
+      id: string
+      title: string
+      status: ProductProject['status']
+      versions?: Array<{ version_number: number }> | null
+    }>).map((project) => ({
+      id: project.id,
+      title: project.title,
+      status: project.status,
+      latest_version_number: Math.max(1, ...(project.versions || []).map((version) => version.version_number)),
+    })) satisfies CorrectableProductProjectOption[]
+    return { data: options, error: null }
+  } catch (error) {
+    return { data: null, error: getErrorMessage(error) }
+  }
+}
+
 export async function getProductProject(id: string) {
   try {
     const { db } = await requireProductAccess('product_projects')
@@ -953,8 +891,31 @@ export async function getProductProject(id: string) {
 
 export async function createProductProject(input: ProductProjectInput) {
   try {
-    const { db, user } = await requireProductManageAccess('product_projects')
-    const project = await insertProductProjectWithInitialVersion(db, user.id, input)
+    const { supabase, db } = await requireProductManageAccess('product_projects')
+    const parsed = productProjectSchema.parse(input)
+    await assertTechnicalDepartmentUser(db, parsed.assigned_engineer_id)
+    const projectId = randomUUID()
+    const versionId = randomUUID()
+    const { error: rpcError } = await (supabase as unknown as RpcClient).rpc(
+      'create_product_project_with_mail_v2',
+      {
+        p_project_id: projectId,
+        p_version_id: versionId,
+        p_title: parsed.title,
+        p_client_id: cleanNullableId(parsed.client_id),
+        p_description: parsed.description || '',
+        p_characteristics: parsed.characteristics || '',
+        p_client_wishes: parsed.client_wishes || '',
+        p_requires_vrb_mesh: parsed.requires_vrb_mesh,
+        p_assigned_engineer_id: parsed.assigned_engineer_id,
+        p_initial_file: null,
+        p_mail_link: null,
+      },
+    )
+    if (rpcError) throw rpcError
+    const { data, error } = await db.from('product_projects').select('*').eq('id', projectId).single()
+    if (error || !data) throw error || new Error('Не удалось открыть созданный проект')
+    const project = data as ProductProject
 
     revalidatePath(ROUTES.PRODUCT_PROJECTS)
     return { success: true, project, error: null }
@@ -964,55 +925,72 @@ export async function createProductProject(input: ProductProjectInput) {
 }
 
 export async function createProductProjectWithPhoto(formData: FormData) {
-  let createdProjectId: string | null = null
   let uploadedPath: string | null = null
 
   try {
-    const { supabase, db, user } = await requireProductManageAccess('product_projects')
+    const { supabase, db } = await requireProductManageAccess('product_projects')
     const input: ProductProjectInput = {
       title: String(formData.get('title') || ''),
       client_id: cleanNullableId(formData.get('client_id')),
       description: String(formData.get('description') || ''),
       characteristics: String(formData.get('characteristics') || ''),
       client_wishes: String(formData.get('client_wishes') || ''),
+      requires_vrb_mesh: String(formData.get('requires_vrb_mesh') || '') === 'true',
       assigned_engineer_id: String(formData.get('assigned_engineer_id') || ''),
       status: String(formData.get('status') || 'draft') as ProductProjectInput['status'],
     }
+    const parsed = productProjectSchema.parse(input)
+    await assertTechnicalDepartmentUser(db, parsed.assigned_engineer_id)
+    const mailKind = String(formData.get('mail_kind') || '')
+    const mailId = String(formData.get('mail_id') || '')
+    const mailLink = mailKind || mailId
+      ? mailLinkInputSchema.parse({ kind: mailKind, id: mailId })
+      : null
     const photo = formData.get('photo')
-    const project = await insertProductProjectWithInitialVersion(db, user.id, input)
-    createdProjectId = project.id
+    const projectId = randomUUID()
+    const versionId = randomUUID()
+    let initialFile: DirectProductProjectUpload | null = null
 
     if (photo instanceof File && photo.size > 0) {
       if (!isImageFile(photo)) throw new Error('Загрузите фото в формате изображения')
-      uploadedPath = await uploadStorageFile(supabase, `product-projects/${project.id}`, photo)
-      const payload: ProductProjectFileInsert = {
-        project_id: project.id,
-        version_id: null,
-        file_kind: 'photo',
-        file_name: photo.name,
-        file_path: uploadedPath,
-        mime_type: photo.type || null,
-        file_size: photo.size,
-        uploaded_by: user.id,
+      if (photo.size > 50 * 1024 * 1024) throw new Error('Фото превышает лимит 50 МБ')
+      uploadedPath = await uploadStorageFile(supabase, `product-projects/${projectId}`, photo)
+      initialFile = {
+        objectPath: uploadedPath,
+        fileKind: 'photo',
+        fileName: photo.name,
+        mimeType: photo.type || null,
+        fileSize: photo.size,
       }
-      const { error } = await db.from('product_project_files').insert(payload)
-      if (error) throw error
     }
+
+    const { error: rpcError } = await (supabase as unknown as RpcClient).rpc(
+      'create_product_project_with_mail_v2',
+      {
+        p_project_id: projectId,
+        p_version_id: versionId,
+        p_title: parsed.title,
+        p_client_id: cleanNullableId(parsed.client_id),
+        p_description: parsed.description || '',
+        p_characteristics: parsed.characteristics || '',
+        p_client_wishes: parsed.client_wishes || '',
+        p_requires_vrb_mesh: parsed.requires_vrb_mesh,
+        p_assigned_engineer_id: parsed.assigned_engineer_id,
+        p_initial_file: initialFile,
+        p_mail_link: mailLink,
+      },
+    )
+    if (rpcError) throw rpcError
+    const { data, error } = await db.from('product_projects').select('*').eq('id', projectId).single()
+    if (error || !data) throw error || new Error('Не удалось открыть созданный проект')
+    const project = data as ProductProject
 
     revalidatePath(ROUTES.PRODUCT_PROJECTS)
     revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${project.id}`)
     return { success: true, project, error: null }
   } catch (error) {
-    const { supabase, db } = await requireProductAccess('product_projects').catch(() => ({ supabase: null, db: null }))
-    if (uploadedPath && supabase) {
-      await supabase.storage.from('product-files').remove([uploadedPath]).catch(() => undefined)
-    }
-    if (createdProjectId && db) {
-      try {
-        await db.from('product_projects').delete().eq('id', createdProjectId)
-      } catch {
-        // Best-effort rollback; return the original upload/create error to the user.
-      }
+    if (uploadedPath) {
+      await createAdminClient().storage.from('product-files').remove([uploadedPath]).catch(() => undefined)
     }
     return { success: false, project: null, error: getErrorMessage(error) }
   }
@@ -1030,6 +1008,7 @@ export async function updateProductProject(id: string, input: ProductProjectInpu
       description: parsed.description?.trim() || '',
       characteristics: parsed.characteristics?.trim() || '',
       client_wishes: parsed.client_wishes?.trim() || '',
+      requires_vrb_mesh: parsed.requires_vrb_mesh,
       assigned_engineer_id: parsed.assigned_engineer_id,
       updated_by: user.id,
       updated_at: new Date().toISOString(),
@@ -1086,26 +1065,31 @@ export async function createProductProjectVersion(projectId: string, input: Prod
 
 export async function approveProductProjectVersion(projectId: string, versionId: string) {
   try {
-    const { db, user } = await requireProductManageAccess('product_projects')
-    const { error: versionError } = await db
+    const parsedProjectId = z.string().uuid('Проект не найден').parse(projectId)
+    const parsedVersionId = z.string().uuid('Версия проекта не найдена').parse(versionId)
+    const { supabase, db } = await requireProductManageAccess('product_projects')
+    const { data: version, error: versionError } = await db
       .from('product_project_versions')
-      .update({ status: 'approved' } satisfies ProductProjectVersionUpdate)
-      .eq('id', versionId)
-      .eq('project_id', projectId)
-    if (versionError) throw versionError
+      .select('name_uk, name_en, uktzed, base_price_eur')
+      .eq('id', parsedVersionId)
+      .eq('project_id', parsedProjectId)
+      .single()
+    if (versionError || !version) throw versionError || new Error('Версия проекта не найдена')
+    const data = version as Pick<ProductProjectVersion, 'name_uk' | 'name_en' | 'uktzed' | 'base_price_eur'>
+    const { error } = await (supabase as unknown as RpcClient).rpc(
+      'approve_product_project_version_v2',
+      {
+        p_project_id: parsedProjectId,
+        p_version_id: parsedVersionId,
+        p_name_uk: data.name_uk || '',
+        p_name_en: data.name_en || '',
+        p_uktzed: data.uktzed || '',
+        p_base_price_eur: data.base_price_eur,
+      },
+    )
+    if (error) throw error
 
-    const { error: projectError } = await db
-      .from('product_projects')
-      .update({
-        status: 'approved',
-        approved_version_id: versionId,
-        updated_by: user.id,
-        updated_at: new Date().toISOString(),
-      } satisfies ProductProjectUpdate)
-      .eq('id', projectId)
-    if (projectError) throw projectError
-
-    revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${projectId}`)
+    revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${parsedProjectId}`)
     return { success: true, error: null }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }
@@ -1202,57 +1186,32 @@ export async function saveProductProjectEngineeringDeliverables(formData: FormDa
   }
 }
 
-export async function approveProductProjectForClient(projectId: string, input: ProductProjectApprovalInput) {
+export async function approveProductProjectForClient(
+  projectId: string,
+  versionId: string,
+  input: ProductProjectApprovalInput,
+) {
   try {
-    const { db, user } = await requireProductManageAccess('product_projects')
+    const { supabase } = await requireProductManageAccess('product_projects')
+    const parsedProjectId = z.string().uuid('Проект не найден').parse(projectId)
+    const parsedVersionId = z.string().uuid('Версия проекта не найдена').parse(versionId)
     const parsed = productProjectApprovalSchema.parse(input)
-    const version = await loadLatestProjectVersion(db, projectId)
-    assertVersionReadyForApproval(version)
-
-    const now = new Date().toISOString()
-    const { error: versionError } = await db
-      .from('product_project_versions')
-      .update({
-        name_uk: parsed.name_uk,
-        name_en: parsed.name_en,
-        uktzed: parsed.uktzed,
-        base_price_eur: parsed.base_price_eur,
-        status: 'approved',
-      } satisfies ProductProjectVersionUpdate)
-      .eq('id', version.id)
-      .eq('project_id', projectId)
-    if (versionError) throw versionError
-
-    const { error: projectError } = await db
-      .from('product_projects')
-      .update({
-        status: 'approved',
-        approved_version_id: version.id,
-        updated_by: user.id,
-        updated_at: now,
-      } satisfies ProductProjectUpdate)
-      .eq('id', projectId)
-    if (projectError) throw projectError
-
-    const { data: tasksData, error: tasksError } = await db
-      .from('tasks')
-      .select('id')
-      .eq('product_project_id', projectId)
-      .eq('task_type', 'product_project_sales_review')
-      .in('status', ['pending', 'in_progress'])
-    if (tasksError) throw tasksError
-    const taskIds = ((tasksData || []) as Array<{ id: string }>).map((task) => task.id)
-    if (taskIds.length > 0) {
-      const { error: taskUpdateError } = await db
-        .from('tasks')
-        .update({ status: 'completed', completed_at: now, updated_at: now } satisfies TaskUpdate)
-        .in('id', taskIds)
-      if (taskUpdateError) throw taskUpdateError
-    }
+    const { error } = await (supabase as unknown as RpcClient).rpc(
+      'approve_product_project_version_v2',
+      {
+        p_project_id: parsedProjectId,
+        p_version_id: parsedVersionId,
+        p_name_uk: parsed.name_uk,
+        p_name_en: parsed.name_en,
+        p_uktzed: parsed.uktzed,
+        p_base_price_eur: parsed.base_price_eur,
+      },
+    )
+    if (error) throw error
 
     revalidatePath(ROUTES.TASKS)
     revalidatePath(ROUTES.PRODUCT_PROJECTS)
-    revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${projectId}`)
+    revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${parsedProjectId}`)
     revalidatePath(ROUTES.SALES_PLAN_NEW)
     return { success: true, error: null }
   } catch (error) {
@@ -1262,79 +1221,36 @@ export async function approveProductProjectForClient(projectId: string, input: P
 
 export async function requestProductProjectCorrection(projectId: string, input: ProductProjectCorrectionInput) {
   try {
-    const { db, user } = await requireProductManageAccess('product_projects')
+    const { supabase, user } = await requireProductManageAccess('product_projects')
+    const parsedProjectId = z.string().uuid('Проект не найден').parse(projectId)
     const parsed = productProjectCorrectionSchema.parse(input)
-    const { data: projectData, error: projectError } = await db
-      .from('product_projects')
-      .select('*')
-      .eq('id', projectId)
-      .single()
-    if (projectError || !projectData) throw projectError || new Error('Проект не найден')
-    const project = projectData as ProductProject
-    if (project.status === 'added_to_products') throw new Error('Проект уже добавлен в базу продукции')
-
-    const latest = await loadLatestProjectVersion(db, projectId)
-    const { data: versionsData, error: versionsError } = await db
-      .from('product_project_versions')
-      .select('version_number')
-      .eq('project_id', projectId)
-      .order('version_number', { ascending: false })
-      .limit(1)
-    if (versionsError) throw versionsError
-    const nextNumber = (((versionsData || []) as Array<{ version_number: number }>)[0]?.version_number || 0) + 1
-
-    if (latest.status !== 'superseded') {
-      const { error: supersedeError } = await db
-        .from('product_project_versions')
-        .update({ status: 'superseded' } satisfies ProductProjectVersionUpdate)
-        .eq('id', latest.id)
-      if (supersedeError) throw supersedeError
-    }
-
-    const { error: insertError } = await db.from('product_project_versions').insert({
-      project_id: projectId,
-      version_number: nextNumber,
-      version_label: String(nextNumber),
-      description: latest.description || project.description || '',
-      characteristics: latest.characteristics || project.characteristics || '',
-      client_wishes: parsed.client_wishes,
-      name_uk: latest.name_uk,
-      name_en: latest.name_en,
-      uktzed: latest.uktzed,
-      base_price_eur: latest.base_price_eur,
-      status: 'draft',
-      created_by: user.id,
-    } satisfies ProductProjectVersionInsert)
-    if (insertError) throw insertError
-
-    await cancelActiveProjectTasks(db, projectId, 'product_project_sales_review')
-    const { error: updateError } = await db
-      .from('product_projects')
-      .update({
-        status: 'engineering',
-        approved_version_id: null,
-        updated_by: user.id,
-        updated_at: new Date().toISOString(),
-      } satisfies ProductProjectUpdate)
-      .eq('id', projectId)
-    if (updateError) throw updateError
-
-    await ensureProductProjectTask(
-      db,
-      projectId,
-      'product_project_engineering',
-      project.assigned_engineer_id,
-      `Корректировка изделия: ${project.title}`,
-      parsed.client_wishes,
-      2,
+    const files = validateProductProjectUploads(
+      parsedProjectId,
+      parsed.versionId,
+      user.id,
+      parsed.files as DirectProductProjectUpload[],
     )
+    const uniqueMailLinks = Array.from(
+      new Map(parsed.mailLinks.map((link) => [`${link.kind}:${link.id}`, link])).values(),
+    )
+    const { error } = await (supabase as unknown as RpcClient).rpc(
+      'request_product_project_correction_v2',
+      {
+        p_project_id: parsedProjectId,
+        p_version_id: parsed.versionId,
+        p_correction_note: parsed.correctionNote,
+        p_files: files,
+        p_mail_links: uniqueMailLinks,
+      },
+    )
+    if (error) throw error
 
     revalidatePath(ROUTES.TASKS)
     revalidatePath(ROUTES.PRODUCT_PROJECTS)
-    revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${projectId}`)
-    return { success: true, error: null }
+    revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${parsedProjectId}`)
+    return { success: true, versionId: parsed.versionId, error: null }
   } catch (error) {
-    return { success: false, error: getErrorMessage(error) }
+    return { success: false, versionId: null, error: getErrorMessage(error) }
   }
 }
 
@@ -1478,6 +1394,7 @@ export async function promoteShippedProjectSamplesToProducts(machineId: string) 
           characteristics: version.characteristics || version.description || '',
           unit_weight_kg: Number(version.unit_weight_kg),
           base_price_eur: Number(version.base_price_eur || 0),
+          requires_vrb_mesh: project.requires_vrb_mesh,
           status: 'active',
           source_project_id: projectId,
           source_version_id: version.id,

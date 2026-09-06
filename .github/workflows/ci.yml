@@ -50,6 +50,8 @@ jobs:
         run: npm run test:material-search-performance
       - name: Product PDF and STEP upload rules
         run: npm run test:product-file-uploads
+      - name: Mail CRM integration and responsive project UI contracts
+        run: npm run test:mail && npm run test:product-project-lifecycle
       - name: Restricted product production drawing rules
         run: npm run test:product-production-drawings
       - name: User impersonation session helpers
@@ -166,6 +168,8 @@ jobs:
         run: npm run test:client-delivery-date-tasks
       - name: VRB trigger permission boundary
         run: npm run test:vrb-outsourcing
+      - name: Product-project mail RLS and correction lifecycle
+        run: npm run test:product-project-mail-db
       - name: Inventory stock lifecycle
         run: node scripts/test-inventory-stock-lifecycle.mjs
       - name: Inventory factory transfers

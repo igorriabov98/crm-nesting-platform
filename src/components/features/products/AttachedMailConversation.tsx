@@ -72,9 +72,9 @@ export function AttachedMailConversation({ link }: { link: MailLinkPreview }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-3 overflow-hidden">
       {thread.messages.map((message) => (
-        <article key={message.id} className="rounded-xl border border-border bg-background p-4 shadow-sm">
+        <article key={message.id} className="min-w-0 overflow-hidden rounded-xl border border-border bg-background p-4 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-foreground">{message.from_name || message.from_address}</p>
@@ -85,10 +85,10 @@ export function AttachedMailConversation({ link }: { link: MailLinkPreview }) {
             </time>
           </div>
           {message.body_text ? (
-            <div className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{message.body_text}</div>
+            <div className="mt-4 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6 text-foreground">{message.body_text}</div>
           ) : message.body_html_sanitized ? (
             <div
-              className="mt-4 break-words text-sm leading-6 text-foreground [&_a]:text-blue-700 [&_a]:underline [&_img]:hidden"
+              className="mt-4 max-w-full overflow-hidden break-words [overflow-wrap:anywhere] text-sm leading-6 text-foreground [&_*]:max-w-full [&_a]:break-all [&_a]:text-blue-700 [&_a]:underline [&_img]:hidden [&_pre]:whitespace-pre-wrap [&_table]:block [&_table]:overflow-x-auto"
               dangerouslySetInnerHTML={{ __html: message.body_html_sanitized }}
             />
           ) : (

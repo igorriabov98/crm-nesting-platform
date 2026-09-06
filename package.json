@@ -28,6 +28,7 @@
     "test:production-analytics": "tsx scripts/test-production-analytics.ts",
     "test:production-analytics-db": "node scripts/test-inventory-transfers-full-schema.mjs && node scripts/test-production-analytics-db.mjs",
     "test:product-project-lifecycle": "tsx scripts/test-product-project-lifecycle.ts",
+    "test:product-project-mail-db": "node scripts/test-product-project-mail-db.mjs",
     "test:document-ral": "tsx scripts/test-document-ral-format.ts",
     "test:order-specification-document": "tsx scripts/test-order-specification-document.tsx",
     "test:coating-variants": "tsx scripts/test-coating-variants.ts",
