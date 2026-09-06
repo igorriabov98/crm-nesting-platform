@@ -231,10 +231,11 @@ export function ProductProjectDetailClient({
           <Badge variant={project.status === 'added_to_products' ? 'default' : 'secondary'}>{productProjectStatusLabels[project.status]}</Badge>
         </div>
         <div className="mt-5"><ProductProjectLifecycle status={project.status} /></div>
-        <div className="mt-5 grid gap-4 md:grid-cols-3">
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <InfoBlock title="Описание продукта" value={project.description} />
           <InfoBlock title="Характеристики" value={project.characteristics} />
           <InfoBlock title="Пожелания клиента" value={project.client_wishes} />
+          <InfoBlock title="Сетка VRB" value={project.requires_vrb_mesh ? 'Требуется' : 'Не требуется'} />
         </div>
       </div>
 
@@ -334,9 +335,10 @@ export function ProductProjectDetailClient({
               <h2 className="text-lg font-semibold text-[#1B3A6B]">Подготовка к заказу</h2>
               <p className="mt-1 text-sm font-medium text-primary">{approvedVersion ? `Готова к заказу: ${versionTitle(approvedVersion)}` : currentVersion ? `К заказу готовится: ${versionTitle(currentVersion)}` : 'Версия не найдена'}</p>
             </div>
-            <div className="grid gap-3 text-sm md:grid-cols-2">
+            <div className="grid gap-3 text-sm sm:grid-cols-3">
               <InfoBlock title="Номер чертежа" value={currentVersion?.drawing_number} compact />
               <InfoBlock title="Вес, кг" value={currentVersion?.unit_weight_kg ? String(currentVersion.unit_weight_kg) : null} compact />
+              <InfoBlock title="Сетка VRB" value={project.requires_vrb_mesh ? 'Требуется' : 'Не требуется'} compact />
             </div>
             <div className="space-y-2"><Label>Название на украинском *</Label><Input value={approvalDraft.name_uk} onChange={(event) => setApprovalDraft((current) => ({ ...current, name_uk: event.target.value }))} required /></div>
             <div className="space-y-2"><Label>Название на английском *</Label><Input value={approvalDraft.name_en} onChange={(event) => setApprovalDraft((current) => ({ ...current, name_en: event.target.value }))} required /></div>

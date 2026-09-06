@@ -183,6 +183,7 @@ export const productProjectSchema = z.object({
   description: z.string().optional().default(''),
   characteristics: z.string().optional().default(''),
   client_wishes: z.string().optional().default(''),
+  requires_vrb_mesh: z.boolean().default(false),
   assigned_engineer_id: z.string().uuid('Выберите инженера'),
   status: productProjectStatusSchema.default('new_project'),
 })

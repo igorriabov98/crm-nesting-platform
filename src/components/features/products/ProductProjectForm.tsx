@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ClipboardPenLine,
+  Grid3X3,
   Mail,
   Paperclip,
   Trash2,
@@ -17,6 +18,7 @@ import { toast } from 'sonner'
 import { createProductProjectWithPhoto, updateProductProject } from '@/lib/actions/products'
 import { ROUTES } from '@/lib/constants/routes'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { LoadingButton } from '@/components/ui/loading-button'
@@ -39,6 +41,7 @@ type ProjectState = {
   description: string
   characteristics: string
   client_wishes: string
+  requires_vrb_mesh: boolean
   assigned_engineer_id: string
 }
 
@@ -49,6 +52,7 @@ function initialState(project?: ProductProject | null, initialTitle = ''): Proje
     description: project?.description || '',
     characteristics: project?.characteristics || '',
     client_wishes: project?.client_wishes || '',
+    requires_vrb_mesh: project?.requires_vrb_mesh || false,
     assigned_engineer_id: project?.assigned_engineer_id || '',
   }
 }
@@ -115,6 +119,7 @@ export function ProductProjectForm({
         description: values.description,
         characteristics: values.characteristics,
         client_wishes: values.client_wishes,
+        requires_vrb_mesh: values.requires_vrb_mesh,
         assigned_engineer_id: values.assigned_engineer_id,
         status,
       }
@@ -143,6 +148,7 @@ export function ProductProjectForm({
     formData.append('description', payload.description || '')
     formData.append('characteristics', payload.characteristics || '')
     formData.append('client_wishes', payload.client_wishes || '')
+    formData.append('requires_vrb_mesh', String(payload.requires_vrb_mesh))
     formData.append('assigned_engineer_id', payload.assigned_engineer_id)
     formData.append('status', status)
     if (attachedMailLink) {
@@ -281,6 +287,26 @@ export function ProductProjectForm({
                   onChange={(event) => setField('client_wishes', event.target.value)}
                   placeholder="Сроки, внешний вид и другие пожелания"
                 />
+              </div>
+            </div>
+            <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
+              <div className="flex min-h-11 items-start gap-3">
+                <Checkbox
+                  id="project_requires_vrb_mesh"
+                  aria-describedby="project_requires_vrb_mesh_help"
+                  checked={values.requires_vrb_mesh}
+                  onCheckedChange={(checked) => setField('requires_vrb_mesh', checked === true)}
+                  className="mt-1"
+                />
+                <Grid3X3 className="mt-1 size-4 shrink-0 text-blue-700" aria-hidden="true" />
+                <div className="min-w-0">
+                  <Label htmlFor="project_requires_vrb_mesh" className="cursor-pointer text-sm font-semibold text-blue-950">
+                    Требуется сетка VRB
+                  </Label>
+                  <p id="project_requires_vrb_mesh_help" className="mt-1 text-sm leading-5 text-blue-800">
+                    При переносе образца в продукцию настройка сохранится. После полного подтверждения заказа CRM создаст заявку снабжению по VRB-позициям.
+                  </p>
+                </div>
               </div>
             </div>
           </section>

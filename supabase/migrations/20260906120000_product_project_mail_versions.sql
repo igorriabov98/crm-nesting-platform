@@ -2,6 +2,12 @@
 -- Keep all ownership checks outside RLS-protected mail tables so the policies
 -- cannot recurse through product/request link tables.
 
+ALTER TABLE public.product_projects
+  ADD COLUMN IF NOT EXISTS requires_vrb_mesh boolean NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN public.product_projects.requires_vrb_mesh IS
+  'Whether the sample must retain the VRB mesh requirement when promoted to a product.';
+
 CREATE OR REPLACE FUNCTION public.can_view_product_projects()
 RETURNS boolean
 LANGUAGE sql
@@ -439,6 +445,7 @@ CREATE OR REPLACE FUNCTION public.create_product_project_with_mail_v2(
   p_characteristics text,
   p_client_wishes text,
   p_assigned_engineer_id uuid,
+  p_requires_vrb_mesh boolean DEFAULT false,
   p_initial_file jsonb DEFAULT NULL,
   p_mail_link jsonb DEFAULT NULL
 )
@@ -495,11 +502,11 @@ BEGIN
 
   INSERT INTO public.product_projects(
     id, title, client_id, description, characteristics, client_wishes,
-    assigned_engineer_id, status, created_by, updated_by
+    assigned_engineer_id, requires_vrb_mesh, status, created_by, updated_by
   ) VALUES (
     p_project_id, btrim(p_title), p_client_id, COALESCE(p_description, ''),
     COALESCE(p_characteristics, ''), COALESCE(p_client_wishes, ''),
-    p_assigned_engineer_id, 'new_project', v_actor, v_actor
+    p_assigned_engineer_id, COALESCE(p_requires_vrb_mesh, false), 'new_project', v_actor, v_actor
   );
 
   INSERT INTO public.product_project_versions(
@@ -559,10 +566,10 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.create_product_project_with_mail_v2(
-  uuid, uuid, text, uuid, text, text, text, uuid, jsonb, jsonb
+  uuid, uuid, text, uuid, text, text, text, uuid, boolean, jsonb, jsonb
 ) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.create_product_project_with_mail_v2(
-  uuid, uuid, text, uuid, text, text, text, uuid, jsonb, jsonb
+  uuid, uuid, text, uuid, text, text, text, uuid, boolean, jsonb, jsonb
 ) TO authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.request_product_project_correction_v2(

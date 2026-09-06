@@ -18,6 +18,8 @@ assert.match(attachedConversation, /getMailThread\(link\.thread_id, link\.kind =
 assert.match(attachedConversation, /thread\.messages\.map/, 'attached thread messages must be rendered')
 assert.doesNotMatch(form, /<Label>Статус<\/Label>/, 'project status must not be editable in the form')
 assert.match(form, /После создания инженер сразу получит задачу/, 'form must explain automatic engineer task creation')
+assert.match(form, /Требуется сетка VRB/, 'project sample form must expose the VRB mesh requirement')
+assert.match(form, /aria-describedby="project_requires_vrb_mesh_help"/, 'VRB mesh control must have accessible helper text')
 
 const lifecycle = source('src/components/features/products/ProductProjectLifecycle.tsx')
 for (const label of ['Ожидает инженера', 'В работе', 'Предварительно готов', 'Готов к заказу', 'Закрыт']) {
@@ -33,6 +35,7 @@ assert.match(productActions, /create_product_project_with_mail_v2/, 'project and
 assert.match(productActions, /request_product_project_correction_v2/, 'corrections must use the atomic database operation')
 assert.match(productActions, /approve_product_project_version_v2/, 'approval must atomically validate the current version')
 assert.match(productActions, /parsedVersionId/, 'approval must validate the explicitly selected version')
+assert.match(productActions, /requires_vrb_mesh: project\.requires_vrb_mesh/, 'promoted products must retain the sample VRB requirement')
 
 const projectDetails = source('src/components/features/products/ProductProjectDetailClient.tsx')
 for (const label of [
@@ -43,6 +46,7 @@ for (const label of [
   'Переписка версии',
   'Весь проект',
   'К заказу готовится:',
+  'Сетка VRB',
 ]) {
   assert.ok(projectDetails.includes(label), `missing version UI label: ${label}`)
 }

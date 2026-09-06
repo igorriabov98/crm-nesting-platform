@@ -1541,6 +1541,7 @@ export type Database = {
           characteristics: string
           client_wishes: string
           assigned_engineer_id: string
+          requires_vrb_mesh: boolean
           status: 'new_project' | 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
           approved_version_id: string | null
           created_by: string | null
@@ -1556,6 +1557,7 @@ export type Database = {
           characteristics?: string
           client_wishes?: string
           assigned_engineer_id: string
+          requires_vrb_mesh?: boolean
           status?: 'new_project' | 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
           approved_version_id?: string | null
           created_by?: string | null
@@ -1571,6 +1573,7 @@ export type Database = {
           characteristics?: string
           client_wishes?: string
           assigned_engineer_id?: string
+          requires_vrb_mesh?: boolean
           status?: 'new_project' | 'draft' | 'engineering' | 'client_review' | 'approved' | 'added_to_products' | 'cancelled'
           approved_version_id?: string | null
           created_by?: string | null
@@ -5531,6 +5534,7 @@ export type Database = {
           p_characteristics: string
           p_client_wishes: string
           p_assigned_engineer_id: string
+          p_requires_vrb_mesh?: boolean
           p_initial_file?: Json | null
           p_mail_link?: Json | null
         }

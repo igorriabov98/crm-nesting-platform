@@ -87,14 +87,14 @@ SELECT public.create_product_project_with_mail_v2(
   '20000000-0000-0000-0000-000000000010',
   '30000000-0000-0000-0000-000000000010',
   'Проект из цепочки', NULL, 'Описание', 'Характеристики', 'Пожелания',
-  '10000000-0000-0000-0000-000000000003', NULL,
+  '10000000-0000-0000-0000-000000000003', true, NULL,
   '{"kind":"thread","id":"40000000-0000-0000-0000-000000000001"}'::jsonb
 );
 SELECT public.create_product_project_with_mail_v2(
   '20000000-0000-0000-0000-000000000011',
   '30000000-0000-0000-0000-000000000011',
   'Проект из письма', NULL, '', '', '',
-  '10000000-0000-0000-0000-000000000003', NULL,
+  '10000000-0000-0000-0000-000000000003', false, NULL,
   '{"kind":"message","id":"50000000-0000-0000-0000-000000000001"}'::jsonb
 );
 
@@ -116,7 +116,7 @@ BEGIN
       '20000000-0000-0000-0000-000000000012',
       '30000000-0000-0000-0000-000000000012',
       'Не должен остаться', NULL, '', '', '',
-      '10000000-0000-0000-0000-000000000003', NULL,
+      '10000000-0000-0000-0000-000000000003', false, NULL,
       '{"kind":"thread","id":"40000000-0000-0000-0000-000000000002"}'::jsonb
     );
     RAISE EXCEPTION 'project with foreign mail unexpectedly succeeded';
@@ -172,6 +172,9 @@ BEGIN
     WHERE product_project_id = '20000000-0000-0000-0000-000000000010'
       AND version_id = '30000000-0000-0000-0000-000000000010'
   ) THEN RAISE EXCEPTION 'new project thread was not linked to version 1'; END IF;
+  IF (SELECT requires_vrb_mesh FROM public.product_projects WHERE id = '20000000-0000-0000-0000-000000000010') IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'new project did not retain the VRB mesh requirement';
+  END IF;
   IF NOT EXISTS (
     SELECT 1 FROM public.product_project_mail_messages
     WHERE product_project_id = '20000000-0000-0000-0000-000000000011'
@@ -237,7 +240,7 @@ BEGIN
       )
   ) THEN RAISE EXCEPTION 'a protected mail function is not locked down'; END IF;
   IF has_function_privilege('anon', 'public.current_user_owns_mail_thread(uuid)', 'EXECUTE')
-     OR has_function_privilege('anon', 'public.create_product_project_with_mail_v2(uuid,uuid,text,uuid,text,text,text,uuid,jsonb,jsonb)', 'EXECUTE') THEN
+     OR has_function_privilege('anon', 'public.create_product_project_with_mail_v2(uuid,uuid,text,uuid,text,text,text,uuid,boolean,jsonb,jsonb)', 'EXECUTE') THEN
     RAISE EXCEPTION 'anon retained execute access to protected mail functions';
   END IF;
 END;
