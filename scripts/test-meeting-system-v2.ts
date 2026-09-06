@@ -34,6 +34,13 @@ const workerMigration = readFileSync(
   ),
   "utf8",
 );
+const legacyDedupMigration = readFileSync(
+  resolve(
+    root,
+    "supabase/migrations/20260906110000_meeting_v2_legacy_question_dedup.sql",
+  ),
+  "utf8",
+);
 const cronAuthorization = readFileSync(
   resolve(root, "src/lib/meetings-v2/cron-auth.ts"),
   "utf8",
@@ -142,6 +149,7 @@ assert.match(ruleEvaluationRoute, /status: 500/);
 assert.match(shadowReport, /BEGIN TRANSACTION READ ONLY/);
 assert.match(shadowReport, /futurePlannedMeetingsWithoutTemplate/);
 assert.match(shadowReport, /duplicateActiveEpisodes/);
+assert.match(shadowReport, /duplicateLegacyOpenQuestions/);
 assert.match(shadowReport, /stalePendingEvents/);
 assert.match(deployWorkflow, /meeting_system_v2_shadow\.sql/);
 assert.match(deployWorkflow, /meeting-system-v2-shadow-\$\{\{ github\.sha \}\}/);
@@ -151,6 +159,9 @@ assert.match(workerMigration, /meeting-reminders-worker-v2/);
 assert.match(workerMigration, /'\*\/5 \* \* \* \*'/);
 assert.match(workerMigration, /vault\.decrypted_secrets/);
 assert.match(workerMigration, /verify_meeting_system_v2_cron_secret/);
+assert.match(legacyDedupMigration, /legacy_duplicate_merged/);
+assert.match(legacyDedupMigration, /adoptedFromLegacyRule/);
+assert.match(legacyDedupMigration, /'machines:' \|\| source_id/);
 assert.match(cronAuthorization, /verify_meeting_system_v2_cron_secret/);
 assert.match(
   proxy,

@@ -1,5 +1,112 @@
 BEGIN;
 
+INSERT INTO public.meetings(id, title, meeting_date, meeting_time, status)
+VALUES (
+  '99000000-0000-4000-8000-000000000001',
+  'Legacy dedup test meeting', CURRENT_DATE - 1, '09:00', 'planned'
+);
+INSERT INTO public.meeting_agenda_items(
+  id, meeting_id, title, description, auto_generated, source_type, source_key
+)
+VALUES (
+  '99000000-0000-4000-8000-000000000002',
+  '99000000-0000-4000-8000-000000000001',
+  'Определить тип материала: SQL', 'Тип материала не определён.', true,
+  'material_undefined',
+  'pool:material_undefined:99000000-0000-4000-8000-000000000004'
+);
+INSERT INTO public.meeting_agenda_pool_items(
+  id, source_key, source_type, title, description, status, assigned_meeting_id
+)
+VALUES (
+  '99000000-0000-4000-8000-000000000003',
+  'material_undefined:99000000-0000-4000-8000-000000000004',
+  'material_undefined', 'Определить тип материала: SQL',
+  'Тип материала не определён.', 'assigned',
+  '99000000-0000-4000-8000-000000000001'
+);
+INSERT INTO public.meeting_questions(
+  id, assigned_meeting_id, episode_key, source_type, source_id, title,
+  description, category, priority, status, legacy_agenda_item_id
+)
+VALUES (
+  '99000000-0000-4000-8000-000000000005',
+  '99000000-0000-4000-8000-000000000001',
+  'pool:material_undefined:99000000-0000-4000-8000-000000000004',
+  'material_undefined', '99000000-0000-4000-8000-000000000004',
+  'Определить тип материала: SQL', 'Тип материала не определён.',
+  'legacy', 'normal', 'assigned',
+  '99000000-0000-4000-8000-000000000002'
+), (
+  '99000000-0000-4000-8000-000000000006',
+  '99000000-0000-4000-8000-000000000001',
+  'material_undefined:99000000-0000-4000-8000-000000000004',
+  'material_undefined', '99000000-0000-4000-8000-000000000004',
+  'Определить тип материала: SQL', 'Тип материала не определён.',
+  'legacy', 'normal', 'assigned',
+  NULL
+);
+UPDATE public.meeting_questions
+SET legacy_pool_item_id = '99000000-0000-4000-8000-000000000003'
+WHERE id = '99000000-0000-4000-8000-000000000006';
+INSERT INTO public.meeting_question_members(
+  question_id, source_key, source_type, source_id, title
+)
+VALUES
+  ('99000000-0000-4000-8000-000000000005',
+   'pool:material_undefined:99000000-0000-4000-8000-000000000004',
+   'material_undefined', '99000000-0000-4000-8000-000000000004', 'SQL'),
+  ('99000000-0000-4000-8000-000000000006',
+   'material_undefined:99000000-0000-4000-8000-000000000004',
+   'material_undefined', '99000000-0000-4000-8000-000000000004', 'SQL');
+INSERT INTO public.meeting_question_meeting_history(question_id, meeting_id)
+VALUES
+  ('99000000-0000-4000-8000-000000000005', '99000000-0000-4000-8000-000000000001'),
+  ('99000000-0000-4000-8000-000000000006', '99000000-0000-4000-8000-000000000001');
+INSERT INTO public.meeting_question_events(question_id, event_type)
+VALUES ('99000000-0000-4000-8000-000000000006', 'legacy_duplicate_test');
+
+\i supabase/migrations/20260906110000_meeting_v2_legacy_question_dedup.sql
+
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM public.meeting_questions WHERE id IN (
+    '99000000-0000-4000-8000-000000000005',
+    '99000000-0000-4000-8000-000000000006'
+  )) <> 1 THEN
+    RAISE EXCEPTION 'Legacy agenda and pool projections were not consolidated';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.meeting_questions
+    WHERE id = '99000000-0000-4000-8000-000000000005'
+      AND legacy_pool_item_id = '99000000-0000-4000-8000-000000000003'
+      AND rule_id = '30000000-0000-4000-8000-000000000007'
+      AND episode_key = 'machines:99000000-0000-4000-8000-000000000004'
+  ) THEN
+    RAISE EXCEPTION 'Consolidated legacy question was not adopted by the system rule';
+  END IF;
+  IF (SELECT count(*) FROM public.meeting_question_members
+      WHERE question_id = '99000000-0000-4000-8000-000000000005') <> 1 THEN
+    RAISE EXCEPTION 'Duplicate legacy members were not consolidated';
+  END IF;
+  IF (SELECT count(*) FROM public.meeting_question_meeting_history
+      WHERE question_id = '99000000-0000-4000-8000-000000000005') <> 1 THEN
+    RAISE EXCEPTION 'Duplicate legacy meeting history was not consolidated';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.meeting_question_events
+    WHERE question_id = '99000000-0000-4000-8000-000000000005'
+      AND event_type = 'legacy_duplicate_test'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.meeting_question_events
+    WHERE question_id = '99000000-0000-4000-8000-000000000005'
+      AND event_type = 'legacy_duplicate_merged'
+  ) THEN
+    RAISE EXCEPTION 'Legacy question history was not preserved during consolidation';
+  END IF;
+END;
+$$;
+
 DO $$
 DECLARE
   v_first_question uuid;
