@@ -43,6 +43,10 @@ const meetingActions = readFileSync(
   "utf8",
 );
 const proxy = readFileSync(resolve(root, "src/proxy.ts"), "utf8");
+const ruleEvaluationRoute = readFileSync(
+  resolve(root, "src/app/api/meetings/rules/evaluate/route.ts"),
+  "utf8",
+);
 
 for (const table of [
   "meeting_templates",
@@ -126,6 +130,15 @@ assert.match(engine, /sendTelegramMessage/);
 assert.match(engine, /meeting_question_critical/);
 assert.match(engine, /executionMode === "shadow"/);
 assert.match(engine, /group_count: groups\.size/);
+assert.match(
+  engine,
+  /current_version:meeting_rule_versions!meeting_rules_current_version_id_fkey/,
+);
+assert.doesNotMatch(engine, /current_version:meeting_rule_versions\(/);
+assert.match(engine, /Event batch failed/);
+assert.match(engine, /failures/);
+assert.match(ruleEvaluationRoute, /result\.failures\.length > 0/);
+assert.match(ruleEvaluationRoute, /status: 500/);
 assert.match(shadowReport, /BEGIN TRANSACTION READ ONLY/);
 assert.match(shadowReport, /futurePlannedMeetingsWithoutTemplate/);
 assert.match(shadowReport, /duplicateActiveEpisodes/);
@@ -155,7 +168,16 @@ assert.match(
   meetingActions,
   /meeting:meetings!meeting_questions_assigned_meeting_id_fkey/,
 );
+assert.match(
+  meetingActions,
+  /responsible:users!meeting_questions_responsible_user_id_fkey/,
+);
+assert.match(
+  meetingActions,
+  /responsible:users!meeting_question_outcomes_responsible_user_id_fkey/,
+);
 assert.doesNotMatch(meetingActions, /questions:meeting_questions\(/);
 assert.doesNotMatch(meetingActions, /meeting:meetings\(/);
+assert.doesNotMatch(meetingActions, /responsible:users\(/);
 
 console.log("Meeting system v2 contracts: OK");

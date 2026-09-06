@@ -13,6 +13,8 @@ async function evaluate(request: Request) {
     );
   try {
     const result = await processPendingMeetingRuleEvents(100);
+    if (result.failures.length > 0)
+      return NextResponse.json({ ok: false, result }, { status: 500 });
     return NextResponse.json({ ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
