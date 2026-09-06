@@ -28,7 +28,6 @@ export function getSidebarWorkQueueCount(href: string, counts: SidebarWorkQueueC
   if (href === ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS) return counts.departmentRequests.technologist
   if (href === ROUTES.SUPPLY_DEPARTMENT_REQUESTS) return counts.departmentRequests.supply
   if (href === ROUTES.PRODUCTION_DEPARTMENT_REQUESTS) return counts.departmentRequests.production
-  if (href === ROUTES.PLANNING_DEPARTMENT_REQUESTS) return counts.departmentRequests.planning
   if (href === ROUTES.SUPPLY_TRANSPORT) return counts.transport
   if (href === ROUTES.SUPPLY_OUTSOURCING_REQUESTS) return counts.outsourcingApprovals
   if (href === ROUTES.MATERIAL_REQUESTS) return counts.materialRequests

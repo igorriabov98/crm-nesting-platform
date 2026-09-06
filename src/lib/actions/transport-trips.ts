@@ -29,7 +29,6 @@ import {
 } from '@/lib/transport/need-groups'
 import { getTransportStopOrderError } from '@/lib/transport/trip-rules'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import { isDirector } from '@/lib/utils/permissions'
 
 export type TransportNeedKind = 'materials' | 'detailing' | 'outsourcing'
 export type TransportNeedSource = 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'
@@ -1079,7 +1078,6 @@ function revalidateTransportWorkspace() {
   revalidatePath(ROUTES.INVENTORY)
   revalidatePath(ROUTES.INVENTORY_RECEIVING)
   revalidatePath(ROUTES.REQUESTS)
-  revalidatePath(ROUTES.PLANNING_DEPARTMENT_REQUESTS)
 }
 
 export async function createTransportTrip(input: z.input<typeof createTripSchema>) {
@@ -1207,7 +1205,7 @@ export async function decideTransportTripDateChange(input: {
     if (requestError || !requestData) throw new Error(requestError?.message || 'Запрос согласования не найден')
     const request = requestData as { status: string; task: { assigned_to: string } | { assigned_to: string }[] | null }
     const task = Array.isArray(request.task) ? request.task[0] : request.task
-    if (task?.assigned_to !== context.userId && !isDirector(context.role)) throw new Error('Недостаточно прав')
+    if (task?.assigned_to !== context.userId) throw new Error('Недостаточно прав')
     const { data, error } = await transportDb(admin).rpc('fn_decide_transport_trip_date_change', {
       p_request_id: parsed.requestId,
       p_decision: parsed.decision,

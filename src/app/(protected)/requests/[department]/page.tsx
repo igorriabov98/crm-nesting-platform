@@ -1,4 +1,4 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { DepartmentRequestsPage } from '@/components/features/department-requests/DepartmentRequestsPage'
 import {
   getDepartmentRequestWorkspace,
@@ -8,6 +8,7 @@ import {
   isDepartmentRequestTarget,
   normalizeDepartmentRequestFilters,
 } from '@/lib/department-requests'
+import { ROUTES } from '@/lib/constants/routes'
 
 export async function generateMetadata({
   params,
@@ -37,6 +38,11 @@ export default async function DepartmentRequestsRoute({
 }) {
   const [{ department }, query] = await Promise.all([params, searchParams])
   if (!isDepartmentRequestTarget(department)) notFound()
+  if (department === 'planning') {
+    const requestParams = new URLSearchParams()
+    if (query.factory) requestParams.set('factory', query.factory)
+    redirect(requestParams.size > 0 ? `${ROUTES.REQUESTS}?${requestParams.toString()}` : ROUTES.REQUESTS)
+  }
 
   let workspace
   try {

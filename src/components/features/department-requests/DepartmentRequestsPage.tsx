@@ -276,7 +276,7 @@ export function DepartmentRequestsPage({
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
               {workspace.mode === 'mine'
-                ? 'Создавайте нестандартные задачи для технологов, снабжения и производства и следите за результатом.'
+                ? 'Создавайте рабочие запросы и обрабатывайте запросы, назначенные лично вам.'
                 : `Здесь собраны только запросы, адресованные отделу «${config!.label}».`}
             </p>
           </div>
@@ -419,7 +419,7 @@ export function DepartmentRequestsPage({
         </div>
 
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 text-sm text-slate-500 sm:px-5">
-          <span>{workspace.mode === 'mine' ? 'Отправленные вами' : 'Адресованные вашему отделу'}</span>
+          <span>{workspace.mode === 'mine' ? 'Отправленные и назначенные лично вам' : 'Адресованные вашему отделу'}</span>
           <span className="tabular-nums">Найдено: {workspace.total}</span>
         </div>
 
@@ -444,7 +444,10 @@ export function DepartmentRequestsPage({
             <RequestListItem
               key={request.id}
               request={request}
-              mode={workspace.mode}
+              mode={workspace.mode === 'mine' && (
+                request.created_by !== workspace.userId
+                || request.request_kind === 'transport_trip_date_approval' && request.assigned_to === workspace.userId
+              ) ? 'inbox' : workspace.mode}
               factoryId={factoryId}
               canClaimMachineLayout={workspace.canClaimMachineLayout}
             />
