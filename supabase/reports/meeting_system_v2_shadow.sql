@@ -34,6 +34,23 @@ SELECT jsonb_build_object(
         HAVING count(*) > 1
       ) duplicates
     ),
+    'duplicateLegacyOpenQuestions', (
+      SELECT count(*)
+      FROM (
+        SELECT question.assigned_meeting_id, question.source_id, question.title,
+               regexp_replace(question.episode_key, '^pool:', '') AS normalized_episode_key
+        FROM public.meeting_questions question
+        WHERE question.rule_id IS NULL
+          AND question.status IN ('new', 'assigned', 'in_meeting', 'on_control', 'deferred')
+          AND (
+            question.legacy_agenda_item_id IS NOT NULL
+            OR question.legacy_pool_item_id IS NOT NULL
+          )
+        GROUP BY question.assigned_meeting_id, question.source_id, question.title,
+                 regexp_replace(question.episode_key, '^pool:', '')
+        HAVING count(*) > 1
+      ) duplicate_legacy_questions
+    ),
     'failedRunsLast24Hours', (
       SELECT count(*)
       FROM public.meeting_rule_runs run
