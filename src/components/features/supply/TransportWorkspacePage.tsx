@@ -83,6 +83,7 @@ import {
   createTransportTrip,
   decideTransportTripDateChange,
   getTransportWorkspace,
+  moveTransportTripPosition,
   startTransportTrip,
   updateTransportTrip,
   updateTransportTripStopStatus,
@@ -99,6 +100,10 @@ import {
   type TransportDraftAssignment,
   type TransportDraftStop,
 } from '@/lib/transport/trip-rules'
+import {
+  groupTransportNeeds,
+  type TransportNeedGroup,
+} from '@/lib/transport/need-groups'
 import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
 import { cn } from '@/lib/utils'
 
@@ -163,6 +168,12 @@ type EditingTransportStop = TransportDraftStop & {
   completedAt: string | null
 }
 
+type MovePositionDraft = {
+  sourceTripId: string
+  title: string
+  references: Array<{ source: UnifiedTransportNeed['source']; id: string }>
+}
+
 const TRANSPORT_TIME_ZONE = 'Europe/Uzhgorod'
 
 function formatDate(value: string | null) {
@@ -174,6 +185,10 @@ function formatDate(value: string | null) {
 function formatMoney(value: number | null) {
   if (value === null) return 'Цена не указана'
   return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} ₴`
+}
+
+function numberLabel(value: number, maximumFractionDigits = 3) {
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits }).format(value)
 }
 
 function formatDateTime(value: string | null) {
@@ -216,29 +231,11 @@ function editableTripNeed(trip: TransportTrip, need: TransportTrip['needs'][numb
   const pickup = trip.stops.find((stop) => stop.id === need.pickupStopId)
   const delivery = trip.stops.find((stop) => stop.id === need.deliveryStopId)
   return {
-    key: need.key,
-    id: need.id,
-    kind: need.kind,
-    source: need.source,
-    direction: need.direction,
-    planState: 'confirmed',
-    status: 'linked',
-    title: need.title,
-    subtitle: need.subtitle,
-    sourcePointKey: need.sourcePointKey,
-    sourcePointLabel: need.sourcePointLabel,
+    ...need,
     sourcePointCity: pickup?.city || null,
     sourcePointAddress: pickup?.address || null,
-    destinationPointKey: need.destinationPointKey,
-    destinationPointLabel: need.destinationPointLabel,
     destinationPointCity: delivery?.city || null,
     destinationPointAddress: delivery?.address || null,
-    neededDate: need.neededDate,
-    deadline: need.neededDate,
-    itemLabels: [],
-    itemDetails: [],
-    volumeLabel: null,
-    deliveryRisk: false,
     selectable: true,
     unavailableReason: null,
   }
@@ -256,6 +253,40 @@ function matchesSearch(need: UnifiedTransportNeed, search: string) {
   return haystack.includes(search)
 }
 
+function groupMatchesSearch(group: TransportNeedGroup<UnifiedTransportNeed>, search: string) {
+  if (!search) return true
+  const haystack = [
+    group.title,
+    group.subtitle,
+    group.sourcePointLabel,
+    group.destinationPointLabel,
+    ...group.itemLabels,
+    ...group.itemDetails.flatMap((item) => [
+      item.title,
+      item.description || '',
+      ...item.characteristics.map((entry) => `${entry.label} ${entry.value}`),
+    ]),
+  ].join(' ').toLocaleLowerCase('ru')
+  return haystack.includes(search)
+}
+
+function groupDetailsNeed(group: TransportNeedGroup<UnifiedTransportNeed>): UnifiedTransportNeed {
+  const first = group.needs[0]
+  return {
+    ...first,
+    key: group.key,
+    positionKey: group.key,
+    title: group.title,
+    subtitle: group.subtitle,
+    itemLabels: group.itemLabels,
+    itemDetails: group.itemDetails as UnifiedTransportNeed['itemDetails'],
+    volumeLabel: group.volumeLabel,
+    weightKg: group.weightKg,
+    selectable: group.selectable,
+    unavailableReason: group.unavailableReason,
+  }
+}
+
 function tripDraft(trip: TransportTrip): TripDraft {
   return {
     status: trip.status === 'needed' ? 'found' : trip.status,
@@ -265,14 +296,6 @@ function tripDraft(trip: TransportTrip): TripDraft {
     route: trip.route || trip.routeStart || '',
     comment: trip.comment || '',
   }
-}
-
-function tripNeedCurrentDate(trip: TransportTrip, need: TransportTrip['needs'][number]) {
-  for (const request of trip.dateChangeRequests) {
-    const approved = request.items.find((item) => item.status === 'approved' && item.needSource === need.source && item.needId === need.id)
-    if (approved) return approved.newDate
-  }
-  return need.neededDate
 }
 
 function operationalStops(trip: TransportTrip) {
@@ -325,7 +348,7 @@ function locationDetails(city: string | null, address: string | null) {
   return [city, address].filter(Boolean).join(', ') || 'Город и адрес не указаны'
 }
 
-const NeedCard = memo(function NeedCard({
+export const NeedCard = memo(function NeedCard({
   need,
   selected,
   compatible,
@@ -443,6 +466,144 @@ const NeedCard = memo(function NeedCard({
   )
 })
 
+const NeedGroupCard = memo(function NeedGroupCard({
+  group,
+  selectedKeys,
+  onToggleReferences,
+  onDetails,
+}: {
+  group: TransportNeedGroup<UnifiedTransportNeed>
+  selectedKeys: Set<string>
+  onToggleReferences: (keys: string[], selected: boolean, neededDate: string | null) => void
+  onDetails: (group: TransportNeedGroup<UnifiedTransportNeed>) => void
+}) {
+  const meta = categoryMeta[group.kind]
+  const Icon = meta.icon
+  const selectablePositions = group.positions.filter((position) => position.selectable)
+  const selectedPositions = selectablePositions.filter((position) => (
+    position.references.every((reference) => selectedKeys.has(reference.key))
+  ))
+  const allSelected = selectablePositions.length > 0 && selectedPositions.length === selectablePositions.length
+  const partiallySelected = selectedPositions.length > 0 && !allSelected
+  const groupKeys = selectablePositions.flatMap((position) => position.references.map((reference) => reference.key))
+
+  return (
+    <article className={cn(
+      'overflow-hidden rounded-2xl border bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-[border-color,box-shadow] motion-reduce:transition-none',
+      (allSelected || partiallySelected) ? 'border-blue-500 ring-1 ring-blue-500/40' : 'border-slate-200 hover:border-blue-300 hover:shadow-md',
+    )}>
+      <div className="p-4">
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={partiallySelected ? 'mixed' : allSelected}
+            aria-label={`Выбрать всю группу ${group.title}`}
+            disabled={selectablePositions.length === 0}
+            onClick={() => onToggleReferences(groupKeys, !allSelected, group.neededDate)}
+            className={cn(
+              '-m-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+            )}
+          >
+            <span className={cn(
+              'flex h-6 w-6 items-center justify-center rounded-lg border',
+              (allSelected || partiallySelected) ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-300 bg-white text-transparent',
+            )}>
+              {partiallySelected ? <span className="h-0.5 w-3 rounded bg-white" /> : <Check className="h-4 w-4" strokeWidth={3} />}
+            </span>
+          </button>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold', meta.chip)}>
+                <Icon className="h-3.5 w-3.5" />
+                {meta.shortLabel}
+              </span>
+              <Badge variant="outline" className="rounded-full bg-slate-50 text-slate-700">
+                {group.positions.length} поз.
+              </Badge>
+              {group.weightKg !== null ? (
+                <span className="text-xs font-semibold text-slate-600">
+                  {group.weightComplete ? 'Вес' : 'Известный вес'}: {numberLabel(group.weightKg)} кг
+                </span>
+              ) : (
+                <span className="text-xs font-medium text-slate-500">Вес не рассчитан</span>
+              )}
+            </div>
+            <div className="mt-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="truncate text-base font-semibold text-slate-950">{group.title}</div>
+                <div className="truncate text-sm text-slate-600">{group.subtitle}</div>
+              </div>
+              <div className="shrink-0 text-left text-xs text-slate-500 sm:text-right">
+                Требуется перевезти
+                <span className="mt-0.5 block text-sm font-semibold text-slate-700">{formatDate(group.neededDate)}</span>
+              </div>
+            </div>
+            <div className="mt-3 flex min-w-0 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+              <span className="truncate">{group.sourcePointLabel}</span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
+              <span className="truncate">{group.destinationPointLabel}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-2 border-t border-slate-100 pt-3">
+          {group.positions.map((position) => {
+            const keys = position.references.map((reference) => reference.key)
+            const selected = keys.every((key) => selectedKeys.has(key))
+            return (
+              <button
+                key={position.key}
+                type="button"
+                role="checkbox"
+                aria-checked={selected}
+                disabled={!position.selectable}
+                data-focus-id={keys.join(' ')}
+                onClick={() => onToggleReferences(keys, !selected, position.neededDate)}
+                className={cn(
+                  'grid min-h-11 w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2',
+                  selected ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-slate-50/60 hover:bg-slate-100',
+                  !position.selectable && 'cursor-not-allowed opacity-55',
+                )}
+              >
+                <span className={cn(
+                  'flex h-5 w-5 items-center justify-center rounded-md border',
+                  selected ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-300 bg-white text-transparent',
+                )}>
+                  <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                </span>
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <span className="truncate text-sm font-semibold text-slate-900">{position.title}</span>
+                    <span className="shrink-0 text-xs font-medium tabular-nums text-slate-600">
+                      {position.volumeLabel || (position.weightKg !== null ? `${numberLabel(position.weightKg)} кг` : 'Вес не рассчитан')}
+                    </span>
+                  </span>
+                  {position.unavailableReason && <span className="mt-0.5 block text-xs text-slate-500">{position.unavailableReason}</span>}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="flex min-h-11 items-center justify-between gap-3 border-t border-slate-100 px-4 py-1.5">
+        <span className="min-w-0 truncate text-xs text-slate-500">Все материалы, размеры и вес</span>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => onDetails(group)}
+          className="h-11 shrink-0 rounded-xl px-3 font-semibold text-blue-800 hover:bg-blue-50 hover:text-blue-900"
+          aria-label={`Подробнее о группе «${group.title}»`}
+        >
+          Подробнее <ChevronRight className="h-4 w-4" />
+        </Button>
+      </div>
+    </article>
+  )
+})
+
 function NeedDetailsDialog({
   need,
   onOpenChange,
@@ -457,6 +618,7 @@ function NeedDetailsDialog({
     ? need.itemDetails
     : need.itemLabels.map((label, index) => ({
         id: `${need.key}:${index}`,
+        logicalItemKey: `${need.key}:${index}`,
         productId: null,
         productVersionId: null,
         productHref: null,
@@ -465,7 +627,15 @@ function NeedDetailsDialog({
         drawingLabel: null,
         description: null,
         quantityLabel: null,
+        quantity: null,
+        requiredQuantity: null,
+        excessQuantity: null,
+        unit: null,
+        weightKg: null,
+        machineLabel: null,
+        characteristics: [],
       }))
+  const weightComplete = items.length > 0 && items.every((item) => item.weightKg !== null)
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
@@ -515,8 +685,10 @@ function NeedDetailsDialog({
                 <dd className="mt-1 font-semibold text-slate-900">{formatDate(need.neededDate)}</dd>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <dt className="text-xs text-slate-500">Объём</dt>
-                <dd className="mt-1 font-semibold text-slate-900">{need.volumeLabel || `${items.length} поз.`}</dd>
+                <dt className="text-xs text-slate-500">{need.weightKg !== null && !weightComplete ? 'Известный вес' : 'Вес'}</dt>
+                <dd className="mt-1 font-semibold text-slate-900">
+                  {need.weightKg !== null ? `${numberLabel(need.weightKg)} кг` : 'Вес не рассчитан'}
+                </dd>
               </div>
             </dl>
             {need.deadline && need.deadline !== need.neededDate && (
@@ -594,10 +766,24 @@ function NeedDetailsDialog({
                         )
                       )}
                       {item.description && <span className="mt-0.5 block text-xs leading-5 text-slate-500">{item.description}</span>}
+                      {item.machineLabel && <span className="mt-0.5 block text-xs leading-5 text-slate-500">Для: {item.machineLabel}</span>}
+                      {item.characteristics.length > 0 && (
+                        <dl className="mt-2 flex flex-wrap gap-1.5">
+                          {item.characteristics.map((entry) => (
+                            <div key={`${entry.label}:${entry.value}`} className="inline-flex gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs">
+                              <dt className="text-slate-500">{entry.label}:</dt>
+                              <dd className="font-medium text-slate-800">{entry.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
                     </span>
-                    {item.quantityLabel && (
-                      <span className="text-sm font-semibold tabular-nums text-slate-800 sm:text-right">{item.quantityLabel}</span>
-                    )}
+                    <span className="grid gap-0.5 text-sm tabular-nums sm:text-right">
+                      {item.quantityLabel && <span className="font-semibold text-slate-800">{item.quantityLabel}</span>}
+                      <span className="text-xs font-medium text-slate-500">
+                        {item.weightKg !== null ? `Вес: ${numberLabel(item.weightKg)} кг` : 'Вес не рассчитан'}
+                      </span>
+                    </span>
                   </li>
                 ))}
               </ol>
@@ -623,6 +809,7 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
   const [workspace, setWorkspace] = useState(initialWorkspace)
   const searchParams = useSearchParams()
   const focusedNeedKey = searchParams.get('focus')
+  const focusedTripId = searchParams.get('trip')
   const [isPending, startTransition] = useTransition()
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [needFilter, setNeedFilter] = useState<NeedFilter>('all')
@@ -656,6 +843,10 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
     action: 'start' | 'complete'
     tripId: string
   } | null>(null)
+  const [movePosition, setMovePosition] = useState<MovePositionDraft | null>(null)
+  const [moveTargetTripId, setMoveTargetTripId] = useState('')
+  const [moveReason, setMoveReason] = useState('')
+  const [moveDateReason, setMoveDateReason] = useState('')
   const [clockNow, setClockNow] = useState<number | null>(null)
 
   useEffect(() => {
@@ -693,36 +884,42 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
   }, [routeAssignments, routeStops])
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination after filter changes
     setVisibleCount(PAGE_SIZE)
   }, [deferredSearch, needFilter])
 
   useEffect(() => {
     if (!focusedNeedKey) return
-    const focusedIndex = workspace.needs.findIndex((need) => need.key === focusedNeedKey)
+    const focusedIndex = workspace.needGroups.findIndex((group) => group.needs.some((need) => need.key === focusedNeedKey))
     if (focusedIndex >= 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- URL focus initializes the visible list
       setNeedFilter('all')
       setSearch('')
       setVisibleCount(Math.max(PAGE_SIZE, focusedIndex + 1))
     }
-  }, [focusedNeedKey, workspace.needs])
+  }, [focusedNeedKey, workspace.needGroups])
+
+  useEffect(() => {
+    if (!focusedTripId || editingTripId === focusedTripId) return
+    const trip = workspace.trips.find((candidate) => candidate.id === focusedTripId)
+    if (trip) openTrip(trip)
+    // URL focus is an entry action; subsequent drawer state is controlled locally.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedTripId, workspace.trips])
 
   const categoryCounts = useMemo(() => ({
-    all: workspace.needs.length,
-    materials: workspace.needs.filter((need) => need.kind === 'materials').length,
-    detailing: workspace.needs.filter((need) => need.kind === 'detailing').length,
-    outsourcing: workspace.needs.filter((need) => need.kind === 'outsourcing').length,
-  }), [workspace.needs])
+    all: workspace.needGroups.length,
+    materials: workspace.needGroups.filter((group) => group.kind === 'materials').length,
+    detailing: workspace.needGroups.filter((group) => group.kind === 'detailing').length,
+    outsourcing: workspace.needGroups.filter((group) => group.kind === 'outsourcing').length,
+  }), [workspace.needGroups])
 
-  const filteredNeeds = useMemo(
-    () => workspace.needs.filter((need) => (
-      (needFilter === 'all' || need.kind === needFilter)
-      && matchesSearch(need, deferredSearch)
+  const filteredGroups = useMemo(
+    () => workspace.needGroups.filter((group) => (
+      (needFilter === 'all' || group.kind === needFilter)
+      && groupMatchesSearch(group, deferredSearch)
     )),
-    [deferredSearch, needFilter, workspace.needs],
+    [deferredSearch, needFilter, workspace.needGroups],
   )
-  const visibleNeeds = filteredNeeds.slice(0, visibleCount)
+  const visibleGroups = filteredGroups.slice(0, visibleCount)
   const activeTrips = workspace.trips.filter((trip) => !['completed', 'cancelled'].includes(trip.status))
   const historyTrips = workspace.trips.filter((trip) => ['completed', 'cancelled'].includes(trip.status))
   const editingTrip = workspace.trips.find((trip) => trip.id === editingTripId) || null
@@ -733,16 +930,40 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
     !editingNeedKeys.has(need.key)
     && matchesSearch(need, needPickerSearch.trim().toLocaleLowerCase('ru'))
   ))
+  const editingNeedGroups = groupTransportNeeds(editingNeeds)
+  const availableEditingGroups = groupTransportNeeds(availableEditingNeeds)
+  const displayedEditingGroups = editingTrip && ['completed', 'cancelled'].includes(editingTrip.status)
+    ? groupTransportNeeds(editingTrip.needs.map((need) => editableTripNeed(editingTrip, need)))
+    : editingNeedGroups
   const editingOperationalStops = editingTrip ? operationalStops(editingTrip) : []
   const editingFirstStop = editingOperationalStops[0] || null
   const editingEndAvailable = editingTrip ? tripEndAvailable(editingTrip, clockNow) : false
   const editingStartAvailable = editingTrip ? tripStartAvailable(editingTrip, clockNow) : false
+  const moveSourceTrip = movePosition
+    ? workspace.trips.find((trip) => trip.id === movePosition.sourceTripId) || null
+    : null
+  const moveTargetTrip = workspace.trips.find((trip) => trip.id === moveTargetTripId) || null
+  const moveTargetOptions = activeTrips.filter((trip) => (
+    trip.id !== movePosition?.sourceTripId && ['found', 'in_transit'].includes(trip.status)
+  ))
+  const movedKeys = new Set(movePosition?.references.map((reference) => `${reference.source}:${reference.id}`) || [])
+  const movedNeeds = moveSourceTrip?.needs
+    .filter((need) => !need.released && movedKeys.has(need.key))
+    .map((need) => editableTripNeed(moveSourceTrip, need)) || []
+  const sourceNeedsAfterMove = moveSourceTrip?.needs
+    .filter((need) => !need.released && !movedKeys.has(need.key))
+    .map((need) => editableTripNeed(moveSourceTrip, need)) || []
+  const moveRequiresDateReason = Boolean(moveSourceTrip && moveTargetTrip && [
+    ...sourceNeedsAfterMove.map((need) => [need.neededDate, moveSourceTrip.scheduledDate] as const),
+    ...movedNeeds.map((need) => [need.neededDate, moveTargetTrip.scheduledDate] as const),
+  ].some(([neededDate, tripDate]) => neededDate && tripDate && neededDate !== tripDate))
 
-  const toggleNeed = useCallback((need: UnifiedTransportNeed) => {
+  const toggleReferences = useCallback((keys: string[], selected: boolean, neededDate: string | null) => {
     setMobileShortcutHidden(false)
-    const nextKeys = selectedKeys.includes(need.key)
-      ? selectedKeys.filter((key) => key !== need.key)
-      : [...selectedKeys, need.key]
+    const keySet = new Set(keys)
+    const nextKeys = selected
+      ? Array.from(new Set([...selectedKeys, ...keys]))
+      : selectedKeys.filter((key) => !keySet.has(key))
     setSelectedKeys(nextKeys)
     const nextNeeds = nextKeys
       .map((key) => needByKey.get(key))
@@ -751,10 +972,14 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
       setScheduledDate('')
       setDateChangeReason('')
     } else if (selectedKeys.length === 0) {
-      setScheduledDate(need.neededDate || '')
+      setScheduledDate(neededDate || '')
     }
     rebuildRoutePlan(nextNeeds, routeStops.length > 0)
   }, [needByKey, rebuildRoutePlan, routeStops.length, selectedKeys])
+
+  const selectedPositionCount = useMemo(() => workspace.needGroups.reduce((count, group) => (
+    count + group.positions.filter((position) => position.references.every((reference) => selectedKeys.includes(reference.key))).length
+  ), 0), [selectedKeys, workspace.needGroups])
 
   function resetComposer() {
     setSelectedKeys([])
@@ -887,6 +1112,115 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
     setCancelReason('')
   }
 
+  function buildMoveComposition(trip: TransportTrip, needs: UnifiedTransportNeed[]) {
+    if (needs.length === 0) return { stops: [], assignments: [] }
+    const currentStops: EditingTransportStop[] = trip.stops.map((stop) => ({
+      id: stop.id,
+      clientId: stop.clientKey,
+      pointKey: stop.pointKey,
+      pointLabel: stop.pointLabel,
+      city: stop.city,
+      address: stop.address,
+      kind: stop.kind,
+      plannedTime: timeFromDate(stop.plannedArrivalAt),
+      serviceDurationMinutes: stop.serviceDurationMinutes,
+      status: stop.status,
+      arrivedAt: stop.arrivedAt,
+      completedAt: stop.completedAt,
+    }))
+    const stopById = new Map(trip.stops.map((stop) => [stop.id, stop]))
+    const currentAssignments = trip.needs.filter((need) => !need.released).flatMap((need) => {
+      const pickup = need.pickupStopId ? stopById.get(need.pickupStopId) : null
+      const delivery = need.deliveryStopId ? stopById.get(need.deliveryStopId) : null
+      return pickup && delivery ? [{
+        needKey: need.key,
+        pickupStopClientId: pickup.clientKey,
+        deliveryStopClientId: delivery.clientKey,
+      }] : []
+    })
+    const plan = reconcileTransportStopPlan(currentStops, currentAssignments, needs)
+    const currentByClientId = new Map(currentStops.map((stop) => [stop.clientId, stop]))
+    let nextStops = plan.stops.map((stop): EditingTransportStop => {
+      const current = currentByClientId.get(stop.clientId)
+      return current ? { ...current, ...stop } : {
+        ...stop,
+        id: null,
+        status: 'planned',
+        arrivedAt: null,
+        completedAt: null,
+      }
+    })
+    if (trip.status === 'in_transit') {
+      const locked = currentStops.filter((stop) => stop.status !== 'planned')
+      const lockedKeys = new Set(locked.map((stop) => stop.clientId))
+      nextStops = [...locked, ...nextStops.filter((stop) => !lockedKeys.has(stop.clientId))]
+    }
+    if (!trip.scheduledDate || nextStops.some((stop) => !stop.plannedTime)) {
+      throw new Error('Перед переносом укажите дату и время всех остановок обоих рейсов')
+    }
+    return {
+      stops: nextStops.map((stop) => ({
+        id: stop.id,
+        clientId: stop.clientId,
+        pointKey: stop.pointKey,
+        pointLabel: stop.pointLabel,
+        city: stop.city,
+        address: stop.address,
+        kind: stop.kind,
+        plannedArrivalAt: plannedArrivalIso(trip.scheduledDate || '', stop.plannedTime),
+        serviceDurationMinutes: stop.serviceDurationMinutes,
+      })),
+      assignments: plan.assignments,
+    }
+  }
+
+  function submitMovePosition() {
+    if (!movePosition || !moveSourceTrip || !moveTargetTrip || !moveReason.trim()) return
+    try {
+      const sourceComposition = buildMoveComposition(moveSourceTrip, sourceNeedsAfterMove)
+      const targetNeeds = [
+        ...moveTargetTrip.needs.filter((need) => !need.released).map((need) => editableTripNeed(moveTargetTrip, need)),
+        ...movedNeeds,
+      ]
+      const targetComposition = buildMoveComposition(moveTargetTrip, targetNeeds)
+      setPendingAction(`move:${movePosition.sourceTripId}:${movePosition.title}`)
+      startTransition(async () => {
+        const result = await moveTransportTripPosition({
+          sourceTripId: movePosition.sourceTripId,
+          targetTripId: moveTargetTrip.id,
+          position: movePosition.references,
+          sourceStops: sourceComposition.stops,
+          sourceAssignments: sourceComposition.assignments,
+          targetStops: targetComposition.stops,
+          targetAssignments: targetComposition.assignments,
+          reason: moveReason,
+          dateChangeReason: moveDateReason || null,
+        })
+        setPendingAction(null)
+        if (!result.success) {
+          toast.error(result.error || 'Не удалось переместить позицию')
+          return
+        }
+        toast.success('Позиция перемещена, оба маршрута пересчитаны')
+        const targetId = moveTargetTrip.id
+        setMovePosition(null)
+        setMoveTargetTripId('')
+        setMoveReason('')
+        setMoveDateReason('')
+        const refreshed = await refreshWorkspaceData()
+        const refreshedTrip = refreshed?.trips.find((trip) => trip.id === targetId)
+        if (refreshedTrip) {
+          openTrip(refreshedTrip)
+          window.setTimeout(() => {
+            document.querySelector<HTMLElement>(`[data-position-title="${CSS.escape(movePosition.title)}"]`)?.focus()
+          }, 50)
+        }
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось подготовить перенос')
+    }
+  }
+
   function reconcileEditingComposition(nextNeeds: UnifiedTransportNeed[]) {
     const plan = reconcileTransportStopPlan(editingStops, editingAssignments, nextNeeds)
     const currentByClientId = new Map(editingStops.map((stop) => [stop.clientId, stop]))
@@ -911,8 +1245,8 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
     setEditingDirty(true)
   }
 
-  function addNeedToEditingTrip(need: UnifiedTransportNeed) {
-    reconcileEditingComposition([...editingNeeds, need])
+  function addPositionToEditingTrip(positionNeeds: UnifiedTransportNeed[]) {
+    reconcileEditingComposition([...editingNeeds, ...positionNeeds.filter((need) => !editingNeedKeys.has(need.key))])
     setNeedPickerOpen(false)
     setNeedPickerSearch('')
   }
@@ -926,16 +1260,17 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
     return !pickup || pickup.status === 'planned'
   }
 
-  function removeNeedFromEditingTrip(need: UnifiedTransportNeed) {
-    if (!canRemoveEditingNeed(need)) {
-      toast.error('Нельзя исключить потребность после начала её точки забора')
+  function removePositionFromEditingTrip(positionNeeds: UnifiedTransportNeed[]) {
+    if (positionNeeds.some((need) => !canRemoveEditingNeed(need))) {
+      toast.error('Нельзя переместить позицию после начала её точки забора')
       return
     }
-    if (editingNeeds.length === 1) {
+    const removeKeys = new Set(positionNeeds.map((need) => need.key))
+    if (editingNeeds.length === positionNeeds.length) {
       setCancelDialogOpen(true)
       return
     }
-    reconcileEditingComposition(editingNeeds.filter((candidate) => candidate.key !== need.key))
+    reconcileEditingComposition(editingNeeds.filter((need) => !removeKeys.has(need.key)))
   }
 
   function saveTrip() {
@@ -1122,8 +1457,8 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[520px]">
-            <Metric icon={Package} label="Потребности" value={workspace.needs.length} tone="blue" />
-            <Metric icon={CheckCircle2} label="Выбрано" value={selectedNeeds.length} tone="emerald" />
+            <Metric icon={Package} label="Потребности" value={workspace.needGroups.length} tone="blue" />
+            <Metric icon={CheckCircle2} label="Выбрано" value={selectedPositionCount} tone="emerald" />
             <Metric icon={Truck} label="Активные рейсы" value={activeTrips.length} tone="violet" />
             <Metric icon={Clock3} label="В истории" value={historyTrips.length} tone="slate" />
           </div>
@@ -1155,7 +1490,7 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
             }}
             className="h-12 w-full rounded-2xl bg-emerald-700 text-base font-semibold shadow-[0_14px_36px_rgba(5,150,105,0.34)] hover:bg-emerald-800"
           >
-            К оформлению рейса · {selectedNeeds.length}
+            К оформлению рейса · {selectedPositionCount}
             <ChevronRight className="h-5 w-5" />
           </Button>
         </div>
@@ -1201,31 +1536,30 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
           </div>
 
           <div className="p-4 sm:p-5">
-            {visibleNeeds.length === 0 ? (
+            {visibleGroups.length === 0 ? (
               <EmptyNeeds hasSearch={Boolean(deferredSearch) || needFilter !== 'all'} />
             ) : (
               <div className="grid gap-3">
-                {visibleNeeds.map((need) => (
-                  <NeedCard
-                    key={need.key}
-                    need={need}
-                    selected={selectedKeys.includes(need.key)}
-                    compatible
-                    onToggle={toggleNeed}
-                    onDetails={setDetailsNeed}
+                {visibleGroups.map((group) => (
+                  <NeedGroupCard
+                    key={group.key}
+                    group={group}
+                    selectedKeys={new Set(selectedKeys)}
+                    onToggleReferences={toggleReferences}
+                    onDetails={(selectedGroup) => setDetailsNeed(groupDetailsNeed(selectedGroup))}
                   />
                 ))}
               </div>
             )}
 
-            {visibleCount < filteredNeeds.length && (
+            {visibleCount < filteredGroups.length && (
               <Button
                 type="button"
                 variant="outline"
                 className="mt-4 h-11 w-full rounded-xl"
                 onClick={() => setVisibleCount((current) => current + PAGE_SIZE)}
               >
-                Показать ещё {Math.min(PAGE_SIZE, filteredNeeds.length - visibleCount)}
+                Показать ещё {Math.min(PAGE_SIZE, filteredGroups.length - visibleCount)}
               </Button>
             )}
           </div>
@@ -1245,7 +1579,7 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
               </div>
               <div className="mt-4 flex items-center justify-between rounded-2xl bg-white/10 px-4 py-3 text-sm">
                 <span className="text-emerald-50">В рейсе</span>
-                <span className="font-bold">{selectedNeeds.length} потребн.</span>
+                <span className="font-bold">{selectedPositionCount} поз.</span>
               </div>
             </div>
 
@@ -1404,9 +1738,7 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
                     <div>
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Состав рейса</div>
                       <div className="mt-1 text-sm text-slate-600">
-                        {['completed', 'cancelled'].includes(editingTrip.status)
-                          ? `${editingTrip.needs.length} потребн.`
-                          : `${editingNeeds.length} потребн.`}
+                        {displayedEditingGroups.reduce((sum, group) => sum + group.positions.length, 0)} поз.
                       </div>
                     </div>
                     {!['completed', 'cancelled'].includes(editingTrip.status) && (
@@ -1416,42 +1748,69 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
                     )}
                   </div>
                   <div className="space-y-2">
-                    {(['completed', 'cancelled'].includes(editingTrip.status)
-                      ? editingTrip.needs
-                      : editingNeeds
-                    ).map((need) => (
-                      <div key={'linkId' in need ? need.linkId || need.key : need.key} className="rounded-xl bg-white px-3 py-2.5 text-sm shadow-sm">
-                        <div className="flex items-start gap-2">
-                          <Badge variant="outline" className={categoryMeta[need.kind].chip}>
-                            {categoryMeta[need.kind].label}
+                    {displayedEditingGroups.map((group) => (
+                      <div key={group.key} className="rounded-xl bg-white p-3 text-sm shadow-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className={categoryMeta[group.kind].chip}>
+                            {categoryMeta[group.kind].label}
                           </Badge>
-                          <span className="min-w-0 flex-1 font-semibold text-slate-900">{need.title}</span>
-                          {!['completed', 'cancelled'].includes(editingTrip.status) && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Исключить потребность ${need.title}`}
-                              disabled={!canRemoveEditingNeed(need as UnifiedTransportNeed)}
-                              onClick={() => removeNeedFromEditingTrip(need as UnifiedTransportNeed)}
-                              className="h-8 w-8 shrink-0 rounded-lg text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                          <span className="min-w-0 flex-1 font-semibold text-slate-900">{group.title}</span>
+                          <span className="text-xs text-slate-500">{group.positions.length} поз.</span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">{group.sourcePointLabel} → {group.destinationPointLabel}</div>
+                        <div className="mt-2 grid gap-1.5">
+                          {group.positions.map((position) => (
+                            <div
+                              key={position.key}
+                              data-position-title={position.title}
+                              tabIndex={-1}
+                              className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2"
                             >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-medium text-slate-900">{position.title}</span>
+                                <span className="block text-xs text-slate-500">{position.volumeLabel || 'Объём не указан'}</span>
+                              </span>
+                              {!['completed', 'cancelled'].includes(editingTrip.status) && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  aria-label={`Переместить позицию ${position.title} в другой рейс`}
+                                  disabled={editingDirty || position.needs.some((need) => !canRemoveEditingNeed(need)) || moveTargetOptions.length === 0}
+                                  onClick={() => {
+                                    setMovePosition({
+                                      sourceTripId: editingTrip.id,
+                                      title: position.title,
+                                      references: position.references.map((reference) => ({
+                                        source: reference.source as UnifiedTransportNeed['source'],
+                                        id: reference.id,
+                                      })),
+                                    })
+                                    setMoveTargetTripId(moveTargetOptions[0]?.id || '')
+                                    setMoveReason('')
+                                    setMoveDateReason('')
+                                  }}
+                                  className="h-11 shrink-0 rounded-lg px-3 text-blue-800 hover:bg-blue-50 hover:text-blue-900"
+                                >
+                                  <ArrowRight className="h-4 w-4" />
+                                  <span className="hidden sm:inline">Переместить</span>
+                                </Button>
+                              )}
+                              {!['completed', 'cancelled'].includes(editingTrip.status) && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`Исключить позицию ${position.title}`}
+                                  disabled={position.needs.some((need) => !canRemoveEditingNeed(need))}
+                                  onClick={() => removePositionFromEditingTrip(position.needs)}
+                                  className="h-11 w-11 shrink-0 rounded-lg text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {need.sourcePointLabel} → {need.destinationPointLabel}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          Текущая дата: {formatDate('linkId' in need ? tripNeedCurrentDate(editingTrip, need) : need.neededDate)}
-                        </div>
-                        {'released' in need && need.released && (
-                          <div className="mt-2 rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-800">
-                            Исключена {formatDateTime(need.releasedAt)} · {need.releasedByName || 'Автор не указан'}
-                            <span className="mt-0.5 block">Причина: {need.releasedReason || 'не указана в старой версии'}</span>
-                          </div>
-                        )}
                       </div>
                     ))}
                   </div>
@@ -1866,6 +2225,93 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
         }}
       />
 
+      <Dialog
+        open={Boolean(movePosition)}
+        onOpenChange={(open) => {
+          if (!open && !isPending) {
+            setMovePosition(null)
+            setMoveTargetTripId('')
+            setMoveReason('')
+            setMoveDateReason('')
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Переместить позицию в другой рейс</DialogTitle>
+            <DialogDescription>
+              {movePosition?.title}. Все её внутренние части будут перемещены вместе одной транзакцией.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <Label className="grid gap-1.5" htmlFor="move-position-target-trip">
+              Целевой рейс
+              <Select value={moveTargetTripId} onValueChange={(value) => setMoveTargetTripId(value || '')}>
+                <SelectTrigger id="move-position-target-trip" className="h-11 w-full rounded-xl">
+                  <SelectValue placeholder="Выберите рейс" />
+                </SelectTrigger>
+                <SelectContent>
+                  {moveTargetOptions.map((trip) => (
+                    <SelectItem key={trip.id} value={trip.id}>
+                      #{trip.id.slice(0, 8).toUpperCase()} · {tripRouteLabel(trip)} · {formatDate(trip.scheduledDate)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Label>
+            <Label className="grid gap-1.5" htmlFor="move-position-reason">
+              Причина переноса <span className="text-rose-700">*</span>
+              <Textarea
+                id="move-position-reason"
+                value={moveReason}
+                onChange={(event) => setMoveReason(event.target.value)}
+                placeholder="Почему позиция должна быть в другом рейсе"
+                className="min-h-24"
+                maxLength={1000}
+                required
+              />
+            </Label>
+            {moveRequiresDateReason && (
+              <Label className="grid gap-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3" htmlFor="move-position-date-reason">
+                Причина изменения дат <span className="text-rose-700">*</span>
+                <span className="text-xs font-normal leading-5 text-amber-900">
+                  Дата целевого рейса не совпадает с датой позиции. Будет создано единое согласование начальнику планирования.
+                </span>
+                <Textarea
+                  id="move-position-date-reason"
+                  value={moveDateReason}
+                  onChange={(event) => setMoveDateReason(event.target.value)}
+                  placeholder="Обоснуйте перенос даты"
+                  className="min-h-24 bg-white"
+                  maxLength={1000}
+                  required
+                />
+              </Label>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 rounded-xl"
+              disabled={isPending}
+              onClick={() => setMovePosition(null)}
+            >
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              className="h-11 rounded-xl bg-blue-800 text-white hover:bg-blue-900"
+              disabled={!moveTargetTripId || !moveReason.trim() || (moveRequiresDateReason && !moveDateReason.trim()) || isPending}
+              onClick={submitMovePosition}
+            >
+              {pendingAction?.startsWith('move:') ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+              Переместить позицию
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={needPickerOpen} onOpenChange={setNeedPickerOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
@@ -1885,13 +2331,15 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
             />
           </Label>
           <div className="space-y-2">
-            {availableEditingNeeds.length > 0 ? availableEditingNeeds.map((need) => (
-              <NeedCard
-                key={need.key}
-                need={need}
-                selected={false}
-                compatible
-                onToggle={addNeedToEditingTrip}
+            {availableEditingGroups.length > 0 ? availableEditingGroups.map((group) => (
+              <NeedGroupCard
+                key={group.key}
+                group={group}
+                selectedKeys={new Set()}
+                onToggleReferences={(keys) => addPositionToEditingTrip(
+                  keys.map((key) => needByKey.get(key)).filter((need): need is UnifiedTransportNeed => Boolean(need)),
+                )}
+                onDetails={(selectedGroup) => setDetailsNeed(groupDetailsNeed(selectedGroup))}
               />
             )) : (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">

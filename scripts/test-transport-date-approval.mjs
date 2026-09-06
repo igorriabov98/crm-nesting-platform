@@ -22,17 +22,35 @@ run('createdb', ['--maintenance-db', adminUrl, databaseName])
 try {
   psql(String.raw`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
+    DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     CREATE SCHEMA auth;
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid';
+    CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS 'SELECT ''service_role''::text';
     CREATE TYPE public.task_type AS ENUM ('outsourcing_transport','inventory_transfer','detailing_transfer');
     CREATE TYPE public.task_status AS ENUM ('pending','in_progress','completed','cancelled');
     CREATE TYPE public.outsourcing_transport_direction AS ENUM ('outbound','return','mixed');
     CREATE TYPE public.outsourcing_transport_order_status AS ENUM ('needed','found','in_transit','completed','cancelled');
-    CREATE TABLE users(id uuid PRIMARY KEY, role text, full_name text, is_active boolean, created_at timestamptz default now());
+    CREATE TABLE users(id uuid PRIMARY KEY, role text, full_name text, is_active boolean, factory_id uuid, created_at timestamptz default now());
     CREATE TABLE factories(id uuid PRIMARY KEY default gen_random_uuid(), name text NOT NULL, created_at timestamptz default now());
     INSERT INTO factories(name) VALUES('Берегово');
-    CREATE TABLE departments(id uuid PRIMARY KEY default gen_random_uuid(), name text, head_user_id uuid, is_active boolean, sort_order integer);
-    CREATE TABLE tasks(id uuid PRIMARY KEY default gen_random_uuid(), assigned_to uuid, task_type task_type, title text, description text, status task_status default 'pending', start_date date, deadline date, detailing_transfer_id uuid, inventory_transfer_id uuid, supply_order_schedule_id uuid, completed_at timestamptz, created_at timestamptz default now(), updated_at timestamptz default now());
+    CREATE TABLE departments(id uuid PRIMARY KEY default gen_random_uuid(), name text, head_user_id uuid, factory_id uuid, is_active boolean, sort_order integer);
+    CREATE TABLE department_members(id uuid PRIMARY KEY default gen_random_uuid(), department_id uuid, user_id uuid);
+    CREATE TABLE department_requests(
+      id uuid PRIMARY KEY default gen_random_uuid(), request_kind text default 'manual', target_department text,
+      title text, description text, priority text default 'normal', status text default 'new', created_by uuid,
+      assigned_to uuid, completed_by uuid, factory_id uuid, machine_id uuid, request_item_table text,
+      request_item_id uuid, technologist_request_id uuid, long_stock_plan_id uuid,
+      long_stock_returned_version_id uuid, request_item_label text, due_date date, response text,
+      completed_at timestamptz, result_viewed_at timestamptz, created_at timestamptz default now(), updated_at timestamptz default now(),
+      CONSTRAINT department_requests_target_check CHECK (target_department in ('technologist','supply','production')),
+      CONSTRAINT department_requests_kind_check CHECK (request_kind in ('manual','machine_layout','long_stock_recalculation'))
+    );
+    CREATE TABLE department_request_events(id uuid PRIMARY KEY default gen_random_uuid(), request_id uuid, event_type text, actor_id uuid, created_at timestamptz default now());
+    CREATE TABLE notifications(id uuid PRIMARY KEY default gen_random_uuid(), user_id uuid, type text, title text, message text, related_department_request_id uuid, created_at timestamptz default now());
+    CREATE TABLE tasks(id uuid PRIMARY KEY default gen_random_uuid(), department_request_id uuid, assigned_to uuid, task_type task_type, title text, description text, status task_status default 'pending', start_date date, deadline date, detailing_transfer_id uuid, inventory_transfer_id uuid, supply_order_schedule_id uuid, completed_at timestamptz, created_at timestamptz default now(), updated_at timestamptz default now());
+    CREATE UNIQUE INDEX tasks_department_request_unique_idx ON tasks(department_request_id) WHERE department_request_id IS NOT NULL;
     CREATE TABLE machine_outsourcing_transport_orders(id uuid PRIMARY KEY default gen_random_uuid(), direction outsourcing_transport_direction, status outsourcing_transport_order_status default 'found', carrier_supplier_id uuid, scheduled_date date, price numeric, route_start_key text, route_start text, route text, comment text, created_by uuid, updated_by uuid, created_at timestamptz default now(), updated_at timestamptz default now());
     CREATE TABLE transport_trip_stops(id uuid PRIMARY KEY default gen_random_uuid(), transport_order_id uuid REFERENCES machine_outsourcing_transport_orders(id), client_key text, sequence_no integer, stop_kind text, point_key text, point_label text, city text, address text, planned_arrival_at timestamptz, service_duration_minutes integer, status text, arrived_at timestamptz, completed_at timestamptz, created_at timestamptz default now(), updated_at timestamptz default now());
     CREATE TABLE transport_trip_need_links(id uuid PRIMARY KEY default gen_random_uuid(), transport_order_id uuid REFERENCES machine_outsourcing_transport_orders(id), need_kind text, need_source text, need_id uuid, direction text, source_point_key text, source_point_label text, destination_point_key text, destination_point_label text, need_title text, need_subtitle text, needed_date date, pickup_stop_id uuid, delivery_stop_id uuid, released_at timestamptz, created_at timestamptz default now());
@@ -41,8 +59,10 @@ try {
     CREATE TABLE machine_outsourcing_transport_needs(id uuid PRIMARY KEY, operation_id uuid, direction text, plan_state text default 'confirmed', needed_date date, task_id uuid, transport_order_id uuid, status text, updated_at timestamptz default now());
     CREATE TABLE detailing_transfers(id uuid PRIMARY KEY, status text default 'planned', expected_arrival_date date, updated_at timestamptz default now());
     CREATE TABLE inventory_transfers(id uuid PRIMARY KEY, status text default 'planned', expected_arrival_date date, updated_at timestamptz default now());
-    CREATE TABLE supply_order_delivery_schedules(id uuid PRIMARY KEY, status text default 'planned', delivery_date date, change_reason text, updated_at timestamptz default now());
+    CREATE TABLE supply_order_delivery_schedules(id uuid PRIMARY KEY, request_item_table text, request_item_id uuid, supplier_id uuid, status text default 'planned', delivery_date date, change_reason text, updated_at timestamptz default now());
     CREATE FUNCTION public.is_director() RETURNS boolean LANGUAGE sql AS 'SELECT true';
+    CREATE FUNCTION public.get_user_role() RETURNS text LANGUAGE sql AS 'SELECT ''planning_director''::text';
+    CREATE FUNCTION public.get_user_factory_id() RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid';
     CREATE FUNCTION public.fn_create_transport_trip_v2(uuid,date,numeric,text,jsonb,jsonb,uuid) RETURNS uuid LANGUAGE plpgsql SET search_path = 'public' AS $$
     DECLARE trip_id uuid; link jsonb; first_stop uuid; second_stop uuid;
     BEGIN
@@ -211,6 +231,160 @@ try {
       EXCEPTION WHEN unique_violation THEN failed := true;
       END;
       IF NOT failed THEN RAISE EXCEPTION 'active-need uniqueness did not stop a parallel assignment'; END IF;
+    END $$;
+  `)
+  psql(String.raw`
+    INSERT INTO inventory_transfers(id,status,expected_arrival_date)
+    VALUES ('40000000-0000-0000-0000-000000000010','planned','2026-09-08');
+    INSERT INTO machine_outsourcing_transport_orders(
+      id,direction,status,scheduled_date,price,route_start,route,date_change_state
+    ) VALUES (
+      '30000000-0000-0000-0000-000000000010','outbound','found','2026-09-09',100,'A','A → B','pending'
+    );
+    INSERT INTO transport_trip_need_links(
+      id,transport_order_id,need_kind,need_source,need_id,direction,source_point_key,source_point_label,
+      destination_point_key,destination_point_label,need_title,needed_date
+    ) VALUES (
+      '60000000-0000-0000-0000-000000000010','30000000-0000-0000-0000-000000000010','materials','inventory_transfer',
+      '40000000-0000-0000-0000-000000000010','outbound','a','A','b','B','Backfill','2026-09-08'
+    );
+    INSERT INTO tasks(id,assigned_to,task_type,title,status,start_date,deadline)
+    VALUES (
+      '70000000-0000-0000-0000-000000000010','10000000-0000-0000-0000-000000000002',
+      'transport_trip_date_approval','Согласовать даты','pending','2026-09-06','2026-09-06'
+    );
+    INSERT INTO transport_trip_date_change_requests(
+      id,transport_order_id,task_id,status,reason,requested_by
+    ) VALUES (
+      '80000000-0000-0000-0000-000000000010','30000000-0000-0000-0000-000000000010',
+      '70000000-0000-0000-0000-000000000010','pending','Backfill test','10000000-0000-0000-0000-000000000001'
+    );
+    INSERT INTO transport_trip_date_change_items(
+      request_id,transport_need_link_id,need_source,need_id,old_date,new_date,sort_order
+    ) VALUES (
+      '80000000-0000-0000-0000-000000000010','60000000-0000-0000-0000-000000000010',
+      'inventory_transfer','40000000-0000-0000-0000-000000000010','2026-09-08','2026-09-09',0
+    );
+  `)
+  run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260906160000_transport_need_groups_planning_requests.sql')])
+  psql(String.raw`
+    DO $$
+    DECLARE
+      actor uuid := '10000000-0000-0000-0000-000000000001';
+      approver uuid := '10000000-0000-0000-0000-000000000002';
+      source_trip uuid := '30000000-0000-0000-0000-000000000020';
+      target_trip uuid := '30000000-0000-0000-0000-000000000021';
+      source_need uuid := '40000000-0000-0000-0000-000000000020';
+      target_need uuid := '40000000-0000-0000-0000-000000000021';
+      failed boolean := false;
+      source_stops jsonb;
+      target_stops jsonb;
+      source_links jsonb;
+      target_links jsonb;
+    BEGIN
+      IF (SELECT count(*) FROM department_requests WHERE transport_trip_date_change_request_id='80000000-0000-0000-0000-000000000010') <> 1 THEN
+        RAISE EXCEPTION 'pending approval backfill did not create exactly one request';
+      END IF;
+      IF (SELECT status FROM department_requests WHERE transport_trip_date_change_request_id='80000000-0000-0000-0000-000000000010') <> 'in_progress' THEN
+        RAISE EXCEPTION 'backfilled request is not in progress';
+      END IF;
+      IF (SELECT department_request_id FROM tasks WHERE id='70000000-0000-0000-0000-000000000010') IS NULL THEN
+        RAISE EXCEPTION 'existing approval task was not linked';
+      END IF;
+      PERFORM sync_transport_date_department_request('80000000-0000-0000-0000-000000000010');
+      PERFORM sync_transport_date_department_request('80000000-0000-0000-0000-000000000010');
+      IF (SELECT count(*) FROM department_requests WHERE transport_trip_date_change_request_id='80000000-0000-0000-0000-000000000010') <> 1 THEN
+        RAISE EXCEPTION 'idempotent sync created a duplicate';
+      END IF;
+      PERFORM fn_decide_transport_trip_date_change('80000000-0000-0000-0000-000000000010','approved','Единое решение',approver);
+      IF (SELECT status FROM department_requests WHERE transport_trip_date_change_request_id='80000000-0000-0000-0000-000000000010') <> 'done' THEN
+        RAISE EXCEPTION 'transport decision did not close the linked request';
+      END IF;
+
+      INSERT INTO inventory_transfers(id,status,expected_arrival_date)
+      VALUES (source_need,'planned','2026-09-08'),(target_need,'planned','2026-09-08');
+      INSERT INTO machine_outsourcing_transport_orders(
+        id,direction,status,carrier_supplier_id,scheduled_date,price,route_start,route,date_change_state
+      ) VALUES
+        (source_trip,'outbound','found','50000000-0000-0000-0000-000000000001','2026-09-08',100,'A','A → C','not_required'),
+        (target_trip,'outbound','found','50000000-0000-0000-0000-000000000001','2026-09-08',100,'B','B → C','not_required');
+
+      source_stops := jsonb_build_array(
+        jsonb_build_object('clientId','a','kind','service','pointKey','a','pointLabel','A','plannedArrivalAt','2026-09-08T08:00:00+00:00','serviceDurationMinutes',30),
+        jsonb_build_object('clientId','c','kind','service','pointKey','c','pointLabel','C','plannedArrivalAt','2026-09-08T10:00:00+00:00','serviceDurationMinutes',30)
+      );
+      source_links := jsonb_build_array(
+        jsonb_build_object('needKind','materials','needSource','inventory_transfer','needId',source_need,'direction','outbound','sourcePointKey','a','sourcePointLabel','A','destinationPointKey','c','destinationPointLabel','C','title','Переносимая','neededDate','2026-09-08','pickupStopClientId','a','deliveryStopClientId','c')
+      );
+      target_stops := jsonb_build_array(
+        jsonb_build_object('clientId','b','kind','service','pointKey','b','pointLabel','B','plannedArrivalAt','2026-09-08T08:00:00+00:00','serviceDurationMinutes',30),
+        jsonb_build_object('clientId','c','kind','service','pointKey','c','pointLabel','C','plannedArrivalAt','2026-09-08T10:00:00+00:00','serviceDurationMinutes',30)
+      );
+      target_links := jsonb_build_array(
+        jsonb_build_object('needKind','materials','needSource','inventory_transfer','needId',target_need,'direction','outbound','sourcePointKey','b','sourcePointLabel','B','destinationPointKey','c','destinationPointLabel','C','title','Целевая','neededDate','2026-09-08','pickupStopClientId','b','deliveryStopClientId','c')
+      );
+      PERFORM fn_update_transport_trip_v4(source_trip,'50000000-0000-0000-0000-000000000001','2026-09-08',100,null,source_stops,source_links,null,null,actor);
+      PERFORM fn_update_transport_trip_v4(target_trip,'50000000-0000-0000-0000-000000000001','2026-09-08',100,null,target_stops,target_links,null,null,actor);
+
+      target_stops := jsonb_build_array(
+        jsonb_build_object('clientId','b','kind','service','pointKey','b','pointLabel','B','plannedArrivalAt','2026-09-08T08:00:00+00:00','serviceDurationMinutes',30),
+        jsonb_build_object('clientId','a','kind','service','pointKey','a','pointLabel','A','plannedArrivalAt','2026-09-08T09:00:00+00:00','serviceDurationMinutes',30),
+        jsonb_build_object('clientId','c','kind','service','pointKey','c','pointLabel','C','plannedArrivalAt','2026-09-08T10:00:00+00:00','serviceDurationMinutes',30)
+      );
+      target_links := target_links || source_links;
+
+      BEGIN
+        PERFORM fn_move_transport_trip_position_v1(
+          source_trip,target_trip,jsonb_build_array(jsonb_build_object('source','inventory_transfer','id',source_need)),
+          '[]'::jsonb,'[]'::jsonb,'[]'::jsonb,target_links,'test rollback',null,actor
+        );
+      EXCEPTION WHEN OTHERS THEN failed := true;
+      END;
+      IF NOT failed THEN RAISE EXCEPTION 'invalid target route did not fail'; END IF;
+      IF (SELECT status FROM machine_outsourcing_transport_orders WHERE id=source_trip) <> 'found'
+        OR NOT EXISTS (SELECT 1 FROM transport_trip_need_links WHERE transport_order_id=source_trip AND need_id=source_need AND released_at IS NULL) THEN
+        RAISE EXCEPTION 'failed atomic move did not roll back source trip';
+      END IF;
+
+      PERFORM fn_move_transport_trip_position_v1(
+        source_trip,target_trip,jsonb_build_array(jsonb_build_object('source','inventory_transfer','id',source_need)),
+        '[]'::jsonb,'[]'::jsonb,target_stops,target_links,'Собираем общий рейс',null,actor
+      );
+      IF (SELECT status FROM machine_outsourcing_transport_orders WHERE id=source_trip) <> 'cancelled' THEN
+        RAISE EXCEPTION 'last-position move did not cancel source trip';
+      END IF;
+      IF (SELECT count(*) FROM transport_trip_need_links WHERE transport_order_id=target_trip AND released_at IS NULL) <> 2 THEN
+        RAISE EXCEPTION 'target trip did not receive moved position';
+      END IF;
+
+      INSERT INTO machine_outsourcing_transport_orders(
+        id,direction,status,carrier_supplier_id,scheduled_date,price,route_start,route,date_change_state
+      ) VALUES (
+        '30000000-0000-0000-0000-000000000030','outbound','found',
+        '50000000-0000-0000-0000-000000000001','2026-09-08',100,'Varian','Varian → C','not_required'
+      );
+      INSERT INTO supply_order_delivery_schedules(
+        id,request_item_table,request_item_id,supplier_id,status,delivery_date
+      ) VALUES
+        ('40000000-0000-0000-0000-000000000030','request_paint','90000000-0000-0000-0000-000000000030','50000000-0000-0000-0000-000000000030','planned','2026-09-08'),
+        ('40000000-0000-0000-0000-000000000031','request_paint','90000000-0000-0000-0000-000000000030','50000000-0000-0000-0000-000000000030','planned','2026-09-08');
+      INSERT INTO transport_trip_need_links(
+        transport_order_id,need_kind,need_source,need_id,direction,source_point_key,source_point_label,
+        destination_point_key,destination_point_label,need_title,needed_date
+      ) VALUES
+        ('30000000-0000-0000-0000-000000000030','materials','supply_schedule','40000000-0000-0000-0000-000000000030','outbound','supplier:varian','Varian','c','C','Краска 22 кг','2026-09-08'),
+        ('30000000-0000-0000-0000-000000000030','materials','supply_schedule','40000000-0000-0000-0000-000000000031','outbound','supplier:varian','Varian','c','C','Краска 3 кг','2026-09-08');
+      failed := false;
+      BEGIN
+        PERFORM fn_move_transport_trip_position_v1(
+          '30000000-0000-0000-0000-000000000030',target_trip,
+          jsonb_build_array(jsonb_build_object('source','supply_schedule','id','40000000-0000-0000-0000-000000000030')),
+          '[]'::jsonb,'[]'::jsonb,'[]'::jsonb,'[]'::jsonb,'Частичный перенос',null,actor
+        );
+      EXCEPTION WHEN OTHERS THEN
+        failed := position('Технические части одной позиции' in SQLERRM) > 0;
+      END;
+      IF NOT failed THEN RAISE EXCEPTION 'one technical schedule fragment was moved separately'; END IF;
     END $$;
   `)
   console.log('Transport date approval DB test: OK')

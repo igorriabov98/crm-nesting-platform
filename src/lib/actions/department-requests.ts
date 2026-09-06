@@ -73,7 +73,7 @@ export type DepartmentRequestEvent = {
 
 export type DepartmentRequestRow = {
   id: string
-  request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation'
+  request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
   target_department: DepartmentRequestTarget
   title: string
   description: string
@@ -88,6 +88,8 @@ export type DepartmentRequestRow = {
   technologist_request_id: string | null
   long_stock_plan_id: string | null
   long_stock_returned_version_id: string | null
+  transport_trip_date_change_request_id: string | null
+  transport_date_change: { transport_order_id: string } | null
   request_item_label: string | null
   due_date: string | null
   response: string | null
@@ -207,6 +209,7 @@ const requestListSelect = `
   technologist_request_id,
   long_stock_plan_id,
   long_stock_returned_version_id,
+  transport_trip_date_change_request_id,
   request_item_label,
   due_date,
   response,
@@ -222,6 +225,9 @@ const requestListSelect = `
     name,
     specification_number,
     client:clients(id, name)
+  ),
+  transport_date_change:transport_trip_date_change_requests!department_requests_transport_trip_date_change_request_id_fkey(
+    transport_order_id
   ),
   attachments:department_request_attachments(
     id,

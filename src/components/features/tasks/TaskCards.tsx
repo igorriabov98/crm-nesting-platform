@@ -231,7 +231,13 @@ function getTaskTarget(task: TaskWithRelations) {
     }
   }
   if (task.task_type === 'transport_trip_date_approval') {
-    return { href: ROUTES.SUPPLY_TRANSPORT, label: 'Транспорт снабжения', kind: 'Рейс' }
+    return {
+      href: task.department_request_id
+        ? `${ROUTES.REQUESTS}/detail/${task.department_request_id}`
+        : ROUTES.SUPPLY_TRANSPORT,
+      label: 'Согласование переноса дат',
+      kind: 'Рейс',
+    }
   }
   if (task.task_type === 'vrb_outsourcing_approval') {
     return { href: ROUTES.SUPPLY_OUTSOURCING_REQUESTS, label: 'Согласование аутсорсинга', kind: 'VRB' }
@@ -933,7 +939,10 @@ export function TaskCards({
 
     if (isTransportTripDateChangeTask(task.task_type)) {
       if (task.status === 'completed' || task.status === 'cancelled') return null
-      return <div className={groupClass}><Link href={ROUTES.SUPPLY_TRANSPORT} className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground')}>Рассмотреть рейс</Link></div>
+      const href = task.department_request_id
+        ? `${ROUTES.REQUESTS}/detail/${task.department_request_id}`
+        : ROUTES.SUPPLY_TRANSPORT
+      return <div className={groupClass}><Link href={href} className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground')}>Рассмотреть</Link></div>
     }
 
     if (isBusinessScrapCorrectionTask(task.task_type)) {

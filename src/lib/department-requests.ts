@@ -26,6 +26,14 @@ export const DEPARTMENT_REQUEST_TARGETS = {
     departmentKeywords: ['производств', 'цех'],
     roles: ['production_manager', 'painting_head'] as UserRole[],
   },
+  planning: {
+    label: 'Отдел планирования',
+    recipientLabel: 'начальнику отдела планирования',
+    description: 'Системные согласования плановых дат и маршрутов',
+    route: ROUTES.PLANNING_DEPARTMENT_REQUESTS,
+    departmentKeywords: ['планирован', 'planning'],
+    roles: ['planning_director'] as UserRole[],
+  },
 } as const
 
 export type DepartmentRequestTarget = keyof typeof DEPARTMENT_REQUEST_TARGETS
