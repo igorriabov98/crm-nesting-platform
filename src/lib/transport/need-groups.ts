@@ -115,6 +115,17 @@ export function formatTransportCarriedQuantity(input: {
   return quantity !== null && unit ? `${numberLabel(quantity)} ${unit}` : null
 }
 
+export function hasCompleteTransportPositionSelection<TNeed extends GroupableTransportNeed>(
+  availableNeeds: TNeed[],
+  selectedNeeds: TNeed[],
+) {
+  const selectedKeys = new Set(selectedNeeds.map((need) => need.key))
+  const selectedPositionKeys = new Set(selectedNeeds.map((need) => need.positionKey))
+  return availableNeeds.every((need) => (
+    !selectedPositionKeys.has(need.positionKey) || selectedKeys.has(need.key)
+  ))
+}
+
 function sumNullable(values: Array<number | null>) {
   const known = values.filter((value): value is number => value !== null && Number.isFinite(value))
   return known.length === values.length

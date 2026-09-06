@@ -106,6 +106,9 @@ export function mergeLongStockPurchasePlans(
 export function projectPlannedLongStockSchedulesToPurchasePlan<T extends PlannedLongStockSchedule>(
   schedules: T[],
   plan: LongStockPurchasePlan | null | undefined,
+  options: {
+    preferredScheduleIds?: ReadonlySet<string>
+  } = {},
 ): T[] {
   if (!plan) return schedules
 
@@ -125,39 +128,61 @@ export function projectPlannedLongStockSchedulesToPurchasePlan<T extends Planned
     remainingPieces.set(pieceLength, Math.max((remainingPieces.get(pieceLength) || 0) - pieceCount, 0))
   }
 
-  return schedules
+  const displayOrder = schedules
     .slice()
     .sort((left, right) => (
       left.delivery_date.localeCompare(right.delivery_date)
       || String(left.created_at || '').localeCompare(String(right.created_at || ''))
       || left.id.localeCompare(right.id)
     ))
-    .flatMap((schedule): T[] => {
-      if (schedule.status !== 'planned') return [schedule]
 
-      let pieceLength = Number(schedule.planned_piece_length_mm || 0)
-      let pieceCount = Number(schedule.planned_piece_count || 0)
-      if (pieceLength <= 0 || !Number.isInteger(pieceCount) || pieceCount <= 0) {
-        const availableLengths = Array.from(remainingPieces.entries())
-          .filter(([, count]) => count > 0)
-          .map(([length]) => length)
-        if (availableLengths.length !== 1) return []
-        pieceLength = availableLengths[0]
-        pieceCount = Number(schedule.quantity) / pieceLength
-        if (!Number.isInteger(pieceCount) || pieceCount <= 0) return []
-      }
+  // Choosing which legacy rows represent the approved purchase plan must not
+  // depend on the mutable delivery date. Otherwise moving a linked schedule to
+  // a trip date can make a previously hidden excess row appear as a new free
+  // transport need. Active transport links take precedence; creation order is
+  // the stable fallback for pre-guard legacy rows.
+  const allocationOrder = schedules
+    .filter((schedule) => schedule.status === 'planned')
+    .slice()
+    .sort((left, right) => (
+      Number(options.preferredScheduleIds?.has(right.id) || false)
+      - Number(options.preferredScheduleIds?.has(left.id) || false)
+      || String(left.created_at || '').localeCompare(String(right.created_at || ''))
+      || left.id.localeCompare(right.id)
+      || left.delivery_date.localeCompare(right.delivery_date)
+    ))
+  const projectedById = new Map<string, T>()
 
-      const projectedPieceCount = Math.min(pieceCount, remainingPieces.get(pieceLength) || 0)
-      if (projectedPieceCount <= 0) return []
-      remainingPieces.set(pieceLength, (remainingPieces.get(pieceLength) || 0) - projectedPieceCount)
+  for (const schedule of allocationOrder) {
+    let pieceLength = Number(schedule.planned_piece_length_mm || 0)
+    let pieceCount = Number(schedule.planned_piece_count || 0)
+    if (pieceLength <= 0 || !Number.isInteger(pieceCount) || pieceCount <= 0) {
+      const availableLengths = Array.from(remainingPieces.entries())
+        .filter(([, count]) => count > 0)
+        .map(([length]) => length)
+      if (availableLengths.length !== 1) continue
+      pieceLength = availableLengths[0]
+      pieceCount = Number(schedule.quantity) / pieceLength
+      if (!Number.isInteger(pieceCount) || pieceCount <= 0) continue
+    }
 
-      return [{
-        ...schedule,
-        quantity: pieceLength * projectedPieceCount,
-        planned_piece_length_mm: pieceLength,
-        planned_piece_count: projectedPieceCount,
-      }]
+    const projectedPieceCount = Math.min(pieceCount, remainingPieces.get(pieceLength) || 0)
+    if (projectedPieceCount <= 0) continue
+    remainingPieces.set(pieceLength, (remainingPieces.get(pieceLength) || 0) - projectedPieceCount)
+
+    projectedById.set(schedule.id, {
+      ...schedule,
+      quantity: pieceLength * projectedPieceCount,
+      planned_piece_length_mm: pieceLength,
+      planned_piece_count: projectedPieceCount,
     })
+  }
+
+  return displayOrder.flatMap((schedule): T[] => {
+    if (schedule.status !== 'planned') return [schedule]
+    const projected = projectedById.get(schedule.id)
+    return projected ? [projected] : []
+  })
 }
 
 export function formatLongStockPurchaseComposition(components: LongStockPurchaseComponent[]) {

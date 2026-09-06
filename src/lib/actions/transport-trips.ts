@@ -26,6 +26,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import {
   formatTransportCarriedQuantity,
   groupTransportNeeds,
+  hasCompleteTransportPositionSelection,
   type TransportNeedGroup,
 } from '@/lib/transport/need-groups'
 import { getTransportStopOrderError } from '@/lib/transport/trip-rules'
@@ -1119,6 +1120,9 @@ export async function createTransportTrip(input: z.input<typeof createTripSchema
     })
 
     if (selectedNeeds.length === 0) throw new Error('Выберите хотя бы одну потребность')
+    if (!hasCompleteTransportPositionSelection(workspace.needs, selectedNeeds)) {
+      throw new Error('Технические части одной позиции можно добавить в рейс только вместе')
+    }
     const assignmentByNeed = new Map(parsed.assignments.map((assignment) => [assignment.needKey, assignment]))
     if (new Set(parsed.stops.map((stop) => stop.clientId)).size !== parsed.stops.length) {
       throw new Error('Идентификаторы остановок должны быть уникальными')
@@ -1320,6 +1324,13 @@ export async function updateTransportTrip(input: z.input<typeof updateTripSchema
     })
     if (new Set(selectedNeeds.map((need) => need.key)).size !== selectedNeeds.length) {
       throw new Error('Одна потребность указана в составе рейса несколько раз')
+    }
+    const selectableNeeds = Array.from(new Map([
+      ...currentByKey.values(),
+      ...workspace.needs,
+    ].map((need) => [need.key, need])).values())
+    if (!hasCompleteTransportPositionSelection(selectableNeeds, selectedNeeds)) {
+      throw new Error('Технические части одной позиции можно оставить в рейсе только вместе')
     }
 
     const selectedKeys = new Set(selectedNeeds.map((need) => need.key))

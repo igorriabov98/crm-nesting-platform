@@ -65,8 +65,13 @@ assert.doesNotMatch(
 )
 assert.match(
   supplyOrdersAction,
-  /projectSchedulesToPurchasePlans\(items, schedules\)\.filter\(\(schedule\) => \([\s\S]*schedule\.status === 'planned'/u,
+  /projectSchedulesToPurchasePlans\(items, schedules, preferredScheduleIds\)\.filter\(\(schedule\) => \([\s\S]*schedule\.status === 'planned'/u,
   'supplier transport must project schedule rows through the approved long-stock purchase map',
+)
+assert.match(
+  supplyOrdersAction,
+  /transport_trip_need_links[\s\S]*need_source', 'supply_schedule'[\s\S]*released_at', null[\s\S]*preferredScheduleIds/u,
+  'active trip links must retain priority when a supplier schedule date changes',
 )
 assert.match(
   supplyOrdersAction,
