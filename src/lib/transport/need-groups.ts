@@ -112,16 +112,7 @@ function mergedDetail(details: GroupableTransportItemDetail[]) {
   const weightKg = sumNullable(details.map((detail) => detail.weightKg))
   const unit = new Set(details.map((detail) => detail.unit).filter(Boolean)).size === 1 ? first.unit : null
   const quantityLabel = quantity !== null && unit
-    ? [
-        `${numberLabel(quantity)} ${unit}`,
-        requiredQuantity !== null && requiredQuantity !== quantity
-          ? `потребность ${numberLabel(requiredQuantity)} ${unit}`
-          : null,
-        excessQuantity !== null && excessQuantity > 0
-          ? `сверх потребности ${numberLabel(excessQuantity)} ${unit}`
-          : null,
-        weightKg !== null && unit !== 'кг' ? `вес ${numberLabel(weightKg)} кг` : null,
-      ].filter(Boolean).join(' · ')
+    ? `${numberLabel(quantity)} ${unit}`
     : first.quantityLabel
 
   return [{
@@ -143,12 +134,18 @@ function positionFromNeeds<TNeed extends GroupableTransportNeed>(needs: TNeed[])
   const machineLabels = Array.from(new Set(
     details.map((detail) => detail.machineLabel).filter((label): label is string => Boolean(label)),
   ))
+  const amountLabel = details.length === 1 ? details[0].quantityLabel : `${details.length} поз.`
+  const normalizedUnit = details.length === 1 ? details[0].unit?.trim().toLocaleLowerCase('ru').replace(/\./g, '') : null
+  const volumeLabel = [
+    amountLabel,
+    weightKg !== null && !['кг', 'kg'].includes(normalizedUnit || '') ? `${numberLabel(weightKg)} кг` : null,
+  ].filter(Boolean).join(' · ')
   return {
     key: first.positionKey,
     title: details.length === 1 ? details[0].title : first.title,
     subtitle: machineLabels.join(', ') || first.subtitle,
     neededDate: first.neededDate,
-    volumeLabel: details.length === 1 ? details[0].quantityLabel : `${details.length} поз.`,
+    volumeLabel,
     weightKg,
     weightComplete: needs.every((need) => need.weightKg !== null),
     selectable: needs.every((need) => need.selectable),

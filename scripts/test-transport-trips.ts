@@ -16,6 +16,7 @@ import {
   groupTransportNeeds,
   type GroupableTransportNeed,
 } from '../src/lib/transport/need-groups'
+import { transportTripDisplayName } from '../src/lib/transport/trip-display-name'
 
 const baseNeed: TransportRouteNeed = {
   sourcePointKey: 'factory:berehove',
@@ -23,6 +24,15 @@ const baseNeed: TransportRouteNeed = {
   destinationPointLabel: 'Ужгород',
   direction: 'outbound',
 }
+
+assert.equal(transportTripDisplayName({
+  scheduledDate: '2026-09-07',
+  stops: [
+    { kind: 'start', sequence: 0, city: 'Мукачево' },
+    { kind: 'service', sequence: 1, city: 'Берегово' },
+    { kind: 'finish', sequence: 2, city: 'Ужгород' },
+  ],
+}), '0709БЕУЖ')
 
 function supplyNeed(input: {
   id: string
@@ -92,15 +102,14 @@ assert.equal(groupedSupply[0].positions[0].itemDetails[0].quantity, 25)
 assert.equal(groupedSupply[0].positions[0].itemDetails[0].requiredQuantity, 22)
 assert.equal(groupedSupply[0].positions[0].itemDetails[0].excessQuantity, 3)
 assert.match(groupedSupply[0].positions[0].volumeLabel || '', /25 кг/)
-assert.match(groupedSupply[0].positions[0].volumeLabel || '', /сверх потребности 3 кг/)
+assert.doesNotMatch(groupedSupply[0].positions[0].volumeLabel || '', /потребност/u)
 assert.equal(groupedSupply[0].weightKg, 337)
 assert.doesNotMatch(groupedSupply[0].volumeLabel, /шт\..*кг.*\+/)
 
 const singleScheduleExcess = groupTransportNeeds([
   supplyNeed({ id: 'paint-ordered', positionKey: 'request_paint:single', title: 'Краска', quantity: 25, required: 22, excess: 3, unit: 'кг', weightKg: 25 }),
 ])
-assert.match(singleScheduleExcess[0].positions[0].volumeLabel || '', /потребность 22 кг/)
-assert.match(singleScheduleExcess[0].positions[0].volumeLabel || '', /сверх потребности 3 кг/)
+assert.equal(singleScheduleExcess[0].positions[0].volumeLabel, '25 кг')
 
 const splitBoundaries = groupTransportNeeds([
   supplyNeed({ id: 'date-a', positionKey: 'a', date: '2026-09-08', title: 'A', quantity: 1, required: 1, excess: 0, unit: 'шт.', weightKg: null }),
@@ -335,7 +344,7 @@ assert.doesNotMatch(transportWorkspace, />Точка выезда</)
 assert.match(transportWorkspace, /aria-label=\{title\}/)
 assert.match(transportWorkspace, /Подробнее о потребности/)
 assert.match(transportWorkspace, /function NeedDetailsDialog/)
-assert.match(transportWorkspace, /Полная информация о потребности в перевозке/)
+assert.match(transportWorkspace, /Полный состав и параметры перевозки/)
 assert.match(transportWorkspace, /Состав перевозки/)
 assert.match(transportWorkspace, /href=\{item\.productHref\}/)
 assert.match(transportWorkspace, /href=\{item\.drawingHref\}/)

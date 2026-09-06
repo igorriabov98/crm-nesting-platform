@@ -26,6 +26,7 @@ import { buttonVariants } from '@/components/ui/button'
 import { RequestActions } from '@/components/features/department-requests/RequestActions'
 import { getDepartmentRequestMailLinks } from '@/lib/actions/mail'
 import { LinkedMailSection } from '@/components/features/mail/LinkedMailSection'
+import { transportTripDisplayName } from '@/lib/transport/trip-display-name'
 
 const statusStyles: Record<DepartmentRequestStatus, string> = {
   new: 'border-blue-200 bg-blue-50 text-blue-800',
@@ -48,6 +49,15 @@ function formatDate(value: string) {
 function formatFileSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`
   return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`
+}
+
+function formatTripDate(value: string | null) {
+  if (!value) return null
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(new Date(`${value}T12:00:00`))
 }
 
 export const metadata = {
@@ -85,6 +95,12 @@ export default async function DepartmentRequestDetailPage({
     rejected: 'Запрос отклонён',
     cancelled: 'Запрос отменён',
   } as const
+  const transportOrder = request.transport_date_change?.transport_order || null
+  const transportTripName = transportOrder ? transportTripDisplayName(transportOrder) : 'Рейс'
+  const transportTripRoute = transportOrder
+    ? [transportOrder.route || transportOrder.route_start || 'Маршрут не указан', formatTripDate(transportOrder.scheduled_date)]
+      .filter(Boolean).join(' · ')
+    : null
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 pb-10">
@@ -193,8 +209,9 @@ export default async function DepartmentRequestDetailPage({
                   Связанный рейс
                 </div>
                 <p className="mt-2 font-semibold text-blue-950">
-                  #{request.transport_date_change.transport_order_id.slice(0, 8).toUpperCase()}
+                  {transportTripName}
                 </p>
+                {transportTripRoute && <p className="mt-1 text-sm text-blue-800">{transportTripRoute}</p>}
               </Link>
             )}
           </div>
