@@ -63,6 +63,61 @@ assert.doesNotMatch(
   /loadLongStockPurchasePlanMap\(db, rawItems\)/u,
   'Authenticated supply-order clients must never read closed cutting-plan tables directly',
 )
+assert.match(
+  supplyOrdersAction,
+  /projectSchedulesToPurchasePlans\(items, schedules\)\.filter\(\(schedule\) => \([\s\S]*schedule\.status === 'planned'/u,
+  'supplier transport must project schedule rows through the approved long-stock purchase map',
+)
+assert.match(
+  supplyOrdersAction,
+  /const projectedSchedules = projectSchedulesToPurchasePlans\(items, schedules\)[\s\S]*for \(const schedule of projectedSchedules\)/u,
+  'receiving must exclude long stock sourced from warehouse reservations',
+)
+assert.match(
+  supplyOrdersAction,
+  /distributeScheduleRows\(resolvedSchedules, targetCapacities, userId, !isBarSchedule\)/u,
+  'saving a long-stock supplier schedule must reject quantities beyond the approved purchase map',
+)
+assert.match(
+  supplyOrdersAction,
+  /fn_replace_supply_order_delivery_schedules_v1/u,
+  'schedule replacement must be atomic so an invalid long-stock graph rolls back completely',
+)
+assert.match(
+  supplyOrdersAction,
+  /if \(isWholeBarItem\(orderItem\)\) \{[\s\S]*изменяется только через состав хлыстов/u,
+  'the legacy quantity-only insert must not bypass the physical long-stock purchase map',
+)
+assert.match(
+  supplyOrdersAction,
+  /if \(selectedItems\.some\(isWholeBarItem\)\) \{[\s\S]*изменяется только через состав хлыстов/u,
+  'the legacy quantity-only update must not bypass the physical long-stock purchase map',
+)
+
+const longStockSupplierGuardMigration = readFileSync(
+  new URL('../supabase/migrations/20260906200000_guard_long_stock_supplier_schedules.sql', import.meta.url),
+  'utf8',
+)
+assert.match(
+  longStockSupplierGuardMigration,
+  /bar\.source_type = 'new_stock'/u,
+  'the database guard must derive supplier capacity only from new-stock bars',
+)
+assert.match(
+  longStockSupplierGuardMigration,
+  /item\.link_state = 'active'/u,
+  'the database guard must derive supplier capacity only from the active cutting map',
+)
+assert.match(
+  longStockSupplierGuardMigration,
+  /v_scheduled_piece_count \+ new\.planned_piece_count > v_expected_piece_count/u,
+  'the database guard must reject concurrent or direct over-scheduling beyond the approved purchase bars',
+)
+assert.match(
+  longStockSupplierGuardMigration,
+  /delete from public\.supply_order_delivery_schedules[\s\S]*insert into public\.supply_order_delivery_schedules/u,
+  'schedule replacement must delete and insert inside one database transaction',
+)
 
 const aggregateOrdersSource = supplyOrdersAction.slice(
   supplyOrdersAction.indexOf('export async function getSupplyOrderAggregates('),
@@ -86,6 +141,11 @@ assert.match(
   longStockPlanReaderSource,
   /eligibleKeys\.has\(`\$\{item\.request_item_table\}:\$\{item\.request_item_id\}`\)/u,
   'The trusted cutting-plan result must be filtered by table and item id',
+)
+assert.match(
+  longStockPlanReaderSource,
+  /item\.link_state === 'active'/u,
+  'supply must never reuse a superseded cutting map after a replacement',
 )
 
 const longStockSchemaMigration = readFileSync(
@@ -404,6 +464,52 @@ const productionKnifeFactory = {
     },
   }],
 }
+
+const splitTechnicalKnifeFactory = {
+  ...productionKnifeFactory,
+  items: [{
+    ...productionKnifeFactory.items[0],
+    delivery_schedules: [
+      makeDeliverySchedule({
+        id: 'knife-required-fragment',
+        delivery_date: '2026-08-29',
+        quantity: 6_000,
+        status: 'planned',
+        received_quantity: null,
+        allocated_quantity: null,
+        allocated_physical_quantity: null,
+        planned_piece_length_mm: 6_000,
+        planned_piece_count: 1,
+        delivered_at: null,
+      }),
+      makeDeliverySchedule({
+        id: 'knife-excess-fragment',
+        delivery_date: '2026-08-29',
+        quantity: 6_000,
+        status: 'planned',
+        received_quantity: null,
+        allocated_quantity: null,
+        allocated_physical_quantity: null,
+        planned_piece_length_mm: 6_000,
+        planned_piece_count: 1,
+        delivered_at: null,
+      }),
+    ],
+  }],
+}
+assert.deepEqual(
+  buildInitialSupplyOrderScheduleDrafts(
+    splitTechnicalKnifeFactory,
+    '2026-08-27',
+    { dateKey: '2026-08-29', unscheduledQuantity: 0 },
+  ).map((draft) => ({
+    quantity: draft.quantity,
+    pieceLength: draft.piece_length_mm,
+    pieceCount: draft.piece_count,
+  })),
+  [{ quantity: '12000', pieceLength: '6000', pieceCount: '2' }],
+  'technical rows for the same physical purchase must reopen as one truthful two-piece delivery schedule',
+)
 assert.deepEqual(
   buildInitialSupplyOrderScheduleDrafts(
     productionKnifeFactory,

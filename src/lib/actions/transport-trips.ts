@@ -24,6 +24,7 @@ import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
+  formatTransportCarriedQuantity,
   groupTransportNeeds,
   type TransportNeedGroup,
 } from '@/lib/transport/need-groups'
@@ -54,6 +55,8 @@ export type TransportNeedItemDetail = {
   excessQuantity: number | null
   unit: string | null
   weightKg: number | null
+  pieceLengthMm: number | null
+  pieceCount: number | null
   machineLabel: string | null
   characteristics: Array<{ label: string; value: string }>
 }
@@ -335,6 +338,12 @@ function supplierPointMissingCity(pointKey: string, city: string | null) {
   return (pointKey.startsWith('supplier:') || pointKey.startsWith('factory:')) && !city?.trim()
 }
 
+const TRANSPORT_EXCLUDED_CHARACTERISTICS = new Set([
+  'финиш',
+  'длина заготовки',
+  'количество заготовок',
+])
+
 function buildTripMutationPayload(
   selectedNeeds: UnifiedTransportNeed[],
   stops: z.infer<typeof tripStopDraftSchema>[],
@@ -446,6 +455,8 @@ function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed 
       excessQuantity: null,
       unit: 'шт.',
       weightKg: item.weight * (item.weight_unit === 'т' ? 1000 : 1),
+      pieceLengthMm: null,
+      pieceCount: null,
       machineLabel: need.machine_name,
       characteristics: [],
     })),
@@ -507,6 +518,8 @@ function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
       excessQuantity: null,
       unit: 'шт.',
       weightKg: item.remainingQuantity * item.unitWeightKg,
+      pieceLengthMm: null,
+      pieceCount: null,
       machineLabel: card.machineName,
       characteristics: [],
     })),
@@ -567,6 +580,8 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
       excessQuantity: null,
       unit: item.unit,
       weightKg: null,
+      pieceLengthMm: item.pieceLengthMm,
+      pieceCount: null,
       machineLabel: card.machineName,
       characteristics: [
         item.materialCategory ? { label: 'Категория', value: item.materialCategory } : null,
@@ -622,14 +637,23 @@ function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
       title: need.itemName,
       drawingLabel: null,
       description: MATERIAL_CATEGORY_LABELS[need.category],
-      quantityLabel: `${numberLabel(need.quantity)} ${need.unit}`,
+      quantityLabel: formatTransportCarriedQuantity({
+        quantity: need.quantity,
+        unit: need.unit,
+        pieceLengthMm: need.plannedPieceLengthMm,
+        pieceCount: need.plannedPieceCount,
+      }),
       quantity: need.quantity,
       requiredQuantity: need.requiredQuantity,
       excessQuantity: need.excessQuantity,
       unit: need.unit,
       weightKg: need.weightKg,
+      pieceLengthMm: need.plannedPieceLengthMm,
+      pieceCount: need.plannedPieceCount,
       machineLabel: need.machineName,
-      characteristics: need.characteristics,
+      characteristics: need.characteristics.filter(
+        (entry) => !TRANSPORT_EXCLUDED_CHARACTERISTICS.has(entry.label.trim().toLocaleLowerCase('ru')),
+      ),
     }],
     volumeLabel: `${numberLabel(need.quantity)} ${need.unit}`,
     weightKg: need.weightKg,

@@ -463,7 +463,7 @@ export const NeedCard = memo(function NeedCard({
             variant="ghost"
             onClick={() => onDetails(need)}
             className="h-11 shrink-0 rounded-xl px-3 font-semibold text-blue-800 hover:bg-blue-50 hover:text-blue-900"
-            aria-label={`Подробнее о потребности «${need.title}»`}
+            aria-label={`Подробнее о перевозке «${need.title}»`}
           >
             Подробнее
             <ChevronRight className="h-4 w-4" />
@@ -640,6 +640,8 @@ function NeedDetailsDialog({
         excessQuantity: null,
         unit: null,
         weightKg: null,
+        pieceLengthMm: null,
+        pieceCount: null,
         machineLabel: null,
         characteristics: [],
       }))
@@ -665,7 +667,7 @@ function NeedDetailsDialog({
             {need.title}
           </DialogTitle>
           <DialogDescription className="text-sm leading-6 text-slate-600">
-            {need.subtitle}. Полный состав и параметры перевозки.
+            Полный состав и параметры перевозки.
           </DialogDescription>
         </DialogHeader>
 
@@ -780,14 +782,13 @@ function NeedDetailsDialog({
                           <span className="mt-0.5 block text-xs leading-5 text-slate-500">{item.drawingLabel}</span>
                         )
                       )}
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                            {showCategory && (
+                          {showCategory && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                               <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-700">
                                 {item.description}
                               </span>
-                            )}
-                            {item.machineLabel && <span>Для: {item.machineLabel}</span>}
-                          </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <dl className="grid grid-cols-2 gap-2 text-sm tabular-nums">
