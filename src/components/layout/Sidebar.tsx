@@ -265,17 +265,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
     role: user.role,
     memberships: requestMemberships,
   })
-  const canManagePlanningRequests = permissions.department_requests?.canView && canManageDepartmentRequestTarget({
-    target: 'planning',
-    role: user.role,
-    memberships: requestMemberships,
-  })
-  const workflowItems = [
-    ...workflowItemsBase,
-    ...(canManagePlanningRequests
-      ? [{ href: ROUTES.PLANNING_DEPARTMENT_REQUESTS, label: 'Запросы планирования', icon: ClipboardList }]
-      : []),
-  ]
+  const workflowItems = workflowItemsBase
   const technologistItems = [
     ...(canManageTechnologistRequests
       ? [{ href: ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS, label: 'Запросы', icon: ClipboardList }]

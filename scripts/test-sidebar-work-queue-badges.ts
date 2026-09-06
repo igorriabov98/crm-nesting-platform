@@ -15,7 +15,7 @@ const counts: SidebarWorkQueueCounts = {
     supply: 3,
     production: 4,
     planning: 5,
-    total: 14,
+    total: 5,
     unreadResults: 2,
   },
   transport: 5,
@@ -23,9 +23,8 @@ const counts: SidebarWorkQueueCounts = {
   materialRequests: 6,
 }
 
-assert.equal(getSidebarWorkQueueCount(ROUTES.REQUESTS, counts), 16)
+assert.equal(getSidebarWorkQueueCount(ROUTES.REQUESTS, counts), 7)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_DEPARTMENT_REQUESTS, counts), 3)
-assert.equal(getSidebarWorkQueueCount(ROUTES.PLANNING_DEPARTMENT_REQUESTS, counts), 5)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_TRANSPORT, counts), 5)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_OUTSOURCING_REQUESTS, counts), 7)
 assert.equal(getSidebarWorkQueueCount(ROUTES.MATERIAL_REQUESTS, counts), 6)
@@ -51,6 +50,7 @@ assert.match(sidebarSource, /setInterval\(\(\) => void refresh\(true\), SIDEBAR_
 assert.match(sidebarSource, /table: 'department_requests'/)
 assert.match(sidebarSource, /table: 'machine_outsourcing_operations'/)
 assert.match(sidebarSource, /SUPPLY_OUTSOURCING_REQUESTS, label: 'Согласование аутсорсинга'/)
+assert.doesNotMatch(sidebarSource, /Запросы планирования/)
 assert.match(mailBadgeSource, /useId\(\)/)
 assert.match(mailBadgeSource, /mail_sidebar_count_\$\{channelInstanceId/)
 assert.doesNotMatch(mailBadgeSource, /channel\('mail_sidebar_count'\)/)

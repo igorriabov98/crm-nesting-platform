@@ -30,7 +30,7 @@ export const DEPARTMENT_REQUEST_TARGETS = {
     label: 'Отдел планирования',
     recipientLabel: 'начальнику отдела планирования',
     description: 'Системные согласования плановых дат и маршрутов',
-    route: ROUTES.PLANNING_DEPARTMENT_REQUESTS,
+    route: ROUTES.REQUESTS,
     departmentKeywords: ['планирован', 'planning'],
     roles: ['planning_director'] as UserRole[],
   },

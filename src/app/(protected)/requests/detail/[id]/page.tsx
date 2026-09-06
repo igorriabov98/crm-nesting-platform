@@ -78,7 +78,9 @@ export default async function DepartmentRequestDetailPage({
 
   const { request, userId, canManage, canClaimMachineLayout } = detail
   const target = DEPARTMENT_REQUEST_TARGETS[request.target_department]
-  const mode = request.created_by === userId ? 'mine' : 'inbox'
+  const mode = request.request_kind === 'transport_trip_date_approval' && request.assigned_to === userId
+    ? 'inbox'
+    : request.created_by === userId ? 'mine' : 'inbox'
   const backRoute = mode === 'mine' ? ROUTES.REQUESTS : target.route
   const backParams = new URLSearchParams()
   if (request.status === 'rejected') backParams.set('tab', 'rejected')

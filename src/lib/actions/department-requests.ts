@@ -331,7 +331,9 @@ function applyScope(
     factoryId: string | null
   },
 ) {
-  if (input.mode === 'mine') return query.eq('created_by', input.userId)
+  if (input.mode === 'mine') {
+    return query.or(`created_by.eq.${input.userId},assigned_to.eq.${input.userId}`)
+  }
   let result = query.eq('target_department', input.target)
   if (input.target === 'production' && !isDirector(input.role) && input.factoryId) {
     result = result.eq('factory_id', input.factoryId)
@@ -483,7 +485,9 @@ export async function getDepartmentRequestDetail(requestId: string) {
     || !request.factory_id
     || request.factory_id === context.factoryId
   const canManage = departmentAllowed && factoryAllowed
-  if (request.created_by !== context.userId && !canManage) return null
+  const personallyAssignedTransportApproval = request.request_kind !== 'transport_trip_date_approval'
+    || request.assigned_to === context.userId
+  if (request.created_by !== context.userId && !(canManage && personallyAssignedTransportApproval)) return null
 
   if (
     request.created_by === context.userId
