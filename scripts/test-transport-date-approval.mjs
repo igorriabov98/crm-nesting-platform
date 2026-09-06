@@ -267,6 +267,7 @@ try {
     );
   `)
   run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260906160000_transport_need_groups_planning_requests.sql')])
+  run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260906190000_fix_transport_request_duplicate_created_event.sql')])
   psql(String.raw`
     DO $$
     DECLARE
@@ -290,6 +291,15 @@ try {
       END IF;
       IF (SELECT department_request_id FROM tasks WHERE id='70000000-0000-0000-0000-000000000010') IS NULL THEN
         RAISE EXCEPTION 'existing approval task was not linked';
+      END IF;
+      IF (
+        SELECT count(*)
+        FROM department_request_events event
+        JOIN department_requests request ON request.id=event.request_id
+        WHERE request.transport_trip_date_change_request_id='80000000-0000-0000-0000-000000000010'
+          AND event.event_type='created'
+      ) <> 1 THEN
+        RAISE EXCEPTION 'transport request contains duplicate created events';
       END IF;
       PERFORM sync_transport_date_department_request('80000000-0000-0000-0000-000000000010');
       PERFORM sync_transport_date_department_request('80000000-0000-0000-0000-000000000010');
