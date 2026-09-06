@@ -104,6 +104,7 @@ import {
   groupTransportNeeds,
   type TransportNeedGroup,
 } from '@/lib/transport/need-groups'
+import { transportTripDisplayName } from '@/lib/transport/trip-display-name'
 import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
 import { cn } from '@/lib/utils'
 
@@ -326,6 +327,13 @@ function tripRouteLabel(trip: TransportTrip) {
   return stops.length > 0
     ? stops.map((stop) => stop.pointLabel).join(' → ')
     : trip.route || trip.routeStart || 'Маршрут не указан'
+}
+
+function tripDisplayName(trip: TransportTrip) {
+  return transportTripDisplayName({
+    scheduledDate: trip.scheduledDate,
+    stops: trip.stops,
+  })
 }
 
 const needStatusLabels: Record<string, string> = {
@@ -657,7 +665,7 @@ function NeedDetailsDialog({
             {need.title}
           </DialogTitle>
           <DialogDescription className="text-sm leading-6 text-slate-600">
-            {need.subtitle}. Полная информация о потребности в перевозке.
+            {need.subtitle}. Полный состав и параметры перевозки.
           </DialogDescription>
         </DialogHeader>
 
@@ -731,12 +739,19 @@ function NeedDetailsDialog({
             </div>
             {items.length > 0 ? (
               <ol className="mt-3 grid gap-2">
-                {items.map((item, index) => (
-                  <li key={item.id} className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-xs font-bold text-slate-500 ring-1 ring-slate-200">
-                      {index + 1}
-                    </span>
-                    <span className="min-w-0">
+                {items.map((item, index) => {
+                  const showCategory = Boolean(
+                    item.description
+                    && item.description.trim().toLocaleLowerCase('ru') !== item.title.trim().toLocaleLowerCase('ru'),
+                  )
+                  return (
+                  <li key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(240px,auto)] sm:items-start">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-xs font-bold text-slate-600 ring-1 ring-slate-200">
+                          {index + 1}
+                        </span>
+                        <div className="min-w-0">
                       {item.productHref ? (
                         <Link
                           href={item.productHref}
@@ -765,27 +780,42 @@ function NeedDetailsDialog({
                           <span className="mt-0.5 block text-xs leading-5 text-slate-500">{item.drawingLabel}</span>
                         )
                       )}
-                      {item.description && <span className="mt-0.5 block text-xs leading-5 text-slate-500">{item.description}</span>}
-                      {item.machineLabel && <span className="mt-0.5 block text-xs leading-5 text-slate-500">Для: {item.machineLabel}</span>}
-                      {item.characteristics.length > 0 && (
-                        <dl className="mt-2 flex flex-wrap gap-1.5">
-                          {item.characteristics.map((entry) => (
-                            <div key={`${entry.label}:${entry.value}`} className="inline-flex gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs">
-                              <dt className="text-slate-500">{entry.label}:</dt>
-                              <dd className="font-medium text-slate-800">{entry.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      )}
-                    </span>
-                    <span className="grid gap-0.5 text-sm tabular-nums sm:text-right">
-                      {item.quantityLabel && <span className="font-semibold text-slate-800">{item.quantityLabel}</span>}
-                      <span className="text-xs font-medium text-slate-500">
-                        {item.weightKg !== null ? `Вес: ${numberLabel(item.weightKg)} кг` : 'Вес не рассчитан'}
-                      </span>
-                    </span>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                            {showCategory && (
+                              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-700">
+                                {item.description}
+                              </span>
+                            )}
+                            {item.machineLabel && <span>Для: {item.machineLabel}</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <dl className="grid grid-cols-2 gap-2 text-sm tabular-nums">
+                        <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                          <dt className="text-[11px] font-medium uppercase tracking-wide text-blue-700">К перевозке</dt>
+                          <dd className="mt-0.5 font-bold text-slate-950">{item.quantityLabel || 'Не указано'}</dd>
+                        </div>
+                        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
+                          <dt className="text-[11px] font-medium uppercase tracking-wide text-emerald-700">Вес</dt>
+                          <dd className="mt-0.5 font-bold text-slate-950">
+                            {item.weightKg !== null ? `${numberLabel(item.weightKg)} кг` : 'Не рассчитан'}
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
+                    {item.characteristics.length > 0 && (
+                      <dl className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 md:grid-cols-3">
+                        {item.characteristics.map((entry) => (
+                          <div key={`${entry.label}:${entry.value}`} className="min-w-0 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200">
+                            <dt className="truncate text-[11px] font-medium text-slate-500">{entry.label}</dt>
+                            <dd className="mt-0.5 break-words text-sm font-semibold text-slate-900">{entry.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
                   </li>
-                ))}
+                  )
+                })}
               </ol>
             ) : (
               <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
@@ -1725,7 +1755,7 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
             <>
               <SheetHeader className="border-b border-slate-100 p-5 pr-14">
                 <SheetTitle className="text-xl font-bold text-slate-950">
-                  Рейс #{editingTrip.id.slice(0, 8).toUpperCase()}
+                  Рейс {tripDisplayName(editingTrip)}
                 </SheetTitle>
                 <SheetDescription>
                   {tripRouteLabel(editingTrip)}
@@ -2253,7 +2283,7 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
                 <SelectContent>
                   {moveTargetOptions.map((trip) => (
                     <SelectItem key={trip.id} value={trip.id}>
-                      #{trip.id.slice(0, 8).toUpperCase()} · {tripRouteLabel(trip)} · {formatDate(trip.scheduledDate)}
+                      {tripDisplayName(trip)} · {tripRouteLabel(trip)} · {formatDate(trip.scheduledDate)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -2750,7 +2780,7 @@ function TripsSection({
                 <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', statusMeta[trip.status].badge)}>
                   {statusMeta[trip.status].label}
                 </span>
-                <span className="text-xs font-semibold text-slate-400">#{trip.id.slice(0, 8).toUpperCase()}</span>
+                <span className="text-xs font-semibold text-slate-500">{tripDisplayName(trip)}</span>
                 {Array.from(new Set(trip.needs.map((need) => need.kind))).map((kind) => (
                   <span key={kind} className={cn('rounded-full border px-2 py-1 text-[11px] font-semibold', categoryMeta[kind].chip)}>
                     {categoryMeta[kind].label}
@@ -2822,7 +2852,7 @@ function TripsSection({
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label={`Открыть рейс ${trip.id.slice(0, 8)}`}
+                aria-label={`Открыть рейс ${tripDisplayName(trip)}`}
                 onClick={() => onOpen(trip)}
                 className="h-11 w-11 rounded-xl"
               >

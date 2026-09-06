@@ -89,7 +89,20 @@ export type DepartmentRequestRow = {
   long_stock_plan_id: string | null
   long_stock_returned_version_id: string | null
   transport_trip_date_change_request_id: string | null
-  transport_date_change: { transport_order_id: string } | null
+  transport_date_change: {
+    transport_order_id: string
+    transport_order: {
+      route: string | null
+      route_start: string | null
+      scheduled_date: string | null
+      stops: Array<{
+        city: string | null
+        point_label: string | null
+        sequence_no: number
+        stop_kind: string
+      }>
+    } | null
+  } | null
   request_item_label: string | null
   due_date: string | null
   response: string | null
@@ -227,7 +240,13 @@ const requestListSelect = `
     client:clients(id, name)
   ),
   transport_date_change:transport_trip_date_change_requests!department_requests_transport_trip_date_change_request_id_fkey(
-    transport_order_id
+    transport_order_id,
+    transport_order:machine_outsourcing_transport_orders!transport_trip_date_change_requests_transport_order_id_fkey(
+      route,
+      route_start,
+      scheduled_date,
+      stops:transport_trip_stops(city, point_label, sequence_no, stop_kind)
+    )
   ),
   attachments:department_request_attachments(
     id,

@@ -239,8 +239,16 @@ try {
     INSERT INTO machine_outsourcing_transport_orders(
       id,direction,status,scheduled_date,price,route_start,route,date_change_state
     ) VALUES (
-      '30000000-0000-0000-0000-000000000010','outbound','found','2026-09-09',100,'A','A → B','pending'
+      '30000000-0000-0000-0000-000000000010','outbound','found','2026-09-09',100,
+      'Берегово','Берегово → Ужгород','pending'
     );
+    INSERT INTO transport_trip_stops(
+      id,transport_order_id,client_key,sequence_no,stop_kind,point_key,point_label,city,status
+    ) VALUES
+      ('61000000-0000-0000-0000-000000000010','30000000-0000-0000-0000-000000000010',
+       'berehove',1,'service','city:berehove','Берегово','Берегово','planned'),
+      ('61000000-0000-0000-0000-000000000011','30000000-0000-0000-0000-000000000010',
+       'uzhhorod',2,'finish','city:uzhhorod','Ужгород','Ужгород','planned');
     INSERT INTO transport_trip_need_links(
       id,transport_order_id,need_kind,need_source,need_id,direction,source_point_key,source_point_label,
       destination_point_key,destination_point_label,need_title,needed_date
@@ -291,6 +299,27 @@ try {
       END IF;
       IF (SELECT department_request_id FROM tasks WHERE id='70000000-0000-0000-0000-000000000010') IS NULL THEN
         RAISE EXCEPTION 'existing approval task was not linked';
+      END IF;
+      IF transport_trip_display_name('30000000-0000-0000-0000-000000000010') <> '0909БЕУЖ' THEN
+        RAISE EXCEPTION 'trip business name was not built from date and ordered cities';
+      END IF;
+      IF (
+        SELECT title FROM department_requests
+        WHERE transport_trip_date_change_request_id='80000000-0000-0000-0000-000000000010'
+      ) <> 'Согласовать перенос дат рейса 0909БЕУЖ' THEN
+        RAISE EXCEPTION 'request title does not contain the trip business name';
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM department_requests
+        WHERE transport_trip_date_change_request_id='80000000-0000-0000-0000-000000000010'
+          AND (description LIKE '%30000000-0000-0000-0000-000000000010%'
+            OR description NOT LIKE 'Рейс: 0909БЕУЖ · Берегово → Ужгород · 09.09.2026%')
+      ) THEN
+        RAISE EXCEPTION 'request description contains an opaque id or lacks a readable trip label';
+      END IF;
+      IF (SELECT title FROM tasks WHERE id='70000000-0000-0000-0000-000000000010')
+          <> 'Согласовать перенос дат рейса 0909БЕУЖ' THEN
+        RAISE EXCEPTION 'task title does not contain the trip business name';
       END IF;
       IF (
         SELECT count(*)
