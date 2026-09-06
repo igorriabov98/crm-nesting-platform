@@ -1084,11 +1084,22 @@ export function compareLongStockCandidates(left: LongStockCuttingCandidate, righ
     // more fully before assigning cuts to purchased bars. A lexical layout
     // signature must not prefer 8 + 2 over 9 + 1 merely because 1574 < 272 as text.
     || physicalStockRemainder(left) - physicalStockRemainder(right)
+    || comparePhysicalStockRemainderConcentration(left, right)
     || layoutSignature(left.bars).localeCompare(layoutSignature(right.bars), 'en')
 }
 
 function physicalStockRemainder(candidate: LongStockCuttingCandidate) {
   return candidate.bars.reduce((total, bar) => total + (bar.source === 'new_stock' ? 0 : bar.remainderMm), 0)
+}
+
+function comparePhysicalStockRemainderConcentration(
+  left: LongStockCuttingCandidate,
+  right: LongStockCuttingCandidate,
+) {
+  return compareRemainderValues(
+    left.bars.filter((bar) => bar.source !== 'new_stock').map((bar) => bar.remainderMm),
+    right.bars.filter((bar) => bar.source !== 'new_stock').map((bar) => bar.remainderMm),
+  )
 }
 
 function compareSourceFifo(left: LongStockCuttingBar[], right: LongStockCuttingBar[]) {
@@ -1123,19 +1134,22 @@ function compareRemainderConcentration(
   right: MutableBar[],
   endTrimMm: number,
 ) {
-  const leftRemainders = left
-    .map((bar) => mutableBarRemainder(bar, endTrimMm))
-    .sort((first, second) => second - first)
-  const rightRemainders = right
-    .map((bar) => mutableBarRemainder(bar, endTrimMm))
-    .sort((first, second) => second - first)
+  return compareRemainderValues(
+    left.map((bar) => mutableBarRemainder(bar, endTrimMm)),
+    right.map((bar) => mutableBarRemainder(bar, endTrimMm)),
+  )
+}
 
-  for (let index = 0; index < leftRemainders.length; index += 1) {
+function compareRemainderValues(left: number[], right: number[]) {
+  const leftRemainders = [...left].sort((first, second) => second - first)
+  const rightRemainders = [...right].sort((first, second) => second - first)
+
+  for (let index = 0; index < Math.min(leftRemainders.length, rightRemainders.length); index += 1) {
     if (leftRemainders[index] !== rightRemainders[index]) {
       return rightRemainders[index] - leftRemainders[index]
     }
   }
-  return 0
+  return leftRemainders.length - rightRemainders.length
 }
 
 function compareOutputBars(left: UnnumberedOutputBar, right: UnnumberedOutputBar) {

@@ -361,6 +361,35 @@ test('uses two selected 8500 mm warehouse bars and keeps both 2499 mm remainders
   assert.deepEqual(candidate.bars.map((bar) => bar.sourceInventoryId), ['inventory-8500', 'inventory-8500'])
 })
 
+test('concentrates the reusable remainder across explicitly selected warehouse bars', () => {
+  const result = solveLongStockCutting({
+    workpieces: Array.from({ length: 15 }, (_, index) => ({
+      id: `part-400-${index + 1}`,
+      lengthMm: 400,
+    })),
+    stockSources: [1, 2].map((pieceNumber) => ({
+      id: `inventory-6000:${pieceNumber}`,
+      inventoryId: 'inventory-6000',
+      source: 'warehouse_stock' as const,
+      lengthMm: 6000,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      factoryId: 'factory-a',
+      requiresTransfer: true,
+      availableFromDate: null,
+    })),
+    requireAllStockSources: true,
+    purchaseLengths: [{ lengthMm: 6000, kind: 'standard' }],
+    kerfMm: 2,
+    endTrimMm: 10,
+  })
+
+  const candidate = result.candidates[0]
+  assert.equal(candidate.kind, 'stock_only')
+  assert.deepEqual(candidate.bars.map((bar) => bar.cuts.length), [14, 1])
+  assert.deepEqual(candidate.bars.map((bar) => bar.remainderMm), [362, 5588])
+  assert.equal(candidate.totalRemainderMm, 5950)
+})
+
 test('requires every explicitly selected physical bar to receive a cut', () => {
   assert.throws(() => solveLongStockCutting({
     workpieces: [{ id: 'part-1000', lengthMm: 1000 }],
