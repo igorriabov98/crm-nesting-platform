@@ -31,6 +31,19 @@ export type LongStockPurchasePlan = {
   uses_nonstandard_length: boolean
 }
 
+type PlannedLongStockSchedule = {
+  id: string
+  delivery_date: string
+  created_at?: string | null
+  status: string
+  quantity: number | string
+  planned_piece_length_mm: number | string | null
+  planned_piece_count: number | string | null
+  received_piece_length_mm?: number | string | null
+  received_piece_count?: number | string | null
+  receipt_parent_schedule_id?: string | null
+}
+
 export function isLongStockRequestItemTable(value: string): value is LongStockRequestItemTable {
   return LONG_STOCK_REQUEST_ITEM_TABLES.includes(value as LongStockRequestItemTable)
 }
@@ -83,6 +96,68 @@ export function mergeLongStockPurchasePlans(
       }),
     )) ?? []
   )))
+}
+
+/**
+ * Limits supplier schedule rows to the new bars in the approved cutting map.
+ * Warehouse bars are deliberately absent from plan components and must never
+ * create supplier transport or receiving work.
+ */
+export function projectPlannedLongStockSchedulesToPurchasePlan<T extends PlannedLongStockSchedule>(
+  schedules: T[],
+  plan: LongStockPurchasePlan | null | undefined,
+): T[] {
+  if (!plan) return schedules
+
+  const remainingPieces = new Map<number, number>()
+  for (const component of plan.components) {
+    remainingPieces.set(
+      component.length_mm,
+      (remainingPieces.get(component.length_mm) || 0) + component.piece_count,
+    )
+  }
+
+  for (const schedule of schedules) {
+    if (schedule.status !== 'delivered' || schedule.receipt_parent_schedule_id) continue
+    const pieceLength = Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0)
+    const pieceCount = Number(schedule.received_piece_count || schedule.planned_piece_count || 0)
+    if (pieceLength <= 0 || !Number.isFinite(pieceCount) || pieceCount <= 0) continue
+    remainingPieces.set(pieceLength, Math.max((remainingPieces.get(pieceLength) || 0) - pieceCount, 0))
+  }
+
+  return schedules
+    .slice()
+    .sort((left, right) => (
+      left.delivery_date.localeCompare(right.delivery_date)
+      || String(left.created_at || '').localeCompare(String(right.created_at || ''))
+      || left.id.localeCompare(right.id)
+    ))
+    .flatMap((schedule): T[] => {
+      if (schedule.status !== 'planned') return [schedule]
+
+      let pieceLength = Number(schedule.planned_piece_length_mm || 0)
+      let pieceCount = Number(schedule.planned_piece_count || 0)
+      if (pieceLength <= 0 || !Number.isInteger(pieceCount) || pieceCount <= 0) {
+        const availableLengths = Array.from(remainingPieces.entries())
+          .filter(([, count]) => count > 0)
+          .map(([length]) => length)
+        if (availableLengths.length !== 1) return []
+        pieceLength = availableLengths[0]
+        pieceCount = Number(schedule.quantity) / pieceLength
+        if (!Number.isInteger(pieceCount) || pieceCount <= 0) return []
+      }
+
+      const projectedPieceCount = Math.min(pieceCount, remainingPieces.get(pieceLength) || 0)
+      if (projectedPieceCount <= 0) return []
+      remainingPieces.set(pieceLength, (remainingPieces.get(pieceLength) || 0) - projectedPieceCount)
+
+      return [{
+        ...schedule,
+        quantity: pieceLength * projectedPieceCount,
+        planned_piece_length_mm: pieceLength,
+        planned_piece_count: projectedPieceCount,
+      }]
+    })
 }
 
 export function formatLongStockPurchaseComposition(components: LongStockPurchaseComponent[]) {

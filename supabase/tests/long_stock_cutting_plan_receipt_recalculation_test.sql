@@ -379,6 +379,9 @@ begin
     '{}'::jsonb
   );
 
+  -- Synthetic legacy parent for a distributed receipt; it is not a supplier
+  -- schedule produced by the application.
+  set local session_replication_role = replica;
   insert into public.supply_order_delivery_schedules(
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     status, created_by, updated_by
@@ -393,6 +396,7 @@ begin
     v_receiver,
     v_receiver
   );
+  set local session_replication_role = origin;
   insert into public.supply_order_delivery_schedules(
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     status, received_quantity, allocated_quantity, allocated_physical_quantity,
@@ -920,6 +924,9 @@ begin
   v_child := pg_temp.create_receipt_guard_plan(
     v_actor, v_factory, v_material, v_variant, 'RECALC-CHILD-SCHEDULE'
   );
+  -- This parent belongs to the already invalidated source position and models
+  -- a receipt that was created before its allocation to another machine.
+  set local session_replication_role = replica;
   insert into public.supply_order_delivery_schedules(
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     status, created_by, updated_by
@@ -934,6 +941,7 @@ begin
     v_actor,
     v_actor
   );
+  set local session_replication_role = origin;
   insert into public.supply_order_delivery_schedules(
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     status, received_quantity, allocated_quantity, allocated_physical_quantity,

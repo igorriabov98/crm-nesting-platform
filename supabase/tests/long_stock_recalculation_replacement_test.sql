@@ -188,10 +188,10 @@ begin
   elsif p_source_kind = 'supply_receipt' then
     insert into public.supply_order_delivery_schedules(
       id, request_item_table, request_item_id, delivery_date, quantity, unit,
-      status, created_by, updated_by
+      status, planned_piece_length_mm, planned_piece_count, created_by, updated_by
     ) values (
       v_parent_schedule, 'request_' || p_category, v_item,
-      current_date, 8000, 'мм', 'planned', v_actor, v_actor
+      current_date, 6000, 'мм', 'planned', 6000, 1, v_actor, v_actor
     );
     insert into public.supply_order_delivery_schedules(
       id, request_item_table, request_item_id, delivery_date, quantity, unit,

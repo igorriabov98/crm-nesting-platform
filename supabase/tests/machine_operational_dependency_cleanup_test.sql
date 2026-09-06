@@ -222,6 +222,11 @@ BEGIN
   SET actual_quantity = 3
   WHERE id = v_confirmed_future_item;
 
+  -- This fixture intentionally models a legacy schedule so that the machine
+  -- cleanup test can verify archival of pre-guard data. Bypass user triggers
+  -- only for the fixture insert; long-stock schedule validation has its own
+  -- executable regression test.
+  SET LOCAL session_replication_role = replica;
   INSERT INTO public.supply_order_delivery_schedules(
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     status, created_by, updated_by
@@ -232,6 +237,7 @@ BEGIN
     v_delivered_schedule, 'request_pipe', v_pipe_delivered_item, '2026-09-04', 500, 'мм',
     'delivered', v_actor, v_actor
   );
+  SET LOCAL session_replication_role = origin;
   UPDATE public.supply_order_delivery_schedules
   SET received_quantity = 500,
       delivered_at = '2026-09-04 09:00:00+00',

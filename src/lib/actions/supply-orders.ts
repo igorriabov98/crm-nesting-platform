@@ -25,6 +25,7 @@ import { calculateLongStockWeightForLength } from '@/lib/long-stock-material-wei
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import {
   isLongStockRequestItemTable,
+  projectPlannedLongStockSchedulesToPurchasePlan,
   summarizeLongStockPurchaseBars,
   type LongStockPurchaseBar,
   type LongStockPurchasePlan,
@@ -168,10 +169,6 @@ export type SupplyTransportNeed = {
   characteristics: SupplyOrderAggregateCharacteristic[]
   plannedPieceLengthMm: number | null
   plannedPieceCount: number | null
-}
-
-function transportNumberLabel(value: number, maximumFractionDigits = 3) {
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits }).format(value)
 }
 
 export type SupplyOrderItem = {
@@ -1121,8 +1118,8 @@ export async function getSupplyTransportNeeds(): Promise<{
     const db = createAdminClient() as unknown as RpcDb
     const { data: schedulesData, error: schedulesError } = await db
       .from('supply_order_delivery_schedules')
-      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, planned_piece_length_mm, planned_piece_count, created_at')
-      .eq('status', 'planned')
+      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, receipt_parent_schedule_id, created_at')
+      .neq('status', 'cancelled')
       .order('delivery_date', { ascending: true })
       .order('created_at', { ascending: true })
     if (schedulesError) throw new Error(schedulesError.message || 'Не удалось загрузить подтверждённые поставки')
@@ -1135,20 +1132,29 @@ export async function getSupplyTransportNeeds(): Promise<{
       quantity: number
       unit: string
       supplier_id: string | null
+      status: 'planned' | 'delivered' | 'cancelled'
       planned_piece_length_mm: number | null
       planned_piece_count: number | null
+      received_piece_length_mm: number | null
+      received_piece_count: number | null
+      receipt_parent_schedule_id: string | null
       created_at: string
     }>
-    const eligibleSchedules = schedules.filter((schedule) => (
-      Boolean(schedule.supplier_id) && ORDER_TABLES.includes(schedule.request_item_table)
+    const plannedSchedules = schedules.filter((schedule) => (
+      schedule.status === 'planned'
+      && Boolean(schedule.supplier_id)
+      && ORDER_TABLES.includes(schedule.request_item_table)
     ))
-    if (eligibleSchedules.length === 0) return { data: [], error: null }
+    if (plannedSchedules.length === 0) return { data: [], error: null }
 
-    const groupedItems = groupItemsByTable(eligibleSchedules.map((schedule) => ({
+    const groupedItems = groupItemsByTable(plannedSchedules.map((schedule) => ({
       table: schedule.request_item_table,
       id: schedule.request_item_id,
     })))
     const items = await loadSelectedOrderItems(db, groupedItems)
+    const eligibleSchedules = projectSchedulesToPurchasePlans(items, schedules).filter((schedule) => (
+      schedule.status === 'planned' && Boolean(schedule.supplier_id)
+    ))
     const itemByKey = new Map(items.map((item) => [`${item.table}:${item.id}`, item]))
     const requestIds = Array.from(new Set(items.map((item) => item.request_id)))
     const supplierIds = Array.from(new Set(
@@ -1227,18 +1233,6 @@ export async function getSupplyTransportNeeds(): Promise<{
           ? Number(schedule.quantity)
           : proportionalWeight(item.calculated_weight_kg, item.to_order, Number(schedule.quantity))
         const characteristics = getAggregateCharacteristics(item.table, item.raw, item)
-        if (schedule.planned_piece_length_mm && !characteristics.some((entry) => entry.label === 'Длина заготовки')) {
-          characteristics.push({
-            label: 'Длина заготовки',
-            value: `${transportNumberLabel(Number(schedule.planned_piece_length_mm), 0)} мм`,
-          })
-        }
-        if (schedule.planned_piece_count && !characteristics.some((entry) => entry.label === 'Количество заготовок')) {
-          characteristics.push({
-            label: 'Количество заготовок',
-            value: `${transportNumberLabel(Number(schedule.planned_piece_count), 0)} шт.`,
-          })
-        }
         return [{
           id: schedule.id,
           requestId: item.request_id,
@@ -2093,7 +2087,10 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       const materialKey = getAggregateIdentityKey(item.table, item.raw, item)
       const dateKey = plannedDateKey(item.planned_material_date)
       const aggregateKey = `${factoryKey(item.factory_id)}|${dateKey}|${materialKey}`
-      const itemSchedules = (schedulesByItem.get(`${item.table}:${item.id}`) || [])
+      const itemSchedules = projectPlannedLongStockSchedulesToPurchasePlan(
+        schedulesByItem.get(`${item.table}:${item.id}`) || [],
+        item.long_stock_purchase_plan,
+      )
         .map((schedule) => toScheduleDto(schedule, supplierNameMap))
       const plannedScheduleQuantity = itemSchedules
         .filter((schedule) => schedule.status === 'planned')
@@ -2367,11 +2364,40 @@ function isWholeBarItem(item: { category: MaterialCategory; pipe_type?: string |
     || (item.category === 'pipe' && (item.raw?.pipe_type ?? item.pipe_type) !== 'wire')
 }
 
+function projectSchedulesToPurchasePlans<T extends {
+  id: string
+  request_item_table: string
+  request_item_id: string
+  delivery_date: string
+  created_at?: string | null
+  status: string
+  quantity: number | string
+  planned_piece_length_mm: number | string | null
+  planned_piece_count: number | string | null
+  received_piece_length_mm?: number | string | null
+  received_piece_count?: number | string | null
+  receipt_parent_schedule_id?: string | null
+}>(
+  items: Array<Pick<SupplyOrderAggregateInputItem, 'table' | 'id' | 'long_stock_purchase_plan'>>,
+  schedules: T[],
+) {
+  const schedulesByItem = new Map<string, T[]>()
+  for (const schedule of schedules) {
+    const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+    schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
+  }
+  return items.flatMap((item) => projectPlannedLongStockSchedulesToPurchasePlan(
+    schedulesByItem.get(itemKey(item)) || [],
+    item.long_stock_purchase_plan,
+  ))
+}
+
 type LongStockPlanItemRow = {
   plan_id: string
   request_item_table: string
   request_item_id: string
   cutting_status: 'planning' | 'plan_approved' | 'accepted' | 'requires_recalculation'
+  link_state: 'active' | 'replacement_staging' | 'superseded'
 }
 
 type LongStockPlanRow = {
@@ -2433,12 +2459,13 @@ async function loadLongStockPurchasePlanMap(
   const eligibleKeys = new Set(eligibleItems.map((item) => `${item.table}:${item.id}`))
   const { data: planItemsRaw, error: planItemsError } = await db
     .from('long_stock_cutting_plan_items')
-    .select('plan_id, request_item_table, request_item_id, cutting_status')
+    .select('plan_id, request_item_table, request_item_id, cutting_status, link_state')
     .in('request_item_id', Array.from(new Set(eligibleItems.map((item) => item.id))))
   if (planItemsError) throw new Error(planItemsError.message || 'Не удалось загрузить карты раскроя для снабжения')
 
   const planItems = ((planItemsRaw || []) as LongStockPlanItemRow[]).filter((item) => (
     eligibleKeys.has(`${item.request_item_table}:${item.request_item_id}`)
+    && item.link_state === 'active'
     && item.cutting_status !== 'planning'
   ))
   const planIds = Array.from(new Set(planItems.map((item) => item.plan_id)))
@@ -2614,9 +2641,28 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
   const sourceItem = allOpenItems.find((item) => item.table === sourceTable && item.id === sourceId)
   if (!sourceItem) throw new Error('Не удалось определить исходную позицию поставки')
   assertApprovedLongStockPurchasePlan(sourceItem)
+  if (scheduleId && sourceItem.long_stock_purchase_plan) {
+    const projectedSchedule = projectSchedulesToPurchasePlans(
+      [sourceItem],
+      await loadReceivingSchedules(db, [sourceItem]),
+    ).find((schedule) => schedule.id === scheduleId)
+    if (!projectedSchedule) {
+      throw new Error('Эта строка превышает утверждённую карту закупки и не относится к поставке')
+    }
+    scheduleQuantity = Number(projectedSchedule.quantity || 0)
+    plannedPieceLengthMm = projectedSchedule.planned_piece_length_mm === null
+      ? null
+      : Number(projectedSchedule.planned_piece_length_mm)
+    plannedPieceCount = projectedSchedule.planned_piece_count === null
+      ? null
+      : Number(projectedSchedule.planned_piece_count)
+  }
   let plannedQuantity = scheduleQuantity
   if (plannedQuantity === null) {
-    const schedules = await loadReceivingSchedules(db, [sourceItem])
+    const schedules = projectSchedulesToPurchasePlans(
+      [sourceItem],
+      await loadReceivingSchedules(db, [sourceItem]),
+    )
     plannedQuantity = projectAggregateVirtualReceivingQuantities([{
       key: itemKey(sourceItem),
       aggregateKey: itemKey(sourceItem),
@@ -2660,7 +2706,10 @@ async function buildMaterialAllocationPreview(
     && getAggregateIdentityKey(item.table, item.raw, item) === sourceIdentity
     && (item.order_status === 'pending' || item.order_status === 'ordered')
   ))
-  const matchingSchedules = await loadReceivingSchedules(db, matchingItems)
+  const matchingSchedules = projectSchedulesToPurchasePlans(
+    matchingItems,
+    await loadReceivingSchedules(db, matchingItems),
+  )
   const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
   for (const schedule of matchingSchedules) {
     const key = `${schedule.request_item_table}:${schedule.request_item_id}`
@@ -2878,7 +2927,8 @@ export async function getLongStockReceivingOptions(input: {
       loadFactoryNameMap(db, [item.factory_id]),
       loadReceivingSchedules(db, [item]),
     ])
-    const openSchedules = schedules.filter((schedule) => schedule.status === 'planned')
+    const projectedSchedules = projectSchedulesToPurchasePlans([item], schedules)
+    const openSchedules = projectedSchedules.filter((schedule) => schedule.status === 'planned')
     const supplierIds = [item.supplier_id, ...openSchedules.map((schedule) => schedule.supplier_id)]
       .filter((id): id is string => Boolean(id))
     const supplierNameMap = await loadSupplierNameMap(db, supplierIds)
@@ -2887,7 +2937,7 @@ export async function getLongStockReceivingOptions(input: {
       key: itemKey(item),
       aggregateKey: itemKey(item),
       requiredQuantity: item.to_order,
-      schedules,
+      schedules: projectedSchedules,
     }]).get(itemKey(item)) || 0
     const options = openSchedules.length > 0
       ? openSchedules.map((schedule) => makeReceivingItem(
@@ -2944,16 +2994,17 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
       loadFactoryNameMap(db, [activeFactoryId]),
       loadReceivingSchedules(db, items),
     ])
+    const projectedSchedules = projectSchedulesToPurchasePlans(items, schedules)
     const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
 
-    for (const schedule of schedules) {
+    for (const schedule of projectedSchedules) {
       const key = `${schedule.request_item_table}:${schedule.request_item_id}`
       schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
     }
 
     const supplierIds = [
       ...items.map((item) => item.supplier_id).filter(Boolean),
-      ...schedules.map((schedule) => schedule.supplier_id).filter(Boolean),
+      ...projectedSchedules.map((schedule) => schedule.supplier_id).filter(Boolean),
     ] as string[]
     const supplierNameMap = await loadSupplierNameMap(db, supplierIds)
     const receivingItems: MaterialReceivingItem[] = []
@@ -3182,7 +3233,10 @@ export async function previewSingleLengthLongStockReceipt(
       if (!item.factory_id) throw new Error('Для приёмки не определён завод машины')
       assertApprovedLongStockPurchasePlan(item)
 
-      const schedules = await loadReceivingSchedules(db, [item])
+      const schedules = projectSchedulesToPurchasePlans(
+        [item],
+        await loadReceivingSchedules(db, [item]),
+      )
       const existingSchedule = schedules.find((schedule) => schedule.status === 'planned')
       const outstandingQuantity = projectAggregateVirtualReceivingQuantities([{
         key: itemKey(item),
@@ -3306,6 +3360,8 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
           quantity: plannedQuantity,
           unit: orderItem.unit,
           supplier_id: orderItem.supplier_id,
+          planned_piece_length_mm: preview.piece_length_mm,
+          planned_piece_count: preview.piece_count,
           created_by: userId,
           updated_by: userId,
         })
@@ -3664,7 +3720,10 @@ async function syncOrderStatusesWithScheduleCoverage(
   db: RpcDb,
   items: SupplyOrderAggregateInputItem[],
 ) {
-  const schedules = await loadReceivingSchedules(db, items)
+  const schedules = projectSchedulesToPurchasePlans(
+    items,
+    await loadReceivingSchedules(db, items),
+  )
   const { coverage, allocations } = projectPlannedScheduleAllocations(items, schedules)
   const suppliersByItem = new Map<string, Set<string>>()
   for (const allocation of allocations) {
@@ -3696,13 +3755,16 @@ async function syncOrderStatusesWithScheduleCoverage(
     }))
 }
 
-async function deletePlannedDeliverySchedules(db: RpcDb, scheduleIds: string[]) {
-  for (const scheduleId of scheduleIds) {
-    const { error } = await db.rpc('fn_delete_supply_order_schedule', {
-      p_schedule_id: scheduleId,
-    })
-    if (error) throw new Error(error.message || 'Не удалось сбросить плановые даты поставки')
-  }
+async function replacePlannedDeliverySchedules(
+  db: RpcDb,
+  scheduleIds: string[],
+  rows: Record<string, unknown>[],
+) {
+  const { error } = await db.rpc('fn_replace_supply_order_delivery_schedules_v1', {
+    p_delete_ids: scheduleIds,
+    p_rows: rows,
+  })
+  if (error) throw new Error(error.message || 'Не удалось сохранить график поставки')
 }
 
 function proportionalWeight(totalWeight: number | null, totalQuantity: number, quantity: number) {
@@ -3766,6 +3828,7 @@ function distributeScheduleRows(
   schedules: NormalizedScheduleInput[],
   capacities: ScheduleCapacity[],
   userId: string,
+  allowExcess = true,
 ) {
   const available = capacities
     .filter((entry) => entry.remaining > 0.000001)
@@ -3806,6 +3869,9 @@ function distributeScheduleRows(
       remainingQuantity = Math.max(remainingQuantity - allocation, 0)
     }
     if (remainingQuantity > 0.000001) {
+      if (!allowExcess) {
+        throw new Error('Количество длинномера превышает утверждённую карту закупки')
+      }
       const excessTarget = available[0]?.item || capacities[0]?.item
       if (!excessTarget) throw new Error('Не найдена позиция для излишка поставки')
       rows.push(makePlannedScheduleRow(excessTarget, schedule, remainingQuantity, userId))
@@ -3861,9 +3927,10 @@ export async function saveAggregateDeliverySchedule(
     const normalizedScope = normalizeDeliveryScheduleScope(scope)
     const totalScheduled = normalizedSchedules.reduce((sum, schedule) => sum + schedule.quantity, 0)
     if (normalizedSchedules.length === 0 || totalScheduled <= 0) throw new Error('Добавьте хотя бы одну дату поставки')
-    const existingSchedules = await loadReceivingSchedules(db, selectedItems)
+    const storedSchedules = await loadReceivingSchedules(db, selectedItems)
+    const existingSchedules = projectSchedulesToPurchasePlans(selectedItems, storedSchedules)
     const { coverage, allocations } = projectPlannedScheduleAllocations(selectedItems, existingSchedules)
-    const allPlannedScheduleIds = existingSchedules
+    const allPlannedScheduleIds = storedSchedules
       .filter((schedule) => schedule.status === 'planned')
       .map((schedule) => schedule.id)
     const resolvedSchedules: NormalizedScheduleInput[] = normalizedSchedules.map((schedule) => {
@@ -3960,7 +4027,7 @@ export async function saveAggregateDeliverySchedule(
       ))
       const targetCapacities = makeCapacities([target], retained)
       if (normalizedScope.replace_delivery_date === null) {
-        insertRows = distributeScheduleRows(resolvedSchedules, targetCapacities, userId)
+        insertRows = distributeScheduleRows(resolvedSchedules, targetCapacities, userId, !isBarSchedule)
         plannedScheduleIds = []
       } else {
         const replacedQuantity = allocations
@@ -3974,7 +4041,7 @@ export async function saveAggregateDeliverySchedule(
         if (replacedQuantity <= 0.000001) throw new Error('У позиции нет плановой поставки на выбранную дату')
         insertRows = [
           ...rowsFromRetainedAllocations(retained, userId),
-          ...distributeScheduleRows(resolvedSchedules, targetCapacities, userId),
+          ...distributeScheduleRows(resolvedSchedules, targetCapacities, userId, !isBarSchedule),
         ]
         plannedScheduleIds = allPlannedScheduleIds
       }
@@ -3990,7 +4057,7 @@ export async function saveAggregateDeliverySchedule(
       const targetItems = selectedItems.filter((item) => targetKeys.has(itemKey(item)))
       insertRows = [
         ...rowsFromRetainedAllocations(retained, userId),
-        ...distributeScheduleRows(resolvedSchedules, makeCapacities(targetItems, retained), userId),
+        ...distributeScheduleRows(resolvedSchedules, makeCapacities(targetItems, retained), userId, !isBarSchedule),
       ]
       plannedScheduleIds = allPlannedScheduleIds
     } else if (normalizedScope?.mode === 'unscheduled') {
@@ -3998,6 +4065,7 @@ export async function saveAggregateDeliverySchedule(
         resolvedSchedules,
         makeCapacities(selectedItems, allocations),
         userId,
+        !isBarSchedule,
       )
       plannedScheduleIds = []
     } else {
@@ -4005,18 +4073,12 @@ export async function saveAggregateDeliverySchedule(
         resolvedSchedules,
         makeCapacities(selectedItems, []),
         userId,
+        !isBarSchedule,
       )
       plannedScheduleIds = allPlannedScheduleIds
     }
 
-    if (insertRows.length > 0) {
-      const { error } = await db.from('supply_order_delivery_schedules').insert(insertRows)
-      if (error) throw new Error(error.message || 'Не удалось сохранить график поставки')
-    }
-
-    if (plannedScheduleIds.length > 0) {
-      await deletePlannedDeliverySchedules(db, plannedScheduleIds)
-    }
+    await replacePlannedDeliverySchedules(db, plannedScheduleIds, insertRows)
 
     await syncOrderStatusesWithScheduleCoverage(db, selectedItems)
 
@@ -4041,7 +4103,8 @@ export async function clearAggregateDeliverySchedule(
     if (selectedItems.length === 0) throw new Error('Позиции закупки не найдены')
     assertSingleAggregateScheduleSelection(selectedItems)
 
-    const existingSchedules = await loadReceivingSchedules(db, selectedItems)
+    const storedSchedules = await loadReceivingSchedules(db, selectedItems)
+    const existingSchedules = projectSchedulesToPurchasePlans(selectedItems, storedSchedules)
     const normalizedScope = normalizeDeliveryScheduleScope(scope)
     let plannedScheduleIds: string[]
     let retainedRows: Record<string, unknown>[] = []
@@ -4067,11 +4130,11 @@ export async function clearAggregateDeliverySchedule(
         itemKey(allocation.item) === targetKey
         && allocation.schedule.delivery_date === normalizedScope.replace_delivery_date
       )), userId)
-      plannedScheduleIds = existingSchedules
+      plannedScheduleIds = storedSchedules
         .filter((schedule) => schedule.status === 'planned')
         .map((schedule) => schedule.id)
     } else {
-      plannedScheduleIds = existingSchedules
+      plannedScheduleIds = storedSchedules
         .filter((schedule) => (
           schedule.status === 'planned'
           && deliveryScheduleBelongsToScope(schedule.delivery_date, normalizedScope)
@@ -4079,14 +4142,7 @@ export async function clearAggregateDeliverySchedule(
         .map((schedule) => schedule.id)
     }
 
-    if (retainedRows.length > 0) {
-      const { error } = await db.from('supply_order_delivery_schedules').insert(retainedRows)
-      if (error) throw new Error(error.message || 'Не удалось сохранить остальные даты графика')
-    }
-
-    if (plannedScheduleIds.length > 0) {
-      await deletePlannedDeliverySchedules(db, plannedScheduleIds)
-    }
+    await replacePlannedDeliverySchedules(db, plannedScheduleIds, retainedRows)
 
     await syncOrderStatusesWithScheduleCoverage(db, selectedItems)
 
@@ -4315,6 +4371,9 @@ export async function addOrderDeliverySchedule(
     if (orderItem.order_status === 'delivered') throw new Error('Нельзя менять график уже принятой позиции')
     if (orderItem.order_status === 'cancelled') throw new Error('Нельзя добавлять график отменённой позиции')
     assertApprovedLongStockPurchasePlan(orderItem)
+    if (isWholeBarItem(orderItem)) {
+      throw new Error('График ножей, круга и непроволочной трубы изменяется только через состав хлыстов')
+    }
     const { error } = await db.from('supply_order_delivery_schedules').insert({
       request_item_table: item.table,
       request_item_id: item.id,
@@ -4340,7 +4399,12 @@ export async function updateOrderDeliverySchedule(
 ) {
   try {
     const { db, userId } = await requireAccess('manage')
-    const machineIds = await getScheduleAffectedMachineIds(db, [scheduleId])
+    const affectedItems = await getScheduleAffectedItems(db, [scheduleId])
+    const selectedItems = await loadSelectedOrderItems(db, affectedItems)
+    if (selectedItems.some(isWholeBarItem)) {
+      throw new Error('График ножей, круга и непроволочной трубы изменяется только через состав хлыстов')
+    }
+    const machineIds = affectedItems.size > 0 ? await getAffectedMachineIds(db, affectedItems) : []
     validateScheduleInput(data)
     const reason = (data.change_reason || '').trim()
     const { error } = await db.rpc('fn_update_supply_order_schedule', {

@@ -18,6 +18,12 @@ const transferCompatPath = path.join(
   'tests',
   'full_schema_inventory_transfer_compat.sql',
 )
+const longStockSupplierScheduleGuardPath = path.join(
+  root,
+  'supabase',
+  'tests',
+  'long_stock_supplier_schedule_guard_test.sql',
+)
 const databaseUrl = new URL(
   process.env.FULL_SCHEMA_TEST_DATABASE_URL ?? 'postgresql://localhost/crm_full_schema_test',
 )
@@ -100,6 +106,10 @@ for (const migration of migrations) {
 
 console.log(
   `[full-schema-test] applied ${prismaMigrations.length} Prisma and ${migrations.length} Supabase migrations`,
+)
+runPsql(
+  'long_stock_supplier_schedule_guard_test.sql',
+  readFileSync(longStockSupplierScheduleGuardPath, 'utf8'),
 )
 runPsql(
   'full_schema_inventory_transfer_compat.sql',

@@ -15,6 +15,8 @@ export type GroupableTransportItemDetail = {
   excessQuantity: number | null
   unit: string | null
   weightKg: number | null
+  pieceLengthMm: number | null
+  pieceCount: number | null
   machineLabel: string | null
   characteristics: Array<{ label: string; value: string }>
 }
@@ -88,6 +90,31 @@ function numberLabel(value: number, maximumFractionDigits = 3) {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits }).format(value)
 }
 
+export function formatTransportCarriedQuantity(input: {
+  quantity: number | null
+  unit: string | null
+  pieceLengthMm: number | null
+  pieceCount: number | null
+}) {
+  const { quantity, unit, pieceLengthMm, pieceCount } = input
+  const normalizedUnit = unit?.trim().toLocaleLowerCase('ru').replace(/\./g, '') || ''
+  const isLengthUnit = normalizedUnit === 'мм' || normalizedUnit === 'mm'
+  const hasWholePieces = pieceLengthMm !== null
+    && pieceCount !== null
+    && Number.isFinite(pieceLengthMm)
+    && Number.isInteger(pieceCount)
+    && pieceLengthMm > 0
+    && pieceCount > 0
+  const quantityMatchesPieces = quantity !== null
+    && hasWholePieces
+    && Math.abs(quantity - pieceLengthMm * pieceCount) < 0.000001
+
+  if (isLengthUnit && quantityMatchesPieces) {
+    return `${numberLabel(pieceCount, 0)} шт. × ${numberLabel(pieceLengthMm, 0)} мм`
+  }
+  return quantity !== null && unit ? `${numberLabel(quantity)} ${unit}` : null
+}
+
 function sumNullable(values: Array<number | null>) {
   const known = values.filter((value): value is number => value !== null && Number.isFinite(value))
   return known.length === values.length
@@ -111,9 +138,15 @@ function mergedDetail(details: GroupableTransportItemDetail[]) {
   const excessQuantity = sumNullable(details.map((detail) => detail.excessQuantity))
   const weightKg = sumNullable(details.map((detail) => detail.weightKg))
   const unit = new Set(details.map((detail) => detail.unit).filter(Boolean)).size === 1 ? first.unit : null
-  const quantityLabel = quantity !== null && unit
-    ? `${numberLabel(quantity)} ${unit}`
-    : first.quantityLabel
+  const knownPieceLengths = details
+    .map((detail) => detail.pieceLengthMm)
+    .filter((value): value is number => value !== null && Number.isFinite(value) && value > 0)
+  const pieceLengthMm = knownPieceLengths.length === details.length && new Set(knownPieceLengths).size === 1
+    ? knownPieceLengths[0]
+    : null
+  const pieceCount = sumNullable(details.map((detail) => detail.pieceCount))
+  const quantityLabel = formatTransportCarriedQuantity({ quantity, unit, pieceLengthMm, pieceCount })
+    || first.quantityLabel
 
   return [{
     ...first,
@@ -123,6 +156,8 @@ function mergedDetail(details: GroupableTransportItemDetail[]) {
     excessQuantity,
     weightKg,
     unit,
+    pieceLengthMm,
+    pieceCount,
     quantityLabel,
   }]
 }

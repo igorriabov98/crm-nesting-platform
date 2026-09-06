@@ -40,9 +40,14 @@ export function buildInitialSupplyOrderScheduleDrafts(
         supplier_id: schedule.supplier_id,
         quantity: 0,
         piece_length_mm: schedule.planned_piece_length_mm,
-        piece_count: schedule.planned_piece_count,
+        piece_count: schedule.planned_piece_length_mm === null ? null : 0,
       }
       current.quantity += Number(schedule.quantity || 0)
+      if (current.piece_count !== null) {
+        current.piece_count = schedule.planned_piece_count === null
+          ? null
+          : current.piece_count + Number(schedule.planned_piece_count || 0)
+      }
       plannedGroups.set(key, current)
     }
   }

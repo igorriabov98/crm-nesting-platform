@@ -46,6 +46,9 @@ function supplyNeed(input: {
   excess: number
   unit: string
   weightKg: number | null
+  pieceLengthMm?: number | null
+  pieceCount?: number | null
+  characteristics?: Array<{ label: string; value: string }>
 }): GroupableTransportNeed {
   const supplier = input.supplier || 'varian'
   const factory = input.factory || 'uzhhorod'
@@ -78,10 +81,12 @@ function supplyNeed(input: {
       excessQuantity: input.excess,
       unit: input.unit,
       weightKg: input.weightKg,
+      pieceLengthMm: input.pieceLengthMm ?? null,
+      pieceCount: input.pieceCount ?? null,
       machineLabel: 'тест 5/09',
-      characteristics: input.title === 'Краска'
+      characteristics: input.characteristics || (input.title === 'Краска'
         ? [{ label: 'RAL', value: '6050' }]
-        : [{ label: 'Размер листа', value: '1000x1000' }],
+        : [{ label: 'Размер листа', value: '1000x1000' }]),
     }],
     volumeLabel: `${input.quantity} ${input.unit}`,
     weightKg: input.weightKg,
@@ -110,6 +115,37 @@ const singleScheduleExcess = groupTransportNeeds([
   supplyNeed({ id: 'paint-ordered', positionKey: 'request_paint:single', title: 'Краска', quantity: 25, required: 22, excess: 3, unit: 'кг', weightKg: 25 }),
 ])
 assert.equal(singleScheduleExcess[0].positions[0].volumeLabel, '25 кг')
+
+const groupedLongStock = groupTransportNeeds([
+  supplyNeed({
+    id: 'circle-fragment-a',
+    positionKey: 'request_circle:circle',
+    title: 'Круг',
+    quantity: 6_000,
+    required: 6_000,
+    excess: 0,
+    unit: 'мм',
+    weightKg: 33.08,
+    pieceLengthMm: 6_000,
+    pieceCount: 1,
+  }),
+  supplyNeed({
+    id: 'circle-fragment-b',
+    positionKey: 'request_circle:circle',
+    title: 'Круг',
+    quantity: 6_000,
+    required: 6_000,
+    excess: 0,
+    unit: 'мм',
+    weightKg: 33.08,
+    pieceLengthMm: 6_000,
+    pieceCount: 1,
+  }),
+])
+assert.equal(groupedLongStock[0].positions[0].itemDetails[0].quantity, 12_000)
+assert.equal(groupedLongStock[0].positions[0].itemDetails[0].pieceCount, 2)
+assert.equal(groupedLongStock[0].positions[0].itemDetails[0].pieceLengthMm, 6_000)
+assert.equal(groupedLongStock[0].positions[0].volumeLabel, '2 шт. × 6\u00a0000 мм · 66,16 кг')
 
 const splitBoundaries = groupTransportNeeds([
   supplyNeed({ id: 'date-a', positionKey: 'a', date: '2026-09-08', title: 'A', quantity: 1, required: 1, excess: 0, unit: 'шт.', weightKg: null }),
@@ -279,7 +315,18 @@ assert.match(transportActions, /\.eq\('status', 'current'\)/)
 assert.match(transportActions, /`\/api\/supply\/transport\/drawings\/\$\{need\.source\}\/\$\{need\.id\}\/\$\{drawingFileId\}`/)
 assert.match(transportActions, /К перевозке:/)
 assert.match(transportActions, /remainingSecondaryQuantity/)
-assert.match(transportActions, /quantityLabel: `\$\{numberLabel\(need\.quantity\)\} \$\{need\.unit\}`/)
+assert.match(transportActions, /TRANSPORT_EXCLUDED_CHARACTERISTICS/)
+assert.match(transportActions, /'финиш'/)
+assert.match(transportActions, /formatTransportCarriedQuantity/)
+assert.doesNotMatch(transportActions, /characteristics: need\.characteristics,/)
+
+const transportWorkspaceSource = readFileSync(resolve('src/components/features/supply/TransportWorkspacePage.tsx'), 'utf8')
+const transportDetailsSource = transportWorkspaceSource.slice(
+  transportWorkspaceSource.indexOf('function NeedDetailsDialog('),
+  transportWorkspaceSource.indexOf('export function TransportWorkspacePage('),
+)
+assert.doesNotMatch(transportDetailsSource, /Для: \{item\.machineLabel\}/)
+assert.doesNotMatch(transportDetailsSource, /Подробнее о потребности/u)
 
 const outsourcingActions = readFileSync(resolve('src/lib/actions/outsourcing.ts'), 'utf8')
 assert.match(outsourcingActions, /item_details: \(operation\?\.items \|\| \[\]\)\.map/)
@@ -342,7 +389,7 @@ assert.match(pickupStartMigration, /'planned', NULL/)
 const transportWorkspace = readFileSync(resolve('src/components/features/supply/TransportWorkspacePage.tsx'), 'utf8')
 assert.doesNotMatch(transportWorkspace, />Точка выезда</)
 assert.match(transportWorkspace, /aria-label=\{title\}/)
-assert.match(transportWorkspace, /Подробнее о потребности/)
+assert.match(transportWorkspace, /Подробнее о перевозке/)
 assert.match(transportWorkspace, /function NeedDetailsDialog/)
 assert.match(transportWorkspace, /Полный состав и параметры перевозки/)
 assert.match(transportWorkspace, /Состав перевозки/)
