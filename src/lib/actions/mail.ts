@@ -8,12 +8,13 @@ import { requireAnyPermission, requirePermission } from '@/lib/permissions/serve
 import { ROUTES } from '@/lib/constants/routes'
 import { buildRawMessage, gmailFetch, getAccessToken, type GmailAccountRow } from '@/lib/mail/gmail-api'
 import { syncGmailPage, syncGmailThread } from '@/lib/mail/sync'
-import type { CrmMailLink, MailFolder, MailLinkInput, MailLinkPreview, MailPageResult, MailThreadDetails } from '@/lib/mail/types'
+import type { CrmMailLink, CrmMailLinkInput, MailFolder, MailLinkInput, MailLinkPreview, MailPageResult, MailThreadDetails } from '@/lib/mail/types'
 import { cacheProjectThreadAttachments } from '@/lib/mail/attachments'
 import { gmailLabelChanges, type MailMutation } from '@/lib/mail/model'
 import { hasPermission } from '@/lib/permissions/resources'
 import { deleteMailVaultSecret } from '@/lib/mail/vault'
 import { canManageDepartmentRequestTarget, type DepartmentRequestTarget } from '@/lib/department-requests'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 
 const PAGE_SIZE = 50
 const mailLinkSchema = z.object({
@@ -366,32 +367,49 @@ export async function disconnectGmail() {
   }
 }
 
-export async function linkMailToProductProject(input: MailLinkInput, productProjectId: string) {
+function productProjectMailError(error: unknown) {
+  const message = getErrorMessage(error)
+  if (/infinite recursion|row-level security|policy for relation/i.test(message)) {
+    return 'Не удалось сохранить связь с письмом. Обновите страницу и повторите попытку'
+  }
+  if (/invalid input syntax for type uuid|invalid_format/i.test(message)) {
+    return 'Некорректная ссылка на письмо или проект'
+  }
+  return message
+}
+
+export async function linkMailToProductProject(
+  input: CrmMailLinkInput,
+  productProjectId: string,
+  versionId: string | null = input.versionId ?? null,
+) {
   try {
     const parsed = mailLinkSchema.parse(input)
     const projectId = z.string().uuid().parse(productProjectId)
+    const parsedVersionId = versionId ? z.string().uuid().parse(versionId) : null
     const { supabase, userId } = await requirePermission('product_projects', 'manage')
-    const table = parsed.kind === 'thread' ? 'product_project_mail_threads' : 'product_project_mail_messages'
-    const mailColumn = parsed.kind === 'thread' ? 'thread_id' : 'message_id'
-    const { error } = await (supabase as any).from(table).upsert({
-      product_project_id: projectId,
-      [mailColumn]: parsed.id,
-      linked_by: userId,
-      linked_at: new Date().toISOString(),
-      unlinked_at: null,
-      unlinked_by: null,
-    }, { onConflict: `product_project_id,${mailColumn}` })
-    if (error) throw new Error(error.message)
+    if (!userId) throw new Error('Необходима авторизация')
+    const { error } = await (supabase as any).rpc('link_mail_to_product_project_v2', {
+      p_product_project_id: projectId,
+      p_version_id: parsedVersionId,
+      p_kind: parsed.kind,
+      p_mail_id: parsed.id,
+    })
+    if (error) throw error
     if (parsed.kind === 'thread') void cacheProjectThreadAttachments(parsed.id)
     revalidatePath(`${ROUTES.PRODUCT_PROJECTS}/${projectId}`)
     return { success: true }
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : 'Не удалось привязать письмо' }
+    return { success: false, error: productProjectMailError(error) }
   }
 }
 
-export async function linkMailThreadToProductProject(threadId: string, productProjectId: string) {
-  return linkMailToProductProject({ kind: 'thread', id: threadId }, productProjectId)
+export async function linkMailThreadToProductProject(
+  threadId: string,
+  productProjectId: string,
+  versionId: string | null = null,
+) {
+  return linkMailToProductProject({ kind: 'thread', id: threadId }, productProjectId, versionId)
 }
 
 export async function unlinkProductProjectMailLink(kind: MailLinkInput['kind'], linkId: string, productProjectId: string) {
@@ -425,6 +443,7 @@ function threadLinkToCrmLink(row: any): CrmMailLink | null {
     link_id: row.id,
     kind: 'thread',
     linked_at: row.linked_at,
+    version_id: row.version_id || null,
     preview: {
       kind: 'thread',
       id: thread.id,
@@ -447,6 +466,7 @@ function messageLinkToCrmLink(row: any): CrmMailLink | null {
     link_id: row.id,
     kind: 'message',
     linked_at: row.linked_at,
+    version_id: row.version_id || null,
     preview: {
       kind: 'message',
       id: message.id,
@@ -468,14 +488,15 @@ async function loadCrmMailLinks(
   entityId: string,
 ) {
   const db = createAdminClient() as any
+  const versionColumn = entityColumn === 'product_project_id' ? ',version_id' : ''
   const [{ data: threadRows, error: threadError }, { data: messageRows, error: messageError }] = await Promise.all([
     db.from(threadTable)
-      .select('id,linked_at,thread:mail_threads(id,subject,snippet,participants,last_message_at,message_count,has_attachments)')
+      .select(`id,linked_at${versionColumn},thread:mail_threads(id,subject,snippet,participants,last_message_at,message_count,has_attachments)`)
       .eq(entityColumn, entityId)
       .is('unlinked_at', null)
       .order('linked_at', { ascending: false }),
     db.from(messageTable)
-      .select('id,linked_at,message:mail_messages(id,subject,snippet,from_address,from_name,received_at,attachments:mail_attachments(id),thread:mail_threads(id))')
+      .select(`id,linked_at${versionColumn},message:mail_messages(id,subject,snippet,from_address,from_name,received_at,attachments:mail_attachments(id),thread:mail_threads(id))`)
       .eq(entityColumn, entityId)
       .is('unlinked_at', null)
       .order('linked_at', { ascending: false }),

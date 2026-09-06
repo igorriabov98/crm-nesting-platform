@@ -59,6 +59,10 @@ export type MailLinkInput = {
   id: string
 }
 
+export type CrmMailLinkInput = MailLinkInput & {
+  versionId?: string | null
+}
+
 export type MailLinkPreview = MailLinkInput & {
   thread_id: string
   subject: string
@@ -73,5 +77,6 @@ export type CrmMailLink = {
   link_id: string
   kind: 'thread' | 'message'
   linked_at: string
+  version_id: string | null
   preview: MailLinkPreview
 }

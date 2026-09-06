@@ -25,8 +25,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import type { Client, ProductProject, UserSummary } from '@/lib/types'
 import type { ProductProjectInput } from '@/lib/types/schemas'
-import { linkMailToProductProject } from '@/lib/actions/mail'
-import type { MailLinkInput, MailLinkPreview } from '@/lib/mail/types'
+import type { MailLinkPreview } from '@/lib/mail/types'
 import { ProductProjectLifecycle, productProjectStatusLabels } from './ProductProjectLifecycle'
 
 const AttachedMailConversation = dynamic(
@@ -89,6 +88,7 @@ export function ProductProjectForm({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [attachedMailLink, setAttachedMailLink] = useState<MailLinkPreview | null>(initialMailLink || null)
   const [mailExpanded, setMailExpanded] = useState(false)
+  const [engineerError, setEngineerError] = useState<string | null>(null)
   const isEdit = Boolean(project?.id)
   const status = project?.status || 'new_project'
   const selectedClientLabel = values.client_id === 'none'
@@ -102,6 +102,11 @@ export function ProductProjectForm({
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!values.assigned_engineer_id) {
+      setEngineerError('Выберите инженера')
+      return
+    }
+    setEngineerError(null)
     setIsSubmitting(true)
     try {
       const payload: ProductProjectInput = {
@@ -120,24 +125,6 @@ export function ProductProjectForm({
       toast.success(isEdit ? 'Проект обновлён' : 'Проект создан. Инженеру назначена задача.')
       const createdProject = 'project' in result ? result.project as { id?: string } | null : null
       if (!isEdit && createdProject?.id) {
-        const mailLinks: MailLinkInput[] = attachedMailLink
-          ? [{ kind: attachedMailLink.kind, id: attachedMailLink.id }]
-          : []
-        const linkResults = await Promise.all(mailLinks.map((mailLink) =>
-          linkMailToProductProject(mailLink, createdProject.id!)
-        ))
-        const failedIndex = linkResults.findIndex((linkResult) => !linkResult.success)
-        if (failedIndex >= 0) {
-          const failedLink = linkResults[failedIndex]
-          const retryLink = mailLinks[failedIndex]
-          toast.error(`Проект создан, но письмо не добавлено: ${failedLink.error}`, {
-            duration: 10000,
-            action: {
-              label: 'Повторить',
-              onClick: () => void linkMailToProductProject(retryLink, createdProject.id!),
-            },
-          })
-        }
         router.push(`${ROUTES.PRODUCT_PROJECTS}/${createdProject.id}`)
       } else {
         router.refresh()
@@ -158,6 +145,10 @@ export function ProductProjectForm({
     formData.append('client_wishes', payload.client_wishes || '')
     formData.append('assigned_engineer_id', payload.assigned_engineer_id)
     formData.append('status', status)
+    if (attachedMailLink) {
+      formData.append('mail_kind', attachedMailLink.kind)
+      formData.append('mail_id', attachedMailLink.id)
+    }
     if (photo) formData.append('photo', photo)
 
     return createProductProjectWithPhoto(formData)
@@ -224,8 +215,16 @@ export function ProductProjectForm({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="project_engineer">Инженер *</Label>
-                <Select value={values.assigned_engineer_id} onValueChange={(value) => setField('assigned_engineer_id', value || '')}>
-                  <SelectTrigger id="project_engineer" className="min-h-11 w-full">
+                <Select value={values.assigned_engineer_id} onValueChange={(value) => {
+                  setField('assigned_engineer_id', value || '')
+                  if (value) setEngineerError(null)
+                }}>
+                  <SelectTrigger
+                    id="project_engineer"
+                    className="min-h-11 w-full"
+                    aria-invalid={Boolean(engineerError)}
+                    aria-describedby={engineerError ? 'project_engineer_error' : 'project_engineer_help'}
+                  >
                     <SelectValue placeholder="Выберите инженера">{selectedEngineerLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
@@ -234,7 +233,8 @@ export function ProductProjectForm({
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="flex items-start gap-1.5 text-xs leading-5 text-muted-foreground">
+                {engineerError && <p id="project_engineer_error" className="text-sm text-destructive">{engineerError}</p>}
+                <p id="project_engineer_help" className="flex items-start gap-1.5 text-xs leading-5 text-muted-foreground">
                   <UserRoundCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                   После создания инженер сразу получит задачу в CRM.
                 </p>

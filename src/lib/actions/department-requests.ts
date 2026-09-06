@@ -20,6 +20,7 @@ import {
   type DepartmentRequestDirectUpload,
   validateDepartmentRequestUploads,
 } from '@/lib/department-request-files'
+import { getErrorMessage } from '@/lib/utils/get-error-message'
 
 const PAGE_SIZE = 40
 const DIRECTORS = ['financial_director', 'commercial_director', 'planning_director']
@@ -540,7 +541,7 @@ export async function createDepartmentRequest(
     }
     if (parsed.mailLink) rpcArgs.p_mail_link = parsed.mailLink
     const { error } = await (context.supabase as unknown as RpcClient).rpc(rpcName, rpcArgs)
-    if (error) throw new Error(error.message)
+    if (error) throw error
     revalidateRequest(parsed.requestId, parsed.target)
     return {
       ok: true,
@@ -548,7 +549,7 @@ export async function createDepartmentRequest(
       requestId: parsed.requestId,
     }
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : 'Не удалось создать запрос' }
+    return { ok: false, message: getErrorMessage(error) || 'Не удалось создать запрос' }
   }
 }
 

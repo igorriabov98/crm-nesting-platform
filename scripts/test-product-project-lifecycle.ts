@@ -29,6 +29,33 @@ assert.match(productActions, /engineer_description/, 'engineering result must in
 assert.match(productActions, /application\/pdf/, 'engineering drawing must be validated as PDF')
 assert.match(productActions, /status: 'added_to_products'/, 'shipped project must be closed after product promotion')
 assert.match(productActions, /source_project_id: projectId/, 'promoted product must retain project provenance')
+assert.match(productActions, /create_product_project_with_mail_v2/, 'project and initial mail link must use one database transaction')
+assert.match(productActions, /request_product_project_correction_v2/, 'corrections must use the atomic database operation')
+assert.match(productActions, /approve_product_project_version_v2/, 'approval must atomically validate the current version')
+assert.match(productActions, /parsedVersionId/, 'approval must validate the explicitly selected version')
+
+const projectDetails = source('src/components/features/products/ProductProjectDetailClient.tsx')
+for (const label of [
+  'Текущая версия',
+  'Архивная версия',
+  'Что изменяет эта версия',
+  'Файлы и чертежи версии',
+  'Переписка версии',
+  'Весь проект',
+  'К заказу готовится:',
+]) {
+  assert.ok(projectDetails.includes(label), `missing version UI label: ${label}`)
+}
+assert.match(projectDetails, /aria-expanded=\{expanded\}/, 'version accordion must expose expanded state')
+assert.match(projectDetails, /max-h-\[calc\(100dvh-2rem\)\]/, 'correction dialog must stay inside the viewport')
+assert.match(projectDetails, /overflow-x-hidden overflow-y-auto/, 'correction dialog body must own scrolling')
+assert.match(projectDetails, /uploadProductProjectCorrectionFiles/, 'correction files must use signed direct uploads')
+assert.match(projectDetails, /correctionThreadIds/, 'correction dialog must support multiple mail threads')
+assert.doesNotMatch(projectDetails, /<SelectValue\s*\/>/, 'closed file selectors must not expose raw enum or UUID values')
+
+const detailsPage = source('src/app/(protected)/product-projects/[id]/page.tsx')
+assert.match(detailsPage, /correctionMailKind/)
+assert.match(detailsPage, /correctionMailId/)
 
 const taskActions = source('src/lib/actions/tasks.ts')
 assert.match(taskActions, /status === 'in_progress'[\s\S]*product_project_engineering[\s\S]*status: 'engineering'/)
@@ -45,7 +72,7 @@ const list = source('src/components/features/products/ProductProjectList.tsx')
 assert.match(list, /Архив проектов/)
 assert.match(list, /status === 'added_to_products'/)
 
-const breadcrumbs = source('src/components/features/layout/Breadcrumbs.tsx')
-assert.match(breadcrumbs, /"product-projects": "Проекты продукции"/)
+const breadcrumbs = source('src/lib/navigation/breadcrumbs.ts')
+assert.match(breadcrumbs, /['"]product-projects['"]:\s*['"]Проекты продукции['"]/)
 
 console.log('product project lifecycle checks passed')
