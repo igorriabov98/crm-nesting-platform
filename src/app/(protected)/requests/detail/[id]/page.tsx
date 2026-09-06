@@ -114,6 +114,11 @@ export default async function DepartmentRequestDetailPage({
                     Пересчёт позиции
                   </span>
                 )}
+                {request.request_kind === 'transport_trip_date_approval' && (
+                  <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-800">
+                    Перенос дат рейса
+                  </span>
+                )}
               </div>
               <h1 className="mt-4 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{request.title}</h1>
               <p className="mt-2 text-sm text-slate-500">Создан {formatDate(request.created_at)}</p>
@@ -176,6 +181,20 @@ export default async function DepartmentRequestDetailPage({
                   Связанная позиция заявки
                 </div>
                 <p className="mt-2 font-semibold text-amber-950">{request.request_item_label || 'Открыть позицию технолога'}</p>
+              </Link>
+            )}
+            {request.request_kind === 'transport_trip_date_approval' && request.transport_date_change?.transport_order_id && (
+              <Link
+                href={`${ROUTES.SUPPLY_TRANSPORT}?trip=${request.transport_date_change.transport_order_id}`}
+                className="rounded-2xl border border-blue-200 bg-blue-50 p-4 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2"
+              >
+                <div className="flex items-center gap-2 text-sm font-medium text-blue-700">
+                  <Package className="size-4" aria-hidden="true" />
+                  Связанный рейс
+                </div>
+                <p className="mt-2 font-semibold text-blue-950">
+                  #{request.transport_date_change.transport_order_id.slice(0, 8).toUpperCase()}
+                </p>
               </Link>
             )}
           </div>
@@ -302,6 +321,7 @@ export default async function DepartmentRequestDetailPage({
               requestKind={request.request_kind}
               machineId={request.machine_id}
               canClaimMachineLayout={canClaimMachineLayout}
+              transportDateChangeRequestId={request.transport_trip_date_change_request_id}
             />
           </div>
         </div>

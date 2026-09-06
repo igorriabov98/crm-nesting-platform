@@ -20,8 +20,13 @@ import {
   type SupplyTransportNeed,
 } from '@/lib/actions/supply-orders'
 import { ROUTES } from '@/lib/constants/routes'
+import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import {
+  groupTransportNeeds,
+  type TransportNeedGroup,
+} from '@/lib/transport/need-groups'
 import { getTransportStopOrderError } from '@/lib/transport/trip-rules'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { isDirector } from '@/lib/utils/permissions'
@@ -36,6 +41,7 @@ export type TransportNeedPlanState = 'preliminary' | 'confirmed'
 
 export type TransportNeedItemDetail = {
   id: string
+  logicalItemKey: string
   productId: string | null
   productVersionId: string | null
   productHref: string | null
@@ -44,10 +50,18 @@ export type TransportNeedItemDetail = {
   drawingLabel: string | null
   description: string | null
   quantityLabel: string | null
+  quantity: number | null
+  requiredQuantity: number | null
+  excessQuantity: number | null
+  unit: string | null
+  weightKg: number | null
+  machineLabel: string | null
+  characteristics: Array<{ label: string; value: string }>
 }
 
 export type UnifiedTransportNeed = {
   key: string
+  positionKey: string
   id: string
   kind: TransportNeedKind
   source: TransportNeedSource
@@ -69,15 +83,13 @@ export type UnifiedTransportNeed = {
   itemLabels: string[]
   itemDetails: TransportNeedItemDetail[]
   volumeLabel: string | null
+  weightKg: number | null
   deliveryRisk: boolean
   selectable: boolean
   unavailableReason: string | null
 }
 
-export type TransportTripNeed = Omit<
-  UnifiedTransportNeed,
-  'planState' | 'status' | 'deadline' | 'itemLabels' | 'itemDetails' | 'volumeLabel' | 'deliveryRisk' | 'selectable' | 'unavailableReason'
-> & {
+export type TransportTripNeed = UnifiedTransportNeed & {
   linkId: string | null
   pickupStopId: string | null
   deliveryStopId: string | null
@@ -125,6 +137,7 @@ export type TransportTrip = {
   dateChangeState: TransportTripDateChangeState
   dateChangeRequests: TransportTripDateChangeRequest[]
   needs: TransportTripNeed[]
+  needGroups: TransportNeedGroup<TransportTripNeed>[]
   stops: TransportTripStop[]
 }
 
@@ -149,6 +162,7 @@ export type TransportTripDateChangeRequest = {
 
 export type TransportWorkspace = {
   needs: UnifiedTransportNeed[]
+  needGroups: TransportNeedGroup<UnifiedTransportNeed>[]
   trips: TransportTrip[]
   carriers: OutsourcingSupplierOption[]
   errors: Partial<Record<TransportNeedKind | 'trips', string>>
@@ -276,6 +290,18 @@ const updateTripSchema = z.object({
   assignments: z.array(tripAssignmentSchema).min(1).max(50),
 })
 
+const moveTripPositionSchema = z.object({
+  sourceTripId: z.string().uuid(),
+  targetTripId: z.string().uuid(),
+  position: z.array(needReferenceSchema).min(1).max(50),
+  sourceStops: z.array(tripStopDraftSchema).max(120),
+  sourceAssignments: z.array(tripAssignmentSchema).max(50),
+  targetStops: z.array(tripStopDraftSchema).min(2).max(120),
+  targetAssignments: z.array(tripAssignmentSchema).min(1).max(50),
+  reason: z.string().trim().min(1, 'Укажите причину переноса позиции').max(1000),
+  dateChangeReason: z.string().trim().max(1000).nullable().optional(),
+})
+
 const cancelTripSchema = z.object({
   tripId: z.string().uuid(),
   reason: z.string().trim().min(1, 'Укажите причину отмены рейса').max(1000),
@@ -310,9 +336,82 @@ function supplierPointMissingCity(pointKey: string, city: string | null) {
   return (pointKey.startsWith('supplier:') || pointKey.startsWith('factory:')) && !city?.trim()
 }
 
+function buildTripMutationPayload(
+  selectedNeeds: UnifiedTransportNeed[],
+  stops: z.infer<typeof tripStopDraftSchema>[],
+  assignments: z.infer<typeof tripAssignmentSchema>[],
+) {
+  if (selectedNeeds.length === 0) return { stops: [], links: [] }
+  if (new Set(stops.map((stop) => stop.clientId)).size !== stops.length) {
+    throw new Error('Идентификаторы остановок должны быть уникальными')
+  }
+  const assignmentByNeed = new Map(assignments.map((assignment) => [assignment.needKey, assignment]))
+  if (assignmentByNeed.size !== selectedNeeds.length || selectedNeeds.some((need) => !assignmentByNeed.has(need.key))) {
+    throw new Error('Для каждой потребности должны быть указаны точки забора и доставки')
+  }
+  const canonicalPointByKey = new Map<string, { pointLabel: string; city: string | null; address: string | null }>()
+  for (const need of selectedNeeds) {
+    canonicalPointByKey.set(need.sourcePointKey, {
+      pointLabel: need.sourcePointLabel, city: need.sourcePointCity, address: need.sourcePointAddress,
+    })
+    canonicalPointByKey.set(need.destinationPointKey, {
+      pointLabel: need.destinationPointLabel, city: need.destinationPointCity, address: need.destinationPointAddress,
+    })
+  }
+  const sanitizedStops = stops.map((stop) => {
+    if (stop.kind !== 'service') return stop
+    const canonical = canonicalPointByKey.get(stop.pointKey)
+    if (!canonical) throw new Error('Маршрут содержит точку, которой нет в составе рейса')
+    return { ...stop, ...canonical }
+  })
+  if (sanitizedStops.length < 2 || sanitizedStops[0]?.kind !== 'service' || sanitizedStops.some((stop) => stop.kind === 'start')) {
+    throw new Error('Маршрут должен начинаться с точки забора и содержать доставку')
+  }
+  if (sanitizedStops.some((stop, index) => stop.kind === 'finish' && index !== sanitizedStops.length - 1)) {
+    throw new Error('Точка завершения должна быть последней')
+  }
+  const orderError = getTransportStopOrderError(
+    sanitizedStops.map((stop) => ({ clientId: stop.clientId, plannedTime: stop.plannedArrivalAt })),
+    assignments,
+  )
+  if (orderError) throw new Error(orderError)
+  const stopByClientId = new Map(sanitizedStops.map((stop) => [stop.clientId, stop]))
+  const links = selectedNeeds.map((need) => {
+    const assignment = assignmentByNeed.get(need.key)
+    if (!assignment) throw new Error(`Не найден маршрут для потребности «${need.title}»`)
+    const pickupStop = stopByClientId.get(assignment.pickupStopClientId)
+    const deliveryStop = stopByClientId.get(assignment.deliveryStopClientId)
+    if (!pickupStop || !deliveryStop) throw new Error('Точка маршрута не найдена')
+    if (pickupStop.pointKey !== need.sourcePointKey || deliveryStop.pointKey !== need.destinationPointKey) {
+      throw new Error('Маршрут потребности не соответствует её точкам забора и доставки')
+    }
+    return {
+      needKind: need.kind,
+      needSource: need.source,
+      needId: need.id,
+      direction: need.direction,
+      sourcePointKey: need.sourcePointKey,
+      sourcePointLabel: need.sourcePointLabel,
+      destinationPointKey: need.destinationPointKey,
+      destinationPointLabel: need.destinationPointLabel,
+      title: need.title,
+      subtitle: need.subtitle,
+      neededDate: need.neededDate,
+      pickupStopClientId: assignment.pickupStopClientId,
+      deliveryStopClientId: assignment.deliveryStopClientId,
+    }
+  })
+  return { stops: sanitizedStops, links }
+}
+
 function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed {
+  const key = needKey('outsourcing', need.id)
+  const weightKg = need.item_details.reduce((sum, item) => (
+    sum + item.weight * (item.weight_unit === 'т' ? 1000 : 1)
+  ), 0)
   return {
-    key: needKey('outsourcing', need.id),
+    key,
+    positionKey: key,
     id: need.id,
     kind: 'outsourcing',
     source: 'outsourcing',
@@ -334,6 +433,7 @@ function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed 
     itemLabels: need.item_labels,
     itemDetails: need.item_details.map((item) => ({
       id: item.id,
+      logicalItemKey: `outsourcing:${item.id}`,
       productId: item.product_id,
       productVersionId: item.product_version_id,
       productHref: item.product_id ? `${ROUTES.PRODUCTS}/${item.product_id}` : null,
@@ -342,8 +442,16 @@ function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed 
       drawingLabel: item.drawing_number ? `Чертёж ${item.drawing_number}` : null,
       description: null,
       quantityLabel: `${numberLabel(item.quantity, 0)} шт. · ${numberLabel(item.weight)} ${item.weight_unit}`,
+      quantity: item.quantity,
+      requiredQuantity: null,
+      excessQuantity: null,
+      unit: 'шт.',
+      weightKg: item.weight * (item.weight_unit === 'т' ? 1000 : 1),
+      machineLabel: need.machine_name,
+      characteristics: [],
     })),
     volumeLabel: need.item_labels.length > 0 ? `${need.item_labels.length} поз.` : null,
+    weightKg,
     deliveryRisk: false,
     selectable: need.plan_state === 'confirmed'
       && !supplierPointMissingCity(need.source_point_key, need.source_point_city)
@@ -358,8 +466,11 @@ function mapOutsourcingNeed(need: TransportWorkspaceNeed): UnifiedTransportNeed 
 }
 
 function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
+  const key = needKey('detailing_transfer', card.id)
+  const weightKg = card.items.reduce((sum, item) => sum + item.remainingQuantity * item.unitWeightKg, 0)
   return {
-    key: needKey('detailing_transfer', card.id),
+    key,
+    positionKey: key,
     id: card.id,
     kind: 'detailing',
     source: 'detailing_transfer',
@@ -381,6 +492,7 @@ function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
     itemLabels: card.items.map((item) => `${item.partName} · ${item.drawingNumber}`),
     itemDetails: card.items.map((item) => ({
       id: item.id,
+      logicalItemKey: `detailing:${item.id}`,
       productId: item.productId,
       productVersionId: item.productVersionId,
       productHref: item.productId ? `${ROUTES.PRODUCTS}/${item.productId}` : null,
@@ -391,8 +503,16 @@ function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
         ? `Получено ${numberLabel(item.receivedQuantity, 0)} из ${numberLabel(item.requestedQuantity, 0)} шт.`
         : null,
       quantityLabel: `К перевозке: ${numberLabel(item.remainingQuantity, 0)} шт. · ${numberLabel(item.remainingQuantity * item.unitWeightKg)} кг`,
+      quantity: item.remainingQuantity,
+      requiredQuantity: null,
+      excessQuantity: null,
+      unit: 'шт.',
+      weightKg: item.remainingQuantity * item.unitWeightKg,
+      machineLabel: card.machineName,
+      characteristics: [],
     })),
     volumeLabel: `${numberLabel(card.items.reduce((sum, item) => sum + item.remainingQuantity, 0), 0)} шт. · ${numberLabel(card.items.reduce((sum, item) => sum + item.remainingQuantity * item.unitWeightKg, 0))} кг`,
+    weightKg,
     deliveryRisk: card.deliveryRisk,
     selectable: Boolean(card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim()),
     unavailableReason: card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim() ? null : 'У площадки не указан город',
@@ -400,8 +520,10 @@ function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
 }
 
 function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
+  const key = needKey('inventory_transfer', card.id)
   return {
-    key: needKey('inventory_transfer', card.id),
+    key,
+    positionKey: key,
     id: card.id,
     kind: 'materials',
     source: 'inventory_transfer',
@@ -423,6 +545,7 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
     itemLabels: card.items.map((item) => item.materialName),
     itemDetails: card.items.map((item) => ({
       id: item.id,
+      logicalItemKey: `inventory:${item.id}`,
       productId: null,
       productVersionId: null,
       productHref: null,
@@ -440,8 +563,19 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
           ? `${numberLabel(item.remainingSecondaryQuantity)} ${item.secondaryUnit}`
           : null,
       ].filter(Boolean).join(' · '),
+      quantity: item.remainingQuantity,
+      requiredQuantity: null,
+      excessQuantity: null,
+      unit: item.unit,
+      weightKg: null,
+      machineLabel: card.machineName,
+      characteristics: [
+        item.materialCategory ? { label: 'Категория', value: item.materialCategory } : null,
+        item.pieceLengthMm ? { label: 'Длина', value: `${numberLabel(item.pieceLengthMm, 0)} мм` } : null,
+      ].filter((entry): entry is { label: string; value: string } => Boolean(entry)),
     })),
     volumeLabel: `${card.items.length} поз.`,
+    weightKg: null,
     deliveryRisk: card.deliveryRisk,
     selectable: Boolean(card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim()),
     unavailableReason: card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim() ? null : 'У площадки не указан город',
@@ -449,8 +583,17 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
 }
 
 function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
+  const key = needKey('supply_schedule', need.id)
   return {
-    key: needKey('supply_schedule', need.id),
+    key,
+    positionKey: [
+      'supply-position',
+      need.requestItemTable,
+      need.requestItemId,
+      need.supplierId,
+      need.factoryId,
+      need.deliveryDate,
+    ].join(':'),
     id: need.id,
     kind: 'materials',
     source: 'supply_schedule',
@@ -472,41 +615,63 @@ function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
     itemLabels: [need.itemName],
     itemDetails: [{
       id: need.id,
+      logicalItemKey: `${need.requestItemTable}:${need.requestItemId}`,
       productId: null,
       productVersionId: null,
       productHref: null,
       drawingHref: null,
       title: need.itemName,
       drawingLabel: null,
-      description: null,
+      description: MATERIAL_CATEGORY_LABELS[need.category],
       quantityLabel: `${numberLabel(need.quantity)} ${need.unit}`,
+      quantity: need.quantity,
+      requiredQuantity: need.requiredQuantity,
+      excessQuantity: need.excessQuantity,
+      unit: need.unit,
+      weightKg: need.weightKg,
+      machineLabel: need.machineName,
+      characteristics: need.characteristics,
     }],
     volumeLabel: `${numberLabel(need.quantity)} ${need.unit}`,
+    weightKg: need.weightKg,
     deliveryRisk: false,
     selectable: Boolean(need.supplierCity?.trim() && need.factoryCity?.trim()),
     unavailableReason: need.supplierCity?.trim() && need.factoryCity?.trim() ? null : 'У площадки не указан город',
   }
 }
 
-function mapLink(link: TripLinkRow): TransportTripNeed {
+function mapLink(link: TripLinkRow, currentNeed?: UnifiedTransportNeed): TransportTripNeed {
   return {
+    ...(currentNeed || {
+      key: needKey(link.need_source, link.need_id),
+      positionKey: needKey(link.need_source, link.need_id),
+      id: link.need_id,
+      kind: link.need_kind,
+      source: link.need_source,
+      direction: link.direction,
+      planState: 'confirmed' as const,
+      status: 'linked',
+      title: link.need_title,
+      subtitle: link.need_subtitle || '',
+      sourcePointKey: link.source_point_key,
+      sourcePointLabel: link.source_point_label,
+      sourcePointCity: null,
+      sourcePointAddress: null,
+      destinationPointKey: link.destination_point_key,
+      destinationPointLabel: link.destination_point_label,
+      destinationPointCity: null,
+      destinationPointAddress: null,
+      neededDate: link.needed_date,
+      deadline: link.needed_date,
+      itemLabels: [],
+      itemDetails: [],
+      volumeLabel: null,
+      weightKg: null,
+      deliveryRisk: false,
+      selectable: false,
+      unavailableReason: null,
+    }),
     linkId: link.id,
-    key: needKey(link.need_source, link.need_id),
-    id: link.need_id,
-    kind: link.need_kind,
-    source: link.need_source,
-    direction: link.direction,
-    title: link.need_title,
-    subtitle: link.need_subtitle || '',
-    sourcePointKey: link.source_point_key,
-    sourcePointLabel: link.source_point_label,
-    sourcePointCity: null,
-    sourcePointAddress: null,
-    destinationPointKey: link.destination_point_key,
-    destinationPointLabel: link.destination_point_label,
-    destinationPointCity: null,
-    destinationPointAddress: null,
-    neededDate: link.needed_date,
     pickupStopId: link.pickup_stop_id,
     deliveryStopId: link.delivery_stop_id,
     released: Boolean(link.released_at),
@@ -591,23 +756,8 @@ async function attachProductNavigation(
 
 function mapLegacyOutsourcingNeed(need: TransportWorkspaceNeed): TransportTripNeed {
   return {
+    ...mapOutsourcingNeed(need),
     linkId: null,
-    key: needKey('outsourcing', need.id),
-    id: need.id,
-    kind: 'outsourcing',
-    source: 'outsourcing',
-    direction: need.direction,
-    title: need.machine_name,
-    subtitle: need.work_type_name,
-    sourcePointKey: need.source_point_key,
-    sourcePointLabel: need.source_point_label,
-    sourcePointCity: need.source_point_city,
-    sourcePointAddress: need.source_point_address,
-    destinationPointKey: need.destination_point_key,
-    destinationPointLabel: need.destination_point_label,
-    destinationPointCity: need.destination_point_city,
-    destinationPointAddress: need.destination_point_address,
-    neededDate: need.needed_date,
     pickupStopId: null,
     deliveryStopId: null,
     released: false,
@@ -621,29 +771,11 @@ function tripNeedForEditing(trip: TransportTrip, need: TransportTripNeed): Unifi
   const pickup = trip.stops.find((stop) => stop.id === need.pickupStopId)
   const delivery = trip.stops.find((stop) => stop.id === need.deliveryStopId)
   return {
-    key: need.key,
-    id: need.id,
-    kind: need.kind,
-    source: need.source,
-    direction: need.direction,
-    planState: 'confirmed',
-    status: 'linked',
-    title: need.title,
-    subtitle: need.subtitle,
-    sourcePointKey: need.sourcePointKey,
-    sourcePointLabel: need.sourcePointLabel,
+    ...need,
     sourcePointCity: pickup?.city || null,
     sourcePointAddress: pickup?.address || null,
-    destinationPointKey: need.destinationPointKey,
-    destinationPointLabel: need.destinationPointLabel,
     destinationPointCity: delivery?.city || null,
     destinationPointAddress: delivery?.address || null,
-    neededDate: need.neededDate,
-    deadline: need.neededDate,
-    itemLabels: [],
-    itemDetails: [],
-    volumeLabel: null,
-    deliveryRisk: false,
     selectable: true,
     unavailableReason: null,
   }
@@ -780,6 +912,19 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       .filter((id): id is string => Boolean(id)),
   )
 
+  const mappedNeeds = await attachProductNavigation(db, [
+    ...outsourcingResult.data.needs.map(mapOutsourcingNeed),
+    ...outsourcingResult.data.orders.flatMap((order) => order.needs.map(mapOutsourcingNeed)),
+    ...(detailingResult.data || [])
+      .filter((card) => isActiveTransfer(card.status))
+      .map(mapDetailingNeed),
+    ...(materialsResult.data || [])
+      .filter((card) => isActiveTransfer(card.status))
+      .map(mapMaterialNeed),
+    ...supplyResult.data.map(mapSupplyNeed),
+  ])
+  const mappedNeedByKey = new Map(mappedNeeds.map((need) => [need.key, need]))
+
   const activeTripIds = new Set(
     outsourcingResult.data.orders
       .filter((order) => isActiveTransfer(order.status))
@@ -807,16 +952,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       .filter((link) => !link.released_at)
       .map((link) => needKey(link.need_source, link.need_id)),
   )
-  const needs = (await attachProductNavigation(db, [
-    ...outsourcingResult.data.needs.map(mapOutsourcingNeed),
-    ...(detailingResult.data || [])
-      .filter((card) => isActiveTransfer(card.status))
-      .map(mapDetailingNeed),
-    ...(materialsResult.data || [])
-      .filter((card) => isActiveTransfer(card.status))
-      .map(mapMaterialNeed),
-    ...supplyResult.data.map(mapSupplyNeed),
-  ]))
+  const needs = mappedNeeds
     .filter((need) => !activeLinkedNeeds.has(need.key))
     .sort((left, right) => {
       const leftDate = left.neededDate || '9999-12-31'
@@ -862,7 +998,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
   const trips = outsourcingResult.data.orders.flatMap((order): TransportTrip[] => {
     const linkedNeeds = linksByTrip.get(order.id) || []
     const tripNeeds = linkedNeeds?.length
-      ? linkedNeeds.map(mapLink)
+      ? linkedNeeds.map((link) => mapLink(link, mappedNeedByKey.get(needKey(link.need_source, link.need_id))))
       : order.needs.map(mapLegacyOutsourcingNeed)
     if (isActiveTransfer(order.status) && tripNeeds.length === 0) return []
     const firstNeed = tripNeeds[0]
@@ -894,6 +1030,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
       dateChangeState: ((order as typeof order & { date_change_state?: TransportTripDateChangeState }).date_change_state || 'not_required'),
       dateChangeRequests: dateRequestsByTrip.get(order.id) || [],
       needs: tripNeeds,
+      needGroups: groupTransportNeeds(tripNeeds.filter((need) => !need.released)),
       stops: (stopsByTrip.get(order.id) || []).map(mapStop),
     }]
   })
@@ -907,6 +1044,7 @@ async function loadTransportWorkspace(): Promise<TransportWorkspace> {
 
   return {
     needs,
+    needGroups: groupTransportNeeds(needs),
     trips,
     carriers: outsourcingResult.data.carriers,
     errors,
@@ -923,6 +1061,7 @@ export async function getTransportWorkspace(): Promise<{
     return {
       data: {
         needs: [],
+        needGroups: [],
         trips: [],
         carriers: [],
         errors: {},
@@ -939,6 +1078,8 @@ function revalidateTransportWorkspace() {
   revalidatePath(ROUTES.PRODUCTION)
   revalidatePath(ROUTES.INVENTORY)
   revalidatePath(ROUTES.INVENTORY_RECEIVING)
+  revalidatePath(ROUTES.REQUESTS)
+  revalidatePath(ROUTES.PLANNING_DEPARTMENT_REQUESTS)
 }
 
 export async function createTransportTrip(input: z.input<typeof createTripSchema>) {
@@ -1056,7 +1197,7 @@ export async function decideTransportTripDateChange(input: {
       requestId: z.string().uuid(), decision: z.enum(['approved', 'rejected']),
       comment: z.string().trim().max(1000).nullable().optional(),
     }).parse(input)
-    const context = await requirePermission('tasks', 'manage')
+    const context = await requirePermission('department_requests', 'manage')
     const admin = createAdminClient()
     const { data: requestData, error: requestError } = await admin
       .from('transport_trip_date_change_requests')
@@ -1250,6 +1391,84 @@ export async function updateTransportTrip(input: z.input<typeof updateTripSchema
     return { success: true, error: null }
   } catch (error) {
     return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function moveTransportTripPosition(input: z.input<typeof moveTripPositionSchema>) {
+  try {
+    const parsed = moveTripPositionSchema.parse(input)
+    const { userId } = await requirePermission('supply_transport', 'manage')
+    const workspace = await loadTransportWorkspace()
+    const sourceTrip = workspace.trips.find((trip) => trip.id === parsed.sourceTripId)
+    const targetTrip = workspace.trips.find((trip) => trip.id === parsed.targetTripId)
+    if (!sourceTrip || !targetTrip) throw new Error('Исходный или целевой рейс не найден')
+    if (sourceTrip.id === targetTrip.id) throw new Error('Выберите другой рейс')
+    if (![sourceTrip.status, targetTrip.status].every((status) => ['found', 'in_transit'].includes(status))) {
+      throw new Error('Перенос доступен только между запланированными или незавершёнными рейсами')
+    }
+
+    const activeSourceNeeds = sourceTrip.needs
+      .filter((need) => !need.released)
+      .map((need) => tripNeedForEditing(sourceTrip, need))
+    const sourceGroups = groupTransportNeeds(activeSourceNeeds)
+    const requestedKeys = new Set(parsed.position.map((reference) => needKey(reference.source, reference.id)))
+    const position = sourceGroups
+      .flatMap((group) => group.positions)
+      .find((candidate) => (
+        candidate.references.length === requestedKeys.size
+        && candidate.references.every((reference) => requestedKeys.has(reference.key))
+      ))
+    if (!position) throw new Error('Логическая позиция изменилась или уже перемещена')
+
+    if (sourceTrip.status === 'in_transit') {
+      const stopById = new Map(sourceTrip.stops.map((stop) => [stop.id, stop]))
+      if (position.needs.some((need) => {
+        const tripNeed = sourceTrip.needs.find((candidate) => candidate.key === need.key)
+        return tripNeed?.pickupStopId && stopById.get(tripNeed.pickupStopId)?.status !== 'planned'
+      })) {
+        throw new Error('Нельзя перенести позицию после начала её точки забора')
+      }
+    }
+
+    const movedKeys = new Set(position.needs.map((need) => need.key))
+    const sourceNeeds = activeSourceNeeds.filter((need) => !movedKeys.has(need.key))
+    const targetNeeds = [
+      ...targetTrip.needs.filter((need) => !need.released).map((need) => tripNeedForEditing(targetTrip, need)),
+      ...position.needs,
+    ]
+    if (new Set(targetNeeds.map((need) => need.key)).size !== targetNeeds.length) {
+      throw new Error('Позиция уже присутствует в целевом рейсе')
+    }
+
+    const hasDateMismatch = [
+      ...sourceNeeds.map((need) => [need.neededDate, sourceTrip.scheduledDate] as const),
+      ...position.needs.map((need) => [need.neededDate, targetTrip.scheduledDate] as const),
+    ].some(([neededDate, scheduledDate]) => neededDate && scheduledDate && neededDate !== scheduledDate)
+    if (hasDateMismatch && !parsed.dateChangeReason?.trim()) {
+      throw new Error('Укажите причину переноса дат')
+    }
+
+    const sourcePayload = sourceNeeds.length > 0
+      ? buildTripMutationPayload(sourceNeeds, parsed.sourceStops, parsed.sourceAssignments)
+      : { stops: [], links: [] }
+    const targetPayload = buildTripMutationPayload(targetNeeds, parsed.targetStops, parsed.targetAssignments)
+    const { data, error } = await transportDb(createAdminClient()).rpc('fn_move_transport_trip_position_v1', {
+      p_source_trip_id: sourceTrip.id,
+      p_target_trip_id: targetTrip.id,
+      p_moved_links: parsed.position,
+      p_source_stops: sourcePayload.stops,
+      p_source_links: sourcePayload.links,
+      p_target_stops: targetPayload.stops,
+      p_target_links: targetPayload.links,
+      p_reason: parsed.reason,
+      p_date_change_reason: parsed.dateChangeReason || null,
+      p_actor: userId,
+    })
+    if (error) throw new Error(error.message || 'Не удалось переместить позицию')
+    revalidateTransportWorkspace()
+    return { success: true, data, error: null }
+  } catch (error) {
+    return { success: false, data: null, error: getErrorMessage(error) }
   }
 }
 

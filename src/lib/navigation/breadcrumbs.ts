@@ -11,6 +11,7 @@ export const BREADCRUMB_SEGMENT_LABELS: Record<string, string> = {
   request: 'Заявка на материалы',
   requests: 'Запросы',
   technologist: 'Технолог',
+  planning: 'Отдел планирования',
   gantt: 'Гант-график',
   consumables: 'Расходники',
   'consumable-requests': 'Заявки на расходники',

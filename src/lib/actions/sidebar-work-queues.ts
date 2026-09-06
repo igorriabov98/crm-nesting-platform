@@ -19,6 +19,7 @@ const EMPTY_COUNTS: SidebarWorkQueueCounts = {
     technologist: 0,
     supply: 0,
     production: 0,
+    planning: 0,
     total: 0,
     unreadResults: 0,
   },
@@ -27,7 +28,7 @@ const EMPTY_COUNTS: SidebarWorkQueueCounts = {
   materialRequests: 0,
 }
 
-const TARGETS: DepartmentRequestTarget[] = ['technologist', 'supply', 'production']
+const TARGETS: DepartmentRequestTarget[] = ['technologist', 'supply', 'production', 'planning']
 const DIRECTORS = ['financial_director', 'commercial_director', 'planning_director']
 
 async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof requirePermission>>) {
@@ -67,6 +68,14 @@ async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof re
         .eq('status', 'new')
         .is('assigned_to', null)
 
+      if (target === 'planning') {
+        query = admin
+          .from('department_requests')
+          .select('id', { count: 'exact', head: true })
+          .eq('target_department', target)
+          .in('status', ['new', 'in_progress'])
+      }
+
       if (target === 'production' && !DIRECTORS.includes(context.role) && context.factoryId) {
         query = query.eq('factory_id', context.factoryId)
       }
@@ -85,7 +94,7 @@ async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof re
 async function loadTransportCount() {
   const result = await getTransportWorkspace()
   if (result.error) return 0
-  return countSelectableTransportNeeds(result.data.needs)
+  return countSelectableTransportNeeds(result.data.needGroups)
 }
 
 async function loadMaterialRequestCount() {

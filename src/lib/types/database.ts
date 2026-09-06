@@ -3441,7 +3441,7 @@ export type Database = {
       department_requests: {
         Row: {
           id: string
-          request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation'
+          request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
           target_department: string
           title: string
           description: string
@@ -3457,6 +3457,7 @@ export type Database = {
           technologist_request_id: string | null
           long_stock_plan_id: string | null
           long_stock_returned_version_id: string | null
+          transport_trip_date_change_request_id: string | null
           request_item_label: string | null
           due_date: string | null
           response: string | null
@@ -3468,7 +3469,7 @@ export type Database = {
         }
         Insert: {
           id?: string
-          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation'
+          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
           target_department: string
           title: string
           description: string
@@ -3484,6 +3485,7 @@ export type Database = {
           technologist_request_id?: string | null
           long_stock_plan_id?: string | null
           long_stock_returned_version_id?: string | null
+          transport_trip_date_change_request_id?: string | null
           request_item_label?: string | null
           due_date?: string | null
           response?: string | null
@@ -3495,7 +3497,7 @@ export type Database = {
         }
         Update: {
           id?: string
-          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation'
+          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
           target_department?: string
           title?: string
           description?: string
@@ -3511,6 +3513,7 @@ export type Database = {
           technologist_request_id?: string | null
           long_stock_plan_id?: string | null
           long_stock_returned_version_id?: string | null
+          transport_trip_date_change_request_id?: string | null
           request_item_label?: string | null
           due_date?: string | null
           response?: string | null
@@ -5718,6 +5721,21 @@ export type Database = {
           p_actor: string
         }
         Returns: Database['public']['Enums']['outsourcing_transport_order_status']
+      }
+      fn_move_transport_trip_position_v1: {
+        Args: {
+          p_source_trip_id: string
+          p_target_trip_id: string
+          p_moved_links: Json
+          p_source_stops: Json
+          p_source_links: Json
+          p_target_stops: Json
+          p_target_links: Json
+          p_reason: string
+          p_date_change_reason: string | null
+          p_actor: string
+        }
+        Returns: Json
       }
       fn_people_schedule_assignment: {
         Args: {

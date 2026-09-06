@@ -60,6 +60,8 @@ jobs:
         run: npm run test:supply-reservation-scope
       - name: Supply order filters and sorting
         run: npm run test:supply-order-view
+      - name: Transport need grouping and department request contracts
+        run: npm run test:transport-trips && npm run test:department-requests && npm run test:sidebar-work-queue-badges
       - name: Supply long-stock purchase plan and return contract
         run: npm run test:supply-long-stock-plan-return
       - name: Supply request lifecycle
@@ -192,6 +194,8 @@ jobs:
         run: node scripts/test-supply-partial-receiving.mjs
       - name: Supply receiving plan/fact database lifecycle
         run: npm run test:supply-receiving-plan-fact
+      - name: Transport date approval and atomic position moves
+        run: npm run test:transport-date-approval
       - name: Long-stock receipt recalculation database lifecycle
         run: npm run test:long-stock-cutting-plan-receipt-recalculation
       - name: Long-stock recalculation replacement matrix

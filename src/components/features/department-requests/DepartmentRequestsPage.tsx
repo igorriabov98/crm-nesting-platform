@@ -220,6 +220,7 @@ function RequestListItem({
             requestKind={request.request_kind}
             machineId={request.machine_id}
             canClaimMachineLayout={canClaimMachineLayout}
+            transportDateChangeRequestId={request.transport_trip_date_change_request_id}
           />
           <Link
             href={detailHref}

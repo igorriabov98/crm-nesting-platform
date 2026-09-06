@@ -77,6 +77,7 @@ const EMPTY_QUEUE_COUNTS: SidebarWorkQueueCounts = {
     technologist: 0,
     supply: 0,
     production: 0,
+    planning: 0,
     total: 0,
     unreadResults: 0,
   },
@@ -244,7 +245,7 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
   const salesItems = sectionItems(user, permissions, 'sales')
   const financeItems = sectionItems(user, permissions, 'finance')
   const reportsItems = sectionItems(user, permissions, 'reports')
-  const workflowItems = sectionItems(user, permissions, 'workflow')
+  const workflowItemsBase = sectionItems(user, permissions, 'workflow')
   const requestMemberships = (user.department_memberships || []).map((membership) => ({
     departmentName: membership.department?.name || null,
     positionName: membership.position?.name || null,
@@ -264,6 +265,17 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
     role: user.role,
     memberships: requestMemberships,
   })
+  const canManagePlanningRequests = permissions.department_requests?.canView && canManageDepartmentRequestTarget({
+    target: 'planning',
+    role: user.role,
+    memberships: requestMemberships,
+  })
+  const workflowItems = [
+    ...workflowItemsBase,
+    ...(canManagePlanningRequests
+      ? [{ href: ROUTES.PLANNING_DEPARTMENT_REQUESTS, label: 'Запросы планирования', icon: ClipboardList }]
+      : []),
+  ]
   const technologistItems = [
     ...(canManageTechnologistRequests
       ? [{ href: ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS, label: 'Запросы', icon: ClipboardList }]

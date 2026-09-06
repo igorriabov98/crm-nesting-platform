@@ -143,6 +143,10 @@ export type SupplyOrderDeliverySchedule = {
 
 export type SupplyTransportNeed = {
   id: string
+  requestId: string
+  requestItemTable: string
+  requestItemId: string
+  category: MaterialCategory
   machineId: string
   machineName: string
   supplierId: string
@@ -157,7 +161,17 @@ export type SupplyTransportNeed = {
   deliveryDate: string
   itemName: string
   quantity: number
+  requiredQuantity: number
+  excessQuantity: number
   unit: string
+  weightKg: number | null
+  characteristics: SupplyOrderAggregateCharacteristic[]
+  plannedPieceLengthMm: number | null
+  plannedPieceCount: number | null
+}
+
+function transportNumberLabel(value: number, maximumFractionDigits = 3) {
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits }).format(value)
 }
 
 export type SupplyOrderItem = {
@@ -1107,9 +1121,10 @@ export async function getSupplyTransportNeeds(): Promise<{
     const db = createAdminClient() as unknown as RpcDb
     const { data: schedulesData, error: schedulesError } = await db
       .from('supply_order_delivery_schedules')
-      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status')
+      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, planned_piece_length_mm, planned_piece_count, created_at')
       .eq('status', 'planned')
       .order('delivery_date', { ascending: true })
+      .order('created_at', { ascending: true })
     if (schedulesError) throw new Error(schedulesError.message || 'Не удалось загрузить подтверждённые поставки')
 
     const schedules = (schedulesData || []) as Array<{
@@ -1120,6 +1135,9 @@ export async function getSupplyTransportNeeds(): Promise<{
       quantity: number
       unit: string
       supplier_id: string | null
+      planned_piece_length_mm: number | null
+      planned_piece_count: number | null
+      created_at: string
     }>
     const eligibleSchedules = schedules.filter((schedule) => (
       Boolean(schedule.supplier_id) && ORDER_TABLES.includes(schedule.request_item_table)
@@ -1173,16 +1191,60 @@ export async function getSupplyTransportNeeds(): Promise<{
     const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>)
       .map((factory) => [factory.id, factory]))
 
+    const remainingRequiredByItem = new Map(
+      items.map((item) => [`${item.table}:${item.id}`, Math.max(item.to_order, 0)]),
+    )
+    const annotatedSchedules = eligibleSchedules
+      .slice()
+      .sort((left, right) => (
+        left.delivery_date.localeCompare(right.delivery_date)
+        || left.created_at.localeCompare(right.created_at)
+        || left.id.localeCompare(right.id)
+      ))
+      .map((schedule) => {
+        const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+        const remainingRequired = remainingRequiredByItem.get(key) || 0
+        const quantity = Number(schedule.quantity)
+        const requiredQuantity = Math.min(quantity, remainingRequired)
+        remainingRequiredByItem.set(key, Math.max(remainingRequired - requiredQuantity, 0))
+        return {
+          ...schedule,
+          requiredQuantity,
+          excessQuantity: Math.max(quantity - requiredQuantity, 0),
+        }
+      })
+
     return {
-      data: eligibleSchedules.flatMap((schedule): SupplyTransportNeed[] => {
+      data: annotatedSchedules.flatMap((schedule): SupplyTransportNeed[] => {
         const item = itemByKey.get(`${schedule.request_item_table}:${schedule.request_item_id}`)
         const request = item ? requestById.get(item.request_id) : null
         const machine = request?.machines
         const supplier = schedule.supplier_id ? suppliers.get(schedule.supplier_id) : null
         const factoryId = machine?.factory_id || null
         if (!item || !request || !machine || machine.is_archived || !supplier || !factoryId) return []
+        const normalizedUnit = schedule.unit.trim().toLocaleLowerCase('ru').replace(/\./g, '')
+        const weightKg = ['кг', 'kg'].includes(normalizedUnit)
+          ? Number(schedule.quantity)
+          : proportionalWeight(item.calculated_weight_kg, item.to_order, Number(schedule.quantity))
+        const characteristics = getAggregateCharacteristics(item.table, item.raw, item)
+        if (schedule.planned_piece_length_mm && !characteristics.some((entry) => entry.label === 'Длина заготовки')) {
+          characteristics.push({
+            label: 'Длина заготовки',
+            value: `${transportNumberLabel(Number(schedule.planned_piece_length_mm), 0)} мм`,
+          })
+        }
+        if (schedule.planned_piece_count && !characteristics.some((entry) => entry.label === 'Количество заготовок')) {
+          characteristics.push({
+            label: 'Количество заготовок',
+            value: `${transportNumberLabel(Number(schedule.planned_piece_count), 0)} шт.`,
+          })
+        }
         return [{
           id: schedule.id,
+          requestId: item.request_id,
+          requestItemTable: schedule.request_item_table,
+          requestItemId: schedule.request_item_id,
+          category: item.category,
           machineId: request.machine_id,
           machineName: machine.name,
           supplierId: supplier.id,
@@ -1197,7 +1259,17 @@ export async function getSupplyTransportNeeds(): Promise<{
           deliveryDate: schedule.delivery_date,
           itemName: item.item_name,
           quantity: Number(schedule.quantity),
+          requiredQuantity: schedule.requiredQuantity,
+          excessQuantity: schedule.excessQuantity,
           unit: schedule.unit,
+          weightKg,
+          characteristics,
+          plannedPieceLengthMm: schedule.planned_piece_length_mm === null
+            ? null
+            : Number(schedule.planned_piece_length_mm),
+          plannedPieceCount: schedule.planned_piece_count === null
+            ? null
+            : Number(schedule.planned_piece_count),
         }]
       }),
       error: null,

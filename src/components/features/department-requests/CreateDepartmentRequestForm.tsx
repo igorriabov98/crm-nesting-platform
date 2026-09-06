@@ -58,7 +58,7 @@ export function CreateDepartmentRequestForm({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [internalOpen, setInternalOpen] = useState(false)
   const [pending, startTransition] = useTransition()
-  const [target, setTarget] = useState<DepartmentRequestTarget>('supply')
+  const [target, setTarget] = useState<Exclude<DepartmentRequestTarget, 'planning'>>('supply')
   const [title, setTitle] = useState(initialTitle)
   const [description, setDescription] = useState('')
   const [dueDate, setDueDate] = useState('')
@@ -208,10 +208,11 @@ export function CreateDepartmentRequestForm({
                 <select
                   id="department-request-target"
                   value={target}
-                  onChange={(event) => setTarget(event.target.value as DepartmentRequestTarget)}
+                  onChange={(event) => setTarget(event.target.value as Exclude<DepartmentRequestTarget, 'planning'>)}
                   className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 >
                   {(Object.entries(DEPARTMENT_REQUEST_TARGETS) as Array<[DepartmentRequestTarget, typeof DEPARTMENT_REQUEST_TARGETS[DepartmentRequestTarget]]>)
+                    .filter(([value]) => value !== 'planning')
                     .map(([value, config]) => (
                       <option key={value} value={value}>{config.label}</option>
                     ))}

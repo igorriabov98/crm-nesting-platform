@@ -11,6 +11,7 @@ import {
   completeDepartmentRequest,
   rejectDepartmentRequest,
 } from '@/lib/actions/department-requests'
+import { decideTransportTripDateChange } from '@/lib/actions/transport-trips'
 import type { DepartmentRequestStatus } from '@/lib/department-requests'
 import {
   cleanupDepartmentRequestUploads,
@@ -44,13 +45,15 @@ export function RequestActions({
   requestKind,
   machineId,
   canClaimMachineLayout,
+  transportDateChangeRequestId,
 }: {
   requestId: string
   status: DepartmentRequestStatus
   mode: 'mine' | 'inbox'
-  requestKind: 'manual' | 'machine_layout' | 'long_stock_recalculation'
+  requestKind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
   machineId: string | null
   canClaimMachineLayout: boolean
+  transportDateChangeRequestId: string | null
 }) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -110,7 +113,20 @@ export function RequestActions({
     startTransition(async () => {
       let uploads: Awaited<ReturnType<typeof uploadDepartmentRequestFiles>> = []
       try {
-        if (decision === 'done') {
+        if (requestKind === 'transport_trip_date_approval' && transportDateChangeRequestId) {
+          const result = await decideTransportTripDateChange({
+            requestId: transportDateChangeRequestId,
+            decision: decision === 'done' ? 'approved' : 'rejected',
+            comment: response,
+          })
+          if (!result.success) throw new Error(result.error || 'Не удалось обработать согласование')
+          refreshWith({
+            ok: true,
+            message: result.outcome === 'conflicted'
+              ? 'Согласование закрыто из-за конфликта исходных дат'
+              : decision === 'done' ? 'Перенос дат одобрен' : 'Перенос дат отклонён',
+          })
+        } else if (decision === 'done') {
           uploads = await uploadDepartmentRequestFiles(requestId, 'resolution', files)
           refreshWith(await completeDepartmentRequest({
             requestId,
@@ -135,6 +151,7 @@ export function RequestActions({
   if (requestKind === 'long_stock_recalculation') return null
 
   if (mode === 'mine') {
+    if (requestKind === 'transport_trip_date_approval') return null
     if (!['new', 'in_progress'].includes(status)) return null
     return (
       <Button type="button" variant="outline" className="min-h-11" disabled={pending} onClick={cancel}>
@@ -146,6 +163,7 @@ export function RequestActions({
 
   if (!['new', 'in_progress'].includes(status)) return null
   const isMachineLayout = requestKind === 'machine_layout'
+  const isTransportDateApproval = requestKind === 'transport_trip_date_approval'
 
   return (
     <>
@@ -159,7 +177,7 @@ export function RequestActions({
         {status === 'in_progress' && !isMachineLayout && (
           <Button type="button" className="min-h-11 bg-emerald-700 text-white hover:bg-emerald-800" onClick={() => setDecision('done')}>
             <CheckCircle2 className="size-4" aria-hidden="true" />
-            Завершить запрос
+            {isTransportDateApproval ? 'Одобрить перенос' : 'Завершить запрос'}
           </Button>
         )}
         {status === 'in_progress' && isMachineLayout && machineId && (
@@ -187,11 +205,15 @@ export function RequestActions({
           <form onSubmit={submitDecision}>
             <DialogHeader className="border-b border-slate-200 px-5 py-5 sm:px-6">
               <DialogTitle className="text-xl text-slate-950">
-                {decision === 'done' ? 'Завершить запрос' : 'Отклонить запрос'}
+                {decision === 'done'
+                  ? isTransportDateApproval ? 'Одобрить перенос дат' : 'Завершить запрос'
+                  : isTransportDateApproval ? 'Отклонить перенос дат' : 'Отклонить запрос'}
               </DialogTitle>
               <DialogDescription>
                 {decision === 'done'
-                  ? 'Опишите выполненное решение. Автор увидит текст и приложенные файлы.'
+                  ? isTransportDateApproval
+                    ? 'Решение синхронно закроет карточку рейса, задачу и этот запрос.'
+                    : 'Опишите выполненное решение. Автор увидит текст и приложенные файлы.'
                   : 'Укажите понятную причину отклонения для автора запроса.'}
               </DialogDescription>
             </DialogHeader>
@@ -205,16 +227,16 @@ export function RequestActions({
                   id={`request-response-${requestId}`}
                   value={response}
                   onChange={(event) => setResponse(event.target.value)}
-                  minLength={3}
+                  minLength={decision === 'done' && isTransportDateApproval ? 0 : 3}
                   maxLength={5000}
-                  required
+                  required={decision !== 'done' || !isTransportDateApproval}
                   rows={6}
                   className="min-h-36 resize-y"
                   placeholder={decision === 'done' ? 'Что было сделано и какой получен результат' : 'Почему запрос невозможно выполнить'}
                 />
               </div>
 
-              {decision === 'done' && (
+              {decision === 'done' && !isTransportDateApproval && (
                 <div className="space-y-3">
                   <div>
                     <Label htmlFor={`request-resolution-files-${requestId}`}>

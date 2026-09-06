@@ -12,6 +12,10 @@ import {
   type TransportRouteNeed,
 } from '../src/lib/transport/trip-rules'
 import { formatCompanyLocation } from '../src/lib/transport/company-location'
+import {
+  groupTransportNeeds,
+  type GroupableTransportNeed,
+} from '../src/lib/transport/need-groups'
 
 const baseNeed: TransportRouteNeed = {
   sourcePointKey: 'factory:berehove',
@@ -19,6 +23,94 @@ const baseNeed: TransportRouteNeed = {
   destinationPointLabel: 'Ужгород',
   direction: 'outbound',
 }
+
+function supplyNeed(input: {
+  id: string
+  positionKey: string
+  date?: string
+  supplier?: string
+  factory?: string
+  title: string
+  quantity: number
+  required: number
+  excess: number
+  unit: string
+  weightKg: number | null
+}): GroupableTransportNeed {
+  const supplier = input.supplier || 'varian'
+  const factory = input.factory || 'uzhhorod'
+  return {
+    key: `supply_schedule:${input.id}`,
+    positionKey: input.positionKey,
+    id: input.id,
+    source: 'supply_schedule',
+    kind: 'materials',
+    title: 'тест 5/09',
+    subtitle: 'Varian',
+    sourcePointKey: `supplier:${supplier}`,
+    sourcePointLabel: 'Varian — Ужгород',
+    sourcePointCity: 'Ужгород',
+    sourcePointAddress: null,
+    destinationPointKey: `factory:${factory}`,
+    destinationPointLabel: 'Ужгород',
+    destinationPointCity: 'Ужгород',
+    destinationPointAddress: null,
+    neededDate: input.date || '2026-09-08',
+    itemLabels: [input.title],
+    itemDetails: [{
+      id: input.id,
+      logicalItemKey: input.positionKey,
+      title: input.title,
+      description: null,
+      quantityLabel: `${input.quantity} ${input.unit}`,
+      quantity: input.quantity,
+      requiredQuantity: input.required,
+      excessQuantity: input.excess,
+      unit: input.unit,
+      weightKg: input.weightKg,
+      machineLabel: 'тест 5/09',
+      characteristics: input.title === 'Краска'
+        ? [{ label: 'RAL', value: '6050' }]
+        : [{ label: 'Размер листа', value: '1000x1000' }],
+    }],
+    volumeLabel: `${input.quantity} ${input.unit}`,
+    weightKg: input.weightKg,
+    selectable: true,
+    unavailableReason: null,
+  }
+}
+
+const groupedSupply = groupTransportNeeds([
+  supplyNeed({ id: 'paint-required', positionKey: 'request_paint:paint', title: 'Краска', quantity: 22, required: 22, excess: 0, unit: 'кг', weightKg: 22 }),
+  supplyNeed({ id: 'paint-excess', positionKey: 'request_paint:paint', title: 'Краска', quantity: 3, required: 0, excess: 3, unit: 'кг', weightKg: 3 }),
+  supplyNeed({ id: 'sheet', positionKey: 'request_sheet_metal:sheet', title: 'Листовой металл', quantity: 2, required: 2, excess: 0, unit: 'шт.', weightKg: 312 }),
+])
+assert.equal(groupedSupply.length, 1)
+assert.equal(groupedSupply[0].positions.length, 2)
+assert.equal(groupedSupply[0].positions[0].references.length, 2)
+assert.equal(groupedSupply[0].positions[0].itemDetails[0].quantity, 25)
+assert.equal(groupedSupply[0].positions[0].itemDetails[0].requiredQuantity, 22)
+assert.equal(groupedSupply[0].positions[0].itemDetails[0].excessQuantity, 3)
+assert.match(groupedSupply[0].positions[0].volumeLabel || '', /25 кг/)
+assert.match(groupedSupply[0].positions[0].volumeLabel || '', /сверх потребности 3 кг/)
+assert.equal(groupedSupply[0].weightKg, 337)
+assert.doesNotMatch(groupedSupply[0].volumeLabel, /шт\..*кг.*\+/)
+
+const singleScheduleExcess = groupTransportNeeds([
+  supplyNeed({ id: 'paint-ordered', positionKey: 'request_paint:single', title: 'Краска', quantity: 25, required: 22, excess: 3, unit: 'кг', weightKg: 25 }),
+])
+assert.match(singleScheduleExcess[0].positions[0].volumeLabel || '', /потребность 22 кг/)
+assert.match(singleScheduleExcess[0].positions[0].volumeLabel || '', /сверх потребности 3 кг/)
+
+const splitBoundaries = groupTransportNeeds([
+  supplyNeed({ id: 'date-a', positionKey: 'a', date: '2026-09-08', title: 'A', quantity: 1, required: 1, excess: 0, unit: 'шт.', weightKg: null }),
+  supplyNeed({ id: 'date-b', positionKey: 'b', date: '2026-09-09', title: 'B', quantity: 1, required: 1, excess: 0, unit: 'шт.', weightKg: null }),
+  supplyNeed({ id: 'supplier-b', positionKey: 'c', supplier: 'other', title: 'C', quantity: 1, required: 1, excess: 0, unit: 'шт.', weightKg: null }),
+  supplyNeed({ id: 'factory-b', positionKey: 'd', factory: 'berehove', title: 'D', quantity: 1, required: 1, excess: 0, unit: 'шт.', weightKg: null }),
+])
+assert.equal(splitBoundaries.length, 4)
+assert.equal(splitBoundaries.every((group) => group.weightKg === null), true)
+assert.equal(splitBoundaries.every((group) => group.volumeLabel.includes('1 поз.')), true)
 
 assert.equal(getTransportNeedConflict(baseNeed, {
   ...baseNeed,
@@ -254,7 +346,7 @@ assert.match(transportWorkspace, /locationDetails\(need\.destinationPointCity, n
 assert.match(transportWorkspace, /Отменить рейс/)
 assert.match(transportWorkspace, /Причина исключения/)
 assert.match(transportWorkspace, /reconcileTransportStopPlan/)
-assert.match(transportWorkspace, /editingNeeds\.length === 1/)
+assert.match(transportWorkspace, /editingNeeds\.length === positionNeeds\.length/)
 assert.match(transportWorkspace, /collapsible/)
 assert.match(transportWorkspace, /Подтвердить начало рейса/)
 assert.match(transportWorkspace, /Подтвердить: рейс выполнен/)
@@ -279,6 +371,25 @@ assert.match(editCancelMigration, /date_change_state = CASE/)
 assert.match(transportActions, /releasedAt: link\.released_at/)
 assert.match(transportActions, /fn_cancel_transport_trip_v1/)
 assert.match(transportActions, /fn_update_transport_trip_v4/)
+
+const groupedTransportMigration = readFileSync(
+  resolve('supabase/migrations/20260906160000_transport_need_groups_planning_requests.sql'),
+  'utf8',
+)
+assert.match(groupedTransportMigration, /target_department in \('technologist', 'supply', 'production', 'planning'\)/)
+assert.match(groupedTransportMigration, /transport_trip_date_change_request_id uuid/)
+assert.match(groupedTransportMigration, /department_requests_transport_date_request_unique_idx/)
+assert.match(groupedTransportMigration, /sync_transport_date_department_request/)
+assert.match(groupedTransportMigration, /status = 'pending' and task_id is not null/)
+assert.match(groupedTransportMigration, /fn_move_transport_trip_position_v1/)
+assert.match(groupedTransportMigration, /Технические части одной позиции можно переносить только вместе/)
+assert.match(groupedTransportMigration, /Состав исходного рейса изменился конкурентно/)
+assert.match(groupedTransportMigration, /fn_cancel_transport_trip_v1\(p_source_trip_id/)
+assert.match(transportActions, /groupTransportNeeds\(needs\)/)
+assert.match(transportActions, /moveTransportTripPosition/)
+assert.match(transportWorkspace, /role="checkbox"/)
+assert.match(transportWorkspace, /aria-checked=\{partiallySelected \? 'mixed' : allSelected\}/)
+assert.match(transportWorkspace, /Переместить позицию в другой рейс/)
 
 const manualLifecycleMigration = readFileSync(
   resolve('supabase/migrations/20260731193000_transport_trip_manual_lifecycle.sql'),
