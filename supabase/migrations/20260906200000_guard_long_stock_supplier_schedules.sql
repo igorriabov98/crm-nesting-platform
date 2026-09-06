@@ -104,7 +104,9 @@ revoke all on function public.fn_guard_long_stock_supplier_schedule_v1()
 
 drop trigger if exists guard_long_stock_supplier_schedule_v1
   on public.supply_order_delivery_schedules;
-create trigger guard_long_stock_supplier_schedule_v1
+drop trigger if exists validate_long_stock_supplier_schedule_v1
+  on public.supply_order_delivery_schedules;
+create trigger validate_long_stock_supplier_schedule_v1
 before insert or update of
   request_item_table,
   request_item_id,

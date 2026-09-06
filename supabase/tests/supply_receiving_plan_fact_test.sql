@@ -53,6 +53,10 @@ begin
       null;
   end;
 
+  -- These synthetic rows exercise receiving plan/fact invariants without a
+  -- cutting-plan fixture. Skip only the supplier-plan guard on insertion;
+  -- the dedicated long-stock guard test covers approved purchase maps.
+  set local session_replication_role = replica;
   insert into public.supply_order_delivery_schedules (
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     planned_piece_length_mm, planned_piece_count
@@ -60,6 +64,7 @@ begin
     v_mismatch_schedule, 'request_circle', gen_random_uuid(), current_date, 12000, 'мм',
     6000, 2
   );
+  set local session_replication_role = origin;
 
   update public.supply_order_delivery_schedules
   set status = 'delivered',
@@ -121,6 +126,7 @@ begin
 
   set constraints supply_order_delivery_piece_fact_constraint_trigger deferred;
 
+  set local session_replication_role = replica;
   insert into public.supply_order_delivery_schedules (
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     planned_piece_length_mm, planned_piece_count
@@ -128,6 +134,7 @@ begin
     v_matching_schedule, 'request_circle', gen_random_uuid(), current_date, 12000, 'мм',
     6000, 2
   );
+  set local session_replication_role = origin;
 
   update public.supply_order_delivery_schedules
   set status = 'delivered',
@@ -151,6 +158,7 @@ begin
 
   set constraints supply_order_delivery_piece_fact_constraint_trigger deferred;
 
+  set local session_replication_role = replica;
   insert into public.supply_order_delivery_schedules (
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     planned_piece_length_mm, planned_piece_count
@@ -158,6 +166,7 @@ begin
     v_missing_fact_schedule, 'request_circle', gen_random_uuid(), current_date, 12000, 'мм',
     6000, 2
   );
+  set local session_replication_role = origin;
 
   begin
     update public.supply_order_delivery_schedules
