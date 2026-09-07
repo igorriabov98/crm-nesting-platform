@@ -71,8 +71,8 @@ assert.match(
 )
 assert.match(
   supplyOrdersAction,
-  /function scheduleDeliveredQuantity[\s\S]*allocated_physical_quantity[\s\S]*received_quantity[\s\S]*allocated_quantity/u,
-  'server aggregation must prefer physical long-stock receipt length over logical cut allocation',
+  /function scheduleDeliveredQuantity[\s\S]*deliveredSupplyQuantity\(schedule\)/u,
+  'server aggregation must use the shared physical supplier-receipt projection',
 )
 assert.match(
   supplyOrdersAction,

@@ -41,6 +41,10 @@ import {
   type LongStockPurchasePlan,
   type LongStockRequestItemTable,
 } from '@/lib/supply-orders/long-stock-purchase-plan'
+import {
+  calculateSupplyReceiptProgress,
+  deliveredSupplyQuantity,
+} from '@/lib/supply-orders/receiving-supply-progress'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -385,6 +389,12 @@ export type MaterialDeliveryAllocationPreviewRow = {
   delivered_quantity: number
   closed_quantity: number
   outstanding_quantity: number
+  supply_requested_quantity: number
+  supply_delivered_quantity: number
+  supply_outstanding_quantity: number
+  supply_requested_piece_count: number | null
+  supply_delivered_piece_count: number | null
+  supply_outstanding_piece_count: number | null
   suggested_quantity: number
   needed_piece_count: number | null
   suggested_piece_count: number | null
@@ -405,6 +415,8 @@ export type MaterialDeliveryAllocationPreview = {
   planned_piece_count: number | null
   received_quantity: number
   total_outstanding_quantity: number
+  total_supply_outstanding_quantity: number
+  total_supply_outstanding_piece_count: number | null
   allocations: MaterialDeliveryAllocationPreviewRow[]
   piece_length_mm: number | null
   piece_count: number | null
@@ -1954,19 +1966,7 @@ function schedulePlannedQuantity(schedule: SupplyOrderDeliverySchedule) {
 }
 
 function scheduleDeliveredQuantity(schedule: SupplyOrderDeliverySchedule) {
-  const pieceLength = Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0)
-  if (pieceLength > 0) {
-    const physicalQuantity = schedule.allocated_physical_quantity
-      ?? schedule.received_quantity
-      ?? (schedule.allocated_piece_count === null
-        ? null
-        : schedule.allocated_piece_count * pieceLength)
-      ?? (schedule.received_piece_count === null
-        ? null
-        : schedule.received_piece_count * pieceLength)
-    return Math.max(Number(physicalQuantity || 0), 0)
-  }
-  return Number(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0)
+  return deliveredSupplyQuantity(schedule)
 }
 
 function toScheduleDto(
@@ -2759,9 +2759,18 @@ async function buildMaterialAllocationPreview(
   const candidates = matchingItems.map((item) => {
     const key = `${item.table}:${item.id}`
     const itemSchedules = schedulesByItem.get(key) || []
-    const delivered = itemSchedules
-      .filter((schedule) => schedule.status === 'delivered')
-      .reduce((sum, schedule) => sum + scheduleDeliveredQuantity(schedule), 0)
+    const requestedSupplyPieceCount = isWholeBarItem(item)
+      ? item.long_stock_purchase_plan?.total_piece_count
+        ?? itemSchedules
+          .filter((schedule) => !schedule.receipt_parent_schedule_id && schedule.status !== 'cancelled')
+          .reduce((sum, schedule) => sum + Number(schedule.planned_piece_count || 0), 0)
+      : null
+    const supplyProgress = calculateSupplyReceiptProgress({
+      requestedQuantity: item.to_order,
+      requestedPieceCount: requestedSupplyPieceCount,
+      schedules: itemSchedules,
+    })
+    const delivered = supplyProgress.deliveredQuantity
     const outstandingQuantity = outstandingAllocationQuantity({
       isWholeBar: isWholeBarItem(item),
       requestedQuantity: item.requested_quantity,
@@ -2789,6 +2798,7 @@ async function buildMaterialAllocationPreview(
       reservedQuantity: item.reserved_quantity,
       deliveredQuantity: delivered,
       outstandingQuantity,
+      supplyProgress,
       hasOtherPlannedSchedule,
       isSource,
       isEligible: outstandingQuantity > 0 && unavailableReason === null,
@@ -2825,6 +2835,12 @@ async function buildMaterialAllocationPreview(
         candidate.reservedQuantity + candidate.deliveredQuantity,
       ),
       outstanding_quantity: candidate.outstandingQuantity,
+      supply_requested_quantity: candidate.supplyProgress.requestedQuantity,
+      supply_delivered_quantity: candidate.supplyProgress.deliveredQuantity,
+      supply_outstanding_quantity: candidate.supplyProgress.outstandingQuantity,
+      supply_requested_piece_count: candidate.supplyProgress.requestedPieceCount,
+      supply_delivered_piece_count: candidate.supplyProgress.deliveredPieceCount,
+      supply_outstanding_piece_count: candidate.supplyProgress.outstandingPieceCount,
       suggested_quantity: isBar ? logicalQuantity : Number(suggestion?.quantity || 0),
       needed_piece_count: isBar && pieceLengthMm
         ? Math.ceil(candidate.outstandingQuantity / pieceLengthMm)
@@ -2848,6 +2864,16 @@ async function buildMaterialAllocationPreview(
     return left.machine_name.localeCompare(right.machine_name, 'ru')
   })
   const totalOutstandingQuantity = eligibleCandidates.reduce((sum, row) => sum + row.outstandingQuantity, 0)
+  const totalSupplyOutstandingQuantity = eligibleCandidates.reduce(
+    (sum, row) => sum + row.supplyProgress.outstandingQuantity,
+    0,
+  )
+  const totalSupplyOutstandingPieceCount = isBar
+    ? eligibleCandidates.reduce(
+      (sum, row) => sum + Number(row.supplyProgress.outstandingPieceCount || 0),
+      0,
+    )
+    : null
   const totalNeededPieces = isBar && pieceLengthMm
     ? eligibleCandidates.reduce((sum, row) => sum + Math.ceil(row.outstandingQuantity / pieceLengthMm), 0)
     : 0
@@ -2865,6 +2891,8 @@ async function buildMaterialAllocationPreview(
     planned_piece_count: plannedPieceCount,
     received_quantity: receivedQuantity,
     total_outstanding_quantity: totalOutstandingQuantity,
+    total_supply_outstanding_quantity: totalSupplyOutstandingQuantity,
+    total_supply_outstanding_piece_count: totalSupplyOutstandingPieceCount,
     allocations: rows,
     piece_length_mm: pieceLengthMm,
     piece_count: pieceCount,
