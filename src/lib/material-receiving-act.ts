@@ -12,6 +12,12 @@ export type MaterialReceivingActSourceItem = {
   planned_quantity: number
   unit: string
   supplier_name: string | null
+  supplier_names?: string[]
+  machines?: Array<{
+    id: string
+    name: string
+    specification_number: string | null
+  }>
   category: MaterialCategory
   is_whole_bar: boolean
   item_name: string
@@ -46,9 +52,13 @@ export type MaterialReceivingActOrder = {
 }
 
 export type MaterialReceivingActData = {
+  batchKey: string
   deliveryDate: string
   generatedAt: string
   factoryName: string
+  transportTripName: string | null
+  plannedArrivalAt: string | null
+  arrivedAt: string | null
   items: MaterialReceivingActItem[]
   orders: MaterialReceivingActOrder[]
   supplierNames: string[]
@@ -72,9 +82,13 @@ function plannedBars(item: MaterialReceivingActSourceItem) {
 }
 
 export function buildMaterialReceivingActData(input: {
+  batchKey: string
   deliveryDate: string
   generatedAt: string
   factoryName: string
+  transportTripName?: string | null
+  plannedArrivalAt?: string | null
+  arrivedAt?: string | null
   items: MaterialReceivingActSourceItem[]
 }): MaterialReceivingActData {
   const orders = new Map<string, MaterialReceivingActOrder>()
@@ -83,16 +97,24 @@ export function buildMaterialReceivingActData(input: {
   let hasWeight = false
 
   const items = input.items.map((item) => {
-    const order = orders.get(item.machine_id)
-    orders.set(item.machine_id, order
-      ? { ...order, itemCount: order.itemCount + 1 }
-      : {
-          machineId: item.machine_id,
-          name: item.machine_name,
-          specificationNumber: item.machine_specification_number,
-          itemCount: 1,
-        })
-    if (item.supplier_name) supplierNames.add(item.supplier_name)
+    const itemMachines = item.machines?.length
+      ? item.machines
+      : [{ id: item.machine_id, name: item.machine_name, specification_number: item.machine_specification_number }]
+    for (const machine of itemMachines) {
+      const order = orders.get(machine.id)
+      orders.set(machine.id, order
+        ? { ...order, itemCount: order.itemCount + 1 }
+        : {
+            machineId: machine.id,
+            name: machine.name,
+            specificationNumber: machine.specification_number,
+            itemCount: 1,
+          })
+    }
+    const itemSupplierNames = item.supplier_names?.length
+      ? item.supplier_names
+      : item.supplier_name ? [item.supplier_name] : []
+    for (const supplierName of itemSupplierNames) supplierNames.add(supplierName)
     if (item.weight_kg !== null && Number.isFinite(item.weight_kg)) {
       totalWeightKg += item.weight_kg
       hasWeight = true
@@ -103,9 +125,9 @@ export function buildMaterialReceivingActData(input: {
       materialName: item.item_name,
       categoryLabel: MATERIAL_CATEGORY_LABELS[item.category],
       characteristics: item.characteristics,
-      supplierName: item.supplier_name || 'Не назначен',
-      orderName: item.machine_name,
-      specificationNumber: item.machine_specification_number,
+      supplierName: itemSupplierNames.join(', ') || 'Не назначен',
+      orderName: itemMachines.map((machine) => machine.name).join('; '),
+      specificationNumber: itemMachines.length === 1 ? itemMachines[0].specification_number : null,
       plannedQuantity: item.planned_quantity,
       unit: item.unit,
       plannedWeightKg: item.weight_kg,
@@ -115,9 +137,13 @@ export function buildMaterialReceivingActData(input: {
   })
 
   return {
+    batchKey: input.batchKey,
     deliveryDate: input.deliveryDate,
     generatedAt: input.generatedAt,
     factoryName: input.factoryName,
+    transportTripName: input.transportTripName || null,
+    plannedArrivalAt: input.plannedArrivalAt || null,
+    arrivedAt: input.arrivedAt || null,
     items,
     orders: Array.from(orders.values()).sort((left, right) => left.name.localeCompare(right.name, 'ru')),
     supplierNames: Array.from(supplierNames).sort((left, right) => left.localeCompare(right, 'ru')),

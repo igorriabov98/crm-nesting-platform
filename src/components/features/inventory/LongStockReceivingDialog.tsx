@@ -35,7 +35,7 @@ type Props = {
 
 type AllocationState = {
   preview: MaterialDeliveryAllocationPreview
-  scheduleId: string
+  scheduleIds: string[]
   values: Record<string, string>
   returnFocus: HTMLElement | null
 }
@@ -100,12 +100,13 @@ export function LongStockReceivingDialog({
 
   function receiptInput(
     confirmedAllocations?: MaterialDeliveryAllocationInput[],
-    scheduleId = selected?.schedule_id || null,
+    scheduleIds = selected?.schedule_ids || [],
   ) {
     return {
       requestItemTable,
       requestItemId,
-      scheduleId,
+      scheduleId: scheduleIds[0] || null,
+      scheduleIds,
       receivedPieceLengthMm: actualLength,
       receivedPieceCount: actualCount,
       confirmedAllocations,
@@ -126,13 +127,13 @@ export function LongStockReceivingDialog({
     setError(null)
     startTransition(async () => {
       const result = await previewSingleLengthLongStockReceipt(receiptInput())
-      if (!result.success || !result.data || !result.scheduleId) {
+      if (!result.success || !result.data || !result.scheduleIds?.length) {
         setError(result.error || 'Не удалось проверить фактическую приёмку')
         return
       }
       setAllocation({
         preview: result.data,
-        scheduleId: result.scheduleId,
+        scheduleIds: result.scheduleIds,
         returnFocus,
         values: Object.fromEntries(result.data.allocations.map((row) => [
           `${row.table}:${row.id}`,
@@ -155,7 +156,7 @@ export function LongStockReceivingDialog({
     startTransition(async () => {
       const result = await receiveSingleLengthLongStockDelivery(receiptInput(
         confirmedAllocations,
-        allocation.scheduleId,
+        allocation.scheduleIds,
       ))
       if (!result.success) {
         setError(result.error || 'Не удалось принять материал')

@@ -25,6 +25,18 @@ const manualAllocationMigration = await readFile(
   new URL('../supabase/migrations/20260803130000_supply_receipt_manual_allocation_guard.sql', import.meta.url),
   'utf8',
 )
+const arrivalBatchMigration = await readFile(
+  new URL('../supabase/migrations/20260907120000_material_receiving_arrival_batches.sql', import.meta.url),
+  'utf8',
+)
+const receivingBatches = await readFile(
+  new URL('../src/lib/supply-orders/receiving-batches.ts', import.meta.url),
+  'utf8',
+)
+const ganttActions = await readFile(
+  new URL('../src/app/(protected)/production/gantt/actions.ts', import.meta.url),
+  'utf8',
+)
 const planFactMigration = await readFile(
   new URL('../supabase/migrations/20260818120000_supply_receiving_plan_fact_piece_fields.sql', import.meta.url),
   'utf8',
@@ -224,6 +236,51 @@ assert.match(
   manualAllocationMigration,
   /REVOKE ALL ON FUNCTION public\.fn_receive_supply_order_schedule_v2\([^)]+\) FROM anon, authenticated;[\s\S]*GRANT EXECUTE ON FUNCTION public\.fn_receive_supply_order_schedule_v2\([^)]+\) TO service_role;/,
   'the hardened RPC must remain service-role-only',
+)
+assert.match(
+  supplyOrderActions,
+  /resolved\.scheduleIds\.length > 1[\s\S]*fn_receive_supply_order_schedule_batch_v1[\s\S]*buildMaterialReceiptBatchCalls/,
+  'aggregated technical schedules must use the atomic batch RPC',
+)
+assert.match(
+  arrivalBatchMigration,
+  /ORDER BY schedule\.id[\s\S]*FOR UPDATE OF schedule[\s\S]*set_config\('app\.receiving_batch_mode', 'on', true\)[\s\S]*fn_receive_supply_order_schedule_v2/,
+  'the batch RPC must lock every schedule before reusing the established receiving lifecycle',
+)
+assert.match(
+  arrivalBatchMigration,
+  /status = 'delivered' THEN RAISE EXCEPTION 'Поставка уже принята'[\s\S]*status = 'cancelled' THEN RAISE EXCEPTION 'Поставка отменена'/,
+  'a concurrent repeated receipt must stop after acquiring the locked schedules',
+)
+assert.match(
+  arrivalBatchMigration,
+  /v_active_batch_count > 1[\s\S]*разных рейсов или точек разгрузки[\s\S]*Поставки без рейса должны относиться к одному поставщику/,
+  'one atomic receipt must be restricted to one physical arrival or one unlinked supplier batch',
+)
+assert.match(
+  arrivalBatchMigration,
+  /material_receipt_batch_variance:[\s\S]*v_total_received < v_total_plan[\s\S]*supply_material_receipt_shortage/,
+  'shortage and excess escalation must be calculated once for the aggregated batch',
+)
+assert.match(
+  arrivalBatchMigration,
+  /REVOKE ALL ON FUNCTION public\.fn_receive_supply_order_schedule_batch_v1\(jsonb, uuid\) FROM anon, authenticated;[\s\S]*GRANT EXECUTE ON FUNCTION public\.fn_receive_supply_order_schedule_batch_v1\(jsonb, uuid\) TO service_role;/,
+  'the batch RPC must be callable only by the server service role',
+)
+assert.match(
+  receivingBatches,
+  /trip:\$\{transportSignature\(context\)\}[\s\S]*unlinked:\$\{row\.delivery_date\}:\$\{row\.supplier_id/,
+  'receiving projection must split linked arrivals by trip and stop and unlinked arrivals by supplier',
+)
+assert.match(
+  receivingPage,
+  /Фактическое прибытие:[\s\S]*Время не указано[\s\S]*Акт партии/,
+  'the receiving UI must show transport timing and create an act for one physical batch',
+)
+assert.match(
+  ganttActions,
+  /ganttMaterialIdentityKey\(table, row, unit\)[\s\S]*planned_piece_length_mm:[\s\S]*aggregateGanttMaterialItems\(markers\)/,
+  'production Gantt must aggregate exact schedule fragments while preserving one-piece bar length',
 )
 assert.match(
   supplyOrderActions,

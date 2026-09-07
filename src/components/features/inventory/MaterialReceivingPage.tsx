@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { AlertTriangle, CheckCircle2, ChevronDown, Factory, FileDown, LoaderCircle, PackageCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Clock3, Factory, FileDown, LoaderCircle, PackageCheck, Truck } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MATERIAL_CATEGORY_LABELS } from '@/lib/constants/procurement'
@@ -16,6 +16,7 @@ import {
   receiveSingleLengthLongStockDelivery,
   type MaterialDeliveryAllocationInput,
   type MaterialDeliveryAllocationPreview,
+  type MaterialReceivingArrivalGroup,
   type MaterialReceivingPageData,
   type MaterialReceivingItem,
 } from '@/lib/actions/supply-orders'
@@ -55,22 +56,22 @@ export function MaterialReceivingPage({ data }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [pendingKey, setPendingKey] = useState<string | null>(null)
-  const [downloadingDate, setDownloadingDate] = useState<string | null>(null)
+  const [downloadingBatch, setDownloadingBatch] = useState<string | null>(null)
   const [allocationState, setAllocationState] = useState<AllocationState | null>(null)
   const initialOpenDates = useMemo(
     () => new Set(data.groups.filter((group) => group.is_initially_open).map((group) => group.date)),
     [data.groups],
   )
   const [openDates, setOpenDates] = useState<Set<string>>(initialOpenDates)
-  const draftKey = useMemo(() => data.groups.flatMap((group) => group.items.map((item) => (
+  const draftKey = useMemo(() => data.groups.flatMap((group) => group.arrivals.flatMap((arrival) => arrival.items.map((item) => (
     `${item.key}:${item.planned_quantity}:${item.planned_piece_length_mm || ''}:${item.planned_piece_count || ''}`
-  ))).join('|'), [data.groups])
+  )))).join('|'), [data.groups])
   const defaultDrafts = useMemo<DraftMap>(() => Object.fromEntries(
-    data.groups.flatMap((group) => group.items.map((item) => [item.key, {
+    data.groups.flatMap((group) => group.arrivals.flatMap((arrival) => arrival.items.map((item) => [item.key, {
       quantity: String(item.planned_quantity),
       pieceLength: item.planned_piece_length_mm ? String(item.planned_piece_length_mm) : '',
       pieceCount: item.planned_piece_count ? String(item.planned_piece_count) : '',
-    }])),
+    }]))),
   ), [data.groups])
   const [draftState, setDraftState] = useState(() => ({ key: draftKey, drafts: defaultDrafts }))
   const drafts = draftState.key === draftKey ? draftState.drafts : defaultDrafts
@@ -98,14 +99,18 @@ export function MaterialReceivingPage({ data }: Props) {
     })
   }
 
-  async function downloadReceivingAct(date: string) {
+  async function downloadReceivingAct(arrival: MaterialReceivingArrivalGroup) {
     if (!data.activeFactoryId) {
       toast.error('Не выбран завод для акта приёма')
       return
     }
-    setDownloadingDate(date)
+    setDownloadingBatch(arrival.key)
     try {
-      const query = new URLSearchParams({ date, factory: data.activeFactoryId })
+      const query = new URLSearchParams({
+        date: arrival.date,
+        factory: data.activeFactoryId,
+        batch: arrival.key,
+      })
       const response = await fetch(`/api/inventory/receiving/act?${query.toString()}`, {
         method: 'GET',
         cache: 'no-store',
@@ -119,7 +124,7 @@ export function MaterialReceivingPage({ data }: Props) {
       const objectUrl = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = objectUrl
-      anchor.download = `akt-priema-materiala-${date}.pdf`
+      anchor.download = `akt-priema-materiala-${arrival.date}-${safeFilePart(arrival.transport_trip_name || arrival.key)}.pdf`
       document.body.appendChild(anchor)
       anchor.click()
       anchor.remove()
@@ -128,7 +133,7 @@ export function MaterialReceivingPage({ data }: Props) {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось сформировать акт приёма')
     } finally {
-      setDownloadingDate(null)
+      setDownloadingBatch(null)
     }
   }
 
@@ -163,6 +168,7 @@ export function MaterialReceivingPage({ data }: Props) {
   function receiptInput(item: MaterialReceivingItem, values: ReceiptValues) {
     return {
       schedule_id: item.schedule_id,
+      schedule_ids: item.schedule_ids,
       table: item.table,
       id: item.id,
       delivery_date: item.delivery_date,
@@ -187,6 +193,7 @@ export function MaterialReceivingPage({ data }: Props) {
         requestItemTable: item.table,
         requestItemId: item.id,
         scheduleId: item.schedule_id || undefined,
+        scheduleIds: item.schedule_ids,
         receivedPieceLengthMm: values.pieceLength,
         receivedPieceCount: values.pieceCount,
         confirmedAllocations,
@@ -217,17 +224,18 @@ export function MaterialReceivingPage({ data }: Props) {
         toast.error('Некорректная категория длинномера')
         return
       }
-      let preparedScheduleId: string | null = null
+      let preparedScheduleIds: string[] = []
       let result: { success: boolean; data?: MaterialDeliveryAllocationPreview; error?: string }
       if (values.isBar && isLongStockRequestItemTable(item.table)) {
         const longStockResult = await previewSingleLengthLongStockReceipt({
           requestItemTable: item.table,
           requestItemId: item.id,
           scheduleId: item.schedule_id || undefined,
+          scheduleIds: item.schedule_ids,
           receivedPieceLengthMm: values.pieceLength,
           receivedPieceCount: values.pieceCount,
         })
-        preparedScheduleId = longStockResult.scheduleId || null
+        preparedScheduleIds = longStockResult.scheduleIds || []
         result = longStockResult
       } else {
         result = await previewMaterialDeliveryAllocation(receiptInput(item, values))
@@ -247,8 +255,8 @@ export function MaterialReceivingPage({ data }: Props) {
 
       setAllocationState({
         itemKey: item.key,
-        item: preparedScheduleId
-          ? { ...item, schedule_id: preparedScheduleId }
+        item: preparedScheduleIds.length
+          ? { ...item, schedule_id: preparedScheduleIds[0], schedule_ids: preparedScheduleIds }
           : item,
         receipt: values,
         data: preview,
@@ -281,7 +289,9 @@ export function MaterialReceivingPage({ data }: Props) {
     })
   }
 
-  const totalItems = data.groups.reduce((sum, group) => sum + group.items.length, 0)
+  const totalItems = data.groups.reduce((sum, group) => (
+    sum + group.arrivals.reduce((arrivalSum, arrival) => arrivalSum + arrival.items.length, 0)
+  ), 0)
 
   return (
     <div className="space-y-5">
@@ -326,6 +336,7 @@ export function MaterialReceivingPage({ data }: Props) {
       ) : (
         data.groups.map((group) => {
           const isOpen = openDates.has(group.date)
+          const groupItemCount = group.arrivals.reduce((sum, arrival) => sum + arrival.items.length, 0)
           return (
             <section key={group.date} className="overflow-hidden rounded-xl border border-[#E8ECF0] bg-white">
               <div className="flex items-stretch gap-2 border-b border-[#E8ECF0] bg-[#F8F9FA] p-2 sm:gap-3 sm:px-4 sm:py-3">
@@ -339,29 +350,54 @@ export function MaterialReceivingPage({ data }: Props) {
                     <PackageCheck className="h-5 w-5 shrink-0 text-[#1B3A6B]" />
                     <div className="min-w-0">
                       <div className="font-semibold text-[#1B3A6B]">{formatDate(group.date)}</div>
-                      <div className="text-sm text-[#6B7280]">{group.items.length} позиций</div>
+                      <div className="text-sm text-[#6B7280]">
+                        {group.arrivals.length} {pluralize(group.arrivals.length, 'партия', 'партии', 'партий')} · {groupItemCount} позиций
+                      </div>
                     </div>
                   </div>
                   <ChevronDown className={cn('h-5 w-5 shrink-0 text-[#6B7280] transition-transform', isOpen && 'rotate-180')} />
                 </button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-11 shrink-0 border-[#CBD5E1] bg-white px-3 text-[#1B3A6B] hover:border-[#1B3A6B]/30 hover:bg-[#EFF6FF]"
-                  disabled={downloadingDate !== null}
-                  onClick={() => downloadReceivingAct(group.date)}
-                  aria-label={`Сформировать акт приёма на ${formatDate(group.date)}`}
-                >
-                  {downloadingDate === group.date
-                    ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-                    : <FileDown className="h-4 w-4" aria-hidden="true" />}
-                  <span className="hidden sm:inline">{downloadingDate === group.date ? 'Формирование...' : 'Акт приёма'}</span>
-                  <span className="sm:hidden">PDF</span>
-                </Button>
               </div>
 
               {isOpen && (
-                <div className="overflow-x-auto">
+                <div className="divide-y divide-[#E8ECF0]">
+                  {group.arrivals.map((arrival) => (
+                    <div key={arrival.key}>
+                      <div className="flex flex-col gap-3 bg-[#FBFCFE] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 font-semibold text-[#1B3A6B]">
+                            {arrival.transport_trip_id
+                              ? <Truck className="h-4 w-4 shrink-0" aria-hidden="true" />
+                              : <Clock3 className="h-4 w-4 shrink-0" aria-hidden="true" />}
+                            <span>{formatArrivalTitle(arrival)}</span>
+                            {arrival.transport_trip_name && (
+                              <Badge variant="outline" className="border-[#BFDBFE] bg-[#EFF6FF] text-[#1E40AF]">
+                                Рейс {arrival.transport_trip_name}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="mt-1 text-sm text-[#64748B]">
+                            {arrival.arrived_at
+                              ? `Фактическое прибытие: ${formatDateTime(arrival.arrived_at)}`
+                              : arrival.planned_arrival_at ? 'Ожидается по маршруту рейса' : 'Время не указано'}
+                            {arrival.supplier_names.length > 0 && ` · ${arrival.supplier_names.join(', ')}`}
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-10 shrink-0 self-start border-[#CBD5E1] bg-white px-3 text-[#1B3A6B] hover:border-[#1B3A6B]/30 hover:bg-[#EFF6FF] sm:self-auto"
+                          disabled={downloadingBatch !== null}
+                          onClick={() => downloadReceivingAct(arrival)}
+                          aria-label={`Сформировать акт приёма для партии ${formatArrivalTitle(arrival)}`}
+                        >
+                          {downloadingBatch === arrival.key
+                            ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+                            : <FileDown className="h-4 w-4" aria-hidden="true" />}
+                          {downloadingBatch === arrival.key ? 'Формирование...' : 'Акт партии'}
+                        </Button>
+                      </div>
+                      <div className="overflow-x-auto">
                   <table className="w-full min-w-[1120px] text-left text-sm">
                     <thead className="border-b border-[#E8ECF0] text-xs font-semibold uppercase text-[#64748B]">
                       <tr>
@@ -375,7 +411,7 @@ export function MaterialReceivingPage({ data }: Props) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#E8ECF0]">
-                      {group.items.map((item) => {
+                      {arrival.items.map((item) => {
                         const draft = drafts[item.key] || defaultDrafts[item.key]
                         const pieceLength = Number((draft?.pieceLength || '').replace(',', '.'))
                         const pieceCount = Number((draft?.pieceCount || '').replace(',', '.'))
@@ -416,12 +452,23 @@ export function MaterialReceivingPage({ data }: Props) {
                               )}
                             </td>
                             <td className="px-4 py-3">
-                              <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-medium text-[#1B3A6B] hover:underline">
-                                {item.machine_name}
-                              </Link>
+                              <div className="space-y-1">
+                                {item.machines.map((machine) => (
+                                  <Link
+                                    key={machine.id}
+                                    href={`${ROUTES.SALES_PLAN}/${machine.id}`}
+                                    className="block font-medium text-[#1B3A6B] hover:underline"
+                                  >
+                                    {machine.name}
+                                    {machine.specification_number ? ` · ${machine.specification_number}` : ''}
+                                  </Link>
+                                ))}
+                              </div>
                               <div className="mt-1 text-xs text-[#64748B]">{item.factory_name}</div>
                             </td>
-                            <td className="px-4 py-3 text-[#374151]">{item.supplier_name || 'Не назначен'}</td>
+                            <td className="px-4 py-3 text-[#374151]">
+                              {item.supplier_names.length > 0 ? item.supplier_names.join(', ') : 'Не назначен'}
+                            </td>
                             <td className="px-4 py-3 font-medium text-[#111827] tabular-nums">
                               {formatAmount(item.planned_quantity)} {item.unit}
                               {isBar && item.planned_piece_length_mm !== null && item.planned_piece_count !== null && (
@@ -517,6 +564,9 @@ export function MaterialReceivingPage({ data }: Props) {
                       })}
                     </tbody>
                   </table>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </section>
@@ -606,4 +656,41 @@ function formatDate(value: string) {
     year: 'numeric',
     timeZone: 'UTC',
   }).format(new Date(`${value}T00:00:00Z`))
+}
+
+function formatArrivalTitle(arrival: MaterialReceivingArrivalGroup) {
+  if (!arrival.planned_arrival_at) return `${formatDate(arrival.date)} · Время не указано`
+  return `${formatDate(arrival.date)} в ${formatTime(arrival.planned_arrival_at)} приедет`
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Uzhgorod',
+  }).format(new Date(value))
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Uzhgorod',
+  }).format(new Date(value))
+}
+
+function safeFilePart(value: string) {
+  return value.toLowerCase().replace(/[^a-zа-яё0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'partiya'
+}
+
+function pluralize(value: number, one: string, few: string, many: string) {
+  const remainder100 = value % 100
+  const remainder10 = value % 10
+  if (remainder100 >= 11 && remainder100 <= 14) return many
+  if (remainder10 === 1) return one
+  if (remainder10 >= 2 && remainder10 <= 4) return few
+  return many
 }

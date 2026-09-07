@@ -78,15 +78,20 @@ const sourceItems: MaterialReceivingActSourceItem[] = [
 ]
 
 const data = buildMaterialReceivingActData({
+  batchKey: 'trip:trip-1:stop-1',
   deliveryDate: '2026-08-29',
   generatedAt: '2026-08-27T09:30:00.000Z',
   factoryName: 'Берегово',
+  transportTripName: '2908БЕР',
+  plannedArrivalAt: '2026-08-29T07:00:00.000Z',
+  arrivedAt: null,
   items: sourceItems,
 })
 
 test('receiving act preserves full material data and summarizes destination orders', () => {
   assert.equal(data.deliveryDate, '2026-08-29')
   assert.equal(data.factoryName, 'Берегово')
+  assert.equal(data.transportTripName, '2908БЕР')
   assert.equal(data.items.length, 7)
   assert.equal(data.orders.length, 2)
   assert.equal(data.orders.find((order) => order.name.includes('ЛЕДА.525'))?.itemCount, 6)

@@ -103,6 +103,17 @@ function formatNumber(value: number) {
   return numberFormatter.format(value)
 }
 
+function arrivalMeta(data: MaterialReceivingActData) {
+  const trip = data.transportTripName ? `Рейс ${data.transportTripName}` : 'Без рейса'
+  const planned = data.plannedArrivalAt
+    ? `план ${dateTimeFormatter.format(new Date(data.plannedArrivalAt))}`
+    : 'время не указано'
+  const actual = data.arrivedAt
+    ? ` · факт ${dateTimeFormatter.format(new Date(data.arrivedAt))}`
+    : ''
+  return `${trip} · ${planned}${actual}`
+}
+
 function pluralRu(value: number, one: string, few: string, many: string) {
   const mod100 = Math.abs(value) % 100
   const mod10 = mod100 % 10
@@ -186,9 +197,9 @@ function DocumentHeader({ data, deliveryDate }: { data: MaterialReceivingActData
 
       <View style={styles.metaGrid} wrap={false}>
         <View style={styles.metaCard}>
-          <Text style={styles.metaLabel}>Дата поставки</Text>
+          <Text style={styles.metaLabel}>Физическая партия</Text>
           <Text style={styles.metaValue}>{deliveryDate}</Text>
-          <Text style={styles.metaSecondary}>Все позиции сгруппированы по этой дате</Text>
+          <Text style={styles.metaSecondary}>{arrivalMeta(data)}</Text>
         </View>
         <View style={styles.metaCard}>
           <Text style={styles.metaLabel}>Завод</Text>
@@ -243,7 +254,11 @@ function OrdersSummary({ data, deliveryDate, orders, showClosing }: {
         </View>
         {showClosing && (
           <View style={styles.summaryBottom}>
-            <Text style={styles.summaryDate}>Дата поставки: {deliveryDate}</Text>
+            <Text style={styles.summaryDate}>
+              {data.plannedArrivalAt
+                ? `Плановое прибытие: ${dateTimeFormatter.format(new Date(data.plannedArrivalAt))}`
+                : `Дата поставки: ${deliveryDate} · время не указано`}
+            </Text>
             <Text style={styles.body}>Сформировано: {dateTimeFormatter.format(new Date(data.generatedAt))}</Text>
           </View>
         )}

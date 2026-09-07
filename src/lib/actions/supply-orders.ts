@@ -24,6 +24,16 @@ import { normalizeSingleLengthReceipt } from '@/lib/supply-orders/single-length-
 import { calculateLongStockWeightForLength } from '@/lib/long-stock-material-weight'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import {
+  buildMaterialReceiptBatchCalls,
+  projectMaterialReceivingGroups,
+  type MaterialReceiptBatchAllocation,
+  type MaterialReceivingItem,
+  type MaterialReceivingPageData,
+  type MaterialReceivingProjectionRow,
+  type ReceivingTransportContext,
+} from '@/lib/supply-orders/receiving-batches'
+import { transportTripDisplayName } from '@/lib/transport/trip-display-name'
+import {
   isLongStockRequestItemTable,
   projectPlannedLongStockSchedulesToPurchasePlan,
   summarizeLongStockPurchaseBars,
@@ -342,46 +352,14 @@ export type MaterialReceivingFactory = {
   name: string
 }
 
-export type MaterialReceivingItem = {
-  key: string
-  schedule_id: string | null
-  table: string
-  id: string
-  request_id: string
-  machine_id: string
-  machine_name: string
-  machine_specification_number: string | null
-  factory_id: string | null
-  factory_name: string
-  delivery_date: string
-  planned_quantity: number
-  unit: string
-  supplier_id: string | null
-  supplier_name: string | null
-  category: MaterialCategory
-  is_whole_bar: boolean
-  item_name: string
-  material_id: string | null
-  material_variant_id: string | null
-  characteristics: SupplyOrderAggregateCharacteristic[]
-  weight_kg: number | null
-  is_virtual_schedule: boolean
-  planned_piece_length_mm: number | null
-  planned_piece_count: number | null
-  purchase_components: LongStockPurchasePlan['components']
-}
-
-export type MaterialReceivingDateGroup = {
-  date: string
-  is_initially_open: boolean
-  items: MaterialReceivingItem[]
-}
-
-export type MaterialReceivingPageData = {
-  factories: MaterialReceivingFactory[]
-  activeFactoryId: string | null
-  groups: MaterialReceivingDateGroup[]
-}
+export type {
+  MaterialReceivingArrivalGroup,
+  MaterialReceivingDateGroup,
+  MaterialReceivingItem,
+  MaterialReceivingMachine,
+  MaterialReceivingPageData,
+  MaterialReceivingSource,
+} from '@/lib/supply-orders/receiving-batches'
 
 export type MaterialDeliveryAllocationInput = {
   mode: 'quantity'
@@ -438,6 +416,7 @@ export type MaterialDeliveryAllocationPreview = {
 
 type MaterialDeliveryInput = {
   schedule_id?: string | null
+  schedule_ids?: string[]
   table?: string
   id?: string
   delivery_date?: string
@@ -452,6 +431,7 @@ export type SingleLengthLongStockReceiptInput = {
   requestItemTable: LongStockRequestItemTable
   requestItemId: string
   scheduleId?: string | null
+  scheduleIds?: string[]
   receivedPieceLengthMm: number
   receivedPieceCount: number
   confirmedAllocations?: MaterialDeliveryAllocationInput[]
@@ -462,6 +442,7 @@ export type SingleLengthLongStockReceiptPreviewResult = {
   data?: MaterialDeliveryAllocationPreview
   error?: string
   scheduleId?: string
+  scheduleIds?: string[]
 }
 
 type SupplyOrderAggregateInputItem = RawOrderItem & {
@@ -2614,42 +2595,55 @@ async function loadCuttingDateMap(db: LooseDb, machineIds: string[]) {
 async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput) {
   let sourceTable = input.table || ''
   let sourceId = input.id || ''
-  const scheduleId = input.schedule_id || null
+  const requestedScheduleIds = Array.from(new Set([
+    ...(input.schedule_ids || []),
+    ...(input.schedule_id ? [input.schedule_id] : []),
+  ].filter(Boolean)))
+  const scheduleId = requestedScheduleIds[0] || null
   let scheduleQuantity: number | null = null
   let plannedPieceLengthMm: number | null = null
   let plannedPieceCount: number | null = null
+  let selectedSchedules: ReceivingScheduleRow[] = []
 
-  if (scheduleId) {
+  if (requestedScheduleIds.length > 0) {
     const { data, error } = await db
       .from('supply_order_delivery_schedules')
-      .select('request_item_table, request_item_id, status, quantity, planned_piece_length_mm, planned_piece_count')
-      .eq('id', scheduleId)
-      .maybeSingle()
+      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at')
+      .in('id', requestedScheduleIds)
     if (error) throw new Error(error.message || 'Не удалось загрузить поставку')
-    const schedule = data as {
-      request_item_table?: string
-      request_item_id?: string
-      status?: string
-      quantity?: number
-      planned_piece_length_mm?: number | null
-      planned_piece_count?: number | null
-    } | null
-    if (!schedule?.request_item_table || !schedule.request_item_id) throw new Error('Поставка не найдена')
-    if ((input.table && input.table !== schedule.request_item_table)
-      || (input.id && input.id !== schedule.request_item_id)) {
-      throw new Error('Строка графика не относится к указанной позиции закупки')
+    const schedulesById = new Map(((data || []) as ReceivingScheduleRow[]).map((schedule) => [schedule.id, schedule]))
+    selectedSchedules = requestedScheduleIds.flatMap((id) => {
+      const schedule = schedulesById.get(id)
+      return schedule ? [schedule] : []
+    })
+    if (selectedSchedules.length !== requestedScheduleIds.length) throw new Error('Одна из строк поставки не найдена')
+    for (const schedule of selectedSchedules) {
+      if (schedule.status === 'delivered') throw new Error('Поставка уже принята')
+      if (schedule.status === 'cancelled') throw new Error('Поставка отменена')
     }
-    if (schedule.status === 'delivered') throw new Error('Поставка уже принята')
-    if (schedule.status === 'cancelled') throw new Error('Поставка отменена')
-    sourceTable = schedule.request_item_table
-    sourceId = schedule.request_item_id
-    scheduleQuantity = Number(schedule.quantity || 0)
-    plannedPieceLengthMm = schedule.planned_piece_length_mm === null || schedule.planned_piece_length_mm === undefined
+    const firstSchedule = selectedSchedules.find((schedule) => (
+      (!input.table || schedule.request_item_table === input.table)
+      && (!input.id || schedule.request_item_id === input.id)
+    )) || selectedSchedules[0]
+    if ((input.table && firstSchedule.request_item_table !== input.table)
+      || (input.id && firstSchedule.request_item_id !== input.id)) {
+      throw new Error('Строки графика не относятся к указанной позиции закупки')
+    }
+    sourceTable = firstSchedule.request_item_table
+    sourceId = firstSchedule.request_item_id
+    scheduleQuantity = selectedSchedules.reduce((sum, schedule) => sum + Number(schedule.quantity || 0), 0)
+    const plannedLengths = Array.from(new Set(selectedSchedules.map((schedule) => (
+      schedule.planned_piece_length_mm === null || schedule.planned_piece_length_mm === undefined
+        ? null
+        : Number(schedule.planned_piece_length_mm)
+    ))))
+    if (plannedLengths.length > 1) throw new Error('В одну приёмку попали разные плановые длины прутков')
+    plannedPieceLengthMm = plannedLengths[0] === null || plannedLengths[0] === undefined
       ? null
-      : Number(schedule.planned_piece_length_mm)
-    plannedPieceCount = schedule.planned_piece_count === null || schedule.planned_piece_count === undefined
+      : Number(plannedLengths[0])
+    plannedPieceCount = plannedPieceLengthMm === null
       ? null
-      : Number(schedule.planned_piece_count)
+      : selectedSchedules.reduce((sum, schedule) => sum + Number(schedule.planned_piece_count || 0), 0)
   }
 
   assertOrderTable(sourceTable)
@@ -2657,21 +2651,35 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
   const sourceItem = allOpenItems.find((item) => item.table === sourceTable && item.id === sourceId)
   if (!sourceItem) throw new Error('Не удалось определить исходную позицию поставки')
   assertApprovedLongStockPurchasePlan(sourceItem)
-  if (scheduleId && sourceItem.long_stock_purchase_plan) {
-    const projectedSchedule = projectSchedulesToPurchasePlans(
-      [sourceItem],
-      await loadReceivingSchedules(db, [sourceItem]),
-    ).find((schedule) => schedule.id === scheduleId)
-    if (!projectedSchedule) {
+  const sourceItems = requestedScheduleIds.length > 0
+    ? Array.from(new Map(selectedSchedules.map((schedule) => {
+        const item = allOpenItems.find((candidate) => (
+          candidate.table === schedule.request_item_table && candidate.id === schedule.request_item_id
+        ))
+        if (!item) throw new Error('Не удалось определить одну из исходных позиций поставки')
+        return [itemKey(item), item] as const
+      })).values())
+    : [sourceItem]
+  const sourceIdentity = getAggregateIdentityKey(sourceItem.table, sourceItem.raw, sourceItem)
+  for (const item of sourceItems) {
+    assertApprovedLongStockPurchasePlan(item)
+    if (item.factory_id !== sourceItem.factory_id
+      || item.table !== sourceItem.table
+      || item.material_id !== sourceItem.material_id
+      || item.material_variant_id !== sourceItem.material_variant_id
+      || item.unit !== sourceItem.unit
+      || getAggregateIdentityKey(item.table, item.raw, item) !== sourceIdentity) {
+      throw new Error('В одну приёмку попали разные материалы или заводы')
+    }
+  }
+  if (requestedScheduleIds.length > 0 && sourceItems.some((item) => item.long_stock_purchase_plan)) {
+    const projectedIds = new Set(projectSchedulesToPurchasePlans(
+      sourceItems,
+      await loadReceivingSchedules(db, sourceItems),
+    ).map((schedule) => schedule.id))
+    if (requestedScheduleIds.some((id) => !projectedIds.has(id))) {
       throw new Error('Эта строка превышает утверждённую карту закупки и не относится к поставке')
     }
-    scheduleQuantity = Number(projectedSchedule.quantity || 0)
-    plannedPieceLengthMm = projectedSchedule.planned_piece_length_mm === null
-      ? null
-      : Number(projectedSchedule.planned_piece_length_mm)
-    plannedPieceCount = projectedSchedule.planned_piece_count === null
-      ? null
-      : Number(projectedSchedule.planned_piece_count)
   }
   let plannedQuantity = scheduleQuantity
   if (plannedQuantity === null) {
@@ -2691,7 +2699,10 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
   }
   return {
     scheduleId,
+    scheduleIds: requestedScheduleIds,
+    selectedSchedules,
     sourceItem,
+    sourceItemKeys: new Set(sourceItems.map(itemKey)),
     allOpenItems,
     plannedQuantity,
     plannedPieceLengthMm,
@@ -2702,7 +2713,8 @@ async function resolveReceivingSource(db: LooseDb, input: MaterialDeliveryInput)
 async function buildMaterialAllocationPreview(
   db: LooseDb,
   input: MaterialDeliveryInput,
-  scheduleId: string | null,
+  selectedScheduleIds: Set<string>,
+  sourceItemKeys: Set<string>,
   sourceItem: SupplyOrderAggregateInputItem,
   allOpenItems: SupplyOrderAggregateInputItem[],
   plannedQuantity: number,
@@ -2732,7 +2744,6 @@ async function buildMaterialAllocationPreview(
     schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
   }
   const cuttingDates = await loadCuttingDateMap(db, matchingItems.map((item) => item.machine_id))
-  const sourceKey = `${sourceItem.table}:${sourceItem.id}`
   const candidates = matchingItems.map((item) => {
     const key = `${item.table}:${item.id}`
     const itemSchedules = schedulesByItem.get(key) || []
@@ -2747,9 +2758,9 @@ async function buildMaterialAllocationPreview(
       deliveredQuantity: delivered,
     })
     const hasOtherPlannedSchedule = itemSchedules.some((schedule) => (
-      schedule.status === 'planned' && schedule.id !== scheduleId
+      schedule.status === 'planned' && !selectedScheduleIds.has(schedule.id)
     ))
-    const isSource = key === sourceKey
+    const isSource = sourceItemKeys.has(key)
     const unavailableReason = !isSource && hasOtherPlannedSchedule
       ? 'Для машины уже запланирована отдельная поставка'
       : null
@@ -2868,6 +2879,86 @@ async function loadSupplierNameMap(db: LooseDb, supplierIds: string[]) {
   return new Map(((data || []) as { id: string; name: string }[]).map((supplier) => [supplier.id, supplier.name]))
 }
 
+async function loadReceivingTransportContexts(
+  db: LooseDb,
+  scheduleIds: string[],
+): Promise<ReceivingTransportContext[]> {
+  const uniqueScheduleIds = Array.from(new Set(scheduleIds.filter(Boolean)))
+  if (uniqueScheduleIds.length === 0) return []
+
+  const { data: linkData, error: linkError } = await db
+    .from('transport_trip_need_links')
+    .select('need_id, transport_order_id, delivery_stop_id')
+    .eq('need_source', 'supply_schedule')
+    .is('released_at', null)
+    .in('need_id', uniqueScheduleIds)
+  if (linkError) throw new Error(linkError.message || 'Не удалось загрузить привязки поставок к транспорту')
+
+  const links = (linkData || []) as Array<{
+    need_id: string
+    transport_order_id: string
+    delivery_stop_id: string | null
+  }>
+  const tripIds = Array.from(new Set(links.map((link) => link.transport_order_id)))
+  if (tripIds.length === 0) return []
+
+  const [{ data: tripData, error: tripError }, { data: stopData, error: stopError }] = await Promise.all([
+    db
+      .from('machine_outsourcing_transport_orders')
+      .select('id, status, scheduled_date')
+      .in('id', tripIds),
+    db
+      .from('transport_trip_stops')
+      .select('id, transport_order_id, stop_kind, city, point_label, sequence_no, planned_arrival_at, arrived_at')
+      .in('transport_order_id', tripIds)
+      .order('sequence_no', { ascending: true }),
+  ])
+  if (tripError) throw new Error(tripError.message || 'Не удалось загрузить рейсы поставок')
+  if (stopError) throw new Error(stopError.message || 'Не удалось загрузить время прибытия поставок')
+
+  const trips = (tripData || []) as Array<{
+    id: string
+    status: string
+    scheduled_date: string | null
+  }>
+  const activeTrips = new Map(trips
+    .filter((trip) => trip.status !== 'cancelled')
+    .map((trip) => [trip.id, trip]))
+  const stops = (stopData || []) as Array<{
+    id: string
+    transport_order_id: string
+    stop_kind: string
+    city: string | null
+    point_label: string | null
+    sequence_no: number
+    planned_arrival_at: string | null
+    arrived_at: string | null
+  }>
+  const stopsByTrip = new Map<string, typeof stops>()
+  for (const stop of stops) {
+    stopsByTrip.set(stop.transport_order_id, [...(stopsByTrip.get(stop.transport_order_id) || []), stop])
+  }
+  const stopsById = new Map(stops.map((stop) => [stop.id, stop]))
+
+  return links.flatMap((link): ReceivingTransportContext[] => {
+    const trip = activeTrips.get(link.transport_order_id)
+    if (!trip) return []
+    const tripStops = stopsByTrip.get(trip.id) || []
+    const deliveryStop = link.delivery_stop_id ? stopsById.get(link.delivery_stop_id) : null
+    return [{
+      schedule_id: link.need_id,
+      trip_id: trip.id,
+      delivery_stop_id: link.delivery_stop_id,
+      trip_name: transportTripDisplayName({
+        scheduled_date: trip.scheduled_date,
+        stops: tripStops,
+      }),
+      planned_arrival_at: deliveryStop?.planned_arrival_at || null,
+      arrived_at: deliveryStop?.arrived_at || null,
+    }]
+  })
+}
+
 async function loadReceivingSchedules(db: LooseDb, items: Array<Pick<RawOrderItem, 'table' | 'id'>>) {
   const itemIds = Array.from(new Set(items.map((item) => item.id)))
   if (itemIds.length === 0) return []
@@ -2893,10 +2984,11 @@ function makeReceivingItem(
   schedule: ReceivingScheduleRow | null,
   deliveryDate: string,
   plannedQuantity: number,
-): MaterialReceivingItem {
+): MaterialReceivingProjectionRow {
   const supplierId = schedule?.supplier_id || item.supplier_id
   return {
     key: schedule?.id || `${item.table}:${item.id}:${deliveryDate}`,
+    aggregate_identity: getAggregateIdentityKey(item.table, item.raw, item),
     schedule_id: schedule?.id || null,
     table: item.table,
     id: item.id,
@@ -2955,7 +3047,7 @@ export async function getLongStockReceivingOptions(input: {
       requiredQuantity: item.to_order,
       schedules: projectedSchedules,
     }]).get(itemKey(item)) || 0
-    const options = openSchedules.length > 0
+    const optionRows = openSchedules.length > 0
       ? openSchedules.map((schedule) => makeReceivingItem(
         item,
         factoryName,
@@ -2972,6 +3064,9 @@ export async function getLongStockReceivingOptions(input: {
         effectiveSupplyDeliveryDate(item, item.planned_material_date) || todayDateOnly(),
         outstandingQuantity,
       )].filter((option) => option.planned_quantity > 0)
+    const options = projectMaterialReceivingGroups(optionRows, [])
+      .flatMap((group) => group.arrivals)
+      .flatMap((arrival) => arrival.items)
     if (options.length === 0) throw new Error('По этой позиции не осталось непринятого метража')
     return { success: true, data: options }
   } catch (error) {
@@ -3023,7 +3118,7 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
       ...projectedSchedules.map((schedule) => schedule.supplier_id).filter(Boolean),
     ] as string[]
     const supplierNameMap = await loadSupplierNameMap(db, supplierIds)
-    const receivingItems: MaterialReceivingItem[] = []
+    const receivingItems: MaterialReceivingProjectionRow[] = []
     const virtualReceivingQuantities = projectAggregateVirtualReceivingQuantities(items.map((item) => ({
       key: itemKey(item),
       aggregateKey: `${factoryKey(item.factory_id)}|${plannedDateKey(item.planned_material_date)}|${getAggregateIdentityKey(item.table, item.raw, item)}`,
@@ -3064,24 +3159,11 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
       ))
     }
 
-    const byDate = new Map<string, MaterialReceivingItem[]>()
-    for (const item of receivingItems) {
-      byDate.set(item.delivery_date, [...(byDate.get(item.delivery_date) || []), item])
-    }
-
-    const groups = Array.from(byDate.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, rows], index) => ({
-        date,
-        is_initially_open: index === 0,
-        items: rows.sort((a, b) => {
-          const byCategory = a.category.localeCompare(b.category)
-          if (byCategory !== 0) return byCategory
-          const byMaterial = a.item_name.localeCompare(b.item_name, 'ru')
-          if (byMaterial !== 0) return byMaterial
-          return a.machine_name.localeCompare(b.machine_name, 'ru')
-        }),
-      }))
+    const transportContexts = await loadReceivingTransportContexts(
+      db,
+      receivingItems.map((item) => item.schedule_id).filter((id): id is string => Boolean(id)),
+    )
+    const groups = projectMaterialReceivingGroups(receivingItems, transportContexts)
 
     return { data: { factories, activeFactoryId, groups }, error: null }
   } catch (error) {
@@ -3194,7 +3276,8 @@ export async function previewMaterialDeliveryAllocation(input: MaterialDeliveryI
       throw new Error('Введите фактическое количество прихода')
     }
     const {
-      scheduleId,
+      scheduleIds,
+      sourceItemKeys,
       sourceItem,
       allOpenItems,
       plannedQuantity,
@@ -3206,7 +3289,8 @@ export async function previewMaterialDeliveryAllocation(input: MaterialDeliveryI
     const data = await buildMaterialAllocationPreview(
       db,
       input,
-      scheduleId,
+      new Set(scheduleIds),
+      sourceItemKeys,
       sourceItem,
       allOpenItems,
       plannedQuantity,
@@ -3234,8 +3318,11 @@ export async function previewSingleLengthLongStockReceipt(
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Некорректные параметры хлыста' }
   }
-  let scheduleId = input.scheduleId || null
-  if (!scheduleId) {
+  let scheduleIds = Array.from(new Set([
+    ...(input.scheduleIds || []),
+    ...(input.scheduleId ? [input.scheduleId] : []),
+  ]))
+  if (scheduleIds.length === 0) {
     try {
       const { db, userId } = await requireReceivingAccess('manage')
       const items = await loadAggregateInputItems(db)
@@ -3265,7 +3352,7 @@ export async function previewSingleLengthLongStockReceipt(
       }
 
       if (existingSchedule) {
-        scheduleId = existingSchedule.id
+        scheduleIds = [existingSchedule.id]
       } else {
         const deliveryDate = assertDateOrNull(
           effectiveSupplyDeliveryDate(item, item.planned_material_date),
@@ -3282,8 +3369,9 @@ export async function previewSingleLengthLongStockReceipt(
           },
         )
         if (error) throw new Error(error.message || 'Не удалось подготовить строку поставки')
-        scheduleId = typeof data === 'string' ? data : null
+        const scheduleId = typeof data === 'string' ? data : null
         if (!scheduleId) throw new Error('Не удалось определить строку поставки')
+        scheduleIds = [scheduleId]
       }
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Не удалось подготовить поставку' }
@@ -3291,14 +3379,15 @@ export async function previewSingleLengthLongStockReceipt(
   }
 
   const result = await previewMaterialDeliveryAllocation({
-    schedule_id: scheduleId,
+    schedule_id: scheduleIds[0] || null,
+    schedule_ids: scheduleIds,
     table: input.requestItemTable,
     id: input.requestItemId,
     received_quantity: receipt.receivedQuantity,
     piece_length_mm: receipt.pieceLengthMm,
     piece_count: receipt.pieceCount,
   })
-  return { ...result, scheduleId }
+  return { ...result, scheduleId: scheduleIds[0], scheduleIds }
 }
 
 export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
@@ -3316,7 +3405,8 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
     const preview = await buildMaterialAllocationPreview(
       db,
       input,
-      resolved.scheduleId,
+      new Set(resolved.scheduleIds),
+      resolved.sourceItemKeys,
       resolved.sourceItem,
       resolved.allOpenItems,
       resolved.plannedQuantity,
@@ -3390,14 +3480,32 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
       createdScheduleId = scheduleId
     }
 
-    const { error } = await receivingRpcDb.rpc('fn_receive_supply_order_schedule_v2', {
-      p_schedule_id: scheduleId,
-      p_performed_by: userId,
-      p_received_quantity: preview.received_quantity,
-      p_allocations: allocations,
-      p_received_piece_length_mm: preview.piece_length_mm,
-      p_received_piece_count: preview.piece_count,
-    })
+    const { error } = resolved.scheduleIds.length > 1
+      ? await receivingRpcDb.rpc('fn_receive_supply_order_schedule_batch_v1', {
+          p_receipts: buildMaterialReceiptBatchCalls({
+            schedules: resolved.selectedSchedules.map((schedule) => ({
+              id: schedule.id,
+              quantity: Number(schedule.quantity || 0),
+              planned_piece_count: schedule.planned_piece_count === null
+                ? null
+                : Number(schedule.planned_piece_count),
+              created_at: schedule.created_at,
+            })),
+            received_quantity: preview.received_quantity,
+            received_piece_length_mm: preview.piece_length_mm,
+            received_piece_count: preview.piece_count,
+            allocations: allocations satisfies MaterialReceiptBatchAllocation[],
+          }),
+          p_performed_by: userId,
+        })
+      : await receivingRpcDb.rpc('fn_receive_supply_order_schedule_v2', {
+          p_schedule_id: scheduleId,
+          p_performed_by: userId,
+          p_received_quantity: preview.received_quantity,
+          p_allocations: allocations,
+          p_received_piece_length_mm: preview.piece_length_mm,
+          p_received_piece_count: preview.piece_count,
+        })
 
     if (error) {
       if (createdScheduleId) {
@@ -3452,6 +3560,7 @@ export async function receiveSingleLengthLongStockDelivery(input: SingleLengthLo
   }
   return receiveMaterialDelivery({
     schedule_id: input.scheduleId || null,
+    schedule_ids: input.scheduleIds,
     table: input.requestItemTable,
     id: input.requestItemId,
     received_quantity: receipt.receivedQuantity,

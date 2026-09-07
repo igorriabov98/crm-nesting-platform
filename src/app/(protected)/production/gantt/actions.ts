@@ -9,6 +9,7 @@ import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { loadVrbMeshStatuses, type VrbMeshStatus } from '@/lib/vrb/status'
+import { aggregateGanttMaterialItems } from '@/lib/production/gantt-material-items'
 import type { StageType } from '@/lib/types'
 
 export type GanttStageStatus = 'not_planned' | 'active' | 'completed' | 'overdue'
@@ -52,6 +53,10 @@ export interface GanttMaterialItem {
   price_per_unit: number | null
   comment: string | null
   source?: 'legacy_supply' | 'supply_order'
+  aggregation_key?: string | null
+  planned_piece_length_mm?: number | null
+  source_ids?: string[]
+  technical_position_count?: number
 }
 
 export interface GanttMachine {
@@ -171,6 +176,7 @@ type GanttSupplyOrderItem = {
   supplier_id: string | null
   planned_delivery_date: string | null
   order_status: string
+  aggregation_key: string
 }
 
 type GanttScheduleRow = {
@@ -184,6 +190,8 @@ type GanttScheduleRow = {
   status: 'planned' | 'delivered' | string
   received_quantity: number | null
   delivered_at: string | null
+  planned_piece_length_mm: number | null
+  received_piece_length_mm: number | null
 }
 type GanttSteelTypeRow = {
   id: string
@@ -201,6 +209,38 @@ const GANTT_ORDER_TABLES = [
   'request_mesh',
   'request_chain_cord',
 ]
+
+const GANTT_IDENTITY_FIELDS: Record<string, string[]> = {
+  request_sheet_metal: ['material_name', 'material_grade', 'steel_type_id', 'thickness_mm', 'sheet_size'],
+  request_round_tube: ['material_name', 'piece_count'],
+  request_circle: ['steel_grade', 'steel_type_id', 'diameter_mm', 'is_calibrated'],
+  request_pipe: ['pipe_type', 'steel_type_id', 'size', 'wall_thickness_mm', 'diameter_mm'],
+  request_knives: ['knife_type', 'steel_grade', 'steel_type_id', 'knife_bevel_count', 'width_mm', 'height_mm'],
+  request_components: ['component_name', 'specification', 'diameter_mm', 'unit'],
+  request_paint: ['paint_type', 'ral_code', 'finish'],
+  request_mesh: ['description', 'length_mm', 'width_mm'],
+  request_chain_cord: ['item_type', 'parameters'],
+}
+
+function ganttIdentityValue(value: unknown) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'boolean') return value ? 'да' : 'нет'
+  return String(value).trim()
+}
+
+function ganttMaterialIdentityKey(table: string, row: GanttRequestItemRow, unit: string) {
+  const base = [
+    table,
+    row.material_id || row.materials?.id || row.material_name || row.materials?.name || '',
+    unit,
+  ]
+  const variantId = ganttIdentityValue(row.material_variant_id)
+  if (variantId) return [...base, `variant:${variantId}`].join('|')
+  return [
+    ...base,
+    ...(GANTT_IDENTITY_FIELDS[table] || []).map((field) => `${field}:${ganttIdentityValue(row[field])}`),
+  ].join('|')
+}
 
 function getStageTimelineStart(stage: RawGanttStage) {
   if (stage.date_start) return stage.date_start
@@ -465,7 +505,7 @@ async function loadGanttSchedules(db: LooseGanttDb, items: GanttSupplyOrderItem[
   const rows = await Promise.all(Array.from(byTable.entries()).map(async ([table, ids]) => {
     const { data, error } = await db
       .from('supply_order_delivery_schedules')
-      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, received_quantity, delivered_at')
+      .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, received_quantity, delivered_at, planned_piece_length_mm, received_piece_length_mm')
       .eq('request_item_table', table)
       .in('request_item_id', ids)
       .neq('status', 'cancelled')
@@ -538,6 +578,7 @@ async function loadSupplyOrderMaterialMarkers(db: LooseGanttDb, machines: Select
       const reserved = ganttReservedQuantity(table, row)
       const quantity = Math.max(requested - reserved, 0)
       const orderStatus = row.order_status || 'pending'
+      const unit = ganttPrimaryUnit(table, row)
       items.push({
         table,
         id: row.id,
@@ -545,10 +586,11 @@ async function loadSupplyOrderMaterialMarkers(db: LooseGanttDb, machines: Select
         machine_id: machineId,
         nomenclature: ganttItemName(table, row, ganttNameFallback(table, row), steelTypeNames),
         quantity,
-        unit: ganttPrimaryUnit(table, row),
+        unit,
         supplier_id: row.supplier_id || null,
         planned_delivery_date: row.custom_delivery_date || machineDateMap.get(machineId) || null,
         order_status: orderStatus,
+        aggregation_key: ganttMaterialIdentityKey(table, row, unit),
       })
     }
   }
@@ -584,6 +626,16 @@ async function loadSupplyOrderMaterialMarkers(db: LooseGanttDb, machines: Select
           price_per_unit: null,
           comment: 'График снабжения',
           source: 'supply_order',
+          aggregation_key: item.aggregation_key,
+          planned_piece_length_mm: (isDelivered
+            ? schedule.received_piece_length_mm ?? schedule.planned_piece_length_mm
+            : schedule.planned_piece_length_mm) === null
+            ? null
+            : Number(isDelivered
+              ? schedule.received_piece_length_mm ?? schedule.planned_piece_length_mm
+              : schedule.planned_piece_length_mm),
+          source_ids: [`supply-order-schedule:${schedule.id}`],
+          technical_position_count: 1,
         }
         result.set(item.machine_id, [...(result.get(item.machine_id) || []), marker])
       }
@@ -605,10 +657,17 @@ async function loadSupplyOrderMaterialMarkers(db: LooseGanttDb, machines: Select
         price_per_unit: null,
         comment: 'Позиция снабжения',
         source: 'supply_order',
+        aggregation_key: item.aggregation_key,
+        planned_piece_length_mm: null,
+        source_ids: [`supply-order:${item.table}:${item.id}`],
+        technical_position_count: 1,
       },
     ])
   }
 
+  for (const [machineId, markers] of result) {
+    result.set(machineId, aggregateGanttMaterialItems(markers))
+  }
   return result
 }
 
