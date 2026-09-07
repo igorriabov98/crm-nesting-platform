@@ -1,0 +1,164 @@
+name: Restore False Long Stock Receipt Plan
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_item_id:
+        description: Request item UUID whose latest invalid receipt-invalidated plan must be checked.
+        type: string
+        required: true
+      actor_id:
+        description: Optional CRM user UUID. Defaults to the user who invalidated the version.
+        type: string
+        required: false
+      apply:
+        description: Restore only when the mandatory dry-run returns eligible=true.
+        type: boolean
+        default: false
+      confirm:
+        description: Type report-false-receipt-plan for dry-run or restore-false-receipt-plan to apply.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restore-false-long-stock-receipt-plan-production
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    name: guarded production restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      REQUEST_ITEM_ID: ${{ inputs.request_item_id }}
+      ACTOR_ID: ${{ inputs.actor_id }}
+      APPLY_RESTORE: ${{ inputs.apply }}
+      CONFIRM_RESTORE: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate protected invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = "main"
+          test -n "${SUPABASE_DB_URL}"
+          test -n "${REQUEST_ITEM_ID}"
+          if [[ "${APPLY_RESTORE}" == "true" ]]; then
+            test "${CONFIRM_RESTORE}" = "restore-false-receipt-plan"
+          else
+            test "${CONFIRM_RESTORE}" = "report-false-receipt-plan"
+          fi
+          echo "restore workflow SHA=${GITHUB_SHA}"
+
+      - name: Install database client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client jq
+
+      - name: Resolve exact invalidated version
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$({
+            psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 -At -F '|' \
+              -v request_item_id="${REQUEST_ITEM_ID}" \
+              -v actor_id="${ACTOR_ID}" <<'SQL'
+          with target as (
+            select
+              version.id as version_id,
+              coalesce(nullif(:'actor_id', '')::uuid, version.invalidated_by) as actor_id
+            from public.long_stock_cutting_plan_items item
+            join public.long_stock_cutting_plan_versions version
+              on version.plan_id = item.plan_id
+            where item.request_item_id = :'request_item_id'::uuid
+              and version.status = 'invalid'
+              and version.invalidation_receipt_schedule_id is not null
+              and version.invalidation_inventory_transfer_id is null
+              and version.invalidation_department_request_id is null
+              and version.invalidation_dependency_id is null
+            order by version.version_number desc, version.created_at desc
+            limit 1
+          )
+          select version_id::text || '|' || actor_id::text
+          from target
+          where actor_id is not null;
+          SQL
+          } | tail -n 1)"
+          test -n "${target}"
+          IFS='|' read -r version_id actor_id <<<"${target}"
+          test -n "${version_id}"
+          test -n "${actor_id}"
+          echo "version_id=${version_id}" >> "${GITHUB_OUTPUT}"
+          echo "actor_id=${actor_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Mandatory read-only eligibility report
+        id: dry_run
+        shell: bash
+        env:
+          VERSION_ID: ${{ steps.target.outputs.version_id }}
+          RESOLVED_ACTOR_ID: ${{ steps.target.outputs.actor_id }}
+        run: |
+          set -euo pipefail
+          report_path="${RUNNER_TEMP}/false-receipt-plan-dry-run.json"
+          psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 -At \
+            -v version_id="${VERSION_ID}" \
+            -v actor_id="${RESOLVED_ACTOR_ID}" <<'SQL' | tee "${report_path}"
+          select jsonb_pretty(
+            public.fn_restore_false_receipt_invalidated_long_stock_plan_v1(
+              :'version_id'::uuid,
+              :'actor_id'::uuid,
+              true
+            )
+          );
+          SQL
+          jq -e 'type == "object"' "${report_path}" >/dev/null
+          eligible="$(jq -r '.eligible == true' "${report_path}")"
+          echo "eligible=${eligible}" >> "${GITHUB_OUTPUT}"
+          {
+            echo '### False receipt plan dry-run'
+            echo
+            echo "- Version: \`${VERSION_ID}\`"
+            echo "- Eligible: \`${eligible}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Reject ineligible mutation
+        if: ${{ inputs.apply == true && steps.dry_run.outputs.eligible != 'true' }}
+        run: |
+          echo 'Dry-run returned eligible=false; production data was not changed.' >&2
+          exit 1
+
+      - name: Restore eligible version atomically
+        if: ${{ inputs.apply == true && steps.dry_run.outputs.eligible == 'true' }}
+        shell: bash
+        env:
+          VERSION_ID: ${{ steps.target.outputs.version_id }}
+          RESOLVED_ACTOR_ID: ${{ steps.target.outputs.actor_id }}
+        run: |
+          set -euo pipefail
+          result_path="${RUNNER_TEMP}/false-receipt-plan-restore.json"
+          psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 -At \
+            -v version_id="${VERSION_ID}" \
+            -v actor_id="${RESOLVED_ACTOR_ID}" <<'SQL' | tee "${result_path}"
+          select jsonb_pretty(
+            public.fn_restore_false_receipt_invalidated_long_stock_plan_v1(
+              :'version_id'::uuid,
+              :'actor_id'::uuid,
+              false
+            )
+          );
+          SQL
+          jq -e '.restored == true or .idempotent == true' "${result_path}" >/dev/null
+
+      - name: Upload immutable operator reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: false-receipt-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/false-receipt-plan-*.json
+          if-no-files-found: error
+          retention-days: 30

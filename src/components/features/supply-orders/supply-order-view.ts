@@ -807,14 +807,27 @@ function summarizeMachineRoutes(
 }
 
 function receivedScheduleQuantity(schedule: SupplyOrderAggregateSourceItem['delivery_schedules'][number]) {
-  const value = schedule.received_quantity ?? schedule.allocated_quantity
+  const pieceLength = Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0)
+  const value = pieceLength > 0
+    ? schedule.allocated_physical_quantity
+      ?? schedule.received_quantity
+      ?? (schedule.allocated_piece_count === null ? null : schedule.allocated_piece_count * pieceLength)
+      ?? (schedule.received_piece_count === null ? null : schedule.received_piece_count * pieceLength)
+    : schedule.received_quantity ?? schedule.allocated_quantity
   if (value === null || value === undefined) return Number(schedule.quantity || 0)
   const quantity = Number(value)
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 0
 }
 
-function deliveredScheduleQuantity(schedule: SupplyOrderAggregateSourceItem['delivery_schedules'][number]) {
-  const value = schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity
+export function deliveredScheduleQuantity(schedule: SupplyOrderAggregateSourceItem['delivery_schedules'][number]) {
+  const pieceLength = Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0)
+  const value = pieceLength > 0
+    ? schedule.allocated_physical_quantity
+      ?? schedule.received_quantity
+      ?? (schedule.allocated_piece_count === null ? null : schedule.allocated_piece_count * pieceLength)
+      ?? (schedule.received_piece_count === null ? null : schedule.received_piece_count * pieceLength)
+      ?? schedule.quantity
+    : schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity
   const quantity = Number(value || 0)
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 0
 }

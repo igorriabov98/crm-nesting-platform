@@ -1954,6 +1954,18 @@ function schedulePlannedQuantity(schedule: SupplyOrderDeliverySchedule) {
 }
 
 function scheduleDeliveredQuantity(schedule: SupplyOrderDeliverySchedule) {
+  const pieceLength = Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0)
+  if (pieceLength > 0) {
+    const physicalQuantity = schedule.allocated_physical_quantity
+      ?? schedule.received_quantity
+      ?? (schedule.allocated_piece_count === null
+        ? null
+        : schedule.allocated_piece_count * pieceLength)
+      ?? (schedule.received_piece_count === null
+        ? null
+        : schedule.received_piece_count * pieceLength)
+    return Math.max(Number(physicalQuantity || 0), 0)
+  }
   return Number(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0)
 }
 

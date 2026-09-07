@@ -128,6 +128,8 @@ declare
   v_candidate jsonb;
   v_schedule uuid := gen_random_uuid();
   v_matching_schedule uuid := gen_random_uuid();
+  v_matching_schedule_2 uuid := gen_random_uuid();
+  v_cancelled_matching_schedule uuid := gen_random_uuid();
   v_transfer uuid := gen_random_uuid();
   v_transfer_item uuid := gen_random_uuid();
   v_source_inventory uuid := gen_random_uuid();
@@ -154,6 +156,10 @@ declare
   v_child_approval_parent_schedule uuid := gen_random_uuid();
   v_child_approval_schedule uuid := gen_random_uuid();
   v_child_approval_result jsonb;
+  v_restore_dry_run jsonb;
+  v_restore_result jsonb;
+  v_restore_repeat jsonb;
+  v_matching_definition jsonb;
 begin
   select id into v_factory from public.factories order by created_at nulls last limit 1;
   if v_factory is null then raise exception 'Для теста пересчёта не найден завод'; end if;
@@ -507,7 +513,7 @@ begin
     where id = v_version_1
       and invalidation_receipt_schedule_id = v_schedule
       and invalidated_by = v_receiver
-      and invalidation_reason like '%6000 мм × 2, принято 8000 мм × 2%'
+      and invalidation_reason like '%ожидалось 6000 мм × 1%физически распределено 8000 мм × 2%'
   ) then
     raise exception 'Версия не сохранила причину и документ приёмки';
   end if;
@@ -688,15 +694,52 @@ begin
     '{}'::jsonb
   );
   perform public.fn_approve_long_stock_cutting_plan_version_v1(v_matching_version, v_technologist);
+
+  -- A cancelled technical root is retained for audit, but must not add a
+  -- hidden third bar to the physical receipt composition.
+  set local session_replication_role = replica;
+  insert into public.supply_order_delivery_schedules(
+    id, request_item_table, request_item_id, delivery_date, quantity, unit,
+    status, planned_piece_length_mm, planned_piece_count,
+    created_by, updated_by
+  ) values (
+    v_cancelled_matching_schedule, 'request_circle', v_matching_item,
+    current_date, 6000, 'мм', 'cancelled', 6000, 1,
+    v_receiver, v_receiver
+  );
+  set local session_replication_role = origin;
+
   insert into public.supply_order_delivery_schedules(
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     status, planned_piece_length_mm, planned_piece_count,
     received_quantity, received_piece_length_mm, received_piece_count,
     delivered_at, received_by, created_by, updated_by
   ) values (
-    v_matching_schedule, 'request_circle', v_matching_item, current_date, 12000, 'мм',
-    'delivered', 6000, 2,
-    12000, 6000, 2,
+    v_matching_schedule, 'request_circle', v_matching_item, current_date, 6000, 'мм',
+    'delivered', 6000, 1,
+    6000, 6000, 1,
+    now(), v_receiver, v_receiver, v_receiver
+  );
+  set constraints supply_order_delivery_piece_fact_constraint_trigger immediate;
+  if (select status from public.long_stock_cutting_plan_versions where id = v_matching_version) <> 'approved'
+    or exists (
+      select 1
+      from public.tasks
+      where long_stock_cutting_plan_id = v_matching_plan
+        and task_type = 'long_stock_cutting_recalculation'
+    ) then
+    raise exception 'Корректная частичная приёмка ошибочно аннулировала карту';
+  end if;
+
+  insert into public.supply_order_delivery_schedules(
+    id, request_item_table, request_item_id, delivery_date, quantity, unit,
+    status, planned_piece_length_mm, planned_piece_count,
+    received_quantity, received_piece_length_mm, received_piece_count,
+    delivered_at, received_by, created_by, updated_by
+  ) values (
+    v_matching_schedule_2, 'request_circle', v_matching_item, current_date, 6000, 'мм',
+    'delivered', 6000, 1,
+    6000, 6000, 1,
     now(), v_receiver, v_receiver, v_receiver
   );
   set constraints supply_order_delivery_piece_fact_constraint_trigger immediate;
@@ -707,6 +750,116 @@ begin
         and task_type = 'long_stock_cutting_recalculation'
   ) then
     raise exception 'Совпадающая приёмка создала инвалидацию или задачу';
+  end if;
+
+  select jsonb_build_object(
+    'input_snapshot', input_snapshot,
+    'settings_snapshot', settings_snapshot,
+    'selected_candidate_number', selected_candidate_number,
+    'pdf_metadata', pdf_metadata,
+    'definition_sealed', definition_sealed
+  ) into v_matching_definition
+  from public.long_stock_cutting_plan_versions where id = v_matching_version;
+
+  -- Simulate the historical false invalidation made by the former hidden-sum
+  -- condition, then recover the same immutable version through dry-run first.
+  perform public.fn_invalidate_long_stock_cutting_plan_for_receipt(
+    'request_circle', v_matching_item, v_receiver,
+    'Старая ложная receipt-инвалидация: 2 против 2',
+    v_matching_schedule_2, null
+  );
+  v_restore_dry_run := public.fn_restore_false_receipt_invalidated_long_stock_plan_v1(
+    v_matching_version, v_receiver, true
+  );
+  if not coalesce((v_restore_dry_run->>'eligible')::boolean, false)
+    or coalesce((v_restore_dry_run->>'restored')::boolean, false)
+    or jsonb_array_length(v_restore_dry_run->'schedule_audit') <> 3 then
+    raise exception 'Dry-run не подтвердил безопасное восстановление: %', v_restore_dry_run;
+  end if;
+
+  -- The repair is all-or-nothing: an outer failure must roll back the restored
+  -- lifecycle, future scraps, completed task and immutable audit event together.
+  begin
+    perform public.fn_restore_false_receipt_invalidated_long_stock_plan_v1(
+      v_matching_version, v_receiver, false
+    );
+    raise exception 'forced receipt restoration rollback';
+  exception
+    when raise_exception then
+      if sqlerrm <> 'forced receipt restoration rollback' then
+        raise;
+      end if;
+  end;
+  if (select status from public.long_stock_cutting_plan_versions where id = v_matching_version) <> 'invalid'
+    or exists (
+      select 1 from public.long_stock_receipt_revalidation_events
+      where version_id = v_matching_version
+    )
+    or exists (
+      select 1
+      from public.long_stock_cutting_business_scraps link
+      join public.inventory inventory on inventory.id = link.inventory_id
+      where link.version_id = v_matching_version and inventory.deleted_at is null
+    )
+    or not exists (
+      select 1 from public.tasks
+      where long_stock_cutting_plan_id = v_matching_plan
+        and long_stock_cutting_plan_version_id = v_matching_version
+        and task_type = 'long_stock_cutting_recalculation'
+        and status = 'pending'
+    ) then
+    raise exception 'Восстановление не откатилось атомарно после внешней ошибки';
+  end if;
+
+  v_restore_result := public.fn_restore_false_receipt_invalidated_long_stock_plan_v1(
+    v_matching_version, v_receiver, false
+  );
+  if not coalesce((v_restore_result->>'restored')::boolean, false)
+    or coalesce((v_restore_result->>'idempotent')::boolean, true)
+    or (select status from public.long_stock_cutting_plan_versions where id = v_matching_version) <> 'approved'
+    or (select cutting_status from public.long_stock_cutting_plan_items where id = v_matching_plan_item) <> 'plan_approved'
+    or exists (
+      select 1
+      from public.long_stock_cutting_business_scraps link
+      join public.inventory inventory on inventory.id = link.inventory_id
+      where link.version_id = v_matching_version and inventory.deleted_at is not null
+    )
+    or exists (
+      select 1 from public.tasks
+      where long_stock_cutting_plan_id = v_matching_plan
+        and long_stock_cutting_plan_version_id = v_matching_version
+        and task_type = 'long_stock_cutting_recalculation'
+        and status <> 'completed'
+    ) then
+    raise exception 'Восстановление не вернуло карту в рабочее состояние: %', v_restore_result;
+  end if;
+  if (
+    select jsonb_build_object(
+      'input_snapshot', input_snapshot,
+      'settings_snapshot', settings_snapshot,
+      'selected_candidate_number', selected_candidate_number,
+      'pdf_metadata', pdf_metadata,
+      'definition_sealed', definition_sealed
+    )
+    from public.long_stock_cutting_plan_versions where id = v_matching_version
+  ) is distinct from v_matching_definition then
+    raise exception 'Восстановление изменило неизменяемое содержимое или PDF версии';
+  end if;
+  if not exists (
+    select 1 from public.long_stock_receipt_revalidation_events
+    where version_id = v_matching_version
+      and prior_invalidation_reason = 'Старая ложная receipt-инвалидация: 2 против 2'
+  ) then
+    raise exception 'Не записано неизменяемое событие восстановления';
+  end if;
+
+  v_restore_repeat := public.fn_restore_false_receipt_invalidated_long_stock_plan_v1(
+    v_matching_version, v_receiver, false
+  );
+  if not coalesce((v_restore_repeat->>'idempotent')::boolean, false)
+    or (select count(*) from public.long_stock_receipt_revalidation_events
+        where version_id = v_matching_version) <> 1 then
+    raise exception 'Повторное восстановление не идемпотентно: %', v_restore_repeat;
   end if;
 
   -- Interfactory receiving carries the physical source-bar length. An 8000 mm
@@ -914,7 +1067,7 @@ begin
     where id = (v_no_schedule->>'version_id')::uuid
       and status = 'invalid'
       and invalidation_receipt_schedule_id = v_no_schedule_id
-      and invalidation_reason like '%утверждённой карте 6000 мм × 1, принято 8000 мм × 1%'
+      and invalidation_reason like '%ожидалось 6000 мм × 1%физически распределено 8000 мм × 1%'
   ) then
     raise exception 'Приёмка без графика не инвалидировала карту по утверждённому составу';
   end if;
@@ -974,9 +1127,36 @@ begin
     where id = (v_child->>'version_id')::uuid
       and status = 'invalid'
       and invalidation_receipt_schedule_id = v_child_schedule_id
-      and invalidation_reason like '%утверждённой карте 6000 мм × 1, принято 8000 мм × 1%'
+      and invalidation_reason like '%ожидалось 6000 мм × 1%физически распределено 8000 мм × 1%'
   ) then
     raise exception 'Дочерняя строка распределения не инвалидировала карту целевой машины';
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if has_function_privilege(
+    'anon',
+    'public.fn_restore_false_receipt_invalidated_long_stock_plan_v1(uuid,uuid,boolean)',
+    'EXECUTE'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.fn_restore_false_receipt_invalidated_long_stock_plan_v1(uuid,uuid,boolean)',
+    'EXECUTE'
+  ) then
+    raise exception 'Клиентские роли получили доступ к RPC восстановления';
+  end if;
+  if not has_function_privilege(
+    'service_role',
+    'public.fn_restore_false_receipt_invalidated_long_stock_plan_v1(uuid,uuid,boolean)',
+    'EXECUTE'
+  ) then
+    raise exception 'service_role не получил доступ к RPC восстановления';
+  end if;
+  if has_table_privilege('anon', 'public.long_stock_receipt_revalidation_events', 'SELECT')
+    or has_table_privilege('authenticated', 'public.long_stock_receipt_revalidation_events', 'SELECT') then
+    raise exception 'Клиентские роли получили доступ к закрытому аудиту восстановления';
   end if;
 end;
 $$;
