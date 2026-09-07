@@ -21,8 +21,12 @@ export async function GET(request: Request) {
     const url = new URL(request.url)
     const date = url.searchParams.get('date') || ''
     const factoryId = url.searchParams.get('factory') || ''
+    const batchKey = url.searchParams.get('batch') || ''
     if (!DATE_RE.test(date)) return errorResponse('Некорректная дата поставки', 400)
     if (!UUID_RE.test(factoryId)) return errorResponse('Некорректный завод', 400)
+    if (!batchKey || batchKey.length > 300 || !/^(trip|unlinked):/.test(batchKey)) {
+      return errorResponse('Некорректная партия поставки', 400)
+    }
 
     const result = await getMaterialReceivingPageData(factoryId)
     if (result.error || !result.data) {
@@ -31,15 +35,20 @@ export async function GET(request: Request) {
     if (result.data.activeFactoryId !== factoryId) return errorResponse('Завод не найден', 404)
 
     const group = result.data.groups.find((candidate) => candidate.date === date)
-    if (!group || group.items.length === 0) return errorResponse('На эту дату нет позиций к приёмке', 404)
+    const arrival = group?.arrivals.find((candidate) => candidate.key === batchKey)
+    if (!arrival || arrival.items.length === 0) return errorResponse('Эта партия больше не ожидает приёмки', 404)
     const factory = result.data.factories.find((candidate) => candidate.id === factoryId)
     if (!factory) return errorResponse('Завод не найден', 404)
 
     const data = buildMaterialReceivingActData({
+      batchKey: arrival.key,
       deliveryDate: date,
       generatedAt: new Date().toISOString(),
       factoryName: factory.name,
-      items: group.items,
+      transportTripName: arrival.transport_trip_name,
+      plannedArrivalAt: arrival.planned_arrival_at,
+      arrivedAt: arrival.arrived_at,
+      items: arrival.items,
     })
     const element = createElement(MaterialReceivingActDocument, { data }) as Parameters<typeof renderToBuffer>[0]
     const pdf = await renderToBuffer(element)
@@ -48,7 +57,7 @@ export async function GET(request: Request) {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="material-receiving-act-${date}.pdf"`,
+        'Content-Disposition': `attachment; filename="material-receiving-act-${date}-${arrival.transport_trip_id || 'unlinked'}.pdf"`,
         'Cache-Control': 'private, no-store, max-age=0',
         'X-Content-Type-Options': 'nosniff',
       },
