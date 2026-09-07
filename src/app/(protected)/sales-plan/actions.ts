@@ -1858,6 +1858,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
     }
 
     revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(ROUTES.SALES_MY_ORDERS)
     revalidatePath(`${ROUTES.SALES_PLAN}/${id}`)
     revalidatePath(ROUTES.TASKS)
     return { success: true, error: null }
@@ -1876,6 +1877,7 @@ export async function deleteMachine(id: string) {
     await deleteMachineWithInventoryCleanup(supabase as unknown as RpcClient, id, user.id)
 
     revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(ROUTES.SALES_MY_ORDERS)
     revalidatePath(`${ROUTES.SALES_PLAN}/${id}`)
     revalidatePath(ROUTES.TASKS)
     revalidatePath(ROUTES.PRODUCTION)
@@ -2043,6 +2045,7 @@ export async function updateMachineConfirmation(id: string, isConfirmed: boolean
     })
 
     revalidatePath(ROUTES.SALES_PLAN)
+    revalidatePath(ROUTES.SALES_MY_ORDERS)
     revalidatePath(`${ROUTES.SALES_PLAN}/${id}`)
     revalidatePath(ROUTES.TASKS)
     revalidatePath(ROUTES.PRODUCTION)

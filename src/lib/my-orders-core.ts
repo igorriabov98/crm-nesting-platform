@@ -56,6 +56,21 @@ export function mergePersonalOrderIds(...groups: readonly (readonly string[])[])
   return Array.from(new Set(groups.flat()))
 }
 
+export function confirmationDeadlineFromEngineerDeadline(engineerDeadline: string | null | undefined) {
+  if (!engineerDeadline) return null
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(engineerDeadline)
+  if (!match) return null
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (Number.isNaN(date.getTime())) return null
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null
+  date.setUTCDate(date.getUTCDate() - 2)
+  return date.toISOString().slice(0, 10)
+}
+
 export function isPersonalUndeliveredOrder(
   order: UndeliveredOrderInput,
   userId: string,

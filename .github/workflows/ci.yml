@@ -38,6 +38,8 @@ jobs:
         run: npm run test:meetings-v2
       - name: My orders calculations and UI contracts
         run: npm run test:my-orders
+      - name: Sales order confirmation deadlines and task contracts
+        run: npm run test:sales-order-confirmation-tasks
       - name: Production analytics calculations and UI contracts
         run: npm run test:production-analytics
       - name: Client UI localization
@@ -168,6 +170,8 @@ jobs:
         run: npm run test:customs-clearance
       - name: Client delivery date task lifecycle
         run: npm run test:client-delivery-date-tasks
+      - name: Sales order confirmation task lifecycle
+        run: npm run test:sales-order-confirmation-tasks
       - name: VRB trigger permission boundary
         run: npm run test:vrb-outsourcing
       - name: Product-project mail RLS and correction lifecycle

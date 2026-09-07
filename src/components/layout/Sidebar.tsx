@@ -79,7 +79,6 @@ const EMPTY_QUEUE_COUNTS: SidebarWorkQueueCounts = {
     production: 0,
     planning: 0,
     total: 0,
-    unreadResults: 0,
   },
   transport: 0,
   outsourcingApprovals: 0,

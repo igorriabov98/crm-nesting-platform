@@ -69,6 +69,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   supply_start: 'Снабжение',
   technologist_request: 'Заявка технолога',
   engineer_confirm: 'Чертежи',
+  sales_order_confirmation: 'Подтверждение заказа',
   material_type_selection: 'Тип материала',
   machine_layout: 'Расстановка машины',
   agenda_pool_distribution: 'Пул повесток',
@@ -304,6 +305,7 @@ function getTaskTypeBadgeClass(taskType: TaskType) {
   if (taskType === 'detailing_transfer') return 'border-blue-200 bg-blue-50 text-blue-800 shadow-sm'
   if (taskType === 'inventory_transfer') return 'border-cyan-200 bg-cyan-50 text-cyan-800 shadow-sm'
   if (taskType === 'client_delivery_date') return 'border-rose-200 bg-rose-50 text-rose-800 shadow-sm'
+  if (taskType === 'sales_order_confirmation') return 'border-blue-200 bg-blue-50 text-blue-800 shadow-sm'
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
