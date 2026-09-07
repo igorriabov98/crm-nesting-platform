@@ -772,6 +772,25 @@ function FactoryDeliveryEditorForm({
     .filter((plan): plan is LongStockPurchasePlan => plan !== null)
   const requiresRecalculation = longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
   const isBarMaterial = isSupplyOrderBarMaterial(aggregate) || longStockPlans.length > 0
+  const deliveredLongStockSchedules = Array.from(new Map(factory.items
+    .flatMap((item) => item.delivery_schedules)
+    .filter((schedule) => schedule.status === 'delivered')
+    .filter((schedule) => Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0) > 0)
+    .map((schedule) => [schedule.id, schedule])).values())
+  const deliveredLongStockPieces = deliveredLongStockSchedules.reduce((sum, schedule) => {
+    const pieceLength = Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0)
+    const count = schedule.allocated_piece_count
+      ?? schedule.received_piece_count
+      ?? (pieceLength > 0 && schedule.allocated_physical_quantity !== null
+        ? schedule.allocated_physical_quantity / pieceLength
+        : 0)
+    return sum + Math.max(Number(count || 0), 0)
+  }, 0)
+  const longStockPartsLength = Math.min(factory.requested_quantity, factory.delivered_schedule_quantity)
+  const longStockRemainderAndLosses = Math.max(
+    factory.delivered_schedule_quantity - longStockPartsLength,
+    0,
+  )
 
   const markOrderedWithPayments = () => {
     const targetKeys = new Set(financePayments.flatMap((payment) => payment.itemKeys))
@@ -927,6 +946,26 @@ function FactoryDeliveryEditorForm({
                 <span className="font-medium tabular-nums">{formatAmount(group.received_quantity || group.quantity)} {aggregate.unit}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {deliveredLongStockSchedules.length > 0 && (
+        <div className="mx-3 mb-3 grid gap-2 rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-950 sm:grid-cols-3">
+          <div>
+            <div className="text-sky-700">Принято физически</div>
+            <div className="mt-1 font-semibold tabular-nums">
+              {formatAmount(factory.delivered_schedule_quantity)} {aggregate.unit}
+              {deliveredLongStockPieces > 0 && ` / ${formatAmount(deliveredLongStockPieces)} шт.`}
+            </div>
+          </div>
+          <div>
+            <div className="text-sky-700">В детали по заявкам</div>
+            <div className="mt-1 font-semibold tabular-nums">{formatAmount(longStockPartsLength)} {aggregate.unit}</div>
+          </div>
+          <div>
+            <div className="text-sky-700">Расчётный остаток и потери</div>
+            <div className="mt-1 font-semibold tabular-nums">{formatAmount(longStockRemainderAndLosses)} {aggregate.unit}</div>
           </div>
         </div>
       )}
@@ -1412,10 +1451,20 @@ function makeDeliveredScheduleGroups(factory: SupplyOrderAggregateFactory, dateK
         quantity: 0,
         received_quantity: 0,
         piece_length_mm: schedule.received_piece_length_mm,
-        piece_count: schedule.received_piece_count,
+        piece_count: 0,
       }
       current.quantity += Number(schedule.quantity || 0)
-      current.received_quantity += Number(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0)
+      const pieceLength = Number(schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0)
+      current.received_quantity += Number(pieceLength > 0
+        ? schedule.allocated_physical_quantity
+          ?? schedule.received_quantity
+          ?? (schedule.allocated_piece_count === null ? null : schedule.allocated_piece_count * pieceLength)
+          ?? (schedule.received_piece_count === null ? null : schedule.received_piece_count * pieceLength)
+          ?? schedule.quantity
+        : schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0)
+      current.piece_count = Number(current.piece_count || 0) + Number(
+        schedule.allocated_piece_count ?? schedule.received_piece_count ?? 0,
+      )
       groups.set(key, current)
     }
   }

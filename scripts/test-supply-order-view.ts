@@ -8,6 +8,7 @@ import type {
 } from '@/lib/actions/supply-orders'
 import {
   buildSupplyOrderDetailContexts,
+  deliveredScheduleQuantity,
   filterAndSortAggregates,
   filterAndSortHistory,
   filterSupplyOrderItems,
@@ -67,6 +68,11 @@ assert.match(
   supplyOrdersAction,
   /projectSchedulesToPurchasePlans\(items, schedules, preferredScheduleIds\)\.filter\(\(schedule\) => \([\s\S]*schedule\.status === 'planned'/u,
   'supplier transport must project schedule rows through the approved long-stock purchase map',
+)
+assert.match(
+  supplyOrdersAction,
+  /function scheduleDeliveredQuantity[\s\S]*allocated_physical_quantity[\s\S]*received_quantity[\s\S]*allocated_quantity/u,
+  'server aggregation must prefer physical long-stock receipt length over logical cut allocation',
 )
 assert.match(
   supplyOrdersAction,
@@ -206,6 +212,21 @@ assert.equal(formatSupplyOrderCharacteristicValue('request_knives', 'knife_type'
 assert.equal(formatSupplyOrderCharacteristicValue('request_knives', 'knife_bevel_count', 1), '1 скос')
 assert.equal(formatSupplyOrderCharacteristicValue('request_knives', 'knife_bevel_count', 2), '2 скоса')
 assert.equal(formatSupplyOrderCharacteristicValue('request_knives', 'knife_bevel_count', null), 'не указан')
+assert.equal(
+  deliveredScheduleQuantity(makeDeliverySchedule({
+    quantity: 12_000,
+    allocated_quantity: 9_000,
+    allocated_physical_quantity: 12_000,
+    received_quantity: 12_000,
+    planned_piece_length_mm: 6_000,
+    planned_piece_count: 2,
+    received_piece_length_mm: 6_000,
+    received_piece_count: 2,
+    allocated_piece_count: 2,
+  })),
+  12_000,
+  'two received 6 000 mm bars must be shown as 12 000 mm physically, not as 9 000 mm of net parts',
+)
 assert.match(
   supplyOrdersAction,
   /request_knives:\s*\[[\s\S]*\['Скос', 'knife_bevel_count'\]/u,
