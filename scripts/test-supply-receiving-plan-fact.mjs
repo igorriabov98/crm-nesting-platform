@@ -150,6 +150,9 @@ async function testConcurrentBatchReceipt() {
           WHERE factory_id = v_factory AND material_id = '${fixture.material}' AND material_variant_id IS NULL AND is_business_scrap = false) <> 10 THEN
         RAISE EXCEPTION 'Конкурентный повтор изменил складской итог более одного раза';
       END IF;
+      -- This fixture is committed so two sessions can race. Keep it from
+      -- participating in later role-based recipient selection in the same DB.
+      UPDATE public.users SET is_active = false WHERE id = '${fixture.actor}';
     END;
     $$;
   `
