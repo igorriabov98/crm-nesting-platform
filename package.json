@@ -36,7 +36,7 @@
     "test:coating-variants": "tsx scripts/test-coating-variants.ts",
     "test:notification-bell": "tsx scripts/test-notification-bell-state.ts",
     "test:mail": "tsx scripts/test-mail-integration.ts",
-    "test:supply-order-view": "tsx scripts/test-supply-order-view.ts",
+    "test:supply-order-view": "tsx scripts/test-supply-order-view.ts && NODE_OPTIONS=--conditions=react-server NODE_PATH=./node_modules/next/dist/compiled tsx scripts/test-supply-date-order-xlsx.ts",
     "test:supply-long-stock-plan-return": "tsx --test src/lib/supply-orders/long-stock-purchase-plan.test.ts && node scripts/test-supply-long-stock-plan-return.mjs",
     "test:supply-request-flow": "tsx --test src/lib/supply-request-stock-coverage.test.ts src/components/features/supply-request/StockCoverageValue.test.tsx && tsx scripts/test-supply-request-flow.ts",
     "test:user-impersonation": "tsx scripts/test-user-impersonation.ts",
