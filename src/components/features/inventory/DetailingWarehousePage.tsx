@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DetailingCreateDialog } from '@/components/features/inventory/DetailingCreateDialog'
+import { ReservationOrdersDialog } from '@/components/features/inventory/ReservationOrdersDialog'
 import { ROUTES } from '@/lib/constants/routes'
 import {
   adjustDetailingStock,
@@ -25,6 +26,7 @@ const MOVEMENT_LABELS: Record<string, string> = {
 }
 
 type StockDialog = { mode: 'receipt' | 'adjust'; part: DetailingPartCard; factoryId: string } | null
+type ReservationDialog = { part: DetailingPartCard; balance: DetailingPartCard['balances'][number] } | null
 
 function kg(value: number) {
   return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(value)} кг`
@@ -44,6 +46,7 @@ export function DetailingWarehousePage({
   const [stockDialog, setStockDialog] = useState<StockDialog>(null)
   const [stockQuantity, setStockQuantity] = useState('')
   const [stockComment, setStockComment] = useState('')
+  const [reservationDialog, setReservationDialog] = useState<ReservationDialog>(null)
   const activeFactory = data.factories.find((factory) => factory.id === activeFactoryId) || null
   const inventoryFactoryQuery = activeFactoryId ? `factory=${encodeURIComponent(activeFactoryId)}&` : ''
   const inventoryMainHref = activeFactoryId
@@ -146,7 +149,26 @@ export function DetailingWarehousePage({
                   const balance = part.balances.find((item) => item.factoryId === factory.id)
                   return <div key={factory.id} className="rounded-lg border border-[#DCE3EC] p-3">
                     <div className="mb-3 flex items-center gap-2 font-semibold text-[#1B3A6B]"><Factory className="h-4 w-4" />{factory.name}</div>
-                    <dl className="grid grid-cols-3 gap-2 text-center"><div><dt className="text-xs text-[#6B7280]">Остаток</dt><dd className="mt-1 font-semibold">{balance?.onHandQuantity || 0}</dd><dd className="text-xs text-[#6B7280]">{kg(balance?.onHandWeightKg || 0)}</dd></div><div><dt className="text-xs text-[#6B7280]">Бронь</dt><dd className="mt-1 font-semibold text-[#A66B13]">{balance?.reservedQuantity || 0}</dd><dd className="text-xs text-[#6B7280]">{kg(balance?.reservedWeightKg || 0)}</dd></div><div><dt className="text-xs text-[#6B7280]">Доступно</dt><dd className="mt-1 font-semibold text-[#236244]">{balance?.availableQuantity || 0}</dd><dd className="text-xs text-[#6B7280]">{kg(balance?.availableWeightKg || 0)}</dd></div></dl>
+                    <dl className="grid grid-cols-3 gap-2 text-center">
+                      <div><dt className="text-xs text-[#6B7280]">Остаток</dt><dd className="mt-1 font-semibold">{balance?.onHandQuantity || 0}</dd><dd className="text-xs text-[#6B7280]">{kg(balance?.onHandWeightKg || 0)}</dd></div>
+                      <div>
+                        <dt className="text-xs text-[#6B7280]">Бронь</dt>
+                        <dd className="mt-1 font-semibold text-[#A66B13]">
+                          {balance && balance.reservedQuantity > 0 ? (
+                            <button
+                              type="button"
+                              className="rounded-sm underline decoration-dotted underline-offset-4 hover:text-[#81510C] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A66B13] focus-visible:ring-offset-2"
+                              onClick={() => setReservationDialog({ part, balance })}
+                              aria-label={`Показать заказы с бронью деталировки ${part.name} на заводе ${factory.name}`}
+                            >
+                              {balance.reservedQuantity}
+                            </button>
+                          ) : 0}
+                        </dd>
+                        <dd className="text-xs text-[#6B7280]">{kg(balance?.reservedWeightKg || 0)}</dd>
+                      </div>
+                      <div><dt className="text-xs text-[#6B7280]">Доступно</dt><dd className="mt-1 font-semibold text-[#236244]">{balance?.availableQuantity || 0}</dd><dd className="text-xs text-[#6B7280]">{kg(balance?.availableWeightKg || 0)}</dd></div>
+                    </dl>
                     <div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => { setStockDialog({ mode: 'receipt', part, factoryId: factory.id }); setStockQuantity(''); setStockComment('') }}><PackagePlus />Поступление</Button>{balance && <Button size="sm" variant="outline" onClick={() => { setStockDialog({ mode: 'adjust', part, factoryId: factory.id }); setStockQuantity(String(balance.onHandQuantity)); setStockComment('') }}><Settings2 />Корректировка</Button>}</div>
                   </div>
                 })}
@@ -162,6 +184,16 @@ export function DetailingWarehousePage({
         activeFactoryId={activeFactoryId}
         open={showCreate}
         onOpenChange={setShowCreate}
+      />
+
+      <ReservationOrdersDialog
+        open={Boolean(reservationDialog)}
+        onOpenChange={(open) => !open && setReservationDialog(null)}
+        subject={reservationDialog ? `${reservationDialog.part.name} · чертёж ${reservationDialog.part.drawingNumber}` : 'Деталировка'}
+        location={reservationDialog ? `Деталировка · ${reservationDialog.balance.factoryName}` : 'Деталировка'}
+        totalLabel={reservationDialog ? `${reservationDialog.balance.reservedQuantity} шт` : '0 шт'}
+        unit="шт"
+        reservations={reservationDialog?.balance.reservations || []}
       />
 
       <Dialog open={Boolean(stockDialog)} onOpenChange={(open) => !open && setStockDialog(null)}>
