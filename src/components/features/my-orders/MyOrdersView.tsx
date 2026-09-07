@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { CalendarDays, ClipboardList, PackageCheck, Rows3 } from 'lucide-react'
+import { CalendarClock, CalendarDays, ClipboardList, PackageCheck, Rows3 } from 'lucide-react'
 
 import { MachineProgressBadge } from '@/components/features/machines/MachineStatusBadge'
 import { Progress } from '@/components/ui/progress'
@@ -94,12 +94,21 @@ function MobileOrderCard({ order }: { order: MyOrderSummary }) {
         <ProductionProgress orderName={order.name} progress={order.productionProgress} />
       </div>
 
-      <div className="mt-4 flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-        <CalendarDays className="h-4 w-4 shrink-0 text-blue-800" aria-hidden="true" />
-        <span className="text-slate-500">Плановая отгрузка</span>
-        <span className="ml-auto font-medium tabular-nums text-slate-900">
-          {dateLabel(order.desiredShippingDate)}
-        </span>
+      <div className="mt-4 space-y-2">
+        <div className="flex items-center gap-2 rounded-xl bg-blue-50 px-3 py-2.5 text-sm">
+          <CalendarClock className="h-4 w-4 shrink-0 text-blue-800" aria-hidden="true" />
+          <span className="text-slate-600">Дедлайн подтверждения</span>
+          <span className="ml-auto font-medium tabular-nums text-slate-900">
+            {dateLabel(order.confirmationDeadline)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
+          <CalendarDays className="h-4 w-4 shrink-0 text-blue-800" aria-hidden="true" />
+          <span className="text-slate-500">Плановая отгрузка</span>
+          <span className="ml-auto font-medium tabular-nums text-slate-900">
+            {dateLabel(order.desiredShippingDate)}
+          </span>
+        </div>
       </div>
     </article>
   )
@@ -153,11 +162,12 @@ export function MyOrdersView({ orders }: { orders: MyOrderSummary[] }) {
             <Table className="w-full table-fixed">
               <TableHeader>
                 <TableRow className="bg-white">
-                  <TableHead className="w-[22%] whitespace-normal leading-4 text-slate-600">Заказ</TableHead>
-                  <TableHead className="w-[18%] whitespace-normal leading-4 text-slate-600">Клиент</TableHead>
-                  <TableHead className="w-[22%] whitespace-normal leading-4 text-slate-600">Статус</TableHead>
-                  <TableHead className="w-[25%] whitespace-normal leading-4 text-slate-600">Прогресс</TableHead>
-                  <TableHead className="w-[13%] whitespace-normal text-right leading-4 text-slate-600">Плановая отгрузка</TableHead>
+                  <TableHead className="w-[19%] whitespace-normal leading-4 text-slate-600">Заказ</TableHead>
+                  <TableHead className="w-[15%] whitespace-normal leading-4 text-slate-600">Клиент</TableHead>
+                  <TableHead className="w-[15%] whitespace-normal leading-4 text-slate-600">Дедлайн подтверждения</TableHead>
+                  <TableHead className="w-[19%] whitespace-normal leading-4 text-slate-600">Статус</TableHead>
+                  <TableHead className="w-[20%] whitespace-normal leading-4 text-slate-600">Прогресс</TableHead>
+                  <TableHead className="w-[12%] whitespace-normal text-right leading-4 text-slate-600">Плановая отгрузка</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -165,6 +175,9 @@ export function MyOrdersView({ orders }: { orders: MyOrderSummary[] }) {
                   <TableRow key={order.id} className="align-middle hover:bg-slate-50/80">
                     <TableCell className="whitespace-normal break-words py-3"><OrderName order={order} /></TableCell>
                     <TableCell className="whitespace-normal break-words py-3 text-slate-600">{order.clientName || 'Не указан'}</TableCell>
+                    <TableCell className="whitespace-normal py-3 font-medium tabular-nums text-slate-900">
+                      {dateLabel(order.confirmationDeadline)}
+                    </TableCell>
                     <TableCell className="whitespace-normal py-3">
                       <OrderStatus order={order} />
                     </TableCell>

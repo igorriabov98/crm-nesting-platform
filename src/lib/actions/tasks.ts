@@ -125,6 +125,7 @@ const CUTTING_ROLLBACK_TASK_TYPE = 'production_cutting_rollback_review' as const
 const PRODUCTION_PLAN_DATE_CHANGE_TASK_TYPE = 'production_plan_date_change_approval' as const
 const MATERIAL_TYPE_SELECTION_TASK_TYPE = 'material_type_selection' as const
 const MACHINE_LAYOUT_TASK_TYPE = 'machine_layout' as const
+const SALES_ORDER_CONFIRMATION_TASK_TYPE = 'sales_order_confirmation' as const
 
 async function getCurrentUser(operation: PermissionOperation = 'view') {
   const { supabase, userId, user, role, factoryId, permissionDetails } = await requirePermission('tasks', operation)
@@ -282,6 +283,7 @@ async function enrichTasksWithDelegationState(
         isActiveTaskStatus(task.status) &&
         task.task_type !== MACHINE_LAYOUT_TASK_TYPE &&
         task.task_type !== 'client_delivery_date' &&
+        task.task_type !== SALES_ORDER_CONFIRMATION_TASK_TYPE &&
         !pendingDelegation &&
         canDelegateFromAnyDepartment
       ),
@@ -1125,6 +1127,9 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
     }
     if (taskRow.task_type === 'client_delivery_date' && (status === 'completed' || status === 'cancelled')) {
       throw new Error('Задача по дате доставки закрывается автоматически после внесения даты доставки клиенту')
+    }
+    if (taskRow.task_type === SALES_ORDER_CONFIRMATION_TASK_TYPE && (status === 'completed' || status === 'cancelled')) {
+      throw new Error('Задача подтверждения заказа закрывается автоматически после подтверждения заказа')
     }
     if (
       taskRow.task_type === MACHINE_LAYOUT_TASK_TYPE

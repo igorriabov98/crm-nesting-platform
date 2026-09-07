@@ -21,7 +21,6 @@ const EMPTY_COUNTS: SidebarWorkQueueCounts = {
     production: 0,
     planning: 0,
     total: 0,
-    unreadResults: 0,
   },
   transport: 0,
   outsourcingApprovals: 0,
@@ -52,19 +51,13 @@ async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof re
   const activeMachineFilter = buildNonArchivedOrUnscopedMachineFilter(
     ((archivedMachines || []) as Array<{ id: string }>).map((machine) => machine.id),
   )
-  const unreadResultQuery = admin
-    .from('department_requests')
-    .select('id', { count: 'exact', head: true })
-    .eq('created_by', context.userId)
-    .in('status', ['done', 'rejected'])
-    .is('result_viewed_at', null)
   const assignedToMeQuery = admin
     .from('department_requests')
     .select('id', { count: 'exact', head: true })
     .eq('assigned_to', context.userId)
     .in('status', ['new', 'in_progress'])
 
-  const [, unreadResult, assignedToMe] = await Promise.all([
+  const [, assignedToMe] = await Promise.all([
     Promise.all(manageableTargets.map(async (target) => {
       let query = admin
         .from('department_requests')
@@ -89,11 +82,9 @@ async function loadDepartmentRequestCounts(context: Awaited<ReturnType<typeof re
       const { count, error } = await query
       if (!error) counts[target] = count || 0
     })),
-    unreadResultQuery,
     assignedToMeQuery,
   ])
   counts.total = assignedToMe.error ? 0 : assignedToMe.count || 0
-  if (!unreadResult.error) counts.unreadResults = unreadResult.count || 0
   return counts
 }
 

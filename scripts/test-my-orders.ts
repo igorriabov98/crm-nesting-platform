@@ -8,6 +8,7 @@ import { MyOrdersView } from '../src/components/features/my-orders/MyOrdersView'
 import { RESOURCE_BY_KEY } from '../src/lib/permissions/resources'
 import {
   calculateMyOrderProductionProgress,
+  confirmationDeadlineFromEngineerDeadline,
   isPersonalUndeliveredOrder,
   isUndeliveredOrderVisibleForCompanyScope,
   mergePersonalOrderIds,
@@ -35,6 +36,10 @@ assert(!isUndeliveredOrderVisibleForCompanyScope({ ...baseOrder, is_archived: tr
 assert(!isUndeliveredOrderVisibleForCompanyScope({ ...baseOrder, delivery_to_client_date: '2026-09-05' }, userId, responsibleClientIds, true), 'Область «Все» не должна включать полученный заказ')
 assert.deepEqual(mergePersonalOrderIds(['created', 'both'], ['responsible', 'both']), ['created', 'both', 'responsible'], 'Заказ, совпавший по двум условиям, не должен дублироваться')
 assert('supportsCompanyScope' in RESOURCE_BY_KEY.my_orders && RESOURCE_BY_KEY.my_orders.supportsCompanyScope, 'Ресурс «Мои заказы» должен поддерживать область компаний')
+assert.equal(confirmationDeadlineFromEngineerDeadline('2026-09-20'), '2026-09-18', 'Дедлайн подтверждения должен быть за 2 дня до инженерного')
+assert.equal(confirmationDeadlineFromEngineerDeadline('2026-03-01'), '2026-02-27', 'Расчёт должен корректно переходить через границу месяца')
+assert.equal(confirmationDeadlineFromEngineerDeadline('2026-02-31'), null, 'Некорректная инженерная дата не должна нормализоваться в другой день')
+assert.equal(confirmationDeadlineFromEngineerDeadline(null), null, 'Без инженерного срока дедлайн подтверждения не рассчитывается')
 
 const stages = [
   { stageType: 'assembly', isSkipped: false },
@@ -162,6 +167,7 @@ const renderedOrders = renderToStaticMarkup(createElement(MyOrdersView, {
       id: 'order-1',
       name: 'Заказ 1',
       clientName: 'Клиент 1',
+      confirmationDeadline: '2026-09-18',
       desiredShippingDate: '2026-09-20',
       status,
       productionProgress: fortyFivePercent,
@@ -171,6 +177,7 @@ const renderedOrders = renderToStaticMarkup(createElement(MyOrdersView, {
       id: 'order-2',
       name: 'Заказ 2',
       clientName: null,
+      confirmationDeadline: null,
       desiredShippingDate: null,
       status,
       productionProgress: legacy,
@@ -182,6 +189,8 @@ assert.match(renderedOrders, /href="\/sales-plan\/order-1"/u, 'Разрешён�
 assert(!renderedOrders.includes('href="/sales-plan/order-2"'), 'Без sales_plan.view ссылка не должна рендериться')
 assert.match(renderedOrders, /aria-valuetext="45%, 180 из 400 кг"/u, 'SSR должен сохранять доступное значение прогресса')
 assert.match(renderedOrders, /20\.09\.2026/u, 'Плановая дата должна форматироваться по-русски')
+assert.match(renderedOrders, /18\.09\.2026/u, 'Дедлайн подтверждения должен форматироваться по-русски')
+assert.match(renderedOrders, /Дедлайн подтверждения/u, 'Таблица и мобильная карточка должны показывать дедлайн подтверждения')
 assert.match(renderedOrders, /Не указана/u, 'SSR должен показывать отсутствие плановой даты')
 assert.doesNotMatch(renderedOrders, /В архиве/u, 'Страница не должна предлагать архивное состояние заказа')
 

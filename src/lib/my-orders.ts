@@ -3,6 +3,7 @@ import 'server-only'
 import { loadMachineProgressContexts, resolveMachineProgressWithContext } from '@/lib/actions/machine-progress'
 import {
   calculateMyOrderProductionProgress,
+  confirmationDeadlineFromEngineerDeadline,
   isUndeliveredOrderVisibleForCompanyScope,
   isQuantitativeStage,
   mergePersonalOrderIds,
@@ -72,11 +73,19 @@ type SectionRow = {
   parent_id: string | null
   production_stage_type: StageType | null
 }
+type EngineerTaskRow = {
+  id: string
+  machine_id: string | null
+  deadline: string | null
+  created_at: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
 
 export type MyOrderSummary = {
   id: string
   name: string
   clientName: string | null
+  confirmationDeadline: string | null
   desiredShippingDate: string | null
   status: MachineProgress
   productionProgress: MyOrderProductionProgress
@@ -227,6 +236,41 @@ async function loadSections(admin: ReturnType<typeof createAdminClient>, section
   return groups.flat()
 }
 
+async function loadEngineerConfirmationDeadlines(
+  admin: ReturnType<typeof createAdminClient>,
+  machineIds: string[],
+) {
+  if (machineIds.length === 0) return new Map<string, string | null>()
+
+  const groups = await Promise.all(chunks(machineIds).map((ids) => (
+    loadAllPages<EngineerTaskRow>(async (from, to) => {
+      const result = await admin.from('tasks')
+        .select('id, machine_id, deadline, created_at, status')
+        .in('machine_id', ids)
+        .eq('task_type', 'engineer_confirm')
+        .neq('status', 'cancelled')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to)
+      return { data: (result.data || []) as EngineerTaskRow[], error: result.error }
+    }, 'Не удалось загрузить сроки подтверждения чертежей')
+  )))
+
+  const deadlines = new Map<string, string | null>()
+  const tasks = groups.flat().sort((left, right) => {
+    const leftPriority = left.status === 'pending' || left.status === 'in_progress' ? 0 : 1
+    const rightPriority = right.status === 'pending' || right.status === 'in_progress' ? 0 : 1
+    if (leftPriority !== rightPriority) return leftPriority - rightPriority
+    const createdAtOrder = right.created_at.localeCompare(left.created_at)
+    return createdAtOrder || right.id.localeCompare(left.id)
+  })
+  for (const task of tasks) {
+    if (!task.machine_id || deadlines.has(task.machine_id)) continue
+    deadlines.set(task.machine_id, confirmationDeadlineFromEngineerDeadline(task.deadline))
+  }
+  return deadlines
+}
+
 async function loadProductionProgressRows(admin: ReturnType<typeof createAdminClient>, machineIds: string[]) {
   const headers = await loadFactHeaders(admin, machineIds)
   if (headers.length === 0) {
@@ -352,9 +396,10 @@ async function buildMyOrderSummaries(
     ))
     .sort(sortMachines)
   const machineIds = machines.map((machine) => machine.id)
-  const [progressContexts, productionRows] = await Promise.all([
+  const [progressContexts, productionRows, confirmationDeadlines] = await Promise.all([
     loadProgressContexts(admin, machineIds),
     loadProductionProgressRows(admin, machineIds),
+    loadEngineerConfirmationDeadlines(admin, machineIds),
   ])
   const canOpenDetails = hasPermission(auth.permissions, 'sales_plan', 'view')
 
@@ -365,6 +410,7 @@ async function buildMyOrderSummaries(
       id: machine.id,
       name: machine.name,
       clientName: firstRelation(machine.client)?.name || null,
+      confirmationDeadline: confirmationDeadlines.get(machine.id) || null,
       desiredShippingDate: machine.desired_shipping_date,
       status: resolveMachineProgressWithContext({
         is_confirmed: machine.is_confirmed,

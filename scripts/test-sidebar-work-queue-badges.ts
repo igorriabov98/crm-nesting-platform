@@ -16,14 +16,13 @@ const counts: SidebarWorkQueueCounts = {
     production: 4,
     planning: 5,
     total: 5,
-    unreadResults: 2,
   },
   transport: 5,
   outsourcingApprovals: 7,
   materialRequests: 6,
 }
 
-assert.equal(getSidebarWorkQueueCount(ROUTES.REQUESTS, counts), 7)
+assert.equal(getSidebarWorkQueueCount(ROUTES.REQUESTS, counts), 5)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_DEPARTMENT_REQUESTS, counts), 3)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_TRANSPORT, counts), 5)
 assert.equal(getSidebarWorkQueueCount(ROUTES.SUPPLY_OUTSOURCING_REQUESTS, counts), 7)
