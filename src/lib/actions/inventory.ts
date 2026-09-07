@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { INVENTORY_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ROUTES } from '@/lib/constants/routes'
 import { classifyBusinessScrapLength, getLongStockLayoutCategoryKey, type BusinessScrapSizeClass } from '@/lib/inventory/business-scrap-size'
+import { groupInventoryReservationOrders, type InventoryReservationLink, type ReservationOrderDetails } from '@/lib/inventory/reservation-order-details'
 import {
   adjustInventoryRecord,
   archiveInventoryItem,
@@ -179,6 +180,7 @@ export type InventoryWithMaterial = Inventory & {
     piece_count: number | null
     created_at: string
   }>
+  active_reservations: ReservationOrderDetails[]
 }
 
 export type InventoryFactory = Pick<Factory, 'id' | 'name'>
@@ -426,27 +428,28 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
     for (const supplier of (suppliersData || []) as { id: string; name: string }[]) supplierMap.set(supplier.id, supplier.name)
   }
   const inventoryIds = rows.map((row) => row.id)
-  type ActivePieceReservation = Pick<
+  type ActiveReservation = Pick<
     InventoryReservation,
-    'id' | 'inventory_id' | 'source_inventory_id' | 'machine_id' | 'request_item_table' | 'request_item_id' | 'reserved_quantity' | 'reserved_secondary_quantity' | 'created_at'
+    'id' | 'inventory_id' | 'source_inventory_id' | 'business_scrap_inventory_id' | 'business_scrap_quantity' | 'machine_id' | 'request_item_table' | 'request_item_id' | 'reserved_quantity' | 'reserved_secondary_quantity' | 'created_at'
   > & {
     is_cut_reservation: boolean
     reservation_source: string
     logical_reserved_quantity: number | null
   }
-  const activePieceReservations: ActivePieceReservation[] = []
+  const activeReservations: ActiveReservation[] = []
   if (inventoryIds.length) {
     const ids = inventoryIds.join(',')
     const { data: reservationData, error: reservationError } = await db
       .from('inventory_reservations')
-      .select('id, inventory_id, source_inventory_id, machine_id, request_item_table, request_item_id, reserved_quantity, logical_reserved_quantity, reserved_secondary_quantity, is_cut_reservation, reservation_source, created_at')
+      .select('id, inventory_id, source_inventory_id, business_scrap_inventory_id, business_scrap_quantity, machine_id, request_item_table, request_item_id, reserved_quantity, logical_reserved_quantity, reserved_secondary_quantity, is_cut_reservation, reservation_source, created_at')
       .is('consumed_at', null)
-      .or(`source_inventory_id.in.(${ids}),inventory_id.in.(${ids})`)
+      .or(`source_inventory_id.in.(${ids}),inventory_id.in.(${ids}),business_scrap_inventory_id.in.(${ids})`)
     if (reservationError) throw new Error(reservationError.message || 'Не удалось загрузить активные мерные бронирования')
-    activePieceReservations.push(...((reservationData || []) as ActivePieceReservation[]).filter((reservation) => (
-      reservation.is_cut_reservation || reservation.reservation_source === 'whole_bar_stock'
-    )))
+    activeReservations.push(...((reservationData || []) as ActiveReservation[]))
   }
+  const activePieceReservations = activeReservations.filter((reservation) => (
+      reservation.is_cut_reservation || reservation.reservation_source === 'whole_bar_stock'
+  ))
   const activeCutReservations = activePieceReservations.filter((reservation) => reservation.is_cut_reservation)
   const activeWholeBarReservations = activePieceReservations.filter((reservation) => reservation.reservation_source === 'whole_bar_stock')
   const transactionMachineByInventory = new Map<string, string>()
@@ -468,6 +471,7 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
   const sourceMachineIds = Array.from(new Set([
     ...rows.map((row) => row.source_machine_id).filter(Boolean),
     ...Array.from(transactionMachineByInventory.values()),
+    ...activeReservations.map((reservation) => reservation.machine_id),
     ...activeCutReservations.map((reservation) => reservation.machine_id),
     ...activeWholeBarReservations.map((reservation) => reservation.machine_id),
   ])) as string[]
@@ -478,8 +482,24 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
     for (const machine of (machinesData || []) as { id: string; name: string }[]) sourceMachineMap.set(machine.id, machine.name)
   }
 
-  const activeCutByInventory = new Map<string, typeof activeCutReservations>()
   const inventoryIdSet = new Set(inventoryIds)
+  const reservationOrdersByInventory = groupInventoryReservationOrders(
+    inventoryIds,
+    activeReservations.map((reservation): InventoryReservationLink => ({
+      reservationId: reservation.id,
+      inventoryId: reservation.inventory_id,
+      sourceInventoryId: reservation.source_inventory_id,
+      businessScrapInventoryId: reservation.business_scrap_inventory_id,
+      businessScrapQuantity: reservation.business_scrap_quantity === null ? null : Number(reservation.business_scrap_quantity || 0),
+      machineId: reservation.machine_id,
+      quantity: Number(reservation.reserved_quantity || 0),
+      secondaryQuantity: reservation.reserved_secondary_quantity === null ? null : Number(reservation.reserved_secondary_quantity || 0),
+      reservedAt: reservation.created_at,
+    })),
+    sourceMachineMap,
+  )
+
+  const activeCutByInventory = new Map<string, typeof activeCutReservations>()
   for (const reservation of activeCutReservations) {
     const inventoryId = reservation.source_inventory_id && inventoryIdSet.has(reservation.source_inventory_id)
       ? reservation.source_inventory_id
@@ -491,7 +511,7 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
   }
   const requestItemWeightMap = await loadRequestItemWeightMap(db, activeCutReservations)
 
-  const activeWholeBarByInventory = new Map<string, ActivePieceReservation[]>()
+  const activeWholeBarByInventory = new Map<string, ActiveReservation[]>()
   for (const reservation of activeWholeBarReservations) {
     const inventoryId = reservation.source_inventory_id && inventoryIdSet.has(reservation.source_inventory_id)
       ? reservation.source_inventory_id
@@ -564,6 +584,7 @@ async function hydrateInventory(db: LooseDb, rows: Inventory[]): Promise<Invento
           : Number(reservation.reserved_secondary_quantity || 0),
         created_at: reservation.created_at,
       })),
+      active_reservations: reservationOrdersByInventory.get(row.id) || [],
     }
   })
 }

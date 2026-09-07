@@ -6,6 +6,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { ACTIVE_TRANSFER_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { requireAnyPermission, requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { aggregateReservationOrders, type ReservationOrderDetails, type ReservationOrderEntry } from '@/lib/inventory/reservation-order-details'
 import type { Database } from '@/lib/types/database'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 
@@ -86,6 +87,7 @@ export type DetailingBalance = {
   onHandWeightKg: number
   reservedWeightKg: number
   availableWeightKg: number
+  reservations: ReservationOrderDetails[]
 }
 export type DetailingMovement = {
   id: string
@@ -237,11 +239,11 @@ function revalidateDetailing() {
   revalidatePath(ROUTES.TASKS)
 }
 
-async function loadWarehouse(db: DetailingDb, includeArchived = false): Promise<DetailingWarehouseData> {
+async function loadWarehouse(db: DetailingDb, includeArchived = false, includeReservationDetails = false): Promise<DetailingWarehouseData> {
   let partsQuery = db.from('detailing_parts').select('id, name, drawing_number, unit_weight_kg, is_active')
   if (!includeArchived) partsQuery = partsQuery.eq('is_active', true)
 
-  const [partsResult, factoriesResult, productsResult, versionsResult, linksResult, linkVersionsResult, balancesResult, movementsResult, usersResult] = await Promise.all([
+  const [partsResult, factoriesResult, productsResult, versionsResult, linksResult, linkVersionsResult, balancesResult, movementsResult, usersResult, reservationsResult, allocationsResult] = await Promise.all([
     partsQuery.order('name', { ascending: true }),
     db.from('factories').select('id, name').order('name', { ascending: true }),
     db.from('products').select('id, name_uk, name_en, drawing_number, status').neq('status', 'archived').order('name_uk', { ascending: true }),
@@ -251,9 +253,15 @@ async function loadWarehouse(db: DetailingDb, includeArchived = false): Promise<
     db.from('detailing_balances').select('id, part_id, factory_id, on_hand_quantity, reserved_quantity, available_quantity'),
     db.from('detailing_movements').select('id, part_id, factory_id, movement_type, quantity_delta, reserved_delta, on_hand_after, reserved_after, comment, created_at, performed_by').order('created_at', { ascending: false }).limit(500),
     db.from('users').select('id, full_name'),
+    includeReservationDetails
+      ? db.from('detailing_reservations').select('id, machine_id, part_id, created_at, status').in('status', ['active', 'partially_consumed'])
+      : Promise.resolve({ data: [], error: null }),
+    includeReservationDetails
+      ? db.from('detailing_reservation_allocations').select('id, reservation_id, factory_id, quantity').gt('quantity', 0)
+      : Promise.resolve({ data: [], error: null }),
   ])
 
-  for (const result of [partsResult, factoriesResult, productsResult, versionsResult, linksResult, linkVersionsResult, balancesResult, movementsResult, usersResult]) {
+  for (const result of [partsResult, factoriesResult, productsResult, versionsResult, linksResult, linkVersionsResult, balancesResult, movementsResult, usersResult, reservationsResult, allocationsResult]) {
     if (result.error) throw new Error(result.error.message || 'Не удалось загрузить данные деталировки')
   }
 
@@ -290,6 +298,36 @@ async function loadWarehouse(db: DetailingDb, includeArchived = false): Promise<
     compatibilitiesByPart.set(row.part_id, list)
   }
 
+  const reservations = (reservationsResult.data || []) as Array<{ id: string; machine_id: string; part_id: string; created_at: string }>
+  const reservationById = new Map(reservations.map((reservation) => [reservation.id, reservation]))
+  const machineIds = Array.from(new Set(reservations.map((reservation) => reservation.machine_id)))
+  const machineMap = new Map<string, string>()
+  if (machineIds.length) {
+    const machinesResult = await db.from('machines').select('id, name').in('id', machineIds)
+    if (machinesResult.error) throw new Error(machinesResult.error.message || 'Не удалось загрузить заказы с бронью деталировки')
+    for (const machine of (machinesResult.data || []) as Array<{ id: string; name: string }>) {
+      machineMap.set(machine.id, machine.name)
+    }
+  }
+  const reservationEntriesByBalance = new Map<string, ReservationOrderEntry[]>()
+  for (const allocation of (allocationsResult.data || []) as Array<{ id: string; reservation_id: string; factory_id: string; quantity: number }>) {
+    const reservation = reservationById.get(allocation.reservation_id)
+    const quantity = numberValue(allocation.quantity)
+    if (!reservation || quantity <= 0) continue
+    const key = `${reservation.part_id}:${allocation.factory_id}`
+    reservationEntriesByBalance.set(key, [
+      ...(reservationEntriesByBalance.get(key) || []),
+      {
+        reservationId: reservation.id,
+        machineId: reservation.machine_id,
+        machineName: machineMap.get(reservation.machine_id) || 'Заказ',
+        quantity,
+        secondaryQuantity: null,
+        reservedAt: reservation.created_at,
+      },
+    ])
+  }
+
   const balancesByPart = new Map<string, DetailingBalance[]>()
   const partWeightMap = new Map(((partsResult.data || []) as RawPart[]).map((part) => [part.id, numberValue(part.unit_weight_kg)]))
   for (const row of (balancesResult.data || []) as Array<Record<string, unknown>>) {
@@ -303,6 +341,7 @@ async function loadWarehouse(db: DetailingDb, includeArchived = false): Promise<
       id: String(row.id), factoryId: String(row.factory_id), factoryName: factoryMap.get(String(row.factory_id)) || 'Неизвестный завод',
       onHandQuantity: onHand, reservedQuantity: reserved, availableQuantity: available,
       onHandWeightKg: onHand * weight, reservedWeightKg: reserved * weight, availableWeightKg: available * weight,
+      reservations: aggregateReservationOrders(reservationEntriesByBalance.get(`${partId}:${String(row.factory_id)}`) || []),
     })
     balancesByPart.set(partId, list)
   }
@@ -349,7 +388,7 @@ export async function getDetailingWarehouse(): Promise<{ data: DetailingWarehous
       { resourceKey: 'technologist_requests', operation: 'view' },
       { resourceKey: 'supply', operation: 'view' },
     ])
-    return { data: await loadWarehouse(adminDb()), error: null }
+    return { data: await loadWarehouse(adminDb(), false, true), error: null }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }

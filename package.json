@@ -11,6 +11,7 @@
     "start": "node node_modules/next/dist/bin/next start",
     "lint": "node node_modules/eslint/bin/eslint.js",
     "test:inventory": "node scripts/test-inventory-stock-lifecycle.mjs",
+    "test:inventory-reservation-details": "tsx --test src/lib/inventory/reservation-order-details.test.ts src/components/features/inventory/ReservationOrdersDialog.test.tsx",
     "test:business-scrap-corrections": "node scripts/test-business-scrap-corrections.mjs",
     "test:supply-reservation-scope": "tsx scripts/test-supply-reservation-scope.ts",
     "test:access-control": "tsx scripts/test-access-control.ts",

@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { ReservationOrdersDialog } from '@/components/features/inventory/ReservationOrdersDialog'
 import {
   ACTIVE_MATERIAL_CATEGORIES,
   CATEGORY_UNITS,
@@ -117,6 +118,7 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
   const [adjustTotal, setAdjustTotal] = useState('')
   const [adjustSecondaryTotal, setAdjustSecondaryTotal] = useState('')
   const [adjustComment, setAdjustComment] = useState('')
+  const [reservationRow, setReservationRow] = useState<InventoryWithMaterial | null>(null)
   const [isPending, startTransition] = useTransition()
 
   const receiptUnits = getUnitsForReceipt(receiptCategory, receiptVariant)
@@ -820,7 +822,18 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
                     <td className="px-4 py-3 text-[#6B7280]">{inventoryCharacteristicsSummary(row, steelTypes)}</td>
                   )}
                   <td className="px-4 py-3">{quantityText(row.display_total_quantity, row.unit, row.display_total_secondary_quantity, row.secondary_unit)}</td>
-                  <td className="px-4 py-3">{quantityText(row.display_reserved_quantity, row.unit, row.display_reserved_secondary_quantity, row.secondary_unit)}</td>
+                  <td className="px-4 py-3">
+                    {hasDisplayedReservation(row) ? (
+                      <button
+                        type="button"
+                        className="rounded-sm text-left font-medium text-[#1B3A6B] underline decoration-dotted underline-offset-4 hover:text-[#25589A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B] focus-visible:ring-offset-2"
+                        onClick={() => setReservationRow(row)}
+                        aria-label={`Показать заказы с бронью материала ${row.material?.name || 'Материал'}`}
+                      >
+                        {quantityText(row.display_reserved_quantity, row.unit, row.display_reserved_secondary_quantity, row.secondary_unit)}
+                      </button>
+                    ) : quantityText(row.display_reserved_quantity, row.unit, row.display_reserved_secondary_quantity, row.secondary_unit)}
+                  </td>
                   <td className="px-4 py-3 font-semibold">{quantityText(row.available_quantity, row.unit, row.available_secondary_quantity, row.secondary_unit)}</td>
                   <td className="px-4 py-3">{formatWeight(row.display_calculated_weight_kg)}</td>
                   {showPieceLengthColumn && <td className="px-4 py-3">{formatPieceLength(row.piece_length_mm)}</td>}
@@ -924,6 +937,26 @@ export function InventoryPage({ items, factories, activeFactoryId, suppliers, st
         </AlertDialogContent>
       </AlertDialog>
 
+      <ReservationOrdersDialog
+        open={Boolean(reservationRow)}
+        onOpenChange={(open) => !open && setReservationRow(null)}
+        subject={reservationRow
+          ? `${reservationRow.material?.name || 'Материал'} · ${inventoryCharacteristicsSummary(reservationRow, steelTypes)}`
+          : 'Материал'}
+        location={`${inventoryStockModeLabel(stockMode)}${activeFactory ? ` · ${activeFactory.name}` : ''}`}
+        totalLabel={reservationRow
+          ? quantityText(
+              reservationRow.display_reserved_quantity,
+              reservationRow.unit,
+              reservationRow.display_reserved_secondary_quantity,
+              reservationRow.secondary_unit,
+            )
+          : '0'}
+        unit={reservationRow?.unit || ''}
+        secondaryUnit={reservationRow?.secondary_unit}
+        reservations={reservationRow?.active_reservations || []}
+      />
+
       {adjustRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
@@ -980,6 +1013,17 @@ function businessScrapHasReservation(row: InventoryWithMaterial) {
     || Number(row.reserved_secondary_quantity || 0) > 0
     || row.active_cut_reservations.length > 0
     || row.active_whole_bar_reservations.length > 0
+}
+
+function hasDisplayedReservation(row: InventoryWithMaterial) {
+  return Number(row.display_reserved_quantity || 0) > 0
+    || Number(row.display_reserved_secondary_quantity || 0) > 0
+}
+
+function inventoryStockModeLabel(mode: 'main' | 'business_scrap' | 'future_business_scrap') {
+  if (mode === 'business_scrap') return 'Деловой остаток'
+  if (mode === 'future_business_scrap') return 'Будущий деловой остаток'
+  return 'Основной склад'
 }
 
 function businessScrapConversionBlockReason(row: InventoryWithMaterial) {
