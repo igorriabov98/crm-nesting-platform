@@ -61,8 +61,6 @@ export function MaterialReceivingAllocationDialog({
     rows,
     selectedRows,
     allocatedPhysical,
-    allocatedLogical,
-    futureScrap,
     allocatedPieces,
     freePieces,
     freeQuantity,
@@ -92,7 +90,7 @@ export function MaterialReceivingAllocationDialog({
             )}
           </div>
           <DialogDescription>
-            {itemName}. Данные потребности взяты из заявок технологов. Предложение можно изменить перед приёмкой.
+            {itemName}. Показан физический план снабжения и ранее принятый материал. Распределение текущего прихода можно изменить перед приёмкой.
           </DialogDescription>
           {hasLengthMismatch && (
             <div role="alert" className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-950">
@@ -106,8 +104,8 @@ export function MaterialReceivingAllocationDialog({
           )}
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-2 border-b bg-muted/25 p-3 sm:grid-cols-5 sm:px-6">
-          <Summary label="План поставки" value={`${formatAmount(preview.planned_quantity)} ${preview.unit}`} />
+        <div className="grid grid-cols-2 gap-2 border-b bg-muted/25 p-3 sm:grid-cols-3 sm:px-6 xl:grid-cols-6">
+          <Summary label="План текущей поставки" value={`${formatAmount(preview.planned_quantity)} ${preview.unit}`} />
           {isBar && preview.planned_piece_length_mm !== null && preview.planned_piece_count !== null && (
             <Summary
               label="Заказано хлыстов"
@@ -121,7 +119,14 @@ export function MaterialReceivingAllocationDialog({
               : `${formatAmount(preview.received_quantity)} ${preview.unit}`}
             emphasis
           />
-          <Summary label="Открыто по заявкам" value={`${formatAmount(preview.total_outstanding_quantity)} ${preview.unit}`} />
+          <Summary
+            label="Осталось принять по заявкам"
+            value={formatSupplyProgress(
+              preview.total_supply_outstanding_quantity,
+              preview.unit,
+              preview.total_supply_outstanding_piece_count,
+            )}
+          />
           <Summary
             label="В резерв"
             value={isBar
@@ -139,9 +144,9 @@ export function MaterialReceivingAllocationDialog({
         <div className="min-h-0 overflow-y-auto overscroll-contain px-3 py-3 sm:px-6">
           <div className="hidden grid-cols-[minmax(230px,1.5fr)_repeat(3,minmax(100px,.65fr))_minmax(150px,.8fr)] gap-3 border-b px-3 py-2 text-xs font-semibold uppercase text-muted-foreground lg:grid">
             <div>Машина и дата Заготовки</div>
-            <div>Заявлено</div>
-            <div>Закрыто</div>
-            <div>Осталось</div>
+            <div>Заявлено к поставке</div>
+            <div>Принято ранее</div>
+            <div>Осталось принять</div>
             <div>{isBar ? 'Хлыстов в резерв' : 'Количество в резерв'}</div>
           </div>
 
@@ -168,15 +173,25 @@ export function MaterialReceivingAllocationDialog({
                   )}
                 </div>
 
-                <QuantityCell label="Заявлено технологом" value={row.requested_quantity} unit={preview.unit} />
-                <div>
-                  <div className="text-xs text-muted-foreground lg:hidden">Закрыто</div>
-                  <div className="font-medium tabular-nums">{formatAmount(row.closed_quantity)} {preview.unit}</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    склад {formatAmount(row.reserved_quantity)} · приходы {formatAmount(row.delivered_quantity)}
-                  </div>
-                </div>
-                <QuantityCell label="Открытый остаток" value={row.outstanding_quantity} unit={preview.unit} strong />
+                <SupplyProgressCell
+                  label="Заявлено к поставке"
+                  quantity={row.supply_requested_quantity}
+                  unit={preview.unit}
+                  pieceCount={row.supply_requested_piece_count}
+                />
+                <SupplyProgressCell
+                  label="Принято ранее"
+                  quantity={row.supply_delivered_quantity}
+                  unit={preview.unit}
+                  pieceCount={row.supply_delivered_piece_count}
+                />
+                <SupplyProgressCell
+                  label="Осталось принять"
+                  quantity={row.supply_outstanding_quantity}
+                  unit={preview.unit}
+                  pieceCount={row.supply_outstanding_piece_count}
+                  strong
+                />
 
                 <div>
                   <label className="text-xs font-medium text-muted-foreground" htmlFor={`receipt-allocation-${row.id}`}>
@@ -214,8 +229,8 @@ export function MaterialReceivingAllocationDialog({
               </strong>
             </div>
             <div className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">
-              По заявкам закроется: <strong>{formatAmount(allocatedLogical)} {preview.unit}</strong>
-              {isBar && futureScrap > 0 && <> · будущий отход <strong>{formatAmount(futureScrap)} {preview.unit}</strong></>}
+              Будет принято по заявкам:{' '}
+              <strong>{formatSupplyProgress(allocatedPhysical, preview.unit, isBar ? allocatedPieces : null)}</strong>
             </div>
           </div>
 
@@ -251,13 +266,33 @@ function Summary({ label, value, emphasis = false }: { label: string; value: str
   )
 }
 
-function QuantityCell({ label, value, unit, strong = false }: { label: string; value: number; unit: string; strong?: boolean }) {
+function SupplyProgressCell({
+  label,
+  quantity,
+  unit,
+  pieceCount,
+  strong = false,
+}: {
+  label: string
+  quantity: number
+  unit: string
+  pieceCount: number | null
+  strong?: boolean
+}) {
   return (
     <div>
       <div className="text-xs text-muted-foreground lg:hidden">{label}</div>
-      <div className={`${strong ? 'font-semibold text-foreground' : 'font-medium'} tabular-nums`}>{formatAmount(value)} {unit}</div>
+      <div className={`${strong ? 'font-semibold text-foreground' : 'font-medium'} tabular-nums`}>
+        {formatSupplyProgress(quantity, unit, pieceCount)}
+      </div>
     </div>
   )
+}
+
+export function formatSupplyProgress(quantity: number, unit: string, pieceCount: number | null) {
+  return pieceCount === null
+    ? `${formatAmount(quantity)} ${unit}`
+    : `${formatAmount(quantity)} ${unit} / ${formatAmount(pieceCount)} шт`
 }
 
 function formatAmount(value: number) {
