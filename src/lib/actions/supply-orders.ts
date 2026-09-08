@@ -288,7 +288,7 @@ export type SupplyOrderAggregateSourceItem = {
   supplier_id: string | null
   supplier_name: string | null
   weight_kg: number | null
-  order_status: Extract<OrderItemStatus, 'pending' | 'ordered' | 'delivered'>
+  order_status: Extract<OrderItemStatus, 'pending' | 'ordered' | 'delivered' | 'cancelled'>
   supply_delivery_date: string | null
   planned_schedule_quantity: number
   delivered_schedule_quantity: number
@@ -296,6 +296,9 @@ export type SupplyOrderAggregateSourceItem = {
   delivery_schedules: SupplyOrderDeliverySchedule[]
   long_stock_purchase_plan: LongStockPurchasePlan | null
   position_revision: SupplyPositionRevisionSummary | null
+  return_state?: 'review' | 'cancelled' | null
+  return_reason?: string | null
+  can_cancel_return?: boolean
 }
 
 export type SupplyOrderAggregateSupplier = {
@@ -501,8 +504,13 @@ const ORDER_TABLES = [
 const MATERIAL_COMPLETION_REQUEST_STATUSES = ['submitted_to_supply', 'completed']
 
 function isReturnedSupplyPosition(item: Pick<RawOrderItem, 'position_revision' | 'long_stock_purchase_plan'>) {
-  return Boolean(item.position_revision)
+  return Boolean(item.position_revision && item.position_revision.status !== 'cancelled')
     || item.long_stock_purchase_plan?.cutting_status === 'requires_recalculation'
+}
+
+function isCancelledReturnedSupplyPosition(item: Pick<RawOrderItem, 'position_revision' | 'long_stock_purchase_plan'>) {
+  return item.position_revision?.status === 'cancelled'
+    || item.long_stock_purchase_plan?.cutting_status === 'cancelled'
 }
 
 async function loadSupplyPositionRevisionMap(
@@ -515,9 +523,9 @@ async function loadSupplyPositionRevisionMap(
   const keys = new Set(eligible.map((item) => supplyPositionRevisionKey(item.table, item.id)))
   const { data, error } = await db
     .from('supply_position_revisions')
-    .select('id, source_request_item_table, source_request_item_id, category, status, reason, department_request_id, replacement_request_id, replacement_request_item_id')
+    .select('id, source_request_item_table, source_request_item_id, category, status, reason, department_request_id, replacement_request_id, replacement_request_item_id, assigned_to, cancelled_by, cancelled_at, cancellation_reason')
     .in('source_request_item_id', Array.from(new Set(eligible.map((item) => item.id))))
-    .in('status', ['requested', 'editing', 'stock_check'])
+    .in('status', ['requested', 'editing', 'stock_check', 'cancelled'])
   if (error) throw new Error(error.message || 'Не удалось загрузить возвраты позиций')
 
   return new Map(((data || []) as SupplyPositionRevisionSummary[])
@@ -532,8 +540,8 @@ async function loadSupplyPositionRevisionMap(
 }
 
 async function requireAccess(operation: PermissionOperation = 'view') {
-  const { supabase, userId } = await requirePermission('supply_orders', operation)
-  return { db: supabase as unknown as RpcDb, userId }
+  const permission = await requirePermission('supply_orders', operation)
+  return { db: permission.supabase as unknown as RpcDb, ...permission }
 }
 
 async function requireReceivingAccess(operation: PermissionOperation = 'view') {
@@ -661,14 +669,18 @@ async function getDeliveryDays(db: LooseDb, supplierIds: string[]) {
 
 async function loadRows(db: LooseDb, table: string, requestIds: string[]) {
   if (requestIds.length === 0) return []
-  const { data, error } = await db.from(table).select(getRequestItemSelect(table)).in('request_id', requestIds)
+  let query = db.from(table).select(getRequestItemSelect(table)).in('request_id', requestIds)
+  if (isLongStockRequestItemTable(table)) query = query.eq('is_cutting_plan_draft', false)
+  const { data, error } = await query
   if (error) throw new Error(error.message || 'Не удалось загрузить позиции')
   return (data || []) as RequestItemRow[]
 }
 
 async function loadRowsByIds(db: LooseDb, table: string, ids: string[]) {
   if (ids.length === 0) return []
-  const { data, error } = await db.from(table).select(getRequestItemSelect(table)).in('id', ids)
+  let query = db.from(table).select(getRequestItemSelect(table)).in('id', ids)
+  if (isLongStockRequestItemTable(table)) query = query.eq('is_cutting_plan_draft', false)
+  const { data, error } = await query
   if (error) throw new Error(error.message || 'Не удалось загрузить позиции')
   return (data || []) as RequestItemRow[]
 }
@@ -873,7 +885,7 @@ function secondaryReservedQuantity(table: string, row: RequestItemRow) {
   return null
 }
 
-const AGGREGATE_ORDER_STATUSES = new Set<OrderItemStatus>(['pending', 'ordered', 'delivered'])
+const AGGREGATE_ORDER_STATUSES = new Set<OrderItemStatus>(['pending', 'ordered', 'delivered', 'cancelled'])
 
 const IDENTITY_FIELDS: Record<string, Array<[label: string, field: string]>> = {
   request_sheet_metal: [
@@ -2017,7 +2029,8 @@ async function loadAggregateInputItems(
       position_revision: positionRevisionMap.get(supplyPositionRevisionKey(item.table, item.id)) || null,
     }))
     .filter((item) => item.to_order > 0)
-    .filter((item) => includeReturned || !isReturnedSupplyPosition(item))
+    .filter((item) => item.order_status !== 'cancelled' || isCancelledReturnedSupplyPosition(item))
+    .filter((item) => includeReturned || (!isReturnedSupplyPosition(item) && !isCancelledReturnedSupplyPosition(item)))
 
   const materialIds = Array.from(new Set(orderableItems.map((item) => item.material_id).filter(Boolean))) as string[]
   const materialsRes = materialIds.length
@@ -2151,7 +2164,7 @@ function addSupplierSummary(
 
 export async function getSupplyOrderAggregates(factoryId?: string | null) {
   try {
-    const { db } = await requireAccess()
+    const { db, userId, role, permissionDetails } = await requireAccess()
     const items = await loadAggregateInputItems(db, factoryId, true)
     const schedules = await loadReceivingSchedules(db, items)
     const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
@@ -2218,12 +2231,19 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
     }
 
     const aggregates = new Map<string, MutableAggregate>()
+    const canManageReturnedPositions = ['planning_director', 'financial_director', 'commercial_director'].includes(role)
+      || permissionDetails.isAdminPosition
 
     for (const item of items) {
       const positionReturned = isReturnedSupplyPosition(item)
-      const activeToOrder = positionReturned ? 0 : item.to_order
-      const activeRequestedQuantity = positionReturned ? 0 : item.requested_quantity
-      const activeReservedQuantity = positionReturned ? 0 : item.reserved_quantity
+      const positionCancelled = isCancelledReturnedSupplyPosition(item)
+      const positionInactive = positionReturned || positionCancelled
+      const returnAssignedTo = item.position_revision?.assigned_to
+        || item.long_stock_purchase_plan?.returned_assigned_to
+        || null
+      const activeToOrder = positionInactive ? 0 : item.to_order
+      const activeRequestedQuantity = positionInactive ? 0 : item.requested_quantity
+      const activeReservedQuantity = positionInactive ? 0 : item.reserved_quantity
       const materialKey = getAggregateIdentityKey(item.table, item.raw, item)
       const dateKey = plannedDateKey(item.planned_material_date)
       const aggregateKey = `${factoryKey(item.factory_id)}|${dateKey}|${materialKey}`
@@ -2232,10 +2252,10 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         item.long_stock_purchase_plan,
       )
         .map((schedule) => toScheduleDto(schedule, supplierNameMap))
-      const plannedScheduleQuantity = positionReturned ? 0 : itemSchedules
+      const plannedScheduleQuantity = positionInactive ? 0 : itemSchedules
         .filter((schedule) => schedule.status === 'planned')
         .reduce((sum, schedule) => sum + schedulePlannedQuantity(schedule), 0)
-      const deliveredScheduleQuantity = positionReturned ? 0 : itemSchedules
+      const deliveredScheduleQuantity = positionInactive ? 0 : itemSchedules
         .filter((schedule) => schedule.status === 'delivered')
         .reduce((sum, schedule) => sum + scheduleDeliveredQuantity(schedule), 0)
       const unscheduledQuantity = Math.max(activeToOrder - plannedScheduleQuantity - deliveredScheduleQuantity, 0)
@@ -2270,15 +2290,15 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       aggregate.quantity += activeToOrder
       aggregate.requested_quantity += activeRequestedQuantity
       aggregate.reserved_quantity += activeReservedQuantity
-      aggregate.weight_kg = addNullableWeight(aggregate.weight_kg, positionReturned ? null : item.calculated_weight_kg)
-      aggregate.item_count += positionReturned ? 0 : 1
-      aggregate.pending_count += !positionReturned && item.order_status === 'pending' ? 1 : 0
-      aggregate.ordered_count += !positionReturned && item.order_status === 'ordered' ? 1 : 0
-      aggregate.delivered_count += !positionReturned && item.order_status === 'delivered' ? 1 : 0
+      aggregate.weight_kg = addNullableWeight(aggregate.weight_kg, positionInactive ? null : item.calculated_weight_kg)
+      aggregate.item_count += positionInactive ? 0 : 1
+      aggregate.pending_count += !positionInactive && item.order_status === 'pending' ? 1 : 0
+      aggregate.ordered_count += !positionInactive && item.order_status === 'ordered' ? 1 : 0
+      aggregate.delivered_count += !positionInactive && item.order_status === 'delivered' ? 1 : 0
       aggregate.planned_schedule_quantity += plannedScheduleQuantity
       aggregate.delivered_schedule_quantity += deliveredScheduleQuantity
       aggregate.unscheduled_quantity += unscheduledQuantity
-      if (!positionReturned) aggregate.machineIds.add(item.machine_id)
+      if (!positionInactive) aggregate.machineIds.add(item.machine_id)
 
       const currentFactoryKey = factoryKey(item.factory_id)
       const existingFactory = aggregate.factories.get(currentFactoryKey)
@@ -2308,17 +2328,17 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
       factory.quantity += activeToOrder
       factory.requested_quantity += activeRequestedQuantity
       factory.reserved_quantity += activeReservedQuantity
-      factory.weight_kg = addNullableWeight(factory.weight_kg, positionReturned ? null : item.calculated_weight_kg)
-      factory.item_count += positionReturned ? 0 : 1
-      factory.pending_count += !positionReturned && item.order_status === 'pending' ? 1 : 0
-      factory.ordered_count += !positionReturned && item.order_status === 'ordered' ? 1 : 0
-      factory.delivered_count += !positionReturned && item.order_status === 'delivered' ? 1 : 0
+      factory.weight_kg = addNullableWeight(factory.weight_kg, positionInactive ? null : item.calculated_weight_kg)
+      factory.item_count += positionInactive ? 0 : 1
+      factory.pending_count += !positionInactive && item.order_status === 'pending' ? 1 : 0
+      factory.ordered_count += !positionInactive && item.order_status === 'ordered' ? 1 : 0
+      factory.delivered_count += !positionInactive && item.order_status === 'delivered' ? 1 : 0
       factory.planned_schedule_quantity += plannedScheduleQuantity
       factory.delivered_schedule_quantity += deliveredScheduleQuantity
       factory.unscheduled_quantity += unscheduledQuantity
-      if (!positionReturned) factory.machineIds.add(item.machine_id)
-      if (!positionReturned) addSupplierSummary(factory.suppliers, item, supplierNameMap)
-      if (!positionReturned) {
+      if (!positionInactive) factory.machineIds.add(item.machine_id)
+      if (!positionInactive) addSupplierSummary(factory.suppliers, item, supplierNameMap)
+      if (!positionInactive) {
         for (const supplyDeliveryDate of supplyDeliveryDates) {
           factory.supplyDates.add(supplyDeliveryDate || 'no_supply_date')
         }
@@ -2339,7 +2359,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         supplier_id: item.supplier_id,
         supplier_name: item.supplier_id ? supplierNameMap.get(item.supplier_id) || 'Поставщик' : null,
         weight_kg: item.calculated_weight_kg,
-        order_status: item.order_status as Extract<OrderItemStatus, 'pending' | 'ordered' | 'delivered'>,
+        order_status: item.order_status as Extract<OrderItemStatus, 'pending' | 'ordered' | 'delivered' | 'cancelled'>,
         supply_delivery_date: supplyDeliveryDates[0] || null,
         planned_schedule_quantity: plannedScheduleQuantity,
         delivered_schedule_quantity: deliveredScheduleQuantity,
@@ -2347,6 +2367,13 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         delivery_schedules: itemSchedules,
         long_stock_purchase_plan: item.long_stock_purchase_plan,
         position_revision: item.position_revision,
+        return_state: positionCancelled ? 'cancelled' : positionReturned ? 'review' : null,
+        return_reason: positionCancelled
+          ? item.position_revision?.cancellation_reason || String(item.raw.cancellation_reason || '') || null
+          : item.position_revision?.reason || String(item.raw.cancellation_reason || '') || null,
+        can_cancel_return: positionReturned
+          && Boolean(returnAssignedTo)
+          && (returnAssignedTo === userId || canManageReturnedPositions),
       })
 
       aggregate.factories.set(currentFactoryKey, factory)
@@ -2589,7 +2616,7 @@ type LongStockPlanItemRow = {
   plan_id: string
   request_item_table: string
   request_item_id: string
-  cutting_status: 'planning' | 'plan_approved' | 'accepted' | 'requires_recalculation'
+  cutting_status: 'planning' | 'plan_approved' | 'accepted' | 'requires_recalculation' | 'cancelled'
   link_state: 'active' | 'replacement_staging' | 'superseded'
 }
 
@@ -2604,6 +2631,7 @@ type LongStockPlanVersionRow = {
   version_number: number
   status: 'approved' | 'invalid'
   selected_candidate_number: number
+  invalidation_department_request_id: string | null
 }
 
 type LongStockCandidateRow = {
@@ -2658,7 +2686,7 @@ async function loadLongStockPurchasePlanMap(
 
   const planItems = ((planItemsRaw || []) as LongStockPlanItemRow[]).filter((item) => (
     eligibleKeys.has(`${item.request_item_table}:${item.request_item_id}`)
-    && item.link_state === 'active'
+    && (item.link_state === 'active' || item.cutting_status === 'cancelled')
     && item.cutting_status !== 'planning'
   ))
   const planIds = Array.from(new Set(planItems.map((item) => item.plan_id)))
@@ -2667,23 +2695,33 @@ async function loadLongStockPurchasePlanMap(
   const [plansResult, versionsResult] = await Promise.all([
     db.from('long_stock_cutting_plans').select('id, plan_number').in('id', planIds),
     db.from('long_stock_cutting_plan_versions')
-      .select('id, plan_id, version_number, status, selected_candidate_number')
+      .select('id, plan_id, version_number, status, selected_candidate_number, invalidation_department_request_id')
       .in('plan_id', planIds)
       .in('status', ['approved', 'invalid'])
       .order('version_number', { ascending: false }),
   ])
   if (plansResult.error) throw new Error(plansResult.error.message || 'Не удалось загрузить номера карт раскроя')
   if (versionsResult.error) throw new Error(versionsResult.error.message || 'Не удалось загрузить версии карт раскроя')
+  const versions = (versionsResult.data || []) as LongStockPlanVersionRow[]
+  const departmentRequestIds = Array.from(new Set(versions
+    .map((version) => version.invalidation_department_request_id)
+    .filter(Boolean))) as string[]
+  const departmentsResult = departmentRequestIds.length > 0
+    ? await db.from('department_requests').select('id,assigned_to').in('id', departmentRequestIds)
+    : { data: [], error: null }
+  if (departmentsResult.error) throw new Error(departmentsResult.error.message || 'Не удалось загрузить исполнителей возврата')
+  const assignedByDepartment = new Map(((departmentsResult.data || []) as Array<{ id: string; assigned_to: string | null }>)
+    .map((request) => [request.id, request.assigned_to]))
 
   const plans = new Map(((plansResult.data || []) as LongStockPlanRow[]).map((plan) => [plan.id, plan]))
   const versionsByPlan = new Map<string, LongStockPlanVersionRow[]>()
-  for (const version of (versionsResult.data || []) as LongStockPlanVersionRow[]) {
+  for (const version of versions) {
     versionsByPlan.set(version.plan_id, [...(versionsByPlan.get(version.plan_id) || []), version])
   }
   const selectedVersions = new Map<string, LongStockPlanVersionRow>()
   for (const item of planItems) {
     const versions = versionsByPlan.get(item.plan_id) || []
-    const selected = item.cutting_status === 'requires_recalculation'
+    const selected = item.cutting_status === 'requires_recalculation' || item.cutting_status === 'cancelled'
       ? versions.find((version) => version.status === 'invalid')
       : versions.find((version) => version.status === 'approved')
     if (selected) selectedVersions.set(item.plan_id, selected)
@@ -2730,9 +2768,12 @@ async function loadLongStockPurchasePlanMap(
       version_id: version.id,
       version_number: version.version_number,
       version_status: version.status,
-      cutting_status: item.cutting_status === 'requires_recalculation'
-        ? 'requires_recalculation'
+      cutting_status: item.cutting_status === 'requires_recalculation' || item.cutting_status === 'cancelled'
+        ? item.cutting_status
         : item.cutting_status === 'accepted' ? 'accepted' : 'plan_approved',
+      returned_assigned_to: version.invalidation_department_request_id
+        ? assignedByDepartment.get(version.invalidation_department_request_id) || null
+        : null,
       ...purchase,
     })
   }

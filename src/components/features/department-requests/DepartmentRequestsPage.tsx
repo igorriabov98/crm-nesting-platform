@@ -226,6 +226,11 @@ function RequestListItem({
             machineId={request.machine_id}
             canClaimMachineLayout={canClaimMachineLayout}
             transportDateChangeRequestId={request.transport_trip_date_change_request_id}
+            canProcessPositionRevision={request.can_process_position_revision}
+            technologistRequestId={request.technologist_request_id}
+            requestItemTable={request.request_item_table}
+            requestItemId={request.request_item_id}
+            hasReplacementRequest={Boolean(request.position_revision?.replacement_request_id)}
           />
           <Link
             href={detailHref}

@@ -54,6 +54,8 @@ import {
 } from '@/lib/supply-orders/delivery-schedule-drafts'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
+import { CancelReturnedSupplyPositionDialog } from '@/components/features/requests/CancelReturnedSupplyPositionDialog'
+import type { SupplyPositionTable } from '@/lib/supply-orders/position-revisions'
 import { SupplyDateOrderExportButton } from './SupplyDateOrderExportButton'
 import { SupplyOrderFactoryToggle } from './SupplyOrderFactoryToggle'
 import {
@@ -62,7 +64,7 @@ import {
   groupSupplyOrderAggregatesBySupplyDate,
   hasSupplyOrderRedelivery,
   isSupplyOrderBarMaterial,
-  isSupplyOrderAggregateClosed,
+  isCancelledReturnedSupplyOrderSource,
   isReturnedSupplyOrderSource,
   partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderMachineRoutes,
@@ -159,11 +161,12 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
         value={filters.status}
         onChange={(status) => setFilters((current) => ({ ...current, status }))}
         counts={{
-          open: aggregates.filter((row) => !isSupplyOrderAggregateClosed(row)).length,
+          open: filterAndSortAggregates(aggregates, { ...defaultFilters, status: 'open' }).length,
+          review: filterAndSortAggregates(aggregates, { ...defaultFilters, status: 'review' }).length,
           all: aggregates.length,
           scheduled: aggregates.filter((row) => row.planned_schedule_quantity > 0).length,
           unscheduled: aggregates.filter(hasSupplyOrderRedelivery).length,
-          closed: aggregates.filter(isSupplyOrderAggregateClosed).length,
+          closed: filterAndSortAggregates(aggregates, { ...defaultFilters, status: 'closed' }).length,
         }}
       />
 
@@ -566,6 +569,7 @@ function MaterialOrderCard({
 
 const aggregateStatusLabels: Record<SupplyOrderAggregateStatusFilter, string> = {
   open: 'Незакрытые поставки',
+  review: 'На рассмотрении',
   all: 'Все статусы',
   scheduled: 'С датой поступления',
   unscheduled: 'Нужно довезти',
@@ -577,10 +581,11 @@ const aggregateStatusLabels: Record<SupplyOrderAggregateStatusFilter, string> = 
 function DeliveryStateTabs({ value, onChange, counts }: {
   value: SupplyOrderAggregateStatusFilter
   onChange: (value: SupplyOrderAggregateStatusFilter) => void
-  counts: { open: number; all: number; scheduled: number; unscheduled: number; closed: number }
+  counts: { open: number; review: number; all: number; scheduled: number; unscheduled: number; closed: number }
 }) {
   const tabs: Array<[SupplyOrderAggregateStatusFilter, string, number]> = [
     ['open', 'Незакрытые', counts.open],
+    ['review', 'На рассмотрении', counts.review],
     ['all', 'Все', counts.all],
     ['scheduled', 'С датой поступления', counts.scheduled],
     ['unscheduled', 'Нужно довезти', counts.unscheduled],
@@ -1300,15 +1305,17 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
       <div className="mt-2 hidden space-y-2 xl:block">
         {factory.items.map((item) => {
           const plan = item.long_stock_purchase_plan
-          const returnedToTechnologist = Boolean(item.position_revision)
-            || plan?.cutting_status === 'requires_recalculation'
+          const returnedToTechnologist = isReturnedSupplyOrderSource(item)
+          const cancelledReturn = isCancelledReturnedSupplyOrderSource(item)
           return (
             <div key={`${item.table}:${item.id}`} className="grid grid-cols-[minmax(150px,0.8fr)_110px_155px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] items-center gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm">
               <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-medium text-primary hover:underline">
                 {item.machine_name}
               </Link>
               <span className="tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</span>
-              {returnedToTechnologist ? (
+              {cancelledReturn ? (
+                <Badge variant="outline" className="w-fit border-slate-300 bg-slate-100 text-slate-800">Отменено</Badge>
+              ) : returnedToTechnologist ? (
                 <Badge variant="outline" className="w-fit border-amber-300 bg-amber-50 text-amber-900">Возвращено технологу</Badge>
               ) : (
                 <MachineItemOrderStatus item={item} />
@@ -1327,7 +1334,7 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
                   <ExternalLink className="h-3.5 w-3.5" />
                   Заявка
                 </Link>
-                {!returnedToTechnologist && (
+                {!returnedToTechnologist && !cancelledReturn && (
                   <ReturnLongStockPositionButton
                     requestItemTable={item.table}
                     requestItemId={item.id}
@@ -1337,7 +1344,13 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
                     versionNumber={plan?.version_number}
                   />
                 )}
+                {item.can_cancel_return && (
+                  <CancelReturnedSupplyPositionDialog table={item.table as SupplyPositionTable} itemId={item.id} compact />
+                )}
               </div>
+              {cancelledReturn && item.return_reason && (
+                <p className="col-span-6 text-xs text-slate-600"><span className="font-medium">Причина:</span> {item.return_reason}</p>
+              )}
             </div>
           )
         })}
@@ -1345,13 +1358,15 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
       <div className="grid gap-3 xl:hidden">
         {factory.items.map((item) => {
           const plan = item.long_stock_purchase_plan
-          const returnedToTechnologist = Boolean(item.position_revision)
-            || plan?.cutting_status === 'requires_recalculation'
+          const returnedToTechnologist = isReturnedSupplyOrderSource(item)
+          const cancelledReturn = isCancelledReturnedSupplyOrderSource(item)
           return (
             <article key={`${item.table}:${item.id}`} className="rounded-xl border border-border/70 bg-background p-3">
               <div className="flex items-start justify-between gap-3">
                 <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}</Link>
-                {returnedToTechnologist ? (
+                {cancelledReturn ? (
+                  <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-800">Отменено</Badge>
+                ) : returnedToTechnologist ? (
                   <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Возвращено технологу</Badge>
                 ) : (
                   <MachineItemOrderStatus item={item} />
@@ -1368,11 +1383,16 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
                   <PurchasePlanSummary plans={[plan]} compact />
                 </div>
               )}
+              {cancelledReturn && item.return_reason && (
+                <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+                  <span className="font-medium">Причина отмены:</span> {item.return_reason}
+                </p>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
                 <Link href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-muted">
                   <ExternalLink className="h-3.5 w-3.5" />Открыть заявку
                 </Link>
-                {!returnedToTechnologist && (
+                {!returnedToTechnologist && !cancelledReturn && (
                   <ReturnLongStockPositionButton
                     requestItemTable={item.table}
                     requestItemId={item.id}
@@ -1381,6 +1401,9 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
                     planNumber={plan?.plan_number}
                     versionNumber={plan?.version_number}
                   />
+                )}
+                {item.can_cancel_return && (
+                  <CancelReturnedSupplyPositionDialog table={item.table as SupplyPositionTable} itemId={item.id} compact />
                 )}
               </div>
             </article>

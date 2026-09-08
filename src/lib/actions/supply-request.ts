@@ -482,7 +482,11 @@ function findStockItems(
 }
 
 async function loadRows<T>(db: LooseDb, table: RequestItemTable, requestId: string) {
-  const { data, error } = await db.from(table).select('*, materials(id, name)').eq('request_id', requestId).order('sort_order', { ascending: true })
+  let query = db.from(table).select('*, materials(id, name)').eq('request_id', requestId)
+  if (table === 'request_circle' || table === 'request_pipe' || table === 'request_knives') {
+    query = query.eq('is_cutting_plan_draft', false)
+  }
+  const { data, error } = await query.order('sort_order', { ascending: true })
   if (error) throw new Error(error.message || 'ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð³Ñ€ÑƒÐ·Ð¸Ñ‚ÑŒ Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸ Ð·Ð°ÑÐ²ÐºÐ¸')
   return (data || []) as T[]
 }

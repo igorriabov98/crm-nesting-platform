@@ -24,11 +24,12 @@ export type LongStockPurchasePlan = {
   version_id: string
   version_number: number
   version_status: 'approved' | 'invalid'
-  cutting_status: 'plan_approved' | 'accepted' | 'requires_recalculation'
+  cutting_status: 'plan_approved' | 'accepted' | 'requires_recalculation' | 'cancelled'
   components: LongStockPurchaseComponent[]
   total_piece_count: number
   total_length_mm: number
   uses_nonstandard_length: boolean
+  returned_assigned_to?: string | null
 }
 
 type PlannedLongStockSchedule = {

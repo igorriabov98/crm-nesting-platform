@@ -67,6 +67,7 @@ function fixture(options: {
   for (const category of categories) {
     tables[category] = [{
       id: category, request_id: requestId, calculated_weight_kg: 20, remainder_qty: 3,
+      is_cutting_plan_draft: false,
       ...(category === 'request_pipe' ? { pipe_type: options.pipeType ?? 'square', size: options.pipeType === 'round' ? '60' : options.pipeType === 'wire' ? '4' : '40х40' } : {}),
       ...(category === 'request_circle' ? { steel_grade: '40Х', diameter_mm: 50, remainder_mm: 3000 } : {}),
       ...(category === 'request_knives' ? { knife_type: 'Нож плоский', steel_grade: '65Г' } : {}),

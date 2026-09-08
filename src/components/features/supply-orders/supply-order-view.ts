@@ -30,7 +30,7 @@ export type OrderFiltersState = {
   sort: SupplyOrderSort
 }
 
-export type SupplyOrderAggregateStatusFilter = 'open' | 'all' | 'scheduled' | 'unscheduled' | 'closed' | 'pending' | 'ordered'
+export type SupplyOrderAggregateStatusFilter = 'open' | 'review' | 'all' | 'scheduled' | 'unscheduled' | 'closed' | 'pending' | 'ordered'
 export type SupplyOrderAggregateSort =
   | 'date_asc'
   | 'date_desc'
@@ -149,10 +149,27 @@ type SourceCoverageState = {
 }
 
 export function isReturnedSupplyOrderSource(
-  item: Pick<SupplyOrderAggregateSourceItem, 'position_revision' | 'long_stock_purchase_plan'>,
+  item: {
+    return_state?: SupplyOrderAggregateSourceItem['return_state']
+    position_revision?: SupplyOrderAggregateSourceItem['position_revision']
+    long_stock_purchase_plan?: SupplyOrderAggregateSourceItem['long_stock_purchase_plan']
+  },
 ) {
-  return Boolean(item.position_revision)
+  if (item.return_state !== undefined) return item.return_state === 'review'
+  return Boolean(item.position_revision && item.position_revision.status !== 'cancelled')
     || item.long_stock_purchase_plan?.cutting_status === 'requires_recalculation'
+}
+
+export function isCancelledReturnedSupplyOrderSource(
+  item: {
+    return_state?: SupplyOrderAggregateSourceItem['return_state']
+    position_revision?: SupplyOrderAggregateSourceItem['position_revision']
+    long_stock_purchase_plan?: SupplyOrderAggregateSourceItem['long_stock_purchase_plan']
+  },
+) {
+  if (item.return_state !== undefined) return item.return_state === 'cancelled'
+  return item.position_revision?.status === 'cancelled'
+    || item.long_stock_purchase_plan?.cutting_status === 'cancelled'
 }
 
 export function buildSupplyOrderDetailContexts(
@@ -545,14 +562,43 @@ export function groupSupplyOrderItems(items: SupplyOrderItem[], sort: SupplyOrde
 
 export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filters: AggregateFiltersState) {
   const normalizedQuery = normalize(filters.query)
-  const filtered = aggregates.filter((aggregate) => {
+  const projected = aggregates.flatMap((aggregate) => {
+    const sourceItems = aggregate.factories.flatMap((factory) => factory.items)
+    const hasReturnedItems = sourceItems.some(isReturnedSupplyOrderSource)
+    const hasCancelledReturnedItems = sourceItems.some(isCancelledReturnedSupplyOrderSource)
+    if (filters.status === 'all') return [aggregate]
+    if (filters.status === 'review') {
+      return [projectSupplyOrderAggregate(aggregate, isReturnedSupplyOrderSource, 'review')].filter(Boolean) as SupplyOrderAggregate[]
+    }
+    if (filters.status === 'closed') {
+      if (!hasReturnedItems && !hasCancelledReturnedItems) {
+        return isSupplyOrderAggregateClosed(aggregate) ? [aggregate] : []
+      }
+      const cancelled = projectSupplyOrderAggregate(aggregate, isCancelledReturnedSupplyOrderSource, 'cancelled')
+      const regular = projectSupplyOrderAggregate(
+        aggregate,
+        (item) => !isReturnedSupplyOrderSource(item) && !isCancelledReturnedSupplyOrderSource(item),
+        'regular',
+      )
+      return [cancelled, regular && isSupplyOrderAggregateClosed(regular) ? regular : null]
+        .filter(Boolean) as SupplyOrderAggregate[]
+    }
+    if (!hasReturnedItems && !hasCancelledReturnedItems) return [aggregate]
+    const regular = projectSupplyOrderAggregate(
+      aggregate,
+      (item) => !isReturnedSupplyOrderSource(item) && !isCancelledReturnedSupplyOrderSource(item),
+      'regular',
+    )
+    if (!regular) return []
+    return [regular]
+  })
+  const filtered = projected.filter((aggregate) => {
     if (filters.category !== 'all' && aggregate.category !== filters.category) return false
     if (filters.status === 'open' && isSupplyOrderAggregateClosed(aggregate)) return false
     if (filters.status === 'pending' && aggregate.pending_count <= 0) return false
     if (filters.status === 'ordered' && aggregate.ordered_count <= 0) return false
     if (filters.status === 'scheduled' && aggregate.planned_schedule_quantity <= 0) return false
     if (filters.status === 'unscheduled' && !hasSupplyOrderRedelivery(aggregate)) return false
-    if (filters.status === 'closed' && !isSupplyOrderAggregateClosed(aggregate)) return false
     if (filters.supplier !== 'all' && !aggregate.factories.some((factory) => (
       factory.items.some((item) => item.supplier_id === filters.supplier) ||
       factory.items.some((item) => item.delivery_schedules.some((schedule) => schedule.supplier_id === filters.supplier))
@@ -585,7 +631,9 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
 }
 
 export function isSupplyOrderAggregateClosed(aggregate: SupplyOrderAggregate) {
-  if (aggregate.factories.some((factory) => factory.items.some(isReturnedSupplyOrderSource))) return false
+  const items = aggregate.factories.flatMap((factory) => factory.items)
+  if (items.some(isReturnedSupplyOrderSource)) return false
+  if (items.length > 0 && items.every(isCancelledReturnedSupplyOrderSource)) return true
   return aggregate.delivered_count === aggregate.item_count && aggregate.unscheduled_quantity <= 0
 }
 
@@ -858,7 +906,7 @@ export function deliveredScheduleQuantity(schedule: SupplyOrderAggregateSourceIt
 function projectSupplyOrderAggregate(
   aggregate: SupplyOrderAggregate,
   predicate: (item: SupplyOrderAggregateSourceItem) => boolean,
-  idSuffix: 'redelivery' | 'regular',
+  idSuffix: 'redelivery' | 'regular' | 'review' | 'cancelled',
 ): SupplyOrderAggregate | null {
   const factories = aggregate.factories
     .map((factory) => projectSupplyOrderFactory(factory, predicate))
@@ -894,7 +942,9 @@ function projectSupplyOrderFactory(
   const items = factory.items.filter(predicate)
   if (items.length === 0) return null
 
-  const activeItems = items.filter((item) => !isReturnedSupplyOrderSource(item))
+  const activeItems = items.filter((item) => (
+    !isReturnedSupplyOrderSource(item) && !isCancelledReturnedSupplyOrderSource(item)
+  ))
   const quantity = activeItems.reduce((sum, item) => sum + item.quantity, 0)
   const ratio = factory.quantity > 0 ? quantity / factory.quantity : 0
   const supplyDates = Array.from(new Set(activeItems.map((item) => item.supply_delivery_date || 'no_supply_date')))

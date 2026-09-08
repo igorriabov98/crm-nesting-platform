@@ -122,10 +122,11 @@ export type DepartmentRequestRow = {
   attachments: DepartmentRequestAttachment[]
   events?: DepartmentRequestEvent[]
   position_revision?: {
-    status: 'requested' | 'editing' | 'stock_check' | 'submitted'
+    status: 'requested' | 'editing' | 'stock_check' | 'submitted' | 'cancelled'
     replacement_request_id: string | null
     replacement_request_item_id: string | null
   } | null
+  can_process_position_revision: boolean
 }
 
 export type DepartmentRequestFilterOption = {
@@ -441,13 +442,37 @@ async function loadWorkspace(input: {
     loadFilterOptions(admin, scope, archivedMachineIds),
   ])
   if (error) throw new Error(error.message || 'Не удалось загрузить запросы')
+  const requests = (data || []) as unknown as DepartmentRequestRow[]
+  const revisionRequestIds = requests
+    .filter((request) => request.request_kind === 'supply_position_revision')
+    .map((request) => request.id)
+  const { data: revisionRows, error: revisionError } = revisionRequestIds.length > 0
+    ? await admin
+      .from('supply_position_revisions')
+      .select('department_request_id,status,replacement_request_id,replacement_request_item_id')
+      .in('department_request_id', revisionRequestIds)
+    : { data: [], error: null }
+  if (revisionError) throw new Error(revisionError.message || 'Не удалось загрузить исправления позиций')
+  const revisionByRequest = new Map(((revisionRows || []) as Array<{
+    department_request_id: string
+    status: 'requested' | 'editing' | 'stock_check' | 'submitted' | 'cancelled'
+    replacement_request_id: string | null
+    replacement_request_item_id: string | null
+  }>).map((revision) => [revision.department_request_id, revision]))
+  const canManageReturnedPositions = DIRECTORS.includes(context.role) || context.permissionDetails.isAdminPosition
+  for (const request of requests) {
+    request.can_process_position_revision = request.assigned_to === context.userId || canManageReturnedPositions
+    if (request.request_kind === 'supply_position_revision') {
+      request.position_revision = revisionByRequest.get(request.id) as DepartmentRequestRow['position_revision'] || null
+    }
+  }
 
   return {
     mode: input.mode,
     target: input.target,
     userId: context.userId,
     canClaimMachineLayout: canClaimMachineLayout(context),
-    requests: (data || []) as unknown as DepartmentRequestRow[],
+    requests,
     total: count || 0,
     page: input.filters.page,
     pageSize: PAGE_SIZE,
@@ -479,6 +504,9 @@ export async function getDepartmentRequestDetail(requestId: string) {
     .maybeSingle()
   if (error || !data) return null
   const request = data as unknown as DepartmentRequestRow
+  request.can_process_position_revision = request.assigned_to === context.userId
+    || DIRECTORS.includes(context.role)
+    || context.permissionDetails.isAdminPosition
   if (request.request_kind === 'supply_position_revision') {
     const { data: revisionData, error: revisionError } = await admin
       .from('supply_position_revisions')
@@ -522,6 +550,7 @@ export async function getDepartmentRequestDetail(requestId: string) {
     request,
     userId: context.userId,
     canManage,
+    canProcessPositionRevision: request.can_process_position_revision,
     canClaimMachineLayout: canClaimMachineLayout(context),
   }
 }

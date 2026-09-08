@@ -136,7 +136,7 @@ const aggregateOrdersSource = supplyOrdersAction.slice(
 )
 assert.match(
   aggregateOrdersSource,
-  /const \{ db \} = await requireAccess\(\)[\s\S]*await loadAggregateInputItems\(db, factoryId(?:, true)?\)/u,
+  /const \{ db(?:, [^}]*)? \} = await requireAccess\(\)[\s\S]*await loadAggregateInputItems\(db, factoryId(?:, true)?\)/u,
   'The aggregate supply-order view must authorize supply_orders:view before loading scoped items',
 )
 
@@ -1042,6 +1042,91 @@ assert.deepEqual(
     .map((route) => [route.machineId, route.quantity]),
   [['active-machine', 5]],
   'returned positions must not inflate active machine routes',
+)
+const returnedMixedAggregate: SupplyOrderAggregate = {
+  ...makeAggregate(),
+  id: 'returned-mixed',
+  quantity: 5,
+  requested_quantity: 5,
+  item_count: 1,
+  machine_count: 1,
+  pending_count: 1,
+  ordered_count: 0,
+  planned_schedule_quantity: 0,
+  unscheduled_quantity: 5,
+  factories: [{
+    ...makeAggregate().factories[0],
+    quantity: 5,
+    requested_quantity: 5,
+    item_count: 1,
+    machine_count: 1,
+    pending_count: 1,
+    ordered_count: 0,
+    planned_schedule_quantity: 0,
+    unscheduled_quantity: 5,
+    items: [returnedAggregateSource, activeAggregateSource],
+  }],
+}
+assert.deepEqual(
+  filterAndSortAggregates([returnedMixedAggregate], {
+    query: '', supplier: 'all', category: 'all', status: 'review', sort: 'date_asc',
+  }).map((row) => ({ id: row.id, items: row.factories.flatMap((factory) => factory.items.map((item) => item.id)) })),
+  [{ id: 'returned-mixed|review', items: ['returned-item'] }],
+  'an active return must appear only in the review projection',
+)
+assert.deepEqual(
+  filterAndSortAggregates([returnedMixedAggregate], {
+    query: '', supplier: 'all', category: 'all', status: 'open', sort: 'date_asc',
+  }).map((row) => ({ id: row.id, items: row.factories.flatMap((factory) => factory.items.map((item) => item.id)) })),
+  [{ id: 'returned-mixed|regular', items: ['active-item'] }],
+  'an active return must be excluded from open supply while normal items remain visible',
+)
+
+const cancelledRevision = {
+  ...openRevision,
+  id: 'cancelled-revision-id',
+  status: 'cancelled' as const,
+  cancellation_reason: 'Потребность больше не актуальна',
+}
+const cancelledAggregateSource = makeAggregateSourceItem({
+  ...returnedAggregateSource,
+  id: 'cancelled-returned-item',
+  position_revision: cancelledRevision,
+  return_state: 'cancelled',
+  return_reason: cancelledRevision.cancellation_reason,
+})
+const cancelledMixedAggregate: SupplyOrderAggregate = {
+  ...returnedMixedAggregate,
+  id: 'cancelled-mixed',
+  factories: [{
+    ...returnedMixedAggregate.factories[0],
+    items: [cancelledAggregateSource, activeAggregateSource],
+  }],
+}
+assert.equal(filterAndSortAggregates([cancelledMixedAggregate], {
+  query: '', supplier: 'all', category: 'all', status: 'review', sort: 'date_asc',
+}).length, 0, 'a cancelled return must leave the review category')
+assert.deepEqual(
+  filterAndSortAggregates([cancelledMixedAggregate], {
+    query: '', supplier: 'all', category: 'all', status: 'closed', sort: 'date_asc',
+  }).map((row) => ({
+    id: row.id,
+    items: row.factories.flatMap((factory) => factory.items.map((item) => item.id)),
+    reason: row.factories[0]?.items[0]?.return_reason,
+  })),
+  [{
+    id: 'cancelled-mixed|cancelled',
+    items: ['cancelled-returned-item'],
+    reason: 'Потребность больше не актуальна',
+  }],
+  'a cancelled return must become a terminal closed card with its reason',
+)
+assert.deepEqual(
+  filterAndSortAggregates([cancelledMixedAggregate], {
+    query: '', supplier: 'all', category: 'all', status: 'open', sort: 'date_asc',
+  }).map((row) => row.factories.flatMap((factory) => factory.items.map((item) => item.id))),
+  [['active-item']],
+  'cancelled returns must stay outside the active volume',
 )
 const returnedDetailContexts = buildSupplyOrderDetailContexts([
   makeItem({

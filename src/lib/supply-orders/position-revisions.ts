@@ -18,7 +18,7 @@ export type SupplyPositionRef = {
   requestItemId: string
 }
 
-export type SupplyPositionRevisionStatus = 'requested' | 'editing' | 'stock_check' | 'submitted'
+export type SupplyPositionRevisionStatus = 'requested' | 'editing' | 'stock_check' | 'submitted' | 'cancelled'
 
 export type SupplyPositionRevisionSummary = {
   id: string
@@ -30,6 +30,10 @@ export type SupplyPositionRevisionSummary = {
   department_request_id: string
   replacement_request_id: string | null
   replacement_request_item_id: string | null
+  assigned_to?: string | null
+  cancelled_by?: string | null
+  cancelled_at?: string | null
+  cancellation_reason?: string | null
 }
 
 export type SupplyPositionReturnBlockerCode =
@@ -78,6 +82,9 @@ export const SUPPLY_POSITION_RETURN_ERROR_MESSAGES: Record<string, string> = {
   REVISION_STRUCTURE_LOCKED: 'В корректирующей заявке должна остаться ровно одна позиция',
   REVISION_CATEGORY_LOCKED: 'Категорию корректирующей позиции менять нельзя',
   STOCK_CHECK_REQUIRED: 'Сначала выполните повторную проверку и резервирование склада',
+  CUTTING_PLAN_REQUIRED: 'Сначала подготовьте и утвердите карту раскроя',
+  REVISION_ALREADY_SUBMITTED: 'Исправленная позиция уже отправлена в снабжение',
+  IRREVERSIBLE_POSITION_FACT: 'Позицию нельзя отменить после приёмки или резки',
 }
 
 export function isSupplyPositionTable(value: string): value is SupplyPositionTable {

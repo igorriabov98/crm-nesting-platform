@@ -76,7 +76,7 @@ export default async function DepartmentRequestDetailPage({
   if (!detail) notFound()
   const mailLinks = await getDepartmentRequestMailLinks(id)
 
-  const { request, userId, canManage, canClaimMachineLayout } = detail
+  const { request, userId, canManage, canClaimMachineLayout, canProcessPositionRevision } = detail
   const target = DEPARTMENT_REQUEST_TARGETS[request.target_department]
   const mode = request.request_kind === 'transport_trip_date_approval' && request.assigned_to === userId
     ? 'inbox'
@@ -378,6 +378,11 @@ export default async function DepartmentRequestDetailPage({
               machineId={request.machine_id}
               canClaimMachineLayout={canClaimMachineLayout}
               transportDateChangeRequestId={request.transport_trip_date_change_request_id}
+              canProcessPositionRevision={canProcessPositionRevision}
+              technologistRequestId={request.technologist_request_id}
+              requestItemTable={request.request_item_table}
+              requestItemId={request.request_item_id}
+              hasReplacementRequest={Boolean(request.position_revision?.replacement_request_id)}
             />
           </div>
         </div>

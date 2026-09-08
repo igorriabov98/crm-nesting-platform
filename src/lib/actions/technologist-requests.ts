@@ -372,9 +372,9 @@ async function validateRequestReadyForSupply(db: LooseDb, requestId: string, use
   const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
     db.from('request_sheet_metal').select('id, material_id, remainder_qty').eq('request_id', requestId),
     db.from('request_round_tube').select('id').eq('request_id', requestId),
-    db.from('request_circle').select('id, material_id, remainder_mm').eq('request_id', requestId),
-    db.from('request_pipe').select('id, material_id, pipe_type, remainder_length_mm, remainder_kg').eq('request_id', requestId),
-    db.from('request_knives').select('id, material_id, knife_bevel_count, remainder_meters').eq('request_id', requestId),
+    db.from('request_circle').select('id, material_id, remainder_mm').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
+    db.from('request_pipe').select('id, material_id, pipe_type, remainder_length_mm, remainder_kg').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
+    db.from('request_knives').select('id, material_id, knife_bevel_count, remainder_meters').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
     db.from('request_components').select('id, material_id, quantity_needed').eq('request_id', requestId),
     db.from('request_paint').select('id, material_id, remainder_kg').eq('request_id', requestId),
     db.from('request_mesh').select('id, material_id, remainder_qty').eq('request_id', requestId),
@@ -581,6 +581,16 @@ export async function submitRequest(requestId: string): Promise<ActionResult> {
       throw new Error('Оформить можно только заявку в статусе «Черновик»')
     }
 
+    const { error: cleanupError } = await (createAdminClient() as unknown as LooseDb).rpc(
+      'fn_discard_long_stock_request_item_drafts_v1',
+      {
+        p_request_id: requestId,
+        p_actor: userId,
+        p_request_item_table: null,
+        p_request_item_id: null,
+      },
+    )
+    if (cleanupError) throw new Error(cleanupError.message || 'Не удалось закрыть неутверждённые карты раскроя')
     await validateRequestReadyForSupply(db, requestId, userId)
 
     const { error } = await db
