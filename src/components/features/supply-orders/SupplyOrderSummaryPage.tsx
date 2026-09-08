@@ -54,6 +54,7 @@ import {
 } from '@/lib/supply-orders/delivery-schedule-drafts'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import { ReturnLongStockPositionButton } from './ReturnLongStockPositionButton'
+import { SupplyDateOrderExportButton } from './SupplyDateOrderExportButton'
 import { SupplyOrderFactoryToggle } from './SupplyOrderFactoryToggle'
 import {
   filterAndSortAggregates,
@@ -119,6 +120,13 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
       filters.sort,
     )
   }, [filters.sort, filters.status, prioritizedAggregates.regular])
+  const exportableCountByDate = useMemo(() => {
+    const regular = partitionSupplyOrderAggregatesByRedelivery(aggregates).regular
+    return new Map(groupSupplyOrderAggregatesBySupplyDate(regular, 'date_asc').map((group) => [
+      group.dateKey,
+      group.rows.filter((slice) => slice.unscheduledQuantity > 0.000001).length,
+    ]))
+  }, [aggregates])
   const metricAggregates = filters.status === 'unscheduled'
     ? prioritizedAggregates.redeliveries
     : visibleAggregates
@@ -226,14 +234,21 @@ export function SupplyOrderSummaryPage({ aggregates, factories, activeFactoryId,
 
           {grouped.map((group) => (
             <section key={group.dateKey} className="space-y-3" aria-labelledby={`aggregate-date-${group.dateKey}`}>
-              <div className="flex items-center gap-3 px-1">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><CalendarDays className="h-4 w-4" /></div>
-                <div>
-                  <h2 id={`aggregate-date-${group.dateKey}`} className="text-base font-semibold text-foreground sm:text-lg">
-                    {group.dateKey === 'no_supply_date' ? 'Без даты поставки' : formatDate(group.dateKey)}
-                  </h2>
-                  <p className="text-xs text-muted-foreground">{group.rows.length} поставок материалов</p>
+              <div className="flex flex-wrap items-center gap-3 px-1">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><CalendarDays className="h-4 w-4" /></div>
+                  <div className="min-w-0">
+                    <h2 id={`aggregate-date-${group.dateKey}`} className="text-base font-semibold text-foreground sm:text-lg">
+                      {group.dateKey === 'no_supply_date' ? 'Без даты поставки' : formatDate(group.dateKey)}
+                    </h2>
+                    <p className="text-xs text-muted-foreground">{group.rows.length} поставок материалов</p>
+                  </div>
                 </div>
+                <SupplyDateOrderExportButton
+                  dateKey={group.dateKey}
+                  factoryId={activeFactoryId}
+                  itemCount={exportableCountByDate.get(group.dateKey) || 0}
+                />
               </div>
 
               <div className="space-y-3">
