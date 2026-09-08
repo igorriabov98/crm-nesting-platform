@@ -143,6 +143,11 @@ function RequestListItem({
                 Пересчёт позиции
               </span>
             )}
+            {request.request_kind === 'supply_position_revision' && (
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                Исправление позиции
+              </span>
+            )}
           </div>
           <Link
             href={detailHref}

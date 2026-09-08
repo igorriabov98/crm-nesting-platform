@@ -12,6 +12,7 @@ import {
   buildSupplyOrderDetailContexts,
   filterSupplyOrderItems,
   groupSupplyOrderItems,
+  isReturnedSupplyOrderSource,
   sortSupplyOrderItems,
   type OrderFiltersState,
 } from './supply-order-view'
@@ -69,11 +70,17 @@ export function SupplyOrdersPage({
   const currentTo = Math.min(total, (page + 1) * pageSize)
   const activeFilterCount = countChangedFilters(filters, defaultFilters)
   const attention = useMemo(() => ({
-    missingSupplier: filteredItems.filter((item) => !item.supplier_id && item.to_order > 0).length,
+    missingSupplier: filteredItems.filter((item) => (
+      !isReturnedSupplyOrderSource(item) && !item.supplier_id && item.to_order > 0
+    )).length,
     scheduled: filteredItems.filter((item) => (
+      !isReturnedSupplyOrderSource(item)
+      &&
       (detailContexts.get(`${item.table}:${item.id}`)?.plannedQuantity || 0) > 0
     )).length,
-    coveredByStock: filteredItems.filter((item) => item.to_order <= 0 && item.reserved_quantity > 0).length,
+    coveredByStock: filteredItems.filter((item) => (
+      !isReturnedSupplyOrderSource(item) && item.to_order <= 0 && item.reserved_quantity > 0
+    )).length,
   }), [detailContexts, filteredItems])
 
   const goToPage = (nextPage: number) => {

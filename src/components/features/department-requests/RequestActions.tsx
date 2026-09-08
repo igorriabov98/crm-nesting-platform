@@ -24,6 +24,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
 import { ROUTES } from '@/lib/constants/routes'
+import { createSupplyPositionRevisionRequest } from '@/lib/actions/technologist-requests'
 import { cn } from '@/lib/utils'
 import {
   Dialog,
@@ -50,7 +51,7 @@ export function RequestActions({
   requestId: string
   status: DepartmentRequestStatus
   mode: 'mine' | 'inbox'
-  requestKind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
+  requestKind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
   machineId: string | null
   canClaimMachineLayout: boolean
   transportDateChangeRequestId: string | null
@@ -76,6 +77,18 @@ export function RequestActions({
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Не удалось взять запрос в работу')
         router.refresh()
+      }
+    })
+  }
+
+  function openPositionRevision() {
+    startTransition(async () => {
+      try {
+        const result = await createSupplyPositionRevisionRequest(requestId)
+        if (!result.success || !result.data) throw new Error(result.error || 'Не удалось открыть исправление')
+        router.push(result.data.href)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Не удалось открыть исправление')
       }
     })
   }
@@ -149,6 +162,15 @@ export function RequestActions({
   }
 
   if (requestKind === 'long_stock_recalculation') return null
+  if (requestKind === 'supply_position_revision') {
+    if (mode === 'mine' || !['new', 'in_progress'].includes(status)) return null
+    return (
+      <Button type="button" className="min-h-11 bg-amber-700 text-white hover:bg-amber-800" disabled={pending} onClick={openPositionRevision}>
+        <FilePlus2 className="size-4" aria-hidden="true" />
+        {pending ? 'Открываем…' : 'Создать исправленную заявку'}
+      </Button>
+    )
+  }
 
   if (mode === 'mine') {
     if (requestKind === 'transport_trip_date_approval') return null

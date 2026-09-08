@@ -45,6 +45,14 @@ import {
   calculateSupplyReceiptProgress,
   deliveredSupplyQuantity,
 } from '@/lib/supply-orders/receiving-supply-progress'
+import {
+  isSupplyPositionTable,
+  supplyPositionRevisionKey,
+  supplyPositionReturnError,
+  type SupplyPositionRef,
+  type SupplyPositionReturnPreview,
+  type SupplyPositionRevisionSummary,
+} from '@/lib/supply-orders/position-revisions'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -129,6 +137,7 @@ type RawOrderItem = {
   selected_piece_length_mm: number | null
   pipe_type: string | null
   long_stock_purchase_plan: LongStockPurchasePlan | null
+  position_revision: SupplyPositionRevisionSummary | null
 }
 
 export type SupplyOrderDeliverySchedule = {
@@ -218,6 +227,7 @@ export type SupplyOrderItem = {
   pipe_type?: string | null
   delivery_schedules: SupplyOrderDeliverySchedule[]
   long_stock_purchase_plan: LongStockPurchasePlan | null
+  position_revision: SupplyPositionRevisionSummary | null
 }
 
 export type SupplyOrderStockItem = {
@@ -236,7 +246,7 @@ export type SupplyOrderStockItem = {
 
 export type SupplyOrderHistoryItem = {
   id: string
-  source: 'item' | 'schedule'
+  source: 'item' | 'schedule' | 'revision'
   table: string
   item_id: string
   schedule_id: string | null
@@ -253,6 +263,11 @@ export type SupplyOrderHistoryItem = {
   quantity: number
   unit: string
   weight_kg: number | null
+  revision: {
+    reason: string
+    replacement_request_id: string
+    replacement_request_item_id: string
+  } | null
 }
 
 export type SupplyOrderAggregateCharacteristic = {
@@ -263,6 +278,8 @@ export type SupplyOrderAggregateCharacteristic = {
 export type SupplyOrderAggregateSourceItem = {
   table: string
   id: string
+  category: MaterialCategory
+  item_name: string
   request_id: string
   machine_id: string
   machine_name: string
@@ -278,6 +295,7 @@ export type SupplyOrderAggregateSourceItem = {
   unscheduled_quantity: number
   delivery_schedules: SupplyOrderDeliverySchedule[]
   long_stock_purchase_plan: LongStockPurchasePlan | null
+  position_revision: SupplyPositionRevisionSummary | null
 }
 
 export type SupplyOrderAggregateSupplier = {
@@ -345,11 +363,13 @@ export type SupplyOrderAggregateScheduleInput = {
   piece_count?: number | null
 }
 
-export type ReturnLongStockPositionInput = {
-  requestItemTable: string
-  requestItemId: string
+export type ReturnSupplyPositionInput = SupplyPositionRef & {
   reason: string
+  confirmExternalOrder?: boolean
 }
+
+/** @deprecated Use ReturnSupplyPositionInput. */
+export type ReturnLongStockPositionInput = ReturnSupplyPositionInput
 
 export type MaterialReceivingFactory = {
   id: string
@@ -479,6 +499,37 @@ const ORDER_TABLES = [
   'request_chain_cord',
 ]
 const MATERIAL_COMPLETION_REQUEST_STATUSES = ['submitted_to_supply', 'completed']
+
+function isReturnedSupplyPosition(item: Pick<RawOrderItem, 'position_revision' | 'long_stock_purchase_plan'>) {
+  return Boolean(item.position_revision)
+    || item.long_stock_purchase_plan?.cutting_status === 'requires_recalculation'
+}
+
+async function loadSupplyPositionRevisionMap(
+  db: LooseDb,
+  items: Array<Pick<RawOrderItem, 'table' | 'id'>>,
+) {
+  const eligible = items.filter((item) => isSupplyPositionTable(item.table))
+  if (eligible.length === 0) return new Map<string, SupplyPositionRevisionSummary>()
+
+  const keys = new Set(eligible.map((item) => supplyPositionRevisionKey(item.table, item.id)))
+  const { data, error } = await db
+    .from('supply_position_revisions')
+    .select('id, source_request_item_table, source_request_item_id, category, status, reason, department_request_id, replacement_request_id, replacement_request_item_id')
+    .in('source_request_item_id', Array.from(new Set(eligible.map((item) => item.id))))
+    .in('status', ['requested', 'editing', 'stock_check'])
+  if (error) throw new Error(error.message || 'Не удалось загрузить возвраты позиций')
+
+  return new Map(((data || []) as SupplyPositionRevisionSummary[])
+    .filter((revision) => keys.has(supplyPositionRevisionKey(
+      revision.source_request_item_table,
+      revision.source_request_item_id,
+    )))
+    .map((revision) => [
+      supplyPositionRevisionKey(revision.source_request_item_table, revision.source_request_item_id),
+      revision,
+    ]))
+}
 
 async function requireAccess(operation: PermissionOperation = 'view') {
   const { supabase, userId } = await requirePermission('supply_orders', operation)
@@ -705,6 +756,7 @@ async function syncActualMaterialDatesForMachines(machineIds: string[]) {
     for (const row of rows) {
       const machineId = requestMachineMap.get(row.request_id)
       if (!machineId) continue
+      if (row.order_status === 'cancelled') continue
 
       const toOrder = Math.max(requestedQuantity(table, row) - reservedQuantity(table, row), 0)
       if (toOrder <= 0) continue
@@ -1066,6 +1118,7 @@ async function loadSelectedOrderItems(
       selected_piece_length_mm: selectedPieceLength(table, row),
       pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
       long_stock_purchase_plan: null,
+      position_revision: null,
       raw: row,
       machine_id: machine.id || request.machine_id,
       machine_name: machine.name || 'Машина',
@@ -1327,7 +1380,7 @@ export async function getSupplyOrders(
     const makeItem = (table: string, category: MaterialCategory, row: RequestItemRow, name: unknown, supplierId: string | null = null): RawOrderItem => {
       const requested = requestedQuantity(table, row)
       const reserved = reservedQuantity(table, row)
-      return { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row), pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null, long_stock_purchase_plan: null }
+      return { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row), pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null, long_stock_purchase_plan: null, position_revision: null }
     }
     const rawItems: RawOrderItem[] = [
       ...sheet.map((row) => makeItem('request_sheet_metal', 'sheet_metal', row, row.material_name, supplierForRow(row))),
@@ -1345,10 +1398,16 @@ export async function getSupplyOrders(
     // authenticated client and RLS. Only the matching cutting-plan details are
     // read with service_role because these internal tables intentionally revoke
     // direct SELECT from authenticated users.
-    const longStockPlanMap = await loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems)
+    const [longStockPlanMap, positionRevisionMap] = await Promise.all([
+      loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems),
+      loadSupplyPositionRevisionMap(db, rawItems),
+    ])
     const orderableRawItems = rawItems
-      .map((item) => applyLongStockPurchasePlan(item, longStockPlanMap))
-      .filter((item) => item.order_status !== 'cancelled' && item.to_order > 0)
+      .map((item) => ({
+        ...applyLongStockPurchasePlan(item, longStockPlanMap),
+        position_revision: positionRevisionMap.get(supplyPositionRevisionKey(item.table, item.id)) || null,
+      }))
+      .filter((item) => item.order_status !== 'cancelled' && (item.to_order > 0 || isReturnedSupplyPosition(item)))
 
     const materialIds = Array.from(new Set(orderableRawItems.map((item) => item.material_id).filter(Boolean))) as string[]
     const materialsRes = materialIds.length
@@ -1511,6 +1570,7 @@ export async function getSupplyOrders(
         selected_piece_length_mm: item.selected_piece_length_mm,
         pipe_type: item.pipe_type,
         long_stock_purchase_plan: item.long_stock_purchase_plan,
+        position_revision: item.position_revision,
         delivery_schedules: deliverySchedules.map((schedule) => ({
           id: schedule.id,
           delivery_date: schedule.delivery_date,
@@ -1627,6 +1687,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
         selected_piece_length_mm: selectedPieceLength(table, row),
         pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
         long_stock_purchase_plan: null,
+        position_revision: null,
         raw: row,
         machine_id: machine.id || request.machine_id,
         machine_name: machine.name || 'Машина',
@@ -1648,16 +1709,26 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
     ].filter((item): item is HistoryInputItem => Boolean(item))
 
     const materialIds = Array.from(new Set(rawItems.map((item) => item.material_id).filter(Boolean))) as string[]
-    const [materialsRes, schedulesRes] = await Promise.all([
+    const activeRevisionItemIds = rawItems
+      .filter((item) => isSupplyPositionTable(item.table))
+      .map((item) => item.id)
+    const [materialsRes, schedulesRes, revisionsRes] = await Promise.all([
       materialIds.length
         ? db.from('materials').select('id, default_supplier_id').in('id', materialIds)
         : Promise.resolve({ data: [], error: null } as DbResult),
       rawItems.length
         ? db.from('supply_order_delivery_schedules').select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, change_reason, status, received_quantity, allocated_quantity, allocated_physical_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, allocated_piece_count, excess_quantity, receipt_parent_schedule_id, delivered_at, received_by, created_at, updated_at').in('request_item_id', rawItems.map((item) => item.id)).order('delivery_date', { ascending: false })
         : Promise.resolve({ data: [], error: null } as DbResult),
+      activeRevisionItemIds.length
+        ? db.from('supply_position_revisions')
+          .select('id, source_request_item_table, source_request_item_id, reason, replacement_request_id, replacement_request_item_id, submitted_at')
+          .eq('status', 'submitted')
+          .in('source_request_item_id', activeRevisionItemIds)
+        : Promise.resolve({ data: [], error: null } as DbResult),
     ])
     if (materialsRes.error) throw new Error(materialsRes.error.message || 'Не удалось загрузить материалы')
     if (schedulesRes.error) throw new Error(schedulesRes.error.message || 'Не удалось загрузить график поставок')
+    if (revisionsRes.error) throw new Error(revisionsRes.error.message || 'Не удалось загрузить историю исправлений')
 
     const materialSupplierMap = new Map(((materialsRes.data || []) as { id: string; default_supplier_id: string | null }[]).map((item) => [item.id, item.default_supplier_id]))
     const items = rawItems.map((item) => ({
@@ -1671,6 +1742,21 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
       const key = `${schedule.request_item_table}:${schedule.request_item_id}`
       schedulesByItem.set(key, [...(schedulesByItem.get(key) || []), schedule])
     }
+    type SubmittedRevisionRow = {
+      id: string
+      source_request_item_table: string
+      source_request_item_id: string
+      reason: string
+      replacement_request_id: string
+      replacement_request_item_id: string
+      submitted_at: string
+    }
+    const submittedRevisions = new Map(((revisionsRes.data || []) as SubmittedRevisionRow[])
+      .filter((revision) => revision.replacement_request_id && revision.replacement_request_item_id)
+      .map((revision) => [
+        supplyPositionRevisionKey(revision.source_request_item_table, revision.source_request_item_id),
+        revision,
+      ]))
 
     const supplierIds = Array.from(new Set([
       ...items.map((item) => item.supplier_id).filter(Boolean),
@@ -1718,6 +1804,7 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
           quantity: Number(schedule.received_quantity ?? schedule.quantity ?? 0),
           unit: schedule.unit || item.unit,
           weight_kg: item.calculated_weight_kg,
+          revision: null,
         })
       }
 
@@ -1749,6 +1836,36 @@ export async function getSupplyOrderHistory(page = 0, pageSize = 50) {
           quantity: item.to_order,
           unit: item.unit,
           weight_kg: item.calculated_weight_kg,
+          revision: null,
+        })
+      }
+
+      const revision = submittedRevisions.get(supplyPositionRevisionKey(item.table, item.id))
+      if (item.order_status === 'cancelled' && revision) {
+        history.push({
+          id: `revision:${revision.id}`,
+          source: 'revision',
+          table: item.table,
+          item_id: item.id,
+          schedule_id: null,
+          machine_id: item.machine_id,
+          machine_name: item.machine_name,
+          request_id: item.request_id,
+          category: item.category,
+          item_name: item.item_name,
+          characteristics: getAggregateCharacteristics(item.table, item.raw, item),
+          supplier_name: item.supplier_id ? supplierMap.get(item.supplier_id) || 'Поставщик' : null,
+          planned_material_date: item.planned_material_date,
+          planned_delivery_date: item.custom_delivery_date,
+          accepted_at: revision.submitted_at,
+          quantity: item.to_order,
+          unit: item.unit,
+          weight_kg: item.calculated_weight_kg,
+          revision: {
+            reason: revision.reason,
+            replacement_request_id: revision.replacement_request_id,
+            replacement_request_item_id: revision.replacement_request_item_id,
+          },
         })
       }
     }
@@ -1804,7 +1921,11 @@ async function loadAggregateRequests(db: LooseDb, factoryId?: string | null) {
   return requests
 }
 
-async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): Promise<SupplyOrderAggregateInputItem[]> {
+async function loadAggregateInputItems(
+  db: LooseDb,
+  factoryId?: string | null,
+  includeReturned = false,
+): Promise<SupplyOrderAggregateInputItem[]> {
   const requests = await loadAggregateRequests(db, factoryId)
   const requestIds = requests.map((request) => request.id)
   const requestMap = new Map(requests.map((request) => [request.id, request]))
@@ -1863,6 +1984,7 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
       selected_piece_length_mm: selectedPieceLength(table, row),
       pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null,
       long_stock_purchase_plan: null,
+      position_revision: null,
       raw: row,
       machine_id: machine.id || request.machine_id,
       machine_name: machine.name || 'Машина',
@@ -1885,10 +2007,17 @@ async function loadAggregateInputItems(db: LooseDb, factoryId?: string | null): 
     ...chainCords.map((row) => makeItem('request_chain_cord', 'chain_cord', row, row.parameters, supplierForRow(row))),
   ].filter((item): item is SupplyOrderAggregateInputItem => Boolean(item))
 
-  const longStockPlanMap = await loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems)
+  const [longStockPlanMap, positionRevisionMap] = await Promise.all([
+    loadLongStockPurchasePlanMap(createTrustedLongStockReadDb(), rawItems),
+    loadSupplyPositionRevisionMap(db, rawItems),
+  ])
   const orderableItems = rawItems
-    .map((item) => applyLongStockPurchasePlan(item, longStockPlanMap))
+    .map((item) => ({
+      ...applyLongStockPurchasePlan(item, longStockPlanMap),
+      position_revision: positionRevisionMap.get(supplyPositionRevisionKey(item.table, item.id)) || null,
+    }))
     .filter((item) => item.to_order > 0)
+    .filter((item) => includeReturned || !isReturnedSupplyPosition(item))
 
   const materialIds = Array.from(new Set(orderableItems.map((item) => item.material_id).filter(Boolean))) as string[]
   const materialsRes = materialIds.length
@@ -2023,7 +2152,7 @@ function addSupplierSummary(
 export async function getSupplyOrderAggregates(factoryId?: string | null) {
   try {
     const { db } = await requireAccess()
-    const items = await loadAggregateInputItems(db, factoryId)
+    const items = await loadAggregateInputItems(db, factoryId, true)
     const schedules = await loadReceivingSchedules(db, items)
     const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
 
@@ -2091,6 +2220,10 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
     const aggregates = new Map<string, MutableAggregate>()
 
     for (const item of items) {
+      const positionReturned = isReturnedSupplyPosition(item)
+      const activeToOrder = positionReturned ? 0 : item.to_order
+      const activeRequestedQuantity = positionReturned ? 0 : item.requested_quantity
+      const activeReservedQuantity = positionReturned ? 0 : item.reserved_quantity
       const materialKey = getAggregateIdentityKey(item.table, item.raw, item)
       const dateKey = plannedDateKey(item.planned_material_date)
       const aggregateKey = `${factoryKey(item.factory_id)}|${dateKey}|${materialKey}`
@@ -2099,13 +2232,13 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         item.long_stock_purchase_plan,
       )
         .map((schedule) => toScheduleDto(schedule, supplierNameMap))
-      const plannedScheduleQuantity = itemSchedules
+      const plannedScheduleQuantity = positionReturned ? 0 : itemSchedules
         .filter((schedule) => schedule.status === 'planned')
         .reduce((sum, schedule) => sum + schedulePlannedQuantity(schedule), 0)
-      const deliveredScheduleQuantity = itemSchedules
+      const deliveredScheduleQuantity = positionReturned ? 0 : itemSchedules
         .filter((schedule) => schedule.status === 'delivered')
         .reduce((sum, schedule) => sum + scheduleDeliveredQuantity(schedule), 0)
-      const unscheduledQuantity = Math.max(item.to_order - plannedScheduleQuantity - deliveredScheduleQuantity, 0)
+      const unscheduledQuantity = Math.max(activeToOrder - plannedScheduleQuantity - deliveredScheduleQuantity, 0)
       const supplyDeliveryDates = itemSchedules.length > 0
         ? itemSchedules.map((schedule) => schedule.delivery_date)
         : [effectiveSupplyDeliveryDate(item, item.planned_material_date)]
@@ -2134,18 +2267,18 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         factories: new Map<string, MutableFactory>(),
       }
 
-      aggregate.quantity += item.to_order
-      aggregate.requested_quantity += item.requested_quantity
-      aggregate.reserved_quantity += item.reserved_quantity
-      aggregate.weight_kg = addNullableWeight(aggregate.weight_kg, item.calculated_weight_kg)
-      aggregate.item_count += 1
-      aggregate.pending_count += item.order_status === 'pending' ? 1 : 0
-      aggregate.ordered_count += item.order_status === 'ordered' ? 1 : 0
-      aggregate.delivered_count += item.order_status === 'delivered' ? 1 : 0
+      aggregate.quantity += activeToOrder
+      aggregate.requested_quantity += activeRequestedQuantity
+      aggregate.reserved_quantity += activeReservedQuantity
+      aggregate.weight_kg = addNullableWeight(aggregate.weight_kg, positionReturned ? null : item.calculated_weight_kg)
+      aggregate.item_count += positionReturned ? 0 : 1
+      aggregate.pending_count += !positionReturned && item.order_status === 'pending' ? 1 : 0
+      aggregate.ordered_count += !positionReturned && item.order_status === 'ordered' ? 1 : 0
+      aggregate.delivered_count += !positionReturned && item.order_status === 'delivered' ? 1 : 0
       aggregate.planned_schedule_quantity += plannedScheduleQuantity
       aggregate.delivered_schedule_quantity += deliveredScheduleQuantity
       aggregate.unscheduled_quantity += unscheduledQuantity
-      aggregate.machineIds.add(item.machine_id)
+      if (!positionReturned) aggregate.machineIds.add(item.machine_id)
 
       const currentFactoryKey = factoryKey(item.factory_id)
       const existingFactory = aggregate.factories.get(currentFactoryKey)
@@ -2172,28 +2305,32 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         items: [],
       }
 
-      factory.quantity += item.to_order
-      factory.requested_quantity += item.requested_quantity
-      factory.reserved_quantity += item.reserved_quantity
-      factory.weight_kg = addNullableWeight(factory.weight_kg, item.calculated_weight_kg)
-      factory.item_count += 1
-      factory.pending_count += item.order_status === 'pending' ? 1 : 0
-      factory.ordered_count += item.order_status === 'ordered' ? 1 : 0
-      factory.delivered_count += item.order_status === 'delivered' ? 1 : 0
+      factory.quantity += activeToOrder
+      factory.requested_quantity += activeRequestedQuantity
+      factory.reserved_quantity += activeReservedQuantity
+      factory.weight_kg = addNullableWeight(factory.weight_kg, positionReturned ? null : item.calculated_weight_kg)
+      factory.item_count += positionReturned ? 0 : 1
+      factory.pending_count += !positionReturned && item.order_status === 'pending' ? 1 : 0
+      factory.ordered_count += !positionReturned && item.order_status === 'ordered' ? 1 : 0
+      factory.delivered_count += !positionReturned && item.order_status === 'delivered' ? 1 : 0
       factory.planned_schedule_quantity += plannedScheduleQuantity
       factory.delivered_schedule_quantity += deliveredScheduleQuantity
       factory.unscheduled_quantity += unscheduledQuantity
-      factory.machineIds.add(item.machine_id)
-      addSupplierSummary(factory.suppliers, item, supplierNameMap)
-      for (const supplyDeliveryDate of supplyDeliveryDates) {
-        factory.supplyDates.add(supplyDeliveryDate || 'no_supply_date')
-      }
-      for (const schedule of itemSchedules) {
-        factory.deliveryScheduleDates.add(schedule.delivery_date)
+      if (!positionReturned) factory.machineIds.add(item.machine_id)
+      if (!positionReturned) addSupplierSummary(factory.suppliers, item, supplierNameMap)
+      if (!positionReturned) {
+        for (const supplyDeliveryDate of supplyDeliveryDates) {
+          factory.supplyDates.add(supplyDeliveryDate || 'no_supply_date')
+        }
+        for (const schedule of itemSchedules) {
+          if (schedule.status !== 'cancelled') factory.deliveryScheduleDates.add(schedule.delivery_date)
+        }
       }
       factory.items.push({
         table: item.table,
         id: item.id,
+        category: item.category,
+        item_name: item.item_name,
         request_id: item.request_id,
         machine_id: item.machine_id,
         machine_name: item.machine_name,
@@ -2209,6 +2346,7 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
         unscheduled_quantity: unscheduledQuantity,
         delivery_schedules: itemSchedules,
         long_stock_purchase_plan: item.long_stock_purchase_plan,
+        position_revision: item.position_revision,
       })
 
       aggregate.factories.set(currentFactoryKey, factory)
@@ -2288,39 +2426,76 @@ export async function getSupplyOrderAggregates(factoryId?: string | null) {
   }
 }
 
-export async function returnLongStockPositionToTechnologist(
-  input: ReturnLongStockPositionInput,
+function assertSupplyPositionRef(input: Pick<ReturnSupplyPositionInput, 'requestItemTable' | 'requestItemId'>) {
+  const requestItemTable = String(input?.requestItemTable ?? '')
+  const requestItemId = String(input?.requestItemId ?? '')
+  if (!isSupplyPositionTable(requestItemTable)) {
+    throw new Error('Недопустимая категория позиции')
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestItemId)) {
+    throw new Error('Некорректный идентификатор позиции')
+  }
+  return { requestItemTable, requestItemId }
+}
+
+export async function previewSupplyPositionReturn(input: SupplyPositionRef) {
+  try {
+    await requireAccess('manage')
+    const { requestItemTable, requestItemId } = assertSupplyPositionRef(input)
+    const { data, error } = await (createAdminClient() as unknown as RpcDb).rpc(
+      'fn_preview_supply_position_revision_v1',
+      {
+        p_request_item_table: requestItemTable,
+        p_request_item_id: requestItemId,
+      },
+    )
+    if (error) {
+      const parsed = supplyPositionReturnError(error, 'Не удалось проверить последствия возврата')
+      return { success: false as const, error: parsed.message, code: parsed.code }
+    }
+    return { success: true as const, data: data as SupplyPositionReturnPreview }
+  } catch (error) {
+    return {
+      success: false as const,
+      error: error instanceof Error ? error.message : 'Не удалось проверить последствия возврата',
+      code: null,
+    }
+  }
+}
+
+export async function returnSupplyPositionToTechnologist(
+  input: ReturnSupplyPositionInput,
 ) {
   try {
     const { userId } = await requireAccess('manage')
-    const requestItemTable = String(input?.requestItemTable ?? '')
-    const requestItemId = String(input?.requestItemId ?? '')
+    const { requestItemTable, requestItemId } = assertSupplyPositionRef(input)
     const reason = String(input?.reason ?? '').trim()
-    if (!isLongStockRequestItemTable(requestItemTable)) {
-      throw new Error('Вернуть можно только позицию круга, трубы или ножей')
-    }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestItemId)) {
-      throw new Error('Некорректный идентификатор позиции')
-    }
     if (reason.length < 3 || reason.length > 2000) {
       throw new Error('Укажите причину возврата от 3 до 2000 символов')
     }
 
     const { data, error } = await (createAdminClient() as unknown as RpcDb).rpc(
-      'fn_return_long_stock_position_to_technologist_v1',
+      'fn_return_supply_position_to_technologist_v1',
       {
         p_request_item_table: requestItemTable,
         p_request_item_id: requestItemId,
         p_reason: reason,
         p_actor: userId,
+        p_confirm_external_order: Boolean(input.confirmExternalOrder),
       },
     )
-    if (error) throw new Error(error.message || 'Не удалось вернуть позицию технологу')
+    if (error) {
+      const parsed = supplyPositionReturnError(error, 'Не удалось вернуть позицию технологу')
+      return { success: false as const, error: parsed.message, code: parsed.code }
+    }
     const result = (data || {}) as {
+      mode?: 'standard' | 'long_stock_recalculation'
+      revision_id?: string
       department_request_id?: string
       technologist_request_id?: string
       machine_id?: string
       assigned_to?: string
+      idempotent?: boolean
     }
 
     revalidatePath(ROUTES.SUPPLY_ORDERS)
@@ -2342,18 +2517,27 @@ export async function returnLongStockPositionToTechnologist(
     }
 
     return {
-      success: true,
+      success: true as const,
       data: {
         requestId: result.department_request_id || null,
         technologistRequestId: result.technologist_request_id || null,
+        revisionId: result.revision_id || null,
+        mode: result.mode || 'standard',
+        idempotent: Boolean(result.idempotent),
       },
     }
   } catch (error) {
     return {
-      success: false,
+      success: false as const,
       error: error instanceof Error ? error.message : 'Не удалось вернуть позицию технологу',
+      code: null,
     }
   }
+}
+
+/** @deprecated Kept for existing long-stock callers. */
+export async function returnLongStockPositionToTechnologist(input: ReturnLongStockPositionInput) {
+  return returnSupplyPositionToTechnologist(input)
 }
 
 type ReceivingScheduleRow = SupplyOrderDeliverySchedule & {

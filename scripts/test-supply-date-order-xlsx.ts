@@ -404,6 +404,8 @@ function makeItem(patch: Partial<SupplyOrderAggregateSourceItem>): SupplyOrderAg
     request_id: 'request-id',
     machine_id: 'machine-id',
     machine_name: 'test 5/09',
+    category: 'sheet_metal',
+    item_name: 'Лист',
     quantity: 1,
     unit: 'шт',
     supplier_id: null,
@@ -416,6 +418,7 @@ function makeItem(patch: Partial<SupplyOrderAggregateSourceItem>): SupplyOrderAg
     unscheduled_quantity: 1,
     delivery_schedules: [],
     long_stock_purchase_plan: null,
+    position_revision: null,
     ...patch,
   }
 }

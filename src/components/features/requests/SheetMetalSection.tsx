@@ -24,6 +24,7 @@ type Props = {
   suppliers?: Supplier[]
   canEdit: boolean
   steelTypes: SteelType[]
+  allowStructureChanges?: boolean
 }
 
 function toNumber(value: string | number | null) {
@@ -51,7 +52,7 @@ function resolveSteelTypeId(steelTypes: SteelType[], variant: MaterialVariant | 
   return steelTypes.find((steelType) => normalizeSteelName(steelType.name) === grade)?.id ?? null
 }
 
-export function SheetMetalSection({ requestId, items, canEdit, steelTypes }: Props) {
+export function SheetMetalSection({ requestId, items, canEdit, steelTypes, allowStructureChanges = true }: Props) {
   const router = useRouter()
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
@@ -148,7 +149,7 @@ export function SheetMetalSection({ requestId, items, canEdit, steelTypes }: Pro
             {rows.map((row) => {
               const canEditCharacteristics = canEditMaterialCharacteristics(row, canEdit)
               return (
-              <tr key={row.id} className="border-b last:border-b-0">
+              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch
                     category="sheet_metal"
@@ -179,7 +180,7 @@ export function SheetMetalSection({ requestId, items, canEdit, steelTypes }: Pro
                 <td className="px-3 py-2 text-slate-700">{formatWeight(row.calculated_weight_kg)}</td>
                 <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_sheet_metal" item={row} /></td>
                 <td className="px-3 py-2 text-right">
-                  {canEdit && (
+                  {canEdit && allowStructureChanges && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
@@ -199,14 +200,14 @@ export function SheetMetalSection({ requestId, items, canEdit, steelTypes }: Pro
               <tr>
                 <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {canEdit && <Button type="button" variant="outline" size="sm" className="ml-3" disabled={isAdding} onClick={handleAdd}>Добавить</Button>}
+                  {canEdit && allowStructureChanges && <Button type="button" variant="outline" size="sm" className="ml-3" disabled={isAdding} onClick={handleAdd}>Добавить</Button>}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {canEdit && (
+      {canEdit && allowStructureChanges && (
         <div className="flex justify-end">
           <Button type="button" variant="outline" size="sm" disabled={isAdding} onClick={handleAdd}>
             {isAdding ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}

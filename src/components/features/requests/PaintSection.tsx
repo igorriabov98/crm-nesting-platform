@@ -23,13 +23,14 @@ type Props = {
   canEdit: boolean
   canEditStock?: boolean
   onRowsChange?: (rows: PaintRow[]) => void
+  allowStructureChanges?: boolean
 }
 
 function materialDisplayName(row: PaintRow) {
   return row.materials?.name || row.paint_type || row.ral_code || ''
 }
 
-export function PaintSection({ requestId, items, canEdit, onRowsChange }: Props) {
+export function PaintSection({ requestId, items, canEdit, onRowsChange, allowStructureChanges = true }: Props) {
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
 
@@ -120,7 +121,7 @@ export function PaintSection({ requestId, items, canEdit, onRowsChange }: Props)
             {rows.map((row) => {
               const canEditCharacteristics = canEditMaterialCharacteristics(row, canEdit)
               return (
-              <tr key={row.id} className="border-b last:border-b-0">
+              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch category="paint" value={materialNames[row.id] ?? materialDisplayName(row)} initialValue={materialDisplayName(row)} selectedMaterialId={row.material_id} disabled={!canEdit} compact onSelect={(material, variant, source) => selectMaterial(row, material, variant, source)} />
                 </td>
@@ -140,7 +141,7 @@ export function PaintSection({ requestId, items, canEdit, onRowsChange }: Props)
                 <td className="px-3 py-2"><InlineEditCell value={row.remainder_kg} type="number" step="0.01" disabled={!canEdit} onSave={(value) => handleUpdate(row.id, { remainder_kg: Number(value || 0) })} /></td>
                 <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_paint" item={row} /></td>
                 <td className="px-3 py-2 text-right">
-                  {canEdit && (
+                  {canEdit && allowStructureChanges && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
@@ -153,14 +154,14 @@ export function PaintSection({ requestId, items, canEdit, onRowsChange }: Props)
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {canEdit && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
+                  {canEdit && allowStructureChanges && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {canEdit && (
+      {canEdit && allowStructureChanges && (
         <div className="flex justify-end">
           <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
             <Plus className="mr-2 h-4 w-4" />

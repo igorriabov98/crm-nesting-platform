@@ -29,6 +29,7 @@ type Props = {
   isEditable: boolean
   steelTypes: SteelType[]
   onRowsChange?: (rows: PipeRow[]) => void
+  allowStructureChanges?: boolean
 }
 
 function toNumber(value: string | number | null) {
@@ -70,7 +71,7 @@ export function calculatePipeWeight(row: PipeRow, steelTypes: SteelType[]) {
   return Math.round(crossSection * lengthMm * Number(density) * 100) / 100
 }
 
-export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsChange }: Props) {
+export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsChange, allowStructureChanges = true }: Props) {
   const router = useRouter()
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
@@ -262,7 +263,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
                     )}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {isEditable && (
+                    {isEditable && allowStructureChanges && (
                       <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                         <Trash2 className="h-4 w-4 text-red-500" />
                       </Button>
@@ -275,14 +276,14 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               <tr>
                 <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
+                  {isEditable && allowStructureChanges && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {isEditable && (
+      {isEditable && allowStructureChanges && (
         <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" onClick={handleAddWire}>
             <Plus className="mr-2 h-4 w-4" />
@@ -294,14 +295,14 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
           </Button>
         </div>
       )}
-      <LongStockPositionDialog
+      {allowStructureChanges && <LongStockPositionDialog
         category="pipe"
         requestId={requestId}
         steelTypes={steelTypes}
         open={positionDialogOpen}
         onOpenChange={setPositionDialogOpen}
         onCreated={(row) => applyRows(upsertLongStockRequestRow(rows, row as PipeRow))}
-      />
+      />}
     </div>
   )
 }

@@ -63,6 +63,7 @@ import {
   hasSupplyOrderRedelivery,
   isSupplyOrderBarMaterial,
   isSupplyOrderAggregateClosed,
+  isReturnedSupplyOrderSource,
   partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderMachineRoutes,
   summarizeSupplyOrderRedeliveryMachineRoutes,
@@ -290,9 +291,10 @@ function MaterialOrderCard({
   dateSlice?: SupplyOrderDateSlice
 }) {
   const [deliveryOpen, setDeliveryOpen] = useState(false)
-  const routes = factory ? summarizeSupplyOrderMachineRoutes(factory.items) : []
+  const activeFactoryItems = factory?.items.filter((item) => !isReturnedSupplyOrderSource(item)) ?? []
+  const routes = factory ? summarizeSupplyOrderMachineRoutes(activeFactoryItems) : []
   const unscheduledRoutes = factory
-    ? summarizeSupplyOrderUnscheduledMachineRoutes(factory.items, factory.unscheduled_quantity)
+    ? summarizeSupplyOrderUnscheduledMachineRoutes(activeFactoryItems, factory.unscheduled_quantity)
     : []
   const redeliveryRoutes = attentionKind === 'redelivery' && factory
     ? summarizeSupplyOrderRedeliveryMachineRoutes(factory.items)
@@ -314,11 +316,13 @@ function MaterialOrderCard({
     : aggregate.weight_kg !== null
       ? `${formatAmount(aggregate.weight_kg)} кг`
       : null
-  const longStockPlans = factory?.items
+  const longStockPlans = activeFactoryItems
     .map((item) => item.long_stock_purchase_plan)
     .filter((plan): plan is LongStockPurchasePlan => plan !== null) ?? []
   const longStockPurchase = mergeLongStockPurchasePlans(longStockPlans)
-  const requiresRecalculation = longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
+  const hasGenericPositionReturn = factory?.items.some((item) => Boolean(item.position_revision)) ?? false
+  const requiresRecalculation = (hasGenericPositionReturn && activeFactoryItems.length === 0)
+    || longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
   const hasMixedPlannedAndUnscheduled = Boolean(
     dateSlice && dateSlice.plannedScheduleCount > 0 && dateSlice.unscheduledQuantity > 0,
   )
@@ -391,7 +395,12 @@ function MaterialOrderCard({
           {requiresRecalculation && (
             <div className="mt-3 flex max-w-3xl items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
               <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-700" aria-hidden="true" />
-              <span><strong>Требуется пересчёт.</strong> График поставки и резка заблокированы до утверждения новой версии.</span>
+              <span>
+                <strong>{hasGenericPositionReturn ? 'Позиция возвращена технологу.' : 'Требуется пересчёт.'}</strong>{' '}
+                {hasGenericPositionReturn
+                  ? 'Она исключена из активного объёма до проверки склада и отправки исправления.'
+                  : 'График поставки и резка заблокированы до утверждения новой версии.'}
+              </span>
             </div>
           )}
         </header>
@@ -735,6 +744,14 @@ function FactoryDeliveryEditorForm({
 }: FactoryDeliveryEditorProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
+  const activeItems = useMemo(
+    () => factory.items.filter((item) => !isReturnedSupplyOrderSource(item)),
+    [factory.items],
+  )
+  const activeFactory = useMemo(
+    () => ({ ...factory, items: activeItems }),
+    [activeItems, factory],
+  )
   const draftDateSlice = appendUnscheduled
     ? { dateKey: 'no_supply_date', unscheduledQuantity: factory.unscheduled_quantity }
     : dateSlice
@@ -744,12 +761,13 @@ function FactoryDeliveryEditorForm({
   const [financeOpen, setFinanceOpen] = useState(false)
   const [financeDrafts, setFinanceDrafts] = useState<Record<string, FinanceDraft>>({})
   const itemKeys = useMemo(
-    () => mutationItems || factory.items.map((item) => ({ table: item.table, id: item.id })),
-    [factory.items, mutationItems],
+    () => (mutationItems || activeItems.map((item) => ({ table: item.table, id: item.id })))
+      .filter((item) => activeItems.some((active) => active.table === item.table && active.id === item.id)),
+    [activeItems, mutationItems],
   )
   const deliveredGroups = useMemo(
-    () => makeDeliveredScheduleGroups(factory, dateSlice?.dateKey),
-    [dateSlice?.dateKey, factory],
+    () => makeDeliveredScheduleGroups(activeFactory, dateSlice?.dateKey),
+    [activeFactory, dateSlice?.dateKey],
   )
   const scheduleScope = mutationScope || (draftDateSlice
     ? deliveryScheduleScopeForDateSlice(
@@ -764,28 +782,32 @@ function FactoryDeliveryEditorForm({
     : dateSlice
     ? Math.max(dateSlice.quantity - dateSlice.deliveredQuantity, 0)
     : Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
-  const isClosed = factory.delivered_count === factory.item_count && factory.unscheduled_quantity <= 0
-  const missingFinanceSuppliers = factory.items.some((item) => (
+  const hasGenericPositionReturn = factory.items.some((item) => Boolean(item.position_revision))
+  const isClosed = !hasGenericPositionReturn
+    && factory.delivered_count === factory.item_count
+    && factory.unscheduled_quantity <= 0
+  const missingFinanceSuppliers = activeItems.some((item) => (
     (item.order_status === 'pending' || item.order_status === 'ordered')
     && !item.supplier_id
     && !item.delivery_schedules.some((schedule) => schedule.status === 'planned' && schedule.supplier_id)
   ))
-  const hasPlannedSchedules = factory.items.some((item) => item.delivery_schedules.some((schedule) => (
+  const hasPlannedSchedules = activeItems.some((item) => item.delivery_schedules.some((schedule) => (
     schedule.status === 'planned' && deliveryScheduleBelongsToScope(schedule.delivery_date, scheduleScope)
   )))
   const financeGroups = useMemo(
-    () => makeFinanceGroups(factory, dateSlice),
-    [dateSlice, factory],
+    () => makeFinanceGroups(activeFactory, dateSlice),
+    [activeFactory, dateSlice],
   )
   const financePayments = makeFinancePayments(financeGroups, financeDrafts)
   const financeInvalid = financeOpen && (
     financeGroups.length === 0 ||
     financePayments.some((payment) => !payment.plannedDate || !Number.isFinite(payment.amount) || payment.amount <= 0)
   )
-  const longStockPlans = factory.items
+  const longStockPlans = activeItems
     .map((item) => item.long_stock_purchase_plan)
     .filter((plan): plan is LongStockPurchasePlan => plan !== null)
-  const requiresRecalculation = longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
+  const requiresRecalculation = (hasGenericPositionReturn && activeItems.length === 0)
+    || longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
   const isBarMaterial = isSupplyOrderBarMaterial(aggregate) || longStockPlans.length > 0
   const deliveredLongStockSchedules = Array.from(new Map(factory.items
     .flatMap((item) => item.delivery_schedules)
@@ -990,7 +1012,11 @@ function FactoryDeliveryEditorForm({
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-700" aria-hidden="true" />
           <div>
             <div className="font-semibold">Позиция возвращена технологу</div>
-            <div className="mt-0.5 text-xs leading-5 text-amber-800">До утверждения новой версии нельзя создавать график, отмечать заказ или передавать позицию в резку.</div>
+            <div className="mt-0.5 text-xs leading-5 text-amber-800">
+              {hasGenericPositionReturn
+                ? 'Она исключена из закупки до повторной проверки склада и отправки исправленной позиции.'
+                : 'До утверждения новой версии нельзя создавать график, отмечать заказ или передавать позицию в резку.'}
+            </div>
           </div>
         </div>
       )}
@@ -1274,14 +1300,16 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
       <div className="mt-2 hidden space-y-2 xl:block">
         {factory.items.map((item) => {
           const plan = item.long_stock_purchase_plan
+          const returnedToTechnologist = Boolean(item.position_revision)
+            || plan?.cutting_status === 'requires_recalculation'
           return (
             <div key={`${item.table}:${item.id}`} className="grid grid-cols-[minmax(150px,0.8fr)_110px_155px_minmax(230px,1.1fr)_minmax(190px,0.9fr)_230px] items-center gap-3 rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm">
               <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-medium text-primary hover:underline">
                 {item.machine_name}
               </Link>
               <span className="tabular-nums text-foreground">{formatAmount(item.quantity)} {item.unit}</span>
-              {plan?.cutting_status === 'requires_recalculation' ? (
-                <Badge variant="outline" className="w-fit border-amber-300 bg-amber-50 text-amber-900">Требует пересчёта</Badge>
+              {returnedToTechnologist ? (
+                <Badge variant="outline" className="w-fit border-amber-300 bg-amber-50 text-amber-900">Возвращено технологу</Badge>
               ) : (
                 <MachineItemOrderStatus item={item} />
               )}
@@ -1299,12 +1327,14 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
                   <ExternalLink className="h-3.5 w-3.5" />
                   Заявка
                 </Link>
-                {plan?.cutting_status === 'plan_approved' && (
+                {!returnedToTechnologist && (
                   <ReturnLongStockPositionButton
                     requestItemTable={item.table}
                     requestItemId={item.id}
-                    planNumber={plan.plan_number}
-                    versionNumber={plan.version_number}
+                    itemName={item.item_name}
+                    categoryLabel={MATERIAL_CATEGORY_LABELS[item.category]}
+                    planNumber={plan?.plan_number}
+                    versionNumber={plan?.version_number}
                   />
                 )}
               </div>
@@ -1315,12 +1345,14 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
       <div className="grid gap-3 xl:hidden">
         {factory.items.map((item) => {
           const plan = item.long_stock_purchase_plan
+          const returnedToTechnologist = Boolean(item.position_revision)
+            || plan?.cutting_status === 'requires_recalculation'
           return (
             <article key={`${item.table}:${item.id}`} className="rounded-xl border border-border/70 bg-background p-3">
               <div className="flex items-start justify-between gap-3">
                 <Link href={`${ROUTES.SALES_PLAN}/${item.machine_id}`} className="font-semibold text-primary hover:underline">{item.machine_name}</Link>
-                {plan?.cutting_status === 'requires_recalculation' ? (
-                  <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Требует пересчёта</Badge>
+                {returnedToTechnologist ? (
+                  <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Возвращено технологу</Badge>
                 ) : (
                   <MachineItemOrderStatus item={item} />
                 )}
@@ -1340,12 +1372,14 @@ function MachineItems({ factory, id }: { factory: SupplyOrderAggregateFactory; i
                 <Link href={`${ROUTES.SUPPLY_REQUEST}/${item.request_id}`} className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-muted">
                   <ExternalLink className="h-3.5 w-3.5" />Открыть заявку
                 </Link>
-                {plan?.cutting_status === 'plan_approved' && (
+                {!returnedToTechnologist && (
                   <ReturnLongStockPositionButton
                     requestItemTable={item.table}
                     requestItemId={item.id}
-                    planNumber={plan.plan_number}
-                    versionNumber={plan.version_number}
+                    itemName={item.item_name}
+                    categoryLabel={MATERIAL_CATEGORY_LABELS[item.category]}
+                    planNumber={plan?.plan_number}
+                    versionNumber={plan?.version_number}
                   />
                 )}
               </div>

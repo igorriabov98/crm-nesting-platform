@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import type { SupplyOrderItem } from '@/lib/actions/supply-orders'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
 import type { SupplyOrderDetailContext } from './supply-order-view'
+import { isReturnedSupplyOrderSource } from './supply-order-view'
 
 const OrderItemRow = dynamic(() => import('./OrderItemRow').then((mod) => mod.OrderItemRow), {
  loading: () => <div className="h-36 animate-pulse border-t border-border bg-muted/30 motion-reduce:animate-none" />,
@@ -18,7 +19,7 @@ type SupplierGroupProps = {
 }
 
 export function SupplierGroup({ supplierName, items, suppliers, detailContexts }: SupplierGroupProps) {
- const total = items.reduce((sum, item) => sum + item.to_order, 0)
+ const total = items.reduce((sum, item) => sum + (isReturnedSupplyOrderSource(item) ? 0 : item.to_order), 0)
  const unit = items.every((item) => item.unit === items[0]?.unit) ? items[0]?.unit : 'ед.'
 
  return (

@@ -51,6 +51,8 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
   const [meshRows, setMeshRows] = useState(data.meshItems)
   const [chainCordRows, setChainCordRows] = useState(data.chainCords)
   const [pipeRows, setPipeRows] = useState(data.pipes)
+  const revision = data.positionRevision || null
+  const revisionTab = revision?.category === 'sheet_metal' ? 'sheet' : revision?.category || 'sheet'
   const canEdit = canManage && isTechnologistRequestEditable(status)
   const resolvedReadOnlyMessage = readOnlyMessage || (
     isTechnologistRequestEditable(status)
@@ -97,7 +99,9 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
     try {
       const result = await submitRequest(data.request.id)
       if (!result.success) throw new Error(result.error || 'Не удалось оформить заявку')
-      toast.success('Заявка оформлена. Забронируйте деловой отход и завершите бронь.')
+      toast.success(revision
+        ? 'Исправление сохранено. Проверьте склад и передайте позицию снабжению.'
+        : 'Заявка оформлена. Забронируйте деловой отход и завершите бронь.')
       setStatus('pending_stock_check')
       openStockCheck()
     } catch (error) {
@@ -117,8 +121,14 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
       <div className="rounded-xl border border-[#E8ECF0] bg-white p-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[#1B3A6B]">Заявка на материалы: {machine.name}</h1>
-            <p className="mt-1 text-sm text-slate-500">Состав материалов, деловой отход и позиции к заказу.</p>
+            <h1 className="text-2xl font-bold text-[#1B3A6B]">
+              {revision ? 'Исправленная позиция' : 'Заявка на материалы'}: {machine.name}
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {revision
+                ? 'Измените материал, характеристики или количество. Категория и состав заявки зафиксированы.'
+                : 'Состав материалов, деловой отход и позиции к заказу.'}
+            </p>
           </div>
           <RequestStatusBadge status={status} />
         </div>
@@ -134,42 +144,42 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
         </div>
       )}
 
-      <Tabs defaultValue="sheet" className="w-full">
+      <Tabs defaultValue={revisionTab} className="w-full">
         <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-lg border border-slate-200 bg-white p-1">
-          <TabsTrigger value="sheet">Листовой металл</TabsTrigger>
-          <TabsTrigger value="circle">Круг</TabsTrigger>
-          <TabsTrigger value="pipe">Труба</TabsTrigger>
-          <TabsTrigger value="knives">Ножи</TabsTrigger>
-          <TabsTrigger value="paint">Краска</TabsTrigger>
-          <TabsTrigger value="components">Комплектация</TabsTrigger>
-          <TabsTrigger value="mesh">Сетка</TabsTrigger>
-          <TabsTrigger value="chain_cord">Цепь / Шнур</TabsTrigger>
+          {(!revision || revision.category === 'sheet_metal') && <TabsTrigger value="sheet">Листовой металл</TabsTrigger>}
+          {(!revision || revision.category === 'circle') && <TabsTrigger value="circle">Круг</TabsTrigger>}
+          {(!revision || revision.category === 'pipe') && <TabsTrigger value="pipe">Труба</TabsTrigger>}
+          {(!revision || revision.category === 'knives') && <TabsTrigger value="knives">Ножи</TabsTrigger>}
+          {(!revision || revision.category === 'paint') && <TabsTrigger value="paint">Краска</TabsTrigger>}
+          {(!revision || revision.category === 'components') && <TabsTrigger value="components">Комплектация</TabsTrigger>}
+          {(!revision || revision.category === 'mesh') && <TabsTrigger value="mesh">Сетка</TabsTrigger>}
+          {(!revision || revision.category === 'chain_cord') && <TabsTrigger value="chain_cord">Цепь / Шнур</TabsTrigger>}
         </TabsList>
         <div className="mt-4 rounded-xl border border-[#E8ECF0] bg-white p-4">
-          <TabsContent value="sheet" className="outline-none">
-            <SheetMetalSection requestId={data.request.id} items={data.sheetMetal} suppliers={suppliers.sheetMetal} canEdit={canEdit} steelTypes={steelTypes} />
-          </TabsContent>
-          <TabsContent value="circle" className="outline-none">
-            <CircleSection requestId={data.request.id} items={data.circles} isEditable={canEdit} steelTypes={steelTypes} />
-          </TabsContent>
-          <TabsContent value="pipe" className="outline-none">
-            <PipeSection requestId={data.request.id} items={data.pipes} isEditable={canEdit} steelTypes={steelTypes} onRowsChange={handlePipeRowsChange} />
-          </TabsContent>
-          <TabsContent value="knives" className="outline-none">
-            <KnivesSection requestId={data.request.id} items={data.knives} canEdit={canEdit} canEditStock={false} steelTypes={steelTypes} />
-          </TabsContent>
-          <TabsContent value="paint" className="outline-none">
-            <PaintSection requestId={data.request.id} items={data.paint} canEdit={canEdit} canEditStock={false} onRowsChange={handlePaintRowsChange} />
-          </TabsContent>
-          <TabsContent value="components" className="outline-none">
-            <ComponentsSection requestId={data.request.id} items={data.components} canEdit={canEdit} canEditStock={false} onRowsChange={handleComponentRowsChange} />
-          </TabsContent>
-          <TabsContent value="mesh" className="outline-none">
-            <MeshSection requestId={data.request.id} items={data.meshItems} isEditable={canEdit} onRowsChange={handleMeshRowsChange} />
-          </TabsContent>
-          <TabsContent value="chain_cord" className="outline-none">
-            <ChainCordSection requestId={data.request.id} items={data.chainCords} isEditable={canEdit} onRowsChange={handleChainCordRowsChange} />
-          </TabsContent>
+          {(!revision || revision.category === 'sheet_metal') && <TabsContent value="sheet" className="outline-none">
+            <SheetMetalSection requestId={data.request.id} items={data.sheetMetal} suppliers={suppliers.sheetMetal} canEdit={canEdit} steelTypes={steelTypes} allowStructureChanges={!revision} />
+          </TabsContent>}
+          {(!revision || revision.category === 'circle') && <TabsContent value="circle" className="outline-none">
+            <CircleSection requestId={data.request.id} items={data.circles} isEditable={canEdit} steelTypes={steelTypes} allowStructureChanges={!revision} />
+          </TabsContent>}
+          {(!revision || revision.category === 'pipe') && <TabsContent value="pipe" className="outline-none">
+            <PipeSection requestId={data.request.id} items={data.pipes} isEditable={canEdit} steelTypes={steelTypes} onRowsChange={handlePipeRowsChange} allowStructureChanges={!revision} />
+          </TabsContent>}
+          {(!revision || revision.category === 'knives') && <TabsContent value="knives" className="outline-none">
+            <KnivesSection requestId={data.request.id} items={data.knives} canEdit={canEdit} canEditStock={false} steelTypes={steelTypes} allowStructureChanges={!revision} />
+          </TabsContent>}
+          {(!revision || revision.category === 'paint') && <TabsContent value="paint" className="outline-none">
+            <PaintSection requestId={data.request.id} items={data.paint} canEdit={canEdit} canEditStock={false} onRowsChange={handlePaintRowsChange} allowStructureChanges={!revision} />
+          </TabsContent>}
+          {(!revision || revision.category === 'components') && <TabsContent value="components" className="outline-none">
+            <ComponentsSection requestId={data.request.id} items={data.components} canEdit={canEdit} canEditStock={false} onRowsChange={handleComponentRowsChange} allowStructureChanges={!revision} />
+          </TabsContent>}
+          {(!revision || revision.category === 'mesh') && <TabsContent value="mesh" className="outline-none">
+            <MeshSection requestId={data.request.id} items={data.meshItems} isEditable={canEdit} onRowsChange={handleMeshRowsChange} allowStructureChanges={!revision} />
+          </TabsContent>}
+          {(!revision || revision.category === 'chain_cord') && <TabsContent value="chain_cord" className="outline-none">
+            <ChainCordSection requestId={data.request.id} items={data.chainCords} isEditable={canEdit} onRowsChange={handleChainCordRowsChange} allowStructureChanges={!revision} />
+          </TabsContent>}
         </div>
       </Tabs>
 
@@ -190,7 +200,9 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
           {(status === 'draft' || status === 'pending_stock_check' || status === 'stock_checked') && (
             <Button type="button" onClick={handleSubmitRequest} disabled={isSubmitting}>
               <Send className="mr-2 h-4 w-4" />
-              {status === 'draft' ? 'Заявка оформлена' : 'Перейти к брони делового отхода'}
+              {status === 'draft'
+                ? revision ? 'Проверить склад' : 'Заявка оформлена'
+                : revision ? 'Вернуться к проверке склада' : 'Перейти к брони делового отхода'}
             </Button>
           )}
         </div>

@@ -3441,7 +3441,7 @@ export type Database = {
       department_requests: {
         Row: {
           id: string
-          request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
+          request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
           target_department: string
           title: string
           description: string
@@ -3469,7 +3469,7 @@ export type Database = {
         }
         Insert: {
           id?: string
-          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
+          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
           target_department: string
           title: string
           description: string
@@ -3497,7 +3497,7 @@ export type Database = {
         }
         Update: {
           id?: string
-          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
+          request_kind?: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
           target_department?: string
           title?: string
           description?: string
@@ -3522,6 +3522,91 @@ export type Database = {
           search_document?: unknown
           created_at?: string
           updated_at?: string
+        }
+      }
+      supply_position_revisions: {
+        Row: {
+          id: string
+          source_request_id: string
+          source_request_item_table: string
+          source_request_item_id: string
+          category: Database['public']['Enums']['material_category']
+          reason: string
+          requested_by: string
+          assigned_to: string
+          department_request_id: string
+          replacement_request_id: string | null
+          replacement_request_item_table: string | null
+          replacement_request_item_id: string | null
+          status: 'requested' | 'editing' | 'stock_check' | 'submitted'
+          external_order_cancellation_confirmed_at: string | null
+          external_order_cancellation_confirmed_by: string | null
+          submitted_by: string | null
+          submitted_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          source_request_id: string
+          source_request_item_table: string
+          source_request_item_id: string
+          category: Database['public']['Enums']['material_category']
+          reason: string
+          requested_by: string
+          assigned_to: string
+          department_request_id: string
+          replacement_request_id?: string | null
+          replacement_request_item_table?: string | null
+          replacement_request_item_id?: string | null
+          status?: 'requested' | 'editing' | 'stock_check' | 'submitted'
+          external_order_cancellation_confirmed_at?: string | null
+          external_order_cancellation_confirmed_by?: string | null
+          submitted_by?: string | null
+          submitted_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          source_request_id?: string
+          source_request_item_table?: string
+          source_request_item_id?: string
+          category?: Database['public']['Enums']['material_category']
+          reason?: string
+          requested_by?: string
+          assigned_to?: string
+          department_request_id?: string
+          replacement_request_id?: string | null
+          replacement_request_item_table?: string | null
+          replacement_request_item_id?: string | null
+          status?: 'requested' | 'editing' | 'stock_check' | 'submitted'
+          external_order_cancellation_confirmed_at?: string | null
+          external_order_cancellation_confirmed_by?: string | null
+          submitted_by?: string | null
+          submitted_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      finance_expense_supply_items: {
+        Row: {
+          expense_id: string
+          request_item_table: string
+          request_item_id: string
+          created_at: string
+        }
+        Insert: {
+          expense_id: string
+          request_item_table: string
+          request_item_id: string
+          created_at?: string
+        }
+        Update: {
+          expense_id?: string
+          request_item_table?: string
+          request_item_id?: string
+          created_at?: string
         }
       }
       department_request_attachments: {
@@ -4121,6 +4206,9 @@ export type Database = {
           available_from_stage_id: string | null
           source_nesting_project_id: string | null
           source_nesting_sheet_id: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancellation_reason: string | null
           source_remnant_geom: Json | null
           deleted_at: string | null
           deleted_by: string | null
@@ -4151,6 +4239,9 @@ export type Database = {
           available_from_stage_id?: string | null
           source_nesting_project_id?: string | null
           source_nesting_sheet_id?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
           source_remnant_geom?: Json | null
           deleted_at?: string | null
           deleted_by?: string | null
@@ -4181,6 +4272,9 @@ export type Database = {
           available_from_stage_id?: string | null
           source_nesting_project_id?: string | null
           source_nesting_sheet_id?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
           source_remnant_geom?: Json | null
           deleted_at?: string | null
           deleted_by?: string | null
@@ -4946,6 +5040,9 @@ export type Database = {
           reserved_from_stock: number | null
           diameter_mm: number | null
           is_custom_material_variant: boolean
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancellation_reason: string | null
         }
         Insert: {
           id?: string
@@ -4967,6 +5064,9 @@ export type Database = {
           reserved_from_stock?: number | null
           diameter_mm?: number | null
           is_custom_material_variant?: boolean
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
         Update: {
           id?: string
@@ -4988,6 +5088,9 @@ export type Database = {
           reserved_from_stock?: number | null
           diameter_mm?: number | null
           is_custom_material_variant?: boolean
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
       }
       request_paint: {
@@ -5013,6 +5116,9 @@ export type Database = {
           material_variant_id: string | null
           reserved_from_stock_kg: number | null
           remainder_kg: number
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancellation_reason: string | null
         }
         Insert: {
           id?: string
@@ -5034,6 +5140,9 @@ export type Database = {
           material_variant_id?: string | null
           reserved_from_stock_kg?: number | null
           remainder_kg?: number
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
         Update: {
           id?: string
@@ -5055,6 +5164,9 @@ export type Database = {
           material_variant_id?: string | null
           reserved_from_stock_kg?: number | null
           remainder_kg?: number
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
       }
       request_circle: {
@@ -5231,6 +5343,9 @@ export type Database = {
           reserved_from_stock_qty: number
           sort_order: number
           created_at: string
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancellation_reason: string | null
         }
         Insert: {
           id?: string
@@ -5248,6 +5363,9 @@ export type Database = {
           reserved_from_stock_qty?: number
           sort_order?: number
           created_at?: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
         Update: {
           id?: string
@@ -5265,6 +5383,9 @@ export type Database = {
           reserved_from_stock_qty?: number
           sort_order?: number
           created_at?: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
       }
       request_chain_cord: {
@@ -5283,6 +5404,9 @@ export type Database = {
           reserved_from_stock_meters: number
           sort_order: number
           created_at: string
+          cancelled_at: string | null
+          cancelled_by: string | null
+          cancellation_reason: string | null
         }
         Insert: {
           id?: string
@@ -5299,6 +5423,9 @@ export type Database = {
           reserved_from_stock_meters?: number
           sort_order?: number
           created_at?: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
         Update: {
           id?: string
@@ -5315,6 +5442,9 @@ export type Database = {
           reserved_from_stock_meters?: number
           sort_order?: number
           created_at?: string
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          cancellation_reason?: string | null
         }
       }
     }

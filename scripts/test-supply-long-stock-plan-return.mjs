@@ -45,8 +45,14 @@ assert.match(
 )
 assert.match(
   actionSource,
-  /fn_return_long_stock_position_to_technologist_v1/,
-  'the UI action must use the atomic database return RPC',
+  /fn_return_supply_position_to_technologist_v1/,
+  'the UI action must use the generic atomic database return RPC',
+)
+const revisionMigrationSource = read('supabase/migrations/20260908120000_supply_position_revisions.sql')
+assert.match(
+  revisionMigrationSource,
+  /fn_return_long_stock_position_to_technologist_v1\(/,
+  'the generic RPC must delegate approved long-stock maps to the existing lifecycle',
 )
 assert.match(requestListSource, /Пересчёт позиции/, 'return request must appear in the common request list')
 assert.match(

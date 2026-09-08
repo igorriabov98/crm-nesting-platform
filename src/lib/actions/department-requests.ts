@@ -73,7 +73,7 @@ export type DepartmentRequestEvent = {
 
 export type DepartmentRequestRow = {
   id: string
-  request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'transport_trip_date_approval'
+  request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
   target_department: DepartmentRequestTarget
   title: string
   description: string
@@ -121,6 +121,11 @@ export type DepartmentRequestRow = {
   } | null
   attachments: DepartmentRequestAttachment[]
   events?: DepartmentRequestEvent[]
+  position_revision?: {
+    status: 'requested' | 'editing' | 'stock_check' | 'submitted'
+    replacement_request_id: string | null
+    replacement_request_item_id: string | null
+  } | null
 }
 
 export type DepartmentRequestFilterOption = {
@@ -474,6 +479,15 @@ export async function getDepartmentRequestDetail(requestId: string) {
     .maybeSingle()
   if (error || !data) return null
   const request = data as unknown as DepartmentRequestRow
+  if (request.request_kind === 'supply_position_revision') {
+    const { data: revisionData, error: revisionError } = await admin
+      .from('supply_position_revisions')
+      .select('status, replacement_request_id, replacement_request_item_id')
+      .eq('department_request_id', id)
+      .maybeSingle()
+    if (revisionError) return null
+    request.position_revision = revisionData as DepartmentRequestRow['position_revision']
+  }
 
   const departmentAllowed = canManageDepartmentRequestTarget({
     target: request.target_department,
@@ -542,7 +556,7 @@ async function loadRequestMutationMeta(requestId: string) {
   return data as {
     target_department: DepartmentRequestTarget
     machine_id: string | null
-    request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation'
+    request_kind: 'manual' | 'machine_layout' | 'long_stock_recalculation' | 'supply_position_revision' | 'transport_trip_date_approval'
   } | null
 }
 

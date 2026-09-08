@@ -36,10 +36,11 @@ const statusVariant = {
 
 export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowProps) {
   const plan = item.long_stock_purchase_plan
-  const requiresRecalculation = plan?.cutting_status === 'requires_recalculation'
+  const returnedToTechnologist = Boolean(item.position_revision)
+    || plan?.cutting_status === 'requires_recalculation'
   const plannedQuantity = detailContext?.plannedQuantity ?? sumSchedules(item.delivery_schedules, 'planned')
   const deliveredQuantity = detailContext?.deliveredQuantity ?? sumSchedules(item.delivery_schedules, 'delivered')
-  const unscheduledQuantity = detailContext?.unscheduledQuantity
+  const unscheduledQuantity = returnedToTechnologist ? 0 : detailContext?.unscheduledQuantity
     ?? Math.max(item.to_order - plannedQuantity - deliveredQuantity, 0)
   const redeliveryQuantity = detailContext?.redeliveryQuantity || 0
   const orderedQuantity = Math.max(item.to_order - unscheduledQuantity, 0)
@@ -123,8 +124,8 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
         </div>
 
         <div className="flex flex-wrap items-start gap-1.5 lg:justify-end">
-          {requiresRecalculation ? (
-            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Требует пересчёта</Badge>
+          {returnedToTechnologist ? (
+            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Возвращено технологу</Badge>
           ) : isCoveredByStock ? (
             <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Закрыто складом</Badge>
           ) : isPartiallyOrdered ? (
@@ -142,7 +143,7 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
         </div>
       </div>
 
-      {!isCoveredByStock && (
+      {(!isCoveredByStock || returnedToTechnologist) && (
         <section className="mt-4 overflow-hidden rounded-2xl border border-border/70 bg-muted/15" aria-label={`График поставок: ${item.item_name}`}>
           <div className="flex flex-col gap-3 border-b border-border/60 bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -152,12 +153,14 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
               </h3>
               <p className="mt-1 text-xs text-muted-foreground">Приёмка выполняется только на странице склада.</p>
             </div>
-            {plan?.cutting_status === 'plan_approved' && (
+            {!returnedToTechnologist && (
               <ReturnLongStockPositionButton
                 requestItemTable={item.table}
                 requestItemId={item.id}
-                planNumber={plan.plan_number}
-                versionNumber={plan.version_number}
+                itemName={item.item_name}
+                categoryLabel={MATERIAL_CATEGORY_LABELS[item.category]}
+                planNumber={plan?.plan_number}
+                versionNumber={plan?.version_number}
               />
             )}
           </div>
@@ -173,10 +176,15 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
             />
           </div>
 
-          {requiresRecalculation ? (
+          {returnedToTechnologist ? (
             <div className="mx-3 mb-3 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
-              <span><strong>Редактирование заблокировано.</strong> Сначала технолог должен утвердить новую версию карты раскроя.</span>
+              <span>
+                <strong>Позиция исключена из активной закупки.</strong>{' '}
+                {item.position_revision
+                  ? <Link className="underline" href={`/requests/detail/${item.position_revision.department_request_id}`}>Открыть запрос технологу</Link>
+                  : 'Сначала технолог должен утвердить новую версию карты раскроя.'}
+              </span>
             </div>
           ) : scopes.length > 0 ? (
             <div className="border-t border-border/60 p-3">
