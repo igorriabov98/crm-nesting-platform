@@ -5,11 +5,12 @@ import {
   assertTechnologistRequestEditable,
   isTechnologistRequestEditable,
 } from '../src/lib/technologist-request-editability'
+import { deriveRequestLifecycleStatus } from '../src/lib/technologist-request-lifecycle'
 import { ORDER_STATUS_LABELS } from '../src/lib/constants/procurement'
 import type { RequestStatus } from '../src/lib/types'
 
 const editable: RequestStatus[] = ['draft', 'pending_stock_check', 'stock_checked']
-const readOnly: RequestStatus[] = ['submitted_to_supply', 'completed']
+const readOnly: RequestStatus[] = ['submitted_to_supply', 'completed', 'cancelled']
 
 for (const status of editable) {
   assert.equal(isTechnologistRequestEditable(status), true, `${status} должен оставаться редактируемым`)
@@ -22,6 +23,26 @@ for (const status of readOnly) {
 }
 
 assert.equal(ORDER_STATUS_LABELS.delivered, 'Получено', 'Финальный статус позиции должен называться «Получено»')
+assert.equal(
+  deriveRequestLifecycleStatus({ status: 'submitted_to_supply' }, ['cancelled']),
+  'cancelled',
+  'Заявка с единственной отменённой позицией должна показываться как отменённая',
+)
+assert.equal(
+  deriveRequestLifecycleStatus({ status: 'submitted_to_supply' }, ['cancelled', 'ordered']),
+  'delivery',
+  'Отменённая позиция не должна скрывать доставку оставшихся активных позиций',
+)
+assert.equal(
+  deriveRequestLifecycleStatus({ status: 'submitted_to_supply' }, ['cancelled', 'delivered']),
+  'received',
+  'Отменённая позиция не должна мешать завершению остальных принятых позиций',
+)
+assert.equal(
+  deriveRequestLifecycleStatus({ status: 'cancelled' }, []),
+  'cancelled',
+  'Явно отменённая корректирующая заявка должна оставаться отменённой без строк заказа',
+)
 
 const root = process.cwd()
 const action = readFileSync(join(root, 'src/lib/actions/technologist-requests.ts'), 'utf8')

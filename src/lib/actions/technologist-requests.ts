@@ -19,10 +19,16 @@ import {
 import {
   loadTechnologistRequestPayload,
 } from '@/lib/technologist-requests/request-payload'
+import {
+  deriveRequestLifecycleStatus,
+  REQUEST_LIFECYCLE_LABELS,
+  type RequestLifecycleStatus,
+} from '@/lib/technologist-request-lifecycle'
 export type {
   TechnologistRequestPayload,
   WithMaterialName,
 } from '@/lib/technologist-requests/request-payload'
+export type { RequestLifecycleStatus } from '@/lib/technologist-request-lifecycle'
 import type { PermissionOperation } from '@/lib/permissions/resources'
 import {
   availabilitySchema,
@@ -71,8 +77,6 @@ type LooseQuery = PromiseLike<DbResult> & {
 }
 type LooseDb = { from: (table: string) => LooseQuery; rpc: (fn: string, args: Record<string, unknown>) => Promise<DbResult> }
 
-export type RequestLifecycleStatus = 'draft' | 'stock_check' | 'submitted_to_supply' | 'delivery' | 'received'
-
 export type TechnologistRequestListItem = Pick<
   TechnologistRequest,
   'id' | 'machine_id' | 'status' | 'submitted_at' | 'created_at' | 'updated_at'
@@ -120,14 +124,6 @@ const REQUEST_SECTION_TABLES: RequestSectionTable[] = [
   'request_mesh',
   'request_chain_cord',
 ]
-
-const REQUEST_LIFECYCLE_LABELS: Record<RequestLifecycleStatus, string> = {
-  draft: 'Черновик',
-  stock_check: 'Проверка склада',
-  submitted_to_supply: 'Отправлена в снабжение',
-  delivery: 'Доставка',
-  received: 'Принята на склад',
-}
 
 const MATERIAL_CHARACTERISTIC_FIELDS: Record<RequestSectionTable, Set<string>> = {
   request_sheet_metal: new Set(['material_name', 'material_grade', 'steel_type_id', 'sheet_size', 'thickness_mm']),
@@ -224,20 +220,6 @@ function isRequestVisibleForRequestRole(request: TechnologistRequest, role: User
   return request.status === 'submitted_to_supply' || request.status === 'completed'
 }
 
-function deriveRequestLifecycleStatus(request: TechnologistRequest, orderStatuses: OrderItemStatus[]): RequestLifecycleStatus {
-  if (request.status === 'draft') return 'draft'
-  if (request.status === 'pending_stock_check' || request.status === 'stock_checked') return 'stock_check'
-  if (request.status === 'completed') return 'received'
-
-  if (orderStatuses.length > 0 && orderStatuses.every((status) => status === 'delivered')) {
-    return 'received'
-  }
-  if (orderStatuses.some((status) => status === 'ordered' || status === 'delivered')) {
-    return 'delivery'
-  }
-  return 'submitted_to_supply'
-}
-
 async function loadMachineRequests(db: LooseDb, machineId: string, role: UserRole) {
   const { data, error } = await db
     .from('technologist_requests')
@@ -267,7 +249,7 @@ async function loadRequestOrderStatuses(db: LooseDb, requestIds: string[]) {
   for (const result of results) {
     if (result.error) throw new Error(result.error.message || 'Не удалось загрузить статусы закупки')
     for (const row of (result.data || []) as RequestOrderStatusRow[]) {
-      if (!row.request_id || !row.order_status || row.order_status === 'cancelled') continue
+      if (!row.request_id || !row.order_status) continue
       const list = statuses.get(row.request_id) || []
       list.push(row.order_status)
       statuses.set(row.request_id, list)

@@ -324,6 +324,7 @@ function MaterialOrderCard({
     .filter((plan): plan is LongStockPurchasePlan => plan !== null) ?? []
   const longStockPurchase = mergeLongStockPurchasePlans(longStockPlans)
   const hasGenericPositionReturn = factory?.items.some((item) => Boolean(item.position_revision)) ?? false
+  const hasCancelledReturn = factory?.items.some(isCancelledReturnedSupplyOrderSource) ?? false
   const requiresRecalculation = (hasGenericPositionReturn && activeFactoryItems.length === 0)
     || longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
   const hasMixedPlannedAndUnscheduled = Boolean(
@@ -346,6 +347,7 @@ function MaterialOrderCard({
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {dateSlice ? (
                 <>
+                  {hasCancelledReturn && <div className="font-medium text-slate-700">Отменено</div>}
                   {dateSlice.plannedScheduleCount > 0 && (
                     <div className="flex items-center gap-1.5 font-medium text-primary">
                       <Check className="h-3.5 w-3.5" />
@@ -410,7 +412,7 @@ function MaterialOrderCard({
 
         <dl className="border-t border-border bg-muted/20 p-4 lg:border-l lg:border-t-0 lg:p-5">
           <div className="flex items-baseline justify-between gap-3 lg:block">
-            <dt className="text-sm text-muted-foreground">{attentionKind === 'redelivery' ? 'Было заявлено' : dateSlice ? 'Количество на дату' : 'Количество'}</dt>
+            <dt className="text-sm text-muted-foreground">{hasCancelledReturn ? 'Активный объём' : attentionKind === 'redelivery' ? 'Было заявлено' : dateSlice ? 'Количество на дату' : 'Количество'}</dt>
             <dd className="text-xl font-semibold text-foreground tabular-nums lg:mt-1">
               {formatAmount(displayQuantity)} {aggregate.unit}
             </dd>
@@ -750,7 +752,9 @@ function FactoryDeliveryEditorForm({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const activeItems = useMemo(
-    () => factory.items.filter((item) => !isReturnedSupplyOrderSource(item)),
+    () => factory.items.filter((item) => (
+      !isReturnedSupplyOrderSource(item) && !isCancelledReturnedSupplyOrderSource(item)
+    )),
     [factory.items],
   )
   const activeFactory = useMemo(
@@ -787,10 +791,14 @@ function FactoryDeliveryEditorForm({
     : dateSlice
     ? Math.max(dateSlice.quantity - dateSlice.deliveredQuantity, 0)
     : Math.max(factory.quantity - factory.delivered_schedule_quantity, 0)
-  const hasGenericPositionReturn = factory.items.some((item) => Boolean(item.position_revision))
-  const isClosed = !hasGenericPositionReturn
+  const hasOpenPositionReturn = factory.items.some(isReturnedSupplyOrderSource)
+  const hasCancelledPositionReturn = factory.items.some(isCancelledReturnedSupplyOrderSource)
+  const isCancelled = activeItems.length === 0 && hasCancelledPositionReturn && !hasOpenPositionReturn
+  const isClosed = isCancelled || (
+    !hasOpenPositionReturn
     && factory.delivered_count === factory.item_count
     && factory.unscheduled_quantity <= 0
+  )
   const missingFinanceSuppliers = activeItems.some((item) => (
     (item.order_status === 'pending' || item.order_status === 'ordered')
     && !item.supplier_id
@@ -811,7 +819,7 @@ function FactoryDeliveryEditorForm({
   const longStockPlans = activeItems
     .map((item) => item.long_stock_purchase_plan)
     .filter((plan): plan is LongStockPurchasePlan => plan !== null)
-  const requiresRecalculation = (hasGenericPositionReturn && activeItems.length === 0)
+  const requiresRecalculation = (hasOpenPositionReturn && activeItems.length === 0)
     || longStockPlans.some((plan) => plan.cutting_status === 'requires_recalculation')
   const isBarMaterial = isSupplyOrderBarMaterial(aggregate) || longStockPlans.length > 0
   const deliveredLongStockSchedules = Array.from(new Map(factory.items
@@ -1018,7 +1026,7 @@ function FactoryDeliveryEditorForm({
           <div>
             <div className="font-semibold">Позиция возвращена технологу</div>
             <div className="mt-0.5 text-xs leading-5 text-amber-800">
-              {hasGenericPositionReturn
+              {hasOpenPositionReturn
                 ? 'Она исключена из закупки до повторной проверки склада и отправки исправленной позиции.'
                 : 'До утверждения новой версии нельзя создавать график, отмечать заказ или передавать позицию в резку.'}
             </div>
@@ -1031,7 +1039,7 @@ function FactoryDeliveryEditorForm({
           <PackageCheck className="h-4 w-4 text-primary" />
           <span className={isClosed ? 'font-semibold text-emerald-700' : undefined}>
             {isClosed
-              ? 'Поставка закрыта'
+              ? isCancelled ? 'Позиция отменена' : 'Поставка закрыта'
               : factory.unscheduled_quantity > 0
                 ? `${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit} без даты поступления · прежний Мат.план ${factory.production_date ? formatDate(factory.production_date) : 'не указан'}`
                 : 'Весь объем распределен по графику'}
