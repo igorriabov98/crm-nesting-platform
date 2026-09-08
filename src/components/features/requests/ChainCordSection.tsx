@@ -22,6 +22,7 @@ type Props = {
   items: ChainCordRow[]
   isEditable: boolean
   onRowsChange?: (rows: ChainCordRow[]) => void
+  allowStructureChanges?: boolean
 }
 
 function materialDisplayName(row: ChainCordRow) {
@@ -38,7 +39,7 @@ function mmToMeters(value: string | number | null) {
   return Number.isFinite(millimeters) ? millimeters / 1000 : 0
 }
 
-export function ChainCordSection({ requestId, items, isEditable, onRowsChange }: Props) {
+export function ChainCordSection({ requestId, items, isEditable, onRowsChange, allowStructureChanges = true }: Props) {
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
 
@@ -125,7 +126,7 @@ export function ChainCordSection({ requestId, items, isEditable, onRowsChange }:
             {rows.map((row) => {
               const canEditCharacteristics = canEditMaterialCharacteristics(row, isEditable)
               return (
-              <tr key={row.id} className="border-b last:border-b-0">
+              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch category="chain_cord" value={materialNames[row.id] ?? materialDisplayName(row)} initialValue={materialDisplayName(row)} selectedMaterialId={row.material_id} disabled={!isEditable} compact onSelect={(material, variant, source) => selectMaterial(row, material, variant, source)} />
                 </td>
@@ -144,7 +145,7 @@ export function ChainCordSection({ requestId, items, isEditable, onRowsChange }:
                 <td className="px-3 py-2"><InlineEditCell value={neededLengthMm(row)} type="number" step="1" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_meters: mmToMeters(value) })} /></td>
                 <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_chain_cord" item={row} /></td>
                 <td className="px-3 py-2 text-right">
-                  {isEditable && (
+                  {isEditable && allowStructureChanges && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
@@ -157,14 +158,14 @@ export function ChainCordSection({ requestId, items, isEditable, onRowsChange }:
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
+                  {isEditable && allowStructureChanges && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {isEditable && (
+      {isEditable && allowStructureChanges && (
         <div className="flex justify-end">
           <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
             <Plus className="mr-2 h-4 w-4" />

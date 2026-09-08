@@ -25,6 +25,7 @@ type Props = {
   items: CircleRow[]
   isEditable: boolean
   steelTypes: SteelType[]
+  allowStructureChanges?: boolean
 }
 
 function toNumber(value: string | number | null) {
@@ -41,7 +42,7 @@ function formatWeight(value: number | null | undefined) {
   return value === null || value === undefined ? '—' : `${value} кг`
 }
 
-export function CircleSection({ requestId, items, isEditable, steelTypes }: Props) {
+export function CircleSection({ requestId, items, isEditable, steelTypes, allowStructureChanges = true }: Props) {
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
   const [positionDialogOpen, setPositionDialogOpen] = useState(false)
@@ -150,7 +151,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
                   <LongStockCuttingPlanStatusControl table="request_circle" itemId={row.id} />
                 </td>
                 <td className="px-3 py-2 text-right">
-                  {isEditable && (
+                  {isEditable && allowStructureChanges && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
@@ -163,14 +164,14 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
               <tr>
                 <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
+                  {isEditable && allowStructureChanges && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {isEditable && (
+      {isEditable && allowStructureChanges && (
         <div className="flex justify-end">
           <Button type="button" variant="outline" size="sm" onClick={() => setPositionDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
@@ -178,14 +179,14 @@ export function CircleSection({ requestId, items, isEditable, steelTypes }: Prop
           </Button>
         </div>
       )}
-      <LongStockPositionDialog
+      {allowStructureChanges && <LongStockPositionDialog
         category="circle"
         requestId={requestId}
         steelTypes={steelTypes}
         open={positionDialogOpen}
         onOpenChange={setPositionDialogOpen}
         onCreated={(row) => setRows((current) => upsertLongStockRequestRow(current, row as CircleRow))}
-      />
+      />}
     </div>
   )
 }

@@ -21,6 +21,7 @@ type Props = {
   items: MeshRow[]
   isEditable: boolean
   onRowsChange?: (rows: MeshRow[]) => void
+  allowStructureChanges?: boolean
 }
 
 function toNumber(value: string | number | null) {
@@ -33,7 +34,7 @@ function materialDisplayName(row: MeshRow) {
   return row.materials?.name ?? ''
 }
 
-export function MeshSection({ requestId, items, isEditable, onRowsChange }: Props) {
+export function MeshSection({ requestId, items, isEditable, onRowsChange, allowStructureChanges = true }: Props) {
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
 
@@ -123,7 +124,7 @@ export function MeshSection({ requestId, items, isEditable, onRowsChange }: Prop
             {rows.map((row) => {
               const canEditCharacteristics = canEditMaterialCharacteristics(row, isEditable)
               return (
-              <tr key={row.id} className="border-b last:border-b-0">
+              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch category="mesh" value={materialNames[row.id] ?? materialDisplayName(row)} initialValue={materialDisplayName(row)} selectedMaterialId={row.material_id} disabled={!isEditable} compact onSelect={(material, variant, source) => selectMaterial(row, material, variant, source)} />
                 </td>
@@ -133,7 +134,7 @@ export function MeshSection({ requestId, items, isEditable, onRowsChange }: Prop
                 <td className="px-3 py-2"><InlineEditCell value={row.remainder_qty} type="number" step="1" disabled={!isEditable} onSave={(value) => handleUpdate(row.id, { remainder_qty: Number(value || 0) })} /></td>
                 <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_mesh" item={row} /></td>
                 <td className="px-3 py-2 text-right">
-                  {isEditable && (
+                  {isEditable && allowStructureChanges && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
@@ -146,14 +147,14 @@ export function MeshSection({ requestId, items, isEditable, onRowsChange }: Prop
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {isEditable && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
+                  {isEditable && allowStructureChanges && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>Добавить</Button>}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {isEditable && (
+      {isEditable && allowStructureChanges && (
         <div className="flex justify-end">
           <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
             <Plus className="mr-2 h-4 w-4" />

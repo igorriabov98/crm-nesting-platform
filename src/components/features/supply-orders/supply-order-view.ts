@@ -148,6 +148,13 @@ type SourceCoverageState = {
   planned: PlannedCoverage[]
 }
 
+export function isReturnedSupplyOrderSource(
+  item: Pick<SupplyOrderAggregateSourceItem, 'position_revision' | 'long_stock_purchase_plan'>,
+) {
+  return Boolean(item.position_revision)
+    || item.long_stock_purchase_plan?.cutting_status === 'requires_recalculation'
+}
+
 export function buildSupplyOrderDetailContexts(
   items: SupplyOrderItem[],
   aggregates: SupplyOrderAggregate[],
@@ -163,7 +170,7 @@ export function buildSupplyOrderDetailContexts(
 
   for (const aggregate of aggregates) {
     for (const factory of aggregate.factories) {
-      const orderedSources = [...factory.items].sort((left, right) => (
+      const orderedSources = factory.items.filter((source) => !isReturnedSupplyOrderSource(source)).sort((left, right) => (
         left.machine_name.localeCompare(right.machine_name, 'ru') || left.id.localeCompare(right.id)
       ))
       const state = new Map<string, SourceCoverageState>(orderedSources.map((source) => {
@@ -255,6 +262,17 @@ export function buildSupplyOrderDetailContexts(
   const contexts = new Map<string, SupplyOrderDetailContext>()
   for (const originalItem of items) {
     const key = `${originalItem.table}:${originalItem.id}`
+    if (isReturnedSupplyOrderSource(originalItem)) {
+      contexts.set(key, {
+        item: originalItem,
+        plannedQuantity: 0,
+        deliveredQuantity: 0,
+        unscheduledQuantity: 0,
+        redeliveryQuantity: 0,
+        scopes: [],
+      })
+      continue
+    }
     const context = sourceContexts.get(key)
     if (!context) continue
 
@@ -567,6 +585,7 @@ export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filt
 }
 
 export function isSupplyOrderAggregateClosed(aggregate: SupplyOrderAggregate) {
+  if (aggregate.factories.some((factory) => factory.items.some(isReturnedSupplyOrderSource))) return false
   return aggregate.delivered_count === aggregate.item_count && aggregate.unscheduled_quantity <= 0
 }
 
@@ -627,6 +646,9 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
   }
 
   for (const factory of aggregate.factories) {
+    if (factory.items.some(isReturnedSupplyOrderSource)) {
+      getSlice(factory.production_date || aggregate.planned_material_date || 'no_supply_date')
+    }
     for (const item of factory.items) {
       for (const schedule of item.delivery_schedules) {
         if (schedule.status === 'cancelled') continue
@@ -774,6 +796,7 @@ function summarizeMachineRoutes(
   const routes = new Map<string, SupplyOrderMachineRoute & { hasUnknownWeight: boolean }>()
 
   for (const item of items) {
+    if (isReturnedSupplyOrderSource(item)) continue
     const quantity = Math.max(Number(getQuantity(item) || 0), 0)
     if (quantity <= 0) continue
 
@@ -871,26 +894,27 @@ function projectSupplyOrderFactory(
   const items = factory.items.filter(predicate)
   if (items.length === 0) return null
 
-  const quantity = items.reduce((sum, item) => sum + item.quantity, 0)
+  const activeItems = items.filter((item) => !isReturnedSupplyOrderSource(item))
+  const quantity = activeItems.reduce((sum, item) => sum + item.quantity, 0)
   const ratio = factory.quantity > 0 ? quantity / factory.quantity : 0
-  const supplyDates = Array.from(new Set(items.map((item) => item.supply_delivery_date || 'no_supply_date')))
-  const deliveryDates = new Set(items.flatMap((item) => item.delivery_schedules.map((schedule) => schedule.delivery_date)))
-  const suppliers = summarizeProjectedSuppliers(items)
+  const supplyDates = Array.from(new Set(activeItems.map((item) => item.supply_delivery_date || 'no_supply_date')))
+  const deliveryDates = new Set(activeItems.flatMap((item) => item.delivery_schedules.map((schedule) => schedule.delivery_date)))
+  const suppliers = summarizeProjectedSuppliers(activeItems)
 
   return {
     ...factory,
     quantity,
     requested_quantity: factory.requested_quantity * ratio,
     reserved_quantity: factory.reserved_quantity * ratio,
-    weight_kg: sumNullableWeights(items.map((item) => item.weight_kg)),
-    item_count: items.length,
-    machine_count: new Set(items.map((item) => item.machine_id)).size,
-    pending_count: items.filter((item) => item.order_status === 'pending').length,
-    ordered_count: items.filter((item) => item.order_status === 'ordered').length,
-    delivered_count: items.filter((item) => item.order_status === 'delivered').length,
-    planned_schedule_quantity: items.reduce((sum, item) => sum + item.planned_schedule_quantity, 0),
-    delivered_schedule_quantity: items.reduce((sum, item) => sum + item.delivered_schedule_quantity, 0),
-    unscheduled_quantity: items.reduce((sum, item) => sum + item.unscheduled_quantity, 0),
+    weight_kg: sumNullableWeights(activeItems.map((item) => item.weight_kg)),
+    item_count: activeItems.length,
+    machine_count: new Set(activeItems.map((item) => item.machine_id)).size,
+    pending_count: activeItems.filter((item) => item.order_status === 'pending').length,
+    ordered_count: activeItems.filter((item) => item.order_status === 'ordered').length,
+    delivered_count: activeItems.filter((item) => item.order_status === 'delivered').length,
+    planned_schedule_quantity: activeItems.reduce((sum, item) => sum + item.planned_schedule_quantity, 0),
+    delivered_schedule_quantity: activeItems.reduce((sum, item) => sum + item.delivered_schedule_quantity, 0),
+    unscheduled_quantity: activeItems.reduce((sum, item) => sum + item.unscheduled_quantity, 0),
     delivery_schedule_count: deliveryDates.size,
     has_delivery_schedules: deliveryDates.size > 0,
     supply_delivery_date: supplyDates.length === 1 && supplyDates[0] !== 'no_supply_date' ? supplyDates[0] : null,

@@ -526,6 +526,51 @@ export async function createRequest(machineId: string): Promise<ActionResult<Tec
   }
 }
 
+export async function createSupplyPositionRevisionRequest(
+  departmentRequestId: string,
+): Promise<ActionResult<{ requestId: string; requestItemId: string; machineId: string; href: string }>> {
+  try {
+    const { userId } = await requireRequestPermission('manage')
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(departmentRequestId)) {
+      throw new Error('Некорректный идентификатор запроса')
+    }
+    const { data, error } = await (createAdminClient() as unknown as LooseDb).rpc(
+      'fn_create_supply_position_revision_request_v1',
+      { p_department_request_id: departmentRequestId, p_actor: userId },
+    )
+    if (error) throw new Error(error.message || 'Не удалось создать корректирующую заявку')
+    const result = (data || {}) as {
+      request_id?: string
+      request_item_id?: string
+      machine_id?: string
+    }
+    if (!result.request_id || !result.request_item_id || !result.machine_id) {
+      throw new Error('Сервер не вернул корректирующую заявку')
+    }
+
+    const requestPath = `${ROUTES.SALES_PLAN}/${result.machine_id}/request/${result.request_id}`
+    const href = `${requestPath}#request-item-${result.request_item_id}`
+    revalidatePath(ROUTES.REQUESTS)
+    revalidatePath(ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS)
+    revalidatePath(`/requests/detail/${departmentRequestId}`)
+    revalidatePath(requestPath)
+    return {
+      success: true,
+      data: {
+        requestId: result.request_id,
+        requestItemId: result.request_item_id,
+        machineId: result.machine_id,
+        href,
+      },
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Не удалось создать корректирующую заявку',
+    }
+  }
+}
+
 export async function submitRequest(requestId: string): Promise<ActionResult> {
   try {
     const { db, userId } = await requireRequestPermission('manage')
@@ -557,7 +602,9 @@ export async function submitRequest(requestId: string): Promise<ActionResult> {
   }
 }
 
-export async function completeStockReservation(requestId: string): Promise<ActionResult> {
+export async function completeStockReservation(
+  requestId: string,
+): Promise<ActionResult<{ href: string; submittedRevision?: boolean }>> {
   try {
     const { db, userId } = await requireRequestPermission('manage')
     const request = await getRequestMachine(db, requestId)
@@ -567,6 +614,43 @@ export async function completeStockReservation(requestId: string): Promise<Actio
 
     if (request.status !== 'pending_stock_check' && request.status !== 'stock_checked') {
       throw new Error('Бронь уже завершена или заявка не находится на проверке склада')
+    }
+
+    const admin = createAdminClient() as unknown as LooseDb
+    const { data: revisionData, error: revisionError } = await admin
+      .from('supply_position_revisions')
+      .select('id, department_request_id')
+      .eq('replacement_request_id', requestId)
+    if (revisionError) throw new Error(revisionError.message || 'Не удалось проверить корректирующую заявку')
+    const revision = ((revisionData || []) as Array<{ id: string; department_request_id: string }>)[0] || null
+
+    if (revision) {
+      await validateRequestReadyForSupply(db, requestId, userId)
+      const { data, error } = await admin.rpc('fn_submit_supply_position_revision_v1', {
+        p_request_id: requestId,
+        p_actor: userId,
+      })
+      if (error) throw new Error(error.message || 'Не удалось отправить исправленную позицию снабжению')
+      const result = (data || {}) as { machine_id?: string; source_request_id?: string }
+      revalidateRequest(request.machine_id, requestId)
+      revalidatePath(ROUTES.SUPPLY_ORDERS)
+      revalidatePath(ROUTES.REQUESTS)
+      revalidatePath(ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS)
+      revalidatePath(ROUTES.TASKS)
+      revalidatePath(ROUTES.NOTIFICATIONS)
+      revalidatePath(`/requests/detail/${revision.department_request_id}`)
+      try {
+        await dispatchPendingTelegramDeliveries({ machineId: result.machine_id || request.machine_id })
+      } catch {
+        // The database transaction is complete; Telegram delivery is best-effort.
+      }
+      return {
+        success: true,
+        data: {
+          href: `${ROUTES.SALES_PLAN}/${request.machine_id}/request/${requestId}`,
+          submittedRevision: true,
+        },
+      }
     }
 
     const { data: detailingCheckData, error: detailingCheckError } = await db.rpc('fn_validate_detailing_request_check', {

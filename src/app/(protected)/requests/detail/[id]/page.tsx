@@ -132,6 +132,11 @@ export default async function DepartmentRequestDetailPage({
                     Пересчёт позиции
                   </span>
                 )}
+                {request.request_kind === 'supply_position_revision' && (
+                  <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                    Исправление позиции
+                  </span>
+                )}
                 {request.request_kind === 'transport_trip_date_approval' && (
                   <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-800">
                     Перенос дат рейса
@@ -199,6 +204,38 @@ export default async function DepartmentRequestDetailPage({
                   Связанная позиция заявки
                 </div>
                 <p className="mt-2 font-semibold text-amber-950">{request.request_item_label || 'Открыть позицию технолога'}</p>
+              </Link>
+            )}
+            {request.request_kind === 'supply_position_revision' && request.technologist_request_id && request.request_item_id && (
+              <Link
+                href={`${ROUTES.SALES_PLAN}/${request.machine_id}/request/${request.technologist_request_id}#request-item-${request.request_item_id}`}
+                className="rounded-2xl border border-amber-300 bg-amber-50 p-4 hover:bg-amber-100"
+              >
+                <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
+                  <Package className="size-4" aria-hidden="true" />
+                  Возвращённая позиция
+                </div>
+                <p className="mt-2 font-semibold text-amber-950">{request.request_item_label || 'Открыть исходную позицию'}</p>
+              </Link>
+            )}
+            {request.request_kind === 'supply_position_revision'
+              && request.position_revision?.replacement_request_id
+              && request.position_revision.replacement_request_item_id && (
+              <Link
+                href={`${ROUTES.SALES_PLAN}/${request.machine_id}/request/${request.position_revision.replacement_request_id}#request-item-${request.position_revision.replacement_request_item_id}`}
+                className="rounded-2xl border border-emerald-300 bg-emerald-50 p-4 hover:bg-emerald-100"
+              >
+                <div className="flex items-center gap-2 text-sm font-medium text-emerald-800">
+                  <Package className="size-4" aria-hidden="true" />
+                  Исправленная заявка
+                </div>
+                <p className="mt-2 font-semibold text-emerald-950">
+                  {request.position_revision.status === 'submitted'
+                    ? 'Отправлена снабжению'
+                    : request.position_revision.status === 'stock_check'
+                      ? 'Проходит проверку склада'
+                      : 'Открыть и продолжить исправление'}
+                </p>
               </Link>
             )}
             {request.request_kind === 'transport_trip_date_approval' && request.transport_date_change?.transport_order_id && (

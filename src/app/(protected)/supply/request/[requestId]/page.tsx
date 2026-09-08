@@ -18,7 +18,7 @@ export default async function SupplyRequestRoute({
 
   if (error || !data) notFound()
 
-  const detailing = isBusinessScrapReservationStatus(data.request.status)
+  const detailing = isBusinessScrapReservationStatus(data.request.status) && !data.positionRevision
     ? (await getDetailingRequestWorkspace(requestId)).data
     : null
 

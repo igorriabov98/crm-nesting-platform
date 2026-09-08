@@ -43,14 +43,14 @@ export function SupplyOrderHistoryPage({ items, page, pageSize, total, factoryId
     <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
       <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-slate-950">История приемки металла</h2>
+          <h2 className="text-lg font-semibold text-slate-950">История поставок и замен</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Принятые на склад поставки из заказов снабжения.
+            Принятые на склад поставки и позиции, заменённые после возврата технологу.
           </p>
         </div>
         <div className="inline-flex min-h-10 w-fit items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-medium text-emerald-800">
           <PackageCheck className="h-4 w-4" />
-          {total} {pluralize(total, 'поставка', 'поставки', 'поставок')}
+          {total} {pluralize(total, 'запись', 'записи', 'записей')}
         </div>
       </div>
 
@@ -59,9 +59,9 @@ export function SupplyOrderHistoryPage({ items, page, pageSize, total, factoryId
           <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-500">
             <PackageCheck className="h-5 w-5" />
           </div>
-          <div className="mt-3 font-medium text-slate-950">{items.length === 0 ? 'В истории пока нет принятых поставок' : 'По выбранным фильтрам ничего не найдено'}</div>
+          <div className="mt-3 font-medium text-slate-950">{items.length === 0 ? 'В истории пока нет поставок и замен' : 'По выбранным фильтрам ничего не найдено'}</div>
           <div className="mt-1 text-sm text-slate-600">
-            {items.length === 0 ? 'После приемки на склад строки появятся здесь автоматически.' : 'Измените условия поиска или сбросьте фильтры.'}
+            {items.length === 0 ? 'После приёмки или отправки исправленной позиции запись появится здесь автоматически.' : 'Измените условия поиска или сбросьте фильтры.'}
           </div>
           {items.length > 0 && <Button type="button" variant="outline" className="mt-4" onClick={() => setFilters(defaultFilters)}>Сбросить фильтры</Button>}
         </div>
@@ -79,7 +79,7 @@ export function SupplyOrderHistoryPage({ items, page, pageSize, total, factoryId
                   className="w-fit rounded-sm text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onClick={() => setFilters((current) => ({ ...current, sort: current.sort === 'accepted_desc' ? 'accepted_asc' : 'accepted_desc' }))}
                 >
-                  Принято {filters.sort === 'accepted_asc' ? '↑' : filters.sort === 'accepted_desc' ? '↓' : ''}
+                  Событие {filters.sort === 'accepted_asc' ? '↑' : filters.sort === 'accepted_desc' ? '↓' : ''}
                 </button>
               </span>
               <span className="text-right">Количество</span>
@@ -118,8 +118,8 @@ export function SupplyOrderHistoryPage({ items, page, pageSize, total, factoryId
 }
 
 const historySortLabels: Record<SupplyOrderHistorySort, string> = {
-  accepted_desc: 'Принято: сначала новые',
-  accepted_asc: 'Принято: сначала старые',
+  accepted_desc: 'Событие: сначала новые',
+  accepted_asc: 'Событие: сначала старые',
   material_asc: 'Материал: А–Я',
   quantity_desc: 'Количество: по убыванию',
 }
@@ -196,18 +196,19 @@ function HistoryFilterSelect({ label, value, display, items, onValueChange, clas
 }
 
 function HistoryRow({ item }: { item: SupplyOrderHistoryItem }) {
+  const isRevision = item.source === 'revision'
   return (
     <div className="grid grid-cols-[minmax(160px,1fr)_minmax(220px,1.4fr)_130px_150px_150px_120px] items-center gap-3 px-4 py-3 text-sm">
       <MachineLink item={item} />
       <MaterialSummary item={item} />
-      <RequestLink requestId={item.request_id} />
+      <RequestLinks item={item} />
       <DateStack
         primary={formatDate(item.planned_delivery_date)}
         secondary={item.planned_material_date ? `Мат.план: ${formatDate(item.planned_material_date)}` : 'Мат.план не указан'}
       />
       <DateStack
         primary={formatDateTime(item.accepted_at)}
-        secondary={item.source === 'schedule' ? 'Строка графика' : 'Позиция целиком'}
+        secondary={isRevision ? 'Исходная → исправленная' : item.source === 'schedule' ? 'Строка графика' : 'Позиция целиком'}
         success
       />
       <div className="text-right font-semibold tabular-nums text-slate-950">
@@ -218,12 +219,15 @@ function HistoryRow({ item }: { item: SupplyOrderHistoryItem }) {
 }
 
 function HistoryCard({ item }: { item: SupplyOrderHistoryItem }) {
+  const isRevision = item.source === 'revision'
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <MachineLink item={item} />
-        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
-          Принято
+        <Badge variant="outline" className={isRevision
+          ? 'border-amber-300 bg-amber-50 text-amber-900'
+          : 'border-emerald-200 bg-emerald-50 text-emerald-700'}>
+          {isRevision ? 'Заменено' : 'Принято'}
         </Badge>
       </div>
       <div className="mt-3">
@@ -231,7 +235,7 @@ function HistoryCard({ item }: { item: SupplyOrderHistoryItem }) {
       </div>
       <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
         <DataPoint label="План поставки" value={formatDate(item.planned_delivery_date)} icon={<CalendarDays className="h-4 w-4" />} />
-        <DataPoint label="Принято" value={formatDateTime(item.accepted_at)} icon={<CheckCircle2 className="h-4 w-4" />} />
+        <DataPoint label={isRevision ? 'Заменено' : 'Принято'} value={formatDateTime(item.accepted_at)} icon={<CheckCircle2 className="h-4 w-4" />} />
         <DataPoint label="Мат.план" value={formatDate(item.planned_material_date)} />
         <DataPoint label="Количество" value={`${formatAmount(item.quantity)} ${item.unit}`} />
       </dl>
@@ -239,7 +243,7 @@ function HistoryCard({ item }: { item: SupplyOrderHistoryItem }) {
         <div className="min-w-0 text-xs text-slate-500">
           {item.supplier_name || 'Поставщик не указан'}
         </div>
-        <RequestLink requestId={item.request_id} />
+        <RequestLinks item={item} />
       </div>
     </article>
   )
@@ -288,14 +292,28 @@ function MaterialSummary({ item }: { item: SupplyOrderHistoryItem }) {
   )
 }
 
-function RequestLink({ requestId }: { requestId: string }) {
+function RequestLinks({ item }: { item: SupplyOrderHistoryItem }) {
+  if (!item.revision) return <RequestLink requestId={item.request_id} />
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <RequestLink requestId={item.request_id} label="Исходная" />
+      <RequestLink
+        requestId={item.revision.replacement_request_id}
+        itemId={item.revision.replacement_request_item_id}
+        label="Исправленная"
+      />
+    </div>
+  )
+}
+
+function RequestLink({ requestId, itemId, label = 'Заявка' }: { requestId: string; itemId?: string; label?: string }) {
   return (
     <Link
-      href={`${ROUTES.SUPPLY_REQUEST}/${requestId}`}
+      href={`${ROUTES.SUPPLY_REQUEST}/${requestId}${itemId ? `#request-item-${itemId}` : ''}`}
       className="inline-flex min-h-9 w-fit items-center justify-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-[#1B3A6B] transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B3A6B]/30"
     >
       <ExternalLink className="h-3.5 w-3.5" />
-      Заявка
+      {label}
     </Link>
   )
 }

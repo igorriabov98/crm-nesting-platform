@@ -136,7 +136,7 @@ const aggregateOrdersSource = supplyOrdersAction.slice(
 )
 assert.match(
   aggregateOrdersSource,
-  /const \{ db \} = await requireAccess\(\)[\s\S]*await loadAggregateInputItems\(db, factoryId\)/u,
+  /const \{ db \} = await requireAccess\(\)[\s\S]*await loadAggregateInputItems\(db, factoryId(?:, true)?\)/u,
   'The aggregate supply-order view must authorize supply_orders:view before loading scoped items',
 )
 
@@ -1009,6 +1009,82 @@ assert.deepEqual(
   'fully covered aggregate bar schedules must not leave a false machine remainder',
 )
 
+const openRevision = {
+  id: 'revision-id',
+  source_request_item_table: 'request_sheet_metal' as const,
+  source_request_item_id: 'returned-item',
+  category: 'sheet_metal' as const,
+  status: 'editing' as const,
+  reason: 'Исправить материал',
+  department_request_id: 'department-request-id',
+  replacement_request_id: 'replacement-request-id',
+  replacement_request_item_id: 'replacement-item-id',
+}
+const returnedAggregateSource = makeAggregateSourceItem({
+  table: 'request_sheet_metal',
+  id: 'returned-item',
+  machine_id: 'returned-machine',
+  machine_name: 'Возвращённая машина',
+  quantity: 7,
+  unscheduled_quantity: 0,
+  position_revision: openRevision,
+})
+const activeAggregateSource = makeAggregateSourceItem({
+  table: 'request_sheet_metal',
+  id: 'active-item',
+  machine_id: 'active-machine',
+  machine_name: 'Активная машина',
+  quantity: 5,
+  unscheduled_quantity: 5,
+})
+assert.deepEqual(
+  summarizeSupplyOrderMachineRoutes([returnedAggregateSource, activeAggregateSource])
+    .map((route) => [route.machineId, route.quantity]),
+  [['active-machine', 5]],
+  'returned positions must not inflate active machine routes',
+)
+const returnedDetailContexts = buildSupplyOrderDetailContexts([
+  makeItem({
+    table: 'request_sheet_metal', id: 'returned-item', machine_id: 'returned-machine',
+    machine_name: 'Возвращённая машина', to_order: 7, position_revision: openRevision,
+  }),
+  makeItem({
+    table: 'request_sheet_metal', id: 'active-item', machine_id: 'active-machine',
+    machine_name: 'Активная машина', to_order: 5,
+  }),
+], [{
+  ...makeAggregate(),
+  quantity: 5,
+  requested_quantity: 5,
+  item_count: 1,
+  machine_count: 1,
+  unscheduled_quantity: 5,
+  factories: [{
+    ...makeAggregate().factories[0],
+    quantity: 5,
+    requested_quantity: 5,
+    item_count: 1,
+    machine_count: 1,
+    unscheduled_quantity: 5,
+    items: [returnedAggregateSource, activeAggregateSource],
+  }],
+}])
+assert.deepEqual(
+  returnedDetailContexts.get('request_sheet_metal:returned-item'),
+  {
+    item: makeItem({
+      table: 'request_sheet_metal', id: 'returned-item', machine_id: 'returned-machine',
+      machine_name: 'Возвращённая машина', to_order: 7, position_revision: openRevision,
+    }),
+    plannedQuantity: 0,
+    deliveredQuantity: 0,
+    unscheduledQuantity: 0,
+    redeliveryQuantity: 0,
+    scopes: [],
+  },
+  'returned detail rows must remain visible while exposing no purchasable quantity or schedule scope',
+)
+
 const history = [
   makeHistory({ id: 'old', accepted_at: '2026-07-12T10:00:00Z', supplier_name: 'Металл А', quantity: 2 }),
   makeHistory({ id: 'new', accepted_at: '2026-07-14T10:00:00Z', supplier_name: 'Металл Б', quantity: 4 }),
@@ -1053,6 +1129,7 @@ function makeItem(patch: Partial<SupplyOrderItem>): SupplyOrderItem {
     reservation_id: null,
     selected_piece_length_mm: null,
     delivery_schedules: [],
+    position_revision: null,
     ...patch,
     long_stock_purchase_plan: patch.long_stock_purchase_plan ?? null,
   }
@@ -1103,10 +1180,11 @@ function makeAggregate(): SupplyOrderAggregate {
       suppliers: [{ id: 'supplier-a', name: 'Металл А', item_count: 1, pending_count: 0, ordered_count: 1, delivered_count: 0 }],
       items: [{
         table: 'request_sheet', id: 'item', request_id: 'request-id', machine_id: 'machine-id', machine_name: 'Машина А',
+        category: 'sheet_metal', item_name: 'Лист 8 мм',
         quantity: 8, unit: 'шт.', supplier_id: 'supplier-a', supplier_name: 'Металл А', weight_kg: 100,
         order_status: 'ordered', supply_delivery_date: '2026-07-18', planned_schedule_quantity: 8,
         delivered_schedule_quantity: 0, unscheduled_quantity: 0, delivery_schedules: [],
-        long_stock_purchase_plan: null,
+        long_stock_purchase_plan: null, position_revision: null,
       }],
     }],
   }
@@ -1273,6 +1351,8 @@ function makeAggregateSourceItem(
     request_id: 'request-id',
     machine_id: 'machine-id',
     machine_name: 'Машина',
+    category: 'sheet_metal',
+    item_name: 'Лист',
     quantity: 1,
     unit: 'шт.',
     supplier_id: null,
@@ -1284,6 +1364,7 @@ function makeAggregateSourceItem(
     delivered_schedule_quantity: 0,
     unscheduled_quantity: 1,
     delivery_schedules: [],
+    position_revision: null,
     ...patch,
     long_stock_purchase_plan: patch.long_stock_purchase_plan ?? null,
   }
@@ -1323,6 +1404,7 @@ function makeHistory(patch: Partial<SupplyOrderHistoryItem>): SupplyOrderHistory
     machine_id: 'machine-id', machine_name: 'Машина', request_id: 'request-id', category: 'sheet_metal',
     item_name: 'Лист', characteristics: [], supplier_name: null, planned_material_date: '2026-07-20',
     planned_delivery_date: '2026-07-18', accepted_at: null, quantity: 1, unit: 'шт.', weight_kg: null,
+    revision: null,
     ...patch,
   }
 }

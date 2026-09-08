@@ -28,6 +28,7 @@ import type {
   UserRole,
   MaterialVariant,
 } from '@/lib/types'
+import type { SupplyPositionRevisionSummary } from '@/lib/supply-orders/position-revisions'
 
 type DbResult = { data: unknown; error: { message?: string } | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -102,6 +103,7 @@ export type SupplyRequestSectionSummary = {
 export type SupplyRequestPayload = {
   current_role: UserRole
   request: RequestWithRelations
+  positionRevision?: SupplyPositionRevisionSummary | null
   factories: Array<{
     id: string
     name: string
@@ -706,7 +708,7 @@ async function loadRequestForStockSource(
   try {
     const request = await getRequestMeta(db, requestId)
     assertSupplyRequestVisibleForRole(request, role)
-    const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
+    const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords, revision] = await Promise.all([
       loadRows<RequestSheetMetal>(db, 'request_sheet_metal', requestId),
       // @deprecated — round_tube excluded from new UI
       loadRows<RequestRoundTube>(db, 'request_round_tube', requestId),
@@ -717,7 +719,12 @@ async function loadRequestForStockSource(
       loadRows<RequestPaint>(db, 'request_paint', requestId),
       loadRows<RequestMesh>(db, 'request_mesh', requestId),
       loadRows<RequestChainCord>(db, 'request_chain_cord', requestId),
+      db.from('supply_position_revisions')
+        .select('id, source_request_item_table, source_request_item_id, category, status, reason, department_request_id, replacement_request_id, replacement_request_item_id')
+        .eq('replacement_request_id', requestId),
     ])
+
+    if (revision.error) throw new Error(revision.error.message || 'Не удалось загрузить сведения о возврате позиции')
 
     const allRows = [
       ...sheetMetal.map((row) => ({ table: 'request_sheet_metal' as RequestItemTable, id: row.id, material_id: row.material_id })),
@@ -833,6 +840,7 @@ async function loadRequestForStockSource(
       data: {
         current_role: role,
         request,
+        positionRevision: ((revision.data || []) as SupplyPositionRevisionSummary[])[0] || null,
         factories,
         sections,
         summary: {

@@ -22,6 +22,7 @@ type Props = {
   canEdit: boolean
   canEditStock?: boolean
   onRowsChange?: (rows: ComponentRow[]) => void
+  allowStructureChanges?: boolean
 }
 
 function toNumber(value: string | number | null) {
@@ -34,7 +35,7 @@ function materialDisplayName(row: ComponentRow) {
   return row.materials?.name || row.component_name || ''
 }
 
-export function ComponentsSection({ requestId, items, canEdit, onRowsChange }: Props) {
+export function ComponentsSection({ requestId, items, canEdit, onRowsChange, allowStructureChanges = true }: Props) {
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
 
@@ -130,7 +131,7 @@ export function ComponentsSection({ requestId, items, canEdit, onRowsChange }: P
             {rows.map((row) => {
               const canEditCharacteristics = canEditMaterialCharacteristics(row, canEdit)
               return (
-              <tr key={row.id} className="border-b last:border-b-0">
+              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch
                     category="components"
@@ -150,7 +151,7 @@ export function ComponentsSection({ requestId, items, canEdit, onRowsChange }: P
                 </td>
                 <td className="px-3 py-2"><RequestItemOrderStatus status={row.order_status} itemTable="request_components" item={row} /></td>
                 <td className="px-3 py-2 text-right">
-                  {canEdit && (
+                  {canEdit && allowStructureChanges && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
@@ -163,7 +164,7 @@ export function ComponentsSection({ requestId, items, canEdit, onRowsChange }: P
               <tr>
                 <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {canEdit && (
+                  {canEdit && allowStructureChanges && (
                     <Button type="button" variant="outline" size="sm" className="ml-3" onClick={handleAdd}>
                       Добавить
                     </Button>
@@ -175,7 +176,7 @@ export function ComponentsSection({ requestId, items, canEdit, onRowsChange }: P
         </table>
       </div>
 
-      {canEdit && (
+      {canEdit && allowStructureChanges && (
         <div className="flex justify-end">
           <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
             <Plus className="mr-2 h-4 w-4" />

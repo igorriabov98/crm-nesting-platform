@@ -12,6 +12,7 @@ import type {
   RequestSheetMetal,
   TechnologistRequest,
 } from '@/lib/types'
+import type { SupplyPositionRevisionSummary } from '@/lib/supply-orders/position-revisions'
 
 type DbResult = { data: unknown; error: { message?: string } | null }
 type LooseQuery = PromiseLike<DbResult> & {
@@ -30,6 +31,7 @@ export type WithMaterialName<T> = T & {
 
 export type TechnologistRequestPayload = {
   request: TechnologistRequest
+  positionRevision?: SupplyPositionRevisionSummary | null
   sheetMetal: WithMaterialName<RequestSheetMetal>[]
   roundTube: WithMaterialName<RequestRoundTube>[]
   circles: WithMaterialName<RequestCircle>[]
@@ -48,7 +50,7 @@ export async function loadTechnologistRequestPayload(
   db: TechnologistRequestPayloadDb,
   request: TechnologistRequest,
 ): Promise<TechnologistRequestPayload> {
-  const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
+  const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords, revision] = await Promise.all([
     db.from('request_sheet_metal').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
     db.from('request_round_tube').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
     db.from('request_circle').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
@@ -58,14 +60,18 @@ export async function loadTechnologistRequestPayload(
     db.from('request_paint').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
     db.from('request_mesh').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
     db.from('request_chain_cord').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
+    db.from('supply_position_revisions')
+      .select('id, source_request_item_table, source_request_item_id, category, status, reason, department_request_id, replacement_request_id, replacement_request_item_id')
+      .eq('replacement_request_id', request.id),
   ])
 
-  for (const result of [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords]) {
+  for (const result of [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords, revision]) {
     if (result.error) throw new Error(result.error.message || 'Не удалось загрузить раздел заявки')
   }
 
   return {
     request,
+    positionRevision: ((revision.data || []) as SupplyPositionRevisionSummary[])[0] || null,
     sheetMetal: (sheetMetal.data || []) as WithMaterialName<RequestSheetMetal>[],
     sheetMetals: (sheetMetal.data || []) as WithMaterialName<RequestSheetMetal>[],
     roundTube: (roundTube.data || []) as WithMaterialName<RequestRoundTube>[],

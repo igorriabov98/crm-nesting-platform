@@ -100,7 +100,13 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         toast.error(result.error || 'Не удалось завершить бронь')
         return
       }
-      router.push(`/technologist/requests/${request.id}/complete`)
+      if (result.data?.submittedRevision) {
+        toast.success('Исправленная позиция передана снабжению')
+        router.push(result.data.href)
+        router.refresh()
+        return
+      }
+      router.push(result.data?.href || `/technologist/requests/${request.id}/complete`)
     })
   }
 
@@ -114,7 +120,14 @@ export function SupplyRequestPage({ data, detailing }: Props) {
       <section className="rounded-xl border border-[#E8ECF0] bg-white p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[#1B3A6B]">Заявка на материалы: {request.machine.name}</h1>
+            <h1 className="text-2xl font-bold text-[#1B3A6B]">
+              {data.positionRevision ? 'Проверка исправленной позиции' : 'Заявка на материалы'}: {request.machine.name}
+            </h1>
+            {data.positionRevision && (
+              <p className="mt-2 text-sm text-amber-800">
+                После проверки склада эта единственная позиция заменит возвращённую и станет доступна снабжению.
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-[#6B7280]">
               <RequestStatusBadge status={request.status} />
               <span>Технолог: <span className="font-medium text-[#374151]">{request.technologist_name || '—'}</span></span>
@@ -131,7 +144,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
             </Button>
             {canCompleteReservation && (
               <Button type="button" onClick={completeReservation} disabled={isPending} className="bg-emerald-700 text-white hover:bg-emerald-800">
-                Продолжить завершение
+                {data.positionRevision ? 'Передать исправление снабжению' : 'Продолжить завершение'}
               </Button>
             )}
             {isSupplyReservationMode && (

@@ -28,6 +28,7 @@ type Props = {
   canEdit: boolean
   canEditStock?: boolean
   steelTypes: SteelType[]
+  allowStructureChanges?: boolean
 }
 
 function toNumber(value: string | number | null) {
@@ -72,7 +73,7 @@ function calculateKnifeWeight(row: KnifeRow, steelTypes: SteelType[]) {
   return Math.round(totalLengthMm * width * height * Number(density) * 100) / 100
 }
 
-export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) {
+export function KnivesSection({ requestId, items, canEdit, steelTypes, allowStructureChanges = true }: Props) {
   const router = useRouter()
   const [rows, setRows] = useState(items)
   const [materialNames, setMaterialNames] = useState<Record<string, string>>({})
@@ -196,7 +197,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
                   <LongStockCuttingPlanStatusControl table="request_knives" itemId={row.id} />
                 </td>
                 <td className="px-3 py-2 text-right">
-                  {canEdit && (
+                  {canEdit && allowStructureChanges && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
@@ -209,14 +210,14 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
                   Нет позиций
-                  {canEdit && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
+                  {canEdit && allowStructureChanges && <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => setPositionDialogOpen(true)}>Добавить</Button>}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {canEdit && (
+      {canEdit && allowStructureChanges && (
         <div className="flex justify-end">
           <Button type="button" variant="outline" size="sm" onClick={() => setPositionDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
@@ -224,14 +225,14 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes }: Props) 
           </Button>
         </div>
       )}
-      <LongStockPositionDialog
+      {allowStructureChanges && <LongStockPositionDialog
         category="knives"
         requestId={requestId}
         steelTypes={steelTypes}
         open={positionDialogOpen}
         onOpenChange={setPositionDialogOpen}
         onCreated={(row) => setRows((current) => upsertLongStockRequestRow(current, row as KnifeRow))}
-      />
+      />}
     </div>
   )
 }
