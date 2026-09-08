@@ -29,6 +29,10 @@ import {
   hasCompleteTransportPositionSelection,
   type TransportNeedGroup,
 } from '@/lib/transport/need-groups'
+import {
+  createTransportCargoSnapshot,
+  parseTransportCargoSnapshot,
+} from '@/lib/transport/cargo-snapshot'
 import { getTransportStopOrderError } from '@/lib/transport/trip-rules'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 
@@ -199,6 +203,7 @@ type TripLinkRow = {
   need_title: string
   need_subtitle: string | null
   needed_date: string | null
+  cargo_snapshot: unknown
   pickup_stop_id: string | null
   delivery_stop_id: string | null
   released_at: string | null
@@ -406,6 +411,7 @@ function buildTripMutationPayload(
       title: need.title,
       subtitle: need.subtitle,
       neededDate: need.neededDate,
+      cargoSnapshot: createTransportCargoSnapshot(need),
       pickupStopClientId: assignment.pickupStopClientId,
       deliveryStopClientId: assignment.deliveryStopClientId,
     }
@@ -665,6 +671,7 @@ function mapSupplyNeed(need: SupplyTransportNeed): UnifiedTransportNeed {
 }
 
 function mapLink(link: TripLinkRow, currentNeed?: UnifiedTransportNeed): TransportTripNeed {
+  const snapshot = parseTransportCargoSnapshot(link.cargo_snapshot)
   return {
     ...(currentNeed || {
       key: needKey(link.need_source, link.need_id),
@@ -675,8 +682,8 @@ function mapLink(link: TripLinkRow, currentNeed?: UnifiedTransportNeed): Transpo
       direction: link.direction,
       planState: 'confirmed' as const,
       status: 'linked',
-      title: link.need_title,
-      subtitle: link.need_subtitle || '',
+      title: snapshot?.title || link.need_title,
+      subtitle: snapshot?.subtitle || link.need_subtitle || '',
       sourcePointKey: link.source_point_key,
       sourcePointLabel: link.source_point_label,
       sourcePointCity: null,
@@ -687,10 +694,18 @@ function mapLink(link: TripLinkRow, currentNeed?: UnifiedTransportNeed): Transpo
       destinationPointAddress: null,
       neededDate: link.needed_date,
       deadline: link.needed_date,
-      itemLabels: [],
-      itemDetails: [],
-      volumeLabel: null,
-      weightKg: null,
+      itemLabels: snapshot?.itemLabels || [],
+      itemDetails: (snapshot?.itemDetails || []).map((item, index) => ({
+        id: `${link.id}:${index}`,
+        logicalItemKey: `${link.id}:${index}`,
+        productId: null,
+        productVersionId: null,
+        productHref: null,
+        drawingHref: null,
+        ...item,
+      })),
+      volumeLabel: snapshot?.volumeLabel || null,
+      weightKg: snapshot?.weightKg ?? null,
       deliveryRisk: false,
       selectable: false,
       unavailableReason: null,
@@ -1103,6 +1118,7 @@ function revalidateTransportWorkspace() {
   revalidatePath(ROUTES.INVENTORY)
   revalidatePath(ROUTES.INVENTORY_RECEIVING)
   revalidatePath(ROUTES.REQUESTS)
+  revalidatePath(ROUTES.PRODUCTION_LOCAL_SHIPMENTS)
 }
 
 export async function createTransportTrip(input: z.input<typeof createTripSchema>) {
@@ -1190,6 +1206,7 @@ export async function createTransportTrip(input: z.input<typeof createTripSchema
         title: need.title,
         subtitle: need.subtitle,
         neededDate: need.neededDate,
+        cargoSnapshot: createTransportCargoSnapshot(need),
         pickupStopClientId: assignment.pickupStopClientId,
         deliveryStopClientId: assignment.deliveryStopClientId,
       }
@@ -1402,6 +1419,7 @@ export async function updateTransportTrip(input: z.input<typeof updateTripSchema
         title: need.title,
         subtitle: need.subtitle,
         neededDate: need.neededDate,
+        cargoSnapshot: createTransportCargoSnapshot(need),
         pickupStopClientId: assignment.pickupStopClientId,
         deliveryStopClientId: assignment.deliveryStopClientId,
       }

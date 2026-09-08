@@ -138,6 +138,16 @@ assert.equal(
   'Запросы завода должны использовать действующее право производства',
 )
 assert.equal(
+  getPermissionRequirementForPath('/production/local-shipments')?.resourceKey,
+  'production_fact',
+  'Локальные отгрузки должны использовать действующее право production_fact.view',
+)
+assert.equal(
+  getPermissionRequirementForPath('/production/local-shipments')?.operation,
+  'view',
+  'Локальные отгрузки должны быть доступны только на чтение',
+)
+assert.equal(
   getPermissionRequirementForPath('/supply/requests')?.resourceKey,
   'supply_transport',
   'Запросы внешним компаниям должны использовать действующее право транспорта снабжения',
@@ -191,6 +201,8 @@ const ownFactoryPermission = {
   factoryId: 'uzhhorod',
   permissionDetails: { isAdminPosition: false, factoryScopes: { production_cutting_area: { view: 'own' as const, manage: 'own' as const } } },
 }
+assert(canAccessFactory(ownFactoryPermission, 'production_fact', 'view', 'uzhhorod'))
+assert(!canAccessFactory(ownFactoryPermission, 'production_fact', 'view', 'berehove'))
 assert(canAccessFactory(ownFactoryPermission, 'production_cutting_area', 'view', 'uzhhorod'))
 assert(!canAccessFactory(ownFactoryPermission, 'production_cutting_area', 'view', 'berehove'))
 assert(!canAccessFactory({ ...ownFactoryPermission, factoryId: null }, 'production_cutting_area', 'view', 'uzhhorod'), 'Пользователь без завода должен быть закрыт по умолчанию')

@@ -52,6 +52,7 @@ export const ROUTES = {
   GANTT:          '/production/gantt',
   PRODUCTION_OUTSOURCING_REQUESTS: '/production/requests',
   PRODUCTION_FACT: '/production/fact',
+  PRODUCTION_LOCAL_SHIPMENTS: '/production/local-shipments',
   PRODUCTION_CUTTING_AREA: '/production/cutting-area',
   PRODUCTION_PEOPLE: '/production/people',
   PRODUCTION_WORKERS: '/production/workers',

@@ -430,6 +430,29 @@ assert.match(editCancelMigration, /date_change_state = CASE/)
 assert.match(transportActions, /releasedAt: link\.released_at/)
 assert.match(transportActions, /fn_cancel_transport_trip_v1/)
 assert.match(transportActions, /fn_update_transport_trip_v4/)
+assert.equal(
+  transportActions.match(/cargoSnapshot: createTransportCargoSnapshot\(need\)/gu)?.length,
+  3,
+  'creation, editing, and trip-to-trip moves must persist a cargo snapshot',
+)
+
+const localShipmentsMigration = readFileSync(
+  resolve('supabase/migrations/20260908150000_production_local_shipments.sql'),
+  'utf8',
+)
+assert.match(localShipmentsMigration, /ADD COLUMN IF NOT EXISTS cargo_snapshot jsonb/)
+assert.match(localShipmentsMigration, /cargo_snapshot->>'version' = '1'/)
+assert.match(localShipmentsMigration, /fn_create_transport_trip_v3_before_cargo_snapshot/)
+assert.match(localShipmentsMigration, /fn_update_transport_trip_v4_before_cargo_snapshot/)
+assert.match(localShipmentsMigration, /SET cargo_snapshot = NULLIF\(desired\.value->'cargoSnapshot'/)
+
+const localShipmentsPage = readFileSync(
+  resolve('src/components/features/production/ProductionLocalShipmentsPage.tsx'),
+  'utf8',
+)
+assert.match(localShipmentsPage, /Подробный состав для старого рейса не сохранён/)
+assert.match(localShipmentsPage, /Последние 50/)
+assert.doesNotMatch(localShipmentsPage, /createTransportTrip|updateTransportTrip|cancelTransportTrip|price|comment/u)
 
 const groupedTransportMigration = readFileSync(
   resolve('supabase/migrations/20260906160000_transport_need_groups_planning_requests.sql'),
