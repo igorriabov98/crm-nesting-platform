@@ -436,6 +436,7 @@ export type LongStockCuttingPlanItemOverview = {
   piece_count: number
   is_returned: boolean
   can_cancel_return: boolean
+  cancel_return_ref: LongStockRequestItemRef | null
 }
 
 export async function getLongStockCuttingPlanItemOverview(
@@ -444,14 +445,35 @@ export async function getLongStockCuttingPlanItemOverview(
   const permission = await requirePermission('technologist_requests', 'view')
   const requestItem = normalizeRequestItemRef(requestItemInput)
   const db = database()
-  const revisionResult = await db.from<{ assigned_to: string; status: string }>('supply_position_revisions')
-    .select('assigned_to,status')
+  type ActiveRevision = {
+    source_request_item_table: LongStockRequestItemRef['table']
+    source_request_item_id: string
+    assigned_to: string
+    status: string
+  }
+  let revisionResult = await db.from<ActiveRevision>('supply_position_revisions')
+    .select('source_request_item_table,source_request_item_id,assigned_to,status')
     .eq('source_request_item_table', requestItem.table)
     .eq('source_request_item_id', requestItem.id)
     .in('status', ['requested', 'editing', 'stock_check'])
   if (revisionResult.error) throw new Error(revisionResult.error.message || 'Не удалось проверить возврат позиции')
-  let returnedAssignedTo = revisionResult.data?.[0]?.assigned_to ?? null
+  if (!revisionResult.data?.length) {
+    revisionResult = await db.from<ActiveRevision>('supply_position_revisions')
+      .select('source_request_item_table,source_request_item_id,assigned_to,status')
+      .eq('replacement_request_item_table', requestItem.table)
+      .eq('replacement_request_item_id', requestItem.id)
+      .in('status', ['editing', 'stock_check'])
+    if (revisionResult.error) throw new Error(revisionResult.error.message || 'Не удалось проверить исправленную позицию')
+  }
+  const activeRevision = revisionResult.data?.[0] ?? null
+  let returnedAssignedTo = activeRevision?.assigned_to ?? null
   const isGenericReturn = Boolean(returnedAssignedTo)
+  const genericCancelRef = activeRevision
+    ? normalizeRequestItemRef({
+        table: activeRevision.source_request_item_table,
+        id: activeRevision.source_request_item_id,
+      })
+    : null
   const itemResult = await db.from<{ id: string; plan_id: string; cutting_status: string }>('long_stock_cutting_plan_items')
     .select('id,plan_id,cutting_status')
     .eq('request_item_table', requestItem.table)
@@ -467,8 +489,8 @@ export async function getLongStockCuttingPlanItemOverview(
       || permission.permissionDetails.isAdminPosition
     )
     return recovery
-      ? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn }
-      : { status: 'none', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn }
+      ? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn, cancel_return_ref: genericCancelRef }
+      : { status: 'none', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn, cancel_return_ref: genericCancelRef }
   }
 
   const status: LongStockCuttingPlanItemStatus = planItem.cutting_status === 'requires_recalculation'
@@ -491,6 +513,7 @@ export async function getLongStockCuttingPlanItemOverview(
     || ['planning_director', 'financial_director', 'commercial_director'].includes(permission.role)
     || permission.permissionDetails.isAdminPosition
   )
+  const cancelReturnRef = genericCancelRef ?? (status === 'requires_recalculation' ? requestItem : null)
   const expectedVersionStatus = status === 'requires_recalculation'
     ? 'invalid'
     : planItem.cutting_status === 'planning' ? 'draft' : 'approved'
@@ -501,7 +524,7 @@ export async function getLongStockCuttingPlanItemOverview(
     .order('version_number', { ascending: false })
   if (versionResult.error) throw new Error(versionResult.error.message || 'Не удалось прочитать версию карты раскроя')
   const versionId = versionResult.data?.[0]?.id
-  if (!versionId) return { status, segments: [], total_length_mm: 0, piece_count: 0, is_returned: isReturned, can_cancel_return: canCancelReturn }
+  if (!versionId) return { status, segments: [], total_length_mm: 0, piece_count: 0, is_returned: isReturned, can_cancel_return: canCancelReturn, cancel_return_ref: cancelReturnRef }
 
   const segmentsResult = await db.from<{ required_length_mm: number | string }>('long_stock_cutting_segments')
     .select('required_length_mm')
@@ -523,6 +546,7 @@ export async function getLongStockCuttingPlanItemOverview(
     piece_count: segments.reduce((sum, segment) => sum + segment.piece_count, 0),
     is_returned: isReturned,
     can_cancel_return: canCancelReturn,
+    cancel_return_ref: cancelReturnRef,
   }
 }
 

@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs'
 const actions = readFileSync('src/lib/actions/long-stock-cutting-plans.ts', 'utf8')
 const dialog = readFileSync('src/components/features/requests/LongStockPositionDialog.tsx', 'utf8')
 const statusControl = readFileSync('src/components/features/requests/LongStockCuttingPlanStatusControl.tsx', 'utf8')
+const requestSections = [
+  'src/components/features/requests/CircleSection.tsx',
+  'src/components/features/requests/PipeSection.tsx',
+  'src/components/features/requests/KnivesSection.tsx',
+].map((path) => [path, readFileSync(path, 'utf8')])
 
 for (const required of [
   "'none' | 'planning' | 'active' | 'requires_recalculation'",
@@ -20,9 +25,12 @@ for (const required of [
   'planItemId: string | null',
   "('supply_position_revisions')",
   ".eq('replacement_request_item_table', requestItem.table)",
+  ".eq('replacement_request_item_id', requestItem.id)",
   ".in('status', ['editing', 'stock_check'])",
+  'source_request_item_table,source_request_item_id,assigned_to,status',
+  'cancel_return_ref: genericCancelRef',
   'if (!planItem && reservedStock.length === 0 && !isCorrectedSupplyPosition) return null',
-  "? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn }",
+  "? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn, cancel_return_ref: genericCancelRef }",
 ]) {
   assert.ok(actions.includes(required), `planning recovery action is missing ${required}`)
 }
@@ -43,11 +51,21 @@ for (const required of [
   'Подготовить карту',
   'LongStockPlanningRecoveryDialog',
   'Карта раскроя: {loadError}',
+  'export function LongStockCuttingPlanActions()',
+  'CancelReturnedSupplyPositionDialog table={cancelRef.table} itemId={cancelRef.id}',
 ]) {
   assert.ok(statusControl.includes(required), `planning status control is missing ${required}`)
 }
 
 console.log('Long-stock planning recovery regression passed')
+
+for (const [path, source] of requestSections) {
+  assert.ok(source.includes('LongStockCuttingPlanStatusProvider'), `${path} must share one overview between both cells`)
+  const statusIndex = source.indexOf('<LongStockCuttingPlanStatusControl />')
+  const actionsIndex = source.indexOf('<LongStockCuttingPlanActions />')
+  assert.ok(statusIndex >= 0 && actionsIndex > statusIndex, `${path} must render plan buttons in the actions column`)
+}
+console.log('Long-stock status and action column placement passed')
 
 const approvalFailure = dialog.slice(dialog.indexOf('} catch (approvalError) {'), dialog.indexOf('async function close()'))
 assert.ok(approvalFailure.includes('await refreshSources()'), 'approval conflict must refresh sources')
