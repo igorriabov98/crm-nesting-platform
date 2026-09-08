@@ -694,7 +694,9 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
   }
 
   for (const factory of aggregate.factories) {
-    if (factory.items.some(isReturnedSupplyOrderSource)) {
+    if (factory.items.some((item) => (
+      isReturnedSupplyOrderSource(item) || isCancelledReturnedSupplyOrderSource(item)
+    ))) {
       getSlice(factory.production_date || aggregate.planned_material_date || 'no_supply_date')
     }
     for (const item of factory.items) {
@@ -908,8 +910,9 @@ function projectSupplyOrderAggregate(
   predicate: (item: SupplyOrderAggregateSourceItem) => boolean,
   idSuffix: 'redelivery' | 'regular' | 'review' | 'cancelled',
 ): SupplyOrderAggregate | null {
+  const includeInactiveCounts = idSuffix === 'cancelled'
   const factories = aggregate.factories
-    .map((factory) => projectSupplyOrderFactory(factory, predicate))
+    .map((factory) => projectSupplyOrderFactory(factory, predicate, includeInactiveCounts))
     .filter((factory): factory is SupplyOrderAggregate['factories'][number] => factory !== null)
 
   if (factories.length === 0) return null
@@ -938,6 +941,7 @@ function projectSupplyOrderAggregate(
 function projectSupplyOrderFactory(
   factory: SupplyOrderAggregate['factories'][number],
   predicate: (item: SupplyOrderAggregateSourceItem) => boolean,
+  includeInactiveCounts = false,
 ): SupplyOrderAggregate['factories'][number] | null {
   const items = factory.items.filter(predicate)
   if (items.length === 0) return null
@@ -957,8 +961,8 @@ function projectSupplyOrderFactory(
     requested_quantity: factory.requested_quantity * ratio,
     reserved_quantity: factory.reserved_quantity * ratio,
     weight_kg: sumNullableWeights(activeItems.map((item) => item.weight_kg)),
-    item_count: activeItems.length,
-    machine_count: new Set(activeItems.map((item) => item.machine_id)).size,
+    item_count: includeInactiveCounts ? items.length : activeItems.length,
+    machine_count: new Set((includeInactiveCounts ? items : activeItems).map((item) => item.machine_id)).size,
     pending_count: activeItems.filter((item) => item.order_status === 'pending').length,
     ordered_count: activeItems.filter((item) => item.order_status === 'ordered').length,
     delivered_count: activeItems.filter((item) => item.order_status === 'delivered').length,

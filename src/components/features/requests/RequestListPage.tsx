@@ -25,6 +25,7 @@ const lifecycleClasses: Record<RequestLifecycleStatus, string> = {
   submitted_to_supply: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   delivery: 'border-blue-200 bg-blue-50 text-blue-700',
   received: 'border-green-300 bg-green-100 text-green-800',
+  cancelled: 'border-slate-300 bg-slate-100 text-slate-700',
 }
 
 function formatDate(value: string | null) {

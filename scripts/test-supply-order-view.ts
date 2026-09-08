@@ -1121,6 +1121,24 @@ assert.deepEqual(
   }],
   'a cancelled return must become a terminal closed card with its reason',
 )
+const cancelledClosedAggregates = filterAndSortAggregates([cancelledMixedAggregate], {
+  query: '', supplier: 'all', category: 'all', status: 'closed', sort: 'date_asc',
+})
+assert.equal(
+  cancelledClosedAggregates[0].item_count,
+  1,
+  'a cancelled closed card must count the historical position it displays',
+)
+assert.deepEqual(
+  groupSupplyOrderAggregatesBySupplyDate(cancelledClosedAggregates, 'date_asc')
+    .flatMap((group) => group.rows.map((row) => ({
+      id: row.aggregate.id,
+      dateKey: group.dateKey,
+      quantity: row.quantity,
+    }))),
+  [{ id: 'cancelled-mixed|cancelled', dateKey: '2026-07-20', quantity: 0 }],
+  'a cancelled return must keep a dated closed card while contributing zero active purchase volume',
+)
 assert.deepEqual(
   filterAndSortAggregates([cancelledMixedAggregate], {
     query: '', supplier: 'all', category: 'all', status: 'open', sort: 'date_asc',
