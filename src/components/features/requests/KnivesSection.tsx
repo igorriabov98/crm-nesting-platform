@@ -10,7 +10,11 @@ import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import { LongStockPositionDialog } from './LongStockPositionDialog'
-import { LongStockCuttingPlanStatusControl } from './LongStockCuttingPlanStatusControl'
+import {
+  LongStockCuttingPlanActions,
+  LongStockCuttingPlanStatusControl,
+  LongStockCuttingPlanStatusProvider,
+} from './LongStockCuttingPlanStatusControl'
 import { deleteKnife, updateKnife, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { KNIFE_BEVEL_OPTIONS, parseKnifeBevelCount } from '@/lib/materials/knife-bevel'
 import { upsertLongStockRequestRow } from '@/lib/long-stock-position-ui'
@@ -144,7 +148,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes, allowStru
               <th className="min-w-[100px] px-3 py-2 text-left">Необходимо, мм</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Вес, кг</th>
               <th className="min-w-[120px] px-3 py-2 text-left">Статус</th>
-              <th className="w-[60px] px-3 py-2 text-right">Действия</th>
+              <th className="min-w-[190px] px-3 py-2 text-right">Действия</th>
             </tr>
           </thead>
           <tbody>
@@ -152,7 +156,8 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes, allowStru
               const canEditCharacteristics = canEditMaterialCharacteristics(row, canEdit)
               const displayWeight = calculateKnifeWeight(row, steelTypes) ?? row.calculated_weight_kg
               return (
-              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
+              <LongStockCuttingPlanStatusProvider table="request_knives" itemId={row.id} key={row.id}>
+              <tr id={`request-item-${row.id}`} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch category="knives" value={materialNames[row.id] ?? materialDisplayName(row)} initialValue={materialDisplayName(row)} selectedMaterialId={row.material_id} disabled={!canEdit} compact onSelect={(material, variant, source) => selectMaterial(row, material, variant, source)} />
                 </td>
@@ -194,9 +199,10 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes, allowStru
                 <td className="px-3 py-2 text-slate-700">{formatWeight(displayWeight)}</td>
                 <td className="px-3 py-2">
                   <RequestItemOrderStatus status={row.order_status} itemTable="request_knives" item={row} />
-                  <LongStockCuttingPlanStatusControl table="request_knives" itemId={row.id} />
+                  <LongStockCuttingPlanStatusControl />
                 </td>
                 <td className="px-3 py-2 text-right">
+                  <LongStockCuttingPlanActions />
                   {canEdit && allowStructureChanges && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
@@ -204,6 +210,7 @@ export function KnivesSection({ requestId, items, canEdit, steelTypes, allowStru
                   )}
                 </td>
               </tr>
+              </LongStockCuttingPlanStatusProvider>
               )
             })}
             {rows.length === 0 && (

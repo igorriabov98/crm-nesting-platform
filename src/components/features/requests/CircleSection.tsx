@@ -9,7 +9,11 @@ import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import { LongStockPositionDialog } from './LongStockPositionDialog'
-import { LongStockCuttingPlanStatusControl } from './LongStockCuttingPlanStatusControl'
+import {
+  LongStockCuttingPlanActions,
+  LongStockCuttingPlanStatusControl,
+  LongStockCuttingPlanStatusProvider,
+} from './LongStockCuttingPlanStatusControl'
 import { deleteCircle, updateCircle, type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { upsertLongStockRequestRow } from '@/lib/long-stock-position-ui'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
@@ -102,14 +106,15 @@ export function CircleSection({ requestId, items, isEditable, steelTypes, allowS
               <th className="min-w-[120px] px-3 py-2 text-left">Необходимо, мм</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Вес, кг</th>
               <th className="min-w-[120px] px-3 py-2 text-left">Статус</th>
-              <th className="w-[60px] px-3 py-2 text-right">Действия</th>
+              <th className="min-w-[190px] px-3 py-2 text-right">Действия</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => {
               const canEditCharacteristics = canEditMaterialCharacteristics(row, isEditable)
               return (
-              <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
+              <LongStockCuttingPlanStatusProvider table="request_circle" itemId={row.id} key={row.id}>
+              <tr id={`request-item-${row.id}`} className="border-b last:border-b-0">
                 <td className="px-3 py-2">
                   <MaterialSearch
                     category="circle"
@@ -148,9 +153,10 @@ export function CircleSection({ requestId, items, isEditable, steelTypes, allowS
                 <td className="px-3 py-2 text-slate-700">{formatWeight(row.calculated_weight_kg)}</td>
                 <td className="px-3 py-2">
                   <RequestItemOrderStatus status={row.order_status} itemTable="request_circle" item={row} />
-                  <LongStockCuttingPlanStatusControl table="request_circle" itemId={row.id} />
+                  <LongStockCuttingPlanStatusControl />
                 </td>
                 <td className="px-3 py-2 text-right">
+                  <LongStockCuttingPlanActions />
                   {isEditable && allowStructureChanges && (
                     <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
@@ -158,6 +164,7 @@ export function CircleSection({ requestId, items, isEditable, steelTypes, allowS
                   )}
                 </td>
               </tr>
+              </LongStockCuttingPlanStatusProvider>
               )
             })}
             {rows.length === 0 && (

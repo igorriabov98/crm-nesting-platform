@@ -14,7 +14,11 @@ import { RequestItemOrderStatus } from './RequestItemOrderStatus'
 import { MaterialSearch, type MaterialSelectionSource } from './MaterialSearch'
 import { canEditMaterialCharacteristics, isCustomVariantSource } from './materialVariantMode'
 import { LongStockPositionDialog } from './LongStockPositionDialog'
-import { LongStockCuttingPlanStatusControl } from './LongStockCuttingPlanStatusControl'
+import {
+  LongStockCuttingPlanActions,
+  LongStockCuttingPlanStatusControl,
+  LongStockCuttingPlanStatusProvider,
+} from './LongStockCuttingPlanStatusControl'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
 import type { PipeInput } from '@/lib/types/request-schemas'
 import type { MaterialVariant, RequestPipe } from '@/lib/types'
@@ -194,7 +198,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               <th className="min-w-[110px] px-3 py-2 text-left">Необходимо, кг</th>
               <th className="min-w-[100px] px-3 py-2 text-left">Вес, кг</th>
               <th className="min-w-[120px] px-3 py-2 text-left">Статус</th>
-              <th className="w-[60px] px-3 py-2 text-right">Действия</th>
+              <th className="min-w-[190px] px-3 py-2 text-right">Действия</th>
             </tr>
           </thead>
           <tbody>
@@ -208,7 +212,8 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
               const showsDiameter = hasMaterial && (row.pipe_type === 'wire' || row.pipe_type === 'round')
               const displayWeight = calculatePipeWeight(row, steelTypes) ?? row.calculated_weight_kg
               return (
-                <tr id={`request-item-${row.id}`} key={row.id} className="border-b last:border-b-0">
+                <LongStockCuttingPlanStatusProvider table="request_pipe" itemId={row.id} key={row.id}>
+                <tr id={`request-item-${row.id}`} className="border-b last:border-b-0">
                   <td className="px-3 py-2">
                     <MaterialSearch
                       category="pipe"
@@ -259,10 +264,11 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
                   <td className="px-3 py-2">
                     <RequestItemOrderStatus status={row.order_status} itemTable="request_pipe" item={row} />
                     {row.pipe_type !== 'wire' && (
-                      <LongStockCuttingPlanStatusControl table="request_pipe" itemId={row.id} />
+                      <LongStockCuttingPlanStatusControl />
                     )}
                   </td>
                   <td className="px-3 py-2 text-right">
+                    {row.pipe_type !== 'wire' && <LongStockCuttingPlanActions />}
                     {isEditable && allowStructureChanges && (
                       <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(row.id)}>
                         <Trash2 className="h-4 w-4 text-red-500" />
@@ -270,6 +276,7 @@ export function PipeSection({ requestId, items, isEditable, steelTypes, onRowsCh
                     )}
                   </td>
                 </tr>
+                </LongStockCuttingPlanStatusProvider>
               )
             })}
             {rows.length === 0 && (
