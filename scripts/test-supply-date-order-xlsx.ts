@@ -31,6 +31,47 @@ const pendingSheet = makeAggregate({
   orderStatus: 'pending',
   supplierName: null,
 })
+const pendingKnifePlan = {
+  plan_id: 'knife-plan',
+  plan_number: 1,
+  version_id: 'knife-version',
+  version_number: 1,
+  version_status: 'approved' as const,
+  cutting_status: 'plan_approved' as const,
+  components: [{ length_mm: 6_000, piece_count: 1, is_nonstandard: false }],
+  total_piece_count: 1,
+  total_length_mm: 6_000,
+  uses_nonstandard_length: false,
+}
+const pendingKnife = makeAggregate({
+  id: 'pending-knife',
+  table: 'request_knives',
+  category: 'knives',
+  itemName: 'Ножи по карте',
+  characteristics: [
+    { label: 'Марка', value: 'Hardox' },
+    { label: 'Ширина', value: '300' },
+    { label: 'Высота', value: '20' },
+  ],
+  quantity: 6_000,
+  unit: 'мм',
+  weightKg: 280.8,
+  unscheduledQuantity: 6_000,
+  orderStatus: 'pending',
+  longStockPurchasePlan: pendingKnifePlan,
+})
+const planlessKnife = makeAggregate({
+  id: 'planless-knife',
+  table: 'request_knives',
+  category: 'knives',
+  itemName: 'Ножи без карты',
+  characteristics: [{ label: 'Марка', value: 'Hardox' }],
+  quantity: 6_000,
+  unit: 'мм',
+  weightKg: 280.8,
+  unscheduledQuantity: 6_000,
+  orderStatus: 'pending',
+})
 const orderedPipe = makeAggregate({
   id: 'ordered-pipe',
   category: 'pipe',
@@ -52,6 +93,34 @@ const orderedPipe = makeAggregate({
     delivered_at: null,
   })],
 })
+const pendingPipePlan = {
+  plan_id: 'pipe-plan',
+  plan_number: 1,
+  version_id: 'pipe-version',
+  version_number: 1,
+  version_status: 'approved' as const,
+  cutting_status: 'plan_approved' as const,
+  components: [
+    { length_mm: 12_000, piece_count: 1, is_nonstandard: false },
+    { length_mm: 6_000, piece_count: 2, is_nonstandard: false },
+  ],
+  total_piece_count: 3,
+  total_length_mm: 24_000,
+  uses_nonstandard_length: false,
+}
+const pendingPipe = makeAggregate({
+  id: 'pending-pipe',
+  table: 'request_pipe',
+  category: 'pipe',
+  itemName: 'Труба к заказу',
+  characteristics: [{ label: 'Размер', value: '40×40 мм' }],
+  quantity: 24_000,
+  unit: 'мм',
+  weightKg: 224.64,
+  unscheduledQuantity: 24_000,
+  orderStatus: 'pending',
+  longStockPurchasePlan: pendingPipePlan,
+})
 const partialCirclePlan = {
   plan_id: 'circle-plan',
   plan_number: 1,
@@ -66,6 +135,7 @@ const partialCirclePlan = {
 }
 const partiallyOrderedCircle = makeAggregate({
   id: 'partial-circle',
+  table: 'request_circle',
   category: 'circle',
   itemName: 'Круг',
   characteristics: [
@@ -106,17 +176,13 @@ const redelivery = makeAggregate({
 })
 
 const report = buildSupplyDateOrderReport(
-  [pendingSheet, orderedPipe, partiallyOrderedCircle, redelivery],
+  [pendingSheet, pendingKnife, planlessKnife, orderedPipe, pendingPipe, partiallyOrderedCircle, redelivery],
   reportDate,
 )
 
 assert.equal(report.dateLabel, '10 сентября 2026 г.')
 assert.equal(report.factoryLabel, 'Ужгород')
-assert.deepEqual(
-  report.rows.map((row) => row.material),
-  ['Круг', 'Лист Hardox'],
-  'the document must include only ordinary uncovered purchase quantities for this date',
-)
+assert.equal(report.rows.length, 6, 'multi-length bar purchases must use one order row per stock length')
 assert.equal(
   report.rows.find((row) => row.material === 'Круг')?.quantity,
   6_000,
@@ -126,6 +192,28 @@ assert.equal(
   report.rows.find((row) => row.material === 'Круг')?.purchaseComposition,
   '6\u00A0000 × 1',
   'the remaining long-stock row must state the exact bar composition still to purchase',
+)
+assert.equal(report.rows.find((row) => row.material === 'Круг')?.barLengthMm, 6_000)
+assert.equal(report.rows.find((row) => row.material === 'Круг')?.barCount, 1)
+assert.deepEqual(
+  report.rows
+    .filter((row) => row.material === 'Труба к заказу')
+    .map((row) => ({ length: row.barLengthMm, count: row.barCount, quantity: row.quantity })),
+  [
+    { length: 12_000, count: 1, quantity: 12_000 },
+    { length: 6_000, count: 2, quantity: 12_000 },
+  ],
+  'each pipe stock length must be a separate, numeric purchase line',
+)
+assert.equal(report.rows.find((row) => row.material === 'Ножи по карте')?.barLengthMm, 6_000)
+assert.equal(report.rows.find((row) => row.material === 'Ножи по карте')?.barCount, 1)
+const planlessKnifeRow = report.rows.find((row) => row.material === 'Ножи без карты')
+assert(planlessKnifeRow)
+assert.equal(planlessKnifeRow.barLengthMm, null)
+assert.equal(planlessKnifeRow.barCount, null)
+assert.match(
+  planlessKnifeRow.purchaseComposition,
+  /Требуется утверждённая карта раскроя/u,
 )
 assert.equal(report.rows.find((row) => row.material === 'Лист Hardox')?.supplier, 'Не назначен')
 assert.equal(report.rows.some((row) => row.material === 'Труба'), false, 'fully ordered material must be excluded')
@@ -148,6 +236,8 @@ assert.deepEqual((worksheet.getRow(6).values as unknown[]).slice(1), [
   'Материал',
   'Характеристики',
   'Состав закупки',
+  'Длина хлыста, мм',
+  'Кол-во хлыстов к заказу, шт.',
   'Количество к заказу',
   'Ед.',
   'Вес, кг',
@@ -157,12 +247,42 @@ assert.deepEqual((worksheet.getRow(6).values as unknown[]).slice(1), [
 assert.equal(worksheet.views[0]?.state, 'frozen')
 assert.equal(worksheet.views[0]?.ySplit, 6)
 assert.equal(worksheet.views[0]?.showGridLines, false)
-assert.equal(worksheet.autoFilter, 'A6:J8')
-assert.equal(worksheet.getCell('F7').value, 6_000, 'purchase quantity must remain a numeric Excel cell')
-assert.equal(worksheet.getCell('H7').value, 236.64, 'known proportional weight must remain numeric')
-assert.equal(worksheet.getCell('E7').value, '6\u00A0000 × 1')
-assert.equal(worksheet.getCell('F8').value, 2)
-assert.equal(worksheet.getCell('H8').value, 112.32)
+assert.equal(worksheet.autoFilter, 'A6:L12')
+const dataRows = Array.from(
+  { length: worksheet.rowCount - 6 },
+  (_, index) => worksheet.getRow(index + 7),
+)
+const circleRow = dataRows.find((row) => row.getCell(3).value === 'Круг')
+assert(circleRow)
+assert.equal(circleRow.getCell(5).value, '6\u00A0000 × 1')
+assert.equal(circleRow.getCell(6).value, 6_000, 'bar length must remain a numeric Excel cell')
+assert.equal(circleRow.getCell(7).value, 1, 'bar count must remain a numeric Excel cell')
+assert.equal(circleRow.getCell(8).value, 6_000, 'purchase quantity must remain a numeric Excel cell')
+assert.equal(circleRow.getCell(10).value, 236.64, 'known proportional weight must remain numeric')
+
+const pipeRows = dataRows.filter((row) => row.getCell(3).value === 'Труба к заказу')
+assert.deepEqual(
+  pipeRows.map((row) => ({
+    length: row.getCell(6).value,
+    count: row.getCell(7).value,
+    quantity: row.getCell(8).value,
+  })),
+  [
+    { length: 12_000, count: 1, quantity: 12_000 },
+    { length: 6_000, count: 2, quantity: 12_000 },
+  ],
+)
+
+const planlessKnifeSheetRow = dataRows.find((row) => row.getCell(3).value === 'Ножи без карты')
+assert(planlessKnifeSheetRow)
+assert.match(String(planlessKnifeSheetRow.getCell(5).value), /Требуется утверждённая карта раскроя/u)
+assert.equal(planlessKnifeSheetRow.getCell(6).value, '—')
+assert.equal(planlessKnifeSheetRow.getCell(7).value, '—')
+
+const sheetRow = dataRows.find((row) => row.getCell(3).value === 'Лист Hardox')
+assert(sheetRow)
+assert.equal(sheetRow.getCell(8).value, 2)
+assert.equal(sheetRow.getCell(10).value, 112.32)
 
 const routeSource = readFileSync(
   new URL('../src/app/api/reports/supply/date-order.xlsx/route.ts', import.meta.url),
@@ -184,6 +304,7 @@ console.log(`supply date order XLSX: ok (${report.rows.length} строки)`)
 
 type AggregateOptions = {
   id: string
+  table?: SupplyOrderAggregateSourceItem['table']
   category: SupplyOrderAggregate['category']
   itemName: string
   characteristics: SupplyOrderAggregate['characteristics']
@@ -206,6 +327,7 @@ function makeAggregate(options: AggregateOptions): SupplyOrderAggregate {
     .filter((schedule) => schedule.status === 'delivered')
     .reduce((sum, schedule) => sum + Number(schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity), 0)
   const item = makeItem({
+    table: options.table ?? 'request_sheet_metal',
     id: `${options.id}-item`,
     quantity: options.quantity,
     unit: options.unit,

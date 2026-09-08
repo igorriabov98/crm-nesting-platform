@@ -10,6 +10,8 @@ const COLUMN_HEADERS = [
   'Материал',
   'Характеристики',
   'Состав закупки',
+  'Длина хлыста, мм',
+  'Кол-во хлыстов к заказу, шт.',
   'Количество к заказу',
   'Ед.',
   'Вес, кг',
@@ -49,13 +51,15 @@ export async function buildSupplyDateOrderXlsx(
     { key: 'index', width: 6 },
     { key: 'category', width: 18 },
     { key: 'material', width: 24 },
-    { key: 'characteristics', width: 42 },
-    { key: 'purchaseComposition', width: 23 },
-    { key: 'quantity', width: 20 },
-    { key: 'unit', width: 10 },
+    { key: 'characteristics', width: 38 },
+    { key: 'purchaseComposition', width: 28 },
+    { key: 'barLengthMm', width: 20 },
+    { key: 'barCount', width: 27 },
+    { key: 'quantity', width: 21 },
+    { key: 'unit', width: 8 },
     { key: 'weightKg', width: 14 },
-    { key: 'supplier', width: 24 },
-    { key: 'machines', width: 30 },
+    { key: 'supplier', width: 22 },
+    { key: 'machines', width: 28 },
   ]
 
   worksheet.getCell('A1').value = 'Заказ материалов'
@@ -88,7 +92,7 @@ export async function buildSupplyDateOrderXlsx(
 
   worksheet.addRow(COLUMN_HEADERS)
   const header = worksheet.getRow(6)
-  header.height = 30
+  header.height = 48
   header.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } }
   header.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
   header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_COLOR } }
@@ -105,13 +109,15 @@ export async function buildSupplyDateOrderXlsx(
       reportRow.material,
       reportRow.characteristics || '—',
       reportRow.purchaseComposition || '—',
+      reportRow.barLengthMm ?? '—',
+      reportRow.barCount ?? '—',
       reportRow.quantity,
       reportRow.unit,
       reportRow.weightKg ?? '—',
       reportRow.supplier,
       reportRow.machines,
     ])
-    row.height = 34
+    row.height = 42
     row.font = { name: 'Arial', size: 10, color: { argb: TEXT_COLOR } }
     row.alignment = { vertical: 'top', wrapText: true }
     if (index % 2 === 1) {
@@ -120,18 +126,23 @@ export async function buildSupplyDateOrderXlsx(
     row.eachCell((cell) => {
       cell.border = {
         bottom: { style: 'thin', color: { argb: BORDER_COLOR } },
+        right: { style: 'thin', color: { argb: BORDER_COLOR } },
       }
     })
   }
 
   const lastRow = Math.max(worksheet.rowCount, 6)
-  worksheet.autoFilter = { from: 'A6', to: `J${lastRow}` }
+  worksheet.autoFilter = { from: 'A6', to: `L${lastRow}` }
   worksheet.getColumn(1).alignment = { horizontal: 'center', vertical: 'top' }
   worksheet.getColumn(6).alignment = { horizontal: 'right', vertical: 'top' }
-  worksheet.getColumn(6).numFmt = '#,##0.###'
-  worksheet.getColumn(7).alignment = { horizontal: 'center', vertical: 'top' }
+  worksheet.getColumn(6).numFmt = '#,##0'
+  worksheet.getColumn(7).alignment = { horizontal: 'right', vertical: 'top' }
+  worksheet.getColumn(7).numFmt = '#,##0'
   worksheet.getColumn(8).alignment = { horizontal: 'right', vertical: 'top' }
   worksheet.getColumn(8).numFmt = '#,##0.###'
+  worksheet.getColumn(9).alignment = { horizontal: 'center', vertical: 'top' }
+  worksheet.getColumn(10).alignment = { horizontal: 'right', vertical: 'top' }
+  worksheet.getColumn(10).numFmt = '#,##0.###'
   worksheet.pageSetup.printTitlesRow = '6:6'
   worksheet.headerFooter.oddFooter = `Заказ материалов · ${report.dateLabel}`
 
