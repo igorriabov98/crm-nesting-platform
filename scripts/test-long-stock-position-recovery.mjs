@@ -18,8 +18,11 @@ for (const required of [
   'planning_recovery:',
   'planId: string | null',
   'planItemId: string | null',
-  "if (!planItem && reservedStock.length === 0) return null",
-  "? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0 }",
+  "('supply_position_revisions')",
+  ".eq('replacement_request_item_table', requestItem.table)",
+  ".in('status', ['editing', 'stock_check'])",
+  'if (!planItem && reservedStock.length === 0 && !isCorrectedSupplyPosition) return null',
+  "? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn }",
 ]) {
   assert.ok(actions.includes(required), `planning recovery action is missing ${required}`)
 }

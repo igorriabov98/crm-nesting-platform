@@ -53,9 +53,9 @@ export async function loadTechnologistRequestPayload(
   const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords, revision] = await Promise.all([
     db.from('request_sheet_metal').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
     db.from('request_round_tube').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_circle').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_pipe').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
-    db.from('request_knives').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
+    db.from('request_circle').select('*, materials(id, name)').eq('request_id', request.id).eq('is_cutting_plan_draft', false).order('sort_order').order('created_at'),
+    db.from('request_pipe').select('*, materials(id, name)').eq('request_id', request.id).eq('is_cutting_plan_draft', false).order('sort_order').order('created_at'),
+    db.from('request_knives').select('*, materials(id, name)').eq('request_id', request.id).eq('is_cutting_plan_draft', false).order('sort_order').order('created_at'),
     db.from('request_components').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
     db.from('request_paint').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),
     db.from('request_mesh').select('*, materials(id, name)').eq('request_id', request.id).order('sort_order').order('created_at'),

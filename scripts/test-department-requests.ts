@@ -133,6 +133,7 @@ assert.match(workspacePage, /Новый результат запроса/)
 assert.match(workspacePage, /divide-y divide-slate-200/)
 assert.match(workspacePage, /RequestListItem/)
 assert.match(workspacePage, /request\.request_kind === 'transport_trip_date_approval'/)
+assert.match(workspacePage, /canProcessPositionRevision=\{request\.can_process_position_revision\}/)
 assert.doesNotMatch(workspacePage, /RequestCard/)
 assert.doesNotMatch(workspacePage, /Приоритет/)
 
@@ -143,6 +144,22 @@ assert.match(requestActions, /getDepartmentRequestTabStatuses\(filters\.tab\)/)
 assert.match(requestActions, /created_by\.eq\.\$\{input\.userId\},assigned_to\.eq\.\$\{input\.userId\}/)
 assert.match(requestActions, /create_department_request_with_mail/)
 assert.match(requestActions, /p_mail_link/)
+assert.match(requestActions, /request\.can_process_position_revision = request\.assigned_to === context\.userId/)
+assert.match(requestActions, /DIRECTORS\.includes\(context\.role\)/)
+assert.match(requestActions, /context\.permissionDetails\.isAdminPosition/)
+
+const requestActionUi = readFileSync(
+  resolve('src/components/features/department-requests/RequestActions.tsx'),
+  'utf8',
+)
+assert.doesNotMatch(
+  requestActionUi,
+  /requestKind === 'supply_position_revision'[\s\S]{0,200}mode === 'mine'/,
+  'position revision actions must not disappear from the personal request list',
+)
+assert.match(requestActionUi, /hasReplacementRequest \? 'Продолжить исправление' : 'Создать исправленную заявку'/)
+assert.match(requestActionUi, /requestKind === 'long_stock_recalculation'[\s\S]*Пересчитать заявку/)
+assert.match(requestActionUi, /CancelReturnedSupplyPositionDialog/)
 
 const createRequestForm = readFileSync(
   resolve('src/components/features/department-requests/CreateDepartmentRequestForm.tsx'),
@@ -157,6 +174,7 @@ const requestDetail = readFileSync(
 )
 assert.match(requestDetail, /getDepartmentRequestMailLinks/)
 assert.match(requestDetail, /LinkedMailSection/)
+assert.match(requestDetail, /canProcessPositionRevision=\{canProcessPositionRevision\}/)
 
 const taskEnumMigration = readFileSync(
   resolve('supabase/migrations/20260726152401_sync_department_request_tasks.sql'),

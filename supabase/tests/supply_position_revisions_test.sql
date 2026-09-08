@@ -86,6 +86,8 @@ declare
   v_other_item uuid := gen_random_uuid();
   v_row jsonb;
   v_error text;
+  v_requires_plan boolean := p_table in ('request_circle', 'request_knives')
+    or (p_table = 'request_pipe' and coalesce(p_variant, 'square') <> 'wire');
 begin
   select id into strict v_factory from public.factories order by created_at nulls last limit 1;
   insert into public.users(id, email, full_name, role, factory_id, is_active)
@@ -185,6 +187,36 @@ begin
       else 'parameters'
     end
   ) using 'Исправлено', v_replacement_item_id;
+
+  if v_requires_plan then
+    begin
+      update public.technologist_requests
+      set status = 'pending_stock_check', updated_at = now()
+      where id = v_replacement_request_id;
+      raise exception 'Long-stock correction entered stock check without a cutting plan';
+    exception when sqlstate '55000' then
+      get stacked diagnostics v_error = message_text;
+      if v_error not like '[CUTTING_PLAN_REQUIRED]%' then raise; end if;
+    end;
+
+    v_submit := public.fn_cancel_returned_supply_position_v1(
+      p_table, v_source_item, 'Потребность больше не актуальна', v_technologist
+    );
+    if v_submit->>'status' <> 'cancelled'
+      or (select status from public.supply_position_revisions where id = v_revision_id) <> 'cancelled'
+      or (select status from public.technologist_requests where id = v_replacement_request_id) <> 'cancelled'
+      or (select status from public.department_requests where id = v_department_request_id) <> 'cancelled'
+      or (select count(*) from public.tasks where department_request_id = v_department_request_id and status = 'cancelled') <> 1 then
+      raise exception 'Cancellation lifecycle is incomplete for %/%', p_table, p_variant;
+    end if;
+    v_repeat_submit := public.fn_cancel_returned_supply_position_v1(
+      p_table, v_source_item, 'Повторная отмена', v_technologist
+    );
+    if not coalesce((v_repeat_submit->>'idempotent')::boolean, false) then
+      raise exception 'Cancellation is not idempotent for %/%', p_table, p_variant;
+    end if;
+    return;
+  end if;
 
   update public.technologist_requests
   set status = 'pending_stock_check', updated_at = now()
@@ -513,13 +545,356 @@ begin
 end;
 $$;
 
+-- Cancellation is permission-bound, reasoned, idempotent and transactionally
+-- safe both before a replacement exists and during stock checking.
+do $$
+declare
+  v_supply uuid := gen_random_uuid();
+  v_assigned uuid := gen_random_uuid();
+  v_other uuid := gen_random_uuid();
+  v_factory uuid;
+  v_machine uuid := gen_random_uuid();
+  v_item uuid;
+  v_return jsonb;
+  v_created jsonb;
+  v_cancelled jsonb;
+  v_revision uuid;
+  v_department uuid;
+  v_replacement_request uuid;
+  v_replacement_item uuid;
+  v_material uuid := gen_random_uuid();
+  v_inventory uuid := gen_random_uuid();
+  v_reservation uuid;
+  v_error text;
+begin
+  select id into strict v_factory from public.factories order by created_at nulls last limit 1;
+  insert into public.users(id, email, full_name, role, factory_id, is_active)
+  values
+    (v_supply, v_supply || '@cancel.test', 'Снабжение отмены', 'supply_manager', v_factory, true),
+    (v_assigned, v_assigned || '@cancel.test', 'Назначенный технолог', 'technologist', v_factory, true),
+    (v_other, v_other || '@cancel.test', 'Другой технолог', 'technologist', v_factory, true);
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, v_factory, 'REVISION-CANCELLATION', v_assigned);
+  insert into public.materials(id, name, category, created_by)
+  values (v_material, 'Компонент отменяемой замены', 'components', v_assigned);
+  insert into public.inventory(
+    id, factory_id, material_id, total_quantity, reserved_quantity, unit, last_updated_by
+  ) values (v_inventory, v_factory, v_material, 10, 0, 'шт', v_supply);
+
+  v_item := pg_temp.make_component_revision_source(v_assigned, v_machine);
+  v_return := public.fn_return_supply_position_to_technologist_v1(
+    'request_components', v_item, 'Проверить отмену до исправления', v_supply, false
+  );
+  v_revision := (v_return->>'revision_id')::uuid;
+  v_department := (v_return->>'department_request_id')::uuid;
+  begin
+    perform public.fn_cancel_returned_supply_position_v1(
+      'request_components', v_item, '  x ', v_assigned
+    );
+    raise exception 'Cancellation accepted a reason shorter than three characters';
+  exception when sqlstate '22023' then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '[REASON_REQUIRED]%' then raise; end if;
+  end;
+  begin
+    perform public.fn_cancel_returned_supply_position_v1(
+      'request_components', v_item, 'Потребность больше не актуальна', v_other
+    );
+    raise exception 'An unrelated technologist cancelled the returned position';
+  exception when sqlstate '42501' then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '[REVISION_FORBIDDEN]%' then raise; end if;
+  end;
+  if (select status from public.supply_position_revisions where id = v_revision) <> 'requested'
+    or (select status from public.department_requests where id = v_department) <> 'in_progress' then
+    raise exception 'Rejected cancellation left partial state';
+  end if;
+  v_cancelled := public.fn_cancel_returned_supply_position_v1(
+    'request_components', v_item, 'Потребность больше не актуальна', v_assigned
+  );
+  if v_cancelled->>'status' <> 'cancelled'
+    or coalesce((v_cancelled->>'idempotent')::boolean, true)
+    or (select order_status from public.request_components where id = v_item) <> 'cancelled'
+    or (select status from public.supply_position_revisions where id = v_revision) <> 'cancelled'
+    or (select cancellation_reason from public.supply_position_revisions where id = v_revision) <> 'Потребность больше не актуальна'
+    or (select status from public.department_requests where id = v_department) <> 'cancelled' then
+    raise exception 'Requested-stage cancellation is incomplete: %', v_cancelled;
+  end if;
+  v_cancelled := public.fn_cancel_returned_supply_position_v1(
+    'request_components', v_item, 'Повторная отмена', v_assigned
+  );
+  if not coalesce((v_cancelled->>'idempotent')::boolean, false) then
+    raise exception 'Requested-stage cancellation is not idempotent';
+  end if;
+
+  v_item := pg_temp.make_component_revision_source(v_assigned, v_machine);
+  v_return := public.fn_return_supply_position_to_technologist_v1(
+    'request_components', v_item, 'Проверить отмену на складе', v_supply, false
+  );
+  v_created := public.fn_create_supply_position_revision_request_v1(
+    (v_return->>'department_request_id')::uuid, v_assigned
+  );
+  v_replacement_request := (v_created->>'request_id')::uuid;
+  v_replacement_item := (v_created->>'request_item_id')::uuid;
+  update public.request_components set material_id = v_material where id = v_replacement_item;
+  v_reservation := public.fn_reserve_inventory_for_machine(
+    v_material, v_machine, 2, 'request_components', v_replacement_item, v_supply
+  );
+  update public.technologist_requests set status = 'pending_stock_check', updated_at = now()
+  where id = v_replacement_request;
+  if (select status from public.supply_position_revisions where id = (v_return->>'revision_id')::uuid) <> 'stock_check' then
+    raise exception 'Test setup did not enter stock_check';
+  end if;
+  perform public.fn_cancel_returned_supply_position_v1(
+    'request_components', v_item, 'Отмена после повторной проверки склада', v_assigned
+  );
+  if (select status from public.technologist_requests where id = v_replacement_request) <> 'cancelled'
+    or (select order_status from public.request_components where id = v_replacement_item) <> 'cancelled'
+    or exists (select 1 from public.inventory_reservations where id = v_reservation)
+    or (select reserved_quantity from public.inventory where id = v_inventory) <> 0 then
+    raise exception 'Stock-check cancellation did not close the replacement request';
+  end if;
+
+  -- A fact that appears after return must reject the entire cancellation.
+  v_item := pg_temp.make_component_revision_source(v_assigned, v_machine);
+  v_return := public.fn_return_supply_position_to_technologist_v1(
+    'request_components', v_item, 'Проверить факт после возврата', v_supply, false
+  );
+  perform set_config('app.supply_position_revision_lifecycle', '1', true);
+  insert into public.supply_order_delivery_schedules(
+    request_item_table, request_item_id, delivery_date, quantity, unit, status,
+    received_quantity, allocated_quantity, delivered_at, received_by, created_by, updated_by
+  ) values (
+    'request_components', v_item, current_date, 2, 'шт', 'delivered',
+    1, 1, now(), v_supply, v_supply, v_supply
+  );
+  perform set_config('app.supply_position_revision_lifecycle', '', true);
+  begin
+    perform public.fn_cancel_returned_supply_position_v1(
+      'request_components', v_item, 'Поздняя отмена после приёмки', v_assigned
+    );
+    raise exception 'Cancellation succeeded after an irreversible receipt fact';
+  exception when sqlstate '55000' then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '[IRREVERSIBLE_POSITION_FACT]%' then raise; end if;
+  end;
+  if (select status from public.supply_position_revisions where id = (v_return->>'revision_id')::uuid) <> 'requested'
+    or (select order_status from public.request_components where id = v_item) = 'cancelled'
+    or (select status from public.department_requests where id = (v_return->>'department_request_id')::uuid) <> 'in_progress' then
+    raise exception 'Irreversible-fact rejection did not roll back atomically';
+  end if;
+end;
+$$;
+
+-- Two browser tabs may prepare independent long-stock rows, but only an
+-- approved row becomes active. Submission removes every remaining draft and a
+-- late tab cannot resurrect it.
+do $$
+declare
+  v_actor uuid := gen_random_uuid();
+  v_factory uuid;
+  v_machine uuid := gen_random_uuid();
+  v_request uuid := gen_random_uuid();
+  v_material uuid := gen_random_uuid();
+  v_variant uuid := gen_random_uuid();
+  v_pipe_material uuid := gen_random_uuid();
+  v_pipe_variant uuid := gen_random_uuid();
+  v_knife_material uuid := gen_random_uuid();
+  v_knife_variant uuid := gen_random_uuid();
+  v_draft_1 jsonb;
+  v_draft_2 jsonb;
+  v_pipe_draft jsonb;
+  v_knife_draft jsonb;
+  v_item_1 uuid;
+  v_item_2 uuid;
+  v_plan uuid;
+  v_plan_item uuid;
+  v_version uuid;
+  v_settings jsonb;
+  v_segments jsonb;
+  v_candidates jsonb;
+  v_approval jsonb;
+  v_pdf jsonb;
+  v_error text;
+begin
+  select id into strict v_factory from public.factories order by created_at nulls last limit 1;
+  insert into public.users(id, email, full_name, role, factory_id, is_active)
+  values (v_actor, v_actor || '@draft-race.test', 'Технолог черновиков', 'technologist', v_factory, true);
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, v_factory, 'CUTTING-DRAFT-RACE', v_actor);
+  insert into public.technologist_requests(id, machine_id, created_by, status)
+  values (v_request, v_machine, v_actor, 'draft');
+  insert into public.materials(id, name, category, created_by)
+  values
+    (v_material, 'Круг для гонки вкладок', 'circle', v_actor),
+    (v_pipe_material, 'Труба для гонки вкладок', 'pipe', v_actor),
+    (v_knife_material, 'Нож для гонки вкладок', 'knives', v_actor);
+  insert into public.material_variants(
+    id, material_id, category, diameter_mm, material_grade,
+    standard_length_mm, weight_per_m_kg, default_unit
+  ) values (v_variant, v_material, 'circle', 40, 'S355', 6000, 2, 'шт');
+  insert into public.material_variants(
+    id, material_id, category, pipe_type, piece_description,
+    wall_thickness_mm, material_grade, standard_length_mm, weight_per_m_kg, default_unit
+  ) values (v_pipe_variant, v_pipe_material, 'pipe', 'square', '40×20', 2, 'S355', 6000, 2, 'шт');
+  insert into public.material_variants(
+    id, material_id, category, knife_material, material_grade,
+    knife_bevel_count, width_mm, height_mm, weight_per_m_kg, default_unit
+  ) values (v_knife_variant, v_knife_material, 'knives', 'Hardox', 'Hardox', 1, 40, 8, 2, 'шт');
+
+  v_draft_1 := public.fn_prepare_long_stock_request_item_draft_v1(
+    v_request, 'request_circle', null,
+    jsonb_build_object(
+      'diameter_mm', 40, 'steel_grade', 'S355', 'is_calibrated', false,
+      'remainder_mm', 1200, 'material_id', v_material, 'material_variant_id', v_variant
+    ),
+    v_actor
+  );
+  v_draft_2 := public.fn_prepare_long_stock_request_item_draft_v1(
+    v_request, 'request_circle', null,
+    jsonb_build_object(
+      'diameter_mm', 40, 'steel_grade', 'S355', 'is_calibrated', false,
+      'remainder_mm', 1200, 'material_id', v_material, 'material_variant_id', v_variant
+    ),
+    v_actor
+  );
+  v_item_1 := (v_draft_1->>'id')::uuid;
+  v_item_2 := (v_draft_2->>'id')::uuid;
+  if v_item_1 = v_item_2
+    or (select count(*) from public.request_circle where request_id = v_request and is_cutting_plan_draft) <> 2 then
+    raise exception 'Independent tabs did not create two isolated cutting drafts';
+  end if;
+  v_pipe_draft := public.fn_prepare_long_stock_request_item_draft_v1(
+    v_request, 'request_pipe', null,
+    jsonb_build_object(
+      'pipe_type', 'square', 'size', '40×20', 'wall_thickness_mm', 2,
+      'remainder_length_mm', 1200, 'remainder_qty', 1, 'remainder_kg', 2.4,
+      'material_id', v_pipe_material, 'material_variant_id', v_pipe_variant
+    ),
+    v_actor
+  );
+  v_knife_draft := public.fn_prepare_long_stock_request_item_draft_v1(
+    v_request, 'request_knives', null,
+    jsonb_build_object(
+      'knife_type', 'Нож 40×8', 'steel_grade', 'Hardox', 'width_mm', 40, 'height_mm', 8,
+      'knife_bevel_count', 1, 'remainder_meters', 1.2, 'remainder_qty', 1,
+      'material_id', v_knife_material, 'material_variant_id', v_knife_variant
+    ),
+    v_actor
+  );
+  if not exists (select 1 from public.request_pipe where id = (v_pipe_draft->>'id')::uuid and is_cutting_plan_draft)
+    or not exists (select 1 from public.request_knives where id = (v_knife_draft->>'id')::uuid and is_cutting_plan_draft) then
+    raise exception 'Pipe or knife cutting draft was not isolated';
+  end if;
+
+  v_plan := public.fn_create_long_stock_cutting_plan(
+    v_variant,
+    jsonb_build_array(jsonb_build_object(
+      'request_item_table', 'request_circle', 'request_item_id', v_item_1
+    )),
+    v_actor
+  );
+  select id into strict v_plan_item from public.long_stock_cutting_plan_items
+  where plan_id = v_plan and request_item_id = v_item_1;
+  v_settings := public.fn_get_long_stock_layout_settings_snapshot();
+  v_segments := jsonb_build_array(jsonb_build_object(
+    'plan_item_id', v_plan_item,
+    'segment_number', 1,
+    'required_length_mm', 1200,
+    'required_weight_kg', 2.4
+  ));
+  v_candidates := jsonb_build_array(jsonb_build_object(
+    'candidate_number', 1,
+    'is_complete', true,
+    'metrics', jsonb_build_object(
+      'purchased_length_mm', 6000,
+      'net_parts_length_mm', 1200,
+      'kerf_loss_length_mm', 1,
+      'end_trim_loss_length_mm', 0,
+      'business_scrap_length_mm', 4799,
+      'purchased_weight_kg', 12,
+      'net_parts_weight_kg', 2.4,
+      'kerf_loss_weight_kg', 0.002,
+      'end_trim_loss_weight_kg', 0,
+      'business_scrap_weight_kg', 9.598
+    ),
+    'bars', jsonb_build_array(jsonb_build_object(
+      'bar_number', 1,
+      'stock_length_mm', 6000,
+      'length_group', 'standard',
+      'source_type', 'new_stock',
+      'source_inventory_id', null,
+      'cuts', jsonb_build_array(jsonb_build_object(
+        'cut_number', 1, 'segment_number', 1, 'cut_length_mm', 1200
+      ))
+    ))
+  ));
+  v_version := public.fn_get_or_create_long_stock_cutting_plan_version_v2(
+    v_plan,
+    jsonb_build_object('case', 'draft-race', 'material_id', v_material, 'material_variant_id', v_variant),
+    v_settings,
+    v_segments,
+    v_candidates,
+    1,
+    v_actor,
+    null,
+    '{}'::jsonb
+  );
+  v_pdf := jsonb_build_object(
+    'schema_version', 1,
+    'bucket_id', 'product-files',
+    'object_path', format('long-stock-cutting-plans/%s/%s/%s.pdf', v_plan, v_version, gen_random_uuid()),
+    'file_name', 'cutting-plan-' || (select plan_number from public.long_stock_cutting_plans where id = v_plan) || '-v1.pdf',
+    'mime_type', 'application/pdf',
+    'size_bytes', 512,
+    'sha256', repeat('d', 64),
+    'generated_by', v_actor,
+    'generated_at', now()
+  );
+  v_approval := public.fn_approve_long_stock_cutting_plan_version_v2(v_version, v_actor, v_pdf);
+  if v_approval->>'status' <> 'approved'
+    or (select is_cutting_plan_draft from public.request_circle where id = v_item_1)
+    or not (select is_cutting_plan_draft from public.request_circle where id = v_item_2) then
+    raise exception 'Approval did not activate exactly one prepared row: %', v_approval;
+  end if;
+  perform public.fn_approve_long_stock_cutting_plan_version_v2(v_version, v_actor, v_pdf);
+  if (select count(*) from public.request_circle where id = v_item_1 and not is_cutting_plan_draft) <> 1 then
+    raise exception 'Repeated approval duplicated or hid the active row';
+  end if;
+
+  update public.technologist_requests
+  set status = 'pending_stock_check', updated_at = now()
+  where id = v_request;
+  if exists (select 1 from public.request_circle where id = v_item_2)
+    or exists (select 1 from public.request_pipe where id = (v_pipe_draft->>'id')::uuid)
+    or exists (select 1 from public.request_knives where id = (v_knife_draft->>'id')::uuid)
+    or not exists (select 1 from public.request_circle where id = v_item_1 and not is_cutting_plan_draft) then
+    raise exception 'Request transition did not keep the approved row and delete the stale draft';
+  end if;
+  begin
+    perform public.fn_prepare_long_stock_request_item_draft_v1(
+      v_request, 'request_circle', v_item_2,
+      jsonb_build_object('remainder_mm', 1200, 'material_id', v_material, 'material_variant_id', v_variant),
+      v_actor
+    );
+    raise exception 'A stale tab recreated a draft after request submission';
+  exception when sqlstate '55000' then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '[CUTTING_DRAFT_STALE]%' then raise; end if;
+  end;
+end;
+$$;
+
 -- Server-only mutation boundary: browser roles must not execute lifecycle RPCs.
 do $$
 begin
   if has_function_privilege('authenticated', 'public.fn_preview_supply_position_revision_v1(text,uuid)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.fn_return_supply_position_to_technologist_v1(text,uuid,text,uuid,boolean)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.fn_create_supply_position_revision_request_v1(uuid,uuid)', 'EXECUTE')
-    or has_function_privilege('authenticated', 'public.fn_submit_supply_position_revision_v1(uuid,uuid)', 'EXECUTE') then
+    or has_function_privilege('authenticated', 'public.fn_submit_supply_position_revision_v1(uuid,uuid)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.fn_prepare_long_stock_request_item_draft_v1(uuid,text,uuid,jsonb,uuid)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.fn_discard_long_stock_request_item_drafts_v1(uuid,uuid,text,uuid)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.fn_cancel_returned_supply_position_v1(text,uuid,text,uuid)', 'EXECUTE') then
     raise exception 'Authenticated role can execute a protected revision RPC';
   end if;
 end;

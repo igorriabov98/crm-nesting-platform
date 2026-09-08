@@ -9,7 +9,6 @@ import {
 } from '@/lib/long-stock-cutting-solver'
 import {
   createLongStockMaterialDraft,
-  longStockDraftDemandPatch,
   longStockMaterialCharacteristics,
   validateLongStockMaterialDraft,
   type LongStockMaterialCategory,
@@ -33,14 +32,6 @@ import {
   type LongStockWeightVariant,
 } from '@/lib/long-stock-material-weight'
 import { createMaterial, recordMaterialUsage } from '@/lib/actions/materials'
-import {
-  addCircle,
-  addKnife,
-  addPipe,
-  updateCircle,
-  updateKnife,
-  updatePipe,
-} from '@/lib/actions/technologist-requests'
 import { requirePermission } from '@/lib/permissions/server'
 import { knifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { requireCanonicalPipeProfile, roundPipeOuterDiameterMm, validatePipeProfileGeometry } from '@/lib/materials/pipe-profile'
@@ -306,7 +297,7 @@ export async function createLongStockMaterialVariant(input: LongStockNewMaterial
 }
 
 export async function prepareLongStockRequestItemDraft(input: PrepareLongStockRequestItemDraftInput) {
-  await requirePermission('technologist_requests', 'manage')
+  const { userId } = await requirePermission('technologist_requests', 'manage')
   const requestId = requireUuid(input?.requestId, 'Идентификатор заявки')
   const materialVariantId = requireUuid(input?.materialVariantId, 'Идентификатор варианта материала')
   const totalLengthMm = Number(input?.totalLengthMm)
@@ -336,6 +327,7 @@ export async function prepareLongStockRequestItemDraft(input: PrepareLongStockRe
   )
   validateDraftVariant(table, material, variant)
 
+  let requestItemId: string | null = null
   if (input.requestItem) {
     const requestItem = normalizeRequestItemRef(input.requestItem)
     if (requestItem.table !== table) throw new Error('Категория черновика позиции не совпадает')
@@ -344,29 +336,50 @@ export async function prepareLongStockRequestItemDraft(input: PrepareLongStockRe
     if (current.material_variant_id !== materialVariantId) {
       throw new Error('Выбранный вариант изменился — создайте черновик позиции заново')
     }
-    const demandPatch = longStockDraftDemandPatch(table, totalLengthMm, pieceCount)
-    const result = table === 'request_circle'
-      ? await updateCircle(requestItem.id, demandPatch)
-      : table === 'request_pipe'
-        ? await updatePipe(requestItem.id, demandPatch)
-        : await updateKnife(requestItem.id, demandPatch)
-    if (!result.success || !result.data) throw new Error(result.error || 'Не удалось обновить черновик позиции')
-    return { table, id: requestItem.id, row: result.data, materialVariantId }
+    requestItemId = requestItem.id
   }
 
   const data = newDraftData(table, material, variant, totalLengthMm, pieceCount)
-  const result = table === 'request_circle'
-    ? await addCircle(requestId, data)
-    : table === 'request_pipe'
-      ? await addPipe(requestId, data)
-      : await addKnife(requestId, data)
-  if (!result.success || !result.data) throw new Error(result.error || 'Не удалось создать черновик позиции')
+  const { data: prepared, error } = await db.rpc<{
+    table: LongStockRequestItemRef['table']
+    id: string
+    row: Record<string, unknown>
+  }>('fn_prepare_long_stock_request_item_draft_v1', {
+    p_request_id: requestId,
+    p_request_item_table: table,
+    p_request_item_id: requestItemId,
+    p_item_data: data,
+    p_actor: userId,
+  })
+  if (error || !prepared) {
+    throw new Error(error?.message || 'Не удалось подготовить черновик позиции')
+  }
   return {
-    table,
-    id: String((result.data as { id: string }).id),
-    row: result.data,
+    table: prepared.table,
+    id: prepared.id,
+    row: prepared.row,
     materialVariantId,
   }
+}
+
+export async function discardLongStockRequestItemDraft(input: {
+  requestId: string
+  requestItem: LongStockRequestItemRef
+}) {
+  const { userId } = await requirePermission('technologist_requests', 'manage')
+  const requestId = requireUuid(input?.requestId, 'Идентификатор заявки')
+  const requestItem = normalizeRequestItemRef(input?.requestItem)
+  const { data, error } = await database().rpc<number>(
+    'fn_discard_long_stock_request_item_drafts_v1',
+    {
+      p_request_id: requestId,
+      p_actor: userId,
+      p_request_item_table: requestItem.table,
+      p_request_item_id: requestItem.id,
+    },
+  )
+  if (error) throw new Error(error.message || 'Не удалось удалить черновик позиции')
+  return Number(data || 0)
 }
 
 export async function calculateLongStockCuttingPlan(input: LongStockPlanCalculationInput) {
@@ -421,14 +434,24 @@ export type LongStockCuttingPlanItemOverview = {
   segments: Array<{ length_mm: number; piece_count: number }>
   total_length_mm: number
   piece_count: number
+  is_returned: boolean
+  can_cancel_return: boolean
 }
 
 export async function getLongStockCuttingPlanItemOverview(
   requestItemInput: LongStockRequestItemRef,
 ): Promise<LongStockCuttingPlanItemOverview> {
-  await requirePermission('technologist_requests', 'view')
+  const permission = await requirePermission('technologist_requests', 'view')
   const requestItem = normalizeRequestItemRef(requestItemInput)
   const db = database()
+  const revisionResult = await db.from<{ assigned_to: string; status: string }>('supply_position_revisions')
+    .select('assigned_to,status')
+    .eq('source_request_item_table', requestItem.table)
+    .eq('source_request_item_id', requestItem.id)
+    .in('status', ['requested', 'editing', 'stock_check'])
+  if (revisionResult.error) throw new Error(revisionResult.error.message || 'Не удалось проверить возврат позиции')
+  let returnedAssignedTo = revisionResult.data?.[0]?.assigned_to ?? null
+  const isGenericReturn = Boolean(returnedAssignedTo)
   const itemResult = await db.from<{ id: string; plan_id: string; cutting_status: string }>('long_stock_cutting_plan_items')
     .select('id,plan_id,cutting_status')
     .eq('request_item_table', requestItem.table)
@@ -438,14 +461,36 @@ export async function getLongStockCuttingPlanItemOverview(
   const planItem = itemResult.data?.[0]
   if (!planItem) {
     const recovery = await loadLongStockPlanningRecoveryState(db, requestItem)
+    const canCancelReturn = isGenericReturn && (
+      returnedAssignedTo === permission.userId
+      || ['planning_director', 'financial_director', 'commercial_director'].includes(permission.role)
+      || permission.permissionDetails.isAdminPosition
+    )
     return recovery
-      ? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0 }
-      : { status: 'none', segments: [], total_length_mm: 0, piece_count: 0 }
+      ? { status: 'planning', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn }
+      : { status: 'none', segments: [], total_length_mm: 0, piece_count: 0, is_returned: isGenericReturn, can_cancel_return: canCancelReturn }
   }
 
   const status: LongStockCuttingPlanItemStatus = planItem.cutting_status === 'requires_recalculation'
     ? 'requires_recalculation'
     : planItem.cutting_status === 'planning' ? 'planning' : 'active'
+  if (status === 'requires_recalculation' && !returnedAssignedTo) {
+    const requestResult = await db.from<{ assigned_to: string | null }>('department_requests')
+      .select('assigned_to')
+      .eq('request_kind', 'long_stock_recalculation')
+      .eq('request_item_table', requestItem.table)
+      .eq('request_item_id', requestItem.id)
+      .in('status', ['new', 'in_progress'])
+      .order('created_at', { ascending: false })
+    if (requestResult.error) throw new Error(requestResult.error.message || 'Не удалось проверить исполнителя возврата')
+    returnedAssignedTo = requestResult.data?.[0]?.assigned_to ?? null
+  }
+  const isReturned = isGenericReturn || status === 'requires_recalculation'
+  const canCancelReturn = isReturned && (
+    returnedAssignedTo === permission.userId
+    || ['planning_director', 'financial_director', 'commercial_director'].includes(permission.role)
+    || permission.permissionDetails.isAdminPosition
+  )
   const expectedVersionStatus = status === 'requires_recalculation'
     ? 'invalid'
     : planItem.cutting_status === 'planning' ? 'draft' : 'approved'
@@ -456,7 +501,7 @@ export async function getLongStockCuttingPlanItemOverview(
     .order('version_number', { ascending: false })
   if (versionResult.error) throw new Error(versionResult.error.message || 'Не удалось прочитать версию карты раскроя')
   const versionId = versionResult.data?.[0]?.id
-  if (!versionId) return { status, segments: [], total_length_mm: 0, piece_count: 0 }
+  if (!versionId) return { status, segments: [], total_length_mm: 0, piece_count: 0, is_returned: isReturned, can_cancel_return: canCancelReturn }
 
   const segmentsResult = await db.from<{ required_length_mm: number | string }>('long_stock_cutting_segments')
     .select('required_length_mm')
@@ -476,6 +521,8 @@ export async function getLongStockCuttingPlanItemOverview(
     segments,
     total_length_mm: segments.reduce((sum, segment) => sum + segment.length_mm * segment.piece_count, 0),
     piece_count: segments.reduce((sum, segment) => sum + segment.piece_count, 0),
+    is_returned: isReturned,
+    can_cancel_return: canCancelReturn,
   }
 }
 
@@ -1508,10 +1555,23 @@ async function loadLongStockPlanningRecoveryState(
   }
   const reservedStock = Array.from(groupedStock, ([lengthMm, pieceCount]) => ({ lengthMm, pieceCount }))
     .sort((left, right) => left.lengthMm - right.lengthMm)
+  let isCorrectedSupplyPosition = false
+  if (!planItem && reservedStock.length === 0) {
+    const revisionResult = await db.from<{ id: string }>('supply_position_revisions')
+      .select('id')
+      .eq('replacement_request_item_table', requestItem.table)
+      .eq('replacement_request_item_id', requestItem.id)
+      .in('status', ['editing', 'stock_check'])
+    if (revisionResult.error) {
+      throw new Error(revisionResult.error.message || 'Не удалось проверить исправление позиции')
+    }
+    isCorrectedSupplyPosition = (revisionResult.data?.length ?? 0) > 0
+  }
   // Legacy received requests may predate cutting-plan creation entirely. They
   // are recoverable only when the exact physical whole-bar reservation exists;
-  // otherwise this is an ordinary position that has not entered cutting yet.
-  if (!planItem && reservedStock.length === 0) return null
+  // a corrected supply position is the deliberate exception: it must enter
+  // planning even if the returned source never had a historical plan.
+  if (!planItem && reservedStock.length === 0 && !isCorrectedSupplyPosition) return null
   return {
     planId: planItem?.plan_id ?? null,
     planItemId: planItem?.id ?? null,

@@ -15,6 +15,7 @@ import {
   LongStockPlanningRecoveryDialog,
   LongStockRecalculationDialog,
 } from './LongStockPositionDialog'
+import { CancelReturnedSupplyPositionDialog } from './CancelReturnedSupplyPositionDialog'
 
 type Props = {
   table: LongStockRequestItemTable
@@ -91,6 +92,9 @@ export function LongStockCuttingPlanStatusControl({ table, itemId }: Props) {
               <ClipboardPenLine className="size-3.5" />Подготовить карту
             </Button>
           </>
+        )}
+        {overview?.is_returned && overview.can_cancel_return && (
+          <CancelReturnedSupplyPositionDialog table={table} itemId={itemId} compact />
         )}
       </div>
       {status === 'planning' ? (

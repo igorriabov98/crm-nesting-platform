@@ -32,6 +32,7 @@ declare
   v_replacement_request uuid;
   v_replacement_item uuid;
   v_approval jsonb;
+  v_cancelled jsonb;
   v_pdf jsonb;
   v_schedule uuid := gen_random_uuid();
   v_parent_schedule uuid := gen_random_uuid();
@@ -303,6 +304,28 @@ begin
       and (status <> 'draft' or not is_recalculation_staging)
   ) then
     raise exception 'Замена стала видимой до утверждения';
+  end if;
+
+  if p_category = 'circle' and p_source_kind = 'supply_return' then
+    v_cancelled := public.fn_cancel_returned_supply_position_v1(
+      'request_circle', v_item, 'Потребность после пересчёта отменена', v_actor
+    );
+    if v_cancelled->>'status' <> 'cancelled'
+      or v_cancelled->>'mode' <> 'long_stock_recalculation'
+      or (select cutting_status from public.long_stock_cutting_plan_items where id = v_plan_item) <> 'cancelled'
+      or (select status from public.long_stock_recalculation_replacements where id = v_replacement_id) <> 'cancelled'
+      or (select status from public.technologist_requests where id = v_replacement_request) <> 'cancelled'
+      or (select order_status from public.request_circle where id = v_replacement_item) <> 'cancelled'
+      or (select order_status from public.request_circle where id = v_item) <> 'cancelled' then
+      raise exception 'Отмена возврата утверждённой карты неполна: %', v_cancelled;
+    end if;
+    v_cancelled := public.fn_cancel_returned_supply_position_v1(
+      'request_circle', v_item, 'Повторная отмена пересчёта', v_actor
+    );
+    if not coalesce((v_cancelled->>'idempotent')::boolean, false) then
+      raise exception 'Отмена возврата утверждённой карты неидемпотентна';
+    end if;
+    return;
   end if;
 
   v_version_2 := public.fn_get_or_create_long_stock_cutting_plan_version_v2(

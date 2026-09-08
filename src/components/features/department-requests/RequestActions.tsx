@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { CheckCircle2, FilePlus2, Hand, Paperclip, Trash2, XCircle } from 'lucide-react'
+import { CheckCircle2, FilePlus2, Hand, Paperclip, RotateCcw, Trash2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   cancelDepartmentRequest,
@@ -21,10 +21,12 @@ import {
   DEPARTMENT_REQUEST_FILE_MAX_COUNT,
   validateDepartmentRequestFile,
 } from '@/lib/department-request-files'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { notifySidebarWorkQueuesChanged } from '@/lib/sidebar-work-queue-events'
 import { ROUTES } from '@/lib/constants/routes'
 import { createSupplyPositionRevisionRequest } from '@/lib/actions/technologist-requests'
+import { isSupplyPositionTable } from '@/lib/supply-orders/position-revisions'
+import { CancelReturnedSupplyPositionDialog } from '@/components/features/requests/CancelReturnedSupplyPositionDialog'
 import { cn } from '@/lib/utils'
 import {
   Dialog,
@@ -47,6 +49,11 @@ export function RequestActions({
   machineId,
   canClaimMachineLayout,
   transportDateChangeRequestId,
+  canProcessPositionRevision,
+  technologistRequestId,
+  requestItemTable,
+  requestItemId,
+  hasReplacementRequest,
 }: {
   requestId: string
   status: DepartmentRequestStatus
@@ -55,6 +62,11 @@ export function RequestActions({
   machineId: string | null
   canClaimMachineLayout: boolean
   transportDateChangeRequestId: string | null
+  canProcessPositionRevision: boolean
+  technologistRequestId: string | null
+  requestItemTable: string | null
+  requestItemId: string | null
+  hasReplacementRequest: boolean
 }) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -161,14 +173,37 @@ export function RequestActions({
     })
   }
 
-  if (requestKind === 'long_stock_recalculation') return null
-  if (requestKind === 'supply_position_revision') {
-    if (mode === 'mine' || !['new', 'in_progress'].includes(status)) return null
+  const activeReturnedPosition = ['new', 'in_progress'].includes(status)
+    && canProcessPositionRevision
+    && requestItemTable !== null
+    && requestItemId !== null
+    && isSupplyPositionTable(requestItemTable)
+
+  if (requestKind === 'long_stock_recalculation') {
+    if (!activeReturnedPosition || !machineId || !technologistRequestId) return null
     return (
-      <Button type="button" className="min-h-11 bg-amber-700 text-white hover:bg-amber-800" disabled={pending} onClick={openPositionRevision}>
-        <FilePlus2 className="size-4" aria-hidden="true" />
-        {pending ? 'Открываем…' : 'Создать исправленную заявку'}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Link
+          href={`${ROUTES.SALES_PLAN}/${machineId}/request/${technologistRequestId}#request-item-${requestItemId}`}
+          className={cn(buttonVariants({ variant: 'default' }), 'min-h-11 bg-amber-700 text-white hover:bg-amber-800')}
+        >
+          <RotateCcw className="size-4" aria-hidden="true" />
+          Пересчитать заявку
+        </Link>
+        <CancelReturnedSupplyPositionDialog table={requestItemTable} itemId={requestItemId} />
+      </div>
+    )
+  }
+  if (requestKind === 'supply_position_revision') {
+    if (!activeReturnedPosition) return null
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" className="min-h-11 bg-amber-700 text-white hover:bg-amber-800" disabled={pending} onClick={openPositionRevision}>
+          <FilePlus2 className="size-4" aria-hidden="true" />
+          {pending ? 'Открываем…' : hasReplacementRequest ? 'Продолжить исправление' : 'Создать исправленную заявку'}
+        </Button>
+        <CancelReturnedSupplyPositionDialog table={requestItemTable} itemId={requestItemId} />
+      </div>
     )
   }
 

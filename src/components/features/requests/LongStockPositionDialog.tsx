@@ -57,6 +57,7 @@ import {
   createLongStockMaterialVariant,
   createLongStockCuttingPlanVersion,
   createManualLongStockCuttingPlanVersion,
+  discardLongStockRequestItemDraft,
   loadLongStockPlanningRecoveryDraft,
   loadLongStockRecalculationSafe,
   loadLongStockSourceOptions,
@@ -66,12 +67,7 @@ import {
   type LongStockSourceOption,
 } from '@/lib/actions/long-stock-cutting-plans'
 import type { MaterialWithSupplier } from '@/lib/actions/materials'
-import {
-  deleteCircle,
-  deleteKnife,
-  deletePipe,
-  type WithMaterialName,
-} from '@/lib/actions/technologist-requests'
+import { type WithMaterialName } from '@/lib/actions/technologist-requests'
 import { PIPE_SUBTYPE_LABELS } from '@/lib/constants/procurement'
 import {
   candidateMaterialBreakdown,
@@ -452,12 +448,10 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     if (!material || !variant) throw new Error('Выберите точный вариант материала')
     let draft = draftRef.current
     if (draft && draft.materialVariantId !== variant.id) {
-      const deletion = draft.table === 'request_circle'
-        ? await deleteCircle(draft.id)
-        : draft.table === 'request_pipe'
-          ? await deletePipe(draft.id)
-          : await deleteKnife(draft.id)
-      if (!deletion.success) throw new Error(deletion.error || 'Не удалось заменить вариант черновика позиции')
+      await discardLongStockRequestItemDraft({
+        requestId,
+        requestItem: { table: draft.table, id: draft.id },
+      })
       draftRef.current = null
       draft = null
     }
@@ -615,12 +609,10 @@ export function LongStockPositionDialog({ category, requestId, steelTypes, open,
     try {
       const draft = draftRef.current
       if (draft) {
-        const result = draft.table === 'request_circle'
-          ? await deleteCircle(draft.id)
-          : draft.table === 'request_pipe'
-            ? await deletePipe(draft.id)
-            : await deleteKnife(draft.id)
-        if (!result.success) throw new Error(result.error || 'Не удалось удалить черновик позиции')
+        await discardLongStockRequestItemDraft({
+          requestId,
+          requestItem: { table: draft.table, id: draft.id },
+        })
         draftRef.current = null
       }
       reset()

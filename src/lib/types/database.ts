@@ -3538,11 +3538,14 @@ export type Database = {
           replacement_request_id: string | null
           replacement_request_item_table: string | null
           replacement_request_item_id: string | null
-          status: 'requested' | 'editing' | 'stock_check' | 'submitted'
+          status: 'requested' | 'editing' | 'stock_check' | 'submitted' | 'cancelled'
           external_order_cancellation_confirmed_at: string | null
           external_order_cancellation_confirmed_by: string | null
           submitted_by: string | null
           submitted_at: string | null
+          cancelled_by: string | null
+          cancelled_at: string | null
+          cancellation_reason: string | null
           created_at: string
           updated_at: string
         }
@@ -3559,11 +3562,14 @@ export type Database = {
           replacement_request_id?: string | null
           replacement_request_item_table?: string | null
           replacement_request_item_id?: string | null
-          status?: 'requested' | 'editing' | 'stock_check' | 'submitted'
+          status?: 'requested' | 'editing' | 'stock_check' | 'submitted' | 'cancelled'
           external_order_cancellation_confirmed_at?: string | null
           external_order_cancellation_confirmed_by?: string | null
           submitted_by?: string | null
           submitted_at?: string | null
+          cancelled_by?: string | null
+          cancelled_at?: string | null
+          cancellation_reason?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -3580,11 +3586,14 @@ export type Database = {
           replacement_request_id?: string | null
           replacement_request_item_table?: string | null
           replacement_request_item_id?: string | null
-          status?: 'requested' | 'editing' | 'stock_check' | 'submitted'
+          status?: 'requested' | 'editing' | 'stock_check' | 'submitted' | 'cancelled'
           external_order_cancellation_confirmed_at?: string | null
           external_order_cancellation_confirmed_by?: string | null
           submitted_by?: string | null
           submitted_at?: string | null
+          cancelled_by?: string | null
+          cancelled_at?: string | null
+          cancellation_reason?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -4956,6 +4965,9 @@ export type Database = {
           cancelled_at: string | null
           cancelled_by: string | null
           cancellation_reason: string | null
+          is_cutting_plan_draft: boolean
+          cutting_plan_draft_created_by: string | null
+          cutting_plan_draft_token: string | null
         }
         Insert: {
           id?: string
@@ -4986,6 +4998,9 @@ export type Database = {
           cancelled_at?: string | null
           cancelled_by?: string | null
           cancellation_reason?: string | null
+          is_cutting_plan_draft?: boolean
+          cutting_plan_draft_created_by?: string | null
+          cutting_plan_draft_token?: string | null
         }
         Update: {
           id?: string
@@ -5016,6 +5031,9 @@ export type Database = {
           cancelled_at?: string | null
           cancelled_by?: string | null
           cancellation_reason?: string | null
+          is_cutting_plan_draft?: boolean
+          cutting_plan_draft_created_by?: string | null
+          cutting_plan_draft_token?: string | null
         }
       }
       request_components: {
@@ -5192,6 +5210,9 @@ export type Database = {
           cancelled_at: string | null
           cancelled_by: string | null
           cancellation_reason: string | null
+          is_cutting_plan_draft: boolean
+          cutting_plan_draft_created_by: string | null
+          cutting_plan_draft_token: string | null
         }
         Insert: {
           id?: string
@@ -5215,6 +5236,9 @@ export type Database = {
           cancelled_at?: string | null
           cancelled_by?: string | null
           cancellation_reason?: string | null
+          is_cutting_plan_draft?: boolean
+          cutting_plan_draft_created_by?: string | null
+          cutting_plan_draft_token?: string | null
         }
         Update: {
           id?: string
@@ -5238,6 +5262,9 @@ export type Database = {
           cancelled_at?: string | null
           cancelled_by?: string | null
           cancellation_reason?: string | null
+          is_cutting_plan_draft?: boolean
+          cutting_plan_draft_created_by?: string | null
+          cutting_plan_draft_token?: string | null
         }
       }
       request_pipe: {
@@ -5268,6 +5295,9 @@ export type Database = {
           cancelled_at: string | null
           cancelled_by: string | null
           cancellation_reason: string | null
+          is_cutting_plan_draft: boolean
+          cutting_plan_draft_created_by: string | null
+          cutting_plan_draft_token: string | null
         }
         Insert: {
           id?: string
@@ -5296,6 +5326,9 @@ export type Database = {
           cancelled_at?: string | null
           cancelled_by?: string | null
           cancellation_reason?: string | null
+          is_cutting_plan_draft?: boolean
+          cutting_plan_draft_created_by?: string | null
+          cutting_plan_draft_token?: string | null
         }
         Update: {
           id?: string
@@ -5324,6 +5357,9 @@ export type Database = {
           cancelled_at?: string | null
           cancelled_by?: string | null
           cancellation_reason?: string | null
+          is_cutting_plan_draft?: boolean
+          cutting_plan_draft_created_by?: string | null
+          cutting_plan_draft_token?: string | null
         }
       }
       request_mesh: {
@@ -5627,7 +5663,7 @@ export type Database = {
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'
       consumable_delivery_method: 'nova_poshta' | 'other'
       consumable_movement_type: 'initial' | 'manual_receipt' | 'request_receipt' | 'consumption' | 'adjustment'
-      request_status: 'draft' | 'pending_stock_check' | 'stock_checked' | 'submitted_to_supply' | 'completed'
+      request_status: 'draft' | 'pending_stock_check' | 'stock_checked' | 'submitted_to_supply' | 'completed' | 'cancelled'
       order_item_status: 'pending' | 'ordered' | 'delivered' | 'cancelled'
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }

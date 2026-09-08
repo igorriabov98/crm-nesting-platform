@@ -177,9 +177,9 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
     const [machineResult, sheet, pipe, circle, knives, planFactsResult] = await Promise.all([
       client.from('machines').select('id,name,factory_id,factories(id,name)').eq('id', requestResult.data.machine_id).single(),
       client.from('request_sheet_metal').select('id,material_id,material_variant_id,material_name,material_grade,sheet_size,quantity_sheets,calculated_weight_kg').eq('request_id', id).order('sort_order'),
-      client.from('request_pipe').select('id,material_id,material_variant_id,pipe_type,size,remainder_qty,calculated_weight_kg').eq('request_id', id).order('sort_order'),
-      client.from('request_circle').select('id,material_id,material_variant_id,steel_grade,diameter_mm,remainder_mm,calculated_weight_kg').eq('request_id', id).order('sort_order'),
-      client.from('request_knives').select('id,material_id,material_variant_id,knife_type,steel_grade,remainder_qty,calculated_weight_kg').eq('request_id', id).order('sort_order'),
+      client.from('request_pipe').select('id,material_id,material_variant_id,pipe_type,size,remainder_qty,calculated_weight_kg').eq('request_id', id).eq('is_cutting_plan_draft', false).order('sort_order'),
+      client.from('request_circle').select('id,material_id,material_variant_id,steel_grade,diameter_mm,remainder_mm,calculated_weight_kg').eq('request_id', id).eq('is_cutting_plan_draft', false).order('sort_order'),
+      client.from('request_knives').select('id,material_id,material_variant_id,knife_type,steel_grade,remainder_qty,calculated_weight_kg').eq('request_id', id).eq('is_cutting_plan_draft', false).order('sort_order'),
       client.rpc('fn_get_long_stock_completion_plan_facts_v1', { p_request_id: id }),
     ])
     if (machineResult.error || !machineResult.data) throw new Error('Не удалось определить завод машины')
