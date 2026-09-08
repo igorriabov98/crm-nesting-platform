@@ -8,6 +8,7 @@ export const BREADCRUMB_SEGMENT_LABELS: Record<string, string> = {
   new: 'Создание',
   production: 'Производство',
   'cutting-area': 'Участок заготовки',
+  'local-shipments': 'Локальные отгрузки',
   request: 'Заявка на материалы',
   requests: 'Запросы',
   technologist: 'Технолог',

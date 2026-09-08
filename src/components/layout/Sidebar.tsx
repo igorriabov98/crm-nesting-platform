@@ -280,6 +280,9 @@ export function Sidebar({ user, permissions, isMobile = false, onNavigate }: Sid
     ...(permissions.production_fact?.canView
       ? [{ href: ROUTES.PRODUCTION_OUTSOURCING_REQUESTS, label: 'Аутсорсинг', icon: ClipboardList }]
       : []),
+    ...(permissions.production_fact?.canView
+      ? [{ href: ROUTES.PRODUCTION_LOCAL_SHIPMENTS, label: 'Локальные отгрузки', icon: Truck }]
+      : []),
     ...productionSectionItems.filter((item) => item.href !== ROUTES.PRODUCTION),
     ...(permissions.production_fact?.canView && ['financial_director', 'commercial_director', 'planning_director', 'production_manager'].includes(user.role)
       ? [

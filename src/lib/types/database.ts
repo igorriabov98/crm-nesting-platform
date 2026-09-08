@@ -2811,6 +2811,10 @@ export type Database = {
           cancellation_reason: string | null
           cancelled_at: string | null
           cancelled_by: string | null
+          started_at: string | null
+          started_by: string | null
+          completed_at: string | null
+          completed_by: string | null
           created_by: string | null
           updated_by: string | null
           created_at: string
@@ -2831,6 +2835,10 @@ export type Database = {
           cancellation_reason?: string | null
           cancelled_at?: string | null
           cancelled_by?: string | null
+          started_at?: string | null
+          started_by?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
           created_by?: string | null
           updated_by?: string | null
           created_at?: string
@@ -2851,6 +2859,10 @@ export type Database = {
           cancellation_reason?: string | null
           cancelled_at?: string | null
           cancelled_by?: string | null
+          started_at?: string | null
+          started_by?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
           created_by?: string | null
           updated_by?: string | null
           created_at?: string
@@ -2910,6 +2922,7 @@ export type Database = {
           need_title: string
           need_subtitle: string | null
           needed_date: string | null
+          cargo_snapshot: Json | null
           pickup_stop_id: string | null
           delivery_stop_id: string | null
           released_at: string | null
@@ -2931,6 +2944,7 @@ export type Database = {
           need_title: string
           need_subtitle?: string | null
           needed_date?: string | null
+          cargo_snapshot?: Json | null
           pickup_stop_id?: string | null
           delivery_stop_id?: string | null
           released_at?: string | null
@@ -2952,6 +2966,7 @@ export type Database = {
           need_title?: string
           need_subtitle?: string | null
           needed_date?: string | null
+          cargo_snapshot?: Json | null
           pickup_stop_id?: string | null
           delivery_stop_id?: string | null
           released_at?: string | null
