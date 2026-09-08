@@ -204,6 +204,8 @@ jobs:
         run: npm run test:long-stock-cutting-plan-receipt-recalculation
       - name: Long-stock recalculation replacement matrix
         run: npm run test:long-stock-recalculation-replacement
+      - name: Supply position revision matrix
+        run: npm run test:supply-position-revisions
       - name: Fixtures are stable
         run: git diff --exit-code -- nesting-service/src/lib/__tests__/fixtures/
       - name: Phase 0
