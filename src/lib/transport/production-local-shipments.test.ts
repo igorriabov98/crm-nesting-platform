@@ -7,6 +7,7 @@ import {
 import {
   formatProductionShipmentDateTime,
   projectProductionLocalShipments,
+  visibleProductionShipmentNeedKeys,
   type ProductionShipmentLinkRow,
   type ProductionShipmentStopRow,
   type ProductionShipmentTripRow,
@@ -33,6 +34,8 @@ function stop(input: Partial<ProductionShipmentStopRow> & Pick<ProductionShipmen
 function link(input: Partial<ProductionShipmentLinkRow> & Pick<ProductionShipmentLinkRow, 'id'>): ProductionShipmentLinkRow {
   return {
     needKind: 'materials',
+    needSource: 'inventory_transfer',
+    needId: input.id,
     sourcePointKey: factoryPointKey,
     destinationPointLabel: 'Аутсорсинг Берегово',
     title: 'Заказ 42',
@@ -64,6 +67,73 @@ function link(input: Partial<ProductionShipmentLinkRow> & Pick<ProductionShipmen
     ...input,
   }
 }
+
+test('hides active cargo whose source need is no longer visible in transport', () => {
+  const currentTrip = trip({
+    id: 'stale-trip',
+    links: [
+      link({ id: 'completed-transfer', needId: 'completed-transfer' }),
+      link({ id: 'active-transfer', needId: 'active-transfer' }),
+    ],
+  })
+  const visibleActiveNeedKeys = visibleProductionShipmentNeedKeys([
+    {
+      id: 'completed-transfer',
+      source: 'inventory_transfer',
+      status: 'completed',
+      hasRequiredRelations: true,
+      machineArchived: false,
+    },
+    {
+      id: 'active-transfer',
+      source: 'inventory_transfer',
+      status: 'scheduled',
+      hasRequiredRelations: true,
+      machineArchived: false,
+    },
+  ])
+
+  const active = projectProductionLocalShipments({
+    factoryId,
+    trips: [currentTrip],
+    visibleActiveNeedKeys,
+  })
+  assert.deepEqual(active.active[0]?.cargo.map((cargo) => cargo.linkId), ['active-transfer'])
+
+  const staleOnly = projectProductionLocalShipments({
+    factoryId,
+    trips: [{ ...currentTrip, links: [link({ id: 'completed-transfer', needId: 'completed-transfer' })] }],
+    visibleActiveNeedKeys,
+  })
+  assert.deepEqual(staleOnly.active, [])
+
+  const historical = projectProductionLocalShipments({
+    factoryId,
+    trips: [{ ...currentTrip, status: 'completed', completedAt: '2026-09-08T12:00:00.000Z' }],
+    visibleActiveNeedKeys,
+  })
+  assert.deepEqual(historical.history[0]?.cargo.map((cargo) => cargo.linkId), ['completed-transfer', 'active-transfer'])
+})
+
+test('matches active source eligibility used by the transport workspace', () => {
+  const visible = visibleProductionShipmentNeedKeys([
+    { id: 'inventory', source: 'inventory_transfer', status: 'partially_received', hasRequiredRelations: true, machineArchived: false },
+    { id: 'detailing', source: 'detailing_transfer', status: 'scheduled', hasRequiredRelations: true, machineArchived: false },
+    { id: 'outsourcing', source: 'outsourcing', status: 'linked', hasRequiredRelations: true, machineArchived: false },
+    { id: 'supply', source: 'supply_schedule', status: 'planned', hasRequiredRelations: true, machineArchived: false, supplierId: 'supplier' },
+    { id: 'archived', source: 'inventory_transfer', status: 'scheduled', hasRequiredRelations: true, machineArchived: true },
+    { id: 'missing', source: 'outsourcing', status: 'linked', hasRequiredRelations: false, machineArchived: false },
+    { id: 'received', source: 'supply_schedule', status: 'delivered', hasRequiredRelations: true, machineArchived: false, supplierId: 'supplier' },
+    { id: 'receipt-child', source: 'supply_schedule', status: 'planned', hasRequiredRelations: true, machineArchived: false, supplierId: 'supplier', receiptParentScheduleId: 'parent' },
+  ])
+
+  assert.deepEqual([...visible].sort(), [
+    'detailing_transfer:detailing',
+    'inventory_transfer:inventory',
+    'outsourcing:outsourcing',
+    'supply_schedule:supply',
+  ])
+})
 
 function trip(input: Partial<ProductionShipmentTripRow> & Pick<ProductionShipmentTripRow, 'id'>): ProductionShipmentTripRow {
   return {

@@ -5,6 +5,9 @@ import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   projectProductionLocalShipments,
+  visibleProductionShipmentNeedKeys,
+  type ProductionShipmentNeedSource,
+  type ProductionShipmentNeedState,
   type ProductionLocalShipmentsWorkspace,
   type ProductionShipmentLinkRow,
   type ProductionShipmentStopRow,
@@ -39,6 +42,8 @@ type LinkRow = {
   id: string
   transport_order_id: string
   need_kind: 'materials' | 'detailing' | 'outsourcing'
+  need_source: ProductionShipmentNeedSource
+  need_id: string
   source_point_key: string
   destination_point_label: string
   need_title: string
@@ -58,6 +63,33 @@ type TripRow = {
   updated_at: string | null
 }
 type CarrierRow = { id: string; name: string }
+type TransferSourceRow = { id: string; status: string; machine_id: string }
+type OutsourcingNeedSourceRow = { id: string; status: string; operation_id: string }
+type OutsourcingOperationSourceRow = { id: string; machine_id: string }
+type SupplyScheduleSourceRow = {
+  id: string
+  status: string
+  supplier_id: string | null
+  receipt_parent_schedule_id: string | null
+  request_item_table: string
+  request_item_id: string
+}
+type RequestItemSourceRow = { id: string; request_id: string }
+type RequestSourceRow = { id: string; machine_id: string }
+type MachineSourceRow = { id: string; factory_id: string | null; is_archived: boolean | null }
+type SupplierSourceRow = { id: string }
+
+const SUPPLY_REQUEST_ITEM_TABLES = new Set([
+  'request_sheet_metal',
+  'request_round_tube',
+  'request_circle',
+  'request_pipe',
+  'request_knives',
+  'request_components',
+  'request_paint',
+  'request_mesh',
+  'request_chain_cord',
+])
 
 function asDb(value: unknown): Db {
   return value as Db
@@ -82,6 +114,8 @@ function mapLink(link: LinkRow): ProductionShipmentLinkRow {
   return {
     id: link.id,
     needKind: link.need_kind,
+    needSource: link.need_source,
+    needId: link.need_id,
     sourcePointKey: link.source_point_key,
     destinationPointLabel: link.destination_point_label,
     title: link.need_title,
@@ -90,6 +124,148 @@ function mapLink(link: LinkRow): ProductionShipmentLinkRow {
     releasedAt: link.released_at,
     cargoSnapshot: link.cargo_snapshot,
   }
+}
+
+function needIdsBySource(links: LinkRow[], source: ProductionShipmentNeedSource) {
+  return Array.from(new Set(
+    links.filter((link) => link.need_source === source).map((link) => link.need_id),
+  ))
+}
+
+async function rowsByIds(db: Db, table: string, columns: string, ids: string[], errorMessage: string) {
+  if (ids.length === 0) return []
+  const result = await db.from(table).select(columns).in('id', ids)
+  if (result.error) throw new Error(result.error.message || errorMessage)
+  return (result.data || []) as unknown[]
+}
+
+async function loadVisibleActiveNeedKeys(db: Db, trips: TripRow[], links: LinkRow[]) {
+  const activeTripIds = new Set(
+    trips.filter((trip) => trip.status !== 'completed' && trip.status !== 'cancelled').map((trip) => trip.id),
+  )
+  const activeLinks = links.filter((link) => activeTripIds.has(link.transport_order_id) && !link.released_at)
+  if (activeLinks.length === 0) return new Set<string>()
+
+  const inventoryIds = needIdsBySource(activeLinks, 'inventory_transfer')
+  const detailingIds = needIdsBySource(activeLinks, 'detailing_transfer')
+  const outsourcingIds = needIdsBySource(activeLinks, 'outsourcing')
+  const supplyIds = needIdsBySource(activeLinks, 'supply_schedule')
+  const [inventoryRows, detailingRows, outsourcingRows, supplyRows] = await Promise.all([
+    rowsByIds(db, 'inventory_transfers', 'id, status, machine_id', inventoryIds, 'Не удалось проверить перевозки материалов'),
+    rowsByIds(db, 'detailing_transfers', 'id, status, machine_id', detailingIds, 'Не удалось проверить перевозки деталировки'),
+    rowsByIds(db, 'machine_outsourcing_transport_needs', 'id, status, operation_id', outsourcingIds, 'Не удалось проверить перевозки аутсорсинга'),
+    rowsByIds(db, 'supply_order_delivery_schedules', 'id, status, supplier_id, receipt_parent_schedule_id, request_item_table, request_item_id', supplyIds, 'Не удалось проверить поставки материалов'),
+  ])
+
+  const inventory = inventoryRows as TransferSourceRow[]
+  const detailing = detailingRows as TransferSourceRow[]
+  const outsourcing = outsourcingRows as OutsourcingNeedSourceRow[]
+  const supply = supplyRows as SupplyScheduleSourceRow[]
+  const operationRows = await rowsByIds(
+    db,
+    'machine_outsourcing_operations',
+    'id, machine_id',
+    Array.from(new Set(outsourcing.map((row) => row.operation_id))),
+    'Не удалось проверить операции аутсорсинга',
+  ) as OutsourcingOperationSourceRow[]
+  const operationById = new Map(operationRows.map((row) => [row.id, row]))
+
+  const itemGroups = new Map<string, string[]>()
+  for (const schedule of supply) {
+    if (!SUPPLY_REQUEST_ITEM_TABLES.has(schedule.request_item_table)) continue
+    itemGroups.set(schedule.request_item_table, [
+      ...(itemGroups.get(schedule.request_item_table) || []),
+      schedule.request_item_id,
+    ])
+  }
+  const itemResults = await Promise.all(Array.from(itemGroups.entries()).map(async ([table, ids]) => ({
+    table,
+    rows: await rowsByIds(
+      db,
+      table,
+      'id, request_id',
+      Array.from(new Set(ids)),
+      'Не удалось проверить позиции поставки',
+    ) as RequestItemSourceRow[],
+  })))
+  const itemByKey = new Map(
+    itemResults.flatMap(({ table, rows }) => rows.map((row) => [`${table}:${row.id}`, row] as const)),
+  )
+  const requestRows = await rowsByIds(
+    db,
+    'technologist_requests',
+    'id, machine_id',
+    Array.from(new Set(itemResults.flatMap(({ rows }) => rows.map((row) => row.request_id)))),
+    'Не удалось проверить заявки поставок',
+  ) as RequestSourceRow[]
+  const requestById = new Map(requestRows.map((row) => [row.id, row]))
+
+  const machineIds = Array.from(new Set([
+    ...inventory.map((row) => row.machine_id),
+    ...detailing.map((row) => row.machine_id),
+    ...operationRows.map((row) => row.machine_id),
+    ...requestRows.map((row) => row.machine_id),
+  ]))
+  const [machineRows, supplierRows] = await Promise.all([
+    rowsByIds(
+      db,
+      'machines',
+      'id, factory_id, is_archived',
+      machineIds,
+      'Не удалось проверить производственные заказы перевозок',
+    ) as Promise<MachineSourceRow[]>,
+    rowsByIds(
+      db,
+      'suppliers',
+      'id',
+      Array.from(new Set(supply.map((row) => row.supplier_id).filter((id): id is string => Boolean(id)))),
+      'Не удалось проверить поставщиков перевозок',
+    ) as Promise<SupplierSourceRow[]>,
+  ])
+  const machineById = new Map(machineRows.map((row) => [row.id, row]))
+  const supplierIds = new Set(supplierRows.map((row) => row.id))
+
+  const states: ProductionShipmentNeedState[] = [
+    ...inventory.map((row) => ({
+      id: row.id,
+      source: 'inventory_transfer' as const,
+      status: row.status,
+      hasRequiredRelations: true,
+      machineArchived: machineById.get(row.machine_id)?.is_archived === true,
+    })),
+    ...detailing.map((row) => ({
+      id: row.id,
+      source: 'detailing_transfer' as const,
+      status: row.status,
+      hasRequiredRelations: true,
+      machineArchived: machineById.get(row.machine_id)?.is_archived === true,
+    })),
+    ...outsourcing.map((row) => {
+      const operation = operationById.get(row.operation_id)
+      return {
+        id: row.id,
+        source: 'outsourcing' as const,
+        status: row.status,
+        hasRequiredRelations: Boolean(operation && machineById.has(operation.machine_id)),
+        machineArchived: operation ? machineById.get(operation.machine_id)?.is_archived === true : false,
+      }
+    }),
+    ...supply.map((row) => {
+      const item = itemByKey.get(`${row.request_item_table}:${row.request_item_id}`)
+      const request = item ? requestById.get(item.request_id) : null
+      const machine = request ? machineById.get(request.machine_id) : null
+      return {
+        id: row.id,
+        source: 'supply_schedule' as const,
+        status: row.status,
+        hasRequiredRelations: Boolean(machine?.factory_id && row.supplier_id && supplierIds.has(row.supplier_id)),
+        machineArchived: machine?.is_archived === true,
+        supplierId: row.supplier_id && supplierIds.has(row.supplier_id) ? row.supplier_id : null,
+        receiptParentScheduleId: row.receipt_parent_schedule_id,
+      }
+    }),
+  ]
+  return visibleProductionShipmentNeedKeys(states)
 }
 
 export async function getProductionLocalShipmentsWorkspace(input: {
@@ -155,13 +331,15 @@ export async function getProductionLocalShipmentsWorkspace(input: {
       .in('transport_order_id', tripIds)
       .order('sequence_no', { ascending: true }),
     db.from('transport_trip_need_links')
-      .select('id, transport_order_id, need_kind, source_point_key, destination_point_label, need_title, need_subtitle, pickup_stop_id, released_at, cargo_snapshot')
+      .select('id, transport_order_id, need_kind, need_source, need_id, source_point_key, destination_point_label, need_title, need_subtitle, pickup_stop_id, released_at, cargo_snapshot')
       .in('transport_order_id', tripIds),
   ])
   const firstError = [tripsResult, stopsResult, linksResult].find((result) => result.error)?.error
   if (firstError) throw new Error(firstError.message || 'Не удалось загрузить локальные отгрузки')
 
   const tripRows = (tripsResult.data || []) as TripRow[]
+  const linkRows = (linksResult.data || []) as LinkRow[]
+  const visibleActiveNeedKeys = await loadVisibleActiveNeedKeys(db, tripRows, linkRows)
   const carrierIds = Array.from(new Set(
     tripRows.map((trip) => trip.carrier_supplier_id).filter((id): id is string => Boolean(id)),
   ))
@@ -181,7 +359,7 @@ export async function getProductionLocalShipmentsWorkspace(input: {
     ])
   }
   const linksByTrip = new Map<string, ProductionShipmentLinkRow[]>()
-  for (const link of (linksResult.data || []) as LinkRow[]) {
+  for (const link of linkRows) {
     linksByTrip.set(link.transport_order_id, [
       ...(linksByTrip.get(link.transport_order_id) || []),
       mapLink(link),
@@ -199,7 +377,11 @@ export async function getProductionLocalShipmentsWorkspace(input: {
     stops: stopsByTrip.get(trip.id) || [],
     links: linksByTrip.get(trip.id) || [],
   }))
-  const projected = projectProductionLocalShipments({ factoryId: selectedFactoryId, trips })
+  const projected = projectProductionLocalShipments({
+    factoryId: selectedFactoryId,
+    trips,
+    visibleActiveNeedKeys,
+  })
 
   return {
     factories,
