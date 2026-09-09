@@ -29,6 +29,7 @@ import {
   hasCompleteTransportPositionSelection,
   type TransportNeedGroup,
 } from '@/lib/transport/need-groups'
+import { materialCategoryLabel } from '@/lib/transport/inventory-transfer-materials'
 import {
   createTransportCargoSnapshot,
   parseTransportCargoSnapshot,
@@ -540,6 +541,10 @@ function mapDetailingNeed(card: DetailingTransferCard): UnifiedTransportNeed {
 
 function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
   const key = needKey('inventory_transfer', card.id)
+  const itemWeights = card.items.map((item) => item.weightKg)
+  const weightKg = itemWeights.length > 0 && itemWeights.every((weight): weight is number => weight !== null)
+    ? itemWeights.reduce((sum, weight) => sum + weight, 0)
+    : null
   return {
     key,
     positionKey: key,
@@ -562,41 +567,53 @@ function mapMaterialNeed(card: InventoryTransferCard): UnifiedTransportNeed {
     neededDate: card.expectedArrivalDate || card.deadline,
     deadline: card.deadline,
     itemLabels: card.items.map((item) => item.materialName),
-    itemDetails: card.items.map((item) => ({
-      id: item.id,
-      logicalItemKey: `inventory:${item.id}`,
-      productId: null,
-      productVersionId: null,
-      productHref: null,
-      drawingHref: null,
-      title: item.materialName,
-      drawingLabel: null,
-      description: [
-        item.materialCategory,
-        item.pieceLengthMm ? `Длина ${numberLabel(item.pieceLengthMm, 0)} мм` : null,
-        item.isBusinessScrap ? 'Деловой остаток' : null,
-      ].filter(Boolean).join(' · ') || null,
-      quantityLabel: [
-        `${numberLabel(item.remainingQuantity)} ${item.unit}`,
-        item.remainingSecondaryQuantity !== null && item.secondaryUnit
-          ? `${numberLabel(item.remainingSecondaryQuantity)} ${item.secondaryUnit}`
-          : null,
-      ].filter(Boolean).join(' · '),
-      quantity: item.remainingQuantity,
-      requiredQuantity: null,
-      excessQuantity: null,
-      unit: item.unit,
-      weightKg: null,
-      pieceLengthMm: item.pieceLengthMm,
-      pieceCount: null,
-      machineLabel: card.machineName,
-      characteristics: [
-        item.materialCategory ? { label: 'Категория', value: item.materialCategory } : null,
-        item.pieceLengthMm ? { label: 'Длина', value: `${numberLabel(item.pieceLengthMm, 0)} мм` } : null,
-      ].filter((entry): entry is { label: string; value: string } => Boolean(entry)),
-    })),
+    itemDetails: card.items.map((item) => {
+      const categoryLabel = materialCategoryLabel(item.materialCategory)
+      const carriedQuantity = formatTransportCarriedQuantity({
+        quantity: item.remainingQuantity,
+        unit: item.unit,
+        pieceLengthMm: item.pieceLengthMm,
+        pieceCount: item.remainingSecondaryQuantity,
+      })
+      return {
+        id: item.id,
+        logicalItemKey: `inventory:${item.id}`,
+        productId: null,
+        productVersionId: null,
+        productHref: null,
+        drawingHref: null,
+        title: item.materialName,
+        drawingLabel: null,
+        description: [
+          categoryLabel,
+          item.pieceLengthMm ? `Длина хлыста ${numberLabel(item.pieceLengthMm, 0)} мм` : null,
+          item.isBusinessScrap ? 'Деловой остаток' : null,
+        ].filter(Boolean).join(' · ') || null,
+        quantityLabel: carriedQuantity || [
+          `${numberLabel(item.remainingQuantity)} ${item.unit}`,
+          item.remainingSecondaryQuantity !== null && item.secondaryUnit
+            ? `${numberLabel(item.remainingSecondaryQuantity)} ${item.secondaryUnit}`
+            : null,
+        ].filter(Boolean).join(' · '),
+        quantity: item.remainingQuantity,
+        requiredQuantity: null,
+        excessQuantity: null,
+        unit: item.unit,
+        weightKg: item.weightKg,
+        pieceLengthMm: item.pieceLengthMm,
+        pieceCount: item.remainingSecondaryQuantity,
+        machineLabel: card.machineName,
+        characteristics: [
+          categoryLabel ? { label: 'Категория', value: categoryLabel } : null,
+          ...item.characteristics,
+          item.pieceLengthMm
+            ? { label: 'Длина хлыста', value: `${numberLabel(item.pieceLengthMm, 0)} мм` }
+            : null,
+        ].filter((entry): entry is { label: string; value: string } => Boolean(entry)),
+      }
+    }),
     volumeLabel: `${card.items.length} поз.`,
-    weightKg: null,
+    weightKg,
     deliveryRisk: card.deliveryRisk,
     selectable: Boolean(card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim()),
     unavailableReason: card.sourceFactoryCity?.trim() && card.destinationFactoryCity?.trim() ? null : 'У площадки не указан город',

@@ -9,8 +9,13 @@ import { Input } from '@/components/ui/input'
 import {
   receiveInventoryTransfer,
   type InventoryTransferCard,
-  type InventoryTransferItemCard,
 } from '@/lib/actions/inventory-transfers'
+import {
+  formatInventoryTransferQuantity,
+  inventoryTransferReceiptInputValue,
+  inventoryTransferReceiptPrimaryQuantity,
+  isMeasuredInventoryTransferItem,
+} from '@/lib/transport/inventory-transfer-materials'
 
 function formatDate(value: string | null) {
   if (!value) return 'Дата доставки не указана'
@@ -22,17 +27,14 @@ function amount(value: number) {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(value)
 }
 
-function quantity(item: InventoryTransferItemCard, value: number, secondary: number | null) {
-  const primary = `${amount(value)} ${item.unit}`
-  if (secondary === null || !item.secondaryUnit) return primary
-  return `${primary} / ${amount(secondary)} ${item.secondaryUnit}`
-}
-
 export function InventoryTransferReceivingPanel({ cards }: { cards: InventoryTransferCard[] }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [drafts, setDrafts] = useState<Record<string, string>>(() =>
-    Object.fromEntries(cards.flatMap((card) => card.items.map((item) => [item.id, String(item.remainingQuantity)]))),
+    Object.fromEntries(cards.flatMap((card) => card.items.map((item) => [
+      item.id,
+      String(inventoryTransferReceiptInputValue(item)),
+    ]))),
   )
   const groups = useMemo(() => {
     const map = new Map<string, InventoryTransferCard[]>()
@@ -44,7 +46,19 @@ export function InventoryTransferReceivingPanel({ cards }: { cards: InventoryTra
   }, [cards])
 
   const receive = (card: InventoryTransferCard) => startTransition(async () => {
-    const items = card.items.map((item) => ({ itemId: item.id, quantity: Number(drafts[item.id] || 0) }))
+    const invalidMeasuredItem = card.items.find((item) => {
+      const displayedQuantity = Number(drafts[item.id] || 0)
+      return isMeasuredInventoryTransferItem(item)
+        && (!Number.isInteger(displayedQuantity) || displayedQuantity < 0)
+    })
+    if (invalidMeasuredItem) {
+      toast.error('Количество хлыстов укажите целым числом')
+      return
+    }
+    const items = card.items.map((item) => ({
+      itemId: item.id,
+      quantity: inventoryTransferReceiptPrimaryQuantity(item, Number(drafts[item.id] || 0)),
+    }))
     if (!items.some((item) => item.quantity > 0)) {
       toast.error('Укажите фактически принятое количество')
       return
@@ -85,14 +99,15 @@ export function InventoryTransferReceivingPanel({ cards }: { cards: InventoryTra
                   <thead className="text-xs uppercase text-[#64748B]"><tr><th className="py-2">Материал</th><th>План</th><th>Принято ранее</th><th>Факт сейчас</th><th>Отклонение</th><th>Источник</th></tr></thead>
                   <tbody>{card.items.map((item) => {
                     const actual = Number(drafts[item.id] || 0)
-                    const variance = actual - item.remainingQuantity
+                    const measured = isMeasuredInventoryTransferItem(item)
+                    const variance = actual - inventoryTransferReceiptInputValue(item)
                     return (
                       <tr key={item.id} className="border-t border-[#EDF0F4]">
-                        <td className="py-2 font-medium">{item.materialName}{item.pieceLengthMm ? <span className="font-normal text-[#6B7280]"> · {amount(item.pieceLengthMm)} мм/кусок</span> : null}</td>
-                        <td>{quantity(item, item.requestedQuantity, item.requestedSecondaryQuantity)}</td>
-                        <td>{quantity(item, item.receivedQuantity, item.receivedSecondaryQuantity)}</td>
-                        <td><div className="flex items-center gap-2"><Input className="w-28" type="number" min="0" step="0.01" value={drafts[item.id] || ''} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))} /><span className="text-xs text-[#64748B]">{item.unit}</span></div></td>
-                        <td className={variance > 0 ? 'font-medium text-amber-700' : variance < 0 ? 'font-medium text-blue-700' : 'text-emerald-700'}>{variance > 0 ? '+' : ''}{amount(variance)} {item.unit}</td>
+                        <td className="py-2 font-medium">{item.materialName}{item.pieceLengthMm ? <span className="font-normal text-[#6B7280]"> · Длина хлыста: {amount(item.pieceLengthMm)} мм</span> : null}</td>
+                        <td>{formatInventoryTransferQuantity(item, item.requestedQuantity, item.requestedSecondaryQuantity)}</td>
+                        <td>{formatInventoryTransferQuantity(item, item.receivedQuantity, item.receivedSecondaryQuantity)}</td>
+                        <td><div className="flex items-center gap-2"><Input className="w-28" type="number" min="0" step={measured ? '1' : '0.01'} value={drafts[item.id] || ''} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))} /><span className="text-xs text-[#64748B]">{measured && item.pieceLengthMm ? `шт. × ${amount(item.pieceLengthMm)} мм` : item.unit}</span></div></td>
+                        <td className={variance > 0 ? 'font-medium text-amber-700' : variance < 0 ? 'font-medium text-blue-700' : 'text-emerald-700'}>{variance > 0 ? '+' : ''}{amount(variance)} {measured ? 'шт.' : item.unit}</td>
                         <td>{item.isBusinessScrap ? 'Деловой отход' : 'Основной склад'}</td>
                       </tr>
                     )

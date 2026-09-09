@@ -6,6 +6,12 @@ import { ROUTES } from '@/lib/constants/routes'
 import { ACTIVE_TRANSFER_STATUSES, isMachineWorkVisible } from '@/lib/machine-work-visibility'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import {
+  calculateInventoryTransferMaterialWeight,
+  inventoryTransferMaterialCharacteristics,
+  type InventoryTransferMaterialCharacteristic,
+  type InventoryTransferMaterialVariant,
+} from '@/lib/transport/inventory-transfer-materials'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 
 type DbResult<T = unknown> = { data: T | null; error: { message?: string } | null }
@@ -44,6 +50,8 @@ export type InventoryTransferItemCard = {
   secondaryUnit: string | null
   pieceLengthMm: number | null
   isBusinessScrap: boolean
+  weightKg: number | null
+  characteristics: InventoryTransferMaterialCharacteristic[]
 }
 
 export type InventoryTransferCard = {
@@ -111,7 +119,7 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
   const [itemsResult, machinesResult, factoriesResult, tasksResult] = await Promise.all([
     db
       .from('inventory_transfer_items')
-      .select('id, transfer_id, material_id, material_variant_id, request_item_table, request_item_id, requested_quantity, received_quantity, requested_secondary_quantity, received_secondary_quantity, unit, secondary_unit, piece_length_mm, is_business_scrap')
+      .select('id, transfer_id, source_inventory_id, material_id, material_variant_id, request_item_table, request_item_id, requested_quantity, received_quantity, requested_secondary_quantity, received_secondary_quantity, unit, secondary_unit, piece_length_mm, is_business_scrap')
       .in('transfer_id', transferIds)
       .order('created_at', { ascending: true }),
     db.from('machines').select('id, name, is_archived').in('id', machineIds),
@@ -130,14 +138,53 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
 
   const itemRows = (itemsResult.data || []) as Array<Record<string, unknown>>
   const materialIds = Array.from(new Set(itemRows.map((row) => String(row.material_id))))
-  const materialsResult = materialIds.length > 0
-    ? await db.from('materials').select('id, name, category').in('id', materialIds)
+  const materialVariantIds = Array.from(new Set(itemRows
+    .map((row) => row.material_variant_id ? String(row.material_variant_id) : null)
+    .filter((id): id is string => Boolean(id))))
+  const sourceInventoryIds = Array.from(new Set(itemRows
+    .map((row) => row.source_inventory_id ? String(row.source_inventory_id) : null)
+    .filter((id): id is string => Boolean(id))))
+  const [materialsResult, materialVariantsResult, sourceInventoriesResult] = await Promise.all([
+    materialIds.length > 0
+      ? db.from('materials').select('id, name, category').in('id', materialIds)
+      : { data: [], error: null },
+    materialVariantIds.length > 0
+      ? db.from('material_variants')
+        .select('id, category, steel_type_id, material_grade, thickness_mm, sheet_size, weight_per_unit_kg, length_m, weight_per_m_kg, piece_description, knife_dimensions, knife_material, knife_bevel_count, specification, default_unit, ral_code, finish, diameter_mm, is_calibrated, pipe_type, wall_thickness_mm, width_mm, height_mm, mesh_description, mesh_length_mm, mesh_width_mm, chain_cord_type, chain_cord_parameters, unit_weight_kg')
+        .in('id', materialVariantIds)
+      : { data: [], error: null },
+    sourceInventoryIds.length > 0
+      ? db.from('inventory').select('id, total_quantity, calculated_weight_kg').in('id', sourceInventoryIds)
+      : { data: [], error: null },
+  ])
+  for (const result of [materialsResult, materialVariantsResult, sourceInventoriesResult]) {
+    if (result.error) {
+      throw new Error(result.error.message || 'Не удалось загрузить материалы перевозки')
+    }
+  }
+
+  const materialVariants = new Map(((materialVariantsResult.data || []) as Array<InventoryTransferMaterialVariant & { id: string }>).map((row) => [row.id, row]))
+  const steelTypeIds = Array.from(new Set(Array.from(materialVariants.values())
+    .map((variant) => variant.steel_type_id)
+    .filter((id): id is string => Boolean(id))))
+  const steelTypesResult = steelTypeIds.length > 0
+    ? await db.from('steel_types').select('id, name, density_kg_mm3').in('id', steelTypeIds)
     : { data: [], error: null }
-  if (materialsResult.error) {
-    throw new Error(materialsResult.error.message || 'Не удалось загрузить материалы перевозки')
+  if (steelTypesResult.error) {
+    throw new Error(steelTypesResult.error.message || 'Не удалось загрузить марки стали перевозки')
   }
 
   const materials = new Map(((materialsResult.data || []) as Array<{ id: string; name: string; category: string | null }>).map((row) => [row.id, row]))
+  const steelTypes = new Map(((steelTypesResult.data || []) as Array<{
+    id: string
+    name: string
+    density_kg_mm3: number
+  }>).map((row) => [row.id, row]))
+  const sourceInventories = new Map(((sourceInventoriesResult.data || []) as Array<{
+    id: string
+    total_quantity: number
+    calculated_weight_kg: number | null
+  }>).map((row) => [row.id, row]))
   const machines = new Map(((machinesResult.data || []) as Array<{ id: string; name: string; is_archived: boolean | null }>).map((row) => [row.id, row]))
   const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>).map((row) => [row.id, row]))
   const tasks = (tasksResult.data || []) as Array<{ id: string; inventory_transfer_id: string; status: string; deadline: string | null }>
@@ -169,16 +216,23 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
         const requestedSecondary = item.requested_secondary_quantity === null ? null : numberValue(item.requested_secondary_quantity)
         const receivedSecondary = item.received_secondary_quantity === null ? null : numberValue(item.received_secondary_quantity)
         const material = materials.get(String(item.material_id))
+        const variant = item.material_variant_id
+          ? materialVariants.get(String(item.material_variant_id)) || null
+          : null
+        const category = material?.category || variant?.category || null
+        const steelType = variant?.steel_type_id ? steelTypes.get(variant.steel_type_id) : null
+        const sourceInventory = sourceInventories.get(String(item.source_inventory_id))
+        const remainingQuantity = Math.max(requested - received, 0)
         return {
           id: String(item.id),
           materialId: String(item.material_id),
           materialName: material?.name || 'Материал',
-          materialCategory: material?.category || null,
+          materialCategory: category,
           requestItemTable: String(item.request_item_table),
           requestItemId: String(item.request_item_id),
           requestedQuantity: requested,
           receivedQuantity: received,
-          remainingQuantity: Math.max(requested - received, 0),
+          remainingQuantity,
           requestedSecondaryQuantity: requestedSecondary,
           receivedSecondaryQuantity: receivedSecondary,
           remainingSecondaryQuantity: requestedSecondary === null
@@ -188,6 +242,23 @@ async function loadTransferCards(db: TransferDb, activeOnly: boolean): Promise<I
           secondaryUnit: item.secondary_unit ? String(item.secondary_unit) : null,
           pieceLengthMm: item.piece_length_mm === null ? null : numberValue(item.piece_length_mm),
           isBusinessScrap: Boolean(item.is_business_scrap),
+          weightKg: calculateInventoryTransferMaterialWeight({
+            remainingQuantity,
+            unit: String(item.unit || ''),
+            variant,
+            densityKgMm3: steelType?.density_kg_mm3 ?? null,
+            sourceStock: sourceInventory ? {
+              totalQuantity: numberValue(sourceInventory.total_quantity),
+              calculatedWeightKg: sourceInventory.calculated_weight_kg === null
+                ? null
+                : numberValue(sourceInventory.calculated_weight_kg),
+            } : null,
+          }),
+          characteristics: inventoryTransferMaterialCharacteristics({
+            category,
+            variant,
+            steelTypeName: steelType?.name || null,
+          }),
         }
       })
 
