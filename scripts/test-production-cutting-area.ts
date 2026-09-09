@@ -7,11 +7,13 @@ import {
   isCuttingAreaFileForItem,
   type CuttingAreaItemFileBinding,
 } from '../src/lib/production-cutting-area/files'
+import { isActiveCuttingAreaRequest } from '../src/lib/production-cutting-area/request-status'
 
 const root = process.cwd()
 const read = (path: string) => readFileSync(join(root, path), 'utf8')
 const migration = read('supabase/migrations/20260809120000_production_cutting_area.sql')
 const factoryScopeMigration = read('supabase/migrations/20260811120000_production_cutting_area_factory_scope.sql')
+const cancelledRequestMigration = read('supabase/migrations/20260909173000_ignore_cancelled_cutting_area_requests.sql')
 
 for (const table of ['production_cutting_cycles', 'production_cutting_cycle_requests', 'production_cutting_cycle_events']) {
   assert(migration.includes(`create table public.${table}`), `Нет таблицы ${table}`)
@@ -37,6 +39,11 @@ assert(factoryScopeMigration.includes("factory_scope = 'own' or resource_key = '
 assert(factoryScopeMigration.includes('old_factory_scope'))
 assert(factoryScopeMigration.includes('new_factory_scope'))
 assert(!factoryScopeMigration.includes("set factory_scope = 'all'"), 'Миграция не должна автоматически открывать оба завода')
+assert(isActiveCuttingAreaRequest('completed'))
+assert(isActiveCuttingAreaRequest('stock_checked'))
+assert(!isActiveCuttingAreaRequest('cancelled'))
+assert.match(cancelledRequestMigration, /request\.status <> 'cancelled'::public\.request_status/)
+assert.match(cancelledRequestMigration, /fn_start_production_cutting_cycle_before_race_serialization/)
 
 const resource = PERMISSION_RESOURCES.find((candidate) => candidate.key === 'production_cutting_area')
 assert(resource)
@@ -65,6 +72,8 @@ assert(action.includes("db.from('factories').select('id,name')"), 'Payload до�
 assert(action.includes('canViewAllFactories: canSeeAllFactories'), 'Payload должен сообщать о полном заводском охвате')
 assert(!action.includes('DIRECTOR_ROLES'), 'Серверные действия должны использовать единый резолвер охвата')
 assert(action.includes('production_month'))
+assert(action.includes('isActiveCuttingAreaRequest(request.status)'))
+assert(action.includes(".neq('status', 'cancelled')"), 'Старт цикла не должен передавать отменённые заявки')
 assert(action.includes(".in('product_id', productIds)"), 'Файлы старых позиций должны находиться по product_id')
 assert(action.includes("['drawing','step','pdf']"), 'PDF изделия должен отображаться вместе с чертежами')
 assert(action.includes("db.from('long_stock_cutting_plan_items')"), 'Под заявкой должны загружаться карты раскроя')
