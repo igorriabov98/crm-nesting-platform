@@ -14,14 +14,22 @@ export type FactoryScopedPermissionContext = {
   }
 }
 
-export function canAccessAllFactories(
+export function canAccessAllFactoriesFromMatrixOrAdmin(
   permission: FactoryScopedPermissionContext,
   resourceKey: ResourceKey,
   operation: PermissionOperation,
 ) {
   return permission.permissionDetails.isAdminPosition
-    || (DIRECTOR_ACCESS_ROLES as readonly string[]).includes(permission.role)
     || permission.permissionDetails.factoryScopes[resourceKey]?.[operation] === 'all'
+}
+
+export function canAccessAllFactories(
+  permission: FactoryScopedPermissionContext,
+  resourceKey: ResourceKey,
+  operation: PermissionOperation,
+) {
+  return canAccessAllFactoriesFromMatrixOrAdmin(permission, resourceKey, operation)
+    || (DIRECTOR_ACCESS_ROLES as readonly string[]).includes(permission.role)
 }
 
 export function canAccessFactory(

@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { canAccessAllFactories } from '@/lib/permissions/factory-scope'
+import { canAccessAllFactoriesFromMatrixOrAdmin } from '@/lib/permissions/factory-scope'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
@@ -96,7 +96,7 @@ export async function getProductionLocalShipmentsWorkspace(input: {
   factoryId?: string | null
 } = {}): Promise<ProductionLocalShipmentsWorkspace> {
   const auth = await requirePermission('production_fact', 'view')
-  const canViewAll = canAccessAllFactories(auth, 'production_fact', 'view')
+  const canViewAll = canAccessAllFactoriesFromMatrixOrAdmin(auth, 'production_fact', 'view')
   const db = asDb(createAdminClient())
   const factoryResult = canViewAll
     ? await db.from('factories').select('id, name').order('name', { ascending: true })
