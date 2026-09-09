@@ -15,6 +15,17 @@ const shipmentTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
 })
 
 export type ProductionLocalShipmentState = 'waiting' | 'onsite' | 'completed' | 'cancelled'
+export type ProductionShipmentNeedSource = 'inventory_transfer' | 'supply_schedule' | 'detailing_transfer' | 'outsourcing'
+
+export type ProductionShipmentNeedState = {
+  id: string
+  source: ProductionShipmentNeedSource
+  status: string
+  hasRequiredRelations: boolean
+  machineArchived: boolean
+  supplierId?: string | null
+  receiptParentScheduleId?: string | null
+}
 
 export type ProductionLocalShipmentCargo = {
   linkId: string
@@ -66,6 +77,8 @@ export type ProductionShipmentStopRow = {
 export type ProductionShipmentLinkRow = {
   id: string
   needKind: 'materials' | 'detailing' | 'outsourcing'
+  needSource: ProductionShipmentNeedSource
+  needId: string
   sourcePointKey: string
   destinationPointLabel: string
   title: string
@@ -73,6 +86,24 @@ export type ProductionShipmentLinkRow = {
   pickupStopId: string | null
   releasedAt: string | null
   cargoSnapshot: unknown
+}
+
+export function productionShipmentNeedKey(input: Pick<ProductionShipmentNeedState, 'source' | 'id'>) {
+  return `${input.source}:${input.id}`
+}
+
+export function visibleProductionShipmentNeedKeys(states: ProductionShipmentNeedState[]) {
+  const visible = states.filter((state) => {
+    if (!state.hasRequiredRelations || state.machineArchived) return false
+    if (state.source === 'inventory_transfer' || state.source === 'detailing_transfer') {
+      return ['needs_date', 'scheduled', 'partially_received'].includes(state.status)
+    }
+    if (state.source === 'outsourcing') return ['open', 'linked'].includes(state.status)
+    return state.status === 'planned'
+      && Boolean(state.supplierId)
+      && !state.receiptParentScheduleId
+  })
+  return new Set(visible.map(productionShipmentNeedKey))
 }
 
 export type ProductionShipmentTripRow = {
@@ -127,6 +158,7 @@ function belongsToCancelledTrip(link: ProductionShipmentLinkRow, trip: Productio
 export function projectProductionLocalShipments(input: {
   factoryId: string
   trips: ProductionShipmentTripRow[]
+  visibleActiveNeedKeys?: ReadonlySet<string>
   now?: Date
   historyLimit?: number
 }) {
@@ -140,7 +172,11 @@ export function projectProductionLocalShipments(input: {
     return factoryStops.flatMap((stop): ProductionLocalShipment[] => {
       const cargo = trip.links
         .filter((link) => (
-          (!link.releasedAt || belongsToCancelledTrip(link, trip))
+          (trip.status === 'completed'
+            || trip.status === 'cancelled'
+            || !input.visibleActiveNeedKeys
+            || input.visibleActiveNeedKeys.has(productionShipmentNeedKey({ source: link.needSource, id: link.needId })))
+          && (!link.releasedAt || belongsToCancelledTrip(link, trip))
           && link.sourcePointKey === factoryPointKey
           && (link.pickupStopId === stop.id || (!link.pickupStopId && stop === factoryStops[0]))
         ))
