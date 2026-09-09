@@ -20,7 +20,14 @@ import { updateMachinePackingSettings } from '@/app/(protected)/sales-plan/actio
 import { getNextSpecificationNumber } from '@/lib/actions/contracts'
 import { ContractSelectField } from '@/components/features/contracts/ContractSelectField'
 import { MACHINE_DELIVERY_BASIS_OPTIONS, MACHINE_DELIVERY_BASIS_VALUES, type MachineDeliveryBasisType } from '@/lib/constants/machine-delivery-basis'
-import { defaultPackingBoxGroup, documentGrossWeight, documentLineNetWeight, packingSummaryFromGroups, totalPackingPlaces } from '@/lib/packing-summary'
+import {
+  PACKING_GROUP_PRESETS,
+  documentGrossWeight,
+  documentLineNetWeight,
+  packingSummaryFromGroups,
+  totalPackingPlaces,
+  type PackingGroupPreset,
+} from '@/lib/packing-summary'
 import { cn } from '@/lib/utils'
 import type { MachineDetails } from '@/lib/types'
 
@@ -63,16 +70,7 @@ interface PackingListTabProps {
 }
 
 function initialGroups(machine: MachineDetails): DraftGroup[] {
-  const storedGroups = machine.machine_packing_groups || []
-  const goodsCount = (machine.machine_items || []).filter((item) => !item.is_sample).length
-  const fallbackGroup = defaultPackingBoxGroup(Number(machine.packing_boxes_count || 0), goodsCount)
-  const groups = storedGroups.length > 0
-    ? storedGroups
-    : fallbackGroup
-      ? [fallbackGroup]
-      : []
-
-  return [...groups]
+  return [...(machine.machine_packing_groups || [])]
     .sort((a, b) => {
       const byOrder = (a.sort_order || 0) - (b.sort_order || 0)
       return byOrder || a.start_item_number - b.start_item_number
@@ -200,7 +198,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
     setGroups((current) => current.map((group, groupIndex) => groupIndex === index ? { ...group, ...patch } : group))
   }
 
-  const addGroup = () => {
+  const addGroup = (preset: PackingGroupPreset) => {
     const lastEnd = groups.length > 0
       ? Number(groups[groups.length - 1].end_item_number || groups[groups.length - 1].start_item_number || 0)
       : 0
@@ -210,8 +208,8 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
       {
         start_item_number: String(nextRow),
         end_item_number: String(nextRow),
-        packing_type_en: 'Pack',
-        packing_type_ua: 'пачка',
+        packing_type_en: preset.packing_type_en,
+        packing_type_ua: preset.packing_type_ua,
         places: '1',
       },
     ])
@@ -497,94 +495,119 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <Table>
-          <TableHeader className="bg-[#F8F9FA]">
-            <TableRow>
-              <TableHead className="w-24 text-[#6B7280]">С</TableHead>
-              <TableHead className="w-24 text-[#6B7280]">По</TableHead>
-              <TableHead className="text-[#6B7280]">Packing type EN</TableHead>
-              <TableHead className="text-[#6B7280]">Тип упаковки UA</TableHead>
-              <TableHead className="w-28 text-right text-[#6B7280]">Places</TableHead>
-              {canEdit && <TableHead className="w-12" />}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {groups.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={canEdit ? 6 : 5} className="h-20 text-center text-[#9CA3AF]">
-                  Нет упаковочных групп
-                </TableCell>
-              </TableRow>
-            ) : (
-              groups.map((group, index) => (
-                <TableRow key={group.id || index}>
-                  <TableCell>
-                    <Input
-                      value={group.start_item_number}
-                      onChange={(event) => updateGroup(index, { start_item_number: event.target.value })}
-                      disabled={!canEdit || isPending}
-                      inputMode="numeric"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      value={group.end_item_number}
-                      onChange={(event) => updateGroup(index, { end_item_number: event.target.value })}
-                      disabled={!canEdit || isPending}
-                      inputMode="numeric"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      value={group.packing_type_en}
-                      onChange={(event) => updateGroup(index, { packing_type_en: event.target.value })}
-                      disabled={!canEdit || isPending}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      value={group.packing_type_ua}
-                      onChange={(event) => updateGroup(index, { packing_type_ua: event.target.value })}
-                      disabled={!canEdit || isPending}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      value={group.places}
-                      onChange={(event) => updateGroup(index, { places: event.target.value })}
-                      disabled={!canEdit || isPending}
-                      inputMode="numeric"
-                      className="text-right"
-                    />
-                  </TableCell>
-                  {canEdit && (
-                    <TableCell>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => removeGroup(index)}
-                        disabled={isPending}
-                        className="text-[#DC2626] hover:bg-red-50 hover:text-[#B91C1C]"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="packing-groups-title">
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 id="packing-groups-title" className="text-sm font-semibold text-slate-950">
+              Упаковочные группы
+            </h3>
+            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-500">
+              Коробки учитываются отдельно. Здесь укажите, какие позиции собраны в Pack (пачка) или Wooden pallet (дерев. піддон).
+            </p>
+          </div>
+          {canEdit && (
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              {PACKING_GROUP_PRESETS.map((preset) => (
+                <Button
+                  key={preset.key}
+                  type="button"
+                  variant="outline"
+                  onClick={() => addGroup(preset)}
+                  disabled={isPending || goods.length === 0}
+                  className="justify-start"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Добавить {preset.label}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
 
-      {canEdit && (
-        <Button type="button" variant="outline" onClick={addGroup} disabled={isPending}>
-          <Plus className="mr-2 h-4 w-4" />
-          Добавить группу
-        </Button>
-      )}
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-[#F8F9FA]">
+              <TableRow>
+                <TableHead className="w-28 text-[#6B7280]">С позиции</TableHead>
+                <TableHead className="w-28 text-[#6B7280]">По позицию</TableHead>
+                <TableHead className="text-[#6B7280]">Packing type EN</TableHead>
+                <TableHead className="text-[#6B7280]">Тип упаковки UA</TableHead>
+                <TableHead className="w-28 text-right text-[#6B7280]">Places</TableHead>
+                {canEdit && <TableHead className="w-12" />}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {groups.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={canEdit ? 6 : 5} className="h-20 text-center text-[#9CA3AF]">
+                    {canEdit
+                      ? 'Выберите Pack или Wooden pallet кнопками выше'
+                      : 'Нет упаковочных групп'}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                groups.map((group, index) => (
+                  <TableRow key={group.id || index}>
+                    <TableCell>
+                      <Input
+                        value={group.start_item_number}
+                        onChange={(event) => updateGroup(index, { start_item_number: event.target.value })}
+                        disabled={!canEdit || isPending}
+                        inputMode="numeric"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        value={group.end_item_number}
+                        onChange={(event) => updateGroup(index, { end_item_number: event.target.value })}
+                        disabled={!canEdit || isPending}
+                        inputMode="numeric"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        value={group.packing_type_en}
+                        onChange={(event) => updateGroup(index, { packing_type_en: event.target.value })}
+                        disabled={!canEdit || isPending}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        value={group.packing_type_ua}
+                        onChange={(event) => updateGroup(index, { packing_type_ua: event.target.value })}
+                        disabled={!canEdit || isPending}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        value={group.places}
+                        onChange={(event) => updateGroup(index, { places: event.target.value })}
+                        disabled={!canEdit || isPending}
+                        inputMode="numeric"
+                        className="text-right"
+                      />
+                    </TableCell>
+                    {canEdit && (
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeGroup(index)}
+                          disabled={isPending}
+                          className="text-[#DC2626] hover:bg-red-50 hover:text-[#B91C1C]"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </section>
 
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
         <Table>

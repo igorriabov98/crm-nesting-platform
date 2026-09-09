@@ -7,28 +7,22 @@ type PackingSummaryGroup = {
   places: number
 }
 
-export type DefaultPackingBoxGroup = PackingSummaryGroup & {
-  id?: string
-  packing_type_ua: string
-  start_item_number: number
-  end_item_number: number
-  sort_order: number
-}
+export const PACKING_GROUP_PRESETS = [
+  {
+    key: 'pack',
+    label: 'Pack (пачка)',
+    packing_type_en: 'Pack',
+    packing_type_ua: 'пачка',
+  },
+  {
+    key: 'wooden-pallet',
+    label: 'Wooden pallet (дерев. піддон)',
+    packing_type_en: 'Wooden pallet',
+    packing_type_ua: 'дерев. піддон',
+  },
+] as const
 
-export function defaultPackingBoxGroup(boxesCount: number, itemCount: number): DefaultPackingBoxGroup | null {
-  const places = Math.max(0, Math.trunc(Number(boxesCount) || 0))
-  const endItemNumber = Math.max(0, Math.trunc(Number(itemCount) || 0))
-  if (places === 0 || endItemNumber === 0) return null
-
-  return {
-    start_item_number: 1,
-    end_item_number: endItemNumber,
-    packing_type_en: 'Cardboard boxes',
-    packing_type_ua: 'картонні коробки',
-    places,
-    sort_order: 0,
-  }
-}
+export type PackingGroupPreset = (typeof PACKING_GROUP_PRESETS)[number]
 
 export function documentUnitWeight(weight: number) {
   return weight * DOCUMENT_WEIGHT_FACTOR
@@ -64,11 +58,6 @@ function joinSummaryParts(parts: string[], conjunction: string) {
   return parts.join(` ${conjunction} `)
 }
 
-function representsCardboardBoxes(group: PackingSummaryGroup, boxesCount: number) {
-  const type = group.packing_type_en.trim().toLowerCase()
-  return group.places === boxesCount && (type === 'cardboard box' || type === 'cardboard boxes')
-}
-
 export function packingSummaryFromGroups(
   groups: PackingSummaryGroup[],
   language: 'en' | 'ua',
@@ -87,7 +76,7 @@ export function packingSummaryFromGroups(
     language === 'en' ? `${count} ${pluralizeEn(type, count)}` : `${count} ${type}`
   ))
 
-  if (boxesCount > 0 && !groups.some((group) => representsCardboardBoxes(group, boxesCount))) {
+  if (boxesCount > 0) {
     parts.push(boxLabel(boxesCount, language))
   }
 
