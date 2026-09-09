@@ -25,6 +25,7 @@ import {
   type CuttingAreaWorkspace,
 } from '@/lib/actions/production-cutting-area'
 import { formatProductionMonth } from '@/lib/utils/production-months'
+import { getCuttingAreaRequestStatusLabel } from '@/lib/production-cutting-area/request-status'
 import { ROUTES } from '@/lib/constants/routes'
 import { cn } from '@/lib/utils'
 import { CuttingAreaMaterialStatus, CuttingAreaRequestDelivery } from './CuttingAreaMaterials'
@@ -229,8 +230,8 @@ export function CuttingAreaPage({ workspace }: { workspace: CuttingAreaWorkspace
                           <h3 className="font-medium text-slate-950">Заявка №{request.number}</h3>
                           <p className="mt-1 text-sm text-slate-500">{formatDateTime(request.createdAt)} · {request.authorName}</p>
                         </div>
-                        <Badge variant="outline" className={request.completion ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800'}>
-                          {request.completion ? 'Завершена' : 'Не завершена'}
+                        <Badge variant="outline" className={request.status === 'cancelled' ? 'border-slate-200 bg-slate-50 text-slate-600' : request.completion ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800'}>
+                          {getCuttingAreaRequestStatusLabel(request.status, Boolean(request.completion))}
                         </Badge>
                       </div>
                       <CuttingAreaRequestDelivery summary={request.materials} requestNumber={request.number} />
