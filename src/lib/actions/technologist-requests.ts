@@ -278,6 +278,10 @@ function hasSelectedMaterial(row: Record<string, unknown>) {
   return typeof row.material_id === 'string' && row.material_id.length > 0
 }
 
+function hasSelectedSteelType(row: Record<string, unknown>) {
+  return typeof row.steel_type_id === 'string' && row.steel_type_id.length > 0
+}
+
 function validatePipeGeometry(row: Record<string, unknown>) {
   const validationError = validatePipeProfileGeometry(row, { requireComplete: false })
   if (validationError) throw new Error(validationError)
@@ -302,11 +306,13 @@ function validateRequiredRequestRows(input: {
 
   checkMaterial('Листовой металл', input.sheetMetal)
   input.sheetMetal.forEach((row, index) => {
+    if (!hasSelectedSteelType(row)) errors.push(`Листовой металл, позиция ${index + 1}: выберите "Тип стали"`)
     if (requiredNumber(row.remainder_qty) <= 0) errors.push(`Листовой металл, позиция ${index + 1}: укажите "Необходимо, шт"`)
   })
 
   checkMaterial('Круг', input.circles)
   input.circles.forEach((row, index) => {
+    if (!hasSelectedSteelType(row)) errors.push(`Круг, позиция ${index + 1}: выберите "Тип стали"`)
     if (requiredNumber(row.remainder_mm) <= 0) errors.push(`Круг, позиция ${index + 1}: укажите "Необходимо, мм"`)
   })
 
@@ -314,13 +320,15 @@ function validateRequiredRequestRows(input: {
   input.pipes.forEach((row, index) => {
     if (row.pipe_type === 'wire') {
       if (requiredNumber(row.remainder_kg) <= 0) errors.push(`Труба, позиция ${index + 1}: укажите "Необходимо, кг"`)
-    } else if (requiredNumber(row.remainder_length_mm) <= 0) {
-      errors.push(`Труба, позиция ${index + 1}: укажите "Необходимо длина, мм"`)
+    } else {
+      if (!hasSelectedSteelType(row)) errors.push(`Труба, позиция ${index + 1}: выберите "Тип стали"`)
+      if (requiredNumber(row.remainder_length_mm) <= 0) errors.push(`Труба, позиция ${index + 1}: укажите "Необходимо длина, мм"`)
     }
   })
 
   checkMaterial('Ножи', input.knives)
   input.knives.forEach((row, index) => {
+    if (!hasSelectedSteelType(row)) errors.push(`Ножи, позиция ${index + 1}: выберите "Тип стали"`)
     if (parseKnifeBevelCount(row.knife_bevel_count) === null) errors.push(`Ножи, позиция ${index + 1}: выберите "Скос"`)
     if (requiredNumber(row.remainder_meters) <= 0) errors.push(`Ножи, позиция ${index + 1}: укажите "Необходимо, мм"`)
   })
@@ -352,11 +360,11 @@ async function validateRequestReadyForSupply(db: LooseDb, requestId: string, use
   if (userId) await repairImportedSheetMetalMaterials(db, userId, requestId)
 
   const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
-    db.from('request_sheet_metal').select('id, material_id, remainder_qty').eq('request_id', requestId),
+    db.from('request_sheet_metal').select('id, material_id, steel_type_id, remainder_qty').eq('request_id', requestId),
     db.from('request_round_tube').select('id').eq('request_id', requestId),
-    db.from('request_circle').select('id, material_id, remainder_mm').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
-    db.from('request_pipe').select('id, material_id, pipe_type, remainder_length_mm, remainder_kg').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
-    db.from('request_knives').select('id, material_id, knife_bevel_count, remainder_meters').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
+    db.from('request_circle').select('id, material_id, steel_type_id, remainder_mm').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
+    db.from('request_pipe').select('id, material_id, pipe_type, steel_type_id, remainder_length_mm, remainder_kg').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
+    db.from('request_knives').select('id, material_id, steel_type_id, knife_bevel_count, remainder_meters').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
     db.from('request_components').select('id, material_id, quantity_needed').eq('request_id', requestId),
     db.from('request_paint').select('id, material_id, remainder_kg').eq('request_id', requestId),
     db.from('request_mesh').select('id, material_id, remainder_qty').eq('request_id', requestId),

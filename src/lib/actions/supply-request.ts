@@ -12,6 +12,7 @@ import { DIRECTOR_ACCESS_ROLES, type PermissionOperation } from '@/lib/permissio
 import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
+import { sheetMetalVariantMatchesRequest } from '@/lib/supply-request-sheet-metal'
 import { summarizeDisplayedStockCoverage } from '@/lib/supply-request-stock-coverage'
 import type {
   Machine,
@@ -256,7 +257,8 @@ function getRoundSecondaryReserve(quantity: number, row: Record<string, unknown>
 }
 
 function requiresExactVariant(table: RequestItemTable, row: Record<string, unknown>) {
-  return table === 'request_knives'
+  return table === 'request_sheet_metal'
+    || table === 'request_knives'
     || table === 'request_circle'
     || (table === 'request_pipe' && row.pipe_type !== 'wire')
 }
@@ -321,6 +323,9 @@ function knifeDimensionMatches(row: Record<string, unknown>, variant: MaterialVa
 
 function variantMatchesRequest(table: RequestItemTable, row: Record<string, unknown>, variant?: MaterialVariant | null) {
   if (!variant) return false
+  if (table === 'request_sheet_metal') {
+    return sheetMetalVariantMatchesRequest(row, variant)
+  }
   if (table === 'request_pipe') {
     const sameBaseProfile = exactTextMatches(row.pipe_type, variant.pipe_type)
       && numbersMatch(row.wall_thickness_mm, variant.wall_thickness_mm)
@@ -454,6 +459,7 @@ function findStockItems(
   const exactItems = row.material_variant_id
     ? inventoryGroupMap.get(stockGroupKey(row.material_id, row.material_variant_id)) || []
     : []
+  const matchingExactItems = exactItems.filter((item) => variantMatchesRequest(table, rowRecord, item.variant))
 
   const allMaterialItems = materialInventoryMap.get(row.material_id) || []
   const matchedByCharacteristics = allMaterialItems.filter((item) => {
@@ -465,7 +471,7 @@ function findStockItems(
       ? allMaterialItems.filter((item) => !item.material_variant_id && !Number(item.piece_length_mm || 0))
       : []
     const matchingItems = uniqueInventoryRows([
-      ...exactItems,
+      ...matchingExactItems,
       ...matchedByCharacteristics,
       ...legacyQuantitativeItems,
     ])
@@ -473,12 +479,12 @@ function findStockItems(
     return matchingItems
   }
 
-  if (hasAvailableStock(table, rowRecord, exactItems)) return exactItems
+  if (hasAvailableStock(table, rowRecord, matchingExactItems)) return matchingExactItems
   if (hasAvailableStock(table, rowRecord, matchedByCharacteristics)) return matchedByCharacteristics
 
   const legacyItems = inventoryGroupMap.get(stockGroupKey(row.material_id, null)) || []
   if (hasAvailableStock(table, rowRecord, legacyItems)) return legacyItems
-  return exactItems.length ? exactItems : legacyItems.length ? legacyItems : allMaterialItems
+  return matchingExactItems.length ? matchingExactItems : legacyItems.length ? legacyItems : matchedByCharacteristics
 }
 
 async function loadRows<T>(db: LooseDb, table: RequestItemTable, requestId: string) {
@@ -606,22 +612,25 @@ function withStock<T extends { id: string; material_id: string | null; material_
     const stockItems = findStockItems(table, row, rowRecord, inventoryGroupMap, materialInventoryMap)
       .filter((item) => inventoryMatchesReservationSource(item, reservationSource))
     const materialItems = row.material_id ? materialInventoryMap.get(row.material_id) || [] : []
+    const exactVariantRequired = requiresExactVariant(table, rowRecord)
     const inventory = row.material_id
-      ? inventoryMap.get(stockKey(row.material_id, row.material_variant_id, null)) ||
-        inventoryMap.get(stockKey(row.material_id, null, null)) ||
-        stockItems[0] ||
-        materialItems[0] ||
-        null
+      ? exactVariantRequired
+        ? stockItems[0] || null
+        : inventoryMap.get(stockKey(row.material_id, row.material_variant_id, null)) ||
+          inventoryMap.get(stockKey(row.material_id, null, null)) ||
+          stockItems[0] ||
+          materialItems[0] ||
+          null
       : null
     const reservation = reservationMap.get(reservationKey(table, row.id))
     const coveredQuantity = getReservedForRow(table, rowRecord)
     const hasReservableStock = hasAvailableStock(table, rowRecord, stockItems)
-    const incompatibleStockAvailable = row.material_id && requiresExactVariant(table, rowRecord) && !hasReservableStock
+    const incompatibleStockAvailable = row.material_id && exactVariantRequired && !hasReservableStock
       ? materialItems.reduce((sum, item) => sum + getRawAvailableQuantity(item), 0)
       : 0
     const availableStock = stockItems.length
       ? stockItems.reduce((sum, item) => sum + getReservableQuantity(table, rowRecord, item), 0)
-      : inventory?.available_quantity ?? null
+      : exactVariantRequired ? 0 : inventory?.available_quantity ?? null
     const availableSecondaryStock = stockItems.length
       ? stockItems.reduce((sum, item) => sum + Number(item.available_secondary_quantity || 0), 0)
       : inventory?.available_secondary_quantity ?? null
@@ -746,6 +755,8 @@ async function loadRequestForStockSource(
     const itemIds = allRows.map((row) => row.id)
 
     const steelTypeIds = Array.from(new Set([
+      ...sheetMetal.map((row) => row.steel_type_id).filter(Boolean),
+      ...circles.map((row) => row.steel_type_id).filter(Boolean),
       ...pipes.map((row) => row.steel_type_id).filter(Boolean),
       ...knives.map((row) => row.steel_type_id).filter(Boolean),
     ])) as string[]
