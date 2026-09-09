@@ -7,7 +7,10 @@ import {
   isCuttingAreaFileForItem,
   type CuttingAreaItemFileBinding,
 } from '../src/lib/production-cutting-area/files'
-import { isActiveCuttingAreaRequest } from '../src/lib/production-cutting-area/request-status'
+import {
+  getCuttingAreaRequestStatusLabel,
+  isActiveCuttingAreaRequest,
+} from '../src/lib/production-cutting-area/request-status'
 
 const root = process.cwd()
 const read = (path: string) => readFileSync(join(root, path), 'utf8')
@@ -42,6 +45,9 @@ assert(!factoryScopeMigration.includes("set factory_scope = 'all'"), 'Мигра
 assert(isActiveCuttingAreaRequest('completed'))
 assert(isActiveCuttingAreaRequest('stock_checked'))
 assert(!isActiveCuttingAreaRequest('cancelled'))
+assert.equal(getCuttingAreaRequestStatusLabel('cancelled', false), 'Отменена')
+assert.equal(getCuttingAreaRequestStatusLabel('completed', true), 'Завершена')
+assert.equal(getCuttingAreaRequestStatusLabel('stock_checked', false), 'Не завершена')
 assert.match(cancelledRequestMigration, /request\.status <> 'cancelled'::public\.request_status/)
 assert.match(cancelledRequestMigration, /fn_start_production_cutting_cycle_before_race_serialization/)
 
