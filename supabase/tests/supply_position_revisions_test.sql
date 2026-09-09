@@ -15,8 +15,15 @@ begin
   case p_table
     when 'request_sheet_metal' then
       insert into public.request_sheet_metal(
-        id, request_id, material_name, quantity_sheets, weight_order_kg
-      ) values (p_item_id, p_request_id, 'Лист S355', 2, 100);
+        id, request_id, material_name, steel_type_id, quantity_sheets, weight_order_kg
+      ) values (
+        p_item_id,
+        p_request_id,
+        'Лист S235',
+        (select id from public.steel_types where name = 'S235' limit 1),
+        2,
+        100
+      );
     when 'request_circle' then
       insert into public.request_circle(
         id, request_id, diameter_mm, steel_grade, remainder_mm

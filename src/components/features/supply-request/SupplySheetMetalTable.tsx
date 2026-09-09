@@ -30,12 +30,19 @@ export function SupplySheetMetalTable({ rows, machineId, canManageOrders = true 
             return (
               <tr key={row.id}>
                 <td className={`${tdClass} min-w-[220px] font-medium text-[#1B3A6B] ${stickyCellClass}`}>{row.materials?.name || row.material_name || '—'}</td>
-                <td className={tdClass}>{row.material_grade || '—'}</td>
+                <td className={tdClass}>{row.steel_type_name || row.material_grade || '—'}</td>
                 <td className={tdClass}>{row.sheet_size || '—'}</td>
                 <td className={tdClass}>{formatAmount(row.thickness_mm)}</td>
                 <td className={tdClass}>{formatAmount(needed)}</td>
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
-                <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockText(row.available_stock, unit)}</td>
+                <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>
+                  {stockText(row.available_stock, unit)}
+                  {Number(row.available_stock || 0) <= 0 && Number(row.incompatible_stock_available || 0) > 0 && (
+                    <div className="mt-1 whitespace-normal text-xs leading-snug text-amber-700">
+                      Есть остаток по материалу, но тип стали, размер или толщина не совпадают
+                    </div>
+                  )}
+                </td>
                 <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
                 <td className={tdClass}><OrderStatusCell table="request_sheet_metal" id={row.id} status={row.order_status} canEdit={canManageOrders} /></td>
                 <td className={tdClass}>

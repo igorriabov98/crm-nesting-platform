@@ -278,6 +278,10 @@ function hasSelectedMaterial(row: Record<string, unknown>) {
   return typeof row.material_id === 'string' && row.material_id.length > 0
 }
 
+function hasSelectedSteelType(row: Record<string, unknown>) {
+  return typeof row.steel_type_id === 'string' && row.steel_type_id.length > 0
+}
+
 function validatePipeGeometry(row: Record<string, unknown>) {
   const validationError = validatePipeProfileGeometry(row, { requireComplete: false })
   if (validationError) throw new Error(validationError)
@@ -302,6 +306,7 @@ function validateRequiredRequestRows(input: {
 
   checkMaterial('Листовой металл', input.sheetMetal)
   input.sheetMetal.forEach((row, index) => {
+    if (!hasSelectedSteelType(row)) errors.push(`Листовой металл, позиция ${index + 1}: выберите "Тип стали"`)
     if (requiredNumber(row.remainder_qty) <= 0) errors.push(`Листовой металл, позиция ${index + 1}: укажите "Необходимо, шт"`)
   })
 
@@ -352,7 +357,7 @@ async function validateRequestReadyForSupply(db: LooseDb, requestId: string, use
   if (userId) await repairImportedSheetMetalMaterials(db, userId, requestId)
 
   const [sheetMetal, roundTube, circles, pipes, knives, components, paint, meshItems, chainCords] = await Promise.all([
-    db.from('request_sheet_metal').select('id, material_id, remainder_qty').eq('request_id', requestId),
+    db.from('request_sheet_metal').select('id, material_id, steel_type_id, remainder_qty').eq('request_id', requestId),
     db.from('request_round_tube').select('id').eq('request_id', requestId),
     db.from('request_circle').select('id, material_id, remainder_mm').eq('request_id', requestId).eq('is_cutting_plan_draft', false),
     db.from('request_pipe').select('id, material_id, pipe_type, remainder_length_mm, remainder_kg').eq('request_id', requestId).eq('is_cutting_plan_draft', false),

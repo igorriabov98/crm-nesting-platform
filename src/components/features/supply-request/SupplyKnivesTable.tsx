@@ -32,7 +32,7 @@ export function SupplyKnivesTable({ rows, machineId, canManageOrders = true }: P
             return (
               <tr key={row.id}>
                 <td className={`${tdClass} min-w-[220px] font-medium text-[#1B3A6B] ${stickyCellClass}`}>{row.materials?.name || row.knife_type || '—'}</td>
-                <td className={tdClass}>{row.steel_grade || '—'}</td>
+                <td className={tdClass}>{row.steel_type_name || row.steel_grade || '—'}</td>
                 <td className={tdClass}>{knifeBevelCharacteristicLabel(row.knife_bevel_count)}</td>
                 <td className={tdClass}>{formatAmount(row.width_mm)}</td>
                 <td className={tdClass}>{formatAmount(row.height_mm)}</td>
