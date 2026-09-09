@@ -24,6 +24,12 @@ const longStockSupplierScheduleGuardPath = path.join(
   'tests',
   'long_stock_supplier_schedule_guard_test.sql',
 )
+const cuttingAreaCancelledRequestsPath = path.join(
+  root,
+  'supabase',
+  'tests',
+  'production_cutting_area_cancelled_requests_test.sql',
+)
 const databaseUrl = new URL(
   process.env.FULL_SCHEMA_TEST_DATABASE_URL ?? 'postgresql://localhost/crm_full_schema_test',
 )
@@ -114,6 +120,10 @@ runPsql(
 runPsql(
   'full_schema_inventory_transfer_compat.sql',
   readFileSync(transferCompatPath, 'utf8'),
+)
+runPsql(
+  'production_cutting_area_cancelled_requests_test.sql',
+  readFileSync(cuttingAreaCancelledRequestsPath, 'utf8'),
 )
 run(process.execPath, [path.join(root, 'scripts', 'test-inventory-transfers.mjs')], {
   ...postgresEnv,

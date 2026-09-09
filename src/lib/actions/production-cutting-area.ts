@@ -31,6 +31,7 @@ import {
   mergeCuttingAreaMaterialSummaries,
   type CuttingAreaMaterialSummary,
 } from '@/lib/production-cutting-area/materials'
+import { isActiveCuttingAreaRequest } from '@/lib/production-cutting-area/request-status'
 
 export type CuttingAreaQueueStatus = 'waiting' | 'in_progress' | 'completed'
 
@@ -247,11 +248,12 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
   const stageByMachine = new Map((stageResult.data || []).filter((stage: any) => !stage.is_skipped).map((stage: any) => [stage.machine_id, stage]))
   const visibleMachines = machines.filter((machine: any) => stageByMachine.has(machine.id))
   const requests = requestResult.data || []
+  const activeRequests = requests.filter((request: any) => isActiveCuttingAreaRequest(request.status))
   const completions = completionResult.data || []
   const completionByRequest = new Map(completions.map((completion: any) => [completion.request_id, completion]))
   const [covered, materialSummaries] = await Promise.all([
-    loadCoveredRequestIds(db, requests.map((request: any) => request.id)),
-    loadCuttingAreaMaterialSummaries(db, visibleMachines.map((machine: any) => machine.factory_id), requests.map((request: any) => request.id)),
+    loadCoveredRequestIds(db, activeRequests.map((request: any) => request.id)),
+    loadCuttingAreaMaterialSummaries(db, visibleMachines.map((machine: any) => machine.factory_id), activeRequests.map((request: any) => request.id)),
   ])
   const cyclesByMachine = new Map<string, any[]>()
   for (const cycle of cycleResult.data || []) {
@@ -261,7 +263,7 @@ export async function getProductionCuttingAreaWorkspace(): Promise<CuttingAreaWo
   }
 
   const orders = visibleMachines.map((machine: any): CuttingAreaOrder => {
-    const machineRequests = requests.filter((request: any) => request.machine_id === machine.id)
+    const machineRequests = activeRequests.filter((request: any) => request.machine_id === machine.id)
     const unprocessed = machineRequests.filter((request: any) => !covered.has(request.id))
     const machineCycles = cyclesByMachine.get(machine.id) || []
     const active = machineCycles.find((cycle) => cycle.status === 'in_progress') || null
@@ -490,7 +492,7 @@ const startSchema = z.object({
 })
 
 async function unprocessedRequestIds(db: any, machineId: string) {
-  const requests = await db.from('technologist_requests').select('id,created_at').eq('machine_id', machineId).order('created_at').order('id')
+  const requests = await db.from('technologist_requests').select('id,created_at').eq('machine_id', machineId).neq('status', 'cancelled').order('created_at').order('id')
   if (requests.error) throw new Error(requests.error.message)
   const rows = requests.data || []
   const covered = await loadCoveredRequestIds(db, rows.map((request: any) => request.id))
