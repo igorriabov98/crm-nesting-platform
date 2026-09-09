@@ -1,6 +1,6 @@
--- Steel type is part of the inventory identity for every metal request except wire.
--- Enforce it at the database handoff boundary so direct RPC/table calls cannot
--- expose an incomplete position to warehouse or supply users.
+-- Steel type is part of sheet-metal inventory identity. Enforce it at the
+-- database handoff boundary so direct RPC/table calls cannot expose an
+-- incomplete sheet position to warehouse or supply users.
 
 create or replace function public.fn_guard_request_steel_type_handoff_v1()
 returns trigger
@@ -22,28 +22,6 @@ begin
     where sheet.request_id = new.id
       and sheet.order_status <> 'cancelled'
       and sheet.steel_type_id is null
-    union all
-    select 'request_circle', circle.id, circle.sort_order
-    from public.request_circle circle
-    where circle.request_id = new.id
-      and circle.order_status <> 'cancelled'
-      and not circle.is_cutting_plan_draft
-      and circle.steel_type_id is null
-    union all
-    select 'request_pipe', pipe.id, pipe.sort_order
-    from public.request_pipe pipe
-    where pipe.request_id = new.id
-      and pipe.order_status <> 'cancelled'
-      and not pipe.is_cutting_plan_draft
-      and pipe.pipe_type <> 'wire'
-      and pipe.steel_type_id is null
-    union all
-    select 'request_knives', knife.id, knife.sort_order
-    from public.request_knives knife
-    where knife.request_id = new.id
-      and knife.order_status <> 'cancelled'
-      and not knife.is_cutting_plan_draft
-      and knife.steel_type_id is null
     order by sort_order, id
     limit 1
   loop
@@ -86,8 +64,7 @@ begin
     return new;
   end if;
   if coalesce(v_row->>'order_status', '') = 'cancelled'
-     or coalesce((v_row->>'is_cutting_plan_draft')::boolean, false)
-     or (tg_table_name = 'request_pipe' and v_row->>'pipe_type' = 'wire') then
+     or coalesce((v_row->>'is_cutting_plan_draft')::boolean, false) then
     return new;
   end if;
 
@@ -110,23 +87,67 @@ create trigger guard_request_sheet_metal_steel_type_removal
 before update of steel_type_id on public.request_sheet_metal
 for each row execute function public.fn_guard_request_item_steel_type_removal_v1();
 
-drop trigger if exists guard_request_circle_steel_type_removal
-  on public.request_circle;
-create trigger guard_request_circle_steel_type_removal
-before update of steel_type_id on public.request_circle
-for each row execute function public.fn_guard_request_item_steel_type_removal_v1();
-
-drop trigger if exists guard_request_pipe_steel_type_removal
-  on public.request_pipe;
-create trigger guard_request_pipe_steel_type_removal
-before update of steel_type_id on public.request_pipe
-for each row execute function public.fn_guard_request_item_steel_type_removal_v1();
-
-drop trigger if exists guard_request_knives_steel_type_removal
-  on public.request_knives;
-create trigger guard_request_knives_steel_type_removal
-before update of steel_type_id on public.request_knives
-for each row execute function public.fn_guard_request_item_steel_type_removal_v1();
-
 revoke all on function public.fn_guard_request_item_steel_type_removal_v1()
+  from public, anon, authenticated;
+
+-- RPC implementations ultimately write inventory_reservations. Validate the
+-- authoritative inventory row there so no client-supplied variant id can bypass
+-- the sheet identity check.
+create or replace function public.fn_guard_sheet_inventory_reservation_v1()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_sheet public.request_sheet_metal%rowtype;
+  v_inventory public.inventory%rowtype;
+  v_variant public.material_variants%rowtype;
+begin
+  if new.request_item_table is distinct from 'request_sheet_metal' then
+    return new;
+  end if;
+
+  select * into v_sheet
+  from public.request_sheet_metal
+  where id = new.request_item_id;
+  if not found then
+    raise exception using errcode = '23503', message = 'Позиция листового металла не найдена';
+  end if;
+
+  select * into v_inventory
+  from public.inventory
+  where id = coalesce(new.source_inventory_id, new.inventory_id)
+    and deleted_at is null;
+  if not found or v_inventory.material_variant_id is null then
+    raise exception using errcode = '23514', message = 'Для листа выберите складской остаток с точной характеристикой';
+  end if;
+
+  select * into v_variant
+  from public.material_variants
+  where id = v_inventory.material_variant_id;
+  if not found
+     or v_inventory.material_id is distinct from v_sheet.material_id
+     or v_sheet.steel_type_id is null
+     or v_variant.steel_type_id is distinct from v_sheet.steel_type_id
+     or replace(replace(replace(regexp_replace(lower(coalesce(v_variant.sheet_size, '')), '\s+', '', 'g'), 'х', 'x'), '×', 'x'), '*', 'x')
+        is distinct from replace(replace(replace(regexp_replace(lower(coalesce(v_sheet.sheet_size, '')), '\s+', '', 'g'), 'х', 'x'), '×', 'x'), '*', 'x')
+     or v_variant.thickness_mm is distinct from v_sheet.thickness_mm then
+    raise exception using
+      errcode = '23514',
+      message = 'Выбранный складской остаток не совпадает с типом стали, размером или толщиной листа';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists guard_sheet_inventory_reservation
+  on public.inventory_reservations;
+create trigger guard_sheet_inventory_reservation
+before insert or update of inventory_id, source_inventory_id, request_item_table, request_item_id
+on public.inventory_reservations
+for each row execute function public.fn_guard_sheet_inventory_reservation_v1();
+
+revoke all on function public.fn_guard_sheet_inventory_reservation_v1()
   from public, anon, authenticated;

@@ -459,7 +459,9 @@ function findStockItems(
   const exactItems = row.material_variant_id
     ? inventoryGroupMap.get(stockGroupKey(row.material_id, row.material_variant_id)) || []
     : []
-  const matchingExactItems = exactItems.filter((item) => variantMatchesRequest(table, rowRecord, item.variant))
+  const matchingExactItems = table === 'request_sheet_metal'
+    ? exactItems.filter((item) => variantMatchesRequest(table, rowRecord, item.variant))
+    : exactItems
 
   const allMaterialItems = materialInventoryMap.get(row.material_id) || []
   const matchedByCharacteristics = allMaterialItems.filter((item) => {

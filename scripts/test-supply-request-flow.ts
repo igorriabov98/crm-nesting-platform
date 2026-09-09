@@ -43,14 +43,12 @@ for (const required of [
   'guard_request_steel_type_handoff',
   "new.status not in ('pending_stock_check', 'stock_checked', 'submitted_to_supply')",
   'sheet.steel_type_id is null',
-  'circle.steel_type_id is null',
-  "pipe.pipe_type <> 'wire'",
-  'knife.steel_type_id is null',
   'guard_request_sheet_metal_steel_type_removal',
-  'guard_request_circle_steel_type_removal',
-  'guard_request_pipe_steel_type_removal',
-  'guard_request_knives_steel_type_removal',
   "v_status in ('pending_stock_check', 'stock_checked', 'submitted_to_supply')",
+  'guard_sheet_inventory_reservation',
+  "new.request_item_table is distinct from 'request_sheet_metal'",
+  'v_variant.steel_type_id is distinct from v_sheet.steel_type_id',
+  'v_variant.thickness_mm is distinct from v_sheet.thickness_mm',
 ]) assert.ok(steelTypeGuard.includes(required), `steel-type handoff guard is missing ${required}`)
 
 console.log('Supply request flow regression passed')
