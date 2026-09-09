@@ -440,6 +440,7 @@ export const PERMISSION_RESOURCES = [
       { path: ROUTES.PRODUCTION_FACT, match: 'prefix', operation: 'view', priority: 100 },
     ],
     sidebar: { section: 'production', icon: 'history', order: 20 },
+    supportsFactoryScope: true,
   },
   {
     key: 'production_cutting_area',

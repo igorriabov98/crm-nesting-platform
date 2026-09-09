@@ -18,6 +18,7 @@ import {
 } from '../src/lib/permissions/resolve'
 import {
   canAccessAllFactories,
+  canAccessAllFactoriesFromMatrixOrAdmin,
   canAccessFactory,
 } from '../src/lib/permissions/factory-scope'
 
@@ -147,6 +148,10 @@ assert.equal(
   'view',
   'Локальные отгрузки должны быть доступны только на чтение',
 )
+assert(
+  PERMISSION_RESOURCES.find((resource) => resource.key === 'production_fact')?.supportsFactoryScope,
+  'Матрица должна позволять выбрать охват заводов для production_fact и локальных отгрузок',
+)
 assert.equal(
   getPermissionRequirementForPath('/supply/requests')?.resourceKey,
   'supply_transport',
@@ -224,6 +229,35 @@ assert(canAccessAllFactories({
   factoryId: null,
   permissionDetails: { isAdminPosition: true, factoryScopes: {} },
 }, 'production_cutting_area', 'manage'), 'Администратор CRM должен видеть все заводы')
+assert(!canAccessAllFactoriesFromMatrixOrAdmin({
+  ...ownFactoryPermission,
+  role: 'planning_director',
+  permissionDetails: { isAdminPosition: false, factoryScopes: { production_fact: { view: 'own', manage: 'own' } } },
+}, 'production_fact', 'view'), 'Директор не должен автоматически видеть локальные отгрузки других заводов')
+assert(canAccessAllFactoriesFromMatrixOrAdmin({
+  ...ownFactoryPermission,
+  role: 'production_manager',
+  permissionDetails: { isAdminPosition: false, factoryScopes: { production_fact: { view: 'all', manage: 'own' } } },
+}, 'production_fact', 'view'), 'Матрица должна открывать все локальные отгрузки выбранным сотрудникам')
+assert(canAccessAllFactoriesFromMatrixOrAdmin({
+  ...ownFactoryPermission,
+  role: 'production_manager',
+  factoryId: null,
+  permissionDetails: { isAdminPosition: true, factoryScopes: {} },
+}, 'production_fact', 'view'), 'Администратор CRM должен видеть все локальные отгрузки по умолчанию')
+
+const localShipmentsSource = readFileSync(
+  join(root, 'src/lib/actions/production-local-shipments.ts'),
+  'utf8',
+)
+assert(
+  localShipmentsSource.includes('canAccessAllFactoriesFromMatrixOrAdmin'),
+  'Локальные отгрузки должны использовать матричный заводской охват без ролевого расширения директоров',
+)
+assert(
+  !localShipmentsSource.includes('canAccessAllFactories(auth'),
+  'Локальные отгрузки не должны использовать общий директорский доступ ко всем заводам',
+)
 
 const denied = resolveDepartmentPermissions(
   [{ departmentId: 'technical', departmentName: 'Технический', isDepartmentHead: false }],
