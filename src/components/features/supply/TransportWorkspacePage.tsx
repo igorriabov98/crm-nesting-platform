@@ -100,6 +100,7 @@ import {
   type TransportDraftAssignment,
   type TransportDraftStop,
 } from '@/lib/transport/trip-rules'
+import { isTransportTripStartAvailable } from '@/lib/transport/trip-lifecycle'
 import {
   groupTransportNeeds,
   type TransportNeedGroup,
@@ -304,11 +305,9 @@ function operationalStops(trip: TransportTrip) {
 }
 
 function tripStartAvailable(trip: TransportTrip, clockNow: number | null) {
-  const firstStop = operationalStops(trip)[0]
   return Boolean(
-    firstStop?.plannedArrivalAt
-      && clockNow !== null
-      && new Date(firstStop.plannedArrivalAt).getTime() <= clockNow,
+    operationalStops(trip)[0]?.plannedArrivalAt
+      && isTransportTripStartAvailable(trip.scheduledDate, clockNow),
   )
 }
 
@@ -1933,7 +1932,7 @@ export function TransportWorkspacePage({ workspace: initialWorkspace }: { worksp
                     </div>
                     {!editingStartAvailable && (
                       <div className="mt-2 text-xs font-medium text-amber-800">
-                        Кнопка станет доступна в запланированное время начала рейса.
+                        Кнопка станет доступна с начала запланированного дня рейса.
                       </div>
                     )}
                     {!['not_required', 'approved'].includes(editingTrip.dateChangeState) && (
@@ -2829,7 +2828,7 @@ function TripsSection({
                   title={!canStart
                     ? !['not_required', 'approved'].includes(trip.dateChangeState)
                       ? 'Ожидается согласование переноса дат'
-                      : 'Запланированное время начала ещё не наступило'
+                      : 'Запланированный день рейса ещё не наступил'
                     : undefined}
                   onClick={() => onLifecycle(trip, 'start')}
                   className="min-h-10 rounded-xl bg-blue-800 px-3 hover:bg-blue-900"

@@ -495,4 +495,19 @@ assert.match(transportActions, /fn_start_transport_trip_v1/)
 assert.match(transportActions, /fn_complete_transport_trip_v1/)
 assert.doesNotMatch(transportActions, /revalidatePath\(ROUTES\.SUPPLY_TRANSPORT\)/)
 
+const tripDateConsistencyMigration = readFileSync(
+  resolve('supabase/migrations/20260909120000_transport_trip_date_consistency_and_start_day.sql'),
+  'utf8',
+)
+assert.match(tripDateConsistencyMigration, /invalidate_transport_trip_date_request_on_date_change/)
+assert.match(tripDateConsistencyMigration, /guard_transport_trip_date_approval/)
+assert.match(tripDateConsistencyMigration, /public\.transport_need_current_date\(item\.need_source, item\.need_id\)/)
+assert.match(tripDateConsistencyMigration, /planned_arrival_at at time zone 'Europe\/Kyiv'/)
+assert.match(tripDateConsistencyMigration, /\(now\(\) at time zone 'Europe\/Kyiv'\)::date < v_trip\.scheduled_date/)
+assert.match(tripDateConsistencyMigration, /Запланированный день начала рейса ещё не наступил/)
+assert.match(transportWorkspace, /operationalStops\(trip\)\[0\]\?\.plannedArrivalAt/)
+assert.match(transportWorkspace, /isTransportTripStartAvailable\(trip\.scheduledDate, clockNow\)/)
+assert.match(transportWorkspace, /Кнопка станет доступна с начала запланированного дня рейса/)
+assert.doesNotMatch(transportWorkspace, /Кнопка станет доступна в запланированное время начала рейса/)
+
 console.log('Transport trip rules: OK')
