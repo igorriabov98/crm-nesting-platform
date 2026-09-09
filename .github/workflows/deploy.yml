@@ -120,7 +120,17 @@ jobs:
       - name: Install root dependencies
         run: npm ci
       - name: Install psql
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          if command -v psql >/dev/null 2>&1; then
+            psql --version
+            exit 0
+          fi
+
+          # Third-party runner repositories are unrelated to this job and can
+          # temporarily publish mismatched metadata while their mirrors sync.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
       - name: Read-only meetings v2 migration preflight
         run: |
           psql "$SUPABASE_DB_URL" -X -v ON_ERROR_STOP=1 -At \
