@@ -1,7 +1,8 @@
-import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
+import { Document, Page, StyleSheet, View } from '@react-pdf/renderer'
 import type { DocumentData, DocumentItem } from '@/lib/actions/document-generation'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
 import { formatDocumentItemName } from './format'
+import { PdfText as Text } from './PdfText'
 
 registerPdfFonts()
 

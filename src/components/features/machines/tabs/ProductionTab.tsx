@@ -332,7 +332,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
                             <li key={item.id} className="text-[#374151]">
                               • {item.product_name} <span className="text-[#9CA3AF]">({item.drawing_number})</span><br />
                               <span className="text-xs font-medium text-[#1B3A6B] ml-3">{COATINGS[item.coating].label}</span><br />
-                              <span className="text-xs text-[#6B7280] ml-3">{item.quantity} шт, {Number(item.weight).toFixed(2)} т</span>
+                              <span className="text-xs text-[#6B7280] ml-3">{item.quantity} шт, {Number(item.weight).toFixed(2)} кг</span>
                             </li>
                           ))}
                         </ul>
@@ -354,7 +354,7 @@ export function ProductionTab({ machine }: ProductionTabProps) {
                           {itemsWithPainting.map((item: MachineItem) => (
                             <li key={item.id} className="text-[#374151]">
                               • {item.product_name} <span className="text-[#9CA3AF]">({item.drawing_number})</span><br />
-                              <span className="text-xs text-[#6B7280] ml-3">RAL {item.ral_number}, {item.quantity} шт, {Number(item.weight).toFixed(2)} т</span>
+                              <span className="text-xs text-[#6B7280] ml-3">RAL {item.ral_number}, {item.quantity} шт, {Number(item.weight).toFixed(2)} кг</span>
                             </li>
                           ))}
                         </ul>

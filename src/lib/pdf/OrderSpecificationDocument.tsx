@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
-import { Document, Page, StyleSheet, Text, View, type ViewProps } from '@react-pdf/renderer'
+import { Document, Page, StyleSheet, View, type ViewProps } from '@react-pdf/renderer'
 import type { DocumentData, DocumentItem } from '@/lib/actions/document-generation'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
 import { formatMoney, formatQuantity } from './format'
+import { PdfText as Text } from './PdfText'
 
 registerPdfFonts()
 

@@ -2,7 +2,7 @@ import 'server-only'
 
 import { z } from 'zod'
 import { getMachineDeliveryBasisOption } from '@/lib/constants/machine-delivery-basis'
-import { documentGrossWeight, documentLineNetWeight, documentUnitWeight, totalPackingPlaces } from '@/lib/packing-summary'
+import { defaultPackingBoxGroup, documentGrossWeight, documentLineNetWeight, documentUnitWeight, totalPackingPlaces } from '@/lib/packing-summary'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import type { Database } from '@/lib/types/database'
@@ -404,7 +404,7 @@ async function loadDocumentData(machineId: string, enforceSessionVisibility: boo
       }
     })
     .filter((expense) => expense.amount > 0)
-  const packingGroups: DocumentPackingGroup[] = (machine.machine_packing_groups || [])
+  const storedPackingGroups: DocumentPackingGroup[] = (machine.machine_packing_groups || [])
     .map((group) => ({
       start_item_number: Math.max(1, Math.trunc(toNumber(group.start_item_number))),
       end_item_number: Math.max(1, Math.trunc(toNumber(group.end_item_number))),
@@ -418,6 +418,12 @@ async function loadDocumentData(machineId: string, enforceSessionVisibility: boo
       const byOrder = a.sort_order - b.sort_order
       return byOrder || a.start_item_number - b.start_item_number
     })
+  const fallbackPackingGroup = defaultPackingBoxGroup(machine.packing_boxes_count, items.length)
+  const packingGroups: DocumentPackingGroup[] = storedPackingGroups.length > 0
+    ? storedPackingGroups
+    : fallbackPackingGroup
+      ? [fallbackPackingGroup]
+      : []
 
   const goodsTotal = items.reduce((sum, item) => sum + item.total, 0)
   const expensesTotal = expenses.reduce((sum, expense) => sum + expense.amount, 0)

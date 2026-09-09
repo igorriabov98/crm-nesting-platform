@@ -45,6 +45,7 @@ import {
   calculateSupplyReceiptProgress,
   deliveredSupplyQuantity,
 } from '@/lib/supply-orders/receiving-supply-progress'
+import { resolveActualMaterialDate, type MaterialCompletionItem } from '@/lib/supply-orders/material-completion'
 import {
   isSupplyPositionTable,
   supplyPositionRevisionKey,
@@ -725,16 +726,7 @@ function todayDateOnly() {
   return `${year}-${month}-${day}`
 }
 
-function dateOnly(value: unknown) {
-  return typeof value === 'string' && value.length > 0 ? value.slice(0, 10) : null
-}
-
-function rememberLatestDate(current: string | null, next: string | null) {
-  if (!next) return current
-  return !current || next > current ? next : current
-}
-
-async function syncActualMaterialDatesForMachines(machineIds: string[]) {
+export async function syncActualMaterialDatesForMachines(machineIds: string[]) {
   const uniqueMachineIds = Array.from(new Set(machineIds.filter(Boolean)))
   if (uniqueMachineIds.length === 0) return
 
@@ -752,11 +744,9 @@ async function syncActualMaterialDatesForMachines(machineIds: string[]) {
   if (requestIds.length === 0) return
 
   const requestMachineMap = new Map(requests.map((request) => [request.id, request.machine_id]))
-  const stateByMachine = new Map(uniqueMachineIds.map((machineId) => [machineId, {
-    hasOrderableItems: false,
-    allDelivered: true,
-    latestDeliveredDate: null as string | null,
-  }]))
+  const completionItemsByMachine = new Map(
+    uniqueMachineIds.map((machineId) => [machineId, [] as MaterialCompletionItem[]]),
+  )
 
   const rowsByTable = await Promise.all(ORDER_TABLES.map(async (table) => ({
     table,
@@ -768,10 +758,15 @@ async function syncActualMaterialDatesForMachines(machineIds: string[]) {
     for (const row of rows) {
       const machineId = requestMachineMap.get(row.request_id)
       if (!machineId) continue
-      if (row.order_status === 'cancelled') continue
-
       const toOrder = Math.max(requestedQuantity(table, row) - reservedQuantity(table, row), 0)
       if (toOrder <= 0) continue
+      if (row.order_status === 'cancelled') {
+        completionItemsByMachine.get(machineId)?.push({
+          status: 'cancelled',
+          completionDates: [row.cancelled_at],
+        })
+        continue
+      }
       orderableItems.push({ table, row, machineId })
     }
   }
@@ -806,34 +801,28 @@ async function syncActualMaterialDatesForMachines(machineIds: string[]) {
   }
 
   for (const { table, row, machineId } of orderableItems) {
-    const state = stateByMachine.get(machineId)
-    if (!state) continue
-
-    state.hasOrderableItems = true
+    const completionItems = completionItemsByMachine.get(machineId)
+    if (!completionItems) continue
     const schedules = schedulesByItem.get(`${table}:${row.id}`) || []
     const itemDelivered = schedules.length > 0
       ? schedules.every((schedule) => schedule.status === 'delivered')
       : row.order_status === 'delivered'
-
-    if (!itemDelivered) {
-      state.allDelivered = false
-      continue
-    }
-
-    state.latestDeliveredDate = rememberLatestDate(state.latestDeliveredDate, dateOnly(row.delivered_at))
-    for (const schedule of schedules) {
-      if (schedule.status !== 'delivered') continue
-      state.latestDeliveredDate = rememberLatestDate(
-        state.latestDeliveredDate,
-        dateOnly(schedule.delivered_at) || dateOnly(schedule.delivery_date)
-      )
-    }
+    completionItems.push({
+      status: itemDelivered ? 'delivered' : 'open',
+      completionDates: itemDelivered
+        ? [
+            row.delivered_at,
+            ...schedules
+              .filter((schedule) => schedule.status === 'delivered')
+              .flatMap((schedule) => [schedule.delivered_at, schedule.delivery_date]),
+          ]
+        : [],
+    })
   }
 
-  await Promise.all(Array.from(stateByMachine.entries()).map(async ([machineId, state]) => {
-    if (!state.hasOrderableItems || !state.allDelivered) return
-
-    const nextDate = state.latestDeliveredDate || todayDateOnly()
+  await Promise.all(Array.from(completionItemsByMachine.entries()).map(async ([machineId, items]) => {
+    const nextDate = resolveActualMaterialDate(items, todayDateOnly())
+    if (!nextDate) return
     const { error } = await adminDb
       .from('machines')
       .update({ actual_material_date: nextDate })

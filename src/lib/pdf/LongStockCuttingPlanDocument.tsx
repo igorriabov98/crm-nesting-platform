@@ -1,4 +1,4 @@
-import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
+import { Document, Page, StyleSheet, View } from '@react-pdf/renderer'
 import {
   formatPdfNumber,
   longStockBarComposition,
@@ -6,6 +6,7 @@ import {
   type LongStockCuttingPlanPdfData,
 } from '@/lib/long-stock-cutting-plan-pdf'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
+import { PdfText as Text } from './PdfText'
 
 registerPdfFonts()
 

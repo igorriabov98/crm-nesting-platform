@@ -33,6 +33,7 @@
     "test:product-project-mail-db": "node scripts/test-product-project-mail-db.mjs",
     "test:document-ral": "tsx scripts/test-document-ral-format.ts",
     "test:order-specification-document": "tsx scripts/test-order-specification-document.tsx",
+    "test:sales-document-regressions": "tsx --test src/lib/pdf/PdfText.test.tsx src/lib/packing-summary.test.ts src/lib/machine-weight.test.ts src/lib/supply-orders/material-completion.test.ts && node scripts/test-pdf-text-coverage.mjs && node scripts/test-cancelled-material-completion-migration.mjs && tsx scripts/test-customs-clearance-pdfs.tsx && tsx scripts/test-order-specification-document.tsx",
     "test:coating-variants": "tsx scripts/test-coating-variants.ts",
     "test:notification-bell": "tsx scripts/test-notification-bell-state.ts",
     "test:mail": "tsx scripts/test-mail-integration.ts",
