@@ -1,7 +1,8 @@
-import { Image, Text, View } from '@react-pdf/renderer'
+import { Image, View } from '@react-pdf/renderer'
 import type { DocumentData } from '@/lib/actions/document-generation'
 import { formatDocumentItemName, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
 import { pdfStyles, tableWidths } from './styles'
+import { PdfText as Text } from './PdfText'
 
 type DocumentProps = {
   data: DocumentData

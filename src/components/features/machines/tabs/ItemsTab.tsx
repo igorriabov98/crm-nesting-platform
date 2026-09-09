@@ -132,7 +132,7 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
                         {versionStatusBadge(item)}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right text-[#374151]">{Number(item.weight).toFixed(2)} т</TableCell>
+                    <TableCell className="text-right text-[#374151]">{Number(item.weight).toFixed(2)} кг</TableCell>
                     <TableCell className="text-right text-[#374151]">€{Number(item.price).toLocaleString()}</TableCell>
                     <TableCell className="text-center text-[#374151]">{item.quantity} шт</TableCell>
                     <TableCell className="text-right font-medium text-[#1B3A6B]">€{itemCost.toLocaleString()}</TableCell>

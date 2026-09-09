@@ -1,8 +1,9 @@
-import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
+import { Document, Page, StyleSheet, View } from '@react-pdf/renderer'
 import type { DocumentData, DocumentExpense, DocumentItem } from '@/lib/actions/document-generation'
 import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
 import { amountToWordsEn, amountToWordsUa, formatDate, formatDocumentItemName, formatMoney, formatQuantity, groupItemsByHsCode } from './format'
+import { PdfText as Text } from './PdfText'
 
 registerPdfFonts()
 

@@ -23,6 +23,8 @@ import { loadClientProductPriceLookup, resolveClientProductPrice, type ClientPri
 import { formatProductionMonth, normalizeProductionMonthValue, type ProductionMonthOption } from '@/lib/utils/production-months'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { assertFactoryAccess, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
+import { resolveActualMaterialDate, type MaterialCompletionItem } from '@/lib/supply-orders/material-completion'
+import { machineTotalWeightTonnes } from '@/lib/machine-weight'
 import type { CreateMachineInput, MachinePackingSettingsInput, UpdateMachineInput } from '@/lib/types/schemas'
 import type { CoatingType, CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, MaterialType, Product } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
@@ -753,15 +755,6 @@ function supplyOrderReservedQuantity(table: string, row: SupplyOrderItemRow) {
   return Number(row.reserved_from_stock_kg || 0)
 }
 
-function actualMaterialDateOnly(value: unknown) {
-  return typeof value === 'string' && value.length > 0 ? value.slice(0, 10) : null
-}
-
-function rememberLatestActualMaterialDate(current: string | null, next: string | null) {
-  if (!next) return current
-  return !current || next > current ? next : current
-}
-
 async function loadSupplyOrderActualMaterialDates(db: LooseDb, machineIds: string[]) {
   const uniqueMachineIds = Array.from(new Set(machineIds.filter(Boolean)))
   const actualDates = new Map<string, string>()
@@ -784,11 +777,9 @@ async function loadSupplyOrderActualMaterialDates(db: LooseDb, machineIds: strin
   if (requestIds.length === 0) return actualDates
 
   const requestMachineMap = new Map(requests.map((request) => [request.id, request.machine_id]))
-  const stateByMachine = new Map(uniqueMachineIds.map((machineId) => [machineId, {
-    hasOrderableItems: false,
-    allDelivered: true,
-    latestDeliveredDate: null as string | null,
-  }]))
+  const completionItemsByMachine = new Map(
+    uniqueMachineIds.map((machineId) => [machineId, [] as MaterialCompletionItem[]]),
+  )
 
   const rowsByTable = await Promise.all(SUPPLY_ORDER_TABLES.map(async (table) => {
     const { data, error } = await readDb
@@ -807,6 +798,13 @@ async function loadSupplyOrderActualMaterialDates(db: LooseDb, machineIds: strin
 
       const toOrder = Math.max(supplyOrderRequestedQuantity(table, row) - supplyOrderReservedQuantity(table, row), 0)
       if (toOrder <= 0) continue
+      if (row.order_status === 'cancelled') {
+        completionItemsByMachine.get(machineId)?.push({
+          status: 'cancelled',
+          completionDates: [row.cancelled_at],
+        })
+        continue
+      }
       orderableItems.push({ table, row, machineId })
     }
   }
@@ -829,34 +827,28 @@ async function loadSupplyOrderActualMaterialDates(db: LooseDb, machineIds: strin
   }
 
   for (const { table, row, machineId } of orderableItems) {
-    const state = stateByMachine.get(machineId)
-    if (!state) continue
-
-    state.hasOrderableItems = true
+    const completionItems = completionItemsByMachine.get(machineId)
+    if (!completionItems) continue
     const schedules = schedulesByItem.get(`${table}:${row.id}`) || []
     const itemDelivered = schedules.length > 0
       ? schedules.every((schedule) => schedule.status === 'delivered')
       : row.order_status === 'delivered'
-
-    if (!itemDelivered) {
-      state.allDelivered = false
-      continue
-    }
-
-    state.latestDeliveredDate = rememberLatestActualMaterialDate(state.latestDeliveredDate, actualMaterialDateOnly(row.delivered_at))
-    for (const schedule of schedules) {
-      if (schedule.status !== 'delivered') continue
-      state.latestDeliveredDate = rememberLatestActualMaterialDate(
-        state.latestDeliveredDate,
-        actualMaterialDateOnly(schedule.delivered_at) || actualMaterialDateOnly(schedule.delivery_date)
-      )
-    }
+    completionItems.push({
+      status: itemDelivered ? 'delivered' : 'open',
+      completionDates: itemDelivered
+        ? [
+            row.delivered_at,
+            ...schedules
+              .filter((schedule) => schedule.status === 'delivered')
+              .flatMap((schedule) => [schedule.delivered_at, schedule.delivery_date]),
+          ]
+        : [],
+    })
   }
 
-  for (const [machineId, state] of stateByMachine.entries()) {
-    if (state.hasOrderableItems && state.allDelivered && state.latestDeliveredDate) {
-      actualDates.set(machineId, state.latestDeliveredDate)
-    }
+  for (const [machineId, items] of completionItemsByMachine.entries()) {
+    const actualDate = resolveActualMaterialDate(items, todayDateOnly())
+    if (actualDate) actualDates.set(machineId, actualDate)
   }
 
   return actualDates
@@ -1101,7 +1093,7 @@ export async function getMachine(id: string) {
     const items = machineData.machine_items || []
     const expenses = machineData.machine_expenses || []
     
-    const total_weight = items.reduce((sum, item) => sum + (Number(item.weight) * Number(item.quantity)), 0)
+    const total_weight = machineTotalWeightTonnes(items)
     const total_items_cost = items.reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity)), 0)
     const total_expenses = expenses.reduce((sum, exp) => sum + Number(exp.amount), 0)
     const total_cost = total_items_cost + total_expenses

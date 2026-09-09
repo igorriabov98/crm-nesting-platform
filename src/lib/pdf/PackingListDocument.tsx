@@ -1,10 +1,11 @@
-import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
+import { Document, Page, StyleSheet, View } from '@react-pdf/renderer'
 import type { ReactNode } from 'react'
 import type { DocumentData, DocumentItem, DocumentPackingGroup } from '@/lib/actions/document-generation'
 import { documentGrossWeight, packingSummaryFromGroups, totalPackingPlaces } from '@/lib/packing-summary'
 import { PdfSignatureStampOverlay } from './components'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
 import { formatDate, formatDocumentItemName, formatQuantity, formatWeight, groupItemsByHsCode } from './format'
+import { PdfText as Text } from './PdfText'
 
 registerPdfFonts()
 
@@ -22,8 +23,6 @@ const COLS = {
   places: 50,
 }
 const LEFT_TABLE_WIDTH = COLS.no + COLS.item + COLS.measurement + COLS.quantity + COLS.netWeight
-const LEADING_GLYPH_GUARD = '\u00A0'
-
 type NumberedItem = {
   item: DocumentItem
   number: number
@@ -33,19 +32,6 @@ type ItemRun = {
   key: string
   items: NumberedItem[]
   group: DocumentPackingGroup | null
-}
-
-function guardPdfText(value: string) {
-  if (!value) return value
-
-  return value
-    .split('\n')
-    .map((line) => (line ? `${LEADING_GLYPH_GUARD}${line}` : line))
-    .join('\n')
-}
-
-function guardPdfNode(value: ReactNode) {
-  return typeof value === 'string' ? guardPdfText(value) : value
 }
 
 const styles = StyleSheet.create({
@@ -167,10 +153,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     lineHeight: 1.08,
     textAlign: 'center',
-  },
-  guardedText: {
-    paddingLeft: 1,
-    paddingRight: 1,
   },
   hsText: {
     width: '100%',
@@ -360,7 +342,7 @@ function buildRuns(items: DocumentItem[], itemNumbers: Map<DocumentItem, number>
 function HeaderCell({ width, children }: { width: number; children: ReactNode }) {
   return (
     <View style={[styles.cell, styles.headerCell, { width }]}>
-      <Text style={[styles.headerText, styles.guardedText]}>{guardPdfNode(children)}</Text>
+      <Text style={styles.headerText}>{children}</Text>
     </View>
   )
 }
@@ -429,8 +411,8 @@ function ItemsTable({ data, packingGroups }: { data: DocumentData; packingGroups
                   ))}
                 </View>
                 <View style={[styles.cell, styles.centerCell, { width: COLS.packingType, height: runHeight }]}>
-                  <Text style={[styles.packingText, styles.guardedText]}>
-                    {guardPdfText(run.group ? `${run.group.packing_type_en}${run.group.packing_type_ua ? `\n(${run.group.packing_type_ua})` : ''}` : '')}
+                  <Text style={styles.packingText}>
+                    {run.group ? `${run.group.packing_type_en}${run.group.packing_type_ua ? `\n(${run.group.packing_type_ua})` : ''}` : ''}
                   </Text>
                 </View>
                 <View style={[styles.cell, styles.centerCell, { width: COLS.places, height: runHeight }]}>
@@ -499,8 +481,8 @@ export function PackingListDocument({ data }: { data: DocumentData }) {
             </View>
             <View style={[styles.topCell, { width: TOP_RIGHT_WIDTH, paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0 }]}>
               <View style={styles.deliveryPart}>
-                <Text style={[styles.topText, styles.guardedText]}>{guardPdfText(deliveryBasisEn)}</Text>
-                <Text style={[styles.topText, styles.guardedText]}>{guardPdfText(deliveryBasisUa)}</Text>
+                <Text style={styles.topText}>{deliveryBasisEn}</Text>
+                <Text style={styles.topText}>{deliveryBasisUa}</Text>
               </View>
               <View style={styles.countryPart}>
                 <Text style={styles.topTextBold}>The country of origin: Ukraine.</Text>
@@ -515,7 +497,7 @@ export function PackingListDocument({ data }: { data: DocumentData }) {
         <View style={styles.weightsTable} wrap={false}>
           <View style={styles.weightRow}>
             <View style={[styles.cell, styles.centerCell, styles.weightLabel]}>
-              <Text style={styles.guardedText}>{guardPdfText('Gross weight, kg/\nМаса брутто, кг')}</Text>
+              <Text>{'Gross weight, kg/\nМаса брутто, кг'}</Text>
             </View>
             <View style={[styles.cell, styles.centerCell, styles.weightValue]}>
               <Text>{formatWeight(grossWeight)}</Text>
@@ -523,7 +505,7 @@ export function PackingListDocument({ data }: { data: DocumentData }) {
           </View>
           <View style={styles.weightRow}>
             <View style={[styles.cell, styles.centerCell, styles.weightLabel]}>
-              <Text style={styles.guardedText}>{guardPdfText('Net weight, kg/\nМаса нетто, кг')}</Text>
+              <Text>{'Net weight, kg/\nМаса нетто, кг'}</Text>
             </View>
             <View style={[styles.cell, styles.centerCell, styles.weightValue]}>
               <Text>{formatWeight(netWeight)}</Text>

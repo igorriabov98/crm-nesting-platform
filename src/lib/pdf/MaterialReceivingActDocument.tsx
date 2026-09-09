@@ -1,6 +1,7 @@
-import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
+import { Document, Page, StyleSheet, View } from '@react-pdf/renderer'
 import type { MaterialReceivingActData, MaterialReceivingActItem } from '@/lib/material-receiving-act'
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
+import { PdfText as Text } from './PdfText'
 
 registerPdfFonts()
 

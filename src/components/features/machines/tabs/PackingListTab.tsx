@@ -20,7 +20,7 @@ import { updateMachinePackingSettings } from '@/app/(protected)/sales-plan/actio
 import { getNextSpecificationNumber } from '@/lib/actions/contracts'
 import { ContractSelectField } from '@/components/features/contracts/ContractSelectField'
 import { MACHINE_DELIVERY_BASIS_OPTIONS, MACHINE_DELIVERY_BASIS_VALUES, type MachineDeliveryBasisType } from '@/lib/constants/machine-delivery-basis'
-import { documentGrossWeight, documentLineNetWeight, packingSummaryFromGroups, totalPackingPlaces } from '@/lib/packing-summary'
+import { defaultPackingBoxGroup, documentGrossWeight, documentLineNetWeight, packingSummaryFromGroups, totalPackingPlaces } from '@/lib/packing-summary'
 import { cn } from '@/lib/utils'
 import type { MachineDetails } from '@/lib/types'
 
@@ -63,7 +63,14 @@ interface PackingListTabProps {
 }
 
 function initialGroups(machine: MachineDetails): DraftGroup[] {
-  const groups = machine.machine_packing_groups || []
+  const storedGroups = machine.machine_packing_groups || []
+  const goodsCount = (machine.machine_items || []).filter((item) => !item.is_sample).length
+  const fallbackGroup = defaultPackingBoxGroup(Number(machine.packing_boxes_count || 0), goodsCount)
+  const groups = storedGroups.length > 0
+    ? storedGroups
+    : fallbackGroup
+      ? [fallbackGroup]
+      : []
 
   return [...groups]
     .sort((a, b) => {
