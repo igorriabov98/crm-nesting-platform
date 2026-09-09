@@ -13,10 +13,19 @@ import {
 } from '../src/lib/transport/trip-rules'
 import { formatCompanyLocation } from '../src/lib/transport/company-location'
 import {
+  formatTransportCarriedQuantity,
   groupTransportNeeds,
   hasCompleteTransportPositionSelection,
   type GroupableTransportNeed,
 } from '../src/lib/transport/need-groups'
+import {
+  calculateInventoryTransferMaterialWeight,
+  formatInventoryTransferQuantity,
+  inventoryTransferMaterialCharacteristics,
+  inventoryTransferReceiptInputValue,
+  inventoryTransferReceiptPrimaryQuantity,
+  materialCategoryLabel,
+} from '../src/lib/transport/inventory-transfer-materials'
 import { transportTripDisplayName } from '../src/lib/transport/trip-display-name'
 
 const baseNeed: TransportRouteNeed = {
@@ -149,6 +158,59 @@ assert.equal(groupedLongStock[0].positions[0].itemDetails[0].pieceLengthMm, 6_00
 assert.equal(groupedLongStock[0].positions[0].volumeLabel, '2 шт. × 6\u00a0000 мм · 66,16 кг')
 assert.equal(hasCompleteTransportPositionSelection(groupedLongStock[0].needs, [groupedLongStock[0].needs[0]]), false)
 assert.equal(hasCompleteTransportPositionSelection(groupedLongStock[0].needs, groupedLongStock[0].needs), true)
+
+assert.equal(formatTransportCarriedQuantity({
+  quantity: 5_588,
+  unit: 'мм',
+  pieceLengthMm: 5_588,
+  pieceCount: 1,
+}), '1 шт. × 5\u00a0588 мм')
+const measuredTransferItem = {
+  pieceLengthMm: 5_588,
+  requestedSecondaryQuantity: 1,
+  remainingQuantity: 5_588,
+  remainingSecondaryQuantity: 1,
+  unit: 'мм',
+}
+assert.equal(formatInventoryTransferQuantity(measuredTransferItem, 5_588, 1), '1 шт. × 5\u00a0588 мм')
+assert.equal(formatInventoryTransferQuantity(measuredTransferItem, 0, null), '0 шт.')
+assert.equal(inventoryTransferReceiptInputValue(measuredTransferItem), 1)
+assert.equal(inventoryTransferReceiptPrimaryQuantity(measuredTransferItem, 1), 5_588)
+assert.equal(materialCategoryLabel('knives'), 'Ножи')
+assert.equal(materialCategoryLabel('sheet_metal'), 'Листовой металл')
+assert.deepEqual(inventoryTransferMaterialCharacteristics({
+  category: 'sheet_metal',
+  steelTypeName: 'Hardox 450',
+  variant: {
+    category: 'sheet_metal',
+    sheet_size: '1500×3000',
+    thickness_mm: 10,
+  },
+}), [
+  { label: 'Марка стали', value: 'Hardox 450' },
+  { label: 'Размер листа', value: '1500×3000' },
+  { label: 'Толщина', value: '10 мм' },
+])
+assert.equal(calculateInventoryTransferMaterialWeight({
+  remainingQuantity: 3,
+  unit: 'шт',
+  variant: null,
+  densityKgMm3: null,
+  sourceStock: { totalQuantity: 10, calculatedWeightKg: 785 },
+}), 235.5)
+const knifeTransferWeight = calculateInventoryTransferMaterialWeight({
+  remainingQuantity: 5_588,
+  unit: 'мм',
+  variant: {
+    category: 'knives',
+    width_mm: 100,
+    height_mm: 10,
+  },
+  densityKgMm3: 7.85 / 1_000_000,
+  sourceStock: null,
+})
+assert.ok(knifeTransferWeight !== null)
+assert.ok(Math.abs(knifeTransferWeight - 43.8658) < 0.000001)
 
 const splitBoundaries = groupTransportNeeds([
   supplyNeed({ id: 'date-a', positionKey: 'a', date: '2026-09-08', title: 'A', quantity: 1, required: 1, excess: 0, unit: 'шт.', weightKg: null }),
@@ -321,7 +383,28 @@ assert.match(transportActions, /remainingSecondaryQuantity/)
 assert.match(transportActions, /TRANSPORT_EXCLUDED_CHARACTERISTICS/)
 assert.match(transportActions, /'финиш'/)
 assert.match(transportActions, /formatTransportCarriedQuantity/)
+assert.match(transportActions, /pieceCount: item\.remainingSecondaryQuantity/)
+assert.match(transportActions, /Длина хлыста/)
+assert.match(transportActions, /materialCategoryLabel\(item\.materialCategory\)/)
+assert.match(transportActions, /weightKg: item\.weightKg/)
 assert.doesNotMatch(transportActions, /characteristics: need\.characteristics,/)
+
+const inventoryTransferActions = readFileSync(resolve('src/lib/actions/inventory-transfers.ts'), 'utf8')
+assert.match(inventoryTransferActions, /source_inventory_id/)
+assert.match(inventoryTransferActions, /calculated_weight_kg/)
+assert.match(inventoryTransferActions, /material_variants/)
+assert.match(inventoryTransferActions, /steel_types/)
+assert.match(inventoryTransferActions, /inventoryTransferMaterialCharacteristics/)
+assert.match(inventoryTransferActions, /calculateInventoryTransferMaterialWeight/)
+
+const inventoryTransferReceiving = readFileSync(
+  resolve('src/components/features/inventory/InventoryTransferReceivingPanel.tsx'),
+  'utf8',
+)
+assert.match(inventoryTransferReceiving, /Длина хлыста:/)
+assert.match(inventoryTransferReceiving, /inventoryTransferReceiptInputValue/)
+assert.match(inventoryTransferReceiving, /inventoryTransferReceiptPrimaryQuantity/)
+assert.match(inventoryTransferReceiving, /Количество хлыстов укажите целым числом/)
 
 const transportWorkspaceSource = readFileSync(resolve('src/components/features/supply/TransportWorkspacePage.tsx'), 'utf8')
 const transportDetailsSource = transportWorkspaceSource.slice(
