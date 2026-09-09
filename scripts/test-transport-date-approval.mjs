@@ -426,6 +426,171 @@ try {
       IF NOT failed THEN RAISE EXCEPTION 'one technical schedule fragment was moved separately'; END IF;
     END $$;
   `)
+  run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260731193000_transport_trip_manual_lifecycle.sql')])
+  psql(String.raw`
+    INSERT INTO supply_order_delivery_schedules(
+      id,request_item_table,request_item_id,status,delivery_date
+    ) VALUES (
+      '40000000-0000-0000-0000-000000000040','request_pipe',
+      '90000000-0000-0000-0000-000000000040','planned','2026-09-09'
+    );
+    INSERT INTO machine_outsourcing_transport_orders(
+      id,direction,status,scheduled_date,price,route_start,route,date_change_state
+    ) VALUES (
+      '30000000-0000-0000-0000-000000000040','outbound','found','2026-09-10',100,
+      'Varian — Ужгород','Varian — Ужгород → Берегово','approved'
+    );
+    INSERT INTO transport_trip_stops(
+      id,transport_order_id,client_key,sequence_no,stop_kind,point_key,point_label,
+      city,planned_arrival_at,service_duration_minutes,status
+    ) VALUES
+      ('61000000-0000-0000-0000-000000000040','30000000-0000-0000-0000-000000000040',
+       'varian',0,'service','supplier:varian','Varian — Ужгород','Ужгород',
+       '2026-09-10T06:00:00+00:00',30,'planned'),
+      ('61000000-0000-0000-0000-000000000041','30000000-0000-0000-0000-000000000040',
+       'berehove',1,'finish','factory:berehove','Берегово','Берегово',
+       '2026-09-10T07:00:00+00:00',30,'planned');
+    INSERT INTO transport_trip_need_links(
+      id,transport_order_id,need_kind,need_source,need_id,direction,source_point_key,
+      source_point_label,destination_point_key,destination_point_label,need_title,
+      needed_date,pickup_stop_id,delivery_stop_id
+    ) VALUES (
+      '60000000-0000-0000-0000-000000000040','30000000-0000-0000-0000-000000000040',
+      'materials','supply_schedule','40000000-0000-0000-0000-000000000040','outbound',
+      'supplier:varian','Varian — Ужгород','factory:berehove','Берегово','Труба',
+      '2026-09-10','61000000-0000-0000-0000-000000000040','61000000-0000-0000-0000-000000000041'
+    );
+    INSERT INTO transport_trip_date_change_requests(
+      id,transport_order_id,status,reason,requested_by,decided_by,decided_at
+    ) VALUES (
+      '80000000-0000-0000-0000-000000000040','30000000-0000-0000-0000-000000000040',
+      'approved','Перенос на согласованную дату','10000000-0000-0000-0000-000000000001',
+      '10000000-0000-0000-0000-000000000002',now()
+    );
+    INSERT INTO transport_trip_date_change_items(
+      id,request_id,transport_need_link_id,need_source,need_id,old_date,new_date,status,sort_order,decided_at
+    ) VALUES (
+      '81000000-0000-0000-0000-000000000040','80000000-0000-0000-0000-000000000040',
+      '60000000-0000-0000-0000-000000000040','supply_schedule',
+      '40000000-0000-0000-0000-000000000040','2026-09-10','2026-09-09','approved',0,now()
+    );
+  `)
+  run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260909120000_transport_trip_date_consistency_and_start_day.sql')])
+  psql(String.raw`
+    DO $$
+    DECLARE
+      actor uuid := '10000000-0000-0000-0000-000000000001';
+      today date := (now() at time zone 'Europe/Kyiv')::date;
+      tomorrow date := (now() at time zone 'Europe/Kyiv')::date + 1;
+      failed boolean := false;
+    BEGIN
+      IF (SELECT scheduled_date FROM machine_outsourcing_transport_orders
+          WHERE id='30000000-0000-0000-0000-000000000040') <> '2026-09-09' THEN
+        RAISE EXCEPTION 'approved legacy trip date was not repaired';
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM transport_trip_stops
+        WHERE transport_order_id='30000000-0000-0000-0000-000000000040'
+          AND (planned_arrival_at at time zone 'Europe/Kyiv')::date <> '2026-09-09'
+      ) THEN RAISE EXCEPTION 'approved legacy stop dates were not repaired'; END IF;
+      IF (SELECT to_char(planned_arrival_at at time zone 'Europe/Kyiv', 'HH24:MI')
+          FROM transport_trip_stops
+          WHERE id='61000000-0000-0000-0000-000000000041') <> '10:00' THEN
+        RAISE EXCEPTION 'repair did not preserve the receiving time';
+      END IF;
+
+      INSERT INTO inventory_transfers(id,status,expected_arrival_date)
+      VALUES
+        ('40000000-0000-0000-0000-000000000041','planned',today),
+        ('40000000-0000-0000-0000-000000000042','planned',tomorrow),
+        ('40000000-0000-0000-0000-000000000043','planned',today),
+        ('40000000-0000-0000-0000-000000000044','planned',today),
+        ('40000000-0000-0000-0000-000000000045','planned',today);
+      INSERT INTO machine_outsourcing_transport_orders(
+        id,direction,status,scheduled_date,price,route_start,route,date_change_state
+      ) VALUES
+        ('30000000-0000-0000-0000-000000000041','outbound','found',today,100,'A','A → B','not_required'),
+        ('30000000-0000-0000-0000-000000000042','outbound','found',tomorrow,100,'A','A → B','not_required'),
+        ('30000000-0000-0000-0000-000000000043','outbound','found',tomorrow,100,'A','A → B','pending'),
+        ('30000000-0000-0000-0000-000000000044','outbound','found',today,100,'A','A → B','pending'),
+        ('30000000-0000-0000-0000-000000000045','outbound','found',tomorrow,100,'A','A → B','pending');
+      INSERT INTO transport_trip_stops(
+        id,transport_order_id,client_key,sequence_no,stop_kind,point_key,point_label,
+        planned_arrival_at,service_duration_minutes,status
+      ) VALUES
+        ('61000000-0000-0000-0000-000000000042','30000000-0000-0000-0000-000000000041','a',0,'service','a','A',
+         (today + time '23:59') at time zone 'Europe/Kyiv',30,'planned'),
+        ('61000000-0000-0000-0000-000000000043','30000000-0000-0000-0000-000000000042','a',0,'service','a','A',
+         (tomorrow + time '00:01') at time zone 'Europe/Kyiv',30,'planned');
+      INSERT INTO transport_trip_need_links(
+        id,transport_order_id,need_kind,need_source,need_id,direction,source_point_key,
+        source_point_label,destination_point_key,destination_point_label,need_title,needed_date
+      ) VALUES
+        ('60000000-0000-0000-0000-000000000041','30000000-0000-0000-0000-000000000041','materials','inventory_transfer','40000000-0000-0000-0000-000000000041','outbound','a','A','b','B','Сегодня',today),
+        ('60000000-0000-0000-0000-000000000042','30000000-0000-0000-0000-000000000042','materials','inventory_transfer','40000000-0000-0000-0000-000000000042','outbound','a','A','b','B','Завтра',tomorrow),
+        ('60000000-0000-0000-0000-000000000043','30000000-0000-0000-0000-000000000043','materials','inventory_transfer','40000000-0000-0000-0000-000000000043','outbound','a','A','b','B','Устаревший',today),
+        ('60000000-0000-0000-0000-000000000044','30000000-0000-0000-0000-000000000044','materials','inventory_transfer','40000000-0000-0000-0000-000000000044','outbound','a','A','b','B','Защита',today),
+        ('60000000-0000-0000-0000-000000000045','30000000-0000-0000-0000-000000000045','materials','inventory_transfer','40000000-0000-0000-0000-000000000045','outbound','a','A','b','B','Одобрение',today);
+
+      IF fn_start_transport_trip_v1('30000000-0000-0000-0000-000000000041',actor) <> 'in_transit' THEN
+        RAISE EXCEPTION 'same-day trip did not start before its planned time';
+      END IF;
+      failed := false;
+      BEGIN
+        PERFORM fn_start_transport_trip_v1('30000000-0000-0000-0000-000000000042',actor);
+      EXCEPTION WHEN OTHERS THEN
+        failed := position('Запланированный день начала рейса' in SQLERRM) > 0;
+      END;
+      IF NOT failed THEN RAISE EXCEPTION 'future-day trip started early'; END IF;
+
+      INSERT INTO transport_trip_date_change_requests(
+        id,transport_order_id,status,reason,requested_by
+      ) VALUES
+        ('80000000-0000-0000-0000-000000000043','30000000-0000-0000-0000-000000000043','pending','Старая редакция',actor),
+        ('80000000-0000-0000-0000-000000000044','30000000-0000-0000-0000-000000000044','pending','Проверка защиты',actor),
+        ('80000000-0000-0000-0000-000000000045','30000000-0000-0000-0000-000000000045','pending','Актуальный перенос',actor);
+      INSERT INTO transport_trip_date_change_items(
+        id,request_id,transport_need_link_id,need_source,need_id,old_date,new_date,sort_order
+      ) VALUES
+        ('81000000-0000-0000-0000-000000000043','80000000-0000-0000-0000-000000000043','60000000-0000-0000-0000-000000000043','inventory_transfer','40000000-0000-0000-0000-000000000043',today,tomorrow,0),
+        ('81000000-0000-0000-0000-000000000044','80000000-0000-0000-0000-000000000044','60000000-0000-0000-0000-000000000044','inventory_transfer','40000000-0000-0000-0000-000000000044',today,tomorrow,0),
+        ('81000000-0000-0000-0000-000000000045','80000000-0000-0000-0000-000000000045','60000000-0000-0000-0000-000000000045','inventory_transfer','40000000-0000-0000-0000-000000000045',today,tomorrow,0);
+
+      UPDATE machine_outsourcing_transport_orders
+      SET scheduled_date=today, updated_by=actor
+      WHERE id='30000000-0000-0000-0000-000000000043';
+      IF (SELECT status FROM transport_trip_date_change_requests
+          WHERE id='80000000-0000-0000-0000-000000000043') <> 'conflicted'
+         OR (SELECT date_change_state FROM machine_outsourcing_transport_orders
+             WHERE id='30000000-0000-0000-0000-000000000043') <> 'not_required' THEN
+        RAISE EXCEPTION 'date edit did not invalidate its stale approval';
+      END IF;
+
+      failed := false;
+      BEGIN
+        PERFORM fn_decide_transport_trip_date_change(
+          '80000000-0000-0000-0000-000000000044','approved',null,actor
+        );
+      EXCEPTION WHEN OTHERS THEN
+        failed := position('Согласование переноса устарело' in SQLERRM) > 0;
+      END;
+      IF NOT failed THEN RAISE EXCEPTION 'stale approval bypassed the consistency guard'; END IF;
+      IF (SELECT expected_arrival_date FROM inventory_transfers
+          WHERE id='40000000-0000-0000-0000-000000000044') <> today THEN
+        RAISE EXCEPTION 'stale approval partially changed its source date';
+      END IF;
+
+      IF fn_decide_transport_trip_date_change(
+          '80000000-0000-0000-0000-000000000045','approved',null,actor
+        ) <> 'approved' THEN
+        RAISE EXCEPTION 'current approval was rejected by the consistency guard';
+      END IF;
+      IF (SELECT expected_arrival_date FROM inventory_transfers
+          WHERE id='40000000-0000-0000-0000-000000000045') <> tomorrow THEN
+        RAISE EXCEPTION 'current approval did not update its source date';
+      END IF;
+    END $$;
+  `)
   console.log('Transport date approval DB test: OK')
 } finally {
   run('dropdb', ['--if-exists', '--force', '--maintenance-db', adminUrl, databaseName])
