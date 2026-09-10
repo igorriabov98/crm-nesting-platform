@@ -86,6 +86,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   consumable_request_review: 'Заявка на расходники',
   consumable_request_shortage: 'Недопоставка расходника',
   supply_material_receipt_shortage: 'Недовес материала',
+  supply_schedule_reconciliation_review: 'Сверка графика снабжения',
   production_cutting_rollback_review: 'Откат заготовки',
   long_stock_cutting_recalculation: 'Пересчёт раскроя',
   long_stock_cutting_supply_shortage: 'Дозаказ длинномера',
@@ -217,6 +218,13 @@ function formatTaskDeadline(value: string | null | undefined) {
 }
 
 function getTaskTarget(task: TaskWithRelations) {
+  if (task.task_type === 'supply_schedule_reconciliation_review' && task.machine?.factory_id) {
+    return {
+      href: `${ROUTES.SUPPLY_ORDERS}?view=summary&factory=${task.machine.factory_id}`,
+      label: 'Сводка заказов снабжения',
+      kind: 'Снабжение',
+    }
+  }
   if (task.task_type === 'customs_clearance' && task.machine) {
     return {
       href: `${ROUTES.CUSTOMS_CLEARANCE}?focus=${task.machine.id}`,
@@ -271,6 +279,7 @@ function isConsumableTask(taskType: TaskType) {
 
 function isSupplyReceiptTask(taskType: TaskType) {
   return taskType === 'supply_material_receipt_shortage'
+    || taskType === 'supply_schedule_reconciliation_review'
 }
 
 function isCuttingRollbackTask(taskType: TaskType) {

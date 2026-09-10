@@ -49,6 +49,7 @@ type AllocationState = {
   receipt: ReceiptValues
   data: MaterialDeliveryAllocationPreview
   values: Record<string, string>
+  reconciliationReason: string
   returnFocus: HTMLElement | null
 }
 
@@ -183,6 +184,7 @@ export function MaterialReceivingPage({ data }: Props) {
     item: MaterialReceivingItem,
     values: ReceiptValues,
     confirmedAllocations?: MaterialDeliveryAllocationInput[],
+    reconciliationReason?: string,
   ) {
     if (values.isBar && !isLongStockRequestItemTable(item.table)) {
       toast.error('Некорректная категория длинномера')
@@ -201,6 +203,7 @@ export function MaterialReceivingPage({ data }: Props) {
       : await receiveMaterialDelivery({
         ...receiptInput(item, values),
         confirmed_allocations: confirmedAllocations,
+        reconciliation_reason: reconciliationReason,
       })
     if (!result.success) {
       toast.error(result.error || 'Не удалось принять поставку')
@@ -247,12 +250,6 @@ export function MaterialReceivingPage({ data }: Props) {
       }
       const preview = result.data
 
-      if (preview.mode === 'quantity' && !preview.has_shortage) {
-        await performReceipt(item, values)
-        setPendingKey(null)
-        return
-      }
-
       setAllocationState({
         itemKey: item.key,
         item: preparedScheduleIds.length
@@ -260,6 +257,7 @@ export function MaterialReceivingPage({ data }: Props) {
           : item,
         receipt: values,
         data: preview,
+        reconciliationReason: '',
         returnFocus,
         values: Object.fromEntries(preview.allocations.map((row) => [
           `${row.table}:${row.id}`,
@@ -272,7 +270,7 @@ export function MaterialReceivingPage({ data }: Props) {
 
   function confirmAllocation() {
     if (!allocationState) return
-    const { item, receipt, data, values } = allocationState
+    const { item, receipt, data, values, reconciliationReason } = allocationState
     const confirmedAllocations: MaterialDeliveryAllocationInput[] = data.allocations
       .filter((row) => row.is_eligible)
       .map((row) => {
@@ -284,7 +282,7 @@ export function MaterialReceivingPage({ data }: Props) {
 
     setPendingKey(item.key)
     startTransition(async () => {
-      await performReceipt(item, receipt, confirmedAllocations)
+      await performReceipt(item, receipt, confirmedAllocations, reconciliationReason)
       setPendingKey(null)
     })
   }
@@ -580,10 +578,14 @@ export function MaterialReceivingPage({ data }: Props) {
           itemName={allocationState.item.item_name}
           preview={allocationState.data}
           values={allocationState.values}
+          reconciliationReason={allocationState.reconciliationReason}
           disabled={isPending && pendingKey === allocationState.itemKey}
           returnFocus={allocationState.returnFocus}
           onValueChange={(key, value) => setAllocationState((current) => current
             ? { ...current, values: { ...current.values, [key]: value } }
+            : current)}
+          onReconciliationReasonChange={(value) => setAllocationState((current) => current
+            ? { ...current, reconciliationReason: value }
             : current)}
           onClose={() => setAllocationState(null)}
           onConfirm={confirmAllocation}

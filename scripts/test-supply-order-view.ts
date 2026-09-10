@@ -81,7 +81,7 @@ assert.match(
 )
 assert.match(
   supplyOrdersAction,
-  /const projectedSchedules = projectSchedulesToPurchasePlans\(items, schedules\)[\s\S]*for \(const schedule of projectedSchedules\)/u,
+  /const allProjectedSchedules = projectSchedulesToPurchasePlans\(factoryItems, allSchedules\)[\s\S]*const projectedSchedules = allProjectedSchedules\.filter[\s\S]*for \(const schedule of projectedSchedules\)/u,
   'receiving must exclude long stock sourced from warehouse reservations',
 )
 assert.match(

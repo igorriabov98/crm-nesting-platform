@@ -36,9 +36,14 @@ const batchTestSql = readFileSync(
   path.join(root, 'supabase', 'tests', 'material_receiving_batch_test.sql'),
   'utf8',
 )
+const manualReconciliationTestSql = readFileSync(
+  path.join(root, 'supabase', 'tests', 'manual_quantity_receipt_reconciliation_test.sql'),
+  'utf8',
+)
 for (const [label, sql] of [
   ['Supply receiving plan/fact', testSql],
   ['Material receiving batch', batchTestSql],
+  ['Manual quantity receipt reconciliation', manualReconciliationTestSql],
 ]) {
   const result = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', databaseName], {
     cwd: root,
@@ -54,6 +59,7 @@ for (const [label, sql] of [
   process.stdout.write(result.stdout || '')
 }
 await testConcurrentBatchReceipt()
+await testConcurrentManualQuantityReceipt()
 console.log('[supply-receiving-plan-fact] all assertions passed')
 
 async function testConcurrentBatchReceipt() {
@@ -116,7 +122,7 @@ async function testConcurrentBatchReceipt() {
       }],
     },
   ]).replaceAll("'", "''")
-  const callSql = `SELECT public.fn_receive_supply_order_schedule_batch_v1('${receiptJson}'::jsonb, '${fixture.actor}');`
+  const callSql = `SELECT public.fn_receive_supply_order_schedule_batch_v2('${receiptJson}'::jsonb, '${fixture.actor}', NULL);`
   const firstSql = `
     BEGIN;
     SELECT id FROM public.supply_order_delivery_schedules
@@ -157,7 +163,92 @@ async function testConcurrentBatchReceipt() {
     $$;
   `
   runPsql(verifySql, 'Concurrent batch verification')
-  console.log('[material-receiving-batch] concurrent repeat rejected after row lock')
+  console.log('[manual-quantity-receiving-batch] concurrent repeat rejected after row lock')
+}
+
+async function testConcurrentManualQuantityReceipt() {
+  const fixture = {
+    actor: randomUUID(),
+    machine: randomUUID(),
+    request: randomUUID(),
+    supplier: randomUUID(),
+    material: randomUUID(),
+    item: randomUUID(),
+    schedule: randomUUID(),
+  }
+  const setupSql = `
+    DO $$
+    DECLARE v_factory uuid;
+    BEGIN
+      SELECT id INTO v_factory FROM public.factories ORDER BY created_at NULLS LAST LIMIT 1;
+      IF v_factory IS NULL THEN RAISE EXCEPTION 'Для теста не найден завод'; END IF;
+      INSERT INTO public.users(id, email, full_name, role, factory_id, is_active)
+      VALUES ('${fixture.actor}', 'manual-receipt-concurrency-${fixture.actor}@example.test', 'Конкурентная ручная приёмка', 'supply_manager', v_factory, true);
+      INSERT INTO public.suppliers(id, name) VALUES ('${fixture.supplier}', 'Manual concurrent supplier ${fixture.supplier}');
+      INSERT INTO public.machines(id, factory_id, name, created_by)
+      VALUES ('${fixture.machine}', v_factory, 'Конкурентная ручная приёмка', '${fixture.actor}');
+      INSERT INTO public.technologist_requests(id, machine_id, created_by, status)
+      VALUES ('${fixture.request}', '${fixture.machine}', '${fixture.actor}', 'submitted_to_supply');
+      INSERT INTO public.materials(id, name, category, default_supplier_id, created_by)
+      VALUES ('${fixture.material}', 'Manual concurrent RAL', 'paint', '${fixture.supplier}', '${fixture.actor}');
+      INSERT INTO public.request_paint(
+        id, request_id, paint_type, ral_code, finish, weight_kg, waste_percent,
+        order_status, ordered_at, material_id, supplier_id, remainder_kg
+      ) VALUES (
+        '${fixture.item}', '${fixture.request}', 'manual concurrent ral', 'MANUAL-CONCURRENT', 'матовый', 5, 0,
+        'ordered', now(), '${fixture.material}', '${fixture.supplier}', 5
+      );
+      INSERT INTO public.supply_order_delivery_schedules(
+        id, request_item_table, request_item_id, delivery_date, quantity, unit,
+        supplier_id, created_by, updated_by, created_at
+      ) VALUES (
+        '${fixture.schedule}', 'request_paint', '${fixture.item}', date '2026-09-14', 5, 'кг',
+        '${fixture.supplier}', '${fixture.actor}', '${fixture.actor}', now()
+      );
+    END;
+    $$;
+  `
+  runPsql(setupSql, 'Concurrent manual receipt fixture setup')
+
+  const callSql = `SELECT public.fn_receive_supply_order_schedule_v3('${fixture.schedule}', '${fixture.actor}', 5, '[]'::jsonb, NULL, NULL, NULL);`
+  const firstSql = `
+    BEGIN;
+    SELECT id FROM public.supply_order_delivery_schedules
+    WHERE id = '${fixture.schedule}' FOR UPDATE;
+    SELECT pg_sleep(0.5);
+    ${callSql}
+    SELECT pg_sleep(1);
+    COMMIT;
+  `
+
+  const first = runPsqlAsync(firstSql)
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  const secondStartedAt = Date.now()
+  const second = runPsqlAsync(callSql)
+  const [firstResult, secondResult] = await Promise.all([first, second])
+  assert.equal(firstResult.status, 0, `First concurrent manual receipt failed: ${firstResult.stderr}`)
+  assert.notEqual(secondResult.status, 0, 'Concurrent repeated manual receipt unexpectedly succeeded')
+  assert.match(`${secondResult.stdout}\n${secondResult.stderr}`, /Поставка уже принята/)
+  assert.ok(Date.now() - secondStartedAt >= 900, 'Concurrent manual receipt did not wait for the schedule lock')
+
+  const verifySql = `
+    DO $$
+    DECLARE v_factory uuid;
+    BEGIN
+      SELECT factory_id INTO v_factory FROM public.machines WHERE id = '${fixture.machine}';
+      IF (SELECT status FROM public.supply_order_delivery_schedules WHERE id = '${fixture.schedule}') <> 'delivered' THEN
+        RAISE EXCEPTION 'Конкурентная ручная приёмка не закрыла график';
+      END IF;
+      IF (SELECT total_quantity FROM public.inventory
+          WHERE factory_id = v_factory AND material_id = '${fixture.material}' AND material_variant_id IS NULL AND is_business_scrap = false) <> 5 THEN
+        RAISE EXCEPTION 'Конкурентный повтор ручной приёмки изменил склад более одного раза';
+      END IF;
+      UPDATE public.users SET is_active = false WHERE id = '${fixture.actor}';
+    END;
+    $$;
+  `
+  runPsql(verifySql, 'Concurrent manual receipt verification')
+  console.log('[manual-quantity-receiving] concurrent repeat rejected after row lock')
 }
 
 function runPsql(sql, label) {

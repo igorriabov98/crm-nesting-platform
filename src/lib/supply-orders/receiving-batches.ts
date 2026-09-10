@@ -49,6 +49,7 @@ export type ReceivingTransportContext = {
   trip_name: string
   planned_arrival_at: string | null
   arrived_at: string | null
+  trip_status?: string
 }
 
 export type MaterialReceivingItem = Omit<MaterialReceivingProjectionRow, 'aggregate_identity'> & {

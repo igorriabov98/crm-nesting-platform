@@ -1223,7 +1223,7 @@ function FactoryDeliveryEditorForm({
             <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
               {isBarMaterial
                 ? <>Физический приход больше логической потребности на {formatAmount(plannedTotal - remainingQuantity)} {aggregate.unit}. При приёмке CRM покажет, какие целые бруски будут зарезервированы под машины, какой будущий деловой отход появится после Заготовки и сколько нетронутых брусков останется свободным складом.</>
-                : <>Сверх потребности: {formatAmount(plannedTotal - remainingQuantity)} {aggregate.unit}. После приёмки CRM распределит объём по открытым потребностям, а свободный излишек оставит на складе.</>}
+                : <>Сверх потребности: {formatAmount(plannedTotal - remainingQuantity)} {aggregate.unit}. При приёмке оператор сам подтвердит бронь по машинам; нераспределённый объём останется на свободном складе.</>}
             </div>
           )}
           {scheduleDrafts.some((draft) => !draft.supplier_id) && (

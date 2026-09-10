@@ -19,9 +19,11 @@ type Props = {
   itemName: string
   preview: MaterialDeliveryAllocationPreview
   values: Record<string, string>
+  reconciliationReason?: string
   disabled: boolean
   returnFocus: HTMLElement | null
   onValueChange: (key: string, value: string) => void
+  onReconciliationReasonChange?: (value: string) => void
   onClose: () => void
   onConfirm: () => void
 }
@@ -31,9 +33,11 @@ export function MaterialReceivingAllocationDialog({
   itemName,
   preview,
   values,
+  reconciliationReason = '',
   disabled,
   returnFocus,
   onValueChange,
+  onReconciliationReasonChange = () => undefined,
   onClose,
   onConfirm,
 }: Props) {
@@ -66,8 +70,22 @@ export function MaterialReceivingAllocationDialog({
     freeQuantity,
     invalidRows,
     exceedsReceipt,
-    canConfirm,
+    canConfirm: allocationCanConfirm,
   } = calculation
+  const futureImpact = isBar ? { reduction: 0, protected: 0 } : rows.reduce((totals, row) => {
+    if (!row.is_eligible || row.value <= 0) return totals
+    const overlap = Math.min(row.logical, row.future_planned_quantity)
+    const reduction = Math.min(overlap, row.future_reducible_quantity)
+    return {
+      reduction: totals.reduction + reduction,
+      protected: totals.protected + Math.max(overlap - reduction, 0),
+    }
+  }, { reduction: 0, protected: 0 })
+  const touchesFutureSchedule = futureImpact.reduction + futureImpact.protected > 0.000001
+  const normalizedReason = reconciliationReason.trim()
+  const reasonIsValid = !touchesFutureSchedule
+    || (normalizedReason.length >= 3 && normalizedReason.length <= 2000)
+  const canConfirm = allocationCanConfirm && reasonIsValid
   const hasLengthMismatch = isBar
     && preview.planned_piece_length_mm !== null
     && preview.piece_length_mm !== null
@@ -139,22 +157,40 @@ export function MaterialReceivingAllocationDialog({
               ? `${formatAmount(freePieces)} шт / ${formatAmount(freeQuantity)} ${preview.unit}`
               : `${formatAmount(freeQuantity)} ${preview.unit}`}
           />
+          {!isBar && (
+            <Summary
+              label="Уменьшится будущий график"
+              value={`${formatAmount(futureImpact.reduction)} ${preview.unit}`}
+            />
+          )}
+          {!isBar && (
+            <Summary
+              label="Защищено в начатом рейсе"
+              value={`${formatAmount(futureImpact.protected)} ${preview.unit}`}
+            />
+          )}
         </div>
 
         <div className="min-h-0 overflow-y-auto overscroll-contain px-3 py-3 sm:px-6">
-          <div className="hidden grid-cols-[minmax(230px,1.5fr)_repeat(3,minmax(100px,.65fr))_minmax(150px,.8fr)] gap-3 border-b px-3 py-2 text-xs font-semibold uppercase text-muted-foreground lg:grid">
+          <div className="hidden grid-cols-[minmax(220px,1.4fr)_repeat(4,minmax(95px,.62fr))_minmax(145px,.8fr)] gap-3 border-b px-3 py-2 text-xs font-semibold uppercase text-muted-foreground lg:grid">
             <div>Машина и дата Заготовки</div>
             <div>Заявлено к поставке</div>
             <div>Принято ранее</div>
             <div>Осталось принять</div>
+            <div>Будущий график</div>
             <div>{isBar ? 'Хлыстов в резерв' : 'Количество в резерв'}</div>
           </div>
 
           <div className="divide-y rounded-xl border">
+            {rows.length === 0 && (
+              <div className="p-4 text-sm text-muted-foreground">
+                Открытых потребностей нет. После подтверждения весь приход останется на свободном складе.
+              </div>
+            )}
             {rows.map((row) => (
               <div
                 key={row.key}
-                className={`grid gap-3 p-3 lg:grid-cols-[minmax(230px,1.5fr)_repeat(3,minmax(100px,.65fr))_minmax(150px,.8fr)] lg:items-center ${row.is_eligible ? 'bg-card' : 'bg-muted/40 text-muted-foreground'}`}
+                className={`grid gap-3 p-3 lg:grid-cols-[minmax(220px,1.4fr)_repeat(4,minmax(95px,.62fr))_minmax(145px,.8fr)] lg:items-center ${row.is_eligible ? 'bg-card' : 'bg-muted/40 text-muted-foreground'}`}
               >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -192,6 +228,26 @@ export function MaterialReceivingAllocationDialog({
                   pieceCount={row.supply_outstanding_piece_count}
                   strong
                 />
+
+                <div>
+                  <div className="text-xs text-muted-foreground lg:hidden">Будущий график</div>
+                  <div className="font-medium tabular-nums">
+                    {formatAmount(row.future_planned_quantity)} {preview.unit}
+                  </div>
+                  {row.future_schedules.length > 0 && (
+                    <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+                      {row.future_schedules.map((schedule) => (
+                        <div key={schedule.schedule_id}>
+                          {formatDate(schedule.delivery_date)} · {schedule.supplier_name || 'Без поставщика'}
+                          {schedule.trip_status && ` · ${tripStatusLabel(schedule.trip_status)}`}
+                          {schedule.protected_quantity > 0
+                            ? ` · защищено ${formatAmount(schedule.protected_quantity)} ${preview.unit}`
+                            : ` · можно уменьшить до ${formatAmount(schedule.reducible_quantity)} ${preview.unit}`}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 <div>
                   <label className="text-xs font-medium text-muted-foreground" htmlFor={`receipt-allocation-${row.id}`}>
@@ -234,13 +290,39 @@ export function MaterialReceivingAllocationDialog({
             </div>
           </div>
 
+          {touchesFutureSchedule && (
+            <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+              <label htmlFor="receipt-reconciliation-reason" className="text-sm font-semibold text-amber-950">
+                Причина изменения будущего графика
+              </label>
+              <textarea
+                id="receipt-reconciliation-reason"
+                value={reconciliationReason}
+                disabled={disabled}
+                minLength={3}
+                maxLength={2000}
+                rows={3}
+                aria-invalid={!reasonIsValid}
+                aria-describedby="receipt-reconciliation-reason-help"
+                onChange={(event) => onReconciliationReasonChange(event.target.value)}
+                className="mt-1 w-full resize-y rounded-md border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-amber-400/30 disabled:opacity-60"
+                placeholder="Почему текущий приход бронируется вместо будущей поставки"
+              />
+              <p id="receipt-reconciliation-reason-help" className="mt-1 text-xs text-amber-900">
+                Обязательно от 3 до 2000 символов. Финансовые документы и договорённости с поставщиком CRM не изменяет.
+              </p>
+            </div>
+          )}
+
           <div aria-live="polite" aria-atomic="true" className="mt-2 min-h-5 text-sm text-destructive">
             {invalidRows
               ? 'Проверьте значения: резерв не может превышать открытый остаток, а хлысты указываются целыми штуками.'
               : exceedsReceipt
                 ? 'Распределено больше материала, чем фактически принято.'
-                : selectedRows.length === 0
+                : isBar && selectedRows.length === 0
                   ? 'Распределите материал хотя бы на одну машину.'
+                  : !reasonIsValid
+                    ? 'Укажите причину изменения будущего графика (от 3 до 2000 символов).'
                   : ''}
           </div>
         </div>
@@ -306,4 +388,12 @@ function formatDate(value: string) {
     year: 'numeric',
     timeZone: 'UTC',
   }).format(new Date(`${value}T00:00:00Z`))
+}
+
+function tripStatusLabel(status: string) {
+  if (status === 'needed') return 'рейс нужен'
+  if (status === 'found') return 'рейс найден'
+  if (status === 'in_transit') return 'в пути'
+  if (status === 'completed') return 'рейс завершён'
+  return status
 }

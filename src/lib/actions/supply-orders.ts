@@ -425,9 +425,26 @@ export type MaterialDeliveryAllocationPreviewRow = {
   suggested_physical_quantity: number
   suggested_logical_quantity: number
   suggested_future_scrap_quantity: number
+  future_schedules: MaterialDeliveryFutureSchedule[]
+  future_planned_quantity: number
+  future_reducible_quantity: number
+  future_protected_quantity: number
   is_source: boolean
   is_eligible: boolean
   unavailable_reason: string | null
+}
+
+export type MaterialDeliveryFutureSchedule = {
+  schedule_id: string
+  delivery_date: string
+  supplier_id: string | null
+  supplier_name: string | null
+  quantity: number
+  trip_id: string | null
+  trip_status: string | null
+  can_reduce: boolean
+  reducible_quantity: number
+  protected_quantity: number
 }
 
 export type MaterialDeliveryAllocationPreview = {
@@ -461,6 +478,7 @@ type MaterialDeliveryInput = {
   piece_length_mm?: number | null
   piece_count?: number | null
   confirmed_allocations?: MaterialDeliveryAllocationInput[]
+  reconciliation_reason?: string
 }
 
 export type SingleLengthLongStockReceiptInput = {
@@ -1166,7 +1184,7 @@ export async function getSupplyTransportNeeds(): Promise<{
     const [schedulesResult, linkedSchedulesResult] = await Promise.all([
       db
         .from('supply_order_delivery_schedules')
-        .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, receipt_parent_schedule_id, created_at')
+        .select('id, request_item_table, request_item_id, delivery_date, quantity, unit, supplier_id, status, received_quantity, allocated_quantity, planned_piece_length_mm, planned_piece_count, received_piece_length_mm, received_piece_count, receipt_parent_schedule_id, created_at')
         .neq('status', 'cancelled')
         .order('delivery_date', { ascending: true })
         .order('created_at', { ascending: true }),
@@ -1191,6 +1209,8 @@ export async function getSupplyTransportNeeds(): Promise<{
       unit: string
       supplier_id: string | null
       status: 'planned' | 'delivered' | 'cancelled'
+      received_quantity: number | null
+      allocated_quantity: number | null
       planned_piece_length_mm: number | null
       planned_piece_count: number | null
       received_piece_length_mm: number | null
@@ -1258,9 +1278,18 @@ export async function getSupplyTransportNeeds(): Promise<{
     const factories = new Map(((factoriesResult.data || []) as Array<{ id: string; name: string; city: string | null; address: string | null }>)
       .map((factory) => [factory.id, factory]))
 
-    const remainingRequiredByItem = new Map(
-      items.map((item) => [`${item.table}:${item.id}`, Math.max(item.to_order, 0)]),
-    )
+    const deliveredByItem = new Map<string, number>()
+    for (const schedule of schedules) {
+      if (schedule.status !== 'delivered') continue
+      const key = `${schedule.request_item_table}:${schedule.request_item_id}`
+      deliveredByItem.set(key, (deliveredByItem.get(key) || 0) + Number(
+        schedule.allocated_quantity ?? schedule.received_quantity ?? schedule.quantity ?? 0,
+      ))
+    }
+    const remainingRequiredByItem = new Map(items.map((item) => {
+      const key = `${item.table}:${item.id}`
+      return [key, Math.max(item.to_order - (deliveredByItem.get(key) || 0), 0)]
+    }))
     const annotatedSchedules = eligibleSchedules
       .slice()
       .sort((left, right) => (
@@ -2964,6 +2993,55 @@ async function buildMaterialAllocationPreview(
     matchingItems,
     await loadReceivingSchedules(db, matchingItems),
   )
+  const futureScheduleRows = matchingSchedules.filter((schedule) => (
+    schedule.status === 'planned' && !selectedScheduleIds.has(schedule.id)
+  ))
+  const [futureSupplierNames, futureTransportContexts] = await Promise.all([
+    loadSupplierNameMap(
+      db,
+      futureScheduleRows.map((schedule) => schedule.supplier_id).filter((id): id is string => Boolean(id)),
+    ),
+    loadReceivingTransportContexts(db, futureScheduleRows.map((schedule) => schedule.id)),
+  ])
+  const futureTransportBySchedule = new Map(
+    futureTransportContexts.map((context) => [context.schedule_id, context]),
+  )
+  const futureCoverageByItem = new Map<string, MaterialDeliveryFutureSchedule[]>()
+  const itemsByMaterialDate = new Map<string, SupplyOrderAggregateInputItem[]>()
+  for (const item of matchingItems) {
+    const dateKey = plannedDateKey(item.planned_material_date)
+    itemsByMaterialDate.set(dateKey, [...(itemsByMaterialDate.get(dateKey) || []), item])
+  }
+  for (const dateItems of itemsByMaterialDate.values()) {
+    const dateItemKeys = new Set(dateItems.map(itemKey))
+    const dateSchedules = matchingSchedules.filter((schedule) => (
+      dateItemKeys.has(`${schedule.request_item_table}:${schedule.request_item_id}`)
+      && (schedule.status !== 'planned' || !selectedScheduleIds.has(schedule.id))
+    ))
+    const { allocations: projectedFutureAllocations } = projectPlannedScheduleAllocations(dateItems, dateSchedules)
+    for (const allocation of projectedFutureAllocations) {
+      if (allocation.isExcess || allocation.schedule.status !== 'planned') continue
+      const context = futureTransportBySchedule.get(allocation.schedule.id)
+      const tripStatus = context?.trip_status || null
+      const isProtected = tripStatus === 'in_transit' || tripStatus === 'completed'
+      const key = itemKey(allocation.item)
+      const schedulePreview: MaterialDeliveryFutureSchedule = {
+        schedule_id: allocation.schedule.id,
+        delivery_date: allocation.schedule.delivery_date,
+        supplier_id: allocation.schedule.supplier_id,
+        supplier_name: allocation.schedule.supplier_id
+          ? futureSupplierNames.get(allocation.schedule.supplier_id) || 'Поставщик'
+          : null,
+        quantity: allocation.quantity,
+        trip_id: context?.trip_id || null,
+        trip_status: tripStatus,
+        can_reduce: !isProtected,
+        reducible_quantity: isProtected ? 0 : allocation.quantity,
+        protected_quantity: isProtected ? allocation.quantity : 0,
+      }
+      futureCoverageByItem.set(key, [...(futureCoverageByItem.get(key) || []), schedulePreview])
+    }
+  }
   const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
   for (const schedule of matchingSchedules) {
     const key = `${schedule.request_item_table}:${schedule.request_item_id}`
@@ -2992,13 +3070,9 @@ async function buildMaterialAllocationPreview(
       purchaseQuantity: item.to_order,
       deliveredQuantity: delivered,
     })
-    const hasOtherPlannedSchedule = itemSchedules.some((schedule) => (
-      schedule.status === 'planned' && !selectedScheduleIds.has(schedule.id)
-    ))
+    const futureSchedules = futureCoverageByItem.get(key) || []
+    const hasOtherPlannedSchedule = futureSchedules.length > 0
     const isSource = sourceItemKeys.has(key)
-    const unavailableReason = !isSource && hasOtherPlannedSchedule
-      ? 'Для машины уже запланирована отдельная поставка'
-      : null
     return {
       key,
       table: item.table,
@@ -3013,10 +3087,11 @@ async function buildMaterialAllocationPreview(
       deliveredQuantity: delivered,
       outstandingQuantity,
       supplyProgress,
+      futureSchedules,
       hasOtherPlannedSchedule,
       isSource,
-      isEligible: outstandingQuantity > 0 && unavailableReason === null,
-      unavailableReason,
+      isEligible: outstandingQuantity > 0,
+      unavailableReason: null,
     }
   }).filter((candidate) => candidate.outstandingQuantity > 0)
 
@@ -3063,6 +3138,13 @@ async function buildMaterialAllocationPreview(
       suggested_physical_quantity: physicalQuantity,
       suggested_logical_quantity: logicalQuantity,
       suggested_future_scrap_quantity: Math.max(physicalQuantity - logicalQuantity, 0),
+      future_schedules: candidate.futureSchedules,
+      future_planned_quantity: candidate.futureSchedules.reduce((sum, schedule) => sum + schedule.quantity, 0),
+      future_reducible_quantity: candidate.futureSchedules
+        .filter((schedule) => schedule.can_reduce)
+        .reduce((sum, schedule) => sum + schedule.quantity, 0),
+      future_protected_quantity: candidate.futureSchedules
+        .reduce((sum, schedule) => sum + schedule.protected_quantity, 0),
       is_source: candidate.isSource,
       is_eligible: candidate.isEligible,
       unavailable_reason: candidate.unavailableReason,
@@ -3209,6 +3291,7 @@ async function loadReceivingTransportContexts(
       }),
       planned_arrival_at: deliveryStop?.planned_arrival_at || null,
       arrived_at: deliveryStop?.arrived_at || null,
+      trip_status: trip.status,
     }]
   })
 }
@@ -3351,15 +3434,24 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
     }
 
     const allItems = await loadAggregateInputItems(db, activeFactoryId)
-    const items = allItems.filter((item) => (
-      item.order_status === 'ordered'
-      && item.factory_id === activeFactoryId
-    ))
-    const [factoryNameMap, schedules] = await Promise.all([
+    const factoryItems = allItems.filter((item) => item.factory_id === activeFactoryId)
+    const [factoryNameMap, allSchedules] = await Promise.all([
       loadFactoryNameMap(db, [activeFactoryId]),
-      loadReceivingSchedules(db, items),
+      loadReceivingSchedules(db, factoryItems),
     ])
-    const projectedSchedules = projectSchedulesToPurchasePlans(items, schedules)
+    const allProjectedSchedules = projectSchedulesToPurchasePlans(factoryItems, allSchedules)
+    const plannedItemKeys = new Set(allProjectedSchedules
+      .filter((schedule) => schedule.status === 'planned')
+      .map((schedule) => `${schedule.request_item_table}:${schedule.request_item_id}`))
+    // Keep a physical future delivery receivable even if an earlier receipt has
+    // already closed the logical demand of its owner row.
+    const items = factoryItems.filter((item) => (
+      item.order_status === 'ordered' || plannedItemKeys.has(itemKey(item))
+    ))
+    const itemKeys = new Set(items.map(itemKey))
+    const projectedSchedules = allProjectedSchedules.filter((schedule) => (
+      itemKeys.has(`${schedule.request_item_table}:${schedule.request_item_id}`)
+    ))
     const schedulesByItem = new Map<string, ReceivingScheduleRow[]>()
 
     for (const schedule of projectedSchedules) {
@@ -3429,29 +3521,10 @@ function confirmedMaterialAllocations(
   preview: MaterialDeliveryAllocationPreview,
   confirmed: MaterialDeliveryAllocationInput[] | undefined,
 ) {
-  const selected: MaterialDeliveryAllocationInput[] = confirmed ? [...confirmed] : []
-  if (!confirmed) {
-    for (const row of preview.allocations) {
-      if (!row.is_eligible) continue
-      if (preview.mode === 'whole_bar') {
-        if (row.suggested_piece_count && row.suggested_piece_count > 0) {
-          selected.push({
-            mode: 'whole_bar',
-            table: row.table,
-            id: row.id,
-            piece_count: row.suggested_piece_count,
-          })
-        }
-      } else if (row.suggested_quantity > 0) {
-        selected.push({
-          mode: 'quantity',
-          table: row.table,
-          id: row.id,
-          quantity: row.suggested_quantity,
-        })
-      }
-    }
+  if (!Array.isArray(confirmed)) {
+    throw new Error('Распределение поставки не подтверждено оператором')
   }
+  const selected: MaterialDeliveryAllocationInput[] = [...confirmed]
   const eligible = new Map(preview.allocations
     .filter((row) => row.is_eligible)
     .map((row) => [`${row.table}:${row.id}`, row]))
@@ -3514,7 +3587,9 @@ function confirmedMaterialAllocations(
   if (totalPhysical > preview.received_quantity + 0.000001) {
     throw new Error('Распределено больше материала, чем принято')
   }
-  if (allocations.length === 0) throw new Error('Распределите материал хотя бы на одну машину')
+  if (preview.mode === 'whole_bar' && allocations.length === 0) {
+    throw new Error('Распределите материал хотя бы на одну машину')
+  }
   return allocations
 }
 
@@ -3551,7 +3626,8 @@ export async function previewMaterialDeliveryAllocation(input: MaterialDeliveryI
       plannedPieceLengthMm,
       plannedPieceCount,
     )
-    if (!data.allocations.some((row) => row.is_eligible && row.outstanding_quantity > 0)) {
+    if (data.mode === 'whole_bar'
+      && !data.allocations.some((row) => row.is_eligible && row.outstanding_quantity > 0)) {
       throw new Error('Не найдено открытых потребностей для распределения поставки')
     }
     return { success: true, data }
@@ -3667,13 +3743,23 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
       resolved.plannedPieceLengthMm,
       resolved.plannedPieceCount,
     )
-    const requiresConfirmation = preview.mode === 'whole_bar' || preview.has_shortage
-    if (requiresConfirmation && !Array.isArray(input.confirmed_allocations)) {
+    if (!Array.isArray(input.confirmed_allocations)) {
       throw new Error('Сначала проверьте и подтвердите распределение материала по машинам')
     }
     const allocations = confirmedMaterialAllocations(preview, input.confirmed_allocations)
-    if (allocations.length === 0) {
+    if (preview.mode === 'whole_bar' && allocations.length === 0) {
       throw new Error('Не найдено открытых потребностей для распределения поставки')
+    }
+    const reconciliationQuantity = allocations.reduce((sum, allocation) => {
+      const row = preview.allocations.find((candidate) => (
+        candidate.table === allocation.table && candidate.id === allocation.id
+      ))
+      return sum + Math.min(allocation.quantity, row?.future_planned_quantity || 0)
+    }, 0)
+    const reconciliationReason = input.reconciliation_reason?.trim() || ''
+    if (reconciliationQuantity > 0.000001
+      && (reconciliationReason.length < 3 || reconciliationReason.length > 2000)) {
+      throw new Error('Укажите причину изменения будущего графика (от 3 до 2000 символов)')
     }
 
     const affectedItems = groupItemsByTable([
@@ -3735,7 +3821,9 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
     }
 
     const { error } = resolved.scheduleIds.length > 1
-      ? await receivingRpcDb.rpc('fn_receive_supply_order_schedule_batch_v1', {
+      ? await receivingRpcDb.rpc(preview.mode === 'whole_bar'
+        ? 'fn_receive_supply_order_schedule_batch_v1'
+        : 'fn_receive_supply_order_schedule_batch_v2', {
           p_receipts: buildMaterialReceiptBatchCalls({
             schedules: resolved.selectedSchedules.map((schedule) => ({
               id: schedule.id,
@@ -3751,14 +3839,22 @@ export async function receiveMaterialDelivery(input: MaterialDeliveryInput) {
             allocations: allocations satisfies MaterialReceiptBatchAllocation[],
           }),
           p_performed_by: userId,
+          ...(preview.mode === 'quantity'
+            ? { p_reconciliation_reason: reconciliationReason || null }
+            : {}),
         })
-      : await receivingRpcDb.rpc('fn_receive_supply_order_schedule_v2', {
+      : await receivingRpcDb.rpc(preview.mode === 'whole_bar'
+        ? 'fn_receive_supply_order_schedule_v2'
+        : 'fn_receive_supply_order_schedule_v3', {
           p_schedule_id: scheduleId,
           p_performed_by: userId,
           p_received_quantity: preview.received_quantity,
           p_allocations: allocations,
           p_received_piece_length_mm: preview.piece_length_mm,
           p_received_piece_count: preview.piece_count,
+          ...(preview.mode === 'quantity'
+            ? { p_reconciliation_reason: reconciliationReason || null }
+            : {}),
         })
 
     if (error) {

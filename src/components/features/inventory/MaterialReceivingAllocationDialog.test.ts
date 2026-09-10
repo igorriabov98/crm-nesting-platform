@@ -30,5 +30,14 @@ test('receipt confirmation remains protected by server-side preview rebuild', ()
 
   assert.match(receiveSource, /buildMaterialAllocationPreview\(/u)
   assert.match(receiveSource, /confirmedMaterialAllocations\(preview, input\.confirmed_allocations\)/u)
-  assert.match(receiveSource, /fn_receive_supply_order_schedule_v2/u)
+  assert.match(receiveSource, /fn_receive_supply_order_schedule_v3/u)
+})
+
+test('ordinary receipt shows future coverage, protected trips, and reason validation', () => {
+  assert.match(source, /Будущий график/u)
+  assert.match(source, /Защищено в начатом рейсе/u)
+  assert.match(source, /Причина изменения будущего графика/u)
+  assert.match(source, /можно уменьшить до/u)
+  assert.match(source, /minLength=\{3\}/u)
+  assert.match(source, /maxLength=\{2000\}/u)
 })
