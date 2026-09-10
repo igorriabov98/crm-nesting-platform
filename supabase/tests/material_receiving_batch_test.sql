@@ -30,6 +30,9 @@ begin
   if to_regprocedure('public.fn_receive_supply_order_schedule_batch_v1(jsonb,uuid)') is null then
     raise exception 'Пакетная RPC приёмки не создана';
   end if;
+  if to_regprocedure('public.fn_receive_supply_order_schedule_batch_v2(jsonb,uuid,text)') is null then
+    raise exception 'Пакетная RPC ручной приёмки не создана';
+  end if;
   if has_function_privilege('anon', 'public.fn_receive_supply_order_schedule_batch_v1(jsonb,uuid)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.fn_receive_supply_order_schedule_batch_v1(jsonb,uuid)', 'EXECUTE') then
     raise exception 'Пакетная RPC доступна браузерным ролям';
@@ -63,7 +66,26 @@ begin
     (v_schedule_22, 'request_paint', v_item, date '2026-09-10', 22, 'кг', v_supplier, v_actor, v_actor, now()),
     (v_schedule_3, 'request_paint', v_item, date '2026-09-10', 3, 'кг', v_supplier, v_actor, v_actor, now() + interval '1 second');
 
-  select public.fn_receive_supply_order_schedule_batch_v1(
+  begin
+    perform public.fn_receive_supply_order_schedule_batch_v1(
+      jsonb_build_array(
+        jsonb_build_object('schedule_id', v_schedule_22, 'received_quantity', 22, 'allocations', '[]'::jsonb),
+        jsonb_build_object('schedule_id', v_schedule_3, 'received_quantity', 3, 'allocations', '[]'::jsonb)
+      ),
+      v_actor
+    );
+    raise exception 'Legacy batch v1 accepted an ordinary receipt without manual confirmation';
+  exception when others then
+    v_error := sqlerrm;
+    if v_error not like '%окно ручного распределения%' then raise; end if;
+  end;
+  if (select count(*) from public.supply_order_delivery_schedules
+      where id in (v_schedule_22, v_schedule_3) and status <> 'planned') <> 0
+    or exists (select 1 from public.inventory where factory_id = v_factory and material_id = v_material) then
+    raise exception 'Legacy batch v1 guard left an ordinary receipt partially applied';
+  end if;
+
+  select public.fn_receive_supply_order_schedule_batch_v2(
     jsonb_build_array(
       jsonb_build_object(
         'schedule_id', v_schedule_22, 'received_quantity', 22,
@@ -79,7 +101,8 @@ begin
         'allocations', '[]'::jsonb
       )
     ),
-    v_actor
+    v_actor,
+    null
   ) into v_result;
 
   if (v_result->>'planned_quantity')::numeric <> 25
@@ -115,12 +138,13 @@ begin
   end if;
 
   begin
-    perform public.fn_receive_supply_order_schedule_batch_v1(
+    perform public.fn_receive_supply_order_schedule_batch_v2(
       jsonb_build_array(
         jsonb_build_object('schedule_id', v_schedule_22, 'received_quantity', 22, 'allocations', '[]'::jsonb),
         jsonb_build_object('schedule_id', v_schedule_3, 'received_quantity', 3, 'allocations', '[]'::jsonb)
       ),
-      v_actor
+      v_actor,
+      null
     );
     raise exception 'Повторная пакетная приёмка не была отклонена';
   exception
@@ -147,7 +171,7 @@ begin
     (v_rollback_schedule_2, 'request_paint', v_rollback_item, date '2026-09-11', 5, 'кг', v_supplier, v_actor, v_actor, now() + interval '1 second');
 
   begin
-    perform public.fn_receive_supply_order_schedule_batch_v1(
+    perform public.fn_receive_supply_order_schedule_batch_v2(
       jsonb_build_array(
         jsonb_build_object(
           'schedule_id', v_rollback_schedule_1, 'received_quantity', 5,
@@ -164,7 +188,8 @@ begin
           ))
         )
       ),
-      v_actor
+      v_actor,
+      null
     );
     raise exception 'Некорректная вторая часть пакета не была отклонена';
   exception
@@ -202,7 +227,7 @@ begin
     (v_shortage_schedule_22, 'request_paint', v_shortage_item, date '2026-09-12', 22, 'кг', v_supplier, v_actor, v_actor, now()),
     (v_shortage_schedule_3, 'request_paint', v_shortage_item, date '2026-09-12', 3, 'кг', v_supplier, v_actor, v_actor, now() + interval '1 second');
 
-  perform public.fn_receive_supply_order_schedule_batch_v1(
+  perform public.fn_receive_supply_order_schedule_batch_v2(
     jsonb_build_array(
       jsonb_build_object(
         'schedule_id', v_shortage_schedule_22, 'received_quantity', 20,
@@ -216,7 +241,8 @@ begin
         'allocations', '[]'::jsonb
       )
     ),
-    v_actor
+    v_actor,
+    null
   );
   if (select status from public.supply_order_delivery_schedules where id = v_shortage_schedule_22) <> 'delivered'
     or (select status from public.supply_order_delivery_schedules where id = v_shortage_schedule_3) <> 'cancelled'
