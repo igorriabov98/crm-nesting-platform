@@ -318,6 +318,7 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
     revalidatePath(ROUTES.MATERIAL_REQUESTS)
     revalidatePath(ROUTES.SUPPLY_MATERIAL_REQUESTS)
     revalidatePath(`${ROUTES.SUPPLY_REQUEST}/${parsed.requestId}`)
+    revalidatePath(ROUTES.INVENTORY_METAL_SCRAP)
     revalidatePath(`${ROUTES.SALES_PLAN}/${machineResult.data.machine_id}`)
     return { success: true, data }
   } catch (error) {

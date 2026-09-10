@@ -581,6 +581,9 @@ declare
   v_bar_second uuid;
   v_scrap_first uuid;
   v_scrap_second uuid;
+  v_metal_scrap_completion uuid := gen_random_uuid();
+  v_metal_scrap_waste uuid := gen_random_uuid();
+  v_metal_scrap_lot uuid := gen_random_uuid();
   v_count integer;
   v_count_two integer;
   v_total numeric;
@@ -642,6 +645,66 @@ begin
   v_version := (v_plan_data->>'version_id')::uuid;
   v_request_item := (v_plan_data->>'request_item_id')::uuid;
 
+  -- Completion-created metal scrap exists before the cutting fact. The fact
+  -- must promote it in the same transaction as the warehouse write-off.
+  insert into public.technologist_request_completions(
+    id, request_id, machine_id, factory_id, created_by,
+    future_detailing_decision, entered_plasma_minutes,
+    added_plasma_minutes, actual_plasma_minutes
+  ) values (
+    v_metal_scrap_completion,
+    (v_plan_data->>'request_id')::uuid,
+    v_machine_two,
+    v_factory,
+    v_actor,
+    'none',
+    0,
+    0,
+    0
+  );
+  insert into public.technologist_request_waste_items(
+    id, completion_id, request_id, source_table, source_id,
+    item_name, material_id, material_variant_id, material_name,
+    material_grade, weight_snapshot_kg, waste_percent,
+    scrap_weight_kg, useful_weight_kg
+  ) values (
+    v_metal_scrap_waste,
+    v_metal_scrap_completion,
+    (v_plan_data->>'request_id')::uuid,
+    'request_sheet_metal',
+    gen_random_uuid(),
+    'Тестовый металлолом по факту',
+    v_material,
+    v_variant_two,
+    'Тестовый круг факта длинномера',
+    'S355',
+    10,
+    10,
+    1,
+    9
+  );
+  insert into public.metal_scrap_lots(
+    id, request_id, waste_item_id, machine_id, factory_id,
+    created_by, material_id, material_variant_id, material_name,
+    material_grade, expected_weight_kg
+  ) values (
+    v_metal_scrap_lot,
+    (v_plan_data->>'request_id')::uuid,
+    v_metal_scrap_waste,
+    v_machine_two,
+    v_factory,
+    v_actor,
+    v_material,
+    v_variant_two,
+    'Тестовый круг факта длинномера',
+    'S355',
+    1
+  );
+  insert into public.metal_scrap_movements(
+    lot_id, movement_type, weight_delta_kg,
+    available_after_kg, blocked_after_kg, sold_after_kg, performed_by
+  ) values (v_metal_scrap_lot, 'planned', 1, 0, 0, 0, v_actor);
+
   insert into public.inventory(
     factory_id, material_id, material_variant_id, piece_length_mm,
     total_quantity, reserved_quantity, unit,
@@ -677,6 +740,18 @@ begin
   where candidate.version_id = v_version and candidate.candidate_number = 1;
   if v_count <> 2 or v_count_two <> 0 then
     raise exception 'Факт с двумя доступными хлыстами закрыл неверный набор: cut=%, planned=%', v_count, v_count_two;
+  end if;
+
+  if (select status from public.metal_scrap_lots where id = v_metal_scrap_lot) <> 'available'
+    or (select available_weight_kg from public.metal_scrap_lots where id = v_metal_scrap_lot) <> 1
+    or not exists (
+      select 1
+      from public.production_fact_cutting_event_metal_scrap_promotions promotion
+      where promotion.event_id = v_event_first
+        and promotion.lot_id = v_metal_scrap_lot
+    )
+    or (select count(*) from public.metal_scrap_movements where lot_id = v_metal_scrap_lot and movement_type = 'available') <> 1 then
+    raise exception 'Будущий металлолом не переведен в доступный по факту заготовки';
   end if;
 
   select count(*), sum(inventory.total_quantity)
@@ -736,6 +811,12 @@ begin
     or (select total_quantity from public.inventory where id = v_source) <> 12000
     or (select reserved_quantity from public.inventory where id = v_source) <> 12000 then
     raise exception 'Штатный откат не восстановил карту и физические хлысты: %', v_rollback;
+  end if;
+  if (select status from public.metal_scrap_lots where id = v_metal_scrap_lot) <> 'future'
+    or (select available_weight_kg from public.metal_scrap_lots where id = v_metal_scrap_lot) <> 0
+    or (select count(*) from public.metal_scrap_movements where lot_id = v_metal_scrap_lot and movement_type = 'future_rollback') <> 1
+    or (select weight_delta_kg from public.metal_scrap_movements where lot_id = v_metal_scrap_lot and movement_type = 'future_rollback') <> -1 then
+    raise exception 'Откат факта не вернул будущий металлолом: %', v_rollback;
   end if;
 
   -- One bar at the first fact, the second bar arrives later. Replaying the old
@@ -1285,6 +1366,20 @@ begin
     where completion_id = v_completion
   )) > 0.001 then
     raise exception 'После восстановления данных смешанная заявка не прошла сверку';
+  end if;
+  -- A completion may be finalized after the machine already has a cutting
+  -- fact. Its planned metal-scrap row must still become available atomically
+  -- with the planned ledger movement.
+  if (select count(*)
+      from public.metal_scrap_lots
+      where request_id = v_mixed_request
+        and status = 'available') <> 1
+    or (select count(*)
+        from public.metal_scrap_movements movement
+        join public.metal_scrap_lots lot on lot.id = movement.lot_id
+        where lot.request_id = v_mixed_request
+          and movement.movement_type = 'available') <> 1 then
+    raise exception 'Металлолом смешанной заявки не переведен в доступный после позднего завершения';
   end if;
 end;
 $$;
