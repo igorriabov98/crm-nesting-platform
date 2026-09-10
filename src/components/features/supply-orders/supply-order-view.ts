@@ -116,6 +116,30 @@ export type SupplyOrderDateSlice = {
   deliveredScheduleCount: number
 }
 
+export type SupplyOrderQuantitySummary = {
+  demandQuantity: number
+  deliveryQuantity: number
+  remainingToOrder: number
+  deliveryExcess: number
+}
+
+export function summarizeSupplyOrderQuantities(
+  aggregate: Pick<SupplyOrderAggregate, 'quantity' | 'unscheduled_quantity'>,
+  factory: Pick<SupplyOrderAggregateFactory, 'quantity' | 'unscheduled_quantity'> | null | undefined,
+  dateSlice?: Pick<SupplyOrderDateSlice, 'quantity'>,
+): SupplyOrderQuantitySummary {
+  const demandQuantity = Math.max(Number(factory?.quantity ?? aggregate.quantity) || 0, 0)
+  const remainingToOrder = Math.max(Number(factory?.unscheduled_quantity ?? aggregate.unscheduled_quantity) || 0, 0)
+  const deliveryQuantity = Math.max(Number(dateSlice?.quantity ?? demandQuantity) || 0, 0)
+
+  return {
+    demandQuantity,
+    deliveryQuantity,
+    remainingToOrder,
+    deliveryExcess: dateSlice ? Math.max(deliveryQuantity - demandQuantity, 0) : 0,
+  }
+}
+
 export type SupplyOrderDetailScheduleScope = {
   id: string
   kind: 'item_date' | 'unscheduled'
