@@ -101,27 +101,28 @@ export function SupplyOrdersPage({
         statusDisabled={Boolean(lockedStatus)}
       />
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Сводка текущей страницы">
-        <StatCard icon={<PackageSearch className="h-4 w-4" />} label="Показано" value={filteredItems.length} hint={`из ${items.length} на странице`} />
-        <StatCard icon={<UserRoundX className="h-4 w-4" />} label="Без поставщика" value={attention.missingSupplier} tone="warning" />
-        <StatCard icon={<Truck className="h-4 w-4" />} label="С графиком" value={attention.scheduled} tone="info" />
-        <StatCard icon={<CheckCircle2 className="h-4 w-4" />} label="Закрыто складом" value={attention.coveredByStock} tone="success" />
+      <section className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between" aria-label="Сводка и навигация по заявкам">
+        <div className="flex flex-wrap gap-2">
+          <SummaryChip icon={<PackageSearch className="h-3.5 w-3.5" />} label="Показано" value={`${filteredItems.length} из ${items.length}`} />
+          <SummaryChip icon={<UserRoundX className="h-3.5 w-3.5" />} label="Без поставщика" value={String(attention.missingSupplier)} tone="warning" />
+          <SummaryChip icon={<Truck className="h-3.5 w-3.5" />} label="С графиком" value={String(attention.scheduled)} tone="info" />
+          <SummaryChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} label="Закрыто складом" value={String(attention.coveredByStock)} tone="success" />
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="text-xs text-muted-foreground sm:text-right">
+            <div className="font-medium text-foreground">Заявки {currentFrom}–{currentTo} из {total}</div>
+            <div>Страница {page + 1} из {pageCount}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" className="min-h-11" disabled={page <= 0} onClick={() => goToPage(page - 1)}>
+              <ChevronLeft className="h-4 w-4" />Назад
+            </Button>
+            <Button type="button" variant="outline" className="min-h-11" disabled={page + 1 >= pageCount} onClick={() => goToPage(page + 1)}>
+              Вперёд<ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
       </section>
-
-      <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3 text-sm shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="font-medium text-foreground">Заявки {currentFrom}–{currentTo} из {total}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">Показано {filteredItems.length} из {items.length} позиций · страница {page + 1} из {pageCount}</div>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Button type="button" variant="outline" disabled={page <= 0} onClick={() => goToPage(page - 1)}>
-            <ChevronLeft className="h-4 w-4" />Назад
-          </Button>
-          <Button type="button" variant="outline" disabled={page + 1 >= pageCount} onClick={() => goToPage(page + 1)}>
-            Вперёд<ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
 
       {grouped.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border bg-card px-4 py-14 text-center">
@@ -135,43 +136,39 @@ export function SupplyOrdersPage({
           {activeFilterCount > 0 && <Button type="button" variant="outline" className="mt-4" onClick={() => setFilters(defaultFilters)}>Сбросить фильтры</Button>}
         </div>
       ) : (
-        grouped.map((group) => (
-          <OrderDateGroup
-            key={group.dateKey}
-            dateKey={group.dateKey}
-            groups={group.groups}
-            suppliers={suppliers}
-            detailContexts={detailContexts}
-          />
-        ))
+        <div className="space-y-3">
+          {grouped.map((group) => (
+            <OrderDateGroup
+              key={group.dateKey}
+              dateKey={group.dateKey}
+              groups={group.groups}
+              suppliers={suppliers}
+              detailContexts={detailContexts}
+            />
+          ))}
+        </div>
       )}
     </div>
   )
 }
 
-function StatCard({ icon, label, value, hint, tone = 'default' }: {
+function SummaryChip({ icon, label, value, tone = 'default' }: {
   icon: React.ReactNode
   label: string
-  value: number
-  hint?: string
+  value: string
   tone?: 'default' | 'warning' | 'info' | 'success'
 }) {
   const toneClass = {
-    default: 'bg-primary/10 text-primary',
-    warning: 'bg-amber-500/10 text-amber-700',
-    info: 'bg-sky-500/10 text-sky-700',
-    success: 'bg-emerald-500/10 text-emerald-700',
+    default: 'border-border bg-background text-primary',
+    warning: 'border-amber-200 bg-amber-50 text-amber-800',
+    info: 'border-sky-200 bg-sky-50 text-sky-800',
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
   }[tone]
   return (
-    <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-xs font-medium text-muted-foreground">{label}</div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{value}</div>
-          {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
-        </div>
-        <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${toneClass}`}>{icon}</div>
-      </div>
+    <div className={`inline-flex min-h-9 items-center gap-2 rounded-lg border px-2.5 text-xs ${toneClass}`}>
+      {icon}
+      <span>{label}</span>
+      <strong className="tabular-nums">{value}</strong>
     </div>
   )
 }

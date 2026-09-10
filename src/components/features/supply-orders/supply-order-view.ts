@@ -730,12 +730,19 @@ function buildSupplyOrderDateSlices(aggregate: SupplyOrderAggregate) {
         const dateKey = schedule.delivery_date || factory.production_date || aggregate.planned_material_date || 'no_supply_date'
         const slice = getSlice(dateKey)
         const plannedQuantity = Math.max(Number(schedule.quantity || 0), 0)
-        slice.quantity += plannedQuantity
         if (schedule.status === 'planned') {
+          slice.quantity += plannedQuantity
           slice.plannedQuantity += plannedQuantity
           slice.plannedScheduleCount += 1
         } else if (schedule.status === 'delivered') {
-          slice.deliveredQuantity += deliveredScheduleQuantity(schedule)
+          // A receipt can create child fact rows when one physical delivery is
+          // distributed between several requests. Their allocated quantities
+          // are parts of the parent receipt, not additional supplier volume.
+          // Build the dated coverage from the actual allocated fact so the
+          // original parent plan and its child allocations are not added twice.
+          const deliveredQuantity = deliveredScheduleQuantity(schedule)
+          slice.quantity += deliveredQuantity
+          slice.deliveredQuantity += deliveredQuantity
           slice.deliveredScheduleCount += 1
         }
       }

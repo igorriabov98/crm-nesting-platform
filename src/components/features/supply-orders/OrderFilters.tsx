@@ -58,14 +58,14 @@ export function OrderFilters({
 }: OrderFiltersProps) {
   return (
     <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm" aria-label="Фильтры и сортировка заказов">
-      <div className="flex flex-col gap-3 border-b border-border/60 bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-b border-border/60 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <SlidersHorizontal className="h-4 w-4" />
           </div>
           <div>
-            <h2 className="text-sm font-semibold text-foreground">Поиск и отбор</h2>
-            <p className="text-xs text-muted-foreground">Фильтры применяются к текущей странице из 50 позиций</p>
+            <h2 className="text-sm font-semibold text-foreground">Фильтры заявок</h2>
+            <p className="text-xs text-muted-foreground">Поиск, состояние заказа и порядок строк</p>
           </div>
         </div>
         <Button
@@ -81,7 +81,7 @@ export function OrderFilters({
         </Button>
       </div>
 
-      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-12">
+      <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-12">
         <label className="grid gap-1.5 md:col-span-2 xl:col-span-4">
           <span className="text-xs font-medium text-muted-foreground">Поиск</span>
           <span className="relative">

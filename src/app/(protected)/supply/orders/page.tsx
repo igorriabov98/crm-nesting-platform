@@ -44,27 +44,28 @@ export default async function SupplyOrdersRoute({
   )
 
   return (
-    <div className="space-y-5 pb-8">
-      <section className="relative overflow-hidden rounded-3xl border border-border/70 bg-card p-5 shadow-sm sm:p-7">
-        <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-primary/5 blur-3xl" />
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/15">
-              <PackageSearch className="h-5 w-5" />
+    <div className="space-y-4 pb-8">
+      <section className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+              <PackageSearch className="h-5 w-5" aria-hidden="true" />
             </div>
-            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Управление закупками</div>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Что нужно заказать</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">Управление закупками</div>
+              <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Что нужно заказать</h1>
+              <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">
               Единое рабочее место снабжения: от потребности технолога до поставщика, графика, платежа и контроля плана/факта.
-            </p>
+              </p>
+            </div>
           </div>
-          <Link href={ROUTES.SUPPLY} className="inline-flex min-h-11 w-fit items-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-medium text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Link href={ROUTES.SUPPLY} className="inline-flex min-h-11 w-fit shrink-0 items-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-medium text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ArrowLeft className="h-4 w-4" />Вернуться в снабжение
           </Link>
         </div>
       </section>
 
-      <nav className="grid grid-cols-1 gap-2 rounded-2xl border border-border/70 bg-card p-2 shadow-sm sm:grid-cols-3" aria-label="Режим представления заказов">
+      <nav className="grid grid-cols-1 gap-1 rounded-2xl border border-border/70 bg-card p-1.5 shadow-sm sm:grid-cols-3" aria-label="Режим представления заказов">
         <Link
           href={supplyOrdersViewHref('details', activeFactoryId)}
           className={viewLinkClass(activeView === 'details')}
@@ -109,7 +110,7 @@ export default async function SupplyOrdersRoute({
 
 function viewLinkClass(isActive: boolean) {
   return [
-    'inline-flex min-h-16 items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_small]:mt-0.5 [&_small]:block [&_small]:text-xs [&_small]:font-normal [&_strong]:block [&_strong]:font-semibold',
+    'inline-flex min-h-14 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_small]:mt-0.5 [&_small]:block [&_small]:text-xs [&_small]:font-normal [&_strong]:block [&_strong]:font-semibold',
     isActive
       ? 'bg-primary text-primary-foreground shadow-sm [&_small]:text-primary-foreground/75'
       : 'text-primary hover:bg-muted [&_small]:text-muted-foreground',

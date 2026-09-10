@@ -23,9 +23,9 @@ export function SupplyOrderFactoryToggle({
   }
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm" aria-label="Выбор завода">
-      <div className="mb-3 flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+    <section className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between" aria-label="Выбор завода">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
           <Factory className="h-4 w-4" aria-hidden="true" />
         </div>
         <div>
