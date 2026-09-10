@@ -66,6 +66,9 @@ export function calculateManualAllocation<T extends ManualAllocationRowInput>({
     freeQuantity,
     invalidRows,
     exceedsReceipt,
-    canConfirm: selectedRows.length > 0 && !invalidRows && !exceedsReceipt,
+    // An empty quantity allocation is an explicit operator decision: the full
+    // receipt stays in free stock. Whole bars keep their existing rule and must
+    // be attached to at least one machine.
+    canConfirm: (!isBar || selectedRows.length > 0) && !invalidRows && !exceedsReceipt,
   }
 }

@@ -19,8 +19,11 @@ test('3/2 quantity receipt supports 1+1, 0+2, and a free remainder', () => {
   assert.equal(leaveOneFree.canConfirm, true)
 })
 
-test('quantity receipt rejects all-zero, per-machine overflow, and receipt overflow', () => {
-  assert.equal(quantityAllocation([0, 0], 2).canConfirm, false)
+test('quantity receipt accepts an explicit all-zero allocation but rejects overflows', () => {
+  const allFree = quantityAllocation([0, 0], 2)
+  assert.equal(allFree.canConfirm, true)
+  assert.equal(allFree.allocatedPhysical, 0)
+  assert.equal(allFree.freeQuantity, 2)
 
   const machineOverflow = quantityAllocation([2, 0], 2)
   assert.equal(machineOverflow.invalidRows, true)
@@ -62,6 +65,18 @@ test('whole-bar allocation accepts only integer piece counts', () => {
   })
 
   assert.equal(result.invalidRows, true)
+  assert.equal(result.canConfirm, false)
+})
+
+test('whole-bar allocation still requires at least one machine reservation', () => {
+  const result = calculateManualAllocation({
+    mode: 'whole_bar',
+    receivedQuantity: 6_000,
+    pieceLengthMm: 6_000,
+    pieceCount: 1,
+    rows: [row('machine-a', 0, 1, 2_000)],
+  })
+
   assert.equal(result.canConfirm, false)
 })
 

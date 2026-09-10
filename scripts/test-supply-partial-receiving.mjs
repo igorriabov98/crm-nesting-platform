@@ -29,6 +29,10 @@ const arrivalBatchMigration = await readFile(
   new URL('../supabase/migrations/20260907120000_material_receiving_arrival_batches.sql', import.meta.url),
   'utf8',
 )
+const manualQuantityReconciliationMigration = await readFile(
+  new URL('../supabase/migrations/20260910160000_manual_quantity_receipt_reconciliation.sql', import.meta.url),
+  'utf8',
+)
 const receivingBatches = await readFile(
   new URL('../src/lib/supply-orders/receiving-batches.ts', import.meta.url),
   'utf8',
@@ -64,8 +68,8 @@ const circleTable = await readFile(
 
 assert.match(
   supplyOrderActions,
-  /requireReceivingAccess\('manage'\)[\s\S]*const receivingRpcDb = createAdminClient\(\) as unknown as RpcDb[\s\S]*receivingRpcDb\.rpc\('fn_receive_supply_order_schedule_v2'/,
-  'receiving must authorize the user before invoking the service-role-only RPC',
+  /requireReceivingAccess\('manage'\)[\s\S]*const receivingRpcDb = createAdminClient\(\) as unknown as RpcDb[\s\S]*fn_receive_supply_order_schedule_v3/,
+  'receiving must authorize the user before invoking the service-role-only manual quantity RPC',
 )
 assert.doesNotMatch(
   supplyOrderActions,
@@ -104,8 +108,8 @@ assert.match(
 )
 assert.match(
   supplyOrderActions,
-  /Для машины уже запланирована отдельная поставка[\s\S]*is_eligible: candidate\.isEligible/,
-  'a machine with a separate active delivery must stay visible but unavailable',
+  /futureSchedules[\s\S]*hasOtherPlannedSchedule[\s\S]*isEligible: outstandingQuantity > 0/,
+  'a machine with a separate future delivery must stay visible and selectable',
 )
 assert.doesNotMatch(
   supplyOrderActions,
@@ -114,13 +118,13 @@ assert.doesNotMatch(
 )
 assert.match(
   supplyOrderActions,
-  /outstandingAllocationQuantity\(\{[\s\S]*requestedQuantity: item\.requested_quantity,[\s\S]*reservedQuantity: item\.reserved_quantity,[\s\S]*purchaseQuantity: item\.to_order,[\s\S]*deliveredQuantity: delivered,[\s\S]*isEligible: outstandingQuantity > 0 && unavailableReason === null/,
+  /outstandingAllocationQuantity\(\{[\s\S]*requestedQuantity: item\.requested_quantity,[\s\S]*reservedQuantity: item\.reserved_quantity,[\s\S]*purchaseQuantity: item\.to_order,[\s\S]*deliveredQuantity: delivered,[\s\S]*isEligible: outstandingQuantity > 0/,
   'whole-bar allocation eligibility must keep logical demand separate from its rounded purchase plan',
 )
 assert.match(
   supplyOrderActions,
-  /quantity > row\.outstanding_quantity[\s\S]*totalPhysical > preview\.received_quantity[\s\S]*allocations\.length === 0/,
-  'fresh server validation must reject per-machine overflow, receipt overflow, and an all-zero allocation',
+  /quantity > row\.outstanding_quantity[\s\S]*totalPhysical > preview\.received_quantity[\s\S]*preview\.mode === 'whole_bar' && allocations\.length === 0/,
+  'fresh server validation must reject overflows while accepting an explicit all-zero quantity allocation',
 )
 assert.match(
   barLifecycleMigration,
@@ -147,15 +151,30 @@ assert.match(
   /const isBar = item\.is_whole_bar/,
   'receiving UI must use the server whole-bar predicate for circles and pipes',
 )
-assert.match(
+assert.doesNotMatch(
   receivingPage,
   /preview\.mode === 'quantity' && !preview\.has_shortage[\s\S]*performReceipt\(item, values\)/,
-  'ordinary material without a shortage must still be accepted directly',
+  'ordinary material must never bypass the manual allocation dialog',
 )
 assert.match(
   receivingPage,
   /MaterialReceivingAllocationDialog[\s\S]*confirmed_allocations: confirmedAllocations/,
   'shortages and whole bars must confirm through the shared allocation dialog',
+)
+assert.match(
+  manualQuantityReconciliationMigration,
+  /fn_reconcile_quantity_receipt_schedules_v1[\s\S]*delivery_date DESC, schedule\.created_at DESC, schedule\.id DESC/,
+  'future schedules must be reduced from the latest row first',
+)
+assert.match(
+  manualQuantityReconciliationMigration,
+  /fn_receive_supply_order_schedule_v3[\s\S]*SELECT public\.fn_reconcile_quantity_receipt_schedules_v1/,
+  'ordinary material must use a dedicated atomic receipt and reconciliation RPC',
+)
+assert.match(
+  manualQuantityReconciliationMigration,
+  /trip\.status IN \('in_transit', 'completed'\)[\s\S]*supply_schedule_reconciliation_review/,
+  'started trips must remain protected and create a supply review task',
 )
 assert.match(
   receivingAllocationDialog,
