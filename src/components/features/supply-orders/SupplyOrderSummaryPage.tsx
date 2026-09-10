@@ -68,6 +68,7 @@ import {
   isReturnedSupplyOrderSource,
   partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderMachineRoutes,
+  summarizeSupplyOrderQuantities,
   summarizeSupplyOrderRedeliveryMachineRoutes,
   summarizeSupplyOrderUnscheduledMachineRoutes,
   type AggregateFiltersState,
@@ -314,6 +315,7 @@ function MaterialOrderCard({
   const supplyPlan = factory ? makeSupplyPlanDateInfo(factory) : null
   const displayQuantity = dateSlice?.quantity ?? aggregate.quantity
   const displayUnscheduledQuantity = dateSlice?.unscheduledQuantity ?? factory?.unscheduled_quantity ?? 0
+  const quantitySummary = summarizeSupplyOrderQuantities(aggregate, factory, dateSlice)
   const displayWeight = dateSlice && factory
     ? formatWeightForQuantity(displayQuantity, factory)
     : aggregate.weight_kg !== null
@@ -411,10 +413,41 @@ function MaterialOrderCard({
         </header>
 
         <dl className="border-t border-border bg-muted/20 p-4 lg:border-l lg:border-t-0 lg:p-5">
-          <div className="flex items-baseline justify-between gap-3 lg:block">
-            <dt className="text-sm text-muted-foreground">{hasCancelledReturn ? 'Активный объём' : attentionKind === 'redelivery' ? 'Было заявлено' : dateSlice ? 'Количество на дату' : 'Количество'}</dt>
-            <dd className="text-xl font-semibold text-foreground tabular-nums lg:mt-1">
-              {formatAmount(displayQuantity)} {aggregate.unit}
+          {dateSlice ? (
+            <>
+              <div className="flex items-baseline justify-between gap-3 lg:block">
+                <dt className="text-sm text-muted-foreground">Потребность по заявкам</dt>
+                <dd className="text-xl font-semibold text-foreground tabular-nums lg:mt-1">
+                  {formatAmount(quantitySummary.demandQuantity)} {aggregate.unit}
+                </dd>
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+                <dt className="text-muted-foreground">Поставка на дату</dt>
+                <dd className="font-medium text-foreground tabular-nums">
+                  {formatAmount(quantitySummary.deliveryQuantity)} {aggregate.unit}
+                </dd>
+              </div>
+              {quantitySummary.deliveryExcess > 0 && (
+                <div className="mt-1 flex items-center justify-between gap-3 text-sm">
+                  <dt className="text-muted-foreground">Избыток графика</dt>
+                  <dd className="font-medium text-amber-700 tabular-nums">
+                    {formatAmount(quantitySummary.deliveryExcess)} {aggregate.unit}
+                  </dd>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex items-baseline justify-between gap-3 lg:block">
+              <dt className="text-sm text-muted-foreground">{hasCancelledReturn ? 'Активный объём' : attentionKind === 'redelivery' ? 'Было заявлено' : 'Количество'}</dt>
+              <dd className="text-xl font-semibold text-foreground tabular-nums lg:mt-1">
+                {formatAmount(displayQuantity)} {aggregate.unit}
+              </dd>
+            </div>
+          )}
+          <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+            <dt className="text-muted-foreground">Осталось заказать</dt>
+            <dd className={`font-medium tabular-nums ${quantitySummary.remainingToOrder > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+              {formatAmount(quantitySummary.remainingToOrder)} {aggregate.unit}
             </dd>
           </div>
           <div className="mt-2 flex items-center justify-between gap-3 text-sm">
@@ -427,6 +460,11 @@ function MaterialOrderCard({
             <dt className="text-muted-foreground">Позиций</dt>
             <dd className="font-medium text-foreground tabular-nums">{aggregate.item_count}</dd>
           </div>
+          {dateSlice && (
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">
+              Потребность указана по заявкам с учётом складской брони. Поставка на дату может быть больше потребности из-за перепоставки.
+            </p>
+          )}
         </dl>
       </div>
 

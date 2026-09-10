@@ -20,6 +20,7 @@ import {
   isSupplyOrderRedeliveryItem,
   partitionSupplyOrderAggregatesByRedelivery,
   summarizeSupplyOrderMachineRoutes,
+  summarizeSupplyOrderQuantities,
   summarizeSupplyOrderRedeliveryMachineRoutes,
   summarizeSupplyOrderUnscheduledMachineRoutes,
   sortSupplyOrderItems,
@@ -390,6 +391,17 @@ assert.deepEqual(
   ],
   'every date card must expose only its scheduled, accepted, and uncovered quantities',
 )
+
+const quantitySummary = summarizeSupplyOrderQuantities(
+  { quantity: 7, unscheduled_quantity: 0 },
+  { quantity: 7, unscheduled_quantity: 0 },
+  { quantity: 9 },
+)
+assert.deepEqual(
+  quantitySummary,
+  { demandQuantity: 7, deliveryQuantity: 9, remainingToOrder: 0, deliveryExcess: 2 },
+  'the summary must distinguish request demand, dated delivery, remaining order quantity, and schedule excess',
+)
 assert.equal(
   new Set(supplyDateGroups.flatMap((group) => group.rows.map((row) => row.id))).size,
   3,
@@ -614,6 +626,9 @@ assert.match(
   /hasMixedPlannedAndUnscheduled[\s\S]*appendUnscheduled[\s\S]*allowFinance=\{false\}/u,
   'a mixed date card must expose a separate append-only editor for its unscheduled remainder',
 )
+assert.match(summaryPageSource, /Потребность по заявкам/u, 'summary cards must show total demand from supply requests')
+assert.match(summaryPageSource, /Осталось заказать/u, 'summary cards must show the remaining quantity still to order')
+assert.match(summaryPageSource, /Избыток графика/u, 'summary cards must explain a dated schedule above request demand')
 
 const detailsPageSource = readFileSync(
   new URL('../src/components/features/supply-orders/OrderItemRow.tsx', import.meta.url),
