@@ -386,7 +386,7 @@ assert.deepEqual(
   })),
   [
     { quantity: 3_000, planned: 3_000, delivered: 0, unscheduled: 0 },
-    { quantity: 5_000, planned: 0, delivered: 4_000, unscheduled: 0 },
+    { quantity: 4_000, planned: 0, delivered: 4_000, unscheduled: 0 },
     { quantity: 1_000, planned: 0, delivered: 0, unscheduled: 1_000 },
   ],
   'every date card must expose only its scheduled, accepted, and uncovered quantities',
@@ -637,11 +637,21 @@ const detailsPageSource = readFileSync(
 assert.match(detailsPageSource, /FactoryDeliveryEditor/u, 'request details must reuse the summary schedule editor')
 assert.match(detailsPageSource, /ReturnLongStockPositionButton/u, 'request details must expose the atomic return-to-technologist action')
 assert.match(detailsPageSource, /План и факт поставки/u, 'request details must show read-only delivery plan and fact')
+assert.match(detailsPageSource, /aria-expanded=\{detailsOpen\}/u, 'dense request rows must reveal the complete editor on demand')
+assert.match(detailsPageSource, /Поставка: план \/ факт \/ осталось/u, 'the request table must keep plan, fact, and remainder visible in every row')
+assert.match(detailsPageSource, /Доступные складские остатки/u, 'expanded request rows must retain the detailed warehouse breakdown')
 assert.doesNotMatch(
   detailsPageSource,
   /reserveForMachine|unreserveItem|markOrderDelivered|LongStockReceivingDialog/u,
   'request details must not expose reservation or warehouse receiving mutations',
 )
+
+const supplierGroupSource = readFileSync(
+  new URL('../src/components/features/supply-orders/SupplierGroup.tsx', import.meta.url),
+  'utf8',
+)
+assert.match(supplierGroupSource, /role="table"/u, 'supplier groups must use a clear table-like information hierarchy')
+assert.match(supplierGroupSource, /Машина \/ заявка[\s\S]*Материал[\s\S]*Потребность[\s\S]*Склад[\s\S]*Статус/u, 'the request table must keep every business column visible')
 
 const mergedDateGroups = groupSupplyOrderAggregatesBySupplyDate([
   makeDateScheduleAggregate([
@@ -673,8 +683,61 @@ assert.deepEqual(
     delivered: mergedDateGroups[0].rows[0].deliveredQuantity,
     unscheduled: mergedDateGroups[0].rows[0].unscheduledQuantity,
   },
-  { quantity: 6_000, planned: 2_000, delivered: 2_500, unscheduled: 1_000 },
-  'same-date schedule parts must be merged without losing their separate states',
+  { quantity: 5_500, planned: 2_000, delivered: 2_500, unscheduled: 1_000 },
+  'same-date schedule parts must use accepted fact instead of the obsolete supplier promise',
+)
+
+const distributedReceiptAggregate = makeDateScheduleAggregate([
+  makeDeliverySchedule({
+    id: 'distributed-receipt-parent',
+    delivery_date: '2026-09-23',
+    quantity: 6,
+    received_quantity: 6,
+    allocated_quantity: 4,
+    allocated_physical_quantity: 4,
+  }),
+  makeDeliverySchedule({
+    id: 'distributed-receipt-child',
+    delivery_date: '2026-09-23',
+    quantity: 2,
+    received_quantity: 0,
+    allocated_quantity: 2,
+    allocated_physical_quantity: 2,
+    receipt_parent_schedule_id: 'distributed-receipt-parent',
+  }),
+  makeDeliverySchedule({
+    id: 'remaining-planned-unit',
+    delivery_date: '2026-09-23',
+    quantity: 1,
+    status: 'planned',
+    received_quantity: null,
+    allocated_quantity: null,
+    allocated_physical_quantity: null,
+    delivered_at: null,
+  }),
+], { plannedMaterialDate: '2026-09-23', unscheduledQuantity: 0 })
+distributedReceiptAggregate.quantity = 7
+distributedReceiptAggregate.requested_quantity = 7
+distributedReceiptAggregate.factories[0].quantity = 7
+distributedReceiptAggregate.factories[0].requested_quantity = 7
+distributedReceiptAggregate.factories[0].items[0].quantity = 7
+const distributedReceiptSlice = groupSupplyOrderAggregatesBySupplyDate(
+  [distributedReceiptAggregate],
+  'date_asc',
+)[0].rows[0]
+assert.deepEqual(
+  {
+    quantity: distributedReceiptSlice.quantity,
+    planned: distributedReceiptSlice.plannedQuantity,
+    delivered: distributedReceiptSlice.deliveredQuantity,
+    excess: summarizeSupplyOrderQuantities(
+      distributedReceiptAggregate,
+      distributedReceiptAggregate.factories[0],
+      distributedReceiptSlice,
+    ).deliveryExcess,
+  },
+  { quantity: 7, planned: 1, delivered: 6, excess: 0 },
+  'receipt allocation children must preserve the six-unit fact without inflating dated supply to nine units',
 )
 
 assert.deepEqual(
