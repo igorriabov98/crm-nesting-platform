@@ -176,6 +176,8 @@ jobs:
         run: npm run test:vrb-outsourcing
       - name: Product-project mail RLS and correction lifecycle
         run: npm run test:product-project-mail-db
+      - name: Product client fastening files and task isolation
+        run: npm run test:product-client-fastening
       - name: Inventory stock lifecycle
         run: node scripts/test-inventory-stock-lifecycle.mjs
       - name: Inventory factory transfers

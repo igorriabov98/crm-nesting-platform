@@ -18,7 +18,10 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { ProductProductionDrawingManager } from '@/components/features/products/ProductProductionDrawingManager'
-import { Checkbox } from '@/components/ui/checkbox'
+import {
+  ClientFasteningHistory,
+  ProductClientFasteningEditor,
+} from '@/components/features/products/ProductClientFasteningEditor'
 import {
   Dialog,
   DialogContent,
@@ -50,9 +53,7 @@ import {
 import { cn } from '@/lib/utils'
 import {
   PRODUCT_COMPLETION_TYPE_LABELS,
-  PRODUCT_FASTENING_TYPE_LABELS,
   type ProductCompletionType,
-  type ProductFasteningType,
 } from '@/lib/constants/product-version-labels'
 import {
   completeCurrentVersionFiles,
@@ -68,6 +69,11 @@ import {
 import { versionDocumentState, type DirectProductUpload } from '@/lib/products/product-file-upload'
 import type { ProductFile } from '@/lib/types'
 import type { ProductProductionDrawingDto } from '@/lib/actions/product-production-drawings'
+import type {
+  ProductClientFasteningSettingDto,
+  ProductClientOption,
+} from '@/lib/actions/product-client-fastening'
+import { normalizeClientFasteningTypes } from '@/lib/products/product-client-fastening'
 import { usePermissions } from '@/components/providers/PermissionProvider'
 
 type ProductVersionAuthor = {
@@ -82,9 +88,11 @@ type ProductVersionHistoryProps = {
   productionDrawingsByVersion?: Record<string, ProductProductionDrawingDto[]>
   productionDrawingsError?: string | null
   canManageProductionDrawings?: boolean
+  clients?: ProductClientOption[]
+  clientFasteningByVersion?: Record<string, ProductClientFasteningSettingDto[]>
+  clientFasteningError?: string | null
 }
 
-const FASTENING_OPTIONS = Object.entries(PRODUCT_FASTENING_TYPE_LABELS) as Array<[ProductFasteningType, string]>
 const COMPLETION_OPTIONS = Object.entries(PRODUCT_COMPLETION_TYPE_LABELS) as Array<[ProductCompletionType, string]>
 
 const versionDateFormatter = new Intl.DateTimeFormat('ru-RU', {
@@ -122,11 +130,6 @@ function getActionError(error: unknown) {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
 }
 
-function toggleFasteningValue(current: ProductFasteningType[], value: ProductFasteningType, checked: boolean) {
-  if (checked) return Array.from(new Set([...current, value]))
-  return current.filter((item) => item !== value)
-}
-
 function ActionError({ message }: { message: string | null }) {
   if (!message) return null
   return (
@@ -139,41 +142,6 @@ function ActionError({ message }: { message: string | null }) {
 
 function FieldLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?: string }) {
   return <label htmlFor={htmlFor} className="text-sm font-medium text-slate-700">{children}</label>
-}
-
-function FasteningCheckboxes({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: ProductFasteningType[]
-  onChange: (nextValue: ProductFasteningType[]) => void
-  disabled?: boolean
-}) {
-  return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      {FASTENING_OPTIONS.map(([type, label]) => {
-        const checked = value.includes(type)
-        return (
-          <label
-            key={type}
-            className={cn(
-              'flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors',
-              checked ? 'border-blue-200 bg-blue-50 text-blue-950' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
-              disabled && 'cursor-not-allowed opacity-60',
-            )}
-          >
-            <Checkbox
-              checked={checked}
-              disabled={disabled}
-              onCheckedChange={(nextChecked) => onChange(toggleFasteningValue(value, type, nextChecked === true))}
-            />
-            <span>{label}</span>
-          </label>
-        )
-      })}
-    </div>
-  )
 }
 
 function CompletionSelect({
@@ -253,7 +221,6 @@ function VersionFilesActionDialog({ productId, version }: { productId: string; v
   const [open, setOpen] = useState(false)
   const [drawingNumber, setDrawingNumber] = useState(version.drawing_number || '')
   const [changeSummary, setChangeSummary] = useState('')
-  const [fasteningTypes, setFasteningTypes] = useState<ProductFasteningType[]>(version.fastening_types || [])
   const [completionType, setCompletionType] = useState<ProductCompletionType | null>(version.completion_type || null)
   const [drawingFile, setDrawingFile] = useState<File | null>(null)
   const [stepFile, setStepFile] = useState<File | null>(null)
@@ -265,7 +232,6 @@ function VersionFilesActionDialog({ productId, version }: { productId: string; v
     if (!open) return
     setDrawingNumber(version.drawing_number || '')
     setChangeSummary('')
-    setFasteningTypes(version.fastening_types || [])
     setCompletionType(version.completion_type || null)
     setDrawingFile(null)
     setStepFile(null)
@@ -304,7 +270,6 @@ function VersionFilesActionDialog({ productId, version }: { productId: string; v
         ? await createProductVersion(productId, {
             drawingNumber,
             changeSummary,
-            fasteningTypes,
             completionType,
             files: uploadedFiles,
           })
@@ -405,15 +370,10 @@ function VersionFilesActionDialog({ productId, version }: { productId: string; v
           )}
 
           {isNewVersionMode && (
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-1.5 md:col-span-2">
-                <FieldLabel>Крепление</FieldLabel>
-                <FasteningCheckboxes value={fasteningTypes} onChange={setFasteningTypes} disabled={isSubmitting} />
-              </div>
-              <div className="space-y-1.5">
-                <FieldLabel>Комплектация</FieldLabel>
+            <div className="space-y-1.5">
+                <FieldLabel>Комплектация — одинаковая для всех клиентов</FieldLabel>
                 <CompletionSelect value={completionType} onChange={setCompletionType} disabled={isSubmitting} />
-              </div>
+                <p className="text-xs text-slate-500">Клиентские галочки крепления скопируются из текущей версии без файлов.</p>
             </div>
           )}
 
@@ -434,13 +394,11 @@ function VersionFilesActionDialog({ productId, version }: { productId: string; v
 
 function VersionCompletionEditor({ productId, version }: { productId: string; version: ProductVersionWithFiles }) {
   const router = useRouter()
-  const [fasteningTypes, setFasteningTypes] = useState<ProductFasteningType[]>(version.fastening_types || [])
   const [completionType, setCompletionType] = useState<ProductCompletionType | null>(version.completion_type || null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    setFasteningTypes(version.fastening_types || [])
     setCompletionType(version.completion_type || null)
     setError(null)
   }, [version])
@@ -450,7 +408,7 @@ function VersionCompletionEditor({ productId, version }: { productId: string; ve
     setIsSubmitting(true)
     setError(null)
     try {
-      const result = await updateCurrentVersionCompletion(productId, { fasteningTypes, completionType })
+      const result = await updateCurrentVersionCompletion(productId, { completionType })
       if (!result.success) throw new Error(result.error || 'Не удалось сохранить комплектацию')
       toast.success('Комплектация сохранена')
       router.refresh()
@@ -466,16 +424,11 @@ function VersionCompletionEditor({ productId, version }: { productId: string; ve
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
       <div>
-        <h3 className="text-sm font-semibold text-slate-900">Крепление и комплектация</h3>
-        <p className="mt-1 text-xs text-slate-500">Параметры относятся только к текущей версии.</p>
+        <h3 className="text-sm font-semibold text-slate-900">Комплектация</h3>
+        <p className="mt-1 text-xs font-medium text-blue-700">Одинаковая для всех клиентов в текущей версии.</p>
       </div>
       <ActionError message={error} />
-      <div className="space-y-4">
-        <div className="space-y-1.5">
-          <FieldLabel>Крепление</FieldLabel>
-          <FasteningCheckboxes value={fasteningTypes} onChange={setFasteningTypes} disabled={isSubmitting} />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
           <div className="space-y-1.5">
             <FieldLabel>Комплектация</FieldLabel>
             <CompletionSelect value={completionType} onChange={setCompletionType} disabled={isSubmitting} />
@@ -484,7 +437,6 @@ function VersionCompletionEditor({ productId, version }: { productId: string; ve
             {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Save className="h-4 w-4" />}
             {isSubmitting ? 'Сохранение…' : 'Сохранить'}
           </Button>
-        </div>
       </div>
     </form>
   )
@@ -561,15 +513,6 @@ function FileLinks({ files }: { files: ProductFile[] }) {
   )
 }
 
-function FasteningBadges({ version }: { version: ProductVersionWithFiles }) {
-  if (!version.fastening_types?.length) return <span className="text-sm text-slate-400">Не заполнено</span>
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {version.fastening_types.map((type) => <Badge key={type} variant="secondary">{PRODUCT_FASTENING_TYPE_LABELS[type]}</Badge>)}
-    </div>
-  )
-}
-
 function CompletionBadge({ version }: { version: ProductVersionWithFiles }) {
   if (!version.completion_type) return <span className="text-sm text-slate-400">Не заполнено</span>
   return <Badge variant="secondary">{PRODUCT_COMPLETION_TYPE_LABELS[version.completion_type]}</Badge>
@@ -604,6 +547,8 @@ function CurrentVersionCard({
   version,
   authorsById,
   canManageVersions,
+  clients,
+  clientSettings,
   productionDrawings,
   canManageProductionDrawings,
 }: {
@@ -611,6 +556,8 @@ function CurrentVersionCard({
   version: ProductVersionWithFiles
   authorsById: Record<string, ProductVersionAuthor>
   canManageVersions: boolean
+  clients: ProductClientOption[]
+  clientSettings: ProductClientFasteningSettingDto[]
   productionDrawings?: ProductProductionDrawingDto[]
   canManageProductionDrawings: boolean
 }) {
@@ -656,10 +603,20 @@ function CurrentVersionCard({
         <div className="grid gap-4 rounded-2xl border border-slate-200 p-4 sm:grid-cols-2">
           <InfoField label="Номер чертежа">{version.drawing_number}</InfoField>
           <InfoField label="Комментарий">{version.change_summary || 'Первая версия'}</InfoField>
-          <InfoField label="Крепление"><FasteningBadges version={version} /></InfoField>
+          <InfoField label="Крепление по клиентам">
+            {clientSettings.filter((setting) => setting.complete).length} из {clients.length} полностью настроено
+          </InfoField>
           <InfoField label="Комплектация"><CompletionBadge version={version} /></InfoField>
         </div>
 
+        <ProductClientFasteningEditor
+          productId={productId}
+          productVersionId={version.id}
+          completionType={version.completion_type}
+          clients={clients}
+          settings={clientSettings}
+          canManage={canManageVersions}
+        />
         {canManageVersions && <VersionCompletionEditor productId={productId} version={version} />}
       </div>
     </section>
@@ -671,6 +628,8 @@ function ArchivedVersions({
   versions,
   authorsById,
   canManageVersions,
+  clients,
+  clientFasteningByVersion,
   productionDrawingsByVersion,
   canManageProductionDrawings,
 }: {
@@ -678,6 +637,8 @@ function ArchivedVersions({
   versions: ProductVersionWithFiles[]
   authorsById: Record<string, ProductVersionAuthor>
   canManageVersions: boolean
+  clients: ProductClientOption[]
+  clientFasteningByVersion: Record<string, ProductClientFasteningSettingDto[]>
   productionDrawingsByVersion?: Record<string, ProductProductionDrawingDto[]>
   canManageProductionDrawings: boolean
 }) {
@@ -714,8 +675,14 @@ function ArchivedVersions({
                 <div className="mt-4 grid gap-4 border-t border-slate-100 pt-4 md:grid-cols-2">
                   <InfoField label="Сборочный чертёж"><FileLinks files={groups.drawing} /></InfoField>
                   <InfoField label="STEP"><FileLinks files={groups.step} /></InfoField>
-                  <InfoField label="Крепление"><FasteningBadges version={version} /></InfoField>
                   <InfoField label="Комплектация"><CompletionBadge version={version} /></InfoField>
+                </div>
+                <div className="mt-4">
+                  <ClientFasteningHistory
+                    clients={clients}
+                    settings={clientFasteningByVersion[version.id] || []}
+                    legacyTypes={normalizeClientFasteningTypes(version.fastening_types)}
+                  />
                 </div>
                 {productionDrawingsByVersion && (
                   <div className="mt-4">
@@ -745,6 +712,9 @@ export function ProductVersionHistory({
   productionDrawingsByVersion,
   productionDrawingsError,
   canManageProductionDrawings = false,
+  clients = [],
+  clientFasteningByVersion = {},
+  clientFasteningError,
 }: ProductVersionHistoryProps) {
   const { can } = usePermissions()
   const currentVersion = versions.find((version) => version.status === 'current') || null
@@ -774,12 +744,19 @@ export function ProductVersionHistory({
           Не удалось загрузить комплектные чертежи: {productionDrawingsError}
         </section>
       )}
+      {clientFasteningError && (
+        <section role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          Не удалось загрузить клиентские крепления: {clientFasteningError}
+        </section>
+      )}
       {currentVersion ? (
         <CurrentVersionCard
           productId={productId}
           version={currentVersion}
           authorsById={authorsById}
           canManageVersions={canManageVersions}
+          clients={clients}
+          clientSettings={clientFasteningByVersion[currentVersion.id] || []}
           productionDrawings={productionDrawingsByVersion?.[currentVersion.id]}
           canManageProductionDrawings={canManageProductionDrawings}
         />
@@ -793,6 +770,8 @@ export function ProductVersionHistory({
         versions={archivedVersions}
         authorsById={authorsById}
         canManageVersions={canManageVersions}
+        clients={clients}
+        clientFasteningByVersion={clientFasteningByVersion}
         productionDrawingsByVersion={productionDrawingsByVersion}
         canManageProductionDrawings={canManageProductionDrawings}
       />

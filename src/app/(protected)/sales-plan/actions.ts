@@ -56,7 +56,7 @@ type MachinePackingGroupInsert = Database['public']['Tables']['machine_packing_g
 type ProductVersionRow = Database['public']['Tables']['product_versions']['Row']
 export type MachineDocumentFieldsInput = z.input<typeof machineDocumentFieldsSchema>
 type ProductSnapshot = Pick<Product, 'id' | 'name_uk' | 'name_en' | 'uktzed' | 'drawing_number' | 'characteristics' | 'unit_weight_kg' | 'base_price_eur' | 'status'>
-type ProductVersionSnapshot = Pick<ProductVersionRow, 'id' | 'product_id' | 'version_number' | 'status' | 'drawing_number' | 'fastening_types' | 'completion_type'>
+type ProductVersionSnapshot = Pick<ProductVersionRow, 'id' | 'product_id' | 'version_number' | 'status' | 'drawing_number' | 'completion_type'>
 type MachineItemVersionStatus = MachineItem & {
   is_product_version_outdated?: boolean
 }
@@ -299,13 +299,13 @@ async function loadProductVersionSnapshots(
     explicitVersionIds.length > 0
       ? db
           .from('product_versions')
-          .select('id, product_id, version_number, status, drawing_number, fastening_types, completion_type')
+          .select('id, product_id, version_number, status, drawing_number, completion_type')
           .in('id', explicitVersionIds)
       : Promise.resolve({ data: [], error: null } as DbResult),
     currentProductIds.length > 0
       ? db
           .from('product_versions')
-          .select('id, product_id, version_number, status, drawing_number, fastening_types, completion_type')
+          .select('id, product_id, version_number, status, drawing_number, completion_type')
           .in('product_id', currentProductIds)
           .eq('status', 'current')
       : Promise.resolve({ data: [], error: null } as DbResult),
@@ -1258,6 +1258,7 @@ export async function createMachine(data: CreateMachineInput) {
         for (const taskInput of productVersionTasksToEnsure) {
           await ensureProductVersionCompletionTask(db, {
             ...taskInput,
+            clientId: parsed.client_id,
             machineId,
             assignedTo: user.id,
           })
@@ -1738,6 +1739,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
             await ensureProductVersionCompletionTask(db, {
               productVersion,
               productName: product.name_uk,
+              clientId: nextClientId,
               machineId: id,
               assignedTo: user.id,
             })
@@ -1781,6 +1783,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
           await ensureProductVersionCompletionTask(db, {
             productVersion,
             productName: product.name_uk,
+            clientId: nextClientId,
             machineId: id,
             assignedTo: user.id,
           })
@@ -1980,6 +1983,7 @@ export async function addMachineItem(machineId: string, data: unknown) {
     await ensureProductVersionCompletionTask(db, {
       productVersion,
       productName: product.name_uk,
+      clientId,
       machineId,
       assignedTo: user.id,
     })
@@ -2164,6 +2168,7 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
     if (productVersionTaskToEnsure) {
       await ensureProductVersionCompletionTask(db, {
         ...productVersionTaskToEnsure,
+        clientId,
         machineId,
         assignedTo: user.id,
       })

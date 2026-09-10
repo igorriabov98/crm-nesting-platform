@@ -15,6 +15,7 @@ import { ProductForm } from '@/components/features/products/ProductForm'
 import { ProductVersionHistory } from '@/components/features/products/ProductVersionHistory'
 import { getProduct } from '@/lib/actions/products'
 import { getProductVersions } from '@/lib/actions/product-versions'
+import { getProductClientFasteningData } from '@/lib/actions/product-client-fastening'
 import {
   getProductProductionDrawings,
   type ProductProductionDrawingDto,
@@ -73,8 +74,13 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     )
   }
 
-  const [{ data: versionsData, error: versionsError }, currentUserContext] = await Promise.all([
+  const [
+    { data: versionsData, error: versionsError },
+    clientFasteningResult,
+    currentUserContext,
+  ] = await Promise.all([
     getProductVersions(id),
+    getProductClientFasteningData(id),
     getCurrentUserContextOrRedirect(),
   ])
   const { supabase } = currentUserContext
@@ -186,6 +192,9 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
               productionDrawingsByVersion={productionDrawingsByVersion}
               productionDrawingsError={productionDrawingsError}
               canManageProductionDrawings={canManageProductionDrawings}
+              clients={clientFasteningResult.data?.clients || []}
+              clientFasteningByVersion={clientFasteningResult.data?.settingsByVersion || {}}
+              clientFasteningError={clientFasteningResult.error}
             />
           )}
         </div>

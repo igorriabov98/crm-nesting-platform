@@ -7,7 +7,7 @@ import { ROUTES } from '@/lib/constants/routes'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { requireProductAccess, requireProductManageAccess } from '@/lib/actions/products'
 import { buildProductVersionFileInsert } from '@/lib/actions/product-version-file-helpers'
-import { completeProductVersionCompletionTasksIfFilled } from '@/lib/actions/product-version-completion-tasks'
+import { reconcileProductVersionCompletionTasksForOrderClients } from '@/lib/actions/product-version-completion-tasks'
 import {
   validateDirectProductUploads,
   validateProductUploadRequest,
@@ -37,7 +37,6 @@ type ProductVersionUpdate = Database['public']['Tables']['product_versions']['Up
 type ProductFile = Database['public']['Tables']['product_files']['Row']
 type ProductFileInsert = Database['public']['Tables']['product_files']['Insert']
 type ProductFileKind = ProductFileInsert['file_kind']
-type ProductFasteningType = Database['public']['Enums']['product_fastening_type']
 type ProductCompletionType = Database['public']['Enums']['product_completion_type']
 
 export type ProductVersionWithFiles = ProductVersion & {
@@ -47,7 +46,6 @@ export type ProductVersionWithFiles = ProductVersion & {
 export type CreateProductVersionInput = {
   drawingNumber: string
   changeSummary: string
-  fasteningTypes?: ProductFasteningType[] | null
   completionType?: ProductCompletionType | null
   files: DirectProductUpload[]
 }
@@ -58,7 +56,6 @@ export type CompleteCurrentVersionFilesInput = {
 }
 
 export type UpdateCurrentVersionCompletionInput = {
-  fasteningTypes?: ProductFasteningType[] | null
   completionType?: ProductCompletionType | null
 }
 
@@ -67,14 +64,6 @@ type ActionResult<T> = {
   data: T | null
   error: string | null
 }
-
-const FASTENING_TYPES: ProductFasteningType[] = [
-  'metal_plate',
-  'wp_plate',
-  'a4_plate',
-  'white_sticker',
-  'none_required',
-]
 
 const COMPLETION_TYPES: ProductCompletionType[] = ['mounting_set', 'chain_set']
 const VERSION_DISPLAY_FILE_KINDS: ProductFileKind[] = ['drawing', 'step', 'pdf']
@@ -88,16 +77,6 @@ function cleanRequiredString(value: unknown, message: string) {
   const text = String(value || '').trim()
   if (!text) throw new Error(message)
   return text
-}
-
-function normalizeFasteningTypes(value: ProductFasteningType[] | null | undefined) {
-  if (!value) return [] as ProductFasteningType[]
-  if (!Array.isArray(value)) throw new Error('Некорректный список креплений')
-  const unique = Array.from(new Set(value))
-  for (const item of unique) {
-    if (!FASTENING_TYPES.includes(item)) throw new Error('Некорректный тип крепления')
-  }
-  return unique
 }
 
 function normalizeCompletionType(value: ProductCompletionType | null | undefined) {
@@ -151,7 +130,7 @@ async function loadVersionWithFiles(db: LooseDb, versionId: string) {
   const version = data as ProductVersion
   return {
     ...version,
-    fastening_types: version.fastening_types || [],
+    fastening_types: (version.fastening_types || []).filter((type) => type !== 'wp_plate'),
     product_files: files,
   } satisfies ProductVersionWithFiles
 }
@@ -215,6 +194,21 @@ async function ignoreQueryError(query: LooseQuery) {
   }
 }
 
+async function copyClientFasteningCheckboxes(
+  admin: ReturnType<typeof createAdminClient>,
+  sourceVersionId: string,
+  targetVersionId: string,
+  userId: string,
+) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (admin as any).rpc('fn_copy_product_version_client_fastening_settings', {
+    p_source_version_id: sourceVersionId,
+    p_target_version_id: targetVersionId,
+    p_user_id: userId,
+  })
+  if (error) throw error
+}
+
 function revalidateProduct(productId: string) {
   revalidatePath(ROUTES.PRODUCTS)
   revalidatePath(`${ROUTES.PRODUCTS}/${productId}`)
@@ -242,7 +236,7 @@ export async function getProductVersions(productId: string): Promise<{ data: Pro
     return {
       data: versions.map((version) => ({
         ...version,
-        fastening_types: version.fastening_types || [],
+        fastening_types: (version.fastening_types || []).filter((type) => type !== 'wp_plate'),
         product_files: filesByVersion.get(version.id) || [],
       })),
       error: null,
@@ -297,7 +291,7 @@ export async function createProductVersion(
       status: 'current',
       drawing_number: drawingNumber,
       change_summary: changeSummary,
-      fastening_types: normalizeFasteningTypes(input.fasteningTypes),
+      fastening_types: [],
       completion_type: normalizeCompletionType(input.completionType),
       created_by: userId,
     }
@@ -308,6 +302,8 @@ export async function createProductVersion(
       .single()
     if (insertError || !versionData) throw insertError || new Error('Не удалось создать версию товара')
     createdVersionId = newVersionId
+
+    await copyClientFasteningCheckboxes(adminSupabase, currentVersion.id, newVersionId, userId)
 
     const { error: filesError } = await db.from('product_files').insert(fileRows)
     if (filesError) throw filesError
@@ -399,13 +395,11 @@ export async function updateCurrentVersionCompletion(
     const adminSupabase = createAdminClient()
     const db = dbFrom(adminSupabase)
     const currentVersion = await loadCurrentVersion(db, productId)
-    const fasteningTypes = normalizeFasteningTypes(input.fasteningTypes)
     const completionType = normalizeCompletionType(input.completionType)
 
     const { error } = await db
       .from('product_versions')
       .update({
-        fastening_types: fasteningTypes,
         completion_type: completionType,
       } satisfies ProductVersionUpdate)
       .eq('id', currentVersion.id)
@@ -413,7 +407,16 @@ export async function updateCurrentVersionCompletion(
     if (error) throw error
 
     const version = await loadVersionWithFiles(db, currentVersion.id)
-    await completeProductVersionCompletionTasksIfFilled(db, version)
+    const { data: productData, error: productError } = await db
+      .from('products')
+      .select('name_uk')
+      .eq('id', productId)
+      .single()
+    if (productError || !productData) throw productError || new Error('Изделие не найдено')
+    await reconcileProductVersionCompletionTasksForOrderClients(db, {
+      productVersion: version,
+      productName: (productData as { name_uk: string }).name_uk,
+    })
     revalidateProduct(productId)
     return { success: true, data: version, error: null }
   } catch (error) {
@@ -429,8 +432,9 @@ export async function rollbackToVersion(
   let archivedCurrentVersionId: string | null = null
 
   try {
-    const { db: requestDb } = await requireProductVersionEngineeringAccess()
+    const { db: requestDb, userId } = await requireProductVersionEngineeringAccess()
     db = requestDb
+    const admin = createAdminClient()
 
     const { data: targetData, error: targetError } = await db
       .from('product_versions')
@@ -449,6 +453,7 @@ export async function rollbackToVersion(
 
     const targetFiles = await loadVersionFiles(db, [targetVersion.id])
     const currentVersion = await loadCurrentVersion(db, productId)
+    await copyClientFasteningCheckboxes(admin, targetVersion.id, targetVersion.id, userId)
 
     const { error: archiveError } = await db
       .from('product_versions')
