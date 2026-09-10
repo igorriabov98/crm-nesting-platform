@@ -803,6 +803,7 @@ function revalidateProductionCuttingFlow(machineId?: string | null) {
   revalidatePath(ROUTES.PRODUCTION)
   revalidatePath(ROUTES.GANTT)
   revalidatePath(ROUTES.INVENTORY)
+  revalidatePath(ROUTES.INVENTORY_METAL_SCRAP)
   revalidatePath(ROUTES.TASKS)
   revalidatePath(ROUTES.NOTIFICATIONS)
   if (machineId) revalidatePath(`${ROUTES.SALES_PLAN}/${machineId}`)
