@@ -1494,6 +1494,75 @@ export type Database = {
           created_at?: string
         }
       }
+      product_version_client_fastening_settings: {
+        Row: {
+          id: string
+          product_version_id: string
+          client_id: string
+          fastening_types: Database['public']['Enums']['product_fastening_type'][]
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          product_version_id: string
+          client_id: string
+          fastening_types?: Database['public']['Enums']['product_fastening_type'][]
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          product_version_id?: string
+          client_id?: string
+          fastening_types?: Database['public']['Enums']['product_fastening_type'][]
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      product_version_client_fastening_files: {
+        Row: {
+          id: string
+          setting_id: string
+          fastening_type: Database['public']['Enums']['product_fastening_type']
+          file_name: string
+          file_path: string
+          mime_type: string | null
+          file_size: number
+          uploaded_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          setting_id: string
+          fastening_type: Database['public']['Enums']['product_fastening_type']
+          file_name: string
+          file_path: string
+          mime_type?: string | null
+          file_size: number
+          uploaded_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          setting_id?: string
+          fastening_type?: Database['public']['Enums']['product_fastening_type']
+          file_name?: string
+          file_path?: string
+          mime_type?: string | null
+          file_size?: number
+          uploaded_by?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       product_versions: {
         Row: {
           id: string
@@ -4659,6 +4728,7 @@ export type Database = {
         Row: {
           id: string
           machine_id: string | null
+          client_id: string | null
           related_meeting_id: string | null
           product_project_id: string | null
           product_version_id: string | null
@@ -4685,6 +4755,7 @@ export type Database = {
         Insert: {
           id?: string
           machine_id?: string | null
+          client_id?: string | null
           related_meeting_id?: string | null
           product_project_id?: string | null
           product_version_id?: string | null
@@ -4711,6 +4782,7 @@ export type Database = {
         Update: {
           id?: string
           machine_id?: string | null
+          client_id?: string | null
           related_meeting_id?: string | null
           product_project_id?: string | null
           product_version_id?: string | null
