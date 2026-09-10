@@ -112,6 +112,28 @@ begin
       'supplier:test', 'Поставщик', 'factory:test', 'Завод', 'Поставка в пути');
 
   begin
+    perform public.fn_receive_supply_order_schedule_v2(
+      v_source_schedule,
+      v_actor,
+      9,
+      jsonb_build_array(jsonb_build_object(
+        'table', 'request_paint', 'id', v_source_item,
+        'quantity', 9, 'physical_quantity', 9, 'piece_count', null
+      )),
+      null,
+      null
+    );
+    raise exception 'Legacy v2 accepted an ordinary receipt without manual confirmation';
+  exception when others then
+    v_error := sqlerrm;
+    if v_error not like '%окно ручного распределения%' then raise; end if;
+  end;
+  if (select status from public.supply_order_delivery_schedules where id = v_source_schedule) <> 'planned'
+    or exists (select 1 from public.inventory where factory_id = v_factory and material_id = v_material) then
+    raise exception 'Legacy v2 guard left an ordinary receipt partially applied';
+  end if;
+
+  begin
     perform public.fn_receive_supply_order_schedule_v3(
       v_source_schedule,
       v_actor,
