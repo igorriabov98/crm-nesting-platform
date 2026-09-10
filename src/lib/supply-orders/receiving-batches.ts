@@ -47,6 +47,7 @@ export type ReceivingTransportContext = {
   trip_id: string
   delivery_stop_id: string | null
   trip_name: string
+  scheduled_date: string | null
   planned_arrival_at: string | null
   arrived_at: string | null
   trip_status?: string
@@ -99,6 +100,26 @@ function rowFallbackKey(row: MaterialReceivingProjectionRow) {
     row.aggregate_identity,
     row.planned_piece_length_mm ?? 'bulk',
   ].join('|')
+}
+
+function dateOnlyInUzhhorod(value: string | null) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Uzhgorod',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const values = new Map(parts.map((part) => [part.type, part.value]))
+  return `${values.get('year')}-${values.get('month')}-${values.get('day')}`
+}
+
+function receivingDate(row: MaterialReceivingProjectionRow, context: ReceivingTransportContext | null) {
+  return dateOnlyInUzhhorod(context?.arrived_at || context?.planned_arrival_at || null)
+    || context?.scheduled_date
+    || row.delivery_date
 }
 
 function mergePurchaseComponents(rows: MaterialReceivingProjectionRow[]) {
@@ -206,14 +227,15 @@ export function projectMaterialReceivingGroups(
       ? Array.from(inferredCandidates.values())[0]
       : null
     const context = (row.schedule_id ? directContext.get(row.schedule_id) : null) || inferredContext || null
+    const effectiveDate = receivingDate(row, context)
     const batchKey = context
       ? `trip:${transportSignature(context)}`
-      : `unlinked:${row.delivery_date}:${row.supplier_id || 'no-supplier'}`
-    const batches = rowsByDateAndBatch.get(row.delivery_date) || new Map()
+      : `unlinked:${effectiveDate}:${row.supplier_id || 'no-supplier'}`
+    const batches = rowsByDateAndBatch.get(effectiveDate) || new Map()
     const batch = batches.get(batchKey) || { context, rows: [] }
     batch.rows.push(row)
     batches.set(batchKey, batch)
-    rowsByDateAndBatch.set(row.delivery_date, batches)
+    rowsByDateAndBatch.set(effectiveDate, batches)
   }
 
   return Array.from(rowsByDateAndBatch.entries())

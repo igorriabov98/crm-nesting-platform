@@ -3289,6 +3289,7 @@ async function loadReceivingTransportContexts(
         scheduled_date: trip.scheduled_date,
         stops: tripStops,
       }),
+      scheduled_date: trip.scheduled_date,
       planned_arrival_at: deliveryStop?.planned_arrival_at || null,
       arrived_at: deliveryStop?.arrived_at || null,
       trip_status: trip.status,
@@ -3443,11 +3444,11 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
     const plannedItemKeys = new Set(allProjectedSchedules
       .filter((schedule) => schedule.status === 'planned')
       .map((schedule) => `${schedule.request_item_table}:${schedule.request_item_id}`))
-    // Keep a physical future delivery receivable even if an earlier receipt has
-    // already closed the logical demand of its owner row.
-    const items = factoryItems.filter((item) => (
-      item.order_status === 'ordered' || plannedItemKeys.has(itemKey(item))
-    ))
+    // Receiving is a view of supplier commitments, not a projection of every
+    // open material need. A real planned schedule is the required evidence that
+    // supply has placed the order. Matching needs are offered later in the
+    // allocation dialog and must not appear here as virtual deliveries.
+    const items = factoryItems.filter((item) => plannedItemKeys.has(itemKey(item)))
     const itemKeys = new Set(items.map(itemKey))
     const projectedSchedules = allProjectedSchedules.filter((schedule) => (
       itemKeys.has(`${schedule.request_item_table}:${schedule.request_item_id}`)
@@ -3465,44 +3466,21 @@ export async function getMaterialReceivingPageData(factoryFilter?: string | null
     ] as string[]
     const supplierNameMap = await loadSupplierNameMap(db, supplierIds)
     const receivingItems: MaterialReceivingProjectionRow[] = []
-    const virtualReceivingQuantities = projectAggregateVirtualReceivingQuantities(items.map((item) => ({
-      key: itemKey(item),
-      aggregateKey: `${factoryKey(item.factory_id)}|${plannedDateKey(item.planned_material_date)}|${getAggregateIdentityKey(item.table, item.raw, item)}`,
-      requiredQuantity: item.to_order,
-      schedules: schedulesByItem.get(itemKey(item)) || [],
-    })))
-
     for (const item of items) {
       const factoryName = item.factory_id ? factoryNameMap.get(item.factory_id) || 'Завод' : 'Без завода'
-      const allItemSchedules = schedulesByItem.get(itemKey(item)) || []
-      const itemSchedules = allItemSchedules.filter((schedule) => schedule.status !== 'delivered')
+      const itemSchedules = (schedulesByItem.get(itemKey(item)) || [])
+        .filter((schedule) => schedule.status === 'planned')
 
-      if (itemSchedules.length > 0) {
-        for (const schedule of itemSchedules) {
-          receivingItems.push(makeReceivingItem(
-            item,
-            factoryName,
-            supplierNameMap,
-            schedule,
-            schedule.delivery_date,
-            Number(schedule.quantity || 0),
-          ))
-        }
-        continue
+      for (const schedule of itemSchedules) {
+        receivingItems.push(makeReceivingItem(
+          item,
+          factoryName,
+          supplierNameMap,
+          schedule,
+          schedule.delivery_date,
+          Number(schedule.quantity || 0),
+        ))
       }
-
-      const deliveryDate = effectiveSupplyDeliveryDate(item, item.planned_material_date)
-      if (!deliveryDate) continue
-      const outstandingQuantity = virtualReceivingQuantities.get(itemKey(item)) || 0
-      if (outstandingQuantity <= 0) continue
-      receivingItems.push(makeReceivingItem(
-        item,
-        factoryName,
-        supplierNameMap,
-        null,
-        deliveryDate,
-        outstandingQuantity,
-      ))
     }
 
     const transportContexts = await loadReceivingTransportContexts(

@@ -41,3 +41,24 @@ test('ordinary receipt shows future coverage, protected trips, and reason valida
   assert.match(source, /minLength=\{3\}/u)
   assert.match(source, /maxLength=\{2000\}/u)
 })
+
+test('receiving queue contains only real supplier schedules', () => {
+  const actionSource = readFileSync(
+    new URL('../../../lib/actions/supply-orders.ts', import.meta.url),
+    'utf8',
+  )
+  const pageStart = actionSource.indexOf('export async function getMaterialReceivingPageData')
+  const pageEnd = actionSource.indexOf('function confirmedMaterialAllocations', pageStart)
+  const pageSource = actionSource.slice(pageStart, pageEnd)
+
+  assert.match(pageSource, /plannedItemKeys\.has\(itemKey\(item\)\)/u)
+  assert.match(pageSource, /schedule\.status === 'planned'/u)
+  assert.doesNotMatch(pageSource, /virtualReceivingQuantities/u)
+  assert.doesNotMatch(pageSource, /effectiveSupplyDeliveryDate/u)
+})
+
+test('allocation summary explains that the selected quantity becomes a machine booking', () => {
+  assert.match(source, /Будет забронировано под машины/u)
+  assert.match(source, /Бронь под машину/u)
+  assert.doesNotMatch(source, /label="В резерв"/u)
+})
