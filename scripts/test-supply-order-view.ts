@@ -913,6 +913,7 @@ const partialItem = partiallyAccepted.factories[0].items[0]
 assert.equal(isSupplyOrderRedeliveryItem(partialItem), true, 'partial receipt must be recognized from actual schedule quantities')
 assert.deepEqual(getSupplyOrderRedeliveryDates(partialItem), ['2026-07-21'], 'the original promised date must be preserved')
 assert.deepEqual(summarizeSupplyOrderRedeliveryMachineRoutes([partialItem]), [{
+  requestId: 'request-id',
   machineId: 'machine-a',
   machineName: 'Машина А',
   quantity: 9,
@@ -960,24 +961,36 @@ assert.equal(
 )
 
 const machineRoutes = summarizeSupplyOrderMachineRoutes([
-  makeAggregateSourceItem({ id: 'machine-a-1', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 3, weight_kg: 30, order_status: 'pending' }),
-  makeAggregateSourceItem({ id: 'machine-a-2', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 2, weight_kg: 20, order_status: 'ordered' }),
-  makeAggregateSourceItem({ id: 'machine-b-1', machine_id: 'machine-b', machine_name: 'Машина Б', quantity: 3, weight_kg: 30, order_status: 'ordered' }),
-  makeAggregateSourceItem({ id: 'machine-b-2', machine_id: 'machine-b', machine_name: 'Машина Б', quantity: 1, weight_kg: null, order_status: 'ordered' }),
+  makeAggregateSourceItem({ id: 'machine-a-1', request_id: 'request-a', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 3, weight_kg: 30, order_status: 'pending' }),
+  makeAggregateSourceItem({ id: 'machine-a-2', request_id: 'request-a', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 2, weight_kg: 20, order_status: 'ordered' }),
+  makeAggregateSourceItem({ id: 'machine-b-1', request_id: 'request-b', machine_id: 'machine-b', machine_name: 'Машина Б', quantity: 3, weight_kg: 30, order_status: 'ordered' }),
+  makeAggregateSourceItem({ id: 'machine-b-2', request_id: 'request-b', machine_id: 'machine-b', machine_name: 'Машина Б', quantity: 1, weight_kg: null, order_status: 'ordered' }),
 ])
 assert.deepEqual(machineRoutes, [
-  { machineId: 'machine-a', machineName: 'Машина А', quantity: 5, weightKg: 50, itemCount: 2, pendingCount: 1, orderedCount: 1 },
-  { machineId: 'machine-b', machineName: 'Машина Б', quantity: 4, weightKg: null, itemCount: 2, pendingCount: 0, orderedCount: 2 },
+  { requestId: 'request-a', machineId: 'machine-a', machineName: 'Машина А', quantity: 5, weightKg: 50, itemCount: 2, pendingCount: 1, orderedCount: 1 },
+  { requestId: 'request-b', machineId: 'machine-b', machineName: 'Машина Б', quantity: 4, weightKg: null, itemCount: 2, pendingCount: 0, orderedCount: 2 },
 ], 'material card must show every destination machine and avoid displaying partial weight as a full machine total')
 
+assert.deepEqual(
+  summarizeSupplyOrderMachineRoutes([
+    makeAggregateSourceItem({ id: 'request-a-item', request_id: 'request-a', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 2 }),
+    makeAggregateSourceItem({ id: 'request-b-item', request_id: 'request-b', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 5 }),
+  ]).map((route) => [route.requestId, route.machineId, route.quantity]),
+  [
+    ['request-a', 'machine-a', 2],
+    ['request-b', 'machine-a', 5],
+  ],
+  'separate supply requests for one machine must remain separate rows on the material card',
+)
+
 const unscheduledMachineRoutes = summarizeSupplyOrderUnscheduledMachineRoutes([
-  makeAggregateSourceItem({ id: 'machine-a', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 10, unscheduled_quantity: 9, weight_kg: 100, order_status: 'ordered' }),
-  makeAggregateSourceItem({ id: 'machine-b', machine_id: 'machine-b', machine_name: 'Машина Б', quantity: 4, unscheduled_quantity: 0, weight_kg: 40, order_status: 'ordered' }),
-  makeAggregateSourceItem({ id: 'machine-c', machine_id: 'machine-c', machine_name: 'Машина В', quantity: 3, unscheduled_quantity: 2, weight_kg: 30, order_status: 'pending' }),
+  makeAggregateSourceItem({ id: 'machine-a', request_id: 'request-a', machine_id: 'machine-a', machine_name: 'Машина А', quantity: 10, unscheduled_quantity: 9, weight_kg: 100, order_status: 'ordered' }),
+  makeAggregateSourceItem({ id: 'machine-b', request_id: 'request-b', machine_id: 'machine-b', machine_name: 'Машина Б', quantity: 4, unscheduled_quantity: 0, weight_kg: 40, order_status: 'ordered' }),
+  makeAggregateSourceItem({ id: 'machine-c', request_id: 'request-c', machine_id: 'machine-c', machine_name: 'Машина В', quantity: 3, unscheduled_quantity: 2, weight_kg: 30, order_status: 'pending' }),
 ])
 assert.deepEqual(unscheduledMachineRoutes, [
-  { machineId: 'machine-a', machineName: 'Машина А', quantity: 9, weightKg: 90, itemCount: 1, pendingCount: 0, orderedCount: 1 },
-  { machineId: 'machine-c', machineName: 'Машина В', quantity: 2, weightKg: 20, itemCount: 1, pendingCount: 1, orderedCount: 0 },
+  { requestId: 'request-a', machineId: 'machine-a', machineName: 'Машина А', quantity: 9, weightKg: 90, itemCount: 1, pendingCount: 0, orderedCount: 1 },
+  { requestId: 'request-c', machineId: 'machine-c', machineName: 'Машина В', quantity: 2, weightKg: 20, itemCount: 1, pendingCount: 1, orderedCount: 0 },
 ], 'no-schedule section must preserve the uncovered quantity and proportional weight for each destination machine')
 
 assert.deepEqual(
@@ -993,6 +1006,7 @@ assert.deepEqual(
     }),
   ], 4_000),
   [{
+    requestId: 'request-id',
     machineId: 'machine-b',
     machineName: 'Машина Б',
     quantity: 4_000,

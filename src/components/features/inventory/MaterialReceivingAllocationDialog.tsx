@@ -146,7 +146,7 @@ export function MaterialReceivingAllocationDialog({
             )}
           />
           <Summary
-            label="В резерв"
+            label="Будет забронировано под машины"
             value={isBar
               ? `${formatAmount(allocatedPieces)} шт / ${formatAmount(allocatedPhysical)} ${preview.unit}`
               : `${formatAmount(allocatedPhysical)} ${preview.unit}`}
@@ -178,7 +178,7 @@ export function MaterialReceivingAllocationDialog({
             <div>Принято ранее</div>
             <div>Осталось принять</div>
             <div>Будущий график</div>
-            <div>{isBar ? 'Хлыстов в резерв' : 'Количество в резерв'}</div>
+            <div>{isBar ? 'Хлыстов для машины' : 'Бронь из текущего прихода'}</div>
           </div>
 
           <div className="divide-y rounded-xl border">
@@ -251,7 +251,7 @@ export function MaterialReceivingAllocationDialog({
 
                 <div>
                   <label className="text-xs font-medium text-muted-foreground" htmlFor={`receipt-allocation-${row.id}`}>
-                    {isBar ? 'Хлыстов для машины' : 'Резерв из прихода'}
+                    {isBar ? 'Хлыстов для машины' : 'Бронь под машину'}
                   </label>
                   <input
                     id={`receipt-allocation-${row.id}`}
@@ -285,7 +285,7 @@ export function MaterialReceivingAllocationDialog({
               </strong>
             </div>
             <div className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">
-              Будет принято по заявкам:{' '}
+              Будет забронировано под машины:{' '}
               <strong>{formatSupplyProgress(allocatedPhysical, preview.unit, isBar ? allocatedPieces : null)}</strong>
             </div>
           </div>
@@ -316,7 +316,7 @@ export function MaterialReceivingAllocationDialog({
 
           <div aria-live="polite" aria-atomic="true" className="mt-2 min-h-5 text-sm text-destructive">
             {invalidRows
-              ? 'Проверьте значения: резерв не может превышать открытый остаток, а хлысты указываются целыми штуками.'
+              ? 'Проверьте значения: бронь не может превышать открытый остаток, а хлысты указываются целыми штуками.'
               : exceedsReceipt
                 ? 'Распределено больше материала, чем фактически принято.'
                 : isBar && selectedRows.length === 0

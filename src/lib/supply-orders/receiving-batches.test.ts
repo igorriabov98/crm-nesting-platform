@@ -50,6 +50,7 @@ function transport(scheduleId: string, overrides: Partial<ReceivingTransportCont
     trip_id: 'trip-1009',
     delivery_stop_id: 'stop-uzhhorod',
     trip_name: '1009УЖУЖ',
+    scheduled_date: '2026-09-10',
     planned_arrival_at: '2026-09-10T07:00:00.000Z',
     arrived_at: null,
     ...overrides,
@@ -113,6 +114,29 @@ test('actual arrival enriches the batch without changing its composition', () =>
   assert.equal(groups[0].arrivals.length, 1)
   assert.equal(groups[0].arrivals[0].arrived_at, '2026-09-10T07:12:00.000Z')
   assert.equal(groups[0].arrivals[0].items[0].planned_quantity, 25)
+})
+
+test('transport arrival date overrides the supplier schedule date', () => {
+  const groups = projectMaterialReceivingGroups([
+    row({ delivery_date: '2026-09-23' }),
+  ], [transport('schedule-1', {
+    scheduled_date: '2026-09-24',
+    planned_arrival_at: '2026-09-25T22:30:00.000Z',
+  })])
+
+  assert.equal(groups[0].date, '2026-09-26')
+  assert.equal(groups[0].arrivals[0].date, '2026-09-26')
+})
+
+test('trip date overrides the supplier date when the unloading time is not set', () => {
+  const groups = projectMaterialReceivingGroups([
+    row({ delivery_date: '2026-09-23' }),
+  ], [transport('schedule-1', {
+    scheduled_date: '2026-09-24',
+    planned_arrival_at: null,
+  })])
+
+  assert.equal(groups[0].date, '2026-09-24')
 })
 
 test('different suppliers combine only when both are linked to the same arrival', () => {

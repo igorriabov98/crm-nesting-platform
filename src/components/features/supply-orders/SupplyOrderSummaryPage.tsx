@@ -303,9 +303,9 @@ function MaterialOrderCard({
     ? summarizeSupplyOrderRedeliveryMachineRoutes(factory.items)
     : []
   const attentionRoutes = attentionKind === 'redelivery' ? redeliveryRoutes : unscheduledRoutes
-  const attentionByMachine = new Map(attentionRoutes.map((route) => [route.machineId || route.machineName, route]))
-  const redeliveryDatesByMachine = new Map(redeliveryRoutes.map((route) => [
-    route.machineId || route.machineName,
+  const attentionByRequest = new Map(attentionRoutes.map((route) => [route.requestId, route]))
+  const redeliveryDatesByRequest = new Map(redeliveryRoutes.map((route) => [
+    route.requestId,
     route.originalDeliveryDates,
   ]))
   const cardId = dateSlice?.id || aggregate.id
@@ -435,7 +435,7 @@ function MaterialOrderCard({
           <div className="flex items-center justify-between gap-3 xl:max-w-3xl">
             <h4 className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <Cog className="h-4 w-4 text-primary" />
-              Машины
+              Заявки (машины)
             </h4>
             <span className="text-xs text-muted-foreground">{routes.length}</span>
           </div>
@@ -449,16 +449,16 @@ function MaterialOrderCard({
           {routes.length > 0 ? (
             <ul className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border xl:max-w-3xl">
               {routes.map((route) => (
-                <li key={route.machineId || route.machineName}>
+                <li key={route.requestId}>
                   <Link
                     href={`${ROUTES.SALES_PLAN}/${route.machineId}`}
                     className="flex min-h-12 items-center justify-between gap-3 px-3 py-2 text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
                   >
                     <span className="min-w-0">
                       <span className="block break-words font-medium text-primary">{route.machineName}</span>
-                      {attentionKind === 'redelivery' && redeliveryDatesByMachine.get(route.machineId || route.machineName) && (
+                      {attentionKind === 'redelivery' && redeliveryDatesByRequest.get(route.requestId) && (
                         <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                          Изначально ожидалось: {redeliveryDatesByMachine.get(route.machineId || route.machineName)!.map(formatDate).join(', ')}
+                          Изначально ожидалось: {redeliveryDatesByRequest.get(route.requestId)!.map(formatDate).join(', ')}
                         </span>
                       )}
                     </span>
@@ -467,9 +467,9 @@ function MaterialOrderCard({
                         {dateSlice && <span className="mr-1 text-xs font-normal text-muted-foreground">Потребность</span>}
                         {formatAmount(route.quantity)} {aggregate.unit}
                       </span>
-                      {attentionByMachine.get(route.machineId || route.machineName) && (
+                      {attentionByRequest.get(route.requestId) && (
                         <span className="text-xs font-medium text-amber-700">
-                          {attentionKind === 'redelivery' ? 'Довезти' : 'Без графика'} {formatAmount(attentionByMachine.get(route.machineId || route.machineName)!.quantity)} {aggregate.unit}
+                          {attentionKind === 'redelivery' ? 'Довезти' : 'Без графика'} {formatAmount(attentionByRequest.get(route.requestId)!.quantity)} {aggregate.unit}
                         </span>
                       )}
                     </span>

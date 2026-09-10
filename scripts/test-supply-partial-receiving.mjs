@@ -9,6 +9,9 @@ const supplyOrderActions = await readFile(
   new URL('../src/lib/actions/supply-orders.ts', import.meta.url),
   'utf8',
 )
+const receivingPageStart = supplyOrderActions.indexOf('export async function getMaterialReceivingPageData')
+const receivingPageEnd = supplyOrderActions.indexOf('function confirmedMaterialAllocations', receivingPageStart)
+const receivingPageActions = supplyOrderActions.slice(receivingPageStart, receivingPageEnd)
 const receivingMigration = await readFile(
   new URL('../supabase/migrations/20260714101554_supply_receipt_priority_allocation.sql', import.meta.url),
   'utf8',
@@ -288,7 +291,7 @@ assert.match(
 )
 assert.match(
   receivingBatches,
-  /trip:\$\{transportSignature\(context\)\}[\s\S]*unlinked:\$\{row\.delivery_date\}:\$\{row\.supplier_id/,
+  /receivingDate\(row, context\)[\s\S]*trip:\$\{transportSignature\(context\)\}[\s\S]*unlinked:\$\{effectiveDate\}:\$\{row\.supplier_id/,
   'receiving projection must split linked arrivals by trip and stop and unlinked arrivals by supplier',
 )
 assert.match(
@@ -307,9 +310,14 @@ assert.match(
   'delivery planning must write the ordered bar composition to planned fields',
 )
 assert.match(
-  supplyOrderActions,
-  /projectAggregateVirtualReceivingQuantities\(items\.map[\s\S]*virtualReceivingQuantities\.get\(itemKey\(item\)\)/,
-  'receiving must project unscheduled rows from the aggregate remainder instead of repeating anchor followers',
+  receivingPageActions,
+  /plannedItemKeys\.has\(itemKey\(item\)\)[\s\S]*schedule\.status === 'planned'/,
+  'receiving must list only real supplier schedules that are still planned',
+)
+assert.doesNotMatch(
+  receivingPageActions,
+  /virtualReceivingQuantities|effectiveSupplyDeliveryDate/,
+  'receiving must not synthesize supplier arrivals from unscheduled material needs',
 )
 assert.doesNotMatch(
   supplyOrderActions,

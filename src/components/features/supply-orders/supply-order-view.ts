@@ -56,6 +56,7 @@ export type HistoryFiltersState = {
 }
 
 export type SupplyOrderMachineRoute = {
+  requestId: string
   machineId: string
   machineName: string
   quantity: number
@@ -823,20 +824,24 @@ export function summarizeSupplyOrderRedeliveryMachineRoutes(
   items: SupplyOrderAggregateSourceItem[]
 ): SupplyOrderRedeliveryMachineRoute[] {
   const redeliveryItems = items.filter(isSupplyOrderRedeliveryItem)
-  const datesByMachine = new Map<string, Set<string>>()
+  const datesByRequest = new Map<string, Set<string>>()
 
   for (const item of redeliveryItems) {
-    const key = item.machine_id || item.machine_name
-    const dates = datesByMachine.get(key) || new Set<string>()
+    const key = supplyOrderDemandRouteKey(item)
+    const dates = datesByRequest.get(key) || new Set<string>()
     for (const date of getSupplyOrderRedeliveryDates(item)) dates.add(date)
-    datesByMachine.set(key, dates)
+    datesByRequest.set(key, dates)
   }
 
   return summarizeMachineRoutes(redeliveryItems, (item) => item.unscheduled_quantity)
     .map((route) => ({
       ...route,
-      originalDeliveryDates: Array.from(datesByMachine.get(route.machineId || route.machineName) || []).sort(),
+      originalDeliveryDates: Array.from(datesByRequest.get(route.requestId) || []).sort(),
     }))
+}
+
+function supplyOrderDemandRouteKey(item: SupplyOrderAggregateSourceItem) {
+  return item.request_id || item.machine_id || item.machine_name
 }
 
 function summarizeMachineRoutes(
@@ -850,8 +855,11 @@ function summarizeMachineRoutes(
     const quantity = Math.max(Number(getQuantity(item) || 0), 0)
     if (quantity <= 0) continue
 
-    const key = item.machine_id || item.machine_name
+    // One machine may have several supply requests. They are separate business
+    // needs and must remain visible as separate rows on the summary card.
+    const key = supplyOrderDemandRouteKey(item)
     const current = routes.get(key) || {
+      requestId: key,
       machineId: item.machine_id,
       machineName: item.machine_name,
       quantity: 0,
