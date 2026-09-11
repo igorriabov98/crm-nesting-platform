@@ -18,17 +18,22 @@ type OrderDateGroupProps = {
 export function OrderDateGroup({ dateKey, groups, suppliers, detailContexts }: OrderDateGroupProps) {
  const noSupplier = dateKey === 'no_supplier'
  const noDate = dateKey === 'no_date'
+ const multipleDates = dateKey === 'multiple_dates'
  const items = groups.flatMap((group) => group.items)
  const itemCount = items.length
  const total = items.reduce((sum, item) => sum + (isReturnedSupplyOrderSource(item) ? 0 : item.to_order), 0)
  const unit = items.every((item) => item.unit === items[0]?.unit) ? items[0]?.unit : 'ед.'
  const title = noSupplier
-  ? 'Поставщик не назначен'
+  ? 'Без графика поставок'
+  : multipleDates
+   ? 'Несколько дат поставки'
   : noDate
    ? 'Дата поставки не определена'
    : format(new Date(`${dateKey}T00:00:00`), 'EEEE, d MMMM yyyy', { locale: ru })
  const description = noSupplier
-  ? 'Назначьте поставщика, затем укажите дату и объём поставки.'
+  ? 'Укажите поставщика, дату и объём, чтобы позиция появилась в графике снабжения.'
+  : multipleDates
+   ? 'У одной позиции несколько дат снабжения. Все даты и поставщики показаны в строке.'
   : noDate
    ? 'Поставщик выбран, но поставка ещё не внесена в график.'
    : 'Позиции сгруппированы по поставщику на эту дату.'
@@ -47,7 +52,9 @@ export function OrderDateGroup({ dateKey, groups, suppliers, detailContexts }: O
     </div>
     <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
      <span className="rounded-lg border border-border bg-background px-2.5 py-1.5">Позиций: <strong className="tabular-nums text-foreground">{itemCount}</strong></span>
-     <span className="rounded-lg border border-border bg-background px-2.5 py-1.5">Поставщиков: <strong className="tabular-nums text-foreground">{groups.length}</strong></span>
+     <span className="rounded-lg border border-border bg-background px-2.5 py-1.5">
+      {noSupplier ? 'Поставок' : 'Поставщиков'}: <strong className="tabular-nums text-foreground">{noSupplier ? 0 : groups.length}</strong>
+     </span>
      <span className="rounded-lg border border-border bg-background px-2.5 py-1.5">Итого <strong className="tabular-nums text-foreground">{new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(total)} {unit}</strong></span>
     </div>
    </div>

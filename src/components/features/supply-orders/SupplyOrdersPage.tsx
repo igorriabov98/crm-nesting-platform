@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { CheckCircle2, ChevronLeft, ChevronRight, PackageSearch, Truck, UserRoundX } from 'lucide-react'
+import { CalendarX2, CheckCircle2, ChevronLeft, ChevronRight, PackageSearch, Truck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { SupplyOrderAggregate, SupplyOrderItem } from '@/lib/actions/supply-orders'
 import type { SupplierWithRelations } from '@/lib/actions/suppliers'
@@ -70,8 +70,10 @@ export function SupplyOrdersPage({
   const currentTo = Math.min(total, (page + 1) * pageSize)
   const activeFilterCount = countChangedFilters(filters, defaultFilters)
   const attention = useMemo(() => ({
-    missingSupplier: filteredItems.filter((item) => (
-      !isReturnedSupplyOrderSource(item) && !item.supplier_id && item.to_order > 0
+    missingSchedule: filteredItems.filter((item) => (
+      !isReturnedSupplyOrderSource(item)
+      && item.to_order > 0
+      && !item.delivery_schedules.some((schedule) => schedule.status === 'planned')
     )).length,
     scheduled: filteredItems.filter((item) => (
       !isReturnedSupplyOrderSource(item)
@@ -104,9 +106,9 @@ export function SupplyOrdersPage({
       <section className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between" aria-label="Сводка и навигация по заявкам">
         <div className="flex flex-wrap gap-2">
           <SummaryChip icon={<PackageSearch className="h-3.5 w-3.5" />} label="Показано" value={`${filteredItems.length} из ${items.length}`} />
-          <SummaryChip icon={<UserRoundX className="h-3.5 w-3.5" />} label="Без поставщика" value={String(attention.missingSupplier)} tone="warning" />
+          <SummaryChip icon={<CalendarX2 className="h-3.5 w-3.5" />} label="Без графика" value={String(attention.missingSchedule)} tone="warning" />
           <SummaryChip icon={<Truck className="h-3.5 w-3.5" />} label="С графиком" value={String(attention.scheduled)} tone="info" />
-          <SummaryChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} label="Закрыто складом" value={String(attention.coveredByStock)} tone="success" />
+          <SummaryChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} label="Потребность закрыта" value={String(attention.coveredByStock)} tone="success" />
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="text-xs text-muted-foreground sm:text-right">

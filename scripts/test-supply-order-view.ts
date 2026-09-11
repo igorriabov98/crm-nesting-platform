@@ -245,8 +245,8 @@ const baseFilters: OrderFiltersState = {
 }
 
 const items = [
-  makeItem({ id: 'late', item_name: 'Лист 8 мм', machine_name: 'Машина Б', supplier_id: 'supplier-b', supplier_name: 'Металл Б', target_delivery_date: '2026-07-24', to_order: 8 }),
-  makeItem({ id: 'early', item_name: 'Труба 40×20', machine_name: 'Машина А', category: 'pipe', supplier_id: 'supplier-a', supplier_name: 'Металл А', target_delivery_date: '2026-07-15', to_order: 3 }),
+  makeItem({ id: 'late', item_name: 'Лист 8 мм', machine_name: 'Машина Б', supplier_id: 'supplier-b', supplier_name: 'Металл Б', target_delivery_date: '2026-07-24', to_order: 8, delivery_schedules: [makeDeliverySchedule({ id: 'late-schedule', delivery_date: '2026-07-24', status: 'planned', received_quantity: null, allocated_quantity: null, allocated_physical_quantity: null })] }),
+  makeItem({ id: 'early', item_name: 'Труба 40×20', machine_name: 'Машина А', category: 'pipe', supplier_id: 'supplier-a', supplier_name: 'Металл А', target_delivery_date: '2026-07-15', to_order: 3, delivery_schedules: [makeDeliverySchedule({ id: 'early-schedule', delivery_date: '2026-07-15', status: 'planned', received_quantity: null, allocated_quantity: null, allocated_physical_quantity: null })] }),
   makeItem({ id: 'missing', item_name: 'Сетка', machine_name: 'Машина В', category: 'mesh', supplier_id: null, supplier_name: null, target_delivery_date: null, to_order: 5 }),
 ]
 
@@ -258,7 +258,7 @@ assert.deepEqual(
 assert.deepEqual(
   filterSupplyOrderItems(items, { ...baseFilters, period: 'this_week' }, new Date('2026-07-14T12:00:00')).map((item) => item.id),
   ['early'],
-  'week filter must use target delivery date'
+  'week filter must use the saved supply schedule date'
 )
 assert.deepEqual(
   filterSupplyOrderItems(items, { ...baseFilters, attention: 'needs_supplier' }).map((item) => item.id),
@@ -274,6 +274,17 @@ assert.deepEqual(
   groupSupplyOrderItems(sortSupplyOrderItems(items, 'delivery_asc'), 'delivery_asc').map((group) => group.dateKey),
   ['2026-07-15', '2026-07-24', 'no_supplier'],
   'special business groups must remain after sorting'
+)
+assert.deepEqual(
+  groupSupplyOrderItems([makeItem({
+    id: 'several-dates',
+    delivery_schedules: [
+      makeDeliverySchedule({ id: 'date-one', delivery_date: '2026-07-15', status: 'planned' }),
+      makeDeliverySchedule({ id: 'date-two', delivery_date: '2026-07-24', status: 'planned' }),
+    ],
+  })], 'delivery_asc').map((group) => group.dateKey),
+  ['multiple_dates'],
+  'one request with several saved supply dates must show a dedicated multi-date group',
 )
 
 const aggregate = makeAggregate()
@@ -636,10 +647,23 @@ const detailsPageSource = readFileSync(
 )
 assert.match(detailsPageSource, /FactoryDeliveryEditor/u, 'request details must reuse the summary schedule editor')
 assert.match(detailsPageSource, /ReturnLongStockPositionButton/u, 'request details must expose the atomic return-to-technologist action')
-assert.match(detailsPageSource, /План и факт поставки/u, 'request details must show read-only delivery plan and fact')
+assert.match(detailsPageSource, /План поставки/u, 'request details must show the delivery plan')
+assert.match(detailsPageSource, /Привезено/u, 'request details must show the accepted fact')
+assert.match(detailsPageSource, /Осталось привезти/u, 'request details must show the physical remainder after accepted fact')
+assert.match(
+  detailsPageSource,
+  /remainingToDeliver = returnedToTechnologist \? 0 : Math\.max\(item\.to_order - deliveredQuantity, 0\)/u,
+  'remaining delivery must be demand minus accepted fact, including quantities already scheduled for a future arrival',
+)
+assert.match(
+  detailsPageSource,
+  /function barsFromSchedules[\s\S]*received_piece_length_mm[\s\S]*allocated_piece_count[\s\S]*planned_piece_count/u,
+  'long-stock plan and fact must retain physical bar lengths and piece counts',
+)
 assert.match(detailsPageSource, /aria-expanded=\{detailsOpen\}/u, 'dense request rows must reveal the complete editor on demand')
-assert.match(detailsPageSource, /Поставка: план \/ факт \/ осталось/u, 'the request table must keep plan, fact, and remainder visible in every row')
-assert.match(detailsPageSource, /Доступные складские остатки/u, 'expanded request rows must retain the detailed warehouse breakdown')
+assert.match(detailsPageSource, /CharacteristicList/u, 'request rows must show material characteristics without opening the editor')
+assert.match(detailsPageSource, /compact/u, 'request details must use the compact schedule editor')
+assert.doesNotMatch(detailsPageSource, /Доступные складские остатки|stockBreakdown/u, 'request details must omit warehouse stock noise')
 assert.doesNotMatch(
   detailsPageSource,
   /reserveForMachine|unreserveItem|markOrderDelivered|LongStockReceivingDialog/u,
@@ -651,7 +675,24 @@ const supplierGroupSource = readFileSync(
   'utf8',
 )
 assert.match(supplierGroupSource, /role="table"/u, 'supplier groups must use a clear table-like information hierarchy')
-assert.match(supplierGroupSource, /Машина \/ заявка[\s\S]*Материал[\s\S]*Потребность[\s\S]*Склад[\s\S]*Статус/u, 'the request table must keep every business column visible')
+assert.match(supplierGroupSource, /Машина \/ заявка[\s\S]*Материал и характеристики[\s\S]*Потребность[\s\S]*План поставки[\s\S]*Привезено[\s\S]*Осталось привезти[\s\S]*Статус/u, 'the request table must keep every procurement decision column visible')
+assert.doesNotMatch(supplierGroupSource, />Склад</u, 'the request table must not show warehouse stock as a procurement column')
+
+const orderDateGroupSource = readFileSync(
+  new URL('../src/components/features/supply-orders/OrderDateGroup.tsx', import.meta.url),
+  'utf8',
+)
+assert.match(orderDateGroupSource, /Без графика поставок/u, 'unscheduled requests must use the established business label')
+assert.match(
+  summaryPageSource,
+  /!compact && <>[\s\S]*Мат\.план снабжения/u,
+  'the request editor must hide production-plan dates while the summary keeps its overview',
+)
+assert.match(
+  summaryPageSource,
+  /draftDateSlice\?\.dateKey !== 'no_supply_date'[\s\S]*delivery_date: ''/u,
+  'a new request schedule must require the supply operator to choose its delivery date explicitly',
+)
 
 const mergedDateGroups = groupSupplyOrderAggregatesBySupplyDate([
   makeDateScheduleAggregate([
@@ -851,6 +892,12 @@ assert.deepEqual(
 )
 assert.equal(anchorDetail.item.target_delivery_date, '2026-08-24')
 assert.equal(followerDetail.item.target_delivery_date, '2026-08-24')
+assert.deepEqual(
+  groupSupplyOrderItems([anchorDetail.item, followerDetail.item], 'delivery_asc')
+    .map((group) => [group.dateKey, group.groups.flatMap((supplier) => supplier.items.map((item) => item.id))]),
+  [['2026-08-24', ['aggregate-anchor', 'aggregate-follower']]],
+  'a shared physical schedule must place every covered request under the actual supply date',
+)
 assert.equal(
   followerDetail.scopes[0]?.sharedItemCount,
   2,
@@ -1301,6 +1348,7 @@ function makeItem(patch: Partial<SupplyOrderItem>): SupplyOrderItem {
     machine_id: 'machine-id',
     category: 'sheet_metal',
     item_name: 'Лист',
+    characteristics: [{ label: 'Толщина', value: '8 мм' }],
     to_order: 1,
     requested_quantity: 1,
     reserved_quantity: 0,
