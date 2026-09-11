@@ -748,6 +748,7 @@ type FactoryDeliveryEditorProps = {
   allowFinance?: boolean
   mutationItems?: Array<{ table: string; id: string }>
   mutationScope?: SupplyOrderDeliveryScheduleScope
+  compact?: boolean
 }
 
 export function FactoryDeliveryEditor(props: FactoryDeliveryEditorProps) {
@@ -763,6 +764,7 @@ export function FactoryDeliveryEditor(props: FactoryDeliveryEditorProps) {
       deliveredScheduleCount: props.dateSlice.deliveredScheduleCount,
     },
     appendUnscheduled: props.appendUnscheduled,
+    compact: props.compact,
     mutationScope: props.mutationScope,
     unscheduledQuantity: props.factory.unscheduled_quantity,
     schedules: props.factory.items.flatMap((item) => item.delivery_schedules.map((schedule) => ({
@@ -786,6 +788,7 @@ function FactoryDeliveryEditorForm({
   allowFinance = true,
   mutationItems,
   mutationScope,
+  compact = false,
 }: FactoryDeliveryEditorProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -802,9 +805,11 @@ function FactoryDeliveryEditorForm({
   const draftDateSlice = appendUnscheduled
     ? { dateKey: 'no_supply_date', unscheduledQuantity: factory.unscheduled_quantity }
     : dateSlice
-  const [scheduleDrafts, setScheduleDrafts] = useState<ScheduleDraft[]>(() => (
-    buildInitialSupplyOrderScheduleDrafts(factory, todayIsoDate(), draftDateSlice)
-  ))
+  const [scheduleDrafts, setScheduleDrafts] = useState<ScheduleDraft[]>(() => {
+    const drafts = buildInitialSupplyOrderScheduleDrafts(factory, todayIsoDate(), draftDateSlice)
+    if (!compact || draftDateSlice?.dateKey !== 'no_supply_date') return drafts
+    return drafts.map((draft) => ({ ...draft, delivery_date: '' }))
+  })
   const [financeOpen, setFinanceOpen] = useState(false)
   const [financeDrafts, setFinanceDrafts] = useState<Record<string, FinanceDraft>>({})
   const itemKeys = useMemo(
@@ -942,7 +947,7 @@ function FactoryDeliveryEditorForm({
       ...current,
       {
         id: `new:${Date.now()}:${current.length}`,
-        delivery_date: scheduleScope?.replace_delivery_date || factory.supply_delivery_date || factory.production_date || todayIsoDate(),
+        delivery_date: scheduleScope?.replace_delivery_date || (compact ? '' : factory.supply_delivery_date || factory.production_date || todayIsoDate()),
         quantity: '',
         supplier_id: current[0]?.supplier_id || '',
         piece_length_mm: '',
@@ -984,7 +989,8 @@ function FactoryDeliveryEditorForm({
   const supplyPlanDateInfo = makeSupplyPlanDateInfo(factory)
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-border/70 bg-background shadow-sm">
+    <section className={compact ? 'overflow-hidden rounded-xl border border-border/70 bg-card' : 'overflow-hidden rounded-2xl border border-border/70 bg-background shadow-sm'}>
+      {!compact && <>
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/60 bg-card px-4 py-3">
         <div className="flex min-w-0 items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-700">
@@ -1057,6 +1063,7 @@ function FactoryDeliveryEditorForm({
           </div>
         </div>
       )}
+      </>}
 
       {requiresRecalculation && (
         <div className="mx-3 mb-3 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
@@ -1079,7 +1086,9 @@ function FactoryDeliveryEditorForm({
             {isClosed
               ? isCancelled ? 'Позиция отменена' : 'Поставка закрыта'
               : factory.unscheduled_quantity > 0
-                ? `${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit} без даты поступления · прежний Мат.план ${factory.production_date ? formatDate(factory.production_date) : 'не указан'}`
+                ? compact
+                  ? `${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit} нужно добавить в график`
+                  : `${formatAmount(factory.unscheduled_quantity)} ${aggregate.unit} без даты поступления · прежний Мат.план ${factory.production_date ? formatDate(factory.production_date) : 'не указан'}`
                 : 'Весь объем распределен по графику'}
           </span>
         </div>
@@ -1112,7 +1121,7 @@ function FactoryDeliveryEditorForm({
       </div>
 
       {allowFinance && financeOpen && !requiresRecalculation && (
-        <div className="mt-3 rounded-md border border-[#E8ECF0] bg-white p-3">
+        <div className={compact ? 'border-t border-border/60 bg-background p-3' : 'mt-3 rounded-md border border-[#E8ECF0] bg-white p-3'}>
           <div className="mb-2 text-sm font-semibold text-[#1B3A6B]">Плановые платежи</div>
           {financeGroups.length === 0 ? (
             <div className="text-sm text-[#DC2626]">Нет позиций с назначенным поставщиком для платежа.</div>
@@ -1176,20 +1185,20 @@ function FactoryDeliveryEditorForm({
             <div>
               <div className="text-sm font-semibold text-[#1B3A6B]">
                 {dateSlice && dateSlice.dateKey !== 'no_supply_date'
-                  ? `График на ${formatDate(dateSlice.dateKey)}`
-                  : 'График поставки'}
+                  ? `Поставка на ${formatDate(dateSlice.dateKey)}`
+                  : 'Новая поставка'}
               </div>
               <div className="text-xs text-[#64748B]">
                 План {formatAmount(plannedTotal)} из {formatAmount(remainingQuantity)} {aggregate.unit}
                 {factory.weight_kg !== null && ` · ${formatWeightForQuantity(plannedTotal, factory)}`}
               </div>
-              <div className="text-xs text-[#64748B]">
+              {!compact && <div className="text-xs text-[#64748B]">
                 {dateSlice
                   ? 'Изменения относятся только к этой поставке и не затрагивают графики на другие даты.'
                   : appendUnscheduled
                     ? 'Новая поставка покрывает только остаток без графика и сохраняет существующие даты.'
-                  : 'Изменения сохраняют график целиком и сразу отмечают материал как заказанный.'}
-              </div>
+                    : 'Изменения сохраняют график целиком и сразу отмечают материал как заказанный.'}
+              </div>}
             </div>
             <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={addDraft}>
               <Plus className="h-3.5 w-3.5" />

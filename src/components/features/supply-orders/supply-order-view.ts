@@ -348,6 +348,7 @@ export function buildSupplyOrderDetailContexts(
         ...context.source.delivery_schedules.filter((schedule) => schedule.status === 'delivered'),
       ],
     }
+    item.delivery_schedules = projectedSource.delivery_schedules
     const itemProjection = projectDetailAggregate(
       context.aggregate,
       context.factory,
@@ -521,7 +522,15 @@ export function filterSupplyOrderItems(
 
   return items.filter((item) => {
     if (filters.status !== 'all' && item.order_status !== filters.status) return false
-    if (filters.supplier !== 'all' && item.supplier_id !== filters.supplier) return false
+    if (filters.supplier !== 'all') {
+      const plannedSupplierIds = item.delivery_schedules
+        .filter((schedule) => schedule.status === 'planned')
+        .map((schedule) => schedule.supplier_id)
+        .filter(Boolean)
+      if (plannedSupplierIds.length > 0
+        ? !plannedSupplierIds.includes(filters.supplier)
+        : item.supplier_id !== filters.supplier) return false
+    }
     if (filters.category !== 'all' && item.category !== filters.category) return false
 
     if (normalizedQuery) {
@@ -529,17 +538,22 @@ export function filterSupplyOrderItems(
         item.item_name,
         item.machine_name,
         item.supplier_name,
+        ...item.delivery_schedules.map((schedule) => schedule.supplier_name),
+        ...(item.characteristics || []).map((part) => `${part.label} ${part.value}`),
       ].filter(Boolean).join(' '))
       if (!haystack.includes(normalizedQuery)) return false
     }
 
     if (filters.attention === 'needs_supplier' && item.supplier_id) return false
-    if (filters.attention === 'needs_schedule' && (item.to_order <= 0 || item.delivery_schedules.length > 0 || item.target_delivery_date)) return false
+    if (filters.attention === 'needs_schedule' && (
+      item.to_order <= 0 || item.delivery_schedules.some((schedule) => schedule.status === 'planned')
+    )) return false
     if (filters.attention === 'stock_covered' && !(item.to_order <= 0 && item.reserved_quantity > 0)) return false
 
     if (filters.period !== 'all') {
-      if (!item.target_delivery_date) return false
-      const date = new Date(`${item.target_delivery_date}T00:00:00`)
+      const deliveryDate = firstPlannedScheduleDate(item)
+      if (!deliveryDate) return false
+      const date = new Date(`${deliveryDate}T00:00:00`)
       if (filters.period === 'this_week' && !isWithinInterval(date, thisWeek)) return false
       if (filters.period === 'next_week' && !isWithinInterval(date, nextWeek)) return false
     }
@@ -555,8 +569,8 @@ export function sortSupplyOrderItems(items: SupplyOrderItem[], sort: SupplyOrder
     if (sort === 'quantity_desc') return right.to_order - left.to_order || compareText(left.item_name, right.item_name)
     if (sort === 'quantity_asc') return left.to_order - right.to_order || compareText(left.item_name, right.item_name)
     return compareNullableDates(
-      left.target_delivery_date,
-      right.target_delivery_date,
+      firstPlannedScheduleDate(left),
+      firstPlannedScheduleDate(right),
       sort === 'delivery_desc' ? 'desc' : 'asc'
     ) || compareText(left.item_name, right.item_name)
   })
@@ -566,9 +580,23 @@ export function groupSupplyOrderItems(items: SupplyOrderItem[], sort: SupplyOrde
   const byDate = new Map<string, Map<string, { supplierName: string; items: SupplyOrderItem[] }>>()
 
   for (const item of items) {
-    const dateKey = item.supplier_id ? item.target_delivery_date || 'no_date' : 'no_supplier'
-    const supplierKey = item.supplier_id || 'no_supplier'
-    const supplierName = item.supplier_name || 'Без поставщика — требует назначения'
+    const plannedSchedules = item.delivery_schedules.filter((schedule) => schedule.status === 'planned')
+    const plannedDates = Array.from(new Set(plannedSchedules.map((schedule) => schedule.delivery_date))).sort()
+    const dateKey = plannedDates.length > 1 ? 'multiple_dates' : plannedDates[0] || 'no_supplier'
+    const scheduleSuppliers = Array.from(new Map(plannedSchedules.map((schedule) => [
+      schedule.supplier_id || 'no_supplier',
+      schedule.supplier_name || 'Поставщик не указан',
+    ])))
+    const supplierKey = plannedSchedules.length === 0
+      ? 'no_supplier'
+      : scheduleSuppliers.length === 1
+        ? scheduleSuppliers[0][0]
+        : 'multiple_suppliers'
+    const supplierName = plannedSchedules.length === 0
+      ? 'Без графика поставок'
+      : scheduleSuppliers.length === 1
+        ? scheduleSuppliers[0][1]
+        : 'Несколько поставщиков'
     if (!byDate.has(dateKey)) byDate.set(dateKey, new Map())
     const dateGroup = byDate.get(dateKey)!
     if (!dateGroup.has(supplierKey)) dateGroup.set(supplierKey, { supplierName, items: [] })
@@ -583,6 +611,13 @@ export function groupSupplyOrderItems(items: SupplyOrderItem[], sort: SupplyOrde
         .sort(([, left], [, right]) => compareText(left.supplierName, right.supplierName))
         .map(([supplierKey, group]) => ({ supplierKey, ...group })),
     }))
+}
+
+function firstPlannedScheduleDate(item: Pick<SupplyOrderItem, 'delivery_schedules'>) {
+  return item.delivery_schedules
+    .filter((schedule) => schedule.status === 'planned')
+    .map((schedule) => schedule.delivery_date)
+    .sort()[0] || null
 }
 
 export function filterAndSortAggregates(aggregates: SupplyOrderAggregate[], filters: AggregateFiltersState) {
@@ -1077,8 +1112,15 @@ function compareDateGroupKeys(
   direction: 'asc' | 'desc',
   emptyKey = 'no_date'
 ) {
-  const specialKeys = new Set([emptyKey, 'no_supplier'])
-  if (specialKeys.has(left) && specialKeys.has(right)) return left === right ? 0 : left === 'no_supplier' ? 1 : -1
+  const specialOrder = new Map([
+    ['multiple_dates', 0],
+    [emptyKey, 1],
+    ['no_supplier', 2],
+  ])
+  const specialKeys = new Set(specialOrder.keys())
+  if (specialKeys.has(left) && specialKeys.has(right)) {
+    return (specialOrder.get(left) || 0) - (specialOrder.get(right) || 0)
+  }
   if (specialKeys.has(left)) return 1
   if (specialKeys.has(right)) return -1
   return direction === 'asc' ? left.localeCompare(right) : right.localeCompare(left)

@@ -45,13 +45,16 @@ export function SupplierGroup({ supplierName, items, suppliers, detailContexts, 
    )}
    <div
     role="row"
-    className="hidden grid-cols-[minmax(160px,1fr)_minmax(180px,1.15fr)_105px_135px_185px_145px_44px] items-center gap-3 border-t border-border/60 bg-muted/35 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground xl:grid"
+    className="hidden grid-cols-[minmax(120px,0.75fr)_minmax(210px,1.35fr)_85px_minmax(300px,1.8fr)_115px_40px] items-center gap-3 border-t border-border/60 bg-muted/35 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground xl:grid"
    >
     <div role="columnheader">Машина / заявка</div>
-    <div role="columnheader">Материал</div>
+    <div role="columnheader">Материал и характеристики</div>
     <div role="columnheader">Потребность</div>
-    <div role="columnheader">Склад</div>
-    <div role="columnheader">Поставка: план / факт / осталось</div>
+    <div role="columnheader" className="grid grid-cols-3 gap-2">
+     <span>План поставки</span>
+     <span>Привезено</span>
+     <span>Осталось привезти</span>
+    </div>
     <div role="columnheader">Статус</div>
     <div role="columnheader"><span className="sr-only">Действия</span></div>
    </div>

@@ -139,6 +139,7 @@ type RawOrderItem = {
   pipe_type: string | null
   long_stock_purchase_plan: LongStockPurchasePlan | null
   position_revision: SupplyPositionRevisionSummary | null
+  characteristics?: SupplyOrderAggregateCharacteristic[]
 }
 
 export type SupplyOrderDeliverySchedule = {
@@ -203,6 +204,7 @@ export type SupplyOrderItem = {
   factory_id?: string | null
   category: MaterialCategory
   item_name: string
+  characteristics: SupplyOrderAggregateCharacteristic[]
   to_order: number
   requested_quantity: number
   reserved_quantity: number
@@ -1410,7 +1412,8 @@ export async function getSupplyOrders(
     const makeItem = (table: string, category: MaterialCategory, row: RequestItemRow, name: unknown, supplierId: string | null = null): RawOrderItem => {
       const requested = requestedQuantity(table, row)
       const reserved = reservedQuantity(table, row)
-      return { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row), pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null, long_stock_purchase_plan: null, position_revision: null }
+      const item: RawOrderItem = { table, category, id: row.id, request_id: row.request_id, item_name: itemName(row, name), requested_quantity: requested, reserved_quantity: reserved, secondary_requested_quantity: secondaryRequestedQuantity(table, row), secondary_reserved_quantity: secondaryReservedQuantity(table, row), to_order: Math.max(requested - reserved, 0), unit: primaryUnit(table, row), supplier_id: supplierId, material_id: row.material_id || null, material_variant_id: row.material_variant_id || null, custom_delivery_date: row.custom_delivery_date || null, order_status: (row.order_status || 'pending') as OrderItemStatus, delivered_at: row.delivered_at || null, calculated_weight_kg: Number(row.calculated_weight_kg || 0) || null, selected_piece_length_mm: selectedPieceLength(table, row), pipe_type: table === 'request_pipe' ? String(row.pipe_type || '') : null, long_stock_purchase_plan: null, position_revision: null }
+      return { ...item, characteristics: getAggregateCharacteristics(table, row, item) }
     }
     const rawItems: RawOrderItem[] = [
       ...sheet.map((row) => makeItem('request_sheet_metal', 'sheet_metal', row, row.material_name, supplierForRow(row))),
@@ -1564,6 +1567,7 @@ export async function getSupplyOrders(
         factory_id: machine?.factory_id || null,
         category: item.category,
         item_name: item.item_name,
+        characteristics: item.characteristics || [{ label: 'Позиция', value: item.item_name }],
         to_order: item.to_order,
         unit: item.unit,
         supplier_name: item.supplier_id ? supplierMap.get(item.supplier_id) || 'Поставщик' : null,

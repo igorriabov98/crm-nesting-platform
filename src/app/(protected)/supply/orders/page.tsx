@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowLeft, ChartNoAxesColumnIncreasing, ClipboardList, History, PackageSearch } from 'lucide-react'
+import { ArrowLeft, ChartNoAxesColumnIncreasing, ClipboardList, History } from 'lucide-react'
 import { SupplyOrderHistoryPage } from '@/components/features/supply-orders/SupplyOrderHistoryPage'
 import { SupplyOrderFactoryToggle } from '@/components/features/supply-orders/SupplyOrderFactoryToggle'
 import { SupplyOrdersPage } from '@/components/features/supply-orders/SupplyOrdersPage'
@@ -42,27 +42,22 @@ export default async function SupplyOrdersRoute({
     availableFactories,
     requestFactory.data || resolvedSearchParams?.factory || null,
   )
+  const viewDescription = activeView === 'details'
+    ? 'Каждая строка — отдельная заявка машины: характеристики материала, потребность и состояние поставки.'
+    : activeView === 'history'
+      ? 'Принятые поставки и завершённые операции снабжения.'
+      : 'Сводный объём по материалам, заводам и датам поставки.'
 
   return (
     <div className="space-y-4 pb-8">
-      <section className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-              <PackageSearch className="h-5 w-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">Управление закупками</div>
-              <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Что нужно заказать</h1>
-              <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">
-              Единое рабочее место снабжения: от потребности технолога до поставщика, графика, платежа и контроля плана/факта.
-              </p>
-            </div>
-          </div>
-          <Link href={ROUTES.SUPPLY} className="inline-flex min-h-11 w-fit shrink-0 items-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-medium text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <ArrowLeft className="h-4 w-4" />Вернуться в снабжение
-          </Link>
+      <section className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Заказы снабжения</h1>
+          <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">{viewDescription}</p>
         </div>
+        <Link href={ROUTES.SUPPLY} className="inline-flex min-h-10 w-fit shrink-0 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm font-medium text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <ArrowLeft className="h-4 w-4" />В снабжение
+        </Link>
       </section>
 
       <nav className="grid grid-cols-1 gap-1 rounded-2xl border border-border/70 bg-card p-1.5 shadow-sm sm:grid-cols-3" aria-label="Режим представления заказов">
@@ -110,7 +105,7 @@ export default async function SupplyOrdersRoute({
 
 function viewLinkClass(isActive: boolean) {
   return [
-    'inline-flex min-h-14 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_small]:mt-0.5 [&_small]:block [&_small]:text-xs [&_small]:font-normal [&_strong]:block [&_strong]:font-semibold',
+    'inline-flex min-h-12 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_small]:mt-0.5 [&_small]:block [&_small]:text-xs [&_small]:font-normal [&_strong]:block [&_strong]:font-semibold',
     isActive
       ? 'bg-primary text-primary-foreground shadow-sm [&_small]:text-primary-foreground/75'
       : 'text-primary hover:bg-muted [&_small]:text-muted-foreground',

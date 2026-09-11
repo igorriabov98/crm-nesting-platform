@@ -1,6 +1,6 @@
 'use client'
 
-import { Filter, RotateCcw, Search, SlidersHorizontal } from 'lucide-react'
+import { Filter, RotateCcw, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -35,8 +35,8 @@ const periodLabels: Record<OrderPeriodFilter, string> = {
 const attentionLabels: Record<OrderAttentionFilter, string> = {
   all: 'Все позиции',
   needs_supplier: 'Без поставщика',
-  needs_schedule: 'Без даты поставки',
-  stock_covered: 'Закрыто складом',
+  needs_schedule: 'Без графика поставок',
+  stock_covered: 'Потребность закрыта',
 }
 
 const sortLabels: Record<SupplyOrderSort, string> = {
@@ -57,31 +57,8 @@ export function OrderFilters({
   statusDisabled = false,
 }: OrderFiltersProps) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm" aria-label="Фильтры и сортировка заказов">
-      <div className="flex flex-col gap-3 border-b border-border/60 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <SlidersHorizontal className="h-4 w-4" />
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Фильтры заявок</h2>
-            <p className="text-xs text-muted-foreground">Поиск, состояние заказа и порядок строк</p>
-          </div>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={activeFilterCount === 0}
-          onClick={onReset}
-          className="min-h-9 justify-start sm:justify-center"
-        >
-          <RotateCcw className="h-4 w-4" />
-          Сбросить{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
-        </Button>
-      </div>
-
-      <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-12">
+    <section className="rounded-2xl border border-border/70 bg-card p-3 shadow-sm" aria-label="Фильтры и сортировка заказов">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-12">
         <label className="grid gap-1.5 md:col-span-2 xl:col-span-4">
           <span className="text-xs font-medium text-muted-foreground">Поиск</span>
           <span className="relative">
@@ -153,7 +130,7 @@ export function OrderFilters({
           items={Object.entries(attentionLabels)}
         />
         <FilterSelect
-          className="md:col-span-2 xl:col-span-6"
+          className="md:col-span-2 xl:col-span-4"
           label="Сортировка"
           value={value.sort}
           display={sortLabels[value.sort]}
@@ -161,6 +138,18 @@ export function OrderFilters({
           items={Object.entries(sortLabels)}
           icon={<Filter className="h-3.5 w-3.5" />}
         />
+        <div className="flex items-end xl:col-span-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={activeFilterCount === 0}
+            onClick={onReset}
+            className="min-h-11 w-full justify-center"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Сбросить{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+          </Button>
+        </div>
       </div>
     </section>
   )
