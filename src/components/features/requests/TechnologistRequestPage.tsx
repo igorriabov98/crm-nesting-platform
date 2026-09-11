@@ -156,28 +156,29 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
           {(!revision || revision.category === 'chain_cord') && <TabsTrigger value="chain_cord">Цепь / Шнур</TabsTrigger>}
         </TabsList>
         <div className="mt-4 rounded-xl border border-[#E8ECF0] bg-white p-4">
-          {(!revision || revision.category === 'sheet_metal') && <TabsContent value="sheet" className="outline-none">
+          {/* Sections own optimistic row state; keep hidden panels mounted so tab changes cannot reset it to stale server props. */}
+          {(!revision || revision.category === 'sheet_metal') && <TabsContent value="sheet" keepMounted className="outline-none">
             <SheetMetalSection requestId={data.request.id} items={data.sheetMetal} suppliers={suppliers.sheetMetal} canEdit={canEdit} steelTypes={steelTypes} allowStructureChanges={!revision} />
           </TabsContent>}
-          {(!revision || revision.category === 'circle') && <TabsContent value="circle" className="outline-none">
+          {(!revision || revision.category === 'circle') && <TabsContent value="circle" keepMounted className="outline-none">
             <CircleSection requestId={data.request.id} items={data.circles} isEditable={canEdit} steelTypes={steelTypes} allowStructureChanges={!revision} />
           </TabsContent>}
-          {(!revision || revision.category === 'pipe') && <TabsContent value="pipe" className="outline-none">
+          {(!revision || revision.category === 'pipe') && <TabsContent value="pipe" keepMounted className="outline-none">
             <PipeSection requestId={data.request.id} items={data.pipes} isEditable={canEdit} steelTypes={steelTypes} onRowsChange={handlePipeRowsChange} allowStructureChanges={!revision} />
           </TabsContent>}
-          {(!revision || revision.category === 'knives') && <TabsContent value="knives" className="outline-none">
+          {(!revision || revision.category === 'knives') && <TabsContent value="knives" keepMounted className="outline-none">
             <KnivesSection requestId={data.request.id} items={data.knives} canEdit={canEdit} canEditStock={false} steelTypes={steelTypes} allowStructureChanges={!revision} />
           </TabsContent>}
-          {(!revision || revision.category === 'paint') && <TabsContent value="paint" className="outline-none">
+          {(!revision || revision.category === 'paint') && <TabsContent value="paint" keepMounted className="outline-none">
             <PaintSection requestId={data.request.id} items={data.paint} canEdit={canEdit} canEditStock={false} onRowsChange={handlePaintRowsChange} allowStructureChanges={!revision} />
           </TabsContent>}
-          {(!revision || revision.category === 'components') && <TabsContent value="components" className="outline-none">
+          {(!revision || revision.category === 'components') && <TabsContent value="components" keepMounted className="outline-none">
             <ComponentsSection requestId={data.request.id} items={data.components} canEdit={canEdit} canEditStock={false} onRowsChange={handleComponentRowsChange} allowStructureChanges={!revision} />
           </TabsContent>}
-          {(!revision || revision.category === 'mesh') && <TabsContent value="mesh" className="outline-none">
+          {(!revision || revision.category === 'mesh') && <TabsContent value="mesh" keepMounted className="outline-none">
             <MeshSection requestId={data.request.id} items={data.meshItems} isEditable={canEdit} onRowsChange={handleMeshRowsChange} allowStructureChanges={!revision} />
           </TabsContent>}
-          {(!revision || revision.category === 'chain_cord') && <TabsContent value="chain_cord" className="outline-none">
+          {(!revision || revision.category === 'chain_cord') && <TabsContent value="chain_cord" keepMounted className="outline-none">
             <ChainCordSection requestId={data.request.id} items={data.chainCords} isEditable={canEdit} onRowsChange={handleChainCordRowsChange} allowStructureChanges={!revision} />
           </TabsContent>}
         </div>

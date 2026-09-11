@@ -54,6 +54,12 @@ const page = readFileSync(join(root, 'src/components/features/requests/Technolog
 assert(page.includes('canManage && isTechnologistRequestEditable(status)'), 'Клиент должен использовать общую матрицу редактируемости')
 assert(page.includes('Заявка уже передана в снабжение и доступна только для просмотра.'), 'Закрытая заявка должна объяснять read-only режим')
 assert(page.includes('{canEdit && ('), 'Действия заявки должны скрываться в read-only режиме')
+const persistentRequestTabs = [...page.matchAll(/<TabsContent value="([^"]+)" keepMounted/g)].map((match) => match[1])
+assert.deepEqual(
+  persistentRequestTabs,
+  ['sheet', 'circle', 'pipe', 'knives', 'paint', 'components', 'mesh', 'chain_cord'],
+  'Каждая категория должна сохранять локальные строки при переключении вкладок',
+)
 
 const sectionFiles = [
   'SheetMetalSection.tsx',
