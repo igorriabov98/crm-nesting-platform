@@ -12,8 +12,8 @@ import {
   buildSupplyOrderDetailContexts,
   filterSupplyOrderItems,
   groupSupplyOrderItems,
-  isReturnedSupplyOrderSource,
   sortSupplyOrderItems,
+  summarizeSupplyOrderRequestAttention,
   type OrderFiltersState,
 } from './supply-order-view'
 
@@ -72,21 +72,10 @@ export function SupplyOrdersPage({
   const currentFrom = total === 0 ? 0 : page * pageSize + 1
   const currentTo = Math.min(total, (page + 1) * pageSize)
   const activeFilterCount = countChangedFilters(filters, defaultFilters)
-  const attention = useMemo(() => ({
-    missingSchedule: filteredItems.filter((item) => (
-      !isReturnedSupplyOrderSource(item)
-      && item.to_order > 0
-      && !item.delivery_schedules.some((schedule) => schedule.status === 'planned')
-    )).length,
-    scheduled: filteredItems.filter((item) => (
-      !isReturnedSupplyOrderSource(item)
-      &&
-      (detailContexts.get(`${item.table}:${item.id}`)?.plannedQuantity || 0) > 0
-    )).length,
-    coveredByStock: filteredItems.filter((item) => (
-      !isReturnedSupplyOrderSource(item) && item.to_order <= 0 && item.reserved_quantity > 0
-    )).length,
-  }), [detailContexts, filteredItems])
+  const attention = useMemo(
+    () => summarizeSupplyOrderRequestAttention(filteredItems, detailContexts),
+    [detailContexts, filteredItems],
+  )
 
   const goToPage = (nextPage: number) => {
     const params = new URLSearchParams(searchParams.toString())
@@ -111,7 +100,7 @@ export function SupplyOrdersPage({
           <SummaryChip icon={<PackageSearch className="h-3.5 w-3.5" />} label="Показано" value={`${filteredItems.length} из ${items.length}`} />
           <SummaryChip icon={<CalendarX2 className="h-3.5 w-3.5" />} label="Без графика" value={String(attention.missingSchedule)} tone="warning" />
           <SummaryChip icon={<Truck className="h-3.5 w-3.5" />} label="С графиком" value={String(attention.scheduled)} tone="info" />
-          <SummaryChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} label="Потребность закрыта" value={String(attention.coveredByStock)} tone="success" />
+          <SummaryChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} label="Потребность закрыта" value={String(attention.closed)} tone="success" />
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="text-xs text-muted-foreground sm:text-right">
