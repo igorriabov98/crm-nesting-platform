@@ -286,6 +286,33 @@ assert.deepEqual(
   ['multiple_dates'],
   'one request with several saved supply dates must show a dedicated multi-date group',
 )
+assert.deepEqual(
+  groupSupplyOrderItems([makeItem({
+    id: 'received-without-planned-row',
+    order_status: 'delivered',
+    to_order: 2,
+    delivery_schedules: [makeDeliverySchedule({
+      id: 'received-without-planned-schedule',
+      delivery_date: '2026-07-23',
+      quantity: 2,
+      status: 'delivered',
+      received_quantity: 2,
+      allocated_quantity: 2,
+      delivered_at: '2026-07-23T10:00:00Z',
+    })],
+  })], 'delivery_asc').map((group) => [group.dateKey, group.groups[0]?.supplierName]),
+  [['2026-07-23', 'Металл А']],
+  'a received row must use its factual delivery date and supplier instead of the unscheduled group',
+)
+assert.deepEqual(
+  filterSupplyOrderItems([makeItem({
+    id: 'received-period-row',
+    order_status: 'delivered',
+    delivery_schedules: [makeDeliverySchedule({ delivery_date: '2026-07-23' })],
+  })], { ...baseFilters, period: 'this_week' }, new Date('2026-07-20T12:00:00')).map((item) => item.id),
+  ['received-period-row'],
+  'a received row must remain discoverable by its factual delivery date in period filters',
+)
 
 const aggregate = makeAggregate()
 assert.deepEqual(

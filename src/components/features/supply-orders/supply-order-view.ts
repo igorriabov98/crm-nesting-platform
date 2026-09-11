@@ -523,12 +523,12 @@ export function filterSupplyOrderItems(
   return items.filter((item) => {
     if (filters.status !== 'all' && item.order_status !== filters.status) return false
     if (filters.supplier !== 'all') {
-      const plannedSupplierIds = item.delivery_schedules
-        .filter((schedule) => schedule.status === 'planned')
+      const activeSupplierIds = item.delivery_schedules
+        .filter((schedule) => schedule.status === 'planned' || schedule.status === 'delivered')
         .map((schedule) => schedule.supplier_id)
         .filter(Boolean)
-      if (plannedSupplierIds.length > 0
-        ? !plannedSupplierIds.includes(filters.supplier)
+      if (activeSupplierIds.length > 0
+        ? !activeSupplierIds.includes(filters.supplier)
         : item.supplier_id !== filters.supplier) return false
     }
     if (filters.category !== 'all' && item.category !== filters.category) return false
@@ -546,7 +546,9 @@ export function filterSupplyOrderItems(
 
     if (filters.attention === 'needs_supplier' && item.supplier_id) return false
     if (filters.attention === 'needs_schedule' && (
-      item.to_order <= 0 || item.delivery_schedules.some((schedule) => schedule.status === 'planned')
+      item.order_status === 'delivered'
+      || item.to_order <= 0
+      || item.delivery_schedules.some((schedule) => schedule.status === 'planned')
     )) return false
     if (filters.attention === 'stock_covered' && !(item.to_order <= 0 && item.reserved_quantity > 0)) return false
 
@@ -580,19 +582,21 @@ export function groupSupplyOrderItems(items: SupplyOrderItem[], sort: SupplyOrde
   const byDate = new Map<string, Map<string, { supplierName: string; items: SupplyOrderItem[] }>>()
 
   for (const item of items) {
-    const plannedSchedules = item.delivery_schedules.filter((schedule) => schedule.status === 'planned')
-    const plannedDates = Array.from(new Set(plannedSchedules.map((schedule) => schedule.delivery_date))).sort()
-    const dateKey = plannedDates.length > 1 ? 'multiple_dates' : plannedDates[0] || 'no_supplier'
-    const scheduleSuppliers = Array.from(new Map(plannedSchedules.map((schedule) => [
+    const activeSchedules = item.delivery_schedules.filter((schedule) => (
+      (schedule.status === 'planned' || schedule.status === 'delivered') && Boolean(schedule.delivery_date)
+    ))
+    const deliveryDates = Array.from(new Set(activeSchedules.map((schedule) => schedule.delivery_date))).sort()
+    const dateKey = deliveryDates.length > 1 ? 'multiple_dates' : deliveryDates[0] || 'no_supplier'
+    const scheduleSuppliers = Array.from(new Map(activeSchedules.map((schedule) => [
       schedule.supplier_id || 'no_supplier',
       schedule.supplier_name || 'Поставщик не указан',
     ])))
-    const supplierKey = plannedSchedules.length === 0
+    const supplierKey = activeSchedules.length === 0
       ? 'no_supplier'
       : scheduleSuppliers.length === 1
         ? scheduleSuppliers[0][0]
         : 'multiple_suppliers'
-    const supplierName = plannedSchedules.length === 0
+    const supplierName = activeSchedules.length === 0
       ? 'Без графика поставок'
       : scheduleSuppliers.length === 1
         ? scheduleSuppliers[0][1]
@@ -615,7 +619,7 @@ export function groupSupplyOrderItems(items: SupplyOrderItem[], sort: SupplyOrde
 
 function firstPlannedScheduleDate(item: Pick<SupplyOrderItem, 'delivery_schedules'>) {
   return item.delivery_schedules
-    .filter((schedule) => schedule.status === 'planned')
+    .filter((schedule) => schedule.status === 'planned' || schedule.status === 'delivered')
     .map((schedule) => schedule.delivery_date)
     .sort()[0] || null
 }
