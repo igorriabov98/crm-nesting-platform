@@ -66,8 +66,11 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
   const plannedSchedules = schedules.filter((schedule) => schedule.status === 'planned')
   const deliveredSchedules = schedules.filter((schedule) => schedule.status === 'delivered')
   const isBarMaterial = isPhysicalBarMaterial(item)
-  const plannedBars = isBarMaterial ? barsFromSchedules(plannedSchedules, 'planned') : []
   const deliveredBars = isBarMaterial ? barsFromSchedules(deliveredSchedules, 'delivered') : []
+  const planQuantity = plannedQuantity + deliveredQuantity
+  const planBars = isBarMaterial
+    ? barsFromSchedules([...plannedSchedules, ...deliveredSchedules], 'coverage')
+    : []
   const remainingBars = isBarMaterial ? remainingPurchaseBars(item, deliveredBars) : []
   const characteristics = visibleCharacteristics(item.characteristics || [], item.item_name)
 
@@ -127,10 +130,10 @@ export function OrderItemRow({ item, suppliers, detailContext }: OrderItemRowPro
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <DeliveryMetric
               label="План поставки"
-              value={`${formatAmount(plannedQuantity)} ${item.unit}`}
-              detail={plannedBars.length > 0 ? formatBars(plannedBars) : formatPlannedDates(plannedSchedules)}
+              value={`${formatAmount(planQuantity)} ${item.unit}`}
+              detail={planBars.length > 0 ? formatBars(planBars) : formatPlannedDates([...plannedSchedules, ...deliveredSchedules])}
               emptyDetail="График не создан"
-              tone={plannedQuantity > 0 ? 'info' : 'neutral'}
+              tone={planQuantity > 0 ? 'info' : 'neutral'}
             />
             <DeliveryMetric
               label="Привезено"
@@ -337,14 +340,15 @@ function isPhysicalBarMaterial(item: SupplyOrderItem) {
     || (item.category === 'pipe' && item.pipe_type !== 'wire')
 }
 
-function barsFromSchedules(schedules: SupplyOrderDeliverySchedule[], status: 'planned' | 'delivered'): BarPart[] {
+function barsFromSchedules(schedules: SupplyOrderDeliverySchedule[], status: 'planned' | 'delivered' | 'coverage'): BarPart[] {
   const grouped = new Map<number, number>()
   for (const schedule of schedules) {
-    const lengthMm = Number(status === 'delivered'
+    const isDelivered = status === 'delivered' || (status === 'coverage' && schedule.status === 'delivered')
+    const lengthMm = Number(isDelivered
       ? schedule.received_piece_length_mm || schedule.planned_piece_length_mm || 0
       : schedule.planned_piece_length_mm || 0)
     if (lengthMm <= 0) continue
-    const rawCount = status === 'delivered'
+    const rawCount = isDelivered
       ? schedule.allocated_piece_count
         ?? schedule.received_piece_count
         ?? ((schedule.allocated_physical_quantity ?? schedule.allocated_quantity ?? 0) / lengthMm)

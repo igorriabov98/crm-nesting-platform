@@ -36,7 +36,10 @@ export function SupplyOrdersPage({
   page,
   pageSize,
   total,
-  initialStatus = 'pending',
+  // The request workspace is a complete machine register. Operators can
+  // narrow it with the status filter, but must see ordered and received
+  // rows alongside pending ones on first open.
+  initialStatus = 'all',
   lockedStatus,
   emptyMessage,
 }: SupplyOrdersPageProps) {
