@@ -162,6 +162,32 @@ export type SupplyOrderDetailContext = {
   scopes: SupplyOrderDetailScheduleScope[]
 }
 
+export type SupplyOrderRequestAttentionSummary = {
+  missingSchedule: number
+  scheduled: number
+  closed: number
+}
+
+export function summarizeSupplyOrderRequestAttention(
+  items: SupplyOrderItem[],
+  detailContexts: Map<string, Pick<SupplyOrderDetailContext, 'plannedQuantity'>>,
+): SupplyOrderRequestAttentionSummary {
+  return items.reduce<SupplyOrderRequestAttentionSummary>((summary, item) => {
+    if (isReturnedSupplyOrderSource(item)) return summary
+
+    const plannedQuantity = detailContexts.get(`${item.table}:${item.id}`)?.plannedQuantity || 0
+    if (item.order_status === 'delivered' || (item.to_order <= 0 && item.reserved_quantity > 0)) {
+      summary.closed += 1
+    } else if (item.to_order > 0 && plannedQuantity <= 0) {
+      summary.missingSchedule += 1
+    } else if (plannedQuantity > 0) {
+      summary.scheduled += 1
+    }
+
+    return summary
+  }, { missingSchedule: 0, scheduled: 0, closed: 0 })
+}
+
 type PlannedCoverage = {
   schedule: SupplyOrderDeliverySchedule
   quantity: number

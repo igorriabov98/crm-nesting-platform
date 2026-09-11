@@ -22,6 +22,7 @@ import {
   summarizeSupplyOrderMachineRoutes,
   summarizeSupplyOrderQuantities,
   summarizeSupplyOrderRedeliveryMachineRoutes,
+  summarizeSupplyOrderRequestAttention,
   summarizeSupplyOrderUnscheduledMachineRoutes,
   sortSupplyOrderItems,
   type OrderFiltersState,
@@ -312,6 +313,26 @@ assert.deepEqual(
   })], { ...baseFilters, period: 'this_week' }, new Date('2026-07-20T12:00:00')).map((item) => item.id),
   ['received-period-row'],
   'a received row must remain discoverable by its factual delivery date in period filters',
+)
+
+const attentionItems = [
+  makeItem({
+    id: 'received-attention-row',
+    order_status: 'delivered',
+    to_order: 2,
+    delivery_schedules: [makeDeliverySchedule({ status: 'delivered', quantity: 2, received_quantity: 2 })],
+  }),
+  makeItem({ id: 'planned-attention-row', order_status: 'ordered', to_order: 1 }),
+  makeItem({ id: 'missing-attention-row', order_status: 'pending', to_order: 1 }),
+]
+assert.deepEqual(
+  summarizeSupplyOrderRequestAttention(attentionItems, new Map([
+    ['request_sheet:received-attention-row', { plannedQuantity: 0 }],
+    ['request_sheet:planned-attention-row', { plannedQuantity: 1 }],
+    ['request_sheet:missing-attention-row', { plannedQuantity: 0 }],
+  ])),
+  { missingSchedule: 1, scheduled: 1, closed: 1 },
+  'received rows must be counted as closed instead of appearing in the missing-schedule indicator',
 )
 
 const aggregate = makeAggregate()
