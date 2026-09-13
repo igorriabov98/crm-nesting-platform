@@ -177,6 +177,7 @@ assert.equal(formatInventoryTransferQuantity(measuredTransferItem, 0, null), '0 
 assert.equal(inventoryTransferReceiptInputValue(measuredTransferItem), 1)
 assert.equal(inventoryTransferReceiptPrimaryQuantity(measuredTransferItem, 1), 5_588)
 assert.equal(materialCategoryLabel('knives'), 'Ножи')
+assert.equal(materialCategoryLabel('circle'), 'Круг')
 assert.equal(materialCategoryLabel('sheet_metal'), 'Листовой металл')
 assert.deepEqual(inventoryTransferMaterialCharacteristics({
   category: 'sheet_metal',
@@ -419,7 +420,14 @@ assert.match(outsourcingActions, /item_details: \(operation\?\.items \|\| \[\]\)
 assert.match(outsourcingActions, /drawing_number: item\.drawing_number \|\| null/)
 assert.match(outsourcingActions, /product_id: item\.product_id \|\| null/)
 assert.match(outsourcingActions, /product_version_id: item\.product_version_id \|\| null/)
-assert.match(outsourcingActions, /weight_unit: operation\?\.operation_kind === 'vrb_mesh' \? 'kg' : 'т'/)
+assert.match(outsourcingActions, /weight_unit: 'kg'/)
+assert.doesNotMatch(outsourcingActions, /weight_unit: operation\?\.operation_kind === 'vrb_mesh' \? 'kg' : 'т'/)
+assert.match(outsourcingActions, /20 kg became 20,000 kg/)
+
+const inventoryActions = readFileSync(resolve('src/lib/actions/inventory.ts'), 'utf8')
+assert.match(inventoryActions, /ensureCategory\('circle'\)/)
+const inventoryHistoryPage = readFileSync(resolve('src/components/features/inventory/InventoryWarehouseHistoryPage.tsx'), 'utf8')
+assert.match(inventoryHistoryPage, /if \(category === 'circle'\) return 'Круги'/)
 
 const transportDrawingRoute = readFileSync(
   resolve('src/app/api/supply/transport/drawings/[needSource]/[needId]/[fileId]/route.ts'),

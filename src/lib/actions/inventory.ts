@@ -1168,6 +1168,12 @@ export async function getWarehouseHistoryOverview(filters: {
       return created
     }
 
+    // Keep the operational long-stock category visible even when its balance and
+    // movements are zero in the selected period. Otherwise "Круги" disappears
+    // from the summary and operators cannot distinguish zero stock from a missing
+    // category.
+    ensureCategory('circle')
+
     let currentWeightKg = 0
     for (const row of currentRows) {
       const category = materialCategoryMap.get(row.material_id) || 'other'

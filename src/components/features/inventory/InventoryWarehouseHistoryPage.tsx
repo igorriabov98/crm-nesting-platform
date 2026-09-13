@@ -498,6 +498,7 @@ function variantSummary(row: InventoryTransactionWithRelations) {
 
 function categoryLabel(category?: InventoryTransactionWithRelations['material_category'] | InventoryWarehouseHistoryCategorySummary['category'] | null) {
   if (!category) return '-'
+  if (category === 'circle') return 'Круги'
   return MATERIAL_CATEGORY_LABELS[category] ?? category
 }
 

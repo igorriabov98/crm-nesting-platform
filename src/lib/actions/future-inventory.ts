@@ -18,6 +18,51 @@ import { getErrorMessage } from '@/lib/utils/get-error-message'
 
 function db() { return createAdminClient() as any }
 
+export type FutureDetailingStatus = 'planned' | 'awaiting_confirmation' | 'confirmed' | 'cancelled'
+
+export type FutureDetailingPageItem = {
+  id: string
+  planned_quantity: number
+  actual_quantity: number | null
+  status: FutureDetailingStatus
+  variance_reason: string | null
+  detailing_parts: {
+    name: string
+    drawing_number: string
+    unit_weight_kg: number
+  } | null
+}
+
+export type FutureDetailingPageBatch = {
+  id: string
+  request_id: string
+  machine_id: string
+  status: FutureDetailingStatus
+  confirmation_due_date: string | null
+  confirmed_at: string | null
+  created_at: string
+  isOwner: boolean
+  machineName: string
+  authorName: string
+  plannedAvailabilityDate: string | null
+  items: FutureDetailingPageItem[]
+}
+
+export type FutureDetailingPageData = {
+  factories: Array<{ id: string; name: string }>
+  selectedFactory: string | null
+  selectedFactoryName: string | null
+  canManage: boolean
+  batches: FutureDetailingPageBatch[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+function relationOne<T>(value: T | T[] | null | undefined): T | null {
+  return Array.isArray(value) ? value[0] || null : value || null
+}
+
 export async function getFutureDetailingPage(factoryId?: string, page = 0) {
   try {
     const { userId } = await requirePermission('future_detailing', 'view')
@@ -25,12 +70,66 @@ export async function getFutureDetailingPage(factoryId?: string, page = 0) {
     const canManage = hasResourcePermission(null, permissions.permissions, 'future_detailing', 'manage')
     const client = db()
     const factories = await client.from('factories').select('id,name').order('name')
-    const selectedFactory = factoryId || factories.data?.[0]?.id
-    const batches = client.from('future_detailing_batches').select('id,request_id,machine_id,factory_id,created_by,status,confirmation_due_date,confirmed_at,machines(name),users!future_detailing_batches_created_by_fkey(full_name)', { count: 'exact' }).eq('factory_id', selectedFactory).order('created_at', { ascending: false }).range(Math.max(0, page) * 20, Math.max(0, page) * 20 + 19)
+    if (factories.error) throw factories.error
+    const selectedFactory = factoryId || factories.data?.[0]?.id || null
+    const safePage = Math.max(0, Math.floor(Number.isFinite(page) ? page : 0))
+    const pageSize = 20
+    if (!selectedFactory) {
+      return {
+        data: {
+          factories: [], selectedFactory: null, selectedFactoryName: null, canManage,
+          batches: [], total: 0, page: safePage, pageSize,
+        } satisfies FutureDetailingPageData,
+        error: null,
+      }
+    }
+    const batches = client.from('future_detailing_batches').select('id,request_id,machine_id,factory_id,created_by,status,confirmation_due_date,confirmed_at,created_at,machines(name),users!future_detailing_batches_created_by_fkey(full_name)', { count: 'exact' }).eq('factory_id', selectedFactory).order('created_at', { ascending: false }).range(safePage * pageSize, safePage * pageSize + pageSize - 1)
     const batchResult = await batches
+    if (batchResult.error) throw batchResult.error
     const ids = (batchResult.data || []).map((batch: any) => batch.id)
     const items = ids.length ? await client.from('future_detailing_items').select('id,batch_id,part_id,planned_quantity,actual_quantity,status,variance_reason,detailing_parts(name,drawing_number,unit_weight_kg)').in('batch_id', ids).order('created_at') : { data: [] }
-    return { data: { factories: factories.data || [], selectedFactory, canManage, batches: (batchResult.data || []).map((batch: any) => ({ ...batch, isOwner: batch.created_by === userId && canManage, items: (items.data || []).filter((item: any) => item.batch_id === batch.id) })), total: batchResult.count || 0 }, error: null }
+    if ('error' in items && items.error) throw items.error
+    const machineIds = Array.from(new Set((batchResult.data || []).map((batch: any) => batch.machine_id))) as string[]
+    const stages = machineIds.length
+      ? await client.from('production_stages').select('machine_id,date_start,date_end').in('machine_id', machineIds).eq('stage_type', 'cutting').order('created_at')
+      : { data: [] }
+    if ('error' in stages && stages.error) throw stages.error
+    const cuttingStageByMachine = new Map<string, { date_start: string | null; date_end: string | null }>()
+    for (const stage of (stages.data || []) as Array<{ machine_id: string; date_start: string | null; date_end: string | null }>) {
+      if (!cuttingStageByMachine.has(stage.machine_id)) cuttingStageByMachine.set(stage.machine_id, stage)
+    }
+    const typedFactories = (factories.data || []) as Array<{ id: string; name: string }>
+    return {
+      data: {
+        factories: typedFactories,
+        selectedFactory,
+        selectedFactoryName: typedFactories.find((factory) => factory.id === selectedFactory)?.name || null,
+        canManage,
+        batches: (batchResult.data || []).map((batch: any) => ({
+          id: batch.id,
+          request_id: batch.request_id,
+          machine_id: batch.machine_id,
+          status: batch.status,
+          confirmation_due_date: batch.confirmation_due_date,
+          confirmed_at: batch.confirmed_at,
+          created_at: batch.created_at,
+          isOwner: batch.created_by === userId && canManage,
+          machineName: relationOne<{ name: string }>(batch.machines)?.name || 'Машина не указана',
+          authorName: relationOne<{ full_name: string }>(batch.users)?.full_name || 'Не указан',
+          plannedAvailabilityDate: cuttingStageByMachine.get(batch.machine_id)?.date_start || null,
+          items: (items.data || []).filter((item: any) => item.batch_id === batch.id).map((item: any) => ({
+            ...item,
+            planned_quantity: Number(item.planned_quantity || 0),
+            actual_quantity: item.actual_quantity === null ? null : Number(item.actual_quantity),
+            detailing_parts: relationOne(item.detailing_parts),
+          })),
+        })),
+        total: batchResult.count || 0,
+        page: safePage,
+        pageSize,
+      } satisfies FutureDetailingPageData,
+      error: null,
+    }
   } catch (error) { return { data: null, error: getErrorMessage(error) } }
 }
 

@@ -1895,7 +1895,10 @@ async function enrichTransportNeeds(db: LooseDb, needs: MachineOutsourcingTransp
         drawing_number: item.drawing_number || null,
         quantity: item.quantity,
         weight: item.weight,
-        weight_unit: operation?.operation_kind === 'vrb_mesh' ? 'kg' : 'т',
+        // machine_items.weight and VRB requested_weight_kg are both stored in kilograms.
+        // Marking standard outsourcing items as tonnes made transport multiply the
+        // entered value by 1,000 (for example, 20 kg became 20,000 kg).
+        weight_unit: 'kg',
       })),
     }]
   })
