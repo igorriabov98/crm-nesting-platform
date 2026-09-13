@@ -44,6 +44,7 @@ export type BusinessScrapQueueState =
   | 'no_request'
   | 'draft'
   | 'initial_reservation'
+  | 'warehouse_reservation'
   | 'submitted'
   | 'correction_pending'
 
@@ -234,7 +235,8 @@ function queueState(request: QueueRequest | null, correction: QueueCorrection | 
   if (!request) return 'no_request'
   if (correction?.status === 'pending') return 'correction_pending'
   if (request.status === 'draft') return 'draft'
-  if (request.status === 'pending_stock_check' || request.status === 'stock_checked') return 'initial_reservation'
+  if (request.status === 'pending_stock_check') return 'initial_reservation'
+  if (request.status === 'stock_checked') return 'warehouse_reservation'
   return 'submitted'
 }
 function asNumber(value: unknown) {

@@ -5,7 +5,6 @@ import { ROUTES } from '@/lib/constants/routes'
 import { reserveForMachine, unreserveFromMachine } from '@/lib/actions/inventory'
 import {
   filterReservationsByStockScope,
-  type ReservationStockScope,
 } from '@/lib/inventory/reservation-stock-scope'
 import { requirePermission } from '@/lib/permissions/server'
 import { DIRECTOR_ACCESS_ROLES, type PermissionOperation } from '@/lib/permissions/resources'
@@ -14,6 +13,14 @@ import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { sheetMetalVariantMatchesRequest } from '@/lib/supply-request-sheet-metal'
 import { summarizeDisplayedStockCoverage } from '@/lib/supply-request-stock-coverage'
+import {
+  assertManualSupplyRequestReservationAllowed,
+  getReservationStockSourceForStatus,
+  isActiveWarehouseReservationStatus,
+  isLayoutManagedSupplyRequestItem,
+  type ReservationStockSource,
+  type SupplyRequestItemTable,
+} from '@/lib/supply-request-reservation-policy'
 import type {
   Machine,
   RequestChainCord,
@@ -44,16 +51,7 @@ type LooseQuery = PromiseLike<DbResult> & {
 }
 type LooseDb = { from: (table: string) => LooseQuery }
 
-type RequestItemTable =
-  | 'request_sheet_metal'
-  | 'request_round_tube'
-  | 'request_circle'
-  | 'request_pipe'
-  | 'request_knives'
-  | 'request_components'
-  | 'request_paint'
-  | 'request_mesh'
-  | 'request_chain_cord'
+type RequestItemTable = SupplyRequestItemTable
 
 type RequestWithRelations = TechnologistRequest & {
   machine: Pick<Machine, 'id' | 'name' | 'factory_id' | 'planned_material_date' | 'created_at' | 'is_archived'>
@@ -65,7 +63,6 @@ export type SupplyRequestRow<T> = T & {
   steel_type_name?: string | null
   available_stock: number | null
   available_secondary_stock?: number | null
-  incompatible_stock_available?: number | null
   stock_unit: string | null
   secondary_stock_unit?: string | null
   stock_items: SupplyStockItem[]
@@ -168,8 +165,6 @@ type ReservationRow = {
   reservation_source?: string | null
 }
 
-type ReservationStockSource = ReservationStockScope
-
 const REQUEST_TABLES: RequestItemTable[] = [
   'request_sheet_metal',
   // @deprecated — round_tube excluded from new UI
@@ -256,11 +251,12 @@ function getRoundSecondaryReserve(quantity: number, row: Record<string, unknown>
   return Math.min(remainingM, (quantity / remainingKg) * remainingM)
 }
 
-function requiresExactVariant(table: RequestItemTable, row: Record<string, unknown>) {
+function requiresExactVariant(table: RequestItemTable) {
   return table === 'request_sheet_metal'
-    || table === 'request_knives'
     || table === 'request_circle'
-    || (table === 'request_pipe' && row.pipe_type !== 'wire')
+    || table === 'request_pipe'
+    || table === 'request_knives'
+    || table === 'request_round_tube'
 }
 
 function isWholeBarRequest(table: RequestItemTable, row: Record<string, unknown>) {
@@ -390,19 +386,15 @@ function uniqueInventoryRows(rows: InventoryRow[]) {
   })
 }
 
-function getRawAvailableQuantity(item: InventoryRow) {
-  return Number(item.available_quantity || 0)
-}
-
 function getReservationStockSource(request: Pick<TechnologistRequest, 'status'>): ReservationStockSource | null {
-  if (request.status === 'pending_stock_check' || request.status === 'stock_checked') return 'business_scrap'
-  if (request.status === 'submitted_to_supply' || request.status === 'completed') return 'regular_stock'
-  return null
+  return getReservationStockSourceForStatus(request.status)
 }
 
 function assertReservationAllowedForRequest(request: Pick<TechnologistRequest, 'status'>) {
   const source = getReservationStockSource(request)
-  if (!source) throw new Error('Заявка не находится на этапе бронирования склада')
+  if (!source || !isActiveWarehouseReservationStatus(request.status)) {
+    throw new Error('Бронирование доступно только на активном складском этапе заявки')
+  }
   return source
 }
 
@@ -414,8 +406,8 @@ function inventoryMatchesReservationSource(item: Pick<InventoryRow, 'is_business
 
 function getReservationSourceError(source: ReservationStockSource) {
   return source === 'business_scrap'
-    ? 'На этапе проверки технолог может бронировать только деловой отход'
-    : 'Снабжение может бронировать только обычный склад'
+    ? 'На этом этапе можно бронировать только деловой остаток'
+    : 'На этом этапе можно бронировать только обычный склад'
 }
 
 function describeStockItem(table: RequestItemTable, variant?: MaterialVariant | null) {
@@ -459,7 +451,7 @@ function findStockItems(
   const exactItems = row.material_variant_id
     ? inventoryGroupMap.get(stockGroupKey(row.material_id, row.material_variant_id)) || []
     : []
-  const matchingExactItems = table === 'request_sheet_metal'
+  const matchingExactItems = ['request_sheet_metal', 'request_circle', 'request_pipe', 'request_knives'].includes(table)
     ? exactItems.filter((item) => variantMatchesRequest(table, rowRecord, item.variant))
     : exactItems
 
@@ -468,14 +460,10 @@ function findStockItems(
     if (!item.material_variant_id) return false
     return variantMatchesRequest(table, rowRecord, item.variant)
   })
-  if (requiresExactVariant(table, rowRecord)) {
-    const legacyQuantitativeItems = isWholeBarRequest(table, rowRecord)
-      ? allMaterialItems.filter((item) => !item.material_variant_id && !Number(item.piece_length_mm || 0))
-      : []
+  if (requiresExactVariant(table)) {
     const matchingItems = uniqueInventoryRows([
       ...matchingExactItems,
       ...matchedByCharacteristics,
-      ...legacyQuantitativeItems,
     ])
     if (hasAvailableStock(table, rowRecord, matchingItems)) return matchingItems
     return matchingItems
@@ -526,6 +514,32 @@ function assertSupplyRequestVisibleForRole(request: TechnologistRequest, role: U
   }
   if (role === 'supply_manager' && request.status !== 'submitted_to_supply' && request.status !== 'completed') {
     throw new Error('Заявка ещё не передана в снабжение')
+  }
+}
+
+async function assertActiveReservationActor(
+  db: LooseDb,
+  request: RequestWithRelations,
+  userId: string,
+  role: UserRole,
+) {
+  if (!isActiveWarehouseReservationStatus(request.status)) {
+    throw new Error('Эта заявка доступна только для ознакомления')
+  }
+  if (request.created_by === userId || (DIRECTOR_ACCESS_ROLES as readonly UserRole[]).includes(role)) return
+  if (role !== 'technologist') throw new Error('Бронировать склад может автор, назначенный технолог или руководитель')
+
+  const { data, error } = await db
+    .from('tasks')
+    .select('id')
+    .eq('machine_id', request.machine_id)
+    .eq('task_type', 'technologist_request')
+    .eq('assigned_to', userId)
+    .in('status', ['pending', 'in_progress', 'completed'])
+    .limit(1)
+  if (error) throw new Error(error.message || 'Не удалось проверить назначенного технолога')
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error('Бронировать склад может автор, назначенный технолог или руководитель')
   }
 }
 
@@ -613,23 +627,17 @@ function withStock<T extends { id: string; material_id: string | null; material_
     const rowRecord = row as Record<string, unknown>
     const stockItems = findStockItems(table, row, rowRecord, inventoryGroupMap, materialInventoryMap)
       .filter((item) => inventoryMatchesReservationSource(item, reservationSource))
-    const materialItems = row.material_id ? materialInventoryMap.get(row.material_id) || [] : []
-    const exactVariantRequired = requiresExactVariant(table, rowRecord)
+    const exactVariantRequired = requiresExactVariant(table)
     const inventory = row.material_id
       ? exactVariantRequired
         ? stockItems[0] || null
         : inventoryMap.get(stockKey(row.material_id, row.material_variant_id, null)) ||
           inventoryMap.get(stockKey(row.material_id, null, null)) ||
           stockItems[0] ||
-          materialItems[0] ||
           null
       : null
     const reservation = reservationMap.get(reservationKey(table, row.id))
     const coveredQuantity = getReservedForRow(table, rowRecord)
-    const hasReservableStock = hasAvailableStock(table, rowRecord, stockItems)
-    const incompatibleStockAvailable = row.material_id && exactVariantRequired && !hasReservableStock
-      ? materialItems.reduce((sum, item) => sum + getRawAvailableQuantity(item), 0)
-      : 0
     const availableStock = stockItems.length
       ? stockItems.reduce((sum, item) => sum + getReservableQuantity(table, rowRecord, item), 0)
       : exactVariantRequired ? 0 : inventory?.available_quantity ?? null
@@ -641,7 +649,6 @@ function withStock<T extends { id: string; material_id: string | null; material_
       steel_type_name: typeof rowRecord.steel_type_id === 'string' ? steelTypeMap.get(rowRecord.steel_type_id) || null : null,
       available_stock: availableStock,
       available_secondary_stock: availableSecondaryStock,
-      incompatible_stock_available: incompatibleStockAvailable > 0 ? incompatibleStockAvailable : null,
       stock_unit: inventory?.unit ?? null,
       secondary_stock_unit: inventory?.secondary_unit ?? null,
       stock_items: stockItems.map((item) => ({
@@ -799,7 +806,8 @@ async function loadRequestForStockSource(
       for (const variant of (variantsData || []) as MaterialVariant[]) variantMap.set(variant.id, variant)
       for (const row of inventoryRows) row.variant = row.material_variant_id ? variantMap.get(row.material_variant_id) || null : null
     }
-    const reservationSource = stockSourceOverride || assertReservationAllowedForRequest(request)
+    const reservationSource = stockSourceOverride || getReservationStockSource(request)
+    if (!reservationSource) throw new Error('Заявка не находится на складском этапе')
     const visibleInventoryRows = inventoryRows
       .filter((row) => inventoryMatchesReservationSource(row, reservationSource))
       .sort((a, b) => Number(Boolean(b.is_local_factory)) - Number(Boolean(a.is_local_factory)))
@@ -924,15 +932,17 @@ export async function reserveItemFromStock(data: {
   quantity: number
 }) {
   try {
-    const { db } = await requireAccess('manage')
+    const { db, userId, role } = await requireAccess('manage')
     if (!REQUEST_TABLES.includes(data.request_item_table)) throw new Error('ÐÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ð°Ñ Ñ‚Ð°Ð±Ð»Ð¸Ñ†Ð° Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸')
     const requestId = await getRequestIdForItem(db, data.request_item_table, data.request_item_id)
     const request = await getRequestMeta(db, requestId)
+    await assertActiveReservationActor(db, request, userId, role)
     const reservationSource = assertReservationAllowedForRequest(request)
     const { data: rowData, error } = await db.from(data.request_item_table).select('*').eq('id', data.request_item_id).single()
     if (error || !rowData) throw new Error(error?.message || 'ÐŸÐ¾Ð·Ð¸Ñ†Ð¸Ñ Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
 
     const row = rowData as Record<string, unknown>
+    assertManualSupplyRequestReservationAllowed(data.request_item_table, row)
     if (row.order_status === 'cancelled') {
       throw new Error('Отменённую позицию нельзя резервировать')
     }
@@ -974,7 +984,7 @@ export async function reserveItemFromStock(data: {
         throw new Error('Выбранный складской остаток не совпадает с характеристикой позиции заявки.')
       }
     } else if (
-      requiresExactVariant(data.request_item_table, row)
+      requiresExactVariant(data.request_item_table)
       && !(isWholeBarRequest(data.request_item_table, row) && !Number(selectedInventory.piece_length_mm || 0))
     ) {
       throw new Error('Выберите складской остаток с точной характеристикой материала.')
@@ -1016,11 +1026,15 @@ export async function reserveItemFromStock(data: {
 
 export async function unreserveItem(data: { request_item_table: RequestItemTable; request_item_id: string }) {
   try {
-    const { db } = await requireAccess('manage')
+    const { db, userId, role } = await requireAccess('manage')
     if (!REQUEST_TABLES.includes(data.request_item_table)) throw new Error('ÐÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ð°Ñ Ñ‚Ð°Ð±Ð»Ð¸Ñ†Ð° Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸')
     const requestId = await getRequestIdForItem(db, data.request_item_table, data.request_item_id)
     const request = await getRequestMeta(db, requestId)
+    await assertActiveReservationActor(db, request, userId, role)
     const reservationSource = assertReservationAllowedForRequest(request)
+    const { data: rowData, error: rowError } = await db.from(data.request_item_table).select('*').eq('id', data.request_item_id).single()
+    if (rowError || !rowData) throw new Error(rowError?.message || 'Позиция заявки не найдена')
+    assertManualSupplyRequestReservationAllowed(data.request_item_table, rowData as Record<string, unknown>)
     const reservationIds = await getReservationIdsForItem(
       db,
       data.request_item_table,
@@ -1042,9 +1056,10 @@ export async function unreserveItem(data: { request_item_table: RequestItemTable
 
 export async function reserveAllAvailable(requestId: string, factoryId: string) {
   try {
-    await requireAccess('manage')
+    const { db, userId, role } = await requireAccess('manage')
     const { data, error } = await getRequestForSupply(requestId)
     if (error || !data) throw new Error(error || 'Ð—Ð°ÑÐ²ÐºÐ° Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½Ð°')
+    await assertActiveReservationActor(db, data.request, userId, role)
     if (!data.factories.some((factory) => factory.id === factoryId)) throw new Error('Выбранный завод не найден')
 
     let reservedCount = 0
@@ -1054,6 +1069,10 @@ export async function reserveAllAvailable(requestId: string, factoryId: string) 
       table: RequestItemTable,
       row: SupplyRequestRow<Record<string, unknown> & { id: string; material_id: string | null }>,
     ) => {
+      if (isLayoutManagedSupplyRequestItem(table, row)) {
+        skippedCount += 1
+        return
+      }
       if (!row.material_id || row.reservation_id) {
         skippedCount += 1
         return

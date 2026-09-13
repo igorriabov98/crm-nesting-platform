@@ -14,7 +14,6 @@ import { ROUTES } from '@/lib/constants/routes'
 import { reserveAllAvailable, type SupplyRequestPayload } from '@/lib/actions/supply-request'
 import { completeStockReservation } from '@/lib/actions/technologist-requests'
 import {
-  getSupplyOrdersForRequestHref,
   isBusinessScrapReservationStatus,
   isSupplyWarehouseReservationStatus,
 } from '@/lib/supply-request-flow'
@@ -58,9 +57,10 @@ export function SupplyRequestPage({ data, detailing }: Props) {
     }
   }, [data.sections, selectedFactoryId])
   const isStockCheckMode = isBusinessScrapReservationStatus(request.status)
-  const isSupplyReservationMode = isSupplyWarehouseReservationStatus(request.status)
-  const canCompleteReservation = isStockCheckMode && data.current_role !== 'supply_manager'
-  const canManageOrders = request.status === 'submitted_to_supply' || request.status === 'completed'
+  const isWarehouseReservationMode = isSupplyWarehouseReservationStatus(request.status)
+  const canReserveByRole = ['engineer', 'technologist', 'planning_director', 'financial_director', 'commercial_director'].includes(data.current_role)
+  const canReserve = (isStockCheckMode || isWarehouseReservationMode) && canReserveByRole
+  const canCompleteReservation = canReserve
   const canManageDetailing = isStockCheckMode && ['technologist', 'planning_director', 'financial_director', 'commercial_director'].includes(data.current_role)
   const totalWeight = [
     ...data.sections.sheetMetal,
@@ -106,6 +106,12 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         router.refresh()
         return
       }
+      if (result.data?.advancedToWarehouse) {
+        toast.success('Этап делового остатка завершён. Открыта бронь основного склада')
+        router.push(result.data.href)
+        router.refresh()
+        return
+      }
       router.push(result.data?.href || `/technologist/requests/${request.id}/complete`)
     })
   }
@@ -121,7 +127,9 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-[#1B3A6B]">
-              {data.positionRevision ? 'Проверка исправленной позиции' : 'Заявка на материалы'}: {request.machine.name}
+              {isWarehouseReservationMode
+                ? 'Бронь основного склада'
+                : data.positionRevision ? 'Проверка исправленной позиции' : 'Заявка на материалы'}: {request.machine.name}
             </h1>
             {data.positionRevision && (
               <p className="mt-2 text-sm text-amber-800">
@@ -138,33 +146,32 @@ export function SupplyRequestPage({ data, detailing }: Props) {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={reserveAll} disabled={isPending} className="bg-[#1B3A6B] text-white hover:bg-[#254B87]">
-              <Pin className="mr-2 h-4 w-4" />
-              {isStockCheckMode ? 'Бронь делового отхода' : 'Забронировать склад'}
-            </Button>
-            {canCompleteReservation && (
-              <Button type="button" onClick={completeReservation} disabled={isPending} className="bg-emerald-700 text-white hover:bg-emerald-800">
-                {data.positionRevision ? 'Передать исправление снабжению' : 'Продолжить завершение'}
+            {canReserve && (
+              <Button type="button" onClick={reserveAll} disabled={isPending} className="bg-[#1B3A6B] text-white hover:bg-[#254B87]">
+                <Pin className="mr-2 h-4 w-4" />
+                {isStockCheckMode ? 'Забронировать деловой остаток' : 'Забронировать доступное со склада'}
               </Button>
             )}
-            {isSupplyReservationMode && (
-              <Button
-                type="button"
-                onClick={() => router.push(getSupplyOrdersForRequestHref(request.id))}
-                disabled={isPending}
-                className="bg-emerald-700 text-white hover:bg-emerald-800"
-              >
-                Бронь завершена
+            {canCompleteReservation && (
+              <Button type="button" onClick={completeReservation} disabled={isPending} className="bg-emerald-700 text-white hover:bg-emerald-800">
+                {isStockCheckMode
+                  ? 'Перейти к основному складу'
+                  : data.positionRevision ? 'Завершить бронь и вернуть снабжению' : 'Завершить бронь склада и продолжить'}
               </Button>
             )}
             <Button type="button" variant="outline" onClick={() => router.push(`${ROUTES.SALES_PLAN}/${request.machine_id}`)}>
-              Открыть машину
+              Открыть заказ
             </Button>
           </div>
         </div>
         {isStockCheckMode && (
           <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Заявка на проверке делового отхода. Забронируйте только доступный деловой отход и нажмите &quot;Бронь завершена&quot;, чтобы передать незакрытый остаток в снабжение.
+            Забронируйте доступный деловой остаток и завершите этап, чтобы перейти к проверке основного склада.
+          </p>
+        )}
+        {isWarehouseReservationMode && (
+          <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+            Проверьте основной склад. Незакрытый объём автоматически останется в колонке «К заказу» для снабжения.
           </p>
         )}
       </section>
@@ -197,7 +204,7 @@ export function SupplyRequestPage({ data, detailing }: Props) {
             </button>
           ))}
         </div>
-        {selectedFactory && !selectedFactory.is_destination && (
+        {canReserve && selectedFactory && !selectedFactory.is_destination && (
           <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             Бронь со склада «{selectedFactory.name}» автоматически создаст межзаводское перемещение на завод машины.
           </p>
@@ -228,14 +235,14 @@ export function SupplyRequestPage({ data, detailing }: Props) {
         </div>
       </div>
 
-      {activeTab === 'sheet_metal' && <SupplySheetMetalTable key={selectedFactoryId} rows={filteredSections.sheetMetal} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'circle' && <SupplyCircleTable key={selectedFactoryId} rows={filteredSections.circles} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'knives' && <SupplyKnivesTable key={selectedFactoryId} rows={filteredSections.knives} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'paint' && <SupplyPaintTable key={selectedFactoryId} rows={filteredSections.paint} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'components' && <SupplyComponentsTable key={selectedFactoryId} rows={filteredSections.components} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'mesh' && <SupplyMeshTable key={selectedFactoryId} rows={filteredSections.meshItems} machineId={request.machine_id} canManageOrders={canManageOrders} />}
-      {activeTab === 'chain_cord' && <SupplyChainCordTable key={selectedFactoryId} rows={filteredSections.chainCords} machineId={request.machine_id} canManageOrders={canManageOrders} />}
+      {activeTab === 'sheet_metal' && <SupplySheetMetalTable key={selectedFactoryId} rows={filteredSections.sheetMetal} machineId={request.machine_id} canReserve={canReserve} />}
+      {activeTab === 'circle' && <SupplyCircleTable key={selectedFactoryId} rows={filteredSections.circles} />}
+      {activeTab === 'pipe' && <SupplyPipeTable key={selectedFactoryId} rows={filteredSections.pipes} machineId={request.machine_id} canReserve={canReserve} />}
+      {activeTab === 'knives' && <SupplyKnivesTable key={selectedFactoryId} rows={filteredSections.knives} />}
+      {activeTab === 'paint' && <SupplyPaintTable key={selectedFactoryId} rows={filteredSections.paint} machineId={request.machine_id} canReserve={canReserve} />}
+      {activeTab === 'components' && <SupplyComponentsTable key={selectedFactoryId} rows={filteredSections.components} machineId={request.machine_id} canReserve={canReserve} />}
+      {activeTab === 'mesh' && <SupplyMeshTable key={selectedFactoryId} rows={filteredSections.meshItems} machineId={request.machine_id} canReserve={canReserve} />}
+      {activeTab === 'chain_cord' && <SupplyChainCordTable key={selectedFactoryId} rows={filteredSections.chainCords} machineId={request.machine_id} canReserve={canReserve} />}
     </div>
   )
 }

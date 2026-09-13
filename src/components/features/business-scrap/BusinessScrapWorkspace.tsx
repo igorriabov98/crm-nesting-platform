@@ -33,6 +33,7 @@ export function BusinessScrapWorkspaceView({ workspace }: Props) {
   const [removed, setRemoved] = useState<Set<string>>(new Set())
   const [additions, setAdditions] = useState<Record<string, string>>({})
   const isInitial = workspace.request.status === 'pending_stock_check' || workspace.request.status === 'stock_checked'
+  const isWarehouseStage = workspace.request.status === 'stock_checked'
   const locked = Boolean(workspace.pendingCorrection)
   const changes = useMemo(() => workspace.items.flatMap((item) => {
     const removeIds = item.reservations.filter((reservation) => removed.has(reservation.id)).map((reservation) => reservation.id)
@@ -92,14 +93,18 @@ export function BusinessScrapWorkspaceView({ workspace }: Props) {
             </p>
           </div>
           <Badge variant="outline" className={isInitial ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}>
-            {isInitial ? 'Первичная бронь' : 'Передана снабжению'}
+            {isWarehouseStage ? 'Бронь основного склада' : isInitial ? 'Бронь делового остатка' : 'Передана снабжению'}
           </Badge>
         </div>
         {isInitial && (
           <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
-            <p className="text-sm text-blue-900">Первичная бронь выполняется без согласования по существующему безопасному процессу.</p>
+            <p className="text-sm text-blue-900">
+              {isWarehouseStage
+                ? 'Этап делового остатка завершён. Продолжите бронь на основном складе.'
+                : 'Сначала проверьте и забронируйте доступный деловой остаток.'}
+            </p>
             <Link href={ROUTES.SUPPLY_REQUEST + '/' + workspace.request.id} className="mt-3 inline-flex min-h-10 items-center rounded-lg bg-[#1B3A6B] px-4 text-sm font-semibold text-white">
-              Открыть первичную бронь
+              {isWarehouseStage ? 'Открыть бронь основного склада' : 'Открыть бронь делового остатка'}
             </Link>
           </div>
         )}

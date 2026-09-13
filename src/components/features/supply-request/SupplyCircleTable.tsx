@@ -1,6 +1,4 @@
 import type { ReactNode } from 'react'
-import { ReserveButton } from './ReserveButton'
-import { UnreserveButton } from './UnreserveButton'
 import { StockCoverageValue } from './StockCoverageValue'
 import { EmptyRows, OrderStatusCell, formatAmount, stockText, stickyCellClass, tableClass, tdClass, thClass } from './SupplyRequestTableShared'
 import type { SupplyRequestRow } from '@/lib/actions/supply-request'
@@ -8,11 +6,9 @@ import type { RequestCircle } from '@/lib/types'
 
 type Props = {
   rows: SupplyRequestRow<RequestCircle>[]
-  machineId: string
-  canManageOrders?: boolean
 }
 
-export function SupplyCircleTable({ rows, machineId, canManageOrders = true }: Props) {
+export function SupplyCircleTable({ rows }: Props) {
   return (
     <Section title="Круг">
       <table className={tableClass}>
@@ -38,13 +34,8 @@ export function SupplyCircleTable({ rows, machineId, canManageOrders = true }: P
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
                 <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockBreakdown(row.stock_items, unit) || stockText(row.available_stock, unit)}</td>
                 <td className={tdClass}><StockCoverageValue reserved={reserved} covered={row.covered_quantity} unit={unit} /></td>
-                <td className={tdClass}><OrderStatusCell table="request_circle" id={row.id} status={row.order_status} canEdit={canManageOrders} receivingTable="request_circle" itemName={row.materials?.name || 'Круг'} /></td>
-                <td className={tdClass}>
-                  <div className="flex items-center gap-2">
-                    <ReserveButton table="request_circle" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
-                    {row.reservation_id && <UnreserveButton table="request_circle" itemId={row.id} />}
-                  </div>
-                </td>
+                <td className={tdClass}><OrderStatusCell table="request_circle" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
+                <td className={tdClass}><span className="text-xs text-slate-500">Бронь по раскладке</span></td>
               </tr>
             )
           })}

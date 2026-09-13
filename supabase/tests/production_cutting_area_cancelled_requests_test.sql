@@ -10,6 +10,7 @@ declare
   v_active_request constant uuid := '99000000-0000-4000-8000-000000000005';
   v_cancelled_request constant uuid := '99000000-0000-4000-8000-000000000006';
   v_completion constant uuid := '99000000-0000-4000-8000-000000000007';
+  v_business_date date := (now() at time zone 'Europe/Kyiv')::date;
   v_cycle uuid;
 begin
   select id into strict v_factory from public.factories order by created_at, id limit 1;
@@ -19,7 +20,7 @@ begin
   insert into public.machines(id, factory_id, name, created_by, is_confirmed)
   values (v_machine, v_factory, 'CUTTING-CANCELLED-REQUEST', v_actor, true);
   insert into public.production_stages(machine_id, stage_type, workshop, date_start, is_skipped, updated_by)
-  values (v_machine, 'cutting', 1, current_date, false, v_actor)
+  values (v_machine, 'cutting', 1, v_business_date, false, v_actor)
   on conflict (machine_id, stage_type) do update
   set workshop = excluded.workshop,
       date_start = excluded.date_start,
@@ -43,7 +44,7 @@ begin
   values (v_cancelled_request, v_machine, v_actor, 'cancelled', now() - interval '1 day');
 
   v_cycle := public.fn_start_production_cutting_cycle(
-    v_machine, v_factory, v_section, current_date, 'day', array[v_active_request], v_actor
+    v_machine, v_factory, v_section, v_business_date, 'day', array[v_active_request], v_actor
   );
 
   if (select count(*) from public.production_cutting_cycle_requests where cycle_id = v_cycle) <> 1 then

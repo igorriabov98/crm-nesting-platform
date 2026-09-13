@@ -4,8 +4,8 @@ import type { RequestStatus } from '@/lib/types'
 
 const STATUS_LABELS: Record<RequestStatus, string> = {
   draft: 'Черновик',
-  pending_stock_check: 'Проверка склада',
-  stock_checked: 'Склад проверен',
+  pending_stock_check: 'Бронь делового остатка',
+  stock_checked: 'Бронь основного склада',
   submitted_to_supply: 'Отправлена в снабжение',
   completed: 'Завершена',
   cancelled: 'Отменена',

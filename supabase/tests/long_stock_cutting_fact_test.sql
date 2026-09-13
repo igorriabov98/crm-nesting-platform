@@ -1081,7 +1081,7 @@ begin
   );
   v_request := (v_plan_data->>'request_id')::uuid;
   update public.technologist_requests
-  set status = 'pending_stock_check'
+  set status = 'stock_checked'
   where id = v_request;
 
   select planned_bar_count, fact_bar_count, plan_status
@@ -1196,7 +1196,7 @@ begin
   join public.machines machine on machine.id = request.machine_id
   where machine.name = 'LONG-STOCK-FACT-SEQUENCE';
   update public.technologist_requests
-  set status = 'pending_stock_check'
+  set status = 'stock_checked'
   where id = v_all_plan_request;
 
   v_completion := public.fn_finalize_technologist_request(
@@ -1287,7 +1287,7 @@ begin
     raise exception 'Не рассчитан вес обычной позиции смешанной заявки';
   end if;
   update public.technologist_requests
-  set status = 'pending_stock_check'
+  set status = 'stock_checked'
   where id = v_mixed_request;
 
   v_payload := jsonb_build_array(jsonb_build_object(
