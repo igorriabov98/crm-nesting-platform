@@ -506,7 +506,6 @@ export const PERMISSION_RESOURCES = [
     defaultViewRoles: SUPPLY_AND_DIRECTORS,
     defaultManageRoles: SUPPLY_AND_DIRECTORS,
     routes: [{ path: ROUTES.SUPPLY_MATERIAL_REQUESTS, match: 'prefix', operation: 'view', priority: 120 }],
-    sidebar: { section: 'supply', icon: 'materialRequests', order: 6 },
   },
   {
     key: 'supply_consumable_requests',

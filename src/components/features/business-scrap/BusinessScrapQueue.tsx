@@ -20,7 +20,8 @@ const stateLabels: Record<'all' | BusinessScrapQueueState, string> = {
   all: 'Все состояния',
   no_request: 'Нет заявки',
   draft: 'Заявка заполняется',
-  initial_reservation: 'Первичная бронь',
+  initial_reservation: 'Бронь делового остатка',
+  warehouse_reservation: 'Бронь основного склада',
   submitted: 'Передана снабжению',
   correction_pending: 'Ждёт согласования',
 }
@@ -30,7 +31,7 @@ function stateBadge(state: BusinessScrapQueueState) {
     ? 'border-amber-200 bg-amber-50 text-amber-800'
     : state === 'submitted'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-      : state === 'initial_reservation'
+      : state === 'initial_reservation' || state === 'warehouse_reservation'
         ? 'border-blue-200 bg-blue-50 text-blue-700'
         : 'border-slate-200 bg-slate-50 text-slate-700'
   return <Badge variant="outline" className={tone}>{stateLabels[state]}</Badge>

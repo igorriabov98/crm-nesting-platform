@@ -34,6 +34,7 @@ export function UnreserveButton({ table, itemId }: UnreserveButtonProps) {
       disabled={isPending}
       className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 disabled:opacity-50"
       title="Снять бронь"
+      aria-label="Снять бронь"
     >
       <X className="h-4 w-4" />
     </button>

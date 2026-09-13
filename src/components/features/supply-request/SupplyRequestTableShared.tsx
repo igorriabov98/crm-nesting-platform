@@ -1,25 +1,8 @@
-'use client'
-
-import { useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
-import { ORDER_STATUS_LABELS } from '@/lib/constants/procurement'
-import { markOrderDelivered, markOrderPlaced } from '@/lib/actions/supply-orders'
-import { LongStockReceivingDialog } from '@/components/features/inventory/LongStockReceivingDialog'
-import type { LongStockRequestItemTable } from '@/lib/supply-orders/long-stock-purchase-plan'
+import { getSupplyRequestPositionStatus, type SupplyRequestItemTable } from '@/lib/supply-request-reservation-policy'
 import type { OrderItemStatus } from '@/lib/types'
 
-export type RequestItemTable =
-  | 'request_sheet_metal'
-  | 'request_round_tube'
-  | 'request_circle'
-  | 'request_pipe'
-  | 'request_knives'
-  | 'request_components'
-  | 'request_paint'
-  | 'request_mesh'
-  | 'request_chain_cord'
+export type RequestItemTable = SupplyRequestItemTable
 
 const statusVariant = {
   pending: 'secondary',
@@ -46,59 +29,26 @@ export function toOrderCell(needed: number, reserved: number, unit: string) {
 
 export function OrderStatusCell({
   table,
-  id,
   status,
-  canEdit = true,
-  receivingTable,
-  itemName,
+  needed,
+  reserved,
+  covered,
+  pipeType,
 }: {
   table: RequestItemTable
-  id: string
   status: OrderItemStatus
-  canEdit?: boolean
-  receivingTable?: LongStockRequestItemTable
-  itemName?: string
+  needed: number
+  reserved: number | null | undefined
+  covered: number | null | undefined
+  pipeType?: unknown
 }) {
-  const router = useRouter()
-  const [isPending, startTransition] = useTransition()
-  const [receivingOpen, setReceivingOpen] = useState(false)
-
-  const update = (mode: 'ordered' | 'delivered') => {
-    startTransition(async () => {
-      const result = mode === 'ordered'
-        ? await markOrderPlaced([{ table, id }])
-        : await markOrderDelivered([{ table, id }])
-      if (!result.success) {
-        toast.error(result.error || 'Не удалось обновить статус')
-        return
-      }
-      toast.success(mode === 'ordered' ? 'Отмечено как заказано' : 'Материал принят на склад')
-      router.refresh()
-    })
-  }
+  const label = getSupplyRequestPositionStatus({ table, status, needed, reserved, covered, pipeType })
 
   return (
     <div className="flex min-w-[145px] flex-col items-start gap-1">
-      <Badge variant={statusVariant[status]}>{ORDER_STATUS_LABELS[status]}</Badge>
-      {canEdit && status === 'pending' && (
-        <button type="button" disabled={isPending} onClick={() => update('ordered')} className="text-xs font-medium text-[#1B3A6B] hover:underline">
-          Отметить заказано
-        </button>
-      )}
-      {canEdit && status === 'ordered' && (
-        <button type="button" disabled={isPending} onClick={() => receivingTable ? setReceivingOpen(true) : update('delivered')} className="text-xs font-medium text-emerald-700 hover:underline">
-          Принять на склад
-        </button>
-      )}
-      {receivingTable && (
-        <LongStockReceivingDialog
-          open={receivingOpen}
-          requestItemTable={receivingTable}
-          requestItemId={id}
-          itemName={itemName}
-          onOpenChange={setReceivingOpen}
-        />
-      )}
+      <Badge variant={label === 'Закрыто со склада' || label === 'Забронировано по раскладке' ? 'outline' : statusVariant[status]}>
+        {label}
+      </Badge>
     </div>
   )
 }

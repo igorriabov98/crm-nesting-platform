@@ -101,7 +101,7 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
       if (!result.success) throw new Error(result.error || 'Не удалось оформить заявку')
       toast.success(revision
         ? 'Исправление сохранено. Проверьте склад и передайте позицию снабжению.'
-        : 'Заявка оформлена. Забронируйте деловой отход и завершите бронь.')
+        : 'Заявка оформлена. Начните с брони делового остатка.')
       setStatus('pending_stock_check')
       openStockCheck()
     } catch (error) {
@@ -203,7 +203,9 @@ export function TechnologistRequestPage({ machine, data, suppliers, canManage, s
               <Send className="mr-2 h-4 w-4" />
               {status === 'draft'
                 ? revision ? 'Проверить склад' : 'Заявка оформлена'
-                : revision ? 'Вернуться к проверке склада' : 'Перейти к брони делового отхода'}
+                : status === 'stock_checked'
+                  ? 'Перейти к брони основного склада'
+                  : revision ? 'Вернуться к проверке склада' : 'Перейти к брони делового остатка'}
             </Button>
           )}
         </div>

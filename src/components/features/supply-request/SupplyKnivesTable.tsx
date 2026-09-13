@@ -1,6 +1,4 @@
 import type { ReactNode } from 'react'
-import { ReserveButton } from './ReserveButton'
-import { UnreserveButton } from './UnreserveButton'
 import { StockCoverageValue } from './StockCoverageValue'
 import { EmptyRows, OrderStatusCell, formatAmount, stockText, stickyCellClass, tableClass, tdClass, thClass } from './SupplyRequestTableShared'
 import type { SupplyRequestRow } from '@/lib/actions/supply-request'
@@ -9,11 +7,9 @@ import { knifeBevelCharacteristicLabel } from '@/lib/materials/knife-bevel'
 
 type Props = {
   rows: SupplyRequestRow<RequestKnives>[]
-  machineId: string
-  canManageOrders?: boolean
 }
 
-export function SupplyKnivesTable({ rows, machineId, canManageOrders = true }: Props) {
+export function SupplyKnivesTable({ rows }: Props) {
   return (
     <Section title="Ножи">
       <table className={tableClass}>
@@ -40,20 +36,10 @@ export function SupplyKnivesTable({ rows, machineId, canManageOrders = true }: P
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
                 <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>
                   {stockBreakdown(row.stock_items, unit) || stockText(row.available_stock, unit)}
-                  {Number(row.available_stock || 0) <= 0 && Number(row.incompatible_stock_available || 0) > 0 && (
-                    <div className="mt-1 whitespace-normal text-xs leading-snug text-amber-700">
-                      Есть остаток по материалу, но характеристики ножа не совпадают
-                    </div>
-                  )}
                 </td>
                 <td className={tdClass}><StockCoverageValue reserved={reserved} covered={row.covered_quantity} unit={unit} /></td>
-                <td className={tdClass}><OrderStatusCell table="request_knives" id={row.id} status={row.order_status} canEdit={canManageOrders} receivingTable="request_knives" itemName={row.materials?.name || row.knife_type || 'Нож'} /></td>
-                <td className={tdClass}>
-                  <div className="flex items-center gap-2">
-                    <ReserveButton table="request_knives" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
-                    {row.reservation_id && <UnreserveButton table="request_knives" itemId={row.id} />}
-                  </div>
-                </td>
+                <td className={tdClass}><OrderStatusCell table="request_knives" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
+                <td className={tdClass}><span className="text-xs text-slate-500">Бронь по раскладке</span></td>
               </tr>
             )
           })}
@@ -70,7 +56,7 @@ function stockBreakdown(items: SupplyRequestRow<RequestKnives>['stock_items'], f
     <div className="space-y-1">
       {lengthItems.map((item) => (
         <div key={item.id} className="whitespace-nowrap">
-          {item.is_business_scrap && <span className="mr-1 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Отход</span>}
+          {item.is_business_scrap && <span className="mr-1 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Деловой остаток</span>}
           {formatAmount(item.piece_length_mm ?? 0)} мм: {formatStockQuantity(item.available_quantity, item.unit || fallbackUnit, item.available_secondary_quantity, item.secondary_unit)}
         </div>
       ))}

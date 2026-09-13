@@ -601,7 +601,7 @@ export async function submitRequest(requestId: string): Promise<ActionResult> {
 
 export async function completeStockReservation(
   requestId: string,
-): Promise<ActionResult<{ href: string; submittedRevision?: boolean }>> {
+): Promise<ActionResult<{ href: string; advancedToWarehouse?: boolean; submittedRevision?: boolean }>> {
   try {
     const { db, userId } = await requireRequestPermission('manage')
     const request = await getRequestMachine(db, requestId)
@@ -620,6 +620,35 @@ export async function completeStockReservation(
       .eq('replacement_request_id', requestId)
     if (revisionError) throw new Error(revisionError.message || 'Не удалось проверить корректирующую заявку')
     const revision = ((revisionData || []) as Array<{ id: string; department_request_id: string }>)[0] || null
+
+    if (request.status === 'pending_stock_check') {
+      if (!revision) {
+        const { data: detailingCheckData, error: detailingCheckError } = await db.rpc('fn_validate_detailing_request_check', {
+          p_request_id: requestId,
+          p_actor: userId,
+        })
+        if (detailingCheckError) throw new Error(detailingCheckError.message || 'Не удалось проверить деталировку')
+        const detailingCheck = detailingCheckData as { ready?: boolean; message?: string } | null
+        if (!detailingCheck?.ready) {
+          throw new Error(detailingCheck?.message || 'Проверьте подходящую деталировку перед переходом к основному складу')
+        }
+      }
+      await validateRequestReadyForSupply(db, requestId, userId)
+      const { error: advanceError } = await db.rpc('fn_complete_business_scrap_stage_v1', {
+        p_request_id: requestId,
+        p_actor: userId,
+      })
+      if (advanceError) throw new Error(advanceError.message || 'Не удалось открыть бронь основного склада')
+      revalidateRequest(request.machine_id, requestId)
+      revalidatePath(`${ROUTES.SUPPLY_REQUEST}/${requestId}`)
+      return {
+        success: true,
+        data: {
+          href: `${ROUTES.SUPPLY_REQUEST}/${requestId}`,
+          advancedToWarehouse: true,
+        },
+      }
+    }
 
     if (revision) {
       await validateRequestReadyForSupply(db, requestId, userId)
@@ -662,33 +691,11 @@ export async function completeStockReservation(
 
     await validateRequestReadyForSupply(db, requestId, userId)
 
-    // The reservation check only opens the completion wizard. The request is
+    // The regular warehouse check only opens the completion wizard. The request is
     // submitted to supply by fn_finalize_technologist_request in one transaction.
     return { success: true, data: { href: `/technologist/requests/${requestId}/complete` } }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось завершить бронь' }
-  }
-}
-
-export async function markStockChecked(requestId: string): Promise<ActionResult> {
-  try {
-    const { db } = await requireRequestPermission('manage')
-    const request = await getRequestMachine(db, requestId)
-    await assertMachineNotArchived(db, request.machine_id)
-    if (request.status !== 'pending_stock_check' && request.status !== 'stock_checked') {
-      throw new Error('Проверка склада уже завершена или заявка находится на другом этапе')
-    }
-
-    const { error } = await db
-      .from('technologist_requests')
-      .update({ status: 'stock_checked', updated_at: new Date().toISOString() })
-      .eq('id', requestId)
-
-    if (error) throw new Error(error.message || 'Не удалось обновить статус')
-    revalidateRequest(request.machine_id, requestId)
-    return { success: true }
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : 'Не удалось обновить статус' }
   }
 }
 

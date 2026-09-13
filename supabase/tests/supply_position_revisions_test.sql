@@ -232,6 +232,21 @@ begin
     raise exception 'Stock-check status was not synchronized for %/%', p_table, p_variant;
   end if;
 
+  begin
+    perform public.fn_submit_supply_position_revision_v1(v_replacement_request_id, v_technologist);
+    raise exception 'Revision bypassed the regular-stock stage for %/%', p_table, p_variant;
+  exception when sqlstate '55000' then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '[REGULAR_STOCK_CHECK_REQUIRED]%' then raise; end if;
+  end;
+  if (select status from public.technologist_requests where id = v_replacement_request_id) <> 'pending_stock_check' then
+    raise exception 'Rejected regular-stock bypass changed request status for %/%', p_table, p_variant;
+  end if;
+
+  update public.technologist_requests
+  set status = 'stock_checked', updated_at = now()
+  where id = v_replacement_request_id;
+
   v_submit := public.fn_submit_supply_position_revision_v1(v_replacement_request_id, v_technologist);
   v_repeat_submit := public.fn_submit_supply_position_revision_v1(v_replacement_request_id, v_technologist);
   if not coalesce((v_repeat_submit->>'idempotent')::boolean, false)

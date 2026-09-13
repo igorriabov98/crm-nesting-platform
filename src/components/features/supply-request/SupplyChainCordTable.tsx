@@ -9,10 +9,10 @@ import type { RequestChainCord } from '@/lib/types'
 type Props = {
   rows: SupplyRequestRow<RequestChainCord>[]
   machineId: string
-  canManageOrders?: boolean
+  canReserve?: boolean
 }
 
-export function SupplyChainCordTable({ rows, machineId, canManageOrders = true }: Props) {
+export function SupplyChainCordTable({ rows, machineId, canReserve = false }: Props) {
   return (
     <Section title="Цепь / Шнур">
       <table className={tableClass}>
@@ -36,12 +36,12 @@ export function SupplyChainCordTable({ rows, machineId, canManageOrders = true }
                 <td className={tdClass}>{formatAmount(needed)}</td>
                 <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockText(row.available_stock, unit)}</td>
                 <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
-                <td className={tdClass}><OrderStatusCell table="request_chain_cord" id={row.id} status={row.order_status} canEdit={canManageOrders} /></td>
+                <td className={tdClass}><OrderStatusCell table="request_chain_cord" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
                 <td className={tdClass}>
-                  <div className="flex items-center gap-2">
+                  {canReserve ? <div className="flex items-center gap-2">
                     <ReserveButton table="request_chain_cord" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
                     {row.reservation_id && <UnreserveButton table="request_chain_cord" itemId={row.id} />}
-                  </div>
+                  </div> : <span className="text-xs text-slate-400">Только просмотр</span>}
                 </td>
               </tr>
             )

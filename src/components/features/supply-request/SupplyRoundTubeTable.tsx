@@ -8,10 +8,10 @@ import type { RequestRoundTube } from '@/lib/types'
 type Props = {
   rows: SupplyRequestRow<RequestRoundTube>[]
   machineId: string
-  canManageOrders?: boolean
+  canReserve?: boolean
 }
 
-export function SupplyRoundTubeTable({ rows, machineId, canManageOrders = true }: Props) {
+export function SupplyRoundTubeTable({ rows, machineId, canReserve = false }: Props) {
   return (
     <Section title="Круг / Труба">
       <table className={tableClass}>
@@ -38,17 +38,17 @@ export function SupplyRoundTubeTable({ rows, machineId, canManageOrders = true }
                   )}
                 </td>
                 <td className={tdClass}>
-                  <ReserveButton table="request_round_tube" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit="кг" stockItems={row.stock_items} />
+                  {canReserve ? <ReserveButton table="request_round_tube" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit="кг" stockItems={row.stock_items} /> : <span className="text-xs text-slate-400">Только просмотр</span>}
                 </td>
                 <td className={tdClass}>
                   <div className="flex items-center gap-2">
                     <span>{formatAmount(reserved)} кг</span>
-                    {row.reservation_id && <UnreserveButton table="request_round_tube" itemId={row.id} />}
+                    {canReserve && row.reservation_id && <UnreserveButton table="request_round_tube" itemId={row.id} />}
                   </div>
                   {Number(row.reserved_from_stock_m || 0) > 0 && <div className="text-xs text-slate-500">{formatAmount(row.reserved_from_stock_m)} м</div>}
                 </td>
                 <td className={tdClass}>{toOrderCell(needed, reserved, 'кг')}</td>
-                <td className={tdClass}><OrderStatusCell table="request_round_tube" id={row.id} status={row.order_status} canEdit={canManageOrders} /></td>
+                <td className={tdClass}><OrderStatusCell table="request_round_tube" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
               </tr>
             )
           })}

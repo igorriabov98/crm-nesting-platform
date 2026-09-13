@@ -149,6 +149,7 @@ export function ReserveButton({ table, itemId, materialId, machineId, needed, re
         disabled={isPending || suggested <= 0}
         className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-[#1B3A6B] text-white hover:bg-[#254B87] disabled:opacity-50"
         title={hasAvailableStock ? 'Забронировать' : 'Нет доступного остатка'}
+        aria-label={hasAvailableStock ? `Забронировать ${quantity || 0} ${unit}` : 'Нет доступного остатка'}
       >
         <Pin className="h-4 w-4" />
       </button>
@@ -173,7 +174,7 @@ function formatPieceLength(value: number | null) {
 }
 
 function formatStockItemOption(item: SupplyStockItem, fallbackUnit: string) {
-  const prefix = item.is_business_scrap ? 'Отход ' : ''
+  const prefix = item.is_business_scrap ? 'Деловой остаток ' : ''
   const legacy = item.is_legacy_bar_stock ? 'Старый количественный остаток ' : ''
   const piece = item.piece_length_mm !== null ? `${formatPieceLength(item.piece_length_mm)} ` : ''
   const label = item.label ? `${item.label} ` : ''

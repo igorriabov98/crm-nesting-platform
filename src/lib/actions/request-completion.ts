@@ -171,7 +171,7 @@ export async function getCompletionWorkspace(requestId: string): Promise<Complet
     const requestResult = await client.from('technologist_requests').select('id,machine_id,created_by,status').eq('id', id).single()
     if (requestResult.error || !requestResult.data) throw new Error('Заявка не найдена')
     if (requestResult.data.created_by !== userId) throw new Error('Завершить заявку может только её автор')
-    const navigation = resolveCompletionWorkspaceNavigation(requestResult.data.status as RequestStatus)
+    const navigation = resolveCompletionWorkspaceNavigation(requestResult.data.status as RequestStatus, id)
     if (navigation.kind === 'redirect') return { data: null, error: null, redirectTo: navigation.href }
     if (navigation.kind === 'unavailable') throw new Error('Заявка не находится на этапе бронирования')
     const [machineResult, sheet, pipe, circle, knives, planFactsResult] = await Promise.all([
@@ -275,12 +275,15 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
     const { supabase, userId } = await requirePermission('technologist_requests', 'manage')
     const client = db()
     const [machineResult, sheetResult] = await Promise.all([
-      client.from('technologist_requests').select('machine_id,created_by').eq('id', parsed.requestId).single(),
+      client.from('technologist_requests').select('machine_id,created_by,status').eq('id', parsed.requestId).single(),
       client.from('request_sheet_metal').select('id', { count: 'exact', head: true }).eq('request_id', parsed.requestId),
     ])
     if (machineResult.error || !machineResult.data) throw new Error('Заявка не найдена')
     if (sheetResult.error) throw new Error('Не удалось проверить состав заявки')
     if (machineResult.data.created_by !== userId) throw new Error('Завершить заявку может только её автор')
+    if (machineResult.data.status !== 'stock_checked') {
+      throw new Error('Сначала завершите бронь основного склада')
+    }
     const hasSheetMetal = (sheetResult.count || 0) > 0
     if (!hasSheetMetal && stagedArchives.length > 0) throw new Error('Программа порезки доступна только для листового металла')
     if (!hasSheetMetal && (parsed.hours > 0 || parsed.minutes > 0)) throw new Error('Время плазмы доступно только для листового металла')

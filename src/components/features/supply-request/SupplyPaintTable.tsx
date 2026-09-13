@@ -8,10 +8,10 @@ import type { RequestPaint } from '@/lib/types'
 type Props = {
   rows: SupplyRequestRow<RequestPaint>[]
   machineId: string
-  canManageOrders?: boolean
+  canReserve?: boolean
 }
 
-export function SupplyPaintTable({ rows, machineId, canManageOrders = true }: Props) {
+export function SupplyPaintTable({ rows, machineId, canReserve = false }: Props) {
   return (
     <Section title="Краска">
       <table className={tableClass}>
@@ -35,12 +35,12 @@ export function SupplyPaintTable({ rows, machineId, canManageOrders = true }: Pr
                 <td className={tdClass}>{formatAmount(needed)}</td>
                 <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockText(row.available_stock, unit)}</td>
                 <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
-                <td className={tdClass}><OrderStatusCell table="request_paint" id={row.id} status={row.order_status} canEdit={canManageOrders} /></td>
+                <td className={tdClass}><OrderStatusCell table="request_paint" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
                 <td className={tdClass}>
-                  <div className="flex items-center gap-2">
+                  {canReserve ? <div className="flex items-center gap-2">
                     <ReserveButton table="request_paint" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
                     {row.reservation_id && <UnreserveButton table="request_paint" itemId={row.id} />}
-                  </div>
+                  </div> : <span className="text-xs text-slate-400">Только просмотр</span>}
                 </td>
               </tr>
             )

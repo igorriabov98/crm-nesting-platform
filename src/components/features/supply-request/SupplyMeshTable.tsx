@@ -8,10 +8,10 @@ import type { RequestMesh } from '@/lib/types'
 type Props = {
   rows: SupplyRequestRow<RequestMesh>[]
   machineId: string
-  canManageOrders?: boolean
+  canReserve?: boolean
 }
 
-export function SupplyMeshTable({ rows, machineId, canManageOrders = true }: Props) {
+export function SupplyMeshTable({ rows, machineId, canReserve = false }: Props) {
   return (
     <Section title="Сетка">
       <table className={tableClass}>
@@ -36,12 +36,12 @@ export function SupplyMeshTable({ rows, machineId, canManageOrders = true }: Pro
                 <td className={tdClass}>{formatAmount(needed)}</td>
                 <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockText(row.available_stock, unit)}</td>
                 <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
-                <td className={tdClass}><OrderStatusCell table="request_mesh" id={row.id} status={row.order_status} canEdit={canManageOrders} /></td>
+                <td className={tdClass}><OrderStatusCell table="request_mesh" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
                 <td className={tdClass}>
-                  <div className="flex items-center gap-2">
+                  {canReserve ? <div className="flex items-center gap-2">
                     <ReserveButton table="request_mesh" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
                     {row.reservation_id && <UnreserveButton table="request_mesh" itemId={row.id} />}
-                  </div>
+                  </div> : <span className="text-xs text-slate-400">Только просмотр</span>}
                 </td>
               </tr>
             )

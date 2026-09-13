@@ -21,7 +21,12 @@ import { requirePermission } from '@/lib/permissions/server'
 import { assertFactoryAccess, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { formatKnifeProfileDimensions } from '@/lib/materials/knife-profile'
-import type { PermissionOperation } from '@/lib/permissions/resources'
+import { DIRECTOR_ACCESS_ROLES, type PermissionOperation } from '@/lib/permissions/resources'
+import {
+  assertManualSupplyRequestReservationAllowed,
+  getReservationStockSourceForStatus,
+  isActiveWarehouseReservationStatus,
+} from '@/lib/supply-request-reservation-policy'
 import type { Factory, Inventory, InventoryReservation, InventoryTransaction, InventoryTransactionType, Material, MaterialCategory, MaterialVariant } from '@/lib/types'
 
 type DbResult = { data: unknown; error: { message?: string } | null; count?: number | null }
@@ -260,9 +265,58 @@ async function assertMachineAccess(
   )
 }
 
+async function assertActiveRequestReservationAccess(
+  db: LooseDb,
+  permission: FactoryScopedPermissionContext & { userId: string },
+  input: { requestId: string; machineId: string; inventoryId?: string | null },
+) {
+  const { data: requestData, error: requestError } = await db
+    .from('technologist_requests')
+    .select('id, machine_id, status, created_by')
+    .eq('id', input.requestId)
+    .maybeSingle()
+  const request = requestData as { machine_id: string; status: import('@/lib/types').RequestStatus; created_by: string | null } | null
+  if (requestError || !request || request.machine_id !== input.machineId) {
+    throw new Error('Позиция заявки не относится к выбранной машине или доступ запрещён')
+  }
+  if (!isActiveWarehouseReservationStatus(request.status)) {
+    throw new Error('Эта заявка доступна только для ознакомления')
+  }
+  const source = getReservationStockSourceForStatus(request.status)
+  if (input.inventoryId) {
+    const { data: sourceInventoryData, error: sourceInventoryError } = await db
+      .from('inventory')
+      .select('is_business_scrap')
+      .eq('id', input.inventoryId)
+      .maybeSingle()
+    if (sourceInventoryError || !sourceInventoryData) throw new Error('Не удалось проверить источник складского остатка')
+    const isBusinessScrap = Boolean((sourceInventoryData as { is_business_scrap?: boolean }).is_business_scrap)
+    if ((source === 'business_scrap') !== isBusinessScrap) {
+      throw new Error(source === 'business_scrap'
+        ? 'На этом этапе можно бронировать только деловой остаток'
+        : 'На этом этапе можно бронировать только обычный склад')
+    }
+  }
+  if (request.created_by === permission.userId || (DIRECTOR_ACCESS_ROLES as readonly string[]).includes(permission.role)) return
+  if (permission.role !== 'technologist') {
+    throw new Error('Бронировать склад может автор, назначенный технолог или руководитель')
+  }
+  const { data: taskData, error: taskError } = await db
+    .from('tasks')
+    .select('id')
+    .eq('machine_id', request.machine_id)
+    .eq('task_type', 'technologist_request')
+    .eq('assigned_to', permission.userId)
+    .in('status', ['pending', 'in_progress', 'completed'])
+    .limit(1)
+  if (taskError || !Array.isArray(taskData) || taskData.length === 0) {
+    throw new Error('Бронировать склад может автор, назначенный технолог или руководитель')
+  }
+}
+
 async function assertInventoryReservationAccess(
   db: LooseDb,
-  permission: FactoryScopedPermissionContext,
+  permission: FactoryScopedPermissionContext & { userId: string },
   input: {
     inventoryId?: string | null
     materialId: string
@@ -292,6 +346,7 @@ async function assertInventoryReservationAccess(
 
   const machine = machineResult.data as { factory_id: string | null }
   const requestItem = requestItemResult.data as Record<string, unknown> & { request_id: string }
+  assertManualSupplyRequestReservationAllowed(input.requestItemTable, requestItem)
   if (requestItem.material_id !== input.materialId) {
     throw new Error('Материал резервирования не соответствует позиции заявки')
   }
@@ -306,7 +361,7 @@ async function assertInventoryReservationAccess(
   if (input.inventoryId) {
     const { data: inventoryData, error: inventoryError } = await db
       .from('inventory')
-      .select('id, factory_id, material_id, material_variant_id, piece_length_mm, business_scrap_state, deleted_at')
+      .select('id, factory_id, material_id, material_variant_id, piece_length_mm, is_business_scrap, business_scrap_state, deleted_at')
       .eq('id', input.inventoryId)
       .maybeSingle()
     if (inventoryError || !inventoryData) {
@@ -317,6 +372,7 @@ async function assertInventoryReservationAccess(
       material_id: string
       material_variant_id: string | null
       piece_length_mm: number | null
+      is_business_scrap: boolean | null
       business_scrap_state: string | null
       deleted_at: string | null
     }
@@ -339,19 +395,15 @@ async function assertInventoryReservationAccess(
     } else if (inventory.factory_id !== machine.factory_id) {
       throw new Error('Складской остаток и машина должны относиться к одному заводу')
     }
-  } else if (input.useInventoryTransfer || input.useWholeBarReservation) {
-    throw new Error('Для резервирования длинномера или перемещения выберите складскую строку')
+  } else {
+    throw new Error('Для бронирования позиции заявки выберите конкретную складскую строку')
   }
 
-  const { data: requestData, error: requestError } = await db
-    .from('technologist_requests')
-    .select('id, machine_id')
-    .eq('id', requestItem.request_id)
-    .maybeSingle()
-  const request = requestData as { machine_id: string } | null
-  if (requestError || !request || request.machine_id !== input.machineId) {
-    throw new Error('Позиция заявки не относится к выбранной машине или доступ запрещён')
-  }
+  await assertActiveRequestReservationAccess(db, permission, {
+    requestId: requestItem.request_id,
+    machineId: input.machineId,
+    inventoryId: input.inventoryId,
+  })
 }
 
 async function getBusinessScrapMinimumLengths() {
@@ -976,13 +1028,26 @@ export async function unreserveFromMachine(reservationId: string): Promise<Actio
     const { db, userId } = access
     const { data: reservationData } = await db
       .from('inventory_reservations')
-      .select('material_id, machine_id, business_scrap_inventory_id, business_scrap_quantity, consumed_at')
+      .select('material_id, machine_id, inventory_id, source_inventory_id, request_item_table, request_item_id, business_scrap_inventory_id, business_scrap_quantity, consumed_at')
       .eq('id', reservationId)
       .maybeSingle()
-    const reservation = reservationData as Pick<InventoryReservation, 'material_id' | 'machine_id' | 'business_scrap_inventory_id' | 'business_scrap_quantity' | 'consumed_at'> | null
+    const reservation = reservationData as (Pick<InventoryReservation, 'material_id' | 'machine_id' | 'inventory_id' | 'source_inventory_id' | 'request_item_table' | 'request_item_id' | 'business_scrap_inventory_id' | 'business_scrap_quantity' | 'consumed_at'>) | null
     if (!reservation) throw new Error('Бронь не найдена или доступ запрещён')
     if (reservation.consumed_at) throw new Error('Бронь уже списана по факту заготовки')
     await assertMachineAccess(db, access, reservation.machine_id)
+    const { data: requestItemData, error: requestItemError } = await db
+      .from(reservation.request_item_table)
+      .select('*')
+      .eq('id', reservation.request_item_id)
+      .maybeSingle()
+    const requestItem = requestItemData as (Record<string, unknown> & { request_id?: string }) | null
+    if (requestItemError || !requestItem?.request_id) throw new Error('Позиция заявки не найдена или доступ запрещён')
+    assertManualSupplyRequestReservationAllowed(reservation.request_item_table, requestItem)
+    await assertActiveRequestReservationAccess(db, access, {
+      requestId: requestItem.request_id,
+      machineId: reservation.machine_id,
+      inventoryId: reservation.source_inventory_id || reservation.inventory_id,
+    })
     await unreserveInventoryReservation({
       reservationId,
       comment: 'Снятие брони',

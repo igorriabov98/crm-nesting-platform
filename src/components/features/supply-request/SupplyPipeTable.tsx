@@ -10,10 +10,10 @@ import type { RequestPipe } from '@/lib/types'
 type Props = {
   rows: SupplyRequestRow<RequestPipe>[]
   machineId: string
-  canManageOrders?: boolean
+  canReserve?: boolean
 }
 
-export function SupplyPipeTable({ rows, machineId, canManageOrders = true }: Props) {
+export function SupplyPipeTable({ rows, machineId, canReserve = false }: Props) {
   return (
     <Section title="Труба">
       <table className={tableClass}>
@@ -43,12 +43,12 @@ export function SupplyPipeTable({ rows, machineId, canManageOrders = true }: Pro
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
                 <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>{stockBreakdown(row.stock_items, unit) || stockText(row.available_stock, unit)}</td>
                 <td className={tdClass}><StockCoverageValue reserved={reserved} covered={row.covered_quantity} unit={unit} showLayoutSource={!isWire} /></td>
-                <td className={tdClass}><OrderStatusCell table="request_pipe" id={row.id} status={row.order_status} canEdit={canManageOrders} receivingTable={isWire ? undefined : 'request_pipe'} itemName={row.materials?.name || row.size || 'Труба'} /></td>
+                <td className={tdClass}><OrderStatusCell table="request_pipe" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} pipeType={row.pipe_type} /></td>
                 <td className={tdClass}>
-                  <div className="flex items-center gap-2">
+                  {isWire && canReserve ? <div className="flex items-center gap-2">
                     <ReserveButton table="request_pipe" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
                     {row.reservation_id && <UnreserveButton table="request_pipe" itemId={row.id} />}
-                  </div>
+                  </div> : <span className="text-xs text-slate-500">{isWire ? 'Только просмотр' : 'Бронь по раскладке'}</span>}
                 </td>
               </tr>
             )
@@ -67,7 +67,7 @@ function stockBreakdown(items: SupplyRequestRow<RequestPipe>['stock_items'], fal
     <div className="space-y-1">
       {lengthItems.map((item) => (
         <div key={item.id} className="whitespace-nowrap">
-          {item.is_business_scrap && <span className="mr-1 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Отход</span>}
+          {item.is_business_scrap && <span className="mr-1 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Деловой остаток</span>}
           {formatPieceLength(item.piece_length_mm)}: {formatStockQuantity(item.available_quantity, item.unit || fallbackUnit, item.available_secondary_quantity, item.secondary_unit)}
         </div>
       ))}

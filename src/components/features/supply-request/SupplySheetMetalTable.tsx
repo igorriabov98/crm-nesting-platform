@@ -8,10 +8,10 @@ import type { RequestSheetMetal } from '@/lib/types'
 type Props = {
   rows: SupplyRequestRow<RequestSheetMetal>[]
   machineId: string
-  canManageOrders?: boolean
+  canReserve?: boolean
 }
 
-export function SupplySheetMetalTable({ rows, machineId, canManageOrders = true }: Props) {
+export function SupplySheetMetalTable({ rows, machineId, canReserve = false }: Props) {
   return (
     <Section title="Листовой металл">
       <table className={tableClass}>
@@ -37,19 +37,14 @@ export function SupplySheetMetalTable({ rows, machineId, canManageOrders = true 
                 <td className={tdClass}>{row.calculated_weight_kg ? `${formatAmount(row.calculated_weight_kg)} кг` : '—'}</td>
                 <td className={`${tdClass} ${Number(row.available_stock || 0) <= 0 ? 'text-red-700' : ''}`}>
                   {stockText(row.available_stock, unit)}
-                  {Number(row.available_stock || 0) <= 0 && Number(row.incompatible_stock_available || 0) > 0 && (
-                    <div className="mt-1 whitespace-normal text-xs leading-snug text-amber-700">
-                      Есть остаток по материалу, но тип стали, размер или толщина не совпадают
-                    </div>
-                  )}
                 </td>
                 <td className={tdClass}>{formatAmount(reserved)} {unit}</td>
-                <td className={tdClass}><OrderStatusCell table="request_sheet_metal" id={row.id} status={row.order_status} canEdit={canManageOrders} /></td>
+                <td className={tdClass}><OrderStatusCell table="request_sheet_metal" status={row.order_status} needed={needed} reserved={reserved} covered={row.covered_quantity} /></td>
                 <td className={tdClass}>
-                  <div className="flex items-center gap-2">
+                  {canReserve ? <div className="flex items-center gap-2">
                     <ReserveButton table="request_sheet_metal" itemId={row.id} materialId={row.material_id} machineId={machineId} needed={needed} reserved={reserved} covered={row.covered_quantity} available={row.available_stock} unit={unit} stockItems={row.stock_items} />
                     {row.reservation_id && <UnreserveButton table="request_sheet_metal" itemId={row.id} />}
-                  </div>
+                  </div> : <span className="text-xs text-slate-400">Только просмотр</span>}
                 </td>
               </tr>
             )
