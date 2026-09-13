@@ -47,6 +47,47 @@ for (const required of [
   'fn_correct_technologist_completion', 'fn_correct_future_detailing_plan',
 ]) assert.ok(migration.includes(required), `migration is missing ${required}`)
 
+const automaticFutureDetailingMigration = readFileSync(
+  'supabase/migrations/20260913120000_future_detailing_first_cutting_promotion.sql',
+  'utf8',
+)
+for (const required of [
+  'fn_promote_future_detailing_batch_on_cutting_event_v1',
+  "v_batch.status not in ('planned', 'awaiting_confirmation')",
+  'for update',
+  'on conflict(part_id, factory_id) do update',
+  'on_hand_quantity = public.detailing_balances.on_hand_quantity + excluded.on_hand_quantity',
+  "movement_type,",
+  "'receipt',",
+  'actual_quantity = planned_quantity',
+  "status = 'confirmed'",
+  'first_cutting_event_id = v_event.id',
+  "batch.status in ('planned', 'awaiting_confirmation')",
+  'event.id = batch.first_cutting_event_id',
+  "where batch.status = 'awaiting_confirmation'",
+]) assert.ok(
+  automaticFutureDetailingMigration.toLowerCase().includes(required.toLowerCase()),
+  `automatic future-detailing migration is missing ${required}`,
+)
+assert.equal(
+  automaticFutureDetailingMigration.match(/fn_promote_future_detailing_batch_on_cutting_event_v1\(/gu)?.length,
+  5,
+  'promotion must have one definition, privilege statements, trigger call, and backfill call',
+)
+
+const futureDetailingPage = readFileSync('src/components/features/detailing/FutureDetailingPage.tsx', 'utf8')
+for (const required of [
+  'Запланировано деталей',
+  'Плановая доступность',
+  'После первого факта «Заготовка» по машине',
+  'Обычная деталировка',
+  'plannedAvailabilityDate',
+]) assert.ok(futureDetailingPage.includes(required), `future-detailing page is missing ${required}`)
+
+const futureDetailingAction = readFileSync('src/lib/actions/future-inventory.ts', 'utf8')
+assert.ok(futureDetailingAction.includes(".eq('stage_type', 'cutting')"))
+assert.ok(futureDetailingAction.includes('plannedAvailabilityDate: cuttingStageByMachine.get(batch.machine_id)?.date_start || null'))
+
 const supplyPage = readFileSync('src/components/features/supply-request/SupplyRequestPage.tsx', 'utf8')
 assert.ok(supplyPage.includes('/technologist/requests/${request.id}/complete'))
 assert.ok(!supplyPage.includes("toast.success('Бронь завершена. Заявка передана в снабжение.')"))

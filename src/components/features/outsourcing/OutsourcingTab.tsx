@@ -448,7 +448,7 @@ export function OutsourcingTab({ data }: { data: MachineOutsourcingData }) {
                   <Checkbox checked={draft.itemIds.includes(item.id)} onCheckedChange={() => toggleItem(item.id)} />
                   <span className="min-w-0">
                     <span className="block font-medium text-slate-900">{item.product_name}</span>
-                    <span className="text-slate-500">{item.drawing_number} · {item.quantity} шт. · {Number(item.weight || 0).toFixed(2)} т</span>
+                    <span className="text-slate-500">{item.drawing_number} · {item.quantity} шт. · {Number(item.weight || 0).toFixed(2)} кг</span>
                   </span>
                 </label>
               ))}
