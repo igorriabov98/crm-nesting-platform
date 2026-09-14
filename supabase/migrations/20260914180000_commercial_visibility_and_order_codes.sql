@@ -225,17 +225,33 @@ ALTER TABLE public.machines
   ADD COLUMN IF NOT EXISTS creation_year integer,
   ADD COLUMN IF NOT EXISTS annual_order_number bigint;
 
+CREATE OR REPLACE FUNCTION public.crm_uzhgorod_year(p_value timestamptz)
+RETURNS integer
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $$
+  SELECT EXTRACT(YEAR FROM p_value AT TIME ZONE COALESCE(
+    (SELECT timezone.name FROM pg_timezone_names timezone WHERE timezone.name = 'Europe/Uzhgorod' LIMIT 1),
+    (SELECT timezone.name FROM pg_timezone_names timezone WHERE timezone.name = 'Europe/Kyiv' LIMIT 1),
+    (SELECT timezone.name FROM pg_timezone_names timezone WHERE timezone.name = 'Europe/Kiev' LIMIT 1),
+    'Etc/GMT-2'
+  ))::integer;
+$$;
+
+REVOKE ALL ON FUNCTION public.crm_uzhgorod_year(timestamptz) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.crm_uzhgorod_year(timestamptz) TO authenticated, service_role;
+
 CREATE UNIQUE INDEX IF NOT EXISTS machines_annual_order_number_unique
 ON public.machines(creation_year, annual_order_number)
 WHERE creation_year IS NOT NULL AND annual_order_number IS NOT NULL;
 
 INSERT INTO public.order_annual_counters(creation_year, last_number)
 SELECT
-  EXTRACT(YEAR FROM CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Uzhgorod')::integer,
+  public.crm_uzhgorod_year(CURRENT_TIMESTAMP),
   COUNT(*)::bigint
 FROM public.machines
-WHERE EXTRACT(YEAR FROM created_at AT TIME ZONE 'Europe/Uzhgorod')::integer
-  = EXTRACT(YEAR FROM CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Uzhgorod')::integer
+WHERE public.crm_uzhgorod_year(created_at) = public.crm_uzhgorod_year(CURRENT_TIMESTAMP)
 ON CONFLICT (creation_year) DO UPDATE
 SET last_number = GREATEST(public.order_annual_counters.last_number, EXCLUDED.last_number), updated_at = now();
 
@@ -265,7 +281,7 @@ BEGIN
     RAISE EXCEPTION 'Нельзя создать заказ чужой компании' USING ERRCODE = '42501';
   END IF;
 
-  NEW.creation_year := EXTRACT(YEAR FROM CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Uzhgorod')::integer;
+  NEW.creation_year := public.crm_uzhgorod_year(CURRENT_TIMESTAMP);
   INSERT INTO public.order_annual_counters(creation_year, last_number)
   VALUES (NEW.creation_year, 1)
   ON CONFLICT (creation_year) DO UPDATE

@@ -16,6 +16,7 @@ assert.match(migration, /clients_commercial_select[\s\S]*responsible_user_id = a
 assert.match(migration, /client_contacts_commercial_select/)
 assert.match(migration, /get_client_identity_projection/)
 assert.match(migration, /Europe\/Uzhgorod/)
+assert.match(migration, /crm_uzhgorod_year[\s\S]*Europe\/Kyiv[\s\S]*Etc\/GMT-2/)
 assert.match(migration, /ON CONFLICT \(creation_year\) DO UPDATE[\s\S]*last_number = public\.order_annual_counters\.last_number \+ 1/)
 assert.match(migration, /BEFORE UPDATE OF client_id[\s\S]*refresh_machine_order_code_client_prefix/)
 assert.match(migration, /REVOKE SELECT ON public\.machines_with_totals FROM authenticated/)
