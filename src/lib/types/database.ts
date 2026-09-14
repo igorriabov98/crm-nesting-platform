@@ -4845,6 +4845,39 @@ export type Database = {
           is_recalculation_staging?: boolean
         }
       }
+      technologist_request_approval_versions: {
+        Row: {
+          id: string
+          request_id: string
+          revision_number: number
+          state: 'pending' | 'returned' | 'superseded' | 'approved'
+          completion_payload: Json
+          summary_snapshot: Json
+          submitted_by: string | null
+          submitted_at: string
+          decided_by: string | null
+          decided_at: string | null
+          return_reason: string | null
+          is_legacy: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: Pick<Database['public']['Tables']['technologist_request_approval_versions']['Row'], 'request_id' | 'revision_number' | 'state' | 'completion_payload' | 'summary_snapshot'> & Partial<Database['public']['Tables']['technologist_request_approval_versions']['Row']>
+        Update: Partial<Database['public']['Tables']['technologist_request_approval_versions']['Row']>
+      }
+      technologist_request_approval_archives: {
+        Row: {
+          id: string
+          approval_version_id: string
+          object_path: string
+          file_name: string
+          mime_type: string | null
+          file_size: number
+          created_at: string
+        }
+        Insert: Pick<Database['public']['Tables']['technologist_request_approval_archives']['Row'], 'approval_version_id' | 'object_path' | 'file_name' | 'file_size'> & Partial<Database['public']['Tables']['technologist_request_approval_archives']['Row']>
+        Update: Partial<Database['public']['Tables']['technologist_request_approval_archives']['Row']>
+      }
       request_sheet_metal: {
         Row: {
           id: string

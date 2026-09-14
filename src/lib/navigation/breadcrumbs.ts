@@ -44,6 +44,7 @@ export const BREADCRUMB_SEGMENT_LABELS: Record<string, string> = {
   outsourcing: 'Аутсорсинговые компании',
   'agenda-pool': 'Общая повестка',
   'business-scrap-reservations': 'Бронь делового остатка',
+  'request-results': 'Итог по заявкам',
   calendar: 'Календарь',
   catalog: 'Каталог',
   clients: 'База клиентов',

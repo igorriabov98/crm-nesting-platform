@@ -2,6 +2,9 @@
 
 begin;
 
+-- Match Supabase's authenticated table grants in the minimal local bootstrap.
+grant select on all tables in schema public to authenticated;
+
 do $$
 declare
   v_factory uuid := gen_random_uuid();
@@ -9,23 +12,28 @@ declare
   v_finance_one uuid := gen_random_uuid();
   v_finance_two uuid := gen_random_uuid();
   v_admin uuid := gen_random_uuid();
+  v_supply uuid := gen_random_uuid();
   v_department uuid := gen_random_uuid();
   v_admin_position uuid;
   v_machine uuid := gen_random_uuid();
   v_request uuid := gen_random_uuid();
   v_second_machine uuid := gen_random_uuid();
   v_second_request uuid := gen_random_uuid();
+  v_second_sheet uuid := gen_random_uuid();
+  v_steel_type uuid := gen_random_uuid();
   v_version uuid;
   v_second_version uuid;
   v_completion uuid;
   v_error text;
 begin
+  update public.users set is_active = false where role = 'financial_director';
   insert into public.factories(id, name) values (v_factory, 'FINANCIAL-APPROVAL-TEST');
   insert into public.users(id, email, full_name, role, factory_id, is_active) values
     (v_technologist, v_technologist || '@approval.test', 'Технолог теста', 'technologist', v_factory, true),
     (v_finance_one, v_finance_one || '@approval.test', 'Финансовый директор 1', 'financial_director', v_factory, true),
     (v_finance_two, v_finance_two || '@approval.test', 'Финансовый директор 2', 'financial_director', v_factory, true),
-    (v_admin, v_admin || '@approval.test', 'Администратор теста', 'technologist', v_factory, true);
+    (v_admin, v_admin || '@approval.test', 'Администратор теста', 'technologist', v_factory, true),
+    (v_supply, v_supply || '@approval.test', 'Снабжение теста', 'supply_manager', v_factory, true);
   select id into v_admin_position from public.positions where name = 'Администратор CRM';
   if v_admin_position is null then
     insert into public.positions(name, is_active) values ('Администратор CRM', true) returning id into v_admin_position;
@@ -38,11 +46,21 @@ begin
   insert into public.technologist_requests(id, machine_id, created_by, status) values
     (v_request, v_machine, v_technologist, 'stock_checked'),
     (v_second_request, v_second_machine, v_technologist, 'stock_checked');
+  insert into public.steel_types(id, name, density_kg_mm3)
+  values (v_steel_type, 'APPROVAL-TEST-STEEL', 0.00000785);
+  insert into public.request_sheet_metal(
+    id, request_id, material_name, material_grade, quantity_sheets,
+    weight_order_kg, calculated_weight_kg, steel_type_id, remainder_qty
+  ) values (
+    v_second_sheet, v_second_request, 'Тестовый лист', 'S235', 1,
+    100, 100, v_steel_type, 1
+  );
+  update public.request_sheet_metal set thickness_mm = 10, sheet_size = '1000x1000' where id = v_second_sheet;
 
   select public.fn_submit_technologist_request_for_approval(
     v_request, v_technologist,
     jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
-    jsonb_build_object('schemaVersion', 1, 'requestId', v_request, 'machineId', v_machine, 'items', '[]'::jsonb),
+    jsonb_build_object('schemaVersion', 1, 'requestId', v_request, 'machineId', v_machine, 'items', '[]'::jsonb, 'sourceData', public.fn_technologist_approval_source(v_request)),
     '[]'::jsonb
   ) into v_version;
 
@@ -58,6 +76,57 @@ begin
   if exists (select 1 from public.technologist_request_completions where request_id = v_request) then
     raise exception 'completion side effects were created before approval';
   end if;
+
+  begin
+    update public.technologist_request_approval_versions set summary_snapshot = '{}'::jsonb where id = v_version;
+    raise exception 'immutable snapshot update unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%неизменяем%' then raise; end if;
+  end;
+  begin
+    update public.tasks set status = 'completed' where technologist_request_approval_id = v_version;
+    raise exception 'approval task bypass unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%решением по версии%' then raise; end if;
+  end;
+  begin
+    perform public.fn_approve_technologist_request(v_version, v_technologist);
+    raise exception 'author approved own request without reviewer authority';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%финансовый директор или администратор CRM%' then raise; end if;
+  end;
+  begin
+    perform public.fn_approve_technologist_request(v_version, v_finance_one);
+    raise exception 'invalid empty request approval unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%металлич%' then raise; end if;
+  end;
+  if (select status from public.technologist_requests where id = v_request) <> 'pending_financial_approval'
+    or (select state from public.technologist_request_approval_versions where id = v_version) <> 'pending'
+    or exists (select 1 from public.technologist_request_completions where request_id = v_request) then
+    raise exception 'failed approval did not roll back all side effects';
+  end if;
+
+  perform set_config('request.jwt.claim.sub', v_supply::text, true);
+  execute 'set local role authenticated';
+  if exists (select 1 from public.technologist_requests where id in (v_request, v_second_request))
+    or exists (select 1 from public.request_sheet_metal where request_id = v_second_request) then
+    raise exception 'supply can read unapproved requests via RLS';
+  end if;
+  execute 'reset role';
+  perform set_config('request.jwt.claim.sub', '', true);
+  begin
+    insert into public.supply_order_delivery_schedules(request_item_table, request_item_id, delivery_date, quantity, unit)
+    values ('request_sheet_metal', v_second_sheet, current_date, 1, 'шт');
+    raise exception 'purchase operation before approval unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%не передана в снабжение%' then raise; end if;
+  end;
 
   begin
     perform public.fn_submit_technologist_request_for_approval(v_request, v_technologist, '{}'::jsonb, '{}'::jsonb, '[]'::jsonb);
@@ -87,7 +156,7 @@ begin
   select public.fn_submit_technologist_request_for_approval(
     v_request, v_technologist,
     jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
-    jsonb_build_object('schemaVersion', 1, 'requestId', v_request, 'machineId', v_machine, 'items', '[]'::jsonb),
+    jsonb_build_object('schemaVersion', 1, 'requestId', v_request, 'machineId', v_machine, 'items', '[]'::jsonb, 'sourceData', public.fn_technologist_approval_source(v_request)),
     '[]'::jsonb
   ) into v_version;
   if (select revision_number from public.technologist_request_approval_versions where id = v_version) <> 1 then
@@ -101,13 +170,29 @@ begin
   update public.users set is_active = false where id in (v_finance_one, v_finance_two);
   select public.fn_submit_technologist_request_for_approval(
     v_second_request, v_technologist,
-    jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
-    jsonb_build_object('schemaVersion', 1, 'requestId', v_second_request, 'machineId', v_second_machine, 'items', '[]'::jsonb),
+    jsonb_build_object(
+      'decision', 'none', 'enteredPlasmaMinutes', 0,
+      'wasteItems', jsonb_build_array(jsonb_build_object(
+        'sourceTable', 'request_sheet_metal', 'sourceId', v_second_sheet,
+        'itemName', 'Тестовый лист', 'materialId', null, 'materialVariantId', null,
+        'materialName', 'Тестовый лист', 'materialGrade', 'S235', 'wastePercent', 10
+      )),
+      'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb
+    ),
+    jsonb_build_object('schemaVersion', 1, 'requestId', v_second_request, 'machineId', v_second_machine, 'items', '[]'::jsonb, 'sourceData', public.fn_technologist_approval_source(v_second_request)),
     '[]'::jsonb
   ) into v_second_version;
   if not exists (
     select 1 from public.tasks where technologist_request_approval_id = v_second_version and assigned_to = v_admin
   ) then raise exception 'CRM administrator fallback task was not created'; end if;
+
+  begin
+    update public.request_sheet_metal set quantity_sheets = 2 where id = v_second_sheet;
+    raise exception 'pending request material mutation unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%верните заявку на редактирование%' then raise; end if;
+  end;
 
   select public.fn_approve_technologist_request(v_second_version, v_admin) into v_completion;
   if v_completion is null
@@ -122,6 +207,48 @@ begin
     get stacked diagnostics v_error = message_text;
     if v_error not like '%уже принято%' then raise; end if;
   end;
+  begin
+    update public.request_sheet_metal set quantity_sheets = 2 where id = v_second_sheet;
+    raise exception 'approved request material mutation unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%нельзя редактировать%' then raise; end if;
+  end;
+  if not exists (select 1 from public.notifications where user_id = v_supply and related_machine_id = v_second_machine and title = 'Заявка одобрена и готова для снабжения') then
+    raise exception 'supply was not notified after the decision';
+  end if;
+
+  update public.users set is_active = false where id in (
+    select dm.user_id from public.department_members dm join public.positions p on p.id = dm.position_id where p.name = 'Администратор CRM'
+  );
+  update public.technologist_requests set status = 'stock_checked' where id = v_request;
+  begin
+    perform public.fn_submit_technologist_request_for_approval(v_request,v_technologist,
+      jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems','[]'::jsonb,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
+      jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_request)));
+    raise exception 'submission without any reviewers unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%Нет активного финансового директора%' then raise; end if;
+  end;
+  update public.users set is_active = true where id = v_finance_one;
+  select public.fn_submit_technologist_request_for_approval(v_request,v_technologist,
+    jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems','[]'::jsonb,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
+    jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_request))) into v_version;
+  if (select revision_number from public.technologist_request_approval_versions where id = v_version) <> 2 then
+    raise exception 'third submission is not version 1.2';
+  end if;
+
+  if exists (select 1 from public.technologist_requests where id = '94000000-0000-4000-8000-000000000001') then
+    if not exists (select 1 from public.technologist_request_approval_versions where request_id = '94000000-0000-4000-8000-000000000001'
+      and state = 'approved' and is_legacy and decided_by is null
+      and summary_snapshot->'sourceData'->'request_components'->0->>'component_name' = 'Старая комплектация') then
+      raise exception 'legacy migration lost the source summary or invented an approver';
+    end if;
+    if exists (select 1 from public.technologist_request_completions where request_id = '94000000-0000-4000-8000-000000000001') then
+      raise exception 'legacy migration replayed production side effects';
+    end if;
+  end if;
 end;
 $$;
 

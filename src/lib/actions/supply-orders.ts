@@ -2115,6 +2115,7 @@ export async function getSupplyOrderRequestFactoryId(requestId: string): Promise
       .from('technologist_requests')
       .select('machines!inner(factory_id)')
       .eq('id', normalizedRequestId)
+      .in('status', ['submitted_to_supply', 'completed'])
       .maybeSingle()
     if (error) throw new Error(error.message || 'Не удалось определить завод заявки')
 

@@ -19,7 +19,7 @@ import { isLongStockPlanReadyForSupply } from '@/lib/request-completion-material
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { formatMetalScrapMaterialName } from '@/lib/metal-scrap'
 import type { CompletionFutureBusinessScrap } from '@/lib/request-completion-future-scrap'
-import { buildTechnologistApprovalSnapshot } from '@/lib/actions/technologist-request-approvals'
+import { buildTechnologistApprovalSnapshot } from '@/lib/server/technologist-approval-snapshot'
 
 const stagedArchiveSchema = z.object({
   requestId: z.string().uuid(),
@@ -326,9 +326,13 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
       const admin = createAdminClient()
       const paths = stagedArchives.map((archive) => archive.objectPath)
       const { data: registered } = await (admin as any).from('machine_cutting_archives').select('storage_path').in('storage_path', paths)
-      const registeredPaths = new Set((registered || []).map((row: { storage_path: string }) => row.storage_path))
+      const { data: staged, error: stagedError } = await (admin as any).from('technologist_request_approval_archives').select('object_path').in('object_path', paths)
+      const registeredPaths = new Set([
+        ...(registered || []).map((row: { storage_path: string }) => row.storage_path),
+        ...(staged || []).map((row: { object_path: string }) => row.object_path),
+      ])
       const orphanPaths = paths.filter((path) => !registeredPaths.has(path))
-      if (orphanPaths.length > 0) await admin.storage.from(MACHINE_CUTTING_BUCKET).remove(orphanPaths)
+      if (!stagedError && orphanPaths.length > 0) await admin.storage.from(MACHINE_CUTTING_BUCKET).remove(orphanPaths)
     }
     return { success: false, error: getErrorMessage(error) }
   }
@@ -337,6 +341,9 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
 export async function getCompletionCorrectionWorkspace(requestId: string) {
   try {
     const id = z.string().uuid().parse(requestId); const { userId } = await requirePermission('technologist_requests', 'manage'); const client = db()
+    const approved = await client.from('technologist_request_approval_versions').select('id').eq('request_id', id).eq('state', 'approved').maybeSingle()
+    if (approved.error) throw approved.error
+    if (approved.data) throw new Error('Одобренную заявку нельзя редактировать')
     const completion = await client.from('technologist_request_completions').select('request_id,machine_id,created_by,entered_plasma_minutes,actual_plasma_minutes,machines(name)').eq('request_id', id).single()
     if (completion.error || !completion.data || completion.data.created_by !== userId) throw new Error('Корректировка недоступна')
     const waste = await client.from('technologist_request_waste_items').select('id,item_name,weight_snapshot_kg,waste_percent,scrap_weight_kg,useful_weight_kg').eq('request_id', id).order('created_at')

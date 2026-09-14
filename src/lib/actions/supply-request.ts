@@ -890,7 +890,11 @@ async function loadRequestForStockSource(
 
 export async function getRequestForSupply(requestId: string): Promise<{ data: SupplyRequestPayload | null; error: string | null }> {
   try {
-    const { db, role } = await requireAccess()
+    const { db, role, userId } = await requireAccess()
+    const request = await getRequestMeta(db, requestId)
+    if (!['submitted_to_supply', 'completed'].includes(request.status)) {
+      await assertActiveReservationActor(db, request, userId, role)
+    }
     return await loadRequestForStockSource(db, role, requestId)
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Не удалось загрузить заявку' }

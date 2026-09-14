@@ -7,126 +7,15 @@ import { ROUTES } from '@/lib/constants/routes'
 import { requirePermission } from '@/lib/permissions/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
+import { snapshotFromSource } from '@/lib/server/technologist-approval-snapshot'
 import {
   compareApprovalSnapshots,
   isFinancialApprovalReviewer,
-  type ApprovalSummaryItem,
-  type ApprovalSummarySnapshot,
 } from '@/lib/technologist-request-approval'
 
 const requestIdSchema = z.string().uuid()
 const versionIdSchema = z.string().uuid()
 const returnSchema = z.object({ versionId: versionIdSchema, reason: z.string().trim().min(3).max(2000) })
-
-const CATEGORY_TABLES = [
-  ['request_sheet_metal', 'Листовой металл'],
-  ['request_round_tube', 'Круглая труба'],
-  ['request_circle', 'Круг'],
-  ['request_pipe', 'Труба, профиль и проволока'],
-  ['request_knives', 'Ножи'],
-  ['request_components', 'Комплектующие'],
-  ['request_paint', 'Краска'],
-  ['request_mesh', 'Сетка'],
-  ['request_chain_cord', 'Цепь и шнур'],
-] as const
-
-type CompletionInput = {
-  decision: 'has_items' | 'none'
-  enteredPlasmaMinutes: number
-  wasteItems: Array<{ sourceTable: string; sourceId: string; wastePercent: number }>
-  futureItems: unknown[]
-  archives: Array<{ objectPath: string; fileName: string; mimeType: string | null; fileSize: number }>
-}
-
-function numberOrNull(value: unknown) {
-  const parsed = Number(value)
-  return value !== null && value !== undefined && value !== '' && Number.isFinite(parsed) ? parsed : null
-}
-
-function describeRow(table: string, row: Record<string, unknown>) {
-  const name = [
-    row.material_name, row.material_grade, row.steel_grade, row.pipe_type, row.knife_type,
-    row.component_name, row.paint_name, row.mesh_type, row.chain_cord_type, row.size, row.sheet_size,
-  ].filter(Boolean).join(' · ')
-  const candidates: Array<[string, string]> = table === 'request_sheet_metal'
-    ? [['quantity_sheets', 'лист.'], ['remainder_qty', 'лист.'], ['weight_order_kg', 'кг']]
-    : table === 'request_components'
-      ? [['quantity_needed', 'шт.']]
-      : table === 'request_circle'
-        ? [['remainder_mm', 'мм']]
-        : table === 'request_pipe'
-          ? [['remainder_length_mm', 'мм'], ['remainder_kg', 'кг'], ['remainder_qty', 'шт.']]
-          : table === 'request_knives'
-            ? [['to_order_mm', 'мм'], ['remainder_qty', 'шт.']]
-            : table === 'request_chain_cord'
-              ? [['remainder_meters', 'м']]
-              : [['remainder_qty', 'шт.'], ['remainder_kg', 'кг'], ['order_kg', 'кг']]
-  const selected = candidates.find(([field]) => numberOrNull(row[field]) !== null)
-  return {
-    name: name || `Позиция ${String(row.id).slice(0, 8)}`,
-    quantity: selected ? numberOrNull(row[selected[0]]) : null,
-    unit: selected?.[1] || '',
-    weightKg: numberOrNull(row.calculated_weight_kg ?? row.weight_order_kg ?? row.order_kg),
-  }
-}
-
-export async function buildTechnologistApprovalSnapshot(
-  client: any,
-  requestId: string,
-  machine: { id: string; name: string | null; material_type: string | null },
-  completion: CompletionInput,
-): Promise<ApprovalSummarySnapshot> {
-  const [tableResults, reservationsResult] = await Promise.all([
-    Promise.all(CATEGORY_TABLES.map(async ([table]) => {
-      const result = await client.from(table).select('*').eq('request_id', requestId).order('sort_order')
-      if (result.error) throw result.error
-      return result.data || []
-    })),
-    client.from('inventory_reservations')
-      .select('request_item_table,request_item_id,reserved_quantity,logical_reserved_quantity,inventory_id,source_inventory_id,consumed_at,reservation_source')
-      .eq('machine_id', machine.id)
-      .is('consumed_at', null),
-  ])
-  if (reservationsResult.error) throw reservationsResult.error
-  const inventoryIds = [...new Set((reservationsResult.data || []).flatMap((row: any) => [row.inventory_id, row.source_inventory_id]).filter(Boolean))]
-  const inventoryResult = inventoryIds.length
-    ? await client.from('inventory').select('id,is_business_scrap').in('id', inventoryIds)
-    : { data: [], error: null }
-  if (inventoryResult.error) throw inventoryResult.error
-  const inventoryById = new Map((inventoryResult.data || []).map((row: any) => [row.id, Boolean(row.is_business_scrap)]))
-  const wasteByKey = new Map(completion.wasteItems.map((item) => [`${item.sourceTable}:${item.sourceId}`, item.wastePercent]))
-  const reservations = reservationsResult.data || []
-
-  const items: ApprovalSummaryItem[] = []
-  CATEGORY_TABLES.forEach(([table, categoryLabel], index) => {
-    for (const raw of tableResults[index] as Record<string, unknown>[]) {
-      if (raw.order_status === 'cancelled' || raw.is_cutting_plan_draft === true) continue
-      const key = `${table}:${raw.id}`
-      const rowReservations = reservations.filter((reservation: any) => `${reservation.request_item_table}:${reservation.request_item_id}` === key && reservation.reservation_source !== 'correction_hold')
-      const reservationTotal = (business: boolean) => rowReservations
-        .filter((reservation: any) => Boolean(inventoryById.get(reservation.source_inventory_id || reservation.inventory_id)) === business)
-        .reduce((sum: number, reservation: any) => sum + Number(reservation.logical_reserved_quantity ?? reservation.reserved_quantity ?? 0), 0)
-      const described = describeRow(table, raw)
-      items.push({
-        key, category: table, categoryLabel, ...described,
-        businessScrapReserved: reservationTotal(true),
-        regularStockReserved: reservationTotal(false),
-        wastePercent: wasteByKey.get(key) ?? null,
-      })
-    }
-  })
-  return {
-    schemaVersion: 1,
-    requestId,
-    machineId: machine.id,
-    orderName: machine.name || 'Без названия',
-    materialType: machine.material_type,
-    items,
-    futureItems: completion.futureItems,
-    enteredPlasmaMinutes: completion.enteredPlasmaMinutes,
-    archives: completion.archives,
-  }
-}
 
 function db() { return createAdminClient() as any }
 
@@ -154,7 +43,7 @@ export async function getTechnologistApprovalList() {
       requestNumberById.set(row.id, next)
     }
     const versions = requestIds.length
-      ? await db().from('technologist_request_approval_versions').select('*').in('request_id', requestIds).order('revision_number', { ascending: false })
+      ? await db().from('technologist_request_approval_versions').select('id,request_id,revision_number,state,material_type_snapshot:summary_snapshot->>materialType').in('request_id', requestIds).order('revision_number', { ascending: false })
       : { data: [], error: null }
     if (versions.error) throw versions.error
     return {
@@ -184,19 +73,32 @@ export async function getTechnologistApprovalDetail(requestId: string) {
     if (numberRows.error) throw numberRows.error
     const requestNumber = (numberRows.data || []).findIndex((row: any) => row.id === id) + 1
     const versionsResult = await db().from('technologist_request_approval_versions')
-      .select('*,decider:users!technologist_request_approval_versions_decided_by_fkey(full_name)')
+      .select('id,revision_number,state,is_legacy')
       .eq('request_id', id).order('revision_number', { ascending: false })
     if (versionsResult.error) throw versionsResult.error
-    const versions = (versionsResult.data || []).map((version: any, index: number, all: any[]) => ({
-      ...version,
-      diffToCurrent: index === 0 || !version.summary_snapshot?.items || !all[0]?.summary_snapshot?.items
-        ? null
-        : compareApprovalSnapshots(version.summary_snapshot, all[0].summary_snapshot),
-    }))
+    const order = Array.isArray(requestResult.data.machines) ? requestResult.data.machines[0] : requestResult.data.machines
+    const latestId = versionsResult.data?.[0]?.id
+    const latestResult = latestId ? await db().from('technologist_request_approval_versions').select('*').eq('id', latestId).single() : { data: null, error: null }
+    if (latestResult.error) throw latestResult.error
+    const latest = latestResult.data
+    if (latest?.is_legacy && latest.summary_snapshot?.sourceData && order) {
+      const stored = latest.summary_snapshot
+      latest.summary_snapshot = snapshotFromSource(stored.sourceData, id, { id: stored.machineId, name: stored.orderName, material_type: stored.materialType }, latest.completion_payload)
+    }
+    const currentDraft = ['returned','superseded'].includes(latest?.state)
+    let currentSnapshot = latest?.summary_snapshot || null
+    if (currentDraft && order) {
+      const source = await db().rpc('fn_technologist_approval_source', { p_request_id: id })
+      if (source.error) throw source.error
+      currentSnapshot = snapshotFromSource(source.data, id, order, latest.completion_payload)
+    }
+    const versions = versionsResult.data || []
     return {
       data: {
         request: { ...requestResult.data, request_number: Math.max(requestNumber, 1) },
-        versions,
+        versions: versions.map((version: any) => ({ id: version.id, revision_number: version.revision_number, state: version.state, is_legacy: version.is_legacy })),
+        currentSnapshot,
+        currentDraft,
         canReview: reviewer,
         canEdit: requestResult.data.created_by === userId
           && ['pending_financial_approval', 'pending_stock_check', 'stock_checked'].includes(requestResult.data.status)
@@ -207,6 +109,27 @@ export async function getTechnologistApprovalDetail(requestId: string) {
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
+}
+
+export async function getTechnologistApprovalHistoryVersion(requestId: string, versionId: string) {
+  try {
+    const id = requestIdSchema.parse(requestId)
+    const version = versionIdSchema.parse(versionId)
+    const detail = await getTechnologistApprovalDetail(id)
+    if (!detail.data) throw new Error(detail.error || 'Заявка недоступна')
+    const result = await db().from('technologist_request_approval_versions').select('*').eq('id', version).eq('request_id', id).single()
+    if (result.error || !result.data) throw new Error('Версия не найдена')
+    const stored = result.data
+    const machine = Array.isArray(detail.data.request.machines) ? detail.data.request.machines[0] : detail.data.request.machines
+    const summary = stored.is_legacy && stored.summary_snapshot?.sourceData && machine
+      ? snapshotFromSource(stored.summary_snapshot.sourceData, id, { id: stored.summary_snapshot.machineId, name: stored.summary_snapshot.orderName, material_type: stored.summary_snapshot.materialType }, stored.completion_payload)
+      : stored.summary_snapshot
+    return { data: {
+      summary,
+      reason: stored.return_reason as string | null,
+      diff: summary?.items && detail.data.currentSnapshot?.items ? compareApprovalSnapshots(summary, detail.data.currentSnapshot) : null,
+    }, error: null }
+  } catch (error) { return { data: null, error: getErrorMessage(error) } }
 }
 
 function revalidateApproval(requestId: string) {
@@ -254,15 +177,6 @@ export async function approveTechnologistRequest(versionId: string) {
     if (version.error || !version.data) throw new Error('Версия не найдена')
     const { error } = await db().rpc('fn_approve_technologist_request', { p_approval_version_id: id, p_actor: userId })
     if (error) throw error
-    const request = await db().from('technologist_requests').select('machine_id').eq('id', version.data.request_id).single()
-    if (request.data?.machine_id) {
-      try {
-        await db().rpc('notify_users_by_role', {
-          p_role: 'supply_manager', p_type: 'technologist_request', p_title: 'Заявка одобрена и готова для снабжения',
-          p_message: 'Финансовый директор одобрил итоговую версию заявки.', p_machine_id: request.data.machine_id,
-        })
-      } catch { /* decision is committed; notification is best-effort */ }
-    }
     revalidateApproval(version.data.request_id)
     return { success: true }
   } catch (error) { return { success: false, error: getErrorMessage(error) } }

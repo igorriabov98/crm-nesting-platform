@@ -119,7 +119,7 @@ function fixture(options: {
     '@/lib/request-completion-material-scope': materialScope,
     '@/lib/materials/pipe-profile': pipeProfile,
     '@/lib/metal-scrap': metalScrap,
-    '@/lib/actions/technologist-request-approvals': { buildTechnologistApprovalSnapshot: forbiddenMutation },
+    '@/lib/server/technologist-approval-snapshot': { buildTechnologistApprovalSnapshot: forbiddenMutation },
   }
   const loadedModule = { exports: {} as { getCompletionWorkspace: (id: string) => Promise<WorkspaceResult> } }
   vm.runInNewContext(actionCode, {

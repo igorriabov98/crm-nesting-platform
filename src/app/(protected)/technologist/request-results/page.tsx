@@ -15,10 +15,13 @@ type ApprovalListRow = {
   id: string
   request_number: number
   machines: { name: string | null; material_type: string | null } | Array<{ name: string | null; material_type: string | null }> | null
-  currentVersion: { revision_number: number; state: string } | null
+  currentVersion: { revision_number: number; state: string; material_type_snapshot?: string | null } | null
 }
 
-function machine(row: ApprovalListRow) { return Array.isArray(row.machines) ? row.machines[0] : row.machines }
+function machine(row: ApprovalListRow) {
+  const order = Array.isArray(row.machines) ? row.machines[0] : row.machines
+  return order ? { ...order, material_type: row.currentVersion?.material_type_snapshot || order.material_type } : null
+}
 
 export const metadata = { title: 'Итог по заявкам | CRM Завода' }
 
