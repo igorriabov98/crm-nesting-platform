@@ -70,7 +70,7 @@ CREATE TABLE public.clients(
 );
 CREATE TABLE public.client_contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), client_id uuid NOT NULL REFERENCES public.clients(id), name text);
 CREATE TABLE public.machines(
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, client_id uuid NOT NULL REFERENCES public.clients(id),
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, client_id uuid REFERENCES public.clients(id),
   created_by uuid REFERENCES public.users(id), created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE public.machine_items(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), machine_id uuid, product_name text, price numeric);
@@ -117,6 +117,9 @@ run('createdb', ['--maintenance-db', adminUrl.toString(), databaseName])
 try {
   psql(setup)
   run('psql', ['-X', '-v', 'ON_ERROR_STOP=1', databaseUrl.toString(), '-f', path.join(root, 'supabase/migrations/20260914180000_commercial_visibility_and_order_codes.sql')])
+
+  const internalMachine = psql("INSERT INTO public.machines(name,client_id,created_by) VALUES ('Внутренняя машина',NULL,NULL) RETURNING name, creation_year IS NULL, annual_order_number IS NULL", true)
+  assert.equal(internalMachine, 'Внутренняя машина|t|t')
 
   const aliases = psql("SELECT string_agg(public_alias, '|' ORDER BY id) FROM public.clients", true)
   assert.equal(aliases, 'ЛЕД.МЕТ|AB|ЛЕД.МЕТ|БЕЗ.ВЛА')

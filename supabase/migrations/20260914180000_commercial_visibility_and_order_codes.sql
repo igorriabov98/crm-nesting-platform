@@ -265,6 +265,10 @@ DECLARE
   v_alias text;
   v_actor uuid := COALESCE(auth.uid(), NEW.created_by);
 BEGIN
+  -- Some production subsystems use machine rows without a client as internal
+  -- work containers. They are not commercial orders and keep their supplied name.
+  IF NEW.client_id IS NULL THEN RETURN NEW; END IF;
+
   SELECT client.public_alias INTO v_alias
   FROM public.clients client
   WHERE client.id = NEW.client_id;
