@@ -52,8 +52,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 62, 'Реестр должен содержать все 62 ресурса')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 62, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 63, 'Реестр должен содержать все 63 ресурса')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 63, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -63,6 +63,9 @@ const productionManagerPermissions = getDefaultPermissionMap('production_manager
 assert(hasPermission(technologistPermissions, 'inventory_detailing', 'manage'), 'Технолог должен управлять деталировкой')
 assert(hasPermission(technologistPermissions, 'inventory_detailing_receiving', 'manage'), 'Технолог должен принимать деталировку')
 assert(hasPermission(technologistPermissions, 'machine_cutting', 'manage'), 'Начальные права порезки должны повторять nesting')
+assert(hasPermission(technologistPermissions, 'technologist_request_results', 'view'), 'Технолог должен видеть итоги своих заявок')
+assert(!hasPermission(technologistPermissions, 'technologist_request_results', 'manage'), 'Технолог не должен согласовывать заявки')
+assert(hasPermission(getDefaultPermissionMap('financial_director'), 'technologist_request_results', 'manage'), 'Финансовый директор должен согласовывать заявки')
 assert(hasPermission(productionManagerPermissions, 'production_cutting_area', 'manage'), 'Начальные права Участка заготовки должны повторять production_fact')
 assert(hasPermission(procurementHeadPermissions, 'inventory_detailing', 'manage'), 'Руководитель снабжения должен управлять каталогом деталировки')
 assert(!hasPermission(procurementHeadPermissions, 'inventory_detailing_receiving', 'view'), 'Руководитель снабжения не должен принимать деталировку')

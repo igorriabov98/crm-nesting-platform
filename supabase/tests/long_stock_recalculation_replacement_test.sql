@@ -2,6 +2,8 @@
 
 begin;
 
+grant select, update on public.technologist_requests, public.request_circle, public.request_pipe, public.request_knives to authenticated;
+
 create or replace function pg_temp.run_replacement_case(
   p_category text,
   p_source_kind text
@@ -636,11 +638,25 @@ begin
     from pg_policies
     where schemaname = 'public'
       and tablename in ('technologist_requests', 'request_circle', 'request_pipe', 'request_knives')
+      -- Restrictive policies can only narrow the existing permissive policies.
+      and permissive = 'PERMISSIVE'
       and roles @> array['authenticated']::name[]
       and coalesce(qual, '') || coalesce(with_check, '') not like '%is_recalculation_staging%'
   ) then
     raise exception 'RLS допускает чтение или изменение скрытой заменяющей заявки';
   end if;
+  -- Verify effective RLS rather than requiring every additional restrictive
+  -- policy to repeat the permissive policy's staging predicate text.
+  update public.technologist_requests set is_recalculation_staging = true where id = v_request;
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
+  set local role authenticated;
+  if exists (select 1 from public.technologist_requests where id = v_request)
+     or exists (select 1 from public.request_pipe where id = v_wire) then
+    raise exception 'Authenticated author can read a hidden staging request';
+  end if;
+  update public.technologist_requests set notes = 'forbidden RLS update' where id = v_request;
+  if found then raise exception 'Authenticated author can modify a hidden staging request'; end if;
+  set local role none;
 end;
 $$;
 

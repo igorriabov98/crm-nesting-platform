@@ -2,6 +2,23 @@
 
 begin;
 
+-- Successful completion fixtures must exercise the new financial handoff,
+-- while the invalid-payload checks below still test the private finalizer.
+create or replace function pg_temp.complete_request_with_approval(
+  p_request uuid, p_actor uuid, p_decision text, p_minutes integer, p_waste jsonb, p_future jsonb
+) returns uuid language plpgsql as $$
+declare v_reviewer uuid := gen_random_uuid(); v_factory uuid; v_version uuid;
+begin
+  select m.factory_id into v_factory from public.technologist_requests r join public.machines m on m.id = r.machine_id where r.id = p_request;
+  insert into public.users(id,email,full_name,role,factory_id,is_active)
+    values (v_reviewer,v_reviewer || '@approval.test','Финансовый директор теста раскроя','financial_director',v_factory,true);
+  v_version := public.fn_submit_technologist_request_for_approval(p_request,p_actor,
+    jsonb_build_object('decision',p_decision,'enteredPlasmaMinutes',p_minutes,'wasteItems',p_waste,'futureItems',p_future,'archives','[]'::jsonb),
+    jsonb_build_object('sourceData',public.fn_technologist_approval_source(p_request)));
+  return public.fn_approve_technologist_request(v_version,v_reviewer);
+end;
+$$;
+
 create or replace function pg_temp.create_new_stock_plan(
   p_actor uuid,
   p_machine uuid,
@@ -1133,7 +1150,7 @@ begin
     raise exception 'Архив программы сохранился для заявки без листового металла';
   end if;
 
-  v_completion := public.fn_finalize_technologist_request(
+  v_completion := pg_temp.complete_request_with_approval(
     v_request, v_actor, 'none', 0, '[]'::jsonb, '[]'::jsonb
   );
   if v_completion is null
@@ -1199,7 +1216,7 @@ begin
   set status = 'stock_checked'
   where id = v_all_plan_request;
 
-  v_completion := public.fn_finalize_technologist_request(
+  v_completion := pg_temp.complete_request_with_approval(
     v_all_plan_request, v_actor, 'none', 0, '[]'::jsonb, '[]'::jsonb
   );
   if v_completion is null then
@@ -1336,7 +1353,7 @@ begin
   where version_id = v_version;
   execute 'alter table public.long_stock_cutting_actual_losses enable trigger long_stock_cutting_actual_loss_guard_trigger';
 
-  v_completion := public.fn_finalize_technologist_request(
+  v_completion := pg_temp.complete_request_with_approval(
     v_mixed_request, v_actor, 'none', 0, v_payload, '[]'::jsonb
   );
   if (select count(*) from public.technologist_request_plan_fact_items where completion_id = v_completion) <> 1

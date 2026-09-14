@@ -4739,6 +4739,8 @@ export type Database = {
           long_stock_cutting_plan_id: string | null
           long_stock_cutting_plan_version_id: string | null
           department_request_id: string | null
+          technologist_request_approval_id: string | null
+          technologist_request_approval_machine_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -4766,6 +4768,8 @@ export type Database = {
           long_stock_cutting_plan_id?: string | null
           long_stock_cutting_plan_version_id?: string | null
           department_request_id?: string | null
+          technologist_request_approval_id?: string | null
+          technologist_request_approval_machine_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -4793,6 +4797,8 @@ export type Database = {
           long_stock_cutting_plan_id?: string | null
           long_stock_cutting_plan_version_id?: string | null
           department_request_id?: string | null
+          technologist_request_approval_id?: string | null
+          technologist_request_approval_machine_id?: string | null
           assigned_to?: string
           task_type?: Database['public']['Enums']['task_type']
           title?: string
@@ -4841,6 +4847,39 @@ export type Database = {
           updated_at?: string
           is_recalculation_staging?: boolean
         }
+      }
+      technologist_request_approval_versions: {
+        Row: {
+          id: string
+          request_id: string
+          revision_number: number
+          state: 'pending' | 'returned' | 'superseded' | 'approved'
+          completion_payload: Json
+          summary_snapshot: Json
+          submitted_by: string | null
+          submitted_at: string
+          decided_by: string | null
+          decided_at: string | null
+          return_reason: string | null
+          is_legacy: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: Pick<Database['public']['Tables']['technologist_request_approval_versions']['Row'], 'request_id' | 'revision_number' | 'state' | 'completion_payload' | 'summary_snapshot'> & Partial<Database['public']['Tables']['technologist_request_approval_versions']['Row']>
+        Update: Partial<Database['public']['Tables']['technologist_request_approval_versions']['Row']>
+      }
+      technologist_request_approval_archives: {
+        Row: {
+          id: string
+          approval_version_id: string
+          object_path: string
+          file_name: string
+          mime_type: string | null
+          file_size: number
+          created_at: string
+        }
+        Insert: Pick<Database['public']['Tables']['technologist_request_approval_archives']['Row'], 'approval_version_id' | 'object_path' | 'file_name' | 'file_size'> & Partial<Database['public']['Tables']['technologist_request_approval_archives']['Row']>
+        Update: Partial<Database['public']['Tables']['technologist_request_approval_archives']['Row']>
       }
       request_sheet_metal: {
         Row: {
@@ -5744,13 +5783,13 @@ export type Database = {
       inventory_transfer_status: InventoryTransferStatus
       detailing_movement_type: DetailingMovementType
       employee_assignment_status: EmployeeAssignmentStatus
-      task_type: 'supply_start' | 'technologist_request' | 'engineer_confirm' | 'sales_order_confirmation' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'customs_clearance' | 'client_delivery_date' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'supply_schedule_reconciliation_review' | 'production_cutting_rollback_review' | 'long_stock_cutting_recalculation' | 'long_stock_cutting_supply_shortage' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'vrb_outsourcing_approval' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
+      task_type: 'supply_start' | 'technologist_request' | 'technologist_request_approval' | 'engineer_confirm' | 'sales_order_confirmation' | 'material_type_selection' | 'machine_layout' | 'agenda_pool_distribution' | 'meeting_unresolved_agenda' | 'meeting_action_item' | 'machine_review' | 'technologist_request_exception' | 'transport_cost' | 'shipping_documents' | 'customs_clearance' | 'client_delivery_date' | 'product_project_engineering' | 'product_project_sales_review' | 'consumable_request_review' | 'consumable_request_shortage' | 'supply_material_receipt_shortage' | 'supply_schedule_reconciliation_review' | 'production_cutting_rollback_review' | 'long_stock_cutting_recalculation' | 'long_stock_cutting_supply_shortage' | 'production_plan_date_change_approval' | 'transport_trip_date_approval' | 'business_scrap_correction_approval' | 'production_plan_preparation' | 'outsourcing_transport' | 'vrb_outsourcing_approval' | 'product_version_incomplete' | 'detailing_transfer' | 'inventory_transfer' | 'department_request'
       task_status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       consumable_request_priority: 'standard' | 'high'
       consumable_request_status: 'draft' | 'new' | 'invoice_taken' | 'delivery' | 'received' | 'received_partial' | 'cancelled'
       consumable_delivery_method: 'nova_poshta' | 'other'
       consumable_movement_type: 'initial' | 'manual_receipt' | 'request_receipt' | 'consumption' | 'adjustment'
-      request_status: 'draft' | 'pending_stock_check' | 'stock_checked' | 'submitted_to_supply' | 'completed' | 'cancelled'
+      request_status: 'draft' | 'pending_stock_check' | 'stock_checked' | 'pending_financial_approval' | 'submitted_to_supply' | 'completed' | 'cancelled'
       order_item_status: 'pending' | 'ordered' | 'delivered' | 'cancelled'
       inventory_transaction_type: 'receipt' | 'reserve' | 'unreserve' | 'write_off' | 'adjustment' | 'transfer_out' | 'transfer_in'
     }

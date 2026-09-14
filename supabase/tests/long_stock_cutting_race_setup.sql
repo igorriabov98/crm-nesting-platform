@@ -23,6 +23,8 @@ declare
   v_plan_item uuid;
   v_version uuid;
   v_reservation uuid;
+  v_reviewer uuid := gen_random_uuid();
+  v_approval uuid;
   v_settings jsonb;
   v_rollback_machine uuid := '20000000-0000-4000-8000-000000000001';
   v_rollback_stage uuid;
@@ -136,6 +138,16 @@ begin
     '{}'::jsonb
   );
 
+  perform public.fn_approve_long_stock_cutting_plan_version_v1(v_version, v_actor);
+  -- Receiving fixtures must pass the same financial handoff as real requests.
+  insert into public.users(id, email, full_name, role, factory_id, is_active)
+  values (v_reviewer, v_reviewer || '@approval.test', 'Финансовый директор теста', 'financial_director', v_factory, true);
+  update public.technologist_requests set status = 'stock_checked' where id = v_request;
+  v_approval := public.fn_submit_technologist_request_for_approval(v_request, v_actor,
+    jsonb_build_object('decision', 'none', 'enteredPlasmaMinutes', 0, 'wasteItems', '[]'::jsonb, 'futureItems', '[]'::jsonb, 'archives', '[]'::jsonb),
+    jsonb_build_object('sourceData', public.fn_technologist_approval_source(v_request)));
+  perform public.fn_approve_technologist_request(v_approval, v_reviewer);
+
   -- Matching receipt: it is only the immutable document used by the explicit
   -- invalidation transaction in the concurrent test.
   insert into public.supply_order_delivery_schedules(
@@ -161,7 +173,6 @@ begin
     v_actor,
     v_actor
   );
-  perform public.fn_approve_long_stock_cutting_plan_version_v1(v_version, v_actor);
 
   insert into public.inventory(
     id, factory_id, material_id, material_variant_id, piece_length_mm,

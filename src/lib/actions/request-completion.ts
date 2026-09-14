@@ -19,6 +19,7 @@ import { isLongStockPlanReadyForSupply } from '@/lib/request-completion-material
 import { roundPipeOuterDiameterMm } from '@/lib/materials/pipe-profile'
 import { formatMetalScrapMaterialName } from '@/lib/metal-scrap'
 import type { CompletionFutureBusinessScrap } from '@/lib/request-completion-future-scrap'
+import { buildTechnologistApprovalSnapshot } from '@/lib/server/technologist-approval-snapshot'
 
 const stagedArchiveSchema = z.object({
   requestId: z.string().uuid(),
@@ -272,10 +273,10 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
   try {
     const parsed = finalizeSchema.parse(input)
     stagedArchives = parsed.archives
-    const { supabase, userId } = await requirePermission('technologist_requests', 'manage')
+    const { userId } = await requirePermission('technologist_requests', 'manage')
     const client = db()
     const [machineResult, sheetResult] = await Promise.all([
-      client.from('technologist_requests').select('machine_id,created_by,status').eq('id', parsed.requestId).single(),
+      client.from('technologist_requests').select('machine_id,created_by,status,machines(id,name,material_type)').eq('id', parsed.requestId).single(),
       client.from('request_sheet_metal').select('id', { count: 'exact', head: true }).eq('request_id', parsed.requestId),
     ])
     if (machineResult.error || !machineResult.data) throw new Error('Заявка не найдена')
@@ -295,30 +296,26 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
     const readiness = await completeStockReservation(parsed.requestId)
     if (!readiness.success) throw new Error(readiness.error || 'Заявка не готова к завершению')
     const enteredMinutes = parsed.hours * 60 + parsed.minutes
-    const { data, error } = await (supabase as any).rpc('fn_finalize_technologist_request_with_archives', {
+    const machineRelation = Array.isArray(machineResult.data.machines) ? machineResult.data.machines[0] : machineResult.data.machines
+    if (!machineRelation) throw new Error('Заказ заявки не найден')
+    const completionPayload = {
+      decision: parsed.decision,
+      enteredPlasmaMinutes: enteredMinutes,
+      wasteItems: parsed.wasteItems,
+      futureItems: parsed.futureItems,
+      archives: stagedArchives,
+    }
+    const summarySnapshot = await buildTechnologistApprovalSnapshot(client, parsed.requestId, machineRelation, completionPayload)
+    const { data, error } = await client.rpc('fn_submit_technologist_request_for_approval', {
       p_request_id: parsed.requestId,
       p_actor: userId,
-      p_decision: parsed.decision,
-      p_entered_plasma_minutes: enteredMinutes,
-      p_waste_items: parsed.wasteItems,
-      p_future_items: parsed.futureItems,
+      p_completion_payload: completionPayload,
+      p_summary_snapshot: summarySnapshot,
       p_archives: stagedArchives,
     })
     if (error) throw error
-    // Notification is deliberately queued after the transaction so Telegram
-    // delivery cannot delay or roll back the finalization button.
-    const request = machineResult
-    if (request.data?.machine_id) {
-      try {
-        await db().rpc('notify_users_by_role', {
-          p_role: 'supply_manager', p_type: 'technologist_request', p_title: 'Заявка готова для снабжения',
-          p_message: 'Бронь и мастер технолога завершены. Заявка передана в снабжение.', p_machine_id: request.data.machine_id,
-        })
-      } catch {
-        // Finalization is already committed; notification delivery is best-effort.
-      }
-    }
     revalidatePath(ROUTES.MATERIAL_REQUESTS)
+    revalidatePath(ROUTES.TECHNOLOGIST_REQUEST_RESULTS)
     revalidatePath(ROUTES.SUPPLY_MATERIAL_REQUESTS)
     revalidatePath(`${ROUTES.SUPPLY_REQUEST}/${parsed.requestId}`)
     revalidatePath(ROUTES.INVENTORY_METAL_SCRAP)
@@ -329,9 +326,13 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
       const admin = createAdminClient()
       const paths = stagedArchives.map((archive) => archive.objectPath)
       const { data: registered } = await (admin as any).from('machine_cutting_archives').select('storage_path').in('storage_path', paths)
-      const registeredPaths = new Set((registered || []).map((row: { storage_path: string }) => row.storage_path))
+      const { data: staged, error: stagedError } = await (admin as any).from('technologist_request_approval_archives').select('object_path').in('object_path', paths)
+      const registeredPaths = new Set([
+        ...(registered || []).map((row: { storage_path: string }) => row.storage_path),
+        ...(staged || []).map((row: { object_path: string }) => row.object_path),
+      ])
       const orphanPaths = paths.filter((path) => !registeredPaths.has(path))
-      if (orphanPaths.length > 0) await admin.storage.from(MACHINE_CUTTING_BUCKET).remove(orphanPaths)
+      if (!stagedError && orphanPaths.length > 0) await admin.storage.from(MACHINE_CUTTING_BUCKET).remove(orphanPaths)
     }
     return { success: false, error: getErrorMessage(error) }
   }
@@ -340,6 +341,9 @@ export async function finalizeTechnologistRequest(input: z.input<typeof finalize
 export async function getCompletionCorrectionWorkspace(requestId: string) {
   try {
     const id = z.string().uuid().parse(requestId); const { userId } = await requirePermission('technologist_requests', 'manage'); const client = db()
+    const approved = await client.from('technologist_request_approval_versions').select('id').eq('request_id', id).eq('state', 'approved').maybeSingle()
+    if (approved.error) throw approved.error
+    if (approved.data) throw new Error('Одобренную заявку нельзя редактировать')
     const completion = await client.from('technologist_request_completions').select('request_id,machine_id,created_by,entered_plasma_minutes,actual_plasma_minutes,machines(name)').eq('request_id', id).single()
     if (completion.error || !completion.data || completion.data.created_by !== userId) throw new Error('Корректировка недоступна')
     const waste = await client.from('technologist_request_waste_items').select('id,item_name,weight_snapshot_kg,waste_percent,scrap_weight_kg,useful_weight_kg').eq('request_id', id).order('created_at')

@@ -11,8 +11,10 @@ export function resolveCompletionWorkspaceNavigation(status: RequestStatus, requ
   if (status === 'pending_stock_check' && requestId) {
     return { kind: 'redirect', href: `${ROUTES.SUPPLY_REQUEST}/${requestId}` as AppRoute }
   }
-  if (status === 'submitted_to_supply' || status === 'completed') {
-    return { kind: 'redirect', href: ROUTES.MATERIAL_REQUESTS }
+  if (status === 'pending_financial_approval' || status === 'submitted_to_supply' || status === 'completed') {
+    return { kind: 'redirect', href: requestId
+      ? `${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${requestId}` as AppRoute
+      : ROUTES.TECHNOLOGIST_REQUEST_RESULTS }
   }
   return { kind: 'unavailable' }
 }

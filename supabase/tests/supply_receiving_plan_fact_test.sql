@@ -6,6 +6,9 @@ do $$
 declare
   v_actor uuid := gen_random_uuid();
   v_factory uuid;
+  v_machine uuid := gen_random_uuid();
+  v_request uuid := gen_random_uuid();
+  v_item uuid := gen_random_uuid();
   v_mismatch_schedule uuid := gen_random_uuid();
   v_matching_schedule uuid := gen_random_uuid();
   v_missing_fact_schedule uuid := gen_random_uuid();
@@ -29,6 +32,16 @@ begin
     true
   );
 
+  -- This receiving-only fixture represents a request already handed to supply.
+  -- Use a real parent/position rather than orphan schedule identifiers; financial
+  -- transitions themselves are covered by the approval lifecycle suite.
+  insert into public.machines(id, factory_id, name, created_by)
+  values (v_machine, v_factory, 'RECEIVING-PLAN-FACT-TEST', v_actor);
+  insert into public.technologist_requests(id, machine_id, created_by, status)
+  values (v_request, v_machine, v_actor, 'submitted_to_supply');
+  insert into public.request_circle(id, request_id, diameter_mm, steel_grade, remainder_mm)
+  values (v_item, v_request, 46, 'S355', 1000);
+
   if (
     select constraint_record.convalidated
     from pg_constraint as constraint_record
@@ -44,7 +57,7 @@ begin
       status, received_quantity, received_piece_length_mm, received_piece_count,
       delivered_at, received_by, updated_by
     ) values (
-      v_invalid_schedule, 'request_circle', gen_random_uuid(), current_date, 6000, 'мм',
+      v_invalid_schedule, 'request_circle', v_item, current_date, 6000, 'мм',
       'delivered', 6000, 6000, null, now(), v_actor, v_actor
     );
     raise exception 'Новая строка с неполным физическим составом прошла constraint';
@@ -61,7 +74,7 @@ begin
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     planned_piece_length_mm, planned_piece_count
   ) values (
-    v_mismatch_schedule, 'request_circle', gen_random_uuid(), current_date, 12000, 'мм',
+    v_mismatch_schedule, 'request_circle', v_item, current_date, 12000, 'мм',
     6000, 2
   );
   set local session_replication_role = origin;
@@ -131,7 +144,7 @@ begin
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     planned_piece_length_mm, planned_piece_count
   ) values (
-    v_matching_schedule, 'request_circle', gen_random_uuid(), current_date, 12000, 'мм',
+    v_matching_schedule, 'request_circle', v_item, current_date, 12000, 'мм',
     6000, 2
   );
   set local session_replication_role = origin;
@@ -163,7 +176,7 @@ begin
     id, request_item_table, request_item_id, delivery_date, quantity, unit,
     planned_piece_length_mm, planned_piece_count
   ) values (
-    v_missing_fact_schedule, 'request_circle', gen_random_uuid(), current_date, 12000, 'мм',
+    v_missing_fact_schedule, 'request_circle', v_item, current_date, 12000, 'мм',
     6000, 2
   );
   set local session_replication_role = origin;

@@ -86,6 +86,9 @@ declare
   v_submit jsonb;
   v_repeat_submit jsonb;
   v_revision_id uuid;
+  v_finance uuid := gen_random_uuid();
+  v_approval uuid;
+  v_waste jsonb := '[]'::jsonb;
   v_department_request_id uuid;
   v_replacement_request_id uuid;
   v_replacement_item_id uuid;
@@ -247,6 +250,29 @@ begin
   set status = 'stock_checked', updated_at = now()
   where id = v_replacement_request_id;
 
+  begin
+    perform public.fn_submit_supply_position_revision_v1(v_replacement_request_id, v_technologist);
+    raise exception 'Correction bypassed financial approval';
+  exception when sqlstate '55000' then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '[FINANCIAL_APPROVAL_REQUIRED]%' then raise; end if;
+  end;
+  insert into public.users(id,email,full_name,role,factory_id,is_active)
+  values (v_finance,v_finance || '@revision.test','Финансовый директор','financial_director',v_factory,true);
+  if p_table in ('request_sheet_metal','request_pipe') then
+    if p_table = 'request_sheet_metal' then
+      update public.request_sheet_metal set thickness_mm = 10, sheet_size = '1000x1000', remainder_qty = 2 where id = v_replacement_item_id;
+    end if;
+    v_waste := jsonb_build_array(jsonb_build_object('sourceTable',p_table,'sourceId',v_replacement_item_id,'wastePercent',10,'itemName','Металл','materialName','Металл'));
+  end if;
+  v_approval := public.fn_submit_technologist_request_for_approval(v_replacement_request_id,v_technologist,
+    jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems',v_waste,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
+    jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_replacement_request_id)));
+  execute format('select to_jsonb(item) from public.%I item where id = $1',p_table) into v_row using v_source_item;
+  if v_row->>'order_status' = 'cancelled' or (select status from public.supply_position_revisions where id = v_revision_id) = 'submitted' then
+    raise exception 'Correction changed its source before financial approval';
+  end if;
+  perform public.fn_approve_technologist_request(v_approval,v_finance);
   v_submit := public.fn_submit_supply_position_revision_v1(v_replacement_request_id, v_technologist);
   v_repeat_submit := public.fn_submit_supply_position_revision_v1(v_replacement_request_id, v_technologist);
   if not coalesce((v_repeat_submit->>'idempotent')::boolean, false)

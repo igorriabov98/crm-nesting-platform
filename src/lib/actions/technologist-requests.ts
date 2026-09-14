@@ -652,31 +652,7 @@ export async function completeStockReservation(
 
     if (revision) {
       await validateRequestReadyForSupply(db, requestId, userId)
-      const { data, error } = await admin.rpc('fn_submit_supply_position_revision_v1', {
-        p_request_id: requestId,
-        p_actor: userId,
-      })
-      if (error) throw new Error(error.message || 'Не удалось отправить исправленную позицию снабжению')
-      const result = (data || {}) as { machine_id?: string; source_request_id?: string }
-      revalidateRequest(request.machine_id, requestId)
-      revalidatePath(ROUTES.SUPPLY_ORDERS)
-      revalidatePath(ROUTES.REQUESTS)
-      revalidatePath(ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS)
-      revalidatePath(ROUTES.TASKS)
-      revalidatePath(ROUTES.NOTIFICATIONS)
-      revalidatePath(`/requests/detail/${revision.department_request_id}`)
-      try {
-        await dispatchPendingTelegramDeliveries({ machineId: result.machine_id || request.machine_id })
-      } catch {
-        // The database transaction is complete; Telegram delivery is best-effort.
-      }
-      return {
-        success: true,
-        data: {
-          href: `${ROUTES.SALES_PLAN}/${request.machine_id}/request/${requestId}`,
-          submittedRevision: true,
-        },
-      }
+      return { success: true, data: { href: `/technologist/requests/${requestId}/complete` } }
     }
 
     const { data: detailingCheckData, error: detailingCheckError } = await db.rpc('fn_validate_detailing_request_check', {
@@ -692,7 +668,7 @@ export async function completeStockReservation(
     await validateRequestReadyForSupply(db, requestId, userId)
 
     // The regular warehouse check only opens the completion wizard. The request is
-    // submitted to supply by fn_finalize_technologist_request in one transaction.
+    // submitted to supply only after financial approval in one transaction.
     return { success: true, data: { href: `/technologist/requests/${requestId}/complete` } }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Не удалось завершить бронь' }
