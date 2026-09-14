@@ -70,7 +70,7 @@ begin
   if (select count(*) from public.tasks where technologist_request_approval_id = v_version) <> 2 then
     raise exception 'approval task was not created for every active financial director';
   end if;
-  if exists (select 1 from public.tasks where technologist_request_approval_id = v_version and deadline <> (now() at time zone 'Europe/Uzhgorod')::date) then
+  if exists (select 1 from public.tasks where technologist_request_approval_id = v_version and deadline <> (now() at time zone 'Europe/Kyiv')::date) then
     raise exception 'approval task deadline is not the submission date';
   end if;
   if exists (select 1 from public.technologist_request_completions where request_id = v_request) then

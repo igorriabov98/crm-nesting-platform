@@ -396,8 +396,8 @@ begin
       v_request.machine_id, v_recipient, 'technologist_request_approval',
       'Проверить и одобрить заявку',
       'Заявка №' || v_request_number || ' для заказа «' || coalesce(v_machine_name, 'Без названия') || '»',
-      'pending', (now() at time zone 'Europe/Uzhgorod')::date,
-      (now() at time zone 'Europe/Uzhgorod')::date, v_version_id
+      'pending', (now() at time zone 'Europe/Kyiv')::date,
+      (now() at time zone 'Europe/Kyiv')::date, v_version_id
     );
   end loop;
 
