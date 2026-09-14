@@ -23,6 +23,7 @@ import type {
   PaymentCompaniesData,
   PaymentCompanyRow,
 } from '@/lib/payments/types'
+import { getCommercialVisibilityForClients, getCommercialVisibilityForClient } from '@/lib/permissions/commercial-visibility'
 
 type ClientRow = {
   id: string
@@ -225,7 +226,12 @@ async function loadBase(resourceKey: CompanyScopedResource) {
   if (context.companyScope === 'own') clientQuery = clientQuery.eq('responsible_user_id', context.userId)
   const { data: clientData, error: clientError } = await clientQuery
   if (clientError) throw new Error(clientError.message)
-  const clients = (clientData || []) as ClientRow[]
+  const rawClients = (clientData || []) as ClientRow[]
+  const visibility = await getCommercialVisibilityForClients(rawClients.map((client) => client.id), context)
+  const clients = rawClients.map((client) => ({
+    ...client,
+    name: visibility.get(client.id)?.displayName || 'КЛИЕНТ',
+  }))
   const clientIds = clients.map((client) => client.id)
   if (clientIds.length === 0) return { context, db, clients, machines: [] as MachineRow[], invoices: [] as InvoiceRow[] }
 
@@ -366,6 +372,7 @@ export async function getClientPaymentDetails(
     .single()
   if (clientError || !clientData) throw new Error('Компания не найдена')
   const client = clientData as ClientRow
+  const clientVisibility = await getCommercialVisibilityForClient(client.id, context)
   const { data: machineData, error: machineError } = await db
     .from('machines')
     .select('id, name, client_id, actual_shipping_date, desired_shipping_date, delivery_to_client_date')
@@ -407,7 +414,7 @@ export async function getClientPaymentDetails(
   return {
     client: {
       id: client.id,
-      name: client.name,
+      name: clientVisibility.displayName,
       responsibleUserId: client.responsible_user_id,
       responsibleName: client.responsible_user_id ? usersById.get(client.responsible_user_id) || null : null,
       paymentTermsType: client.payment_terms_type,

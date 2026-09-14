@@ -299,6 +299,8 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
           next.companyManageScope = 'own'
         }
       } else {
+        const resource = data.resources.find((item) => item.key === resourceKey)
+        if (resource?.viewOnly) return current
         next.canManage = checked
         if (checked) next.canView = true
         if (!checked) next.companyManageScope = 'own'
@@ -759,13 +761,13 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                                   {renderPermissionSwitch(resource, 'head', 'view')}
                                 </TableCell>
                                 <TableCell className="bg-primary/[0.018] p-0 text-center group-hover/permission-row:bg-primary/[0.04]">
-                                  {renderPermissionSwitch(resource, 'head', 'manage')}
+                                  {resource.viewOnly ? <span className="text-xs text-muted-foreground">—</span> : renderPermissionSwitch(resource, 'head', 'manage')}
                                 </TableCell>
                                 <TableCell className="border-l bg-primary/[0.045] p-0 text-center group-hover/permission-row:bg-primary/[0.075]">
                                   {renderPermissionSwitch(resource, 'member', 'view')}
                                 </TableCell>
                                 <TableCell className="bg-primary/[0.045] p-0 text-center group-hover/permission-row:bg-primary/[0.075]">
-                                  {renderPermissionSwitch(resource, 'member', 'manage')}
+                                  {resource.viewOnly ? <span className="text-xs text-muted-foreground">—</span> : renderPermissionSwitch(resource, 'member', 'manage')}
                                 </TableCell>
                               </TableRow>
                               {resource.supportsFactoryScope && (
@@ -795,13 +797,13 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                                   <TableCell colSpan={2} className="border-l bg-primary/[0.018] px-4 py-3">
                                     <div className="grid gap-3 lg:grid-cols-2">
                                       {renderCompanyScopeSelect(resource, 'head', 'view', 'desktop')}
-                                      {renderCompanyScopeSelect(resource, 'head', 'manage', 'desktop')}
+                                      {!resource.viewOnly && renderCompanyScopeSelect(resource, 'head', 'manage', 'desktop')}
                                     </div>
                                   </TableCell>
                                   <TableCell colSpan={2} className="border-l bg-primary/[0.045] px-4 py-3">
                                     <div className="grid gap-3 lg:grid-cols-2">
                                       {renderCompanyScopeSelect(resource, 'member', 'view', 'desktop')}
-                                      {renderCompanyScopeSelect(resource, 'member', 'manage', 'desktop')}
+                                      {!resource.viewOnly && renderCompanyScopeSelect(resource, 'member', 'manage', 'desktop')}
                                     </div>
                                   </TableCell>
                                 </TableRow>
@@ -839,7 +841,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                               <div key={`${resource.key}-${scope}`} className="grid grid-cols-[minmax(0,1fr)_64px_64px] items-center border-t px-3">
                                 <span className="text-sm font-medium text-foreground">{subjectShortLabel(scope)}</span>
                                 <span className="flex justify-center">{renderPermissionSwitch(resource, scope, 'view')}</span>
-                                <span className="flex justify-center">{renderPermissionSwitch(resource, scope, 'manage')}</span>
+                                <span className="flex justify-center">{resource.viewOnly ? <span className="text-muted-foreground">—</span> : renderPermissionSwitch(resource, scope, 'manage')}</span>
                               </div>
                             ))}
                           </div>
@@ -856,7 +858,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
                                   <div className="text-xs font-semibold text-foreground">{subjectShortLabel(scope)}</div>
                                   <div className="grid gap-3 sm:grid-cols-2">
                                     {renderCompanyScopeSelect(resource, scope, 'view', 'mobile')}
-                                    {renderCompanyScopeSelect(resource, scope, 'manage', 'mobile')}
+                                    {!resource.viewOnly && renderCompanyScopeSelect(resource, scope, 'manage', 'mobile')}
                                   </div>
                                 </div>
                               ))}

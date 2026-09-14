@@ -52,8 +52,8 @@ function pagePath(filePath: string) {
   return `/${route}`
 }
 
-assert.equal(PERMISSION_RESOURCES.length, 63, 'Реестр должен содержать все 63 ресурса')
-assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 63, 'Ключи ресурсов должны быть уникальными')
+assert.equal(PERMISSION_RESOURCES.length, 64, 'Реестр должен содержать все 64 ресурса')
+assert.equal(new Set(PERMISSION_RESOURCES.map((resource) => resource.key)).size, 64, 'Ключи ресурсов должны быть уникальными')
 
 const technologistPermissions = getDefaultPermissionMap('technologist')
 const procurementHeadPermissions = getDefaultPermissionMap('procurement_head')
@@ -87,6 +87,10 @@ assert(!hasPermission(getDefaultPermissionMap('production_manager'), 'production
 assert(hasPermission(getFullPermissionMap(), 'production_reports', 'manage'), 'CRM-администратор должен управлять производственной аналитикой')
 assert(!hasPermission(getDefaultPermissionMap('sales_manager'), 'my_orders', 'view'), 'Мои заказы должны открываться только через матрицу доступа')
 assert(hasPermission(getFullPermissionMap(), 'my_orders', 'view'), 'CRM-администратор должен видеть Мои заказы')
+assert(!hasPermission(getDefaultPermissionMap('sales_manager'), 'client_identity', 'view'), 'Полные названия клиентов не выдаются ролью по умолчанию')
+assert(!hasPermission(getDefaultPermissionMap('sales_manager'), 'client_prices', 'view'), 'Цены заказов не выдаются ролью по умолчанию')
+assert(hasPermission(getFullPermissionMap(), 'client_identity', 'view'), 'CRM-администратор должен видеть полные названия клиентов')
+assert(!hasPermission(getFullPermissionMap(), 'client_identity', 'manage'), 'Полные названия клиентов являются view-only ресурсом')
 assert(!hasPermission(getDefaultPermissionMap('planning_director'), 'meeting_rules', 'view'), 'Конструктор правил по умолчанию открывается только администратору CRM')
 assert(hasPermission(getFullPermissionMap(), 'meeting_templates', 'manage'), 'CRM-администратор должен управлять шаблонами совещаний')
 assert(hasPermission(getFullPermissionMap(), 'meeting_question_templates', 'manage'), 'CRM-администратор должен управлять шаблонами вопросов')

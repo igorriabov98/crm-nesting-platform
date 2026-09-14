@@ -126,11 +126,12 @@ function machineOrder(left: MachineListItem, right: MachineListItem) {
 }
 
 function compactMoney(value: number | null) {
+  if (value == null) return '—'
   return new Intl.NumberFormat('ru-RU', {
     style: 'currency',
     currency: 'EUR',
     maximumFractionDigits: 0,
-  }).format(Number(value || 0))
+  }).format(Number(value))
 }
 
 function compactWeight(value: number | null) {

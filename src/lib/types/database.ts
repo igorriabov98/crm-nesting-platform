@@ -449,6 +449,7 @@ export type Database = {
         Row: {
           id: string
           name: string
+          public_alias: string
           primary_contact_name: string | null
           phone: string | null
           email: string | null
@@ -476,6 +477,7 @@ export type Database = {
         Insert: {
           id?: string
           name: string
+          public_alias?: string
           primary_contact_name?: string | null
           phone?: string | null
           email?: string | null
@@ -503,6 +505,7 @@ export type Database = {
         Update: {
           id?: string
           name?: string
+          public_alias?: string
           primary_contact_name?: string | null
           phone?: string | null
           email?: string | null
@@ -730,6 +733,8 @@ export type Database = {
           factory_id: string | null
           created_by: string
           name: string
+          creation_year: number | null
+          annual_order_number: number | null
           status: Database['public']['Enums']['machine_status']
           material_type: Database['public']['Enums']['material_type']
           is_confirmed: boolean
@@ -769,6 +774,8 @@ export type Database = {
           factory_id?: string | null
           created_by: string
           name: string
+          creation_year?: number | null
+          annual_order_number?: number | null
           status?: Database['public']['Enums']['machine_status']
           material_type?: Database['public']['Enums']['material_type']
           is_confirmed?: boolean
@@ -808,6 +815,8 @@ export type Database = {
           factory_id?: string | null
           created_by?: string
           name?: string
+          creation_year?: number | null
+          annual_order_number?: number | null
           status?: Database['public']['Enums']['machine_status']
           material_type?: Database['public']['Enums']['material_type']
           is_confirmed?: boolean
@@ -953,7 +962,7 @@ export type Database = {
           product_characteristics: string | null
           weight: number
           net_weight: number | null
-          price: number
+          price: number | null
           quantity: number
           packing_type: string | null
           packing_places: number | null
@@ -1306,7 +1315,7 @@ export type Database = {
           id: string
           machine_id: string
           category: string
-          amount: number
+          amount: number | null
           comment: string | null
           date_change_state: Database['public']['Enums']['transport_trip_date_change_state']
           created_at: string
@@ -5636,6 +5645,8 @@ export type Database = {
           factory_id: string | null
           created_by: string
           name: string
+          creation_year: number | null
+          annual_order_number: number | null
           created_at: string
           updated_at: string
           desired_shipping_date: string | null

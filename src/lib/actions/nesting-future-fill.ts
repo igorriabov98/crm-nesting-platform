@@ -10,6 +10,7 @@ import { getProductVersionNestingGuards, type ProductVersionNestingDb } from '@/
 import { getResult, type NestingResult, type RemnantGeom, type SheetResult } from '@/lib/nesting/api'
 import { requirePermission } from '@/lib/permissions/server'
 import type { PermissionOperation } from '@/lib/permissions/resources'
+import { sanitizeStructuredClientRelations } from '@/lib/permissions/commercial-visibility'
 
 type ActionResult<T> = {
   success: boolean
@@ -69,7 +70,7 @@ type CandidateStageRow = {
     id: string
     name: string
     is_archived?: boolean | null
-    client?: { name?: string | null } | null
+    client?: { id: string; name?: string | null } | null
   } | null
 }
 
@@ -290,14 +291,14 @@ async function loadCandidates(db: LooseDb, batchDate: string, originalMachineIds
   const until = addDays(batchDate, 30)
   const { data: stageData, error: stageError } = await db
     .from('production_stages')
-    .select('id, machine_id, date_start, machines!inner(id, name, is_archived, client:clients(name))')
+    .select('id, machine_id, date_start, machines!inner(id, name, is_archived, client:clients(id, name))')
     .eq('stage_type', 'cutting')
     .gt('date_start', batchDate)
     .lte('date_start', until)
     .order('date_start', { ascending: true })
 
   if (stageError) throw new Error(stageError.message || 'Не удалось загрузить будущие машины')
-  const stages = ((stageData || []) as CandidateStageRow[])
+  const stages = (await sanitizeStructuredClientRelations((stageData || []) as CandidateStageRow[]))
     .filter((stage) => stage.date_start && stage.machines && !stage.machines.is_archived && !originalMachineIds.includes(stage.machine_id))
   const machineIds = Array.from(new Set(stages.map((stage) => stage.machine_id)))
   if (machineIds.length === 0) return []

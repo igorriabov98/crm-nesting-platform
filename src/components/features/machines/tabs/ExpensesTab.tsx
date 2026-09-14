@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/table'
 import { useRole } from '@/lib/hooks/useRole'
 import { LazyMachineEditDialog } from '../LazyMachineEditDialog'
-import type { MachineDetails, MachineExpense } from '@/lib/types'
+import type { CommercialMachineExpense, MachineDetails } from '@/lib/types'
 import { TRANSPORT_EXPENSE_CATEGORY, isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 
 interface ExpensesTabProps {
@@ -22,7 +22,7 @@ interface ExpensesTabProps {
 
 export function ExpensesTab({ machine }: ExpensesTabProps) {
   const { can } = useRole()
-  const canEdit = can('sales_plan', 'manage')
+  const canEdit = can('sales_plan', 'manage') && machine.can_manage_order_prices
   const [isEditOpen, setIsEditOpen] = useState(false)
 
   const allExpenses = machine.machine_expenses || []
@@ -71,7 +71,7 @@ export function ExpensesTab({ machine }: ExpensesTabProps) {
         </div>
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
           <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">Итого расходов</span>
-          <span className="mt-1 block text-2xl font-bold tabular-nums text-amber-800">€{Number(machine.total_expenses || 0).toLocaleString()}</span>
+          <span className="mt-1 block text-2xl font-bold tabular-nums text-amber-800">{machine.total_expenses == null ? '—' : `€${Number(machine.total_expenses).toLocaleString()}`}</span>
         </div>
       </div>
 
@@ -97,13 +97,13 @@ export function ExpensesTab({ machine }: ExpensesTabProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {expenses.map((expense: MachineExpense, idx: number) => (
+                {expenses.map((expense: CommercialMachineExpense, idx: number) => (
                   <TableRow key={expense.id || idx} className="border-slate-200 hover:bg-slate-50">
                     <TableCell className="text-center tabular-nums text-slate-400">{idx + 1}</TableCell>
                     <TableCell className="font-medium text-slate-900">
                       {isTransportExpenseCategory(expense.category) ? TRANSPORT_EXPENSE_CATEGORY : expense.category}
                     </TableCell>
-                    <TableCell className="text-right font-semibold tabular-nums text-amber-700">€{Number(expense.amount).toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums text-amber-700">{expense.amount == null ? '—' : `€${Number(expense.amount).toLocaleString()}`}</TableCell>
                     <TableCell className="max-w-lg text-slate-600">{expense.comment || '—'}</TableCell>
                     {canEdit && (
                       <TableCell>
@@ -119,14 +119,14 @@ export function ExpensesTab({ machine }: ExpensesTabProps) {
           </div>
 
           <div className="space-y-3 md:hidden">
-            {expenses.map((expense: MachineExpense, idx: number) => (
+            {expenses.map((expense: CommercialMachineExpense, idx: number) => (
               <article key={expense.id || idx} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Расход {idx + 1}</span>
                     <h3 className="mt-1 break-words font-semibold text-slate-950">{isTransportExpenseCategory(expense.category) ? TRANSPORT_EXPENSE_CATEGORY : expense.category}</h3>
                   </div>
-                  <span className="shrink-0 text-lg font-bold tabular-nums text-amber-700">€{Number(expense.amount).toLocaleString()}</span>
+                  <span className="shrink-0 text-lg font-bold tabular-nums text-amber-700">{expense.amount == null ? '—' : `€${Number(expense.amount).toLocaleString()}`}</span>
                 </div>
                 {expense.comment && <p className="mt-3 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-600">{expense.comment}</p>}
               </article>

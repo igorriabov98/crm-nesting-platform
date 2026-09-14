@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { requirePermission } from '@/lib/permissions/server'
+import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
+import { requireClientDocumentAccess } from '@/lib/permissions/commercial-visibility'
 import {
   clientFasteningUploadPrefix,
   validateClientFasteningFile,
@@ -34,6 +35,11 @@ async function assertUploadScope(input: {
   clientId: string
 }) {
   await requirePermission('products', 'manage')
+  await requireClientDocumentAccess(input.clientId, {
+    resourceKey: 'products',
+    operation: 'manage',
+    includesPrices: false,
+  })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const admin = createAdminClient() as any
   const [{ data: version, error: versionError }, { data: client, error: clientError }] = await Promise.all([
@@ -76,7 +82,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Не удалось подготовить загрузку' },
-      { status: 400 },
+      { status: error instanceof PermissionDeniedError ? 403 : 400 },
     )
   }
 }
@@ -95,7 +101,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Не удалось очистить загрузку' },
-      { status: 400 },
+      { status: error instanceof PermissionDeniedError ? 403 : 400 },
     )
   }
 }

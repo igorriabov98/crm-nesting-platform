@@ -20,6 +20,7 @@ interface DocumentGenerationButtonsProps {
   specificationNumber?: string | null
   specificationDate?: string | null
   deliveryBasisType?: string | null
+  canGeneratePriced: boolean
 }
 
 const DOCUMENT_OPTIONS: Array<{
@@ -76,6 +77,7 @@ export function DocumentGenerationButtons({
   specificationNumber,
   specificationDate,
   deliveryBasisType,
+  canGeneratePriced,
 }: DocumentGenerationButtonsProps) {
   const [loadingType, setLoadingType] = useState<DocumentType | null>(null)
   const isLoading = loadingType !== null
@@ -144,7 +146,7 @@ export function DocumentGenerationButtons({
         align="end"
         className="w-64 border-[#E8ECF0] bg-white text-[#374151]"
       >
-        {DOCUMENT_OPTIONS.map((option) => {
+        {DOCUMENT_OPTIONS.filter((option) => canGeneratePriced || ['packing_list', 'quality_control'].includes(option.type)).map((option) => {
           const isActive = loadingType === option.type
           const Icon = option.kind === "zip" ? Package : FileText
 

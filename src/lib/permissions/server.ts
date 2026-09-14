@@ -129,6 +129,15 @@ function makeFullAdminPermissionDetails(memberships: DepartmentPermissionMembers
   }
 }
 
+function addSalesOwnerCommercialCapabilities(permissions: PermissionMap, role: UserRole | null) {
+  if (role !== 'sales_manager') return permissions
+  return {
+    ...permissions,
+    client_identity: { canView: true, canManage: false },
+    client_prices: { canView: true, canManage: true },
+  }
+}
+
 function getCurrentContextAdminPermissions(
   user: Pick<Awaited<ReturnType<typeof getCurrentUserContext>>['user'], 'department_memberships'>,
 ) {
@@ -241,7 +250,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
       legacySources[resource.key] = ['Legacy role fallback']
     }
     return {
-      permissions: legacyPermissions,
+      permissions: addSalesOwnerCommercialCapabilities(legacyPermissions, userRow.role),
       isAdminPosition: false,
       usedLegacyFallback: true,
       memberships,
@@ -254,7 +263,7 @@ export const getCurrentUserPermissions = cache(async (userId: string): Promise<U
   }
 
   return {
-    permissions,
+    permissions: addSalesOwnerCommercialCapabilities(permissions, userRow.role),
     isAdminPosition: false,
     usedLegacyFallback: false,
     memberships,

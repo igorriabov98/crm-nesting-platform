@@ -21,6 +21,7 @@ import {
 } from '@/lib/invoices/payment-schedule'
 import type { Database } from '@/lib/types/database'
 import type { UserRole } from '@/lib/types'
+import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
 const dateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Некорректная дата')
 const issueInvoiceSchema = z.object({
@@ -175,6 +176,7 @@ export async function issueMachineInvoice(input: InvoiceIssueInput) {
     if (machine.is_archived) throw new Error('Машина архивирована. Действия с ней остановлены.')
     if (!machine.client_id || !machine.client) throw new Error('У машины не указана компания клиента')
     await requireCompanyRecordAccess('invoices', 'manage', machine.client_id)
+    await requireClientCommercialDocumentVisibility(machine.client_id, true)
 
     const { data: invoiceHistory, error: invoiceHistoryError } = await admin
       .from('invoices')

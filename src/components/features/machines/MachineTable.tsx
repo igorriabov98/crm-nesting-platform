@@ -132,7 +132,7 @@ function getGoodsAndSamples(machine: MachineListItem) {
 }
 
 function formatMoney(value: number | null | undefined) {
-  return `€${Number(value || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 })}`
+  return value == null ? '—' : `€${Number(value).toLocaleString('ru-RU', { maximumFractionDigits: 0 })}`
 }
 
 function formatWeight(value: number | null | undefined) {
@@ -451,23 +451,25 @@ export function MachineTable({
       && matchesConfirmation
   }), [filters, machines, normalizedSearch, selectedFactoryFilter, selectedProductionMonthFilter])
 
+  const canViewAllPrices = filteredMachines.every((machine) => machine.can_view_order_prices)
+  const effectiveSort = sort === 'cost_desc' && !canViewAllPrices ? 'newest' : sort
   const sortedMachines = useMemo(() => [...filteredMachines].sort((left, right) => {
-    if (sort === 'oldest') return new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
-    if (sort === 'name_asc') return left.name.localeCompare(right.name, 'ru')
-    if (sort === 'production_month_asc') {
+    if (effectiveSort === 'oldest') return new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
+    if (effectiveSort === 'name_asc') return left.name.localeCompare(right.name, 'ru')
+    if (effectiveSort === 'production_month_asc') {
       return (left.production_month || '9999-12').localeCompare(right.production_month || '9999-12')
     }
-    if (sort === 'cost_desc') return Number(right.total_cost || 0) - Number(left.total_cost || 0)
-    if (sort === 'weight_desc') return Number(right.total_weight || 0) - Number(left.total_weight || 0)
+    if (effectiveSort === 'cost_desc') return Number(right.total_cost || 0) - Number(left.total_cost || 0)
+    if (effectiveSort === 'weight_desc') return Number(right.total_weight || 0) - Number(left.total_weight || 0)
     return new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
-  }), [filteredMachines, sort])
+  }), [effectiveSort, filteredMachines])
 
   const stats = useMemo(() => ({
     total: sortedMachines.length,
     confirmed: sortedMachines.filter((machine) => machine.is_confirmed).length,
     weight: sortedMachines.reduce((sum, machine) => sum + Number(machine.total_weight || 0), 0),
-    cost: sortedMachines.reduce((sum, machine) => sum + Number(machine.total_cost || 0), 0),
-  }), [sortedMachines])
+    cost: canViewAllPrices ? sortedMachines.reduce((sum, machine) => sum + Number(machine.total_cost || 0), 0) : null,
+  }), [canViewAllPrices, sortedMachines])
 
   const activeClientFilters = useMemo(() => {
     const items: Array<{ key: keyof SalesPlanFilters; label: string }> = []
@@ -710,7 +712,7 @@ export function MachineTable({
                     <SelectValue>{sortLabels[sort]}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.entries(sortLabels).map(([value, label]) => (
+                    {Object.entries(sortLabels).filter(([value]) => value !== 'cost_desc' || canViewAllPrices).map(([value, label]) => (
                       <SelectItem key={value} value={value}>{label}</SelectItem>
                     ))}
                   </SelectContent>
@@ -904,7 +906,7 @@ export function MachineTable({
                           <td className="sticky right-0 z-20 border-b border-l border-slate-100 bg-white px-3 py-4 align-top group-hover:bg-slate-50">
                             <MachineActions
                               machine={machine}
-                              canEdit={canEdit}
+                              canEdit={canEdit && machine.can_manage_order_prices}
                               canDelete={canDelete}
                               isDirector={isDirector}
                               onEdit={() => setEditMachine(machine)}
@@ -942,7 +944,7 @@ export function MachineTable({
                         </div>
                         <MachineActions
                           machine={machine}
-                          canEdit={canEdit}
+                          canEdit={canEdit && machine.can_manage_order_prices}
                           canDelete={canDelete}
                           isDirector={isDirector}
                           onEdit={() => setEditMachine(machine)}

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { buildNonArchivedOrUnscopedMachineFilter } from '@/lib/machine-work-visibility'
 import { requirePermission } from '@/lib/permissions/server'
+import { sanitizeStructuredClientRelations } from '@/lib/permissions/commercial-visibility'
 import { ROUTES } from '@/lib/constants/routes'
 import { dispatchPendingTelegramDeliveries } from '@/lib/services/task-notifications'
 import {
@@ -467,12 +468,13 @@ async function loadWorkspace(input: {
     }
   }
 
+  const safeRequests = await sanitizeStructuredClientRelations(requests, context)
   return {
     mode: input.mode,
     target: input.target,
     userId: context.userId,
     canClaimMachineLayout: canClaimMachineLayout(context),
-    requests,
+    requests: safeRequests,
     total: count || 0,
     page: input.filters.page,
     pageSize: PAGE_SIZE,
@@ -546,8 +548,9 @@ export async function getDepartmentRequestDetail(requestId: string) {
     if (!readError) request.result_viewed_at = viewedAt
   }
 
+  const safeRequest = await sanitizeStructuredClientRelations(request, context)
   return {
-    request,
+    request: safeRequest,
     userId: context.userId,
     canManage,
     canProcessPositionRevision: request.can_process_position_revision,
@@ -713,7 +716,7 @@ export async function searchDepartmentRequestMachines(query: string): Promise<De
   const search = normalizeSearch(query)
   let machineQuery = createAdminClient()
     .from('machines')
-    .select('id, name, specification_number, factory_id, client:clients(name)')
+    .select('id, name, specification_number, factory_id, client:clients(id, name)')
     .eq('is_archived', false)
     .is('actual_shipping_date', null)
     .neq('status', 'shipped')
@@ -724,7 +727,8 @@ export async function searchDepartmentRequestMachines(query: string): Promise<De
 
   const { data, error } = await machineQuery
   if (error) throw new Error(error.message)
-  return ((data || []) as unknown as MachineSearchRow[]).map((row) => {
+  const safeRows = await sanitizeStructuredClientRelations((data || []) as unknown as MachineSearchRow[], context)
+  return safeRows.map((row) => {
     const client = Array.isArray(row.client) ? row.client[0] : row.client
     const details = [row.specification_number, client?.name].filter(Boolean).join(' · ')
     return {

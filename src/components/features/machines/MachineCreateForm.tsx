@@ -87,7 +87,6 @@ export function MachineCreateForm({
   const form = useForm<CreateMachineInput>({
     resolver: zodResolver(createMachineSchema) as unknown as Resolver<CreateMachineInput>,
     defaultValues: {
-      name: '',
       client_id: '',
       is_confirmed: false,
       desired_shipping_date: undefined,
@@ -417,20 +416,6 @@ export function MachineCreateForm({
                         })}
                       </p>
                     )}
-                    <FormMessage className="text-[#DC2626]" />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-[#374151]">Название машины *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Например: ТН-1400" {...field} className="h-11 border-slate-200 bg-slate-50 text-base text-slate-900 sm:text-sm" />
-                    </FormControl>
                     <FormMessage className="text-[#DC2626]" />
                   </FormItem>
                 )}

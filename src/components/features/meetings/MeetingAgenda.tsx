@@ -477,10 +477,10 @@ export function MeetingAgenda({ meeting, factories, meetingOptions, isDirector }
                         {item.machine.item_count !== undefined && (
                           <span className="bg-gray-100 px-2 py-0.5 rounded">Товаров: {item.machine.item_count}</span>
                         )}
-                        {item.machine.total_weight !== undefined && (
+                        {item.machine.total_weight != null && (
                           <span className="bg-gray-100 px-2 py-0.5 rounded">Вес: {item.machine.total_weight.toFixed(1)} т</span>
                         )}
-                        {item.machine.total_cost !== undefined && (
+                        {item.machine.total_cost != null && (
                           <span className="bg-gray-100 px-2 py-0.5 rounded">€{item.machine.total_cost.toLocaleString()}</span>
                         )}
                         <span className={`px-2 py-0.5 rounded ${item.machine.material_type === 'undefined' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`}>

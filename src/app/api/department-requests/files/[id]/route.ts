@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import { canManageDepartmentRequestTarget, type DepartmentRequestTarget } from '@/lib/department-requests'
 import { resolveFileResponse } from '@/lib/file-archive/resolver'
+import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
 type AttachmentRow = {
   id: string
@@ -13,6 +14,7 @@ type AttachmentRow = {
     created_by: string
     target_department: DepartmentRequestTarget
     factory_id: string | null
+    machine: { client_id: string | null } | Array<{ client_id: string | null }> | null
   } | null
 }
 
@@ -34,7 +36,8 @@ export async function GET(
         request:department_requests!department_request_attachments_request_id_fkey(
           created_by,
           target_department,
-          factory_id
+          factory_id,
+          machine:machines(client_id)
         )
       `)
       .eq('id', id)
@@ -59,6 +62,8 @@ export async function GET(
     if (!request || (request.created_by !== context.userId && (!departmentAllowed || !factoryAllowed))) {
       return NextResponse.json({ error: 'Недостаточно прав' }, { status: 403 })
     }
+    const machine = Array.isArray(request.machine) ? request.machine[0] : request.machine
+    if (machine?.client_id) await requireClientCommercialDocumentVisibility(machine.client_id, false)
     if (!attachment.storage_path.startsWith('department-requests/') || attachment.storage_path.includes('..')) {
       return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
     }

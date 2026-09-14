@@ -190,6 +190,7 @@ export type RolePermissionsPageData = {
     group: string
     supportsFactoryScope: boolean
     supportsCompanyScope: boolean
+    viewOnly: boolean
   }>
   permissions: DepartmentAccessPermissionInput[]
   auditLog: Array<{
@@ -571,6 +572,7 @@ export async function getRolePermissionsPageData(): Promise<{ data: RolePermissi
           group: resource.group,
           supportsFactoryScope: 'supportsFactoryScope' in resource && resource.supportsFactoryScope === true,
           supportsCompanyScope: 'supportsCompanyScope' in resource && resource.supportsCompanyScope === true,
+          viewOnly: 'viewOnly' in resource && resource.viewOnly === true,
         })),
         permissions: buildAccessInputs(departments, accessRows),
         auditLog: auditRows
@@ -612,6 +614,9 @@ function validateInput(input: DepartmentAccessPermissionInput[], departmentIds: 
   const resourcesWithCompanyScope = new Set(PERMISSION_RESOURCES
     .filter((resource) => 'supportsCompanyScope' in resource && resource.supportsCompanyScope === true)
     .map((resource) => resource.key))
+  const viewOnlyResources = new Set(PERMISSION_RESOURCES
+    .filter((resource) => 'viewOnly' in resource && resource.viewOnly === true)
+    .map((resource) => resource.key))
   const normalized: DepartmentAccessPermissionInput[] = []
 
   for (const item of input) {
@@ -619,7 +624,7 @@ function validateInput(input: DepartmentAccessPermissionInput[], departmentIds: 
     if (item.subjectScope !== 'head' && item.subjectScope !== 'member') continue
     if (!validResources.has(item.resourceKey)) continue
 
-    const canManage = item.canManage === true
+    const canManage = !viewOnlyResources.has(item.resourceKey) && item.canManage === true
     const companyScopes = normalizedCompanyScopes(item, resourcesWithCompanyScope.has(item.resourceKey))
     normalized.push({
       departmentId: item.departmentId,

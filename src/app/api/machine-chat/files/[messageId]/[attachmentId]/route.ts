@@ -3,8 +3,9 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { decodeMachineChatBody } from '@/lib/machine-chat-attachments'
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import { resolveFileResponse } from '@/lib/file-archive/resolver'
+import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
-type MachineRelation = { id: string; factory_id: string | null }
+type MachineRelation = { id: string; factory_id: string | null; client_id: string | null }
 type MessageFileRow = {
   id: string
   machine_id: string
@@ -28,7 +29,7 @@ export async function GET(
 
     const { data, error } = await admin
       .from('machine_chat_messages')
-      .select('id, machine_id, body, machine:machines(id, factory_id)')
+      .select('id, machine_id, body, machine:machines(id, factory_id, client_id)')
       .eq('id', messageId)
       .single()
 
@@ -43,6 +44,7 @@ export async function GET(
     ) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
+    if (machine?.client_id) await requireClientCommercialDocumentVisibility(machine.client_id, false)
 
     const attachment = decodeMachineChatBody(message.body).attachments.find((item) => item.id === attachmentId)
     if (!attachment || !attachment.path.startsWith(`machine-chat/${message.machine_id}/`)) {

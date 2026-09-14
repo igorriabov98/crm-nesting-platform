@@ -21,10 +21,10 @@ import { COATINGS } from '@/lib/constants/coatings'
 import { ROUTES } from '@/lib/constants/routes'
 import { LazyMachineEditDialog } from '../LazyMachineEditDialog'
 import { startMachineItemNesting, type MachineItemNestingState } from '@/lib/actions/machine-item-nesting'
-import type { CoatingType, MachineDetails, MachineItem } from '@/lib/types'
+import type { CoatingType, CommercialMachineItem, MachineDetails, MachineItem } from '@/lib/types'
 import type { TaskWithRelations } from '@/lib/actions/tasks'
 
-type MachineItemWithVersionStatus = MachineItem & {
+type MachineItemWithVersionStatus = CommercialMachineItem & {
   is_product_version_outdated?: boolean
 }
 
@@ -37,7 +37,7 @@ interface ItemsTabProps {
 
 export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNesting = false }: ItemsTabProps) {
   const { can } = useRole()
-  const canEdit = can('sales_plan', 'manage')
+  const canEdit = can('sales_plan', 'manage') && machine.can_manage_order_prices
   const canNest = canManageNesting
   const [isEditOpen, setIsEditOpen] = useState(false)
 
@@ -133,9 +133,9 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
                       </div>
                     </TableCell>
                     <TableCell className="text-right text-[#374151]">{Number(item.weight).toFixed(2)} кг</TableCell>
-                    <TableCell className="text-right text-[#374151]">€{Number(item.price).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-[#374151]">{item.price == null ? '—' : `€${Number(item.price).toLocaleString()}`}</TableCell>
                     <TableCell className="text-center text-[#374151]">{item.quantity} шт</TableCell>
-                    <TableCell className="text-right font-medium text-[#1B3A6B]">€{itemCost.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-medium text-[#1B3A6B]">{item.price == null ? '—' : `€${itemCost.toLocaleString()}`}</TableCell>
                     <TableCell>{getCoatingBadge(item.coating, item.ral_number)}</TableCell>
                     {showActions && (
                       <TableCell>
@@ -165,7 +165,7 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
         <div className="flex flex-wrap justify-end gap-4 border-t border-[#E8ECF0] bg-[#F8F9FA] px-4 py-2 text-sm text-[#374151]">
           <span>{items.length} поз.</span>
           <span>{(totalWeight / 1000).toFixed(2)} т</span>
-          <span className="font-medium text-[#1B3A6B]">€{totalCost.toLocaleString()}</span>
+          <span className="font-medium text-[#1B3A6B]">{machine.can_view_order_prices ? `€${totalCost.toLocaleString()}` : '—'}</span>
         </div>
       </div>
       <div className="grid gap-3 md:hidden">
@@ -215,11 +215,11 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
                 </div>
                 <div className="rounded-lg bg-slate-50 p-3">
                   <div className="text-[11px] uppercase tracking-wide text-slate-400">Цена единицы</div>
-                  <div className="mt-1 font-semibold tabular-nums text-slate-800">€{Number(item.price).toLocaleString()}</div>
+                  <div className="mt-1 font-semibold tabular-nums text-slate-800">{item.price == null ? '—' : `€${Number(item.price).toLocaleString()}`}</div>
                 </div>
                 <div className="rounded-lg bg-emerald-50 p-3">
                   <div className="text-[11px] uppercase tracking-wide text-emerald-600">Стоимость</div>
-                  <div className="mt-1 font-bold tabular-nums text-emerald-700">€{itemCost.toLocaleString()}</div>
+                  <div className="mt-1 font-bold tabular-nums text-emerald-700">{item.price == null ? '—' : `€${itemCost.toLocaleString()}`}</div>
                 </div>
               </div>
               <div className="mt-3">{getCoatingBadge(item.coating, item.ral_number)}</div>
@@ -229,7 +229,7 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
         <div className="flex flex-wrap justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
           <span>{items.length} поз.</span>
           <span>{(totalWeight / 1000).toFixed(2)} т</span>
-          <span className="font-semibold text-blue-950">€{totalCost.toLocaleString()}</span>
+          <span className="font-semibold text-blue-950">{machine.can_view_order_prices ? `€${totalCost.toLocaleString()}` : '—'}</span>
         </div>
       </div>
       </>
@@ -270,7 +270,7 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
         </div>
         <div className="text-sm text-[#1B3A6B] font-medium text-lg">
           <span className="text-[#6B7280] text-sm pr-2">Итого стоимость товаров:</span>
-          €{Number(machine.total_items_cost || 0).toLocaleString()}
+          {machine.total_items_cost == null ? '—' : `€${Number(machine.total_items_cost).toLocaleString()}`}
         </div>
       </div>
 

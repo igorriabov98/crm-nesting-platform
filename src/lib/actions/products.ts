@@ -41,6 +41,7 @@ import type {
   UserSummary,
 } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
+import { requireClientDocumentAccess, sanitizeStructuredClientRelations } from '@/lib/permissions/commercial-visibility'
 
 type DbError = { message?: string; details?: string; hint?: string; code?: string }
 type LooseDbResult = { data: unknown; error: DbError | null }
@@ -144,13 +145,26 @@ function dbFrom(supabase: unknown): LooseDb {
 }
 
 export async function requireProductAccess(resourceKey: Extract<ResourceKey, 'products' | 'product_projects'> = 'products') {
-  const { supabase, user } = await requirePermission(resourceKey, 'view')
-  return { supabase, db: dbFrom(supabase), user }
+  const context = await requirePermission(resourceKey, 'view')
+  return { ...context, db: dbFrom(context.supabase) }
 }
 
 export async function requireProductManageAccess(resourceKey: Extract<ResourceKey, 'products' | 'product_projects'> = 'products') {
-  const { supabase, user } = await requirePermission(resourceKey, 'manage')
-  return { supabase, db: dbFrom(supabase), user }
+  const context = await requirePermission(resourceKey, 'manage')
+  return { ...context, db: dbFrom(context.supabase) }
+}
+
+async function requireProjectClientAccess(projectId: string, operation: 'view' | 'manage' = 'manage') {
+  const context = await requirePermission('product_projects', operation)
+  const { data, error } = await createAdminClient().from('product_projects').select('client_id').eq('id', projectId).single()
+  if (error || !data) throw error || new Error('Проект не найден')
+  const clientId = (data as unknown as { client_id: string | null }).client_id
+  if (clientId) {
+    await requireClientDocumentAccess(clientId, {
+      resourceKey: 'product_projects', operation, includesPrices: false,
+    }, context)
+  }
+  return context
 }
 
 function cleanNullableId(value: unknown) {
@@ -813,8 +827,8 @@ export async function getEngineerOptions() {
 
 export async function getProductProjects() {
   try {
-    const { db } = await requireProductAccess('product_projects')
-    const { data, error } = await db
+    const context = await requireProductAccess('product_projects')
+    const { data, error } = await dbFrom(createAdminClient())
       .from('product_projects')
       .select(`
         *,
@@ -826,7 +840,7 @@ export async function getProductProjects() {
       .order('updated_at', { ascending: false })
 
     if (error) throw error
-    return { data: (data || []) as ProductProjectListItem[], error: null }
+    return { data: await sanitizeStructuredClientRelations((data || []) as ProductProjectListItem[], context), error: null }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
@@ -861,8 +875,9 @@ export async function getCorrectableProductProjectOptions() {
 
 export async function getProductProject(id: string) {
   try {
-    const { db } = await requireProductAccess('product_projects')
-    const { data: projectData, error: projectError } = await db
+    const context = await requireProductAccess('product_projects')
+    const { db } = context
+    const { data: projectData, error: projectError } = await dbFrom(createAdminClient())
       .from('product_projects')
       .select('*, client:clients(id, name), assigned_engineer:users!product_projects_assigned_engineer_id_fkey(id, full_name)')
       .eq('id', id)
@@ -877,11 +892,11 @@ export async function getProductProject(id: string) {
     if (filesError) throw filesError
 
     return {
-      data: {
+      data: await sanitizeStructuredClientRelations({
         ...(projectData as ProductProjectDetails),
         versions: (versionsData || []) as ProductProjectVersion[],
         files: (filesData || []) as ProductProjectFile[],
-      },
+      }, context),
       error: null,
     }
   } catch (error) {
@@ -891,8 +906,12 @@ export async function getProductProject(id: string) {
 
 export async function createProductProject(input: ProductProjectInput) {
   try {
-    const { supabase, db } = await requireProductManageAccess('product_projects')
+    const context = await requireProductManageAccess('product_projects')
+    const { supabase, db } = context
     const parsed = productProjectSchema.parse(input)
+    if (parsed.client_id) await requireClientDocumentAccess(parsed.client_id, {
+      resourceKey: 'product_projects', operation: 'manage', includesPrices: false,
+    }, context)
     await assertTechnicalDepartmentUser(db, parsed.assigned_engineer_id)
     const projectId = randomUUID()
     const versionId = randomUUID()
@@ -928,7 +947,8 @@ export async function createProductProjectWithPhoto(formData: FormData) {
   let uploadedPath: string | null = null
 
   try {
-    const { supabase, db } = await requireProductManageAccess('product_projects')
+    const context = await requireProductManageAccess('product_projects')
+    const { supabase, db } = context
     const input: ProductProjectInput = {
       title: String(formData.get('title') || ''),
       client_id: cleanNullableId(formData.get('client_id')),
@@ -940,6 +960,9 @@ export async function createProductProjectWithPhoto(formData: FormData) {
       status: String(formData.get('status') || 'draft') as ProductProjectInput['status'],
     }
     const parsed = productProjectSchema.parse(input)
+    if (parsed.client_id) await requireClientDocumentAccess(parsed.client_id, {
+      resourceKey: 'product_projects', operation: 'manage', includesPrices: false,
+    }, context)
     await assertTechnicalDepartmentUser(db, parsed.assigned_engineer_id)
     const mailKind = String(formData.get('mail_kind') || '')
     const mailId = String(formData.get('mail_id') || '')
@@ -998,8 +1021,13 @@ export async function createProductProjectWithPhoto(formData: FormData) {
 
 export async function updateProductProject(id: string, input: ProductProjectInput) {
   try {
-    const { db, user } = await requireProductManageAccess('product_projects')
+    const context = await requireProductManageAccess('product_projects')
+    const { db, user } = context
     const parsed = productProjectSchema.parse(input)
+    await requireProjectClientAccess(id)
+    if (parsed.client_id) await requireClientDocumentAccess(parsed.client_id, {
+      resourceKey: 'product_projects', operation: 'manage', includesPrices: false,
+    }, context)
     await assertTechnicalDepartmentUser(db, parsed.assigned_engineer_id)
 
     const payload: ProductProjectUpdate = {
@@ -1025,6 +1053,7 @@ export async function updateProductProject(id: string, input: ProductProjectInpu
 
 export async function createProductProjectVersion(projectId: string, input: ProductProjectVersionInput) {
   try {
+    await requireProjectClientAccess(projectId)
     const { db, user } = await requireProductManageAccess('product_projects')
     const parsed = productProjectVersionSchema.parse(input)
     const { data: versionsData, error: versionsError } = await db
@@ -1067,6 +1096,7 @@ export async function approveProductProjectVersion(projectId: string, versionId:
   try {
     const parsedProjectId = z.string().uuid('Проект не найден').parse(projectId)
     const parsedVersionId = z.string().uuid('Версия проекта не найдена').parse(versionId)
+    await requireProjectClientAccess(parsedProjectId)
     const { supabase, db } = await requireProductManageAccess('product_projects')
     const { data: version, error: versionError } = await db
       .from('product_project_versions')
@@ -1102,6 +1132,7 @@ export async function saveProductProjectEngineeringDeliverables(formData: FormDa
   try {
     const { supabase, db, user } = await requireProductManageAccess('product_projects')
     const projectId = String(formData.get('project_id') || '')
+    await requireProjectClientAccess(projectId)
     const drawing = formData.get('drawing')
     const photo = formData.get('photo')
     const engineerDescription = String(formData.get('engineer_description') || '').trim()
@@ -1192,6 +1223,7 @@ export async function approveProductProjectForClient(
   input: ProductProjectApprovalInput,
 ) {
   try {
+    await requireProjectClientAccess(projectId)
     const { supabase } = await requireProductManageAccess('product_projects')
     const parsedProjectId = z.string().uuid('Проект не найден').parse(projectId)
     const parsedVersionId = z.string().uuid('Версия проекта не найдена').parse(versionId)
@@ -1221,6 +1253,7 @@ export async function approveProductProjectForClient(
 
 export async function requestProductProjectCorrection(projectId: string, input: ProductProjectCorrectionInput) {
   try {
+    await requireProjectClientAccess(projectId)
     const { supabase, user } = await requireProductManageAccess('product_projects')
     const parsedProjectId = z.string().uuid('Проект не найден').parse(projectId)
     const parsed = productProjectCorrectionSchema.parse(input)
@@ -1256,6 +1289,7 @@ export async function requestProductProjectCorrection(projectId: string, input: 
 
 export async function promoteProjectVersionToProduct(projectId: string, versionId: string, input: PromoteProductVersionInput) {
   try {
+    await requireProjectClientAccess(projectId)
     const { db, user } = await requireProductManageAccess('product_projects')
     const parsed = promoteProductVersionSchema.parse(input)
     const { data: versionData, error: versionError } = await db
@@ -1468,6 +1502,7 @@ export async function uploadProductProjectFile(formData: FormData) {
   try {
     const { supabase, db, user } = await requireProductManageAccess('product_projects')
     const projectId = String(formData.get('project_id') || '')
+    await requireProjectClientAccess(projectId)
     const versionId = cleanNullableId(formData.get('version_id'))
     const fileKind = productFileKindSchema.parse(String(formData.get('file_kind') || 'other'))
     const file = formData.get('file')
@@ -1496,6 +1531,7 @@ export async function uploadProductProjectFile(formData: FormData) {
 
 export async function deleteProductProjectFile(fileId: string, projectId: string) {
   try {
+    await requireProjectClientAccess(projectId)
     const { db } = await requireProductManageAccess('product_projects')
     const { data, error } = await db.from('product_project_files').select('file_path').eq('id', fileId).eq('project_id', projectId).single()
     if (error) throw error
