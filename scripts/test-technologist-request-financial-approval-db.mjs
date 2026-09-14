@@ -39,12 +39,25 @@ const version = sql(`
   commit;
 `).trim()
 assert.match(version, /^[0-9a-f-]{36}$/)
+const secondRequest = randomUUID()
+const secondVersion = sql(`
+  insert into technologist_requests(id,machine_id,created_by,status) values ('${secondRequest}','${ids.machine}','${ids.author}','stock_checked');
+  select fn_submit_technologist_request_for_approval('${secondRequest}','${ids.author}',
+    jsonb_build_object('decision','none','enteredPlasmaMinutes',0,'wasteItems','[]'::jsonb,'futureItems','[]'::jsonb,'archives','[]'::jsonb),
+    jsonb_build_object('sourceData',fn_technologist_approval_source('${secondRequest}')));
+`).trim()
+assert.match(secondVersion, /^[0-9a-f-]{36}$/)
+assert.equal(sql(`select count(distinct technologist_request_approval_id) from tasks where technologist_request_approval_machine_id = '${ids.machine}' and assigned_to = '${ids.reviewer}' and status = 'pending'`).trim(), '2', 'Different requests for the same order must have separate approval tasks')
 
 const decisions = await Promise.all([decision(), decision()])
 assert.equal(decisions.filter((result) => result.code === 0).length, 1, 'Exactly one concurrent approval must succeed')
 assert.match(decisions.find((result) => result.code !== 0)?.stderr || '', /Решение по версии уже принято/)
 assert.equal(sql(`select count(*) from technologist_request_completions where request_id = '${ids.request}'`).trim(), '1')
 assert.equal(sql(`select count(*) from tasks where technologist_request_approval_id = '${version}' and status in ('pending','in_progress')`).trim(), '0')
+assert.equal(sql(`select count(*) from tasks where technologist_request_approval_id = '${secondVersion}' and assigned_to = '${ids.reviewer}' and status = 'pending'`).trim(), '1', 'Approving one request must not close another request of the same order')
+sql(`update machines set is_archived = true where id = '${ids.machine}'`)
+assert.equal(sql(`select state from technologist_request_approval_versions where id = '${secondVersion}'`).trim(), 'superseded')
+assert.equal(sql(`select count(*) from tasks where technologist_request_approval_machine_id = '${ids.machine}' and status in ('pending','in_progress')`).trim(), '0', 'Archiving must not leave pending approval tasks')
 
 console.log('[technologist-request-financial-approval] database lifecycle and concurrent approval assertions passed')
 

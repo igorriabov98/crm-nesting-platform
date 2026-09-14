@@ -4740,6 +4740,7 @@ export type Database = {
           long_stock_cutting_plan_version_id: string | null
           department_request_id: string | null
           technologist_request_approval_id: string | null
+          technologist_request_approval_machine_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -4768,6 +4769,7 @@ export type Database = {
           long_stock_cutting_plan_version_id?: string | null
           department_request_id?: string | null
           technologist_request_approval_id?: string | null
+          technologist_request_approval_machine_id?: string | null
           assigned_to: string
           task_type: Database['public']['Enums']['task_type']
           title: string
@@ -4796,6 +4798,7 @@ export type Database = {
           long_stock_cutting_plan_version_id?: string | null
           department_request_id?: string | null
           technologist_request_approval_id?: string | null
+          technologist_request_approval_machine_id?: string | null
           assigned_to?: string
           task_type?: Database['public']['Enums']['task_type']
           title?: string

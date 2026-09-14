@@ -19,6 +19,7 @@ type DbResult = {
 type LooseQuery = PromiseLike<DbResult> & {
   select: (columns: string) => LooseQuery
   eq: (column: string, value: unknown) => LooseQuery
+  or: (filters: string) => LooseQuery
   in: (column: string, values: unknown[]) => LooseQuery
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery
   limit: (count: number) => LooseQuery
@@ -48,6 +49,7 @@ export type TaskWithRelations = Task & {
   product_project: { id: string; title: string; status: ProductProject['status'] } | null
   assigned_user: { id: string; full_name: string } | null
   approval_version?: { request_id: string } | null
+  approval_machine?: { id: string; name: string; factory_id: string | null; is_archived?: boolean | null } | null
   pending_delegation?: TaskDelegationSummary | null
   can_delegate?: boolean
 }
@@ -264,6 +266,7 @@ async function enrichTasksWithDelegationState(
   factoryId: string | null,
   customsFactoryScope: 'own' | 'all' = 'own',
 ) {
+  tasks = tasks.map((task) => task.approval_machine ? { ...task, machine: task.approval_machine, machine_id: task.approval_machine.id } : task)
   const visibleTasks = filterVisibleMachineTasks(tasks, role, factoryId, customsFactoryScope)
   if (visibleTasks.length === 0) return visibleTasks
 
@@ -285,6 +288,7 @@ async function enrichTasksWithDelegationState(
         task.task_type !== MACHINE_LAYOUT_TASK_TYPE &&
         task.task_type !== 'client_delivery_date' &&
         task.task_type !== SALES_ORDER_CONFIRMATION_TASK_TYPE &&
+        task.task_type !== 'technologist_request_approval' &&
         !pendingDelegation &&
         canDelegateFromAnyDepartment
       ),
@@ -563,6 +567,7 @@ async function createPlanningDirectorReasonTasks(
 }
 
 export async function getTasks(filters: TaskFilters = {}) {
+  if (filters.machine_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filters.machine_id)) return { data: null, error: 'Некорректный заказ' }
   const { supabase, userId, role, factoryId, permissionDetails } = await getCurrentUser()
   const db = supabase as unknown as LooseSupabaseClient
 
@@ -573,12 +578,13 @@ export async function getTasks(filters: TaskFilters = {}) {
       machine:machines(id, name, factory_id, is_archived),
       product_project:product_projects(id, title, status),
       approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
+      approval_machine(id, name, factory_id, is_archived),
       assigned_user:users!tasks_assigned_to_fkey(id, full_name)
     `)
     .order('deadline', { ascending: true })
     .order('created_at', { ascending: true })
 
-  if (filters.machine_id) query = query.eq('machine_id', filters.machine_id)
+  if (filters.machine_id) query = query.or(`machine_id.eq.${filters.machine_id},technologist_request_approval_machine_id.eq.${filters.machine_id}`)
   if (filters.product_project_id) query = query.eq('product_project_id', filters.product_project_id)
   if (filters.assigned_to) query = query.eq('assigned_to', filters.assigned_to)
   if (filters.status) query = query.eq('status', filters.status)
@@ -612,6 +618,7 @@ export async function getMyTasks() {
       machine:machines(id, name, factory_id, is_archived),
       product_project:product_projects(id, title, status),
       approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
+      approval_machine(id, name, factory_id, is_archived),
       assigned_user:users!tasks_assigned_to_fkey(id, full_name)
     `)
     .eq('assigned_to', userId)
@@ -803,6 +810,7 @@ async function getDelegationById(db: LooseSupabaseClient, delegationId: string) 
         machine:machines(id, name, factory_id, is_archived),
         product_project:product_projects(id, title, status),
         approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
+        approval_machine(id, name, factory_id, is_archived),
         assigned_user:users!tasks_assigned_to_fkey(id, full_name)
       ),
       delegated_by_user:users!task_delegations_delegated_by_fkey(id, full_name),
@@ -850,6 +858,7 @@ export async function getTaskDelegationOverview(): Promise<{
         machine:machines(id, name, factory_id, is_archived),
         product_project:product_projects(id, title, status),
         approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
+        approval_machine(id, name, factory_id, is_archived),
         assigned_user:users!tasks_assigned_to_fkey(id, full_name)
       ),
       delegated_by_user:users!task_delegations_delegated_by_fkey(id, full_name),

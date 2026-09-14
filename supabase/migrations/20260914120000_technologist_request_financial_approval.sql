@@ -44,6 +44,17 @@ create table if not exists public.technologist_request_approval_archives (
 alter table public.tasks
   add column if not exists technologist_request_approval_id uuid
     references public.technologist_request_approval_versions(id) on delete set null;
+alter table public.tasks
+  add column if not exists technologist_request_approval_machine_id uuid;
+-- Keep the existing tasks->machines relation unambiguous for all legacy queries.
+-- The authoritative FK remains task->version->request->machine.
+create or replace function public.approval_machine(p_task public.tasks)
+returns setof public.machines rows 1 language sql stable set search_path = public, pg_temp as $$
+  select m.* from public.machines m where m.id = p_task.technologist_request_approval_machine_id
+    and exists (select 1 from public.technologist_request_approval_versions v join public.technologist_requests r on r.id = v.request_id
+      where v.id = p_task.technologist_request_approval_id and r.machine_id = m.id);
+$$;
+grant execute on function public.approval_machine(public.tasks) to authenticated;
 create index if not exists tasks_technologist_request_approval_idx
   on public.tasks(technologist_request_approval_id);
 create unique index if not exists tasks_one_active_technologist_approval_per_user
@@ -254,6 +265,8 @@ begin
   if old.technologist_request_approval_id is not null and exists (
     select 1 from public.technologist_request_approval_versions where id = old.technologist_request_approval_id and state = 'pending'
   ) and (tg_op = 'DELETE' or new.assigned_to is distinct from old.assigned_to
+    or new.technologist_request_approval_machine_id is distinct from old.technologist_request_approval_machine_id
+    or new.machine_id is distinct from old.machine_id
     or new.technologist_request_approval_id is distinct from old.technologist_request_approval_id
     or new.status in ('completed','cancelled')) then
     raise exception 'Задача завершается только решением по версии согласования';
@@ -263,6 +276,29 @@ end;
 $$;
 create trigger financial_approval_task_guard before update or delete on public.tasks
 for each row execute function public.fn_guard_financial_approval_task();
+
+create or replace function public.fn_archive_pending_financial_approvals()
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_request uuid;
+begin
+  if not new.is_archived or old.is_archived then return new; end if;
+  for v_request in select r.id from public.technologist_requests r
+    where r.machine_id = new.id order by r.id for update loop
+    if not exists (select 1 from public.technologist_request_approval_versions where request_id = v_request and state = 'pending') then continue; end if;
+    update public.technologist_request_approval_versions set state = 'superseded', updated_at = now() where request_id = v_request and state = 'pending';
+    update public.tasks set status = 'cancelled', completed_at = now(), updated_at = now()
+      where technologist_request_approval_machine_id = new.id and technologist_request_approval_id in (
+        select id from public.technologist_request_approval_versions where request_id = v_request
+      ) and status in ('pending','in_progress');
+    perform set_config('app.financial_approval_request', v_request::text, true);
+    update public.technologist_requests set status = 'cancelled', updated_at = now() where id = v_request;
+    perform set_config('app.financial_approval_request', '', true);
+  end loop;
+  return new;
+end;
+$$;
+create trigger financial_approval_archive_guard before update of is_archived on public.machines
+for each row execute function public.fn_archive_pending_financial_approvals();
 
 -- Capture all source rows, reservations and selected cutting definitions, not a UI-derived checksum.
 create or replace function public.fn_technologist_approval_source(p_request_id uuid)
@@ -336,7 +372,8 @@ begin
   for update of r;
   if not found or v_request.created_by <> p_actor then raise exception 'Заявка недоступна'; end if;
   if not exists (select 1 from public.users where id = p_actor and is_active) then raise exception 'Недостаточно прав'; end if;
-  select m.name into v_machine_name from public.machines m where m.id = v_request.machine_id;
+  select m.name into v_machine_name from public.machines m where m.id = v_request.machine_id and not m.is_archived;
+  if not found then raise exception 'Заказ находится в архиве'; end if;
   if v_request.status <> 'stock_checked' then raise exception 'Заявка не готова к согласованию'; end if;
   if p_summary_snapshot->'sourceData' is distinct from public.fn_technologist_approval_source(p_request_id) then
     raise exception 'Данные заявки изменились. Обновите итоговый мастер';
@@ -402,13 +439,13 @@ begin
   foreach v_recipient in array v_recipients loop
     insert into public.tasks(
       machine_id, assigned_to, task_type, title, description, status,
-      start_date, deadline, technologist_request_approval_id
+      start_date, deadline, technologist_request_approval_id, technologist_request_approval_machine_id
     ) values (
-      v_request.machine_id, v_recipient, 'technologist_request_approval',
+      null, v_recipient, 'technologist_request_approval',
       'Проверить и одобрить заявку',
       'Заявка №' || v_request_number || ' для заказа «' || coalesce(v_machine_name, 'Без названия') || '»',
       'pending', (now() at time zone 'Europe/Kyiv')::date,
-      (now() at time zone 'Europe/Kyiv')::date, v_version_id
+      (now() at time zone 'Europe/Kyiv')::date, v_version_id, v_request.machine_id
     );
   end loop;
 
@@ -499,12 +536,16 @@ begin
        join public.positions p on p.id = dm.position_id
        where u.id = p_actor and u.is_active and p.is_active and p.name = 'Администратор CRM'
      ) then raise exception 'Одобрить заявку может финансовый директор или администратор CRM'; end if;
+  perform 1 from public.machines m join public.technologist_requests r on r.machine_id = m.id
+    join public.technologist_request_approval_versions v on v.request_id = r.id
+    where v.id = p_approval_version_id for update of m;
   select r.* into v_request from public.technologist_requests r
     join public.technologist_request_approval_versions v on v.request_id = r.id
     where v.id = p_approval_version_id for update of r;
   select * into v_version from public.technologist_request_approval_versions where id = p_approval_version_id for update;
   if not found or v_version.state <> 'pending' then raise exception 'Решение по версии уже принято'; end if;
   if v_request.status <> 'pending_financial_approval' then raise exception 'Заявка больше не ожидает согласования'; end if;
+  if exists (select 1 from public.machines where id = v_request.machine_id and is_archived) then raise exception 'Заказ находится в архиве'; end if;
   if v_version.summary_snapshot->'sourceData' is distinct from public.fn_technologist_approval_source(v_request.id) then
     raise exception 'Данные заявки изменились. Верните заявку на доработку';
   end if;
