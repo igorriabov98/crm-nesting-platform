@@ -47,6 +47,7 @@ export type TaskWithRelations = Task & {
   machine: { id: string; name: string; factory_id: string | null; is_archived?: boolean | null } | null
   product_project: { id: string; title: string; status: ProductProject['status'] } | null
   assigned_user: { id: string; full_name: string } | null
+  approval_version?: { request_id: string } | null
   pending_delegation?: TaskDelegationSummary | null
   can_delegate?: boolean
 }
@@ -571,6 +572,7 @@ export async function getTasks(filters: TaskFilters = {}) {
       *,
       machine:machines(id, name, factory_id, is_archived),
       product_project:product_projects(id, title, status),
+      approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
       assigned_user:users!tasks_assigned_to_fkey(id, full_name)
     `)
     .order('deadline', { ascending: true })
@@ -609,6 +611,7 @@ export async function getMyTasks() {
       *,
       machine:machines(id, name, factory_id, is_archived),
       product_project:product_projects(id, title, status),
+      approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
       assigned_user:users!tasks_assigned_to_fkey(id, full_name)
     `)
     .eq('assigned_to', userId)
@@ -706,6 +709,9 @@ async function assertTaskCanBeDelegated(db: LooseSupabaseClient, taskId: string,
   if (task.task_type === 'client_delivery_date') {
     throw new Error('Задача по дате доставки закреплена за ответственным менеджером клиента')
   }
+  if (task.task_type === 'technologist_request_approval') {
+    throw new Error('Задача согласования закрывается только решением по заявке')
+  }
 
   const pendingDelegation = await getPendingDelegationForTask(db, taskId)
   if (pendingDelegation) throw new Error('По задаче уже есть делегирование, ожидающее ответа')
@@ -796,6 +802,7 @@ async function getDelegationById(db: LooseSupabaseClient, delegationId: string) 
         *,
         machine:machines(id, name, factory_id, is_archived),
         product_project:product_projects(id, title, status),
+        approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
         assigned_user:users!tasks_assigned_to_fkey(id, full_name)
       ),
       delegated_by_user:users!task_delegations_delegated_by_fkey(id, full_name),
@@ -842,6 +849,7 @@ export async function getTaskDelegationOverview(): Promise<{
         *,
         machine:machines(id, name, factory_id, is_archived),
         product_project:product_projects(id, title, status),
+        approval_version:technologist_request_approval_versions!tasks_technologist_request_approval_id_fkey(request_id),
         assigned_user:users!tasks_assigned_to_fkey(id, full_name)
       ),
       delegated_by_user:users!task_delegations_delegated_by_fkey(id, full_name),
@@ -1130,6 +1138,9 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
     }
     if (taskRow.task_type === SALES_ORDER_CONFIRMATION_TASK_TYPE && (status === 'completed' || status === 'cancelled')) {
       throw new Error('Задача подтверждения заказа закрывается автоматически после подтверждения заказа')
+    }
+    if (taskRow.task_type === 'technologist_request_approval' && (status === 'completed' || status === 'cancelled')) {
+      throw new Error('Задача согласования закрывается автоматически после одобрения или возврата заявки')
     }
     if (
       taskRow.task_type === MACHINE_LAYOUT_TASK_TYPE

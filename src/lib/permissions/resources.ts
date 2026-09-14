@@ -12,6 +12,7 @@ export type ResourceKey =
   | 'client_prices'
   | 'technologist_requests'
   | 'material_request_queue'
+  | 'technologist_request_results'
   | 'business_scrap_reservations'
   | 'products'
   | 'product_production_drawings'
@@ -243,6 +244,17 @@ export const PERMISSION_RESOURCES = [
     defaultManageRoles: [],
     routes: [{ path: ROUTES.MATERIAL_REQUESTS, match: 'prefix', operation: 'view', priority: 100 }],
     sidebar: { section: 'technologist', icon: 'materialRequests', order: 20 },
+  },
+  {
+    key: 'technologist_request_results',
+    label: 'Итог по заявкам',
+    description: 'Версии и финансовое согласование заявок технолога',
+    group: 'Технолог',
+    defaultHref: ROUTES.TECHNOLOGIST_REQUEST_RESULTS,
+    defaultViewRoles: ['technologist', 'financial_director'],
+    defaultManageRoles: ['financial_director'],
+    routes: [{ path: ROUTES.TECHNOLOGIST_REQUEST_RESULTS, match: 'prefix', operation: 'view', priority: 140 }],
+    sidebar: { section: 'technologist', icon: 'history', order: 25 },
   },
   {
     key: 'business_scrap_reservations',

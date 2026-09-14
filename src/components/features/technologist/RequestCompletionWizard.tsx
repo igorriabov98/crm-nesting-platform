@@ -151,8 +151,8 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
   async function finish(archives: DirectMachineCuttingUpload[]) {
     const result = await finalizeTechnologistRequest(completionPayload(archives))
     if (!result.success) { toast.error(result.error || 'Не удалось завершить заявку'); return false }
-    toast.success('Заявка зафиксирована и передана снабжению')
-    router.replace(ROUTES.MATERIAL_REQUESTS)
+    toast.success('Версия заявки отправлена финансовому директору')
+    router.replace(`${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${workspace.requestId}`)
     return true
   }
 
@@ -420,7 +420,7 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
       <div className="sticky bottom-4 z-10 flex flex-col-reverse gap-2 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-xl backdrop-blur sm:flex-row sm:items-center sm:justify-between">
         <Button type="button" variant="outline" className="h-12 rounded-xl px-5" onClick={() => setStep(1)} disabled={pending}><ArrowLeft className="mr-2 h-4 w-4" />Назад к деталировке</Button>
         <Button type="button" onClick={submit} disabled={pending} className="h-12 rounded-xl bg-emerald-700 px-6 text-base shadow-sm hover:bg-emerald-800">
-          {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}{pending ? 'Фиксируем заявку…' : 'Завершить и передать снабжению'}
+          {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}{pending ? 'Отправляем на согласование…' : 'Отправить на согласование'}
         </Button>
       </div>
     </div>}
@@ -439,13 +439,13 @@ export function RequestCompletionWizard({ workspace }: { workspace: CompletionWo
             const uploads = uploadFailure.successful
             setUploadFailure(null)
             await finish(uploads)
-          })}>Завершить с загруженными</Button>
+          })}>Отправить с загруженными</Button>
           <Button type="button" disabled={pending} variant="ghost" className="min-h-11 w-full" onClick={() => startTransition(async () => {
             if (!uploadFailure) return
             await Promise.all(uploadFailure.successful.map((upload) => cleanupDirectMachineCuttingUpload(workspace.machineId, upload)))
             setUploadFailure(null)
             await finish([])
-          })}>Завершить без программы</Button>
+          })}>Отправить без программы</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

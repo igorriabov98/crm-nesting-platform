@@ -119,6 +119,7 @@ function fixture(options: {
     '@/lib/request-completion-material-scope': materialScope,
     '@/lib/materials/pipe-profile': pipeProfile,
     '@/lib/metal-scrap': metalScrap,
+    '@/lib/actions/technologist-request-approvals': { buildTechnologistApprovalSnapshot: forbiddenMutation },
   }
   const loadedModule = { exports: {} as { getCompletionWorkspace: (id: string) => Promise<WorkspaceResult> } }
   vm.runInNewContext(actionCode, {
@@ -231,6 +232,6 @@ test('completion keeps author and lifecycle checks before loading any scraps', a
   assert.match((await foreign.load()).error ?? '', /только её автор/)
   assert.equal(foreign.calls.length, 1)
   const completed = fixture({ requestStatus: 'submitted_to_supply' })
-  assert.equal((await completed.load()).redirectTo, routes.ROUTES.MATERIAL_REQUESTS)
+  assert.equal((await completed.load()).redirectTo, `${routes.ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${requestId}`)
   assert.equal(completed.calls.length, 1)
 })

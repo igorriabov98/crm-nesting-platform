@@ -512,7 +512,7 @@ function assertSupplyRequestVisibleForRole(request: TechnologistRequest, role: U
   if (!visibleStatuses.includes(request.status)) {
     throw new Error('Заявка ещё не передана на проверку склада')
   }
-  if (role === 'supply_manager' && request.status !== 'submitted_to_supply' && request.status !== 'completed') {
+  if ((role === 'supply_manager' || role === 'procurement_head') && request.status !== 'submitted_to_supply' && request.status !== 'completed') {
     throw new Error('Заявка ещё не передана в снабжение')
   }
 }
@@ -1136,7 +1136,7 @@ export async function reserveAllAvailable(requestId: string, factoryId: string) 
 export async function getSupplyRequestCards() {
   try {
     const { db, role } = await requireAccess()
-    const statuses = role === 'supply_manager'
+    const statuses = role === 'supply_manager' || role === 'procurement_head'
       ? ['submitted_to_supply']
       : ['pending_stock_check', 'stock_checked', 'submitted_to_supply']
     const { data: requestsData, error } = await db

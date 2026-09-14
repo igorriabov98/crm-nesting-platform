@@ -68,6 +68,7 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
 const TASK_TYPE_LABELS: Record<TaskType, string> = {
   supply_start: 'Снабжение',
   technologist_request: 'Заявка технолога',
+  technologist_request_approval: 'Согласование заявки',
   engineer_confirm: 'Чертежи',
   sales_order_confirmation: 'Подтверждение заказа',
   material_type_selection: 'Тип материала',
@@ -218,6 +219,13 @@ function formatTaskDeadline(value: string | null | undefined) {
 }
 
 function getTaskTarget(task: TaskWithRelations) {
+  if (task.task_type === 'technologist_request_approval' && task.approval_version?.request_id) {
+    return {
+      href: `${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${task.approval_version.request_id}`,
+      label: 'Проверить итог заявки',
+      kind: 'Согласование',
+    }
+  }
   if (task.task_type === 'supply_schedule_reconciliation_review' && task.machine?.factory_id) {
     return {
       href: `${ROUTES.SUPPLY_ORDERS}?view=summary&factory=${task.machine.factory_id}`,
@@ -833,6 +841,18 @@ export function TaskCards({
     }
 
     if (context === 'outgoing' && pendingDelegation) return null
+
+    if (task.task_type === 'technologist_request_approval' && task.approval_version?.request_id) {
+      if (task.status === 'completed' || task.status === 'cancelled') return null
+      return <div className={groupClass}>
+        <Link
+          href={`${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${task.approval_version.request_id}`}
+          className={cn(buttonClass, 'inline-flex items-center justify-center rounded-md bg-[#1B3A6B] px-4 text-sm font-medium text-white hover:bg-[#152f59]')}
+        >
+          Проверить и одобрить
+        </Link>
+      </div>
+    }
 
     if (task.task_type === 'department_request' && task.department_request_id) {
       return (

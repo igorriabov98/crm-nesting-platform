@@ -47,6 +47,7 @@ export const ROUTES = {
   SUPPLY_DEPARTMENT_REQUESTS: '/requests/supply',
   PRODUCTION_DEPARTMENT_REQUESTS: '/requests/production',
   MATERIAL_REQUESTS: '/material-requests',
+  TECHNOLOGIST_REQUEST_RESULTS: '/technologist/request-results',
   BUSINESS_SCRAP_RESERVATIONS: '/technologist/business-scrap-reservations',
   PRODUCTION:     '/production',
   GANTT:          '/production/gantt',
