@@ -9,6 +9,7 @@ import type { PermissionOperation } from '@/lib/permissions/resources'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
 import type { Client, Contract } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
+import { sanitizeStructuredClientRelations, requireClientDocumentAccess } from '@/lib/permissions/commercial-visibility'
 
 type ContractInsert = Database['public']['Tables']['contracts']['Insert']
 type ContractUpdate = Database['public']['Tables']['contracts']['Update']
@@ -54,8 +55,8 @@ function looseDb(supabase: unknown): LooseDb {
 }
 
 async function requireContractAccess(operation: PermissionOperation = 'view') {
-  await requirePermission('contracts', operation)
-  return { db: looseDb(createAdminClient()) }
+  const context = await requirePermission('contracts', operation)
+  return { ...context, db: looseDb(createAdminClient()) }
 }
 
 function contractPayload(input: ContractInput): ContractInsert {
@@ -80,14 +81,15 @@ function revalidateContractSurfaces(clientIds: Array<string | null | undefined> 
 
 export async function getContracts() {
   try {
-    const { db } = await requireContractAccess('view')
+    const context = await requireContractAccess('view')
+    const { db } = context
     const { data, error } = await db
       .from('contracts')
       .select('*, client:clients(id, name)')
       .order('date', { ascending: false })
 
     if (error) throw error
-    return { data: (data || []) as ContractWithClient[], error: null }
+    return { data: await sanitizeStructuredClientRelations((data || []) as ContractWithClient[], context), error: null }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
@@ -95,8 +97,10 @@ export async function getContracts() {
 
 export async function getContractsByClient(clientId: string) {
   try {
-    const { db } = await requireContractAccess('view')
+    const context = await requireContractAccess('view')
+    const { db } = context
     const parsedClientId = z.string().uuid('Выберите клиента').parse(clientId)
+    await requireClientDocumentAccess(parsedClientId, { resourceKey: 'contracts', operation: 'view', includesPrices: false }, context)
     const { data, error } = await db
       .from('contracts')
       .select('*')
@@ -112,8 +116,10 @@ export async function getContractsByClient(clientId: string) {
 
 export async function createContract(input: ContractInput) {
   try {
-    const { db } = await requireContractAccess('manage')
+    const context = await requireContractAccess('manage')
+    const { db } = context
     const payload = contractPayload(input)
+    await requireClientDocumentAccess(payload.client_id, { resourceKey: 'contracts', operation: 'manage', includesPrices: false }, context)
     const { data, error } = await db
       .from('contracts')
       .insert(payload)
@@ -131,7 +137,8 @@ export async function createContract(input: ContractInput) {
 
 export async function updateContract(id: string, input: ContractInput) {
   try {
-    const { db } = await requireContractAccess('manage')
+    const context = await requireContractAccess('manage')
+    const { db } = context
     const parsedId = z.string().uuid('Контракт не найден').parse(id)
     const { data: existing, error: existingError } = await db
       .from('contracts')
@@ -145,6 +152,8 @@ export async function updateContract(id: string, input: ContractInput) {
       ...contractPayload(input),
       updated_at: new Date().toISOString(),
     }
+    await requireClientDocumentAccess((existing as { client_id: string }).client_id, { resourceKey: 'contracts', operation: 'manage', includesPrices: false }, context)
+    await requireClientDocumentAccess(payload.client_id!, { resourceKey: 'contracts', operation: 'manage', includesPrices: false }, context)
 
     const { data, error } = await db
       .from('contracts')
@@ -167,7 +176,8 @@ export async function updateContract(id: string, input: ContractInput) {
 
 export async function deleteContract(id: string) {
   try {
-    const { db } = await requireContractAccess('manage')
+    const context = await requireContractAccess('manage')
+    const { db } = context
     const parsedId = z.string().uuid('Контракт не найден').parse(id)
     const { data: contract, error: contractError } = await db
       .from('contracts')
@@ -176,6 +186,7 @@ export async function deleteContract(id: string) {
       .single()
 
     if (contractError || !contract) throw contractError || new Error('Контракт не найден')
+    await requireClientDocumentAccess((contract as { client_id: string }).client_id, { resourceKey: 'contracts', operation: 'manage', includesPrices: false }, context)
 
     const { data: machines, error: machinesError } = await db
       .from('machines')
@@ -200,13 +211,18 @@ export async function deleteContract(id: string) {
 
 export async function getNextSpecificationNumber(input: { client_id?: string | null; contract_id?: string | null } = {}) {
   try {
-    const { db } = await requireContractAccess('view')
+    const context = await requireContractAccess('view')
+    const { db } = context
     const parsed = nextSpecificationSchema.parse(input)
     let query = db.from('machines').select('specification_number')
 
     if (parsed.contract_id) {
+      const { data: contract, error: contractError } = await db.from('contracts').select('client_id').eq('id', parsed.contract_id).single()
+      if (contractError || !contract) throw contractError || new Error('Контракт не найден')
+      await requireClientDocumentAccess((contract as { client_id: string }).client_id, { resourceKey: 'contracts', operation: 'view', includesPrices: false }, context)
       query = query.eq('contract_id', parsed.contract_id)
     } else if (parsed.client_id) {
+      await requireClientDocumentAccess(parsed.client_id, { resourceKey: 'contracts', operation: 'view', includesPrices: false }, context)
       query = query.eq('client_id', parsed.client_id)
     }
 

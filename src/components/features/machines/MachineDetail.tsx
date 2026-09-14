@@ -161,9 +161,9 @@ export function MachineDetail({
   const [isConfirming, setIsConfirming] = useState(false)
 
   const isArchived = machine.is_archived
-  const canEdit = !isArchived && can('sales_plan', 'manage')
+  const canEdit = !isArchived && can('sales_plan', 'manage') && machine.can_manage_order_prices
   const canEditConfirmation = canEdit
-  const canDelete = can('sales_plan', 'manage')
+  const canDelete = can('sales_plan', 'manage') && machine.can_manage_order_prices
   const showInvoiceTab = canViewInvoice
   const tabParam = searchParams.get('tab')
   const defaultTab = tabParam && MACHINE_TAB_VALUES.includes(tabParam) && (tabParam !== 'invoice' || showInvoiceTab)
@@ -288,13 +288,18 @@ export function MachineDetail({
             </div>
 
             <div className="flex flex-wrap items-center gap-2 lg:max-w-[560px] lg:justify-end">
-              <DocumentReadinessIndicator missingFields={documentMissingFields} />
-              <DocumentGenerationButtons
-                machineId={machine.id}
-                specificationNumber={machine.specification_number}
-                specificationDate={machine.specification_date}
-                deliveryBasisType={machine.delivery_basis_type}
-              />
+              {machine.can_use_order_documents && (
+                <>
+                  <DocumentReadinessIndicator missingFields={documentMissingFields} />
+                  <DocumentGenerationButtons
+                    machineId={machine.id}
+                    specificationNumber={machine.specification_number}
+                    specificationDate={machine.specification_date}
+                    deliveryBasisType={machine.delivery_basis_type}
+                    canGeneratePriced={machine.can_use_priced_order_documents}
+                  />
+                </>
+              )}
               {!machine.factory_id && isDirector && (
                 <Button
                   className="min-h-10 bg-white text-blue-950 hover:bg-blue-50"
@@ -393,7 +398,7 @@ export function MachineDetail({
 
           <div className="bg-white p-4 sm:p-5">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Стоимость</span>
-            <span className="mt-1 block text-lg font-bold tabular-nums text-emerald-700">€{Number(machine.total_cost || 0).toLocaleString()}</span>
+            <span className="mt-1 block text-lg font-bold tabular-nums text-emerald-700">{machine.total_cost == null ? '—' : `€${Number(machine.total_cost).toLocaleString()}`}</span>
             <span className="mt-0.5 block text-xs text-slate-500">
               {machine.created_by_user?.full_name || 'Неизвестно'} · {createdDate}
             </span>

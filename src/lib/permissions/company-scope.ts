@@ -5,7 +5,7 @@ import { PermissionDeniedError, requireAnyPermission, requirePermission } from '
 import { hasPermission } from '@/lib/permissions/resources'
 import type { CompanyAccessScope, PermissionOperation, ResourceKey } from '@/lib/permissions/resources'
 
-export type CompanyScopedResource = Extract<ResourceKey, 'invoices' | 'client_payments'>
+export type CompanyScopedResource = Extract<ResourceKey, 'client_identity' | 'client_prices' | 'invoices' | 'client_payments'>
 
 export async function requireCompanyScope(
   resourceKey: CompanyScopedResource,

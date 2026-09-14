@@ -1,5 +1,6 @@
 import type { Database } from '@/lib/types/database'
 import { isTransportExpenseCategory } from '@/lib/utils/transport-expense'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 type TaskStatus = Database['public']['Enums']['task_status']
 type DbError = { message?: string; code?: string } | null
@@ -50,7 +51,9 @@ async function cancelOpenTasks(db: LooseDb, machineId: string, taskType?: Shippi
 }
 
 async function hasTransportCost(db: LooseDb, machineId: string) {
-  const { data, error } = await db.from('machine_expenses').select('category, amount').eq('machine_id', machineId)
+  void db
+  const priceDb = dbFrom(createAdminClient())
+  const { data, error } = await priceDb.from('machine_expenses').select('category, amount').eq('machine_id', machineId)
   if (error) throw new Error(error.message || 'Не удалось проверить стоимость транспорта')
   return ((data || []) as Array<{ category: string | null; amount: number | string | null }>).some(
     (row) => isTransportExpenseCategory(row.category) && Number(row.amount || 0) > 0,

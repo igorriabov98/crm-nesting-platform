@@ -2,6 +2,8 @@
 
 import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { getCommercialVisibilityForClients } from '@/lib/permissions/commercial-visibility'
 import { isFactoryWorkshopAllowed } from '@/lib/constants/factory-workshops'
 import { MEETINGS_LIST_LIMIT } from '@/lib/constants/meetings-performance'
 import { requirePermission } from '@/lib/permissions/server'
@@ -1281,7 +1283,7 @@ export async function getMeeting(id: string) {
       await syncMeetingAutoAgenda(db, id, seed.meeting_type)
     }
 
-    const { data, error } = await db
+    const { data, error } = await (createAdminClient() as unknown as LooseDb)
       .from('meetings')
       .select(`
         *,
@@ -1290,7 +1292,7 @@ export async function getMeeting(id: string) {
         external_attendees:meeting_external_attendees(*),
         agenda:meeting_agenda_items(
           *,
-          machine:machines(id, name, status, factory_id, material_type, desired_shipping_date,
+          machine:machines(id, name, client_id, status, factory_id, material_type, desired_shipping_date,
             planned_material_date, production_month, production_workshop, production_queue_number,
             machine_items(id, drawing_number, product_name, price, quantity, weight, coating, ral_number, is_sample, sort_order)
           )
@@ -1313,8 +1315,12 @@ export async function getMeeting(id: string) {
 
     const meetingData = data as MeetingDetails
     if (meetingData?.agenda) {
+      const clientIds = meetingData.agenda.map((item) => (item.machine as (MachineRelation & { client_id?: string | null }) | null)?.client_id)
+      const visibility = await getCommercialVisibilityForClients(clientIds)
       meetingData.agenda = meetingData.agenda.map((item) => {
         if (item.machine && item.machine.machine_items) {
+          const clientId = (item.machine as MachineRelation & { client_id?: string | null }).client_id
+          const commercial = clientId ? visibility.get(clientId) : null
           const items = item.machine.machine_items
           const total_weight = items.reduce((sum, i) => sum + (Number(i.weight) * Number(i.quantity)), 0)
           const total_cost = items.reduce((sum, i) => sum + (Number(i.price) * Number(i.quantity)), 0)
@@ -1323,7 +1329,8 @@ export async function getMeeting(id: string) {
             machine: {
               ...item.machine,
               total_weight: total_weight / 1000,
-              total_cost,
+              machine_items: items.map((machineItem) => ({ ...machineItem, price: commercial?.canViewOrderPrices ? machineItem.price : null })),
+              total_cost: commercial?.canViewOrderPrices ? total_cost : null,
               item_count: items.length
             } satisfies MachineRelation
           }

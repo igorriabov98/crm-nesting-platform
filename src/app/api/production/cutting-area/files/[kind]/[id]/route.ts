@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { requirePermission } from '@/lib/permissions/server'
+import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import { canAccessFactory } from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveFileResponse } from '@/lib/file-archive/resolver'
@@ -9,6 +9,7 @@ import {
   type CuttingAreaFileBinding,
   type CuttingAreaItemFileBinding,
 } from '@/lib/production-cutting-area/files'
+import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Dynamic file source types are narrowed below. */
 
@@ -52,16 +53,19 @@ async function loadItemBindings(db: any, machineId: string): Promise<CuttingArea
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ kind: string; id: string }> }) {
-  const permission = await requirePermission('production_cutting_area', 'view')
-  const routeParams = await params
-  const parsed = paramsSchema.safeParse({ ...routeParams, machineId: request.nextUrl.searchParams.get('machineId') })
-  if (!parsed.success) return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
-  const db = createAdminClient() as any
-  const machine = await db.from('machines').select('factory_id').eq('id', parsed.data.machineId).maybeSingle()
-  if (machine.error || !machine.data || !canAccessFactory(permission, 'production_cutting_area', 'view', machine.data.factory_id)) {
-    return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
-  }
-  let source: FileSource | null = null
+  try {
+    const permission = await requirePermission('production_cutting_area', 'view')
+    const routeParams = await params
+    const parsed = paramsSchema.safeParse({ ...routeParams, machineId: request.nextUrl.searchParams.get('machineId') })
+    if (!parsed.success) return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
+    const db = createAdminClient() as any
+    const machine = await db.from('machines').select('factory_id,client_id').eq('id', parsed.data.machineId).maybeSingle()
+    if (machine.error || !machine.data || !canAccessFactory(permission, 'production_cutting_area', 'view', machine.data.factory_id)) {
+      return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
+    }
+    if (!machine.data.client_id) return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
+    await requireClientCommercialDocumentVisibility(machine.data.client_id, false)
+    let source: FileSource | null = null
 
   if (parsed.data.kind === 'product') {
     const { data } = await db.from('product_files').select('file_path,file_name,mime_type,file_kind,product_id,product_version_id').eq('id', parsed.data.id).maybeSingle()
@@ -91,11 +95,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       binding: { kind: 'production_drawing', productVersionId: data.product_version_id, fileKind: 'pdf' },
     }
   }
-  if (!source) return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
+    if (!source) return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
 
-  const itemBindings = await loadItemBindings(db, parsed.data.machineId)
-  if (!itemBindings.some((item) => isCuttingAreaFileForItem(item, source.binding))) {
-    return NextResponse.json({ error: 'Файл не принадлежит этому заказу' }, { status: 403 })
+    const itemBindings = await loadItemBindings(db, parsed.data.machineId)
+    if (!itemBindings.some((item) => isCuttingAreaFileForItem(item, source.binding))) {
+      return NextResponse.json({ error: 'Файл не принадлежит этому заказу' }, { status: 403 })
+    }
+    return resolveFileResponse({ bucket: source.bucket, objectPath: source.objectPath, fileName: source.fileName, mimeType: source.mimeType, disposition: 'attachment' })
+  } catch (error) {
+    const status = error instanceof PermissionDeniedError ? 403 : 401
+    return NextResponse.json({ error: status === 403 ? 'Forbidden' : 'Unauthorized' }, { status })
   }
-  return resolveFileResponse({ bucket: source.bucket, objectPath: source.objectPath, fileName: source.fileName, mimeType: source.mimeType, disposition: 'attachment' })
 }

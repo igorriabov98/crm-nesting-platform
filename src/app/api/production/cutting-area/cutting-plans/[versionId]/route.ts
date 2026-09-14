@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { requirePermission } from '@/lib/permissions/server'
+import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import { canAccessFactory } from '@/lib/permissions/factory-scope'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveFileResponse } from '@/lib/file-archive/resolver'
 import { parseLongStockCuttingPlanPdfMetadata } from '@/lib/long-stock-cutting-plan-pdf'
+import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- Long-stock tables are generated after migrations are applied. */
 
@@ -17,23 +18,26 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ versionId: string }> },
 ) {
-  const permission = await requirePermission('production_cutting_area', 'view')
-  const routeParams = await params
-  const parsed = inputSchema.safeParse({
-    versionId: routeParams.versionId,
-    machineId: request.nextUrl.searchParams.get('machineId'),
-  })
-  if (!parsed.success) return NextResponse.json({ error: 'Карта раскроя не найдена' }, { status: 404 })
+  try {
+    const permission = await requirePermission('production_cutting_area', 'view')
+    const routeParams = await params
+    const parsed = inputSchema.safeParse({
+      versionId: routeParams.versionId,
+      machineId: request.nextUrl.searchParams.get('machineId'),
+    })
+    if (!parsed.success) return NextResponse.json({ error: 'Карта раскроя не найдена' }, { status: 404 })
 
-  const db = createAdminClient() as any
-  const machineResult = await db.from('machines')
-    .select('id,factory_id')
-    .eq('id', parsed.data.machineId)
-    .maybeSingle()
-  if (machineResult.error || !machineResult.data
-    || !canAccessFactory(permission, 'production_cutting_area', 'view', machineResult.data.factory_id)) {
-    return NextResponse.json({ error: 'Карта раскроя не найдена' }, { status: 404 })
-  }
+    const db = createAdminClient() as any
+    const machineResult = await db.from('machines')
+      .select('id,factory_id,client_id')
+      .eq('id', parsed.data.machineId)
+      .maybeSingle()
+    if (machineResult.error || !machineResult.data
+      || !canAccessFactory(permission, 'production_cutting_area', 'view', machineResult.data.factory_id)) {
+      return NextResponse.json({ error: 'Карта раскроя не найдена' }, { status: 404 })
+    }
+    if (!machineResult.data.client_id) return NextResponse.json({ error: 'Карта раскроя не найдена' }, { status: 404 })
+    await requireClientCommercialDocumentVisibility(machineResult.data.client_id, false)
 
   const versionResult = await db.from('long_stock_cutting_plan_versions')
     .select('id,plan_id,status,pdf_metadata')
@@ -70,11 +74,15 @@ export async function GET(
   })
   if (!metadata) return NextResponse.json({ error: 'PDF карты раскроя не найден' }, { status: 404 })
 
-  return resolveFileResponse({
-    bucket: metadata.bucket_id,
-    objectPath: metadata.object_path,
-    fileName: metadata.file_name,
-    mimeType: metadata.mime_type,
-    disposition: 'inline',
-  })
+    return resolveFileResponse({
+      bucket: metadata.bucket_id,
+      objectPath: metadata.object_path,
+      fileName: metadata.file_name,
+      mimeType: metadata.mime_type,
+      disposition: 'inline',
+    })
+  } catch (error) {
+    const status = error instanceof PermissionDeniedError ? 403 : 401
+    return NextResponse.json({ error: status === 403 ? 'Forbidden' : 'Unauthorized' }, { status })
+  }
 }

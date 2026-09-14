@@ -11,6 +11,7 @@ import { PermissionDeniedError, requirePermission } from '@/lib/permissions/serv
 import { SpecificationDocument } from '@/lib/pdf/SpecificationDocument'
 import { InvoiceDocument } from '@/lib/pdf/InvoiceDocument'
 import { PackingListDocument } from '@/lib/pdf/PackingListDocument'
+import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
 export const runtime = 'nodejs'
 
@@ -36,12 +37,14 @@ export async function POST(request: Request) {
     const context = await requirePermission('customs_clearance', 'view')
     const { data: machineData, error } = await trustedDb(createAdminClient())
       .from('machines')
-      .select('factory_id')
+      .select('factory_id, client_id')
       .eq('id', input.machineId)
       .maybeSingle()
     if (error || !machineData) throw new Error('Машина не найдена')
-    const machine = machineData as { factory_id: string | null }
+    const machine = machineData as { factory_id: string | null; client_id: string | null }
     assertFactoryAccess(context, 'customs_clearance', 'view', machine.factory_id)
+    if (!machine.client_id) throw new Error('У заказа не указана компания')
+    await requireClientCommercialDocumentVisibility(machine.client_id, input.type !== 'packing_list')
 
     // This loader reads the order snapshot only. It never creates or updates an
     // invoice, payment schedule or any record in the financial module.

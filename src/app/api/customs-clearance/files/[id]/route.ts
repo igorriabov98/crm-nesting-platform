@@ -5,12 +5,13 @@ import { trustedDb } from '@/lib/supabase/trusted-db'
 import { resolveFileResponse } from '@/lib/file-archive/resolver'
 import { assertFactoryAccess } from '@/lib/permissions/factory-scope'
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
+import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
 type DocumentRow = {
   storage_path: string
   file_name: string
   mime_type: string
-  machine: { factory_id: string | null } | Array<{ factory_id: string | null }> | null
+  machine: { factory_id: string | null; client_id: string | null } | Array<{ factory_id: string | null; client_id: string | null }> | null
 }
 
 function relationOne<T>(value: T | T[] | null | undefined) {
@@ -26,13 +27,15 @@ export async function GET(
     const { id } = await params
     const { data, error } = await trustedDb(createAdminClient())
       .from('machine_customs_documents')
-      .select('storage_path, file_name, mime_type, machine:machines(factory_id)')
+      .select('storage_path, file_name, mime_type, machine:machines(factory_id,client_id)')
       .eq('id', id)
       .maybeSingle()
     if (error || !data) return NextResponse.json({ error: 'Документ не найден' }, { status: 404 })
     const document = data as DocumentRow
     const machine = relationOne(document.machine)
     assertFactoryAccess(context, 'customs_clearance', 'view', machine?.factory_id)
+    if (!machine?.client_id) return NextResponse.json({ error: 'Документ не найден' }, { status: 404 })
+    await requireClientCommercialDocumentVisibility(machine.client_id, false)
     if (!document.storage_path.startsWith('customs-clearance/') || document.storage_path.includes('..')) {
       return NextResponse.json({ error: 'Документ не найден' }, { status: 404 })
     }

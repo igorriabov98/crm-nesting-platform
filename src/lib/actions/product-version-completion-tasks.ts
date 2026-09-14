@@ -96,14 +96,14 @@ export async function ensureProductVersionCompletionTask(
         .eq('assigned_to', input.assignedTo)
         .in('status', ['pending', 'in_progress'])
         .limit(1),
-      db.from('clients').select('name').eq('id', input.clientId).limit(1),
+      db.from('clients').select('public_alias').eq('id', input.clientId).limit(1),
     ])
 
     if (existingError) throw existingError
     if (clientError) throw clientError
     if (((existing || []) as Array<{ id: string }>).length > 0) return
 
-    const clientName = ((clientData || []) as Array<{ name: string }>)[0]?.name || 'Клиент'
+    const clientName = ((clientData || []) as Array<{ public_alias: string }>)[0]?.public_alias || 'КЛИЕНТ'
     const versionLabel = `v${input.productVersion.version_number}`
     const payload: TaskInsert = {
       machine_id: input.machineId,

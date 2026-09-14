@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
 import { resolveFileResponse } from '@/lib/file-archive/resolver'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireClientDocumentAccess } from '@/lib/permissions/commercial-visibility'
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -11,10 +12,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const admin = createAdminClient() as any
     const { data, error } = await admin
       .from('product_version_client_fastening_files')
-      .select('file_path,file_name,mime_type')
+      .select('file_path,file_name,mime_type,client_id')
       .eq('id', id)
       .single()
     if (error || !data) return NextResponse.json({ error: 'Файл не найден' }, { status: 404 })
+    await requireClientDocumentAccess(data.client_id, {
+      resourceKey: 'products',
+      operation: 'view',
+      includesPrices: false,
+    })
 
     return await resolveFileResponse({
       bucket: 'product-files',

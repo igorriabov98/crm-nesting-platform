@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { AccessDenied } from '@/components/ui/AccessDenied'
 import { MachineCreateForm } from '@/components/features/machines/MachineCreateForm'
-import { getClientOptions } from '@/lib/actions/clients'
+import { getOrderClientOptions } from '@/lib/actions/clients'
 import { getProductOptions, getProductProjectSampleOptions } from '@/lib/actions/products'
 import { requirePermission } from '@/lib/permissions/server'
 
@@ -18,7 +18,7 @@ export default async function NewMachinePage() {
   const supabase = await createServerSupabaseClient()
 
   const [{ data: clients }, { data: factories }, { data: products }, { data: projectSamples }] = await Promise.all([
-    getClientOptions(),
+    getOrderClientOptions(),
     supabase.from('factories').select('id, name').order('name'),
     getProductOptions(),
     getProductProjectSampleOptions(),

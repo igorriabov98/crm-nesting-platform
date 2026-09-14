@@ -5,13 +5,17 @@ import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { CLIENTS_LIST_LIMIT } from '@/lib/constants/performance-limits'
 import { ROUTES } from '@/lib/constants/routes'
-import { requirePermission } from '@/lib/permissions/server'
-import { DIRECTOR_ACCESS_ROLES, hasPermission, type PermissionOperation } from '@/lib/permissions/resources'
+import { PermissionDeniedError, requirePermission } from '@/lib/permissions/server'
+import { hasPermission, type PermissionOperation } from '@/lib/permissions/resources'
 import { clientContactSchema, clientSchema, type ClientContactInput, type ClientInput } from '@/lib/types/schemas'
 import { getErrorMessage } from '@/lib/utils/get-error-message'
-import type { Client, ClientContact, CurrentUser, MachineDetails } from '@/lib/types'
+import type { Client, ClientContact, MachineDetails } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
 import { normalizeScheduledDays } from '@/lib/payments/terms'
+import {
+  getCommercialVisibilityForClients,
+  requireClientCardAccess,
+} from '@/lib/permissions/commercial-visibility'
 
 type ClientInsert = Database['public']['Tables']['clients']['Insert']
 type ClientUpdate = Database['public']['Tables']['clients']['Update']
@@ -78,7 +82,6 @@ async function requireClientPermission(operation: PermissionOperation) {
 
 function canAssignResponsible(context: Awaited<ReturnType<typeof requireClientPermission>>) {
   return context.permissionDetails.isAdminPosition
-    || (DIRECTOR_ACCESS_ROLES as readonly string[]).includes(context.role)
 }
 
 async function assertResponsibleManager(userId: string | null | undefined) {
@@ -153,18 +156,47 @@ async function createSignedImageUrl(path: string | null | undefined) {
   return data?.signedUrl || null
 }
 
-function assertCanManageClients(user: CurrentUser) {
-  void user
+function assertCanManageClients(context: Awaited<ReturnType<typeof requireClientPermission>>) {
+  if (context.role !== 'sales_manager' && !context.permissionDetails.isAdminPosition) {
+    throw new PermissionDeniedError('clients', 'manage')
+  }
 }
 
 export async function getClientOptions() {
   try {
-    const { supabase } = await requireClientPermission('view')
+    const context = await requirePermission('client_identity', 'view')
 
-    const { data, error } = await looseDb(supabase).from('clients')
-      .select('id, name, primary_contact_name, phone, email, country_city, address, delivery_basis_location_en, delivery_basis_location_ua, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, responsible_user_id, estimated_delivery_days, scheduled_payment_weekdays, scheduled_payment_month_days, scheduled_payment_amount_mode, scheduled_payment_minimum_amount')
+    const { data, error } = await looseDb(createAdminClient()).from('clients')
+      .select('id, name')
       .order('name', { ascending: true })
 
+    if (error) throw error
+    const clients = (data || []) as unknown as Array<Pick<Client, 'id' | 'name'>>
+    const visibility = await getCommercialVisibilityForClients(clients.map((client) => client.id), context)
+    return {
+      data: clients.map((client) => {
+        const access = visibility.get(client.id)
+        return {
+          id: client.id,
+          name: access?.displayName || 'КЛИЕНТ',
+        }
+      }),
+      error: null,
+    }
+  } catch (error) {
+    return { data: null, error: getErrorMessage(error) }
+  }
+}
+
+export async function getOrderClientOptions() {
+  try {
+    const context = await requireClientPermission('view')
+    const query = looseDb(createAdminClient()).from('clients')
+      .select('id, name, primary_contact_name, phone, email, country_city, address, delivery_basis_location_en, delivery_basis_location_ua, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, responsible_user_id, estimated_delivery_days, scheduled_payment_weekdays, scheduled_payment_month_days, scheduled_payment_amount_mode, scheduled_payment_minimum_amount')
+      .order('name', { ascending: true })
+    const { data, error } = context.permissionDetails.isAdminPosition
+      ? await query
+      : await query.eq('responsible_user_id', context.userId)
     if (error) throw error
     return { data: (data || []) as unknown as Client[], error: null }
   } catch (error) {
@@ -175,11 +207,12 @@ export async function getClientOptions() {
 export async function getClients() {
   try {
     const context = await requireClientPermission('view')
-    const { supabase } = context
-    const { data: clients, error } = await looseDb(supabase).from('client_list_summary')
+    let query = looseDb(createAdminClient()).from('client_list_summary')
       .select('id, name, responsible_user_id, primary_contact_name, phone, email, country_city, payment_terms_type, payment_due_days, prepayment_percent, final_payment_due_days, scheduled_payment_weekdays, scheduled_payment_month_days, scheduled_payment_amount_mode, scheduled_payment_minimum_amount, active_machines_count, current_invoice_amount, overdue_invoice_amount, last_activity')
       .order('updated_at', { ascending: false })
       .limit(CLIENTS_LIST_LIMIT)
+    if (!context.permissionDetails.isAdminPosition) query = query.eq('responsible_user_id', context.userId)
+    const { data: clients, error } = await query
 
     if (error) throw error
 
@@ -220,8 +253,8 @@ export async function getClients() {
 export async function getClient(id: string) {
   try {
     const context = await requireClientPermission('view')
-    const { supabase } = context
-    const { data, error } = await looseDb(supabase).from('clients')
+    await requireClientCardAccess(id, context)
+    const { data, error } = await looseDb(createAdminClient()).from('clients')
       .select(`
         *,
         client_contacts(*),
@@ -256,8 +289,9 @@ export async function getClient(id: string) {
 
 export async function getClientImageUrls(id: string) {
   try {
-    const { supabase } = await requireClientPermission('view')
-    const { data, error } = await looseDb(supabase).from('clients')
+    const context = await requireClientPermission('view')
+    await requireClientCardAccess(id, context)
+    const { data, error } = await looseDb(createAdminClient()).from('clients')
       .select('signature_image_path, stamp_image_path')
       .eq('id', id)
       .single()
@@ -278,9 +312,7 @@ export async function getClientImageUrls(id: string) {
 export async function createClient(input: ClientInput) {
   try {
     const context = await requireClientPermission('manage')
-    const { user } = context
-    assertCanManageClients(user)
-
+    assertCanManageClients(context)
     const parsed = clientSchema.parse(input)
     const clientValues = { ...parsed }
     delete clientValues.responsible_user_id
@@ -330,8 +362,8 @@ export async function createClient(input: ClientInput) {
 export async function updateClient(id: string, input: ClientInput) {
   try {
     const context = await requireClientPermission('manage')
-    const { user } = context
-    assertCanManageClients(user)
+    assertCanManageClients(context)
+    await requireClientCardAccess(id, context)
 
     const parsed = clientSchema.parse(input)
     const clientValues = { ...parsed }
@@ -384,8 +416,9 @@ export async function uploadClientImage(
   let adminSupabase: ReturnType<typeof createAdminClient> | null = null
 
   try {
-    const { user } = await requireClientPermission('manage')
-    assertCanManageClients(user)
+    const context = await requireClientPermission('manage')
+    assertCanManageClients(context)
+    await requireClientCardAccess(clientId, context)
     if (type !== 'signature' && type !== 'stamp') throw new Error('Некорректный тип изображения')
 
     const file = formData.get('file')
@@ -431,8 +464,9 @@ export async function uploadClientImage(
 
 export async function createClientContact(clientId: string, input: ClientContactInput) {
   try {
-    const { supabase, user } = await requireClientPermission('manage')
-    assertCanManageClients(user)
+    const context = await requireClientPermission('manage')
+    assertCanManageClients(context)
+    await requireClientCardAccess(clientId, context)
 
     const parsed = clientContactSchema.parse(input)
     const payload: ClientContactInsert = {
@@ -445,7 +479,7 @@ export async function createClientContact(clientId: string, input: ClientContact
       is_primary: false,
     }
 
-    const { data, error } = await looseDb(supabase).from('client_contacts')
+    const { data, error } = await looseDb(createAdminClient()).from('client_contacts')
       .insert(payload)
       .select('*')
       .single()
@@ -460,8 +494,9 @@ export async function createClientContact(clientId: string, input: ClientContact
 
 export async function updateClientContact(clientId: string, contactId: string, input: ClientContactInput) {
   try {
-    const { supabase, user } = await requireClientPermission('manage')
-    assertCanManageClients(user)
+    const context = await requireClientPermission('manage')
+    assertCanManageClients(context)
+    await requireClientCardAccess(clientId, context)
 
     const parsed = clientContactSchema.parse(input)
     const payload: ClientContactUpdate = {
@@ -472,7 +507,7 @@ export async function updateClientContact(clientId: string, contactId: string, i
       notes: parsed.notes || null,
     }
 
-    const { data, error } = await looseDb(supabase).from('client_contacts')
+    const { data, error } = await looseDb(createAdminClient()).from('client_contacts')
       .update(payload)
       .eq('id', contactId)
       .eq('client_id', clientId)
@@ -489,10 +524,11 @@ export async function updateClientContact(clientId: string, contactId: string, i
 
 export async function deleteClientContact(clientId: string, contactId: string) {
   try {
-    const { supabase, user } = await requireClientPermission('manage')
-    assertCanManageClients(user)
+    const context = await requireClientPermission('manage')
+    assertCanManageClients(context)
+    await requireClientCardAccess(clientId, context)
 
-    const { error } = await looseDb(supabase).from('client_contacts')
+    const { error } = await looseDb(createAdminClient()).from('client_contacts')
       .delete()
       .eq('id', contactId)
       .eq('client_id', clientId)
@@ -507,8 +543,10 @@ export async function deleteClientContact(clientId: string, contactId: string) {
 
 export async function applyClientPaymentTermsToMachines(clientId: string, machineIds: string[]) {
   try {
-    const { supabase, user } = await requireClientPermission('manage')
-    assertCanManageClients(user)
+    const context = await requireClientPermission('manage')
+    const { supabase } = context
+    assertCanManageClients(context)
+    await requireClientCardAccess(clientId, context)
 
     const ids = Array.from(new Set(machineIds.filter(Boolean)))
     if (!ids.length) return { success: true, updated_count: 0, error: null }

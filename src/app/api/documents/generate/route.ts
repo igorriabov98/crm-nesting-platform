@@ -14,6 +14,7 @@ import { OrderSpecificationDocument } from '@/lib/pdf/OrderSpecificationDocument
 import { InvoiceDocument } from '@/lib/pdf/InvoiceDocument'
 import { PackingListDocument } from '@/lib/pdf/PackingListDocument'
 import { QualityControlDocument } from '@/lib/pdf/QualityControlDocument'
+import { requireClientCommercialDocumentVisibility } from '@/lib/permissions/commercial-visibility'
 
 export const runtime = 'nodejs'
 
@@ -78,6 +79,17 @@ export async function POST(request: Request) {
     const parsed = requestSchema.parse(body)
     if (parsed.type !== 'invoice') await requirePermission('sales_plan', 'view')
 
+    const { data: orderData, error: orderError } = await trustedDb(createAdminClient())
+      .from('machines')
+      .select('client_id')
+      .eq('id', parsed.machineId)
+      .maybeSingle()
+    if (orderError || !orderData || !(orderData as { client_id: string | null }).client_id) {
+      throw new Error('Заказ или компания не найдены')
+    }
+    const orderClientId = (orderData as { client_id: string }).client_id
+    const includesPrices = ['specification', 'order_specification', 'invoice', 'all'].includes(parsed.type)
+
     let invoice: InvoiceDocumentRecord | null = null
     if (parsed.type === 'invoice' || parsed.type === 'all') {
       let query = trustedDb(createAdminClient())
@@ -98,6 +110,7 @@ export async function POST(request: Request) {
         { resourceKey: 'client_payments', operation: 'view' },
       ], machine?.client_id)
     }
+    await requireClientCommercialDocumentVisibility(orderClientId, includesPrices)
     const data = invoice
       ? await getInvoiceDocumentData(invoice.id)
       : await getDocumentData(parsed.machineId)

@@ -9,6 +9,7 @@ export type ResourceKey =
   | 'dashboard'
   | 'sales_plan'
   | 'my_orders'
+  | 'client_identity'
   | 'client_prices'
   | 'technologist_requests'
   | 'material_request_queue'
@@ -130,6 +131,7 @@ export type PermissionResource = {
   locked?: boolean
   supportsFactoryScope?: boolean
   supportsCompanyScope?: boolean
+  viewOnly?: boolean
 }
 
 export type PermissionState = {
@@ -214,14 +216,27 @@ export const PERMISSION_RESOURCES = [
     supportsCompanyScope: true,
   },
   {
+    key: 'client_identity',
+    label: 'Полные названия клиентов',
+    description: 'Полные названия компаний в планах, документах, отчетах и поиске',
+    group: 'Sales',
+    defaultViewRoles: [],
+    defaultManageRoles: [],
+    routes: [],
+    supportsCompanyScope: true,
+    viewOnly: true,
+  },
+  {
     key: 'client_prices',
-    label: 'Цены',
+    label: 'Цены заказов',
+    description: 'Прайс клиента, цены изделий, расходы и коммерческие итоги заказов',
     group: 'Sales',
     defaultHref: ROUTES.SALES_PLAN_PRICES,
-    defaultViewRoles: DIRECTORS,
-    defaultManageRoles: DIRECTORS,
+    defaultViewRoles: [],
+    defaultManageRoles: [],
     routes: [{ path: ROUTES.SALES_PLAN_PRICES, match: 'prefix', operation: 'view', priority: 120 }],
     sidebar: { section: 'sales', icon: 'prices', order: 15 },
+    supportsCompanyScope: true,
   },
   {
     key: 'technologist_requests',
@@ -930,7 +945,10 @@ export function getEmptyPermissionMap(): PermissionMap {
 
 export function getFullPermissionMap(): PermissionMap {
   return Object.fromEntries(
-    PERMISSION_RESOURCES.map((resource) => [resource.key, { canView: true, canManage: true }])
+    PERMISSION_RESOURCES.map((resource) => [resource.key, {
+      canView: true,
+      canManage: !('viewOnly' in resource && resource.viewOnly),
+    }])
   ) as PermissionMap
 }
 

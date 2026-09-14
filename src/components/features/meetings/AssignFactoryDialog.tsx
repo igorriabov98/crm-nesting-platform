@@ -76,13 +76,13 @@ export function AssignFactoryDialog({ machine, factories, meetingId, open, onOpe
                 <p className="font-bold text-[#1B3A6B]">{machine.item_count}</p>
               </div>
             )}
-            {machine.total_weight !== undefined && (
+            {machine.total_weight != null && (
               <div>
                 <p className="text-xs text-[#9CA3AF]">Вес</p>
                 <p className="font-bold text-[#1B3A6B]">{machine.total_weight.toFixed(1)} т</p>
               </div>
             )}
-            {machine.total_cost !== undefined && (
+            {machine.total_cost != null && (
               <div>
                 <p className="text-xs text-[#9CA3AF]">Стоимость</p>
                 <p className="font-bold text-[#1B3A6B]">€{machine.total_cost.toLocaleString()}</p>

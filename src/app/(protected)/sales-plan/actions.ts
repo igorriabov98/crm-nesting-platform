@@ -28,6 +28,11 @@ import { machineTotalWeightTonnes } from '@/lib/machine-weight'
 import type { CreateMachineInput, MachinePackingSettingsInput, UpdateMachineInput } from '@/lib/types/schemas'
 import type { CoatingType, CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, MaterialType, Product } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
+import {
+  canUseClientDocuments,
+  getCommercialVisibilityForClients,
+  requireOrderPriceManagement,
+} from '@/lib/permissions/commercial-visibility'
 
 const machineItemActionSchema = machineItemSchema.strict()
 const machineItemUpdateSchema = machineItemSchema.partial().strict()
@@ -158,6 +163,12 @@ function applySalesPlanFactoryScope<T>(query: T, user: CurrentUser, factoryFilte
 async function requireSalesPlanPermission(operation: 'view' | 'manage') {
   const permission = await requirePermission('sales_plan', operation)
   return { ...permission, db: permission.supabase as unknown as LooseDb }
+}
+
+async function requireMachinePriceManagement(db: LooseDb, machineId: string, context: Awaited<ReturnType<typeof requireSalesPlanPermission>>) {
+  const clientId = await getMachineClientId(db, machineId)
+  if (!clientId) throw new Error('У заказа не указана компания')
+  return requireOrderPriceManagement(clientId, context)
 }
 
 function requireMachineMutationAccess(user: CurrentUser) {
@@ -952,13 +963,14 @@ export async function moveMachineInProductionQueue(input: unknown) {
 
 export async function getMachines(factoryFilter?: string | null, productionMonthFilter?: string | null) {
   try {
-    const { supabase, db, user, permissions, permissionDetails } = await requireSalesPlanPermission('view')
+    const context = await requireSalesPlanPermission('view')
+    const { db, user, permissions, permissionDetails } = context
     const normalizedProductionMonth = normalizeProductionMonthValue(productionMonthFilter)
 
-    let query = supabase
+    let query = createAdminClient()
       .from('machines_with_totals')
       .select(`
-        id, name, material_type, status, factory_id, is_confirmed, planned_material_date,
+        id, name, client_id, creation_year, annual_order_number, material_type, status, factory_id, is_confirmed, planned_material_date,
         actual_material_date, actual_shipping_date, created_at, created_by, total_weight,
         total_cost, item_count, production_month, production_workshop, production_queue_number,
         contract_id, specification_number, specification_date,
@@ -984,6 +996,7 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
     if (error) throw error
 
     const rows = (rawData || []) as unknown as Omit<MachineListItem, 'production_progress' | 'supply_progress' | 'uniqueCoatings' | 'progress'>[]
+    const commercialVisibility = await getCommercialVisibilityForClients(rows.map((machine) => machine.client_id), context)
     const machineIds = rows.map((machine) => machine.id)
     const [progressContexts, actualMaterialDateFallbacks] = await Promise.all([
       loadMachineProgressContexts(db, machineIds),
@@ -992,11 +1005,29 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
     const mappedData: MachineListItem[] = rows.map((m) => {
       const rawClient = m.client as (MachineListItem['client'] & { responsible_user_id?: string | null }) | Array<MachineListItem['client'] & { responsible_user_id?: string | null }> | null
       const client = Array.isArray(rawClient) ? rawClient[0] || null : rawClient
+      const commercial = m.client_id ? commercialVisibility.get(m.client_id) : null
       const invoiceViewScope = permissionDetails.companyScopes.invoices?.view || 'own'
       const canViewInvoice = hasPermission(permissions, 'invoices', 'view')
         && (invoiceViewScope === 'all' || client?.responsible_user_id === user.id)
       const machine = {
         ...m,
+        client: client ? {
+          id: client.id,
+          name: commercial?.displayName || 'КЛИЕНТ',
+          display_name: commercial?.displayName || 'КЛИЕНТ',
+          is_name_masked: commercial?.isNameMasked ?? true,
+          primary_contact_name: commercial?.canAccessClientCard ? client.primary_contact_name : null,
+        } : null,
+        order_code: m.name,
+        can_view_order_prices: commercial?.canViewOrderPrices ?? false,
+        can_manage_order_prices: commercial?.canManageOrderPrices ?? false,
+        total_cost: commercial?.canViewOrderPrices ? m.total_cost : null,
+        total_items_cost: commercial?.canViewOrderPrices ? m.total_items_cost : null,
+        total_expenses: commercial?.canViewOrderPrices ? m.total_expenses : null,
+        machine_items: (m.machine_items || []).map((item) => ({
+          ...item,
+          price: commercial?.canViewOrderPrices ? item.price : null,
+        })),
         invoice: canViewInvoice ? m.invoice : null,
         can_view_invoice: canViewInvoice,
         actual_material_date: m.actual_material_date || actualMaterialDateFallbacks.get(m.id) || null,
@@ -1040,9 +1071,10 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
 // === Получение одной машины ===
 export async function getMachine(id: string) {
   try {
-    const { supabase, db, user, permissions, permissionDetails } = await requireSalesPlanPermission('view')
+    const context = await requireSalesPlanPermission('view')
+    const { db, user, permissions, permissionDetails } = context
 
-    let query = supabase
+    let query = createAdminClient()
       .from('machines')
       .select(`
         *,
@@ -1070,6 +1102,9 @@ export async function getMachine(id: string) {
     const machineData = data as unknown as MachineDetails
     const rawClient = machineData.client as (MachineDetails['client'] & { responsible_user_id?: string | null }) | Array<MachineDetails['client'] & { responsible_user_id?: string | null }> | null
     const client = Array.isArray(rawClient) ? rawClient[0] || null : rawClient
+    const commercial = machineData.client_id
+      ? (await getCommercialVisibilityForClients([machineData.client_id], context)).get(machineData.client_id)
+      : null
     const invoiceViewScope = permissionDetails.companyScopes.invoices?.view || 'own'
     const invoiceManageScope = permissionDetails.companyScopes.invoices?.manage || 'own'
     const canViewInvoice = hasPermission(permissions, 'invoices', 'view')
@@ -1077,7 +1112,19 @@ export async function getMachine(id: string) {
     const canManageInvoice = hasPermission(permissions, 'invoices', 'manage')
       && (invoiceManageScope === 'all' || client?.responsible_user_id === user.id)
     if (!canViewInvoice) machineData.invoice = null
-    if (client) delete client.responsible_user_id
+    if (client) {
+      delete client.responsible_user_id
+      machineData.client = {
+        ...client,
+        name: commercial?.displayName || 'КЛИЕНТ',
+        display_name: commercial?.displayName || 'КЛИЕНТ',
+        is_name_masked: commercial?.isNameMasked ?? true,
+        primary_contact_name: commercial?.canAccessClientCard ? client.primary_contact_name : null,
+        phone: commercial?.canAccessClientCard ? client.phone : null,
+        email: commercial?.canAccessClientCard ? client.email : null,
+        country_city: commercial?.canAccessClientCard ? client.country_city : null,
+      }
+    }
     if (machineData.machine_items) {
       machineData.machine_items.sort((a, b) => a.sort_order - b.sort_order)
       machineData.machine_items = await markOutdatedProductVersions(db, machineData.machine_items)
@@ -1114,17 +1161,29 @@ export async function getMachine(id: string) {
 
     const enrichedData: MachineDetails = {
       ...machineWithActualMaterialDate,
+      machine_items: items.map((item) => ({ ...item, price: commercial?.canViewOrderPrices ? item.price : null })),
+      machine_expenses: expenses.map((expense) => ({ ...expense, amount: commercial?.canViewOrderPrices ? expense.amount : null })),
       status: getDisplayMachineStatus(machineWithActualMaterialDate),
       total_weight,
-      total_items_cost,
-      total_expenses,
-      total_cost,
+      total_items_cost: commercial?.canViewOrderPrices ? total_items_cost : null,
+      total_expenses: commercial?.canViewOrderPrices ? total_expenses : null,
+      total_cost: commercial?.canViewOrderPrices ? total_cost : null,
+      freight_cost: commercial?.canViewOrderPrices ? machineWithActualMaterialDate.freight_cost : null,
       item_count: items.length,
       has_zinc,
       has_hot_zinc,
       has_cold_zinc,
       has_painting,
       progress: resolveMachineProgressWithContext(machineWithActualMaterialDate, progressContexts.get(machineData.id)),
+      order_code: machineData.name,
+      can_view_order_prices: commercial?.canViewOrderPrices ?? false,
+      can_manage_order_prices: commercial?.canManageOrderPrices ?? false,
+      can_use_order_documents: commercial ? canUseClientDocuments(context, commercial, {
+        resourceKey: 'sales_plan', operation: 'view', includesPrices: false,
+      }) : false,
+      can_use_priced_order_documents: commercial ? canUseClientDocuments(context, commercial, {
+        resourceKey: 'sales_plan', operation: 'view', includesPrices: true,
+      }) : false,
     }
 
     return { data: enrichedData, invoiceAccess: { canView: canViewInvoice, canManage: canManageInvoice }, error: null }
@@ -1136,9 +1195,15 @@ export async function getMachine(id: string) {
 // === Создание ===
 export async function createMachine(data: CreateMachineInput) {
   try {
-    const { supabase, db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { supabase, user } = context
 
     const parsed = createMachineSchema.parse(data)
+    const commercial = await requireOrderPriceManagement(parsed.client_id, context)
+    if (!commercial.isOwner && !commercial.isAdmin) {
+      throw new Error('Создавать заказ можно только для своей компании')
+    }
+    const db = createAdminClient() as unknown as LooseDb
     const allItems = [
       ...(parsed.items || []).map((item) => ({ ...item, is_sample: item.is_sample ?? false })),
       ...(parsed.samples || []).map((item) => ({ ...item, is_sample: true })),
@@ -1197,7 +1262,7 @@ export async function createMachine(data: CreateMachineInput) {
     const { data: newMachineData, error: machineError } = await db
       .from('machines')
       .insert({
-        name: parsed.name,
+        name: '',
         factory_id: parsed.factory_id,
         status: 'factory_assigned',
         client_id: parsed.client_id,
@@ -1304,7 +1369,9 @@ export async function createMachine(data: CreateMachineInput) {
 
 export async function updateMachineDocumentFields(machineId: string, data: MachineDocumentFieldsInput) {
   try {
-    const { db } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    await requireMachinePriceManagement(context.db, machineId, context)
+    const db = createAdminClient() as unknown as LooseDb
     const parsedMachineId = machineIdSchema.parse(machineId)
     const parsed = machineDocumentFieldsSchema.parse(data)
 
@@ -1344,7 +1411,10 @@ export async function updateMachineDocumentFields(machineId: string, data: Machi
 
 export async function updateMachinePackingSettings(machineId: string, data: MachinePackingSettingsInput) {
   try {
-    const { db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { user } = context
+    await requireMachinePriceManagement(context.db, machineId, context)
+    const db = createAdminClient() as unknown as LooseDb
     requireMachineMutationAccess(user)
     const parsedMachineId = machineIdSchema.parse(machineId)
     const parsed = machinePackingSettingsSchema.parse(data)
@@ -1453,8 +1523,20 @@ export async function updateMachineMaterialType(machineId: string, materialType:
 // === Обновление ===
 export async function updateMachine(id: string, data: UpdateMachineInput & { deletedItemIds?: string[], deletedExpenseIds?: string[] }) {
   try {
-    const { supabase, db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { supabase, user } = context
+    let db = context.db
     await assertMachineNotArchived(db, id)
+    const changesCommercialData = data.client_id !== undefined
+      || data.items !== undefined
+      || data.expenses !== undefined
+      || Boolean(data.deletedItemIds?.length)
+      || Boolean(data.deletedExpenseIds?.length)
+    if (changesCommercialData) {
+      await requireMachinePriceManagement(db, id, context)
+      if (data.client_id) await requireOrderPriceManagement(data.client_id, context)
+      db = createAdminClient() as unknown as LooseDb
+    }
     if (data.actual_material_date !== undefined) {
       throw new Error('Факт поставки материала заполняется автоматически после приемки всех материалов по заявке')
     }
@@ -1526,7 +1608,6 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
 
     // 1. Обновляем основные поля машины
     const machineUpdates: MachineUpdate = {}
-    if (data.name !== undefined) machineUpdates.name = data.name
     if (data.client_id !== undefined) machineUpdates.client_id = data.client_id
     if (data.contract_id !== undefined) machineUpdates.contract_id = data.contract_id || null
     if (data.specification_number !== undefined) machineUpdates.specification_number = data.specification_number || null
@@ -1595,7 +1676,7 @@ export async function updateMachine(id: string, data: UpdateMachineInput & { del
           supabase,
           nextFactoryId,
           id,
-          data.name || machineNameForNotifications || 'Машина'
+          machineNameForNotifications || 'Машина'
         )
       }
 
@@ -1868,6 +1949,7 @@ export async function deleteMachine(id: string) {
     const permission = await requireSalesPlanPermission('manage')
     const { supabase, db, user } = permission
 
+    await requireMachinePriceManagement(db, id, permission)
     await assertSalesPlanMachineAccess(db, permission, id)
     await deleteMachineWithInventoryCleanup(supabase as unknown as RpcClient, id, user.id)
 
@@ -1890,7 +1972,9 @@ export async function deleteMachine(id: string) {
 
 export async function archiveMachine(id: string, reason?: string) {
   try {
-    const { db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { db, user } = context
+    await requireMachinePriceManagement(db, id, context)
 
     const { data: machineData, error: machineError } = await db
       .from('machines')
@@ -1936,7 +2020,10 @@ export async function archiveMachine(id: string, reason?: string) {
 // === MACHINE ITEMS (Single Actions) ===
 export async function addMachineItem(machineId: string, data: unknown) {
   try {
-    const { db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { user } = context
+    await requireMachinePriceManagement(context.db, machineId, context)
+    const db = createAdminClient() as unknown as LooseDb
     requireMachineMutationAccess(user)
     await assertMachineNotArchived(db, machineId)
     const parsed = machineItemActionSchema.parse(data)
@@ -2055,7 +2142,10 @@ export async function updateMachineConfirmation(id: string, isConfirmed: boolean
 
 export async function updateMachineItem(itemId: string, data: unknown, machineId: string) {
   try {
-    const { db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { user } = context
+    await requireMachinePriceManagement(context.db, machineId, context)
+    const db = createAdminClient() as unknown as LooseDb
     requireMachineMutationAccess(user)
     await assertMachineNotArchived(db, machineId)
     const parsed = machineItemUpdateSchema.parse(data)
@@ -2186,7 +2276,10 @@ export async function updateMachineItem(itemId: string, data: unknown, machineId
 
 export async function deleteMachineItem(itemId: string, machineId: string) {
   try {
-    const { db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { user } = context
+    await requireMachinePriceManagement(context.db, machineId, context)
+    const db = createAdminClient() as unknown as LooseDb
     requireMachineMutationAccess(user)
     await assertMachineNotArchived(db, machineId)
     const { data: machineData, error: machineError } = await db
@@ -2216,7 +2309,10 @@ export async function deleteMachineItem(itemId: string, machineId: string) {
 // === MACHINE EXPENSES (Single Actions) ===
 export async function addMachineExpense(machineId: string, data: unknown) {
   try {
-    const { db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { user } = context
+    await requireMachinePriceManagement(context.db, machineId, context)
+    const db = createAdminClient() as unknown as LooseDb
     requireMachineMutationAccess(user)
     await assertMachineNotArchived(db, machineId)
     const parsed = machineExpenseActionSchema.parse(data)
@@ -2235,7 +2331,10 @@ export async function addMachineExpense(machineId: string, data: unknown) {
 
 export async function updateMachineExpense(expenseId: string, data: unknown, machineId: string) {
   try {
-    const { db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { user } = context
+    await requireMachinePriceManagement(context.db, machineId, context)
+    const db = createAdminClient() as unknown as LooseDb
     requireMachineMutationAccess(user)
     await assertMachineNotArchived(db, machineId)
     const parsed = machineExpenseUpdateSchema.parse(data)
@@ -2251,7 +2350,10 @@ export async function updateMachineExpense(expenseId: string, data: unknown, mac
 
 export async function deleteMachineExpense(expenseId: string, machineId: string) {
   try {
-    const { db, user } = await requireSalesPlanPermission('manage')
+    const context = await requireSalesPlanPermission('manage')
+    const { user } = context
+    await requireMachinePriceManagement(context.db, machineId, context)
+    const db = createAdminClient() as unknown as LooseDb
     requireMachineMutationAccess(user)
     await assertMachineNotArchived(db, machineId)
     const { error } = await db.from('machine_expenses').delete().eq('id', expenseId).eq('machine_id', machineId)

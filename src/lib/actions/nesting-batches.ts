@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { ROUTES } from '@/lib/constants/routes'
 import { NESTING_QUEUE_LIMIT } from '@/lib/constants/performance-limits'
 import { requirePermission } from '@/lib/permissions/server'
+import { sanitizeStructuredClientRelations } from '@/lib/permissions/commercial-visibility'
 import { fetchNestingService as fetch, getNestingServiceUrl, getProjectStatus, markProjectSuperseded } from '@/lib/nesting/api'
 import { isCompletedNestingStatus } from '@/lib/nesting/status'
 import { getProductVersionNestingGuards, type ProductVersionNestingDb } from '@/lib/actions/product-version-nesting-guard'
@@ -177,8 +178,8 @@ const startBatchSchema = z.object({
 })
 
 async function requireNestingPermission(operation: PermissionOperation = 'view') {
-  const { userId } = await requirePermission('nesting', operation)
-  return { supabase: createAdminClient(), userId }
+  const context = await requirePermission('nesting', operation)
+  return { ...context, supabase: createAdminClient() }
 }
 
 function isStepFile(file: ProductFileRow) {
@@ -274,7 +275,8 @@ async function syncProjectStatuses(db: LooseDb, runs: RunRow[]) {
 }
 
 async function fetchQueueRows(scope: 'tasks' | 'all') {
-  const { supabase } = await requireNestingPermission('view')
+  const context = await requireNestingPermission('view')
+  const { supabase } = context
   const db = supabase as unknown as LooseDb
 
   const activeTasksResult = await db
@@ -291,7 +293,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
 
   let machineQuery = db
     .from('machines')
-    .select('id, name, desired_shipping_date, production_month, created_at, client:clients(name)')
+    .select('id, name, desired_shipping_date, production_month, created_at, client:clients(id, name)')
     .eq('is_archived', false)
     .order('created_at', { ascending: false })
     .limit(NESTING_QUEUE_LIMIT)
@@ -316,7 +318,7 @@ async function fetchQueueRows(scope: 'tasks' | 'all') {
 
   const machineResult = await machineQuery
   if (machineResult.error) throw new Error(machineResult.error.message || 'Не удалось загрузить машины')
-  const machines = (machineResult.data || []) as MachineRow[]
+  const machines = await sanitizeStructuredClientRelations((machineResult.data || []) as MachineRow[], context)
   const machineIds = machines.map((machine) => machine.id)
 
   if (machineIds.length === 0) {

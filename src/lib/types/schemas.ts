@@ -291,7 +291,6 @@ export const clientContactSchema = z.object({
 
 // Обновлённая схема создания машины
 export const createMachineSchema = z.object({
-  name: z.string().min(1, 'Введите название машины'),
   client_id: z.string().uuid('Выберите клиента'),
   contract_id: z.string().uuid().optional().nullable(),
   specification_number: z.string().optional().nullable(),

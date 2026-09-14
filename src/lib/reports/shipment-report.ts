@@ -12,6 +12,7 @@ import {
   type ShipmentReportFactory,
   type ShipmentReportFilters,
 } from '@/lib/reports/shipment-report-core'
+import { getCommercialVisibilityForClients } from '@/lib/permissions/commercial-visibility'
 
 export * from '@/lib/reports/shipment-report-core'
 
@@ -48,7 +49,7 @@ async function loadMachinePage(
     .range(offset, offset + REPORT_PAGE_SIZE - 1)
 }
 
-async function loadRows(admin: ReturnType<typeof createAdminClient>, filters: ShipmentReportFilters) {
+async function loadRows(admin: ReturnType<typeof createAdminClient>, filters: ShipmentReportFilters, context: Awaited<ReturnType<typeof requirePermission>>) {
   const machines: ShipmentMachineRow[] = []
   for (let offset = 0; ; offset += REPORT_PAGE_SIZE) {
     const { data, error } = await loadMachinePage(admin, filters, offset)
@@ -75,25 +76,34 @@ async function loadRows(admin: ReturnType<typeof createAdminClient>, filters: Sh
   const relationError = [...clientResults, ...invoiceResults].find((result) => result.error)?.error
   if (relationError) throw relationError
 
+  const visibility = await getCommercialVisibilityForClients(clientIds, context)
+  const safeMachines = machines.map((machine) => ({
+    ...machine,
+    freight_cost: machine.client_id && visibility.get(machine.client_id)?.canViewOrderPrices ? machine.freight_cost : null,
+  }))
+  const safeClients = clientResults.flatMap((result) => (result.data || []) as ShipmentClientRow[]).map((client) => ({
+    ...client,
+    name: visibility.get(client.id)?.displayName || 'КЛИЕНТ',
+  }))
   return mapShipmentReportRows(
-    machines,
-    clientResults.flatMap((result) => (result.data || []) as ShipmentClientRow[]),
+    safeMachines,
+    safeClients,
     invoiceResults.flatMap((result) => (result.data || []) as ShipmentInvoiceRow[]),
   )
 }
 
 export async function loadShipmentReport(filtersInput: ShipmentReportFilters) {
-  await requirePermission('complex_reports', 'view')
+  const context = await requirePermission('complex_reports', 'view')
   const filters = parseShipmentReportFilters(filtersInput)
-  return loadRows(createAdminClient(), filters)
+  return loadRows(createAdminClient(), filters, context)
 }
 
 export async function loadShipmentReportPageData(filtersInput: ShipmentReportFilters) {
-  await requirePermission('complex_reports', 'view')
+  const context = await requirePermission('complex_reports', 'view')
   const filters = parseShipmentReportFilters(filtersInput)
   const admin = createAdminClient()
   const [rows, factoriesResult] = await Promise.all([
-    loadRows(admin, filters),
+    loadRows(admin, filters, context),
     admin.from('factories').select('id, name').order('name'),
   ])
   if (factoriesResult.error) throw factoriesResult.error

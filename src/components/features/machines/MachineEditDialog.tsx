@@ -141,7 +141,6 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
   const form = useForm<MachineFormInput>({
     resolver: zodResolver(updateMachineSchema) as unknown as Resolver<MachineFormInput>,
     defaultValues: {
-      name: machine.name || '',
       factory_id: machine.factory_id || null,
       production_month: machine.production_month || null,
       production_workshop: machine.production_workshop || undefined,
@@ -560,20 +559,6 @@ export function MachineEditDialog({ machine, isOpen, onClose, isDirector, factor
             {mode === 'full' && (
               <>
             <div className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3 sm:p-5">
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-[#374151]">Название машины</FormLabel>
-                    <FormControl>
-                      <Input {...field} className="bg-[#F8F9FA] border-[#E8ECF0] focus-visible:ring-blue-500" />
-                    </FormControl>
-                    <FormMessage className="text-[#DC2626]" />
-                  </FormItem>
-                )}
-              />
-
               <FormField
                 control={form.control}
                 name="production_month"

@@ -3,6 +3,7 @@ import 'server-only'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSupplyOrders, type SupplyOrderItem } from '@/lib/actions/supply-orders'
 import { ROUTES } from '@/lib/constants/routes'
+import { sanitizeStructuredClientRelations } from '@/lib/permissions/commercial-visibility'
 import {
   buildTonnageMetric,
   daysBetween,
@@ -270,7 +271,7 @@ export async function getPlanningOverdueShipments(
   today = todayInUzhgorod(),
 ) {
   const result = await db().from('machines_with_totals')
-    .select('id, name, specification_number, total_weight, desired_shipping_date, client:clients(name)', { count: 'exact' })
+    .select('id, name, specification_number, total_weight, desired_shipping_date, client:clients(id, name)', { count: 'exact' })
     .eq('factory_id', factoryId)
     .eq('is_confirmed', true)
     .eq('is_archived', false)
@@ -285,9 +286,10 @@ export async function getPlanningOverdueShipments(
     specification_number: string | null
     total_weight: number | null
     desired_shipping_date: string
-    client: { name: string } | Array<{ name: string }> | null
+    client: { id: string; name: string } | Array<{ id: string; name: string }> | null
   }
-  const rows: PlanningOverdueShipment[] = ((result.data || []) as Row[]).map((row) => ({
+  const safeRows = await sanitizeStructuredClientRelations((result.data || []) as Row[])
+  const rows: PlanningOverdueShipment[] = safeRows.map((row) => ({
     id: row.id,
     name: row.name,
     specification: row.specification_number,

@@ -188,39 +188,56 @@ export type MachineRelation = Pick<Machine,
   machine_items?: (Pick<MachineItem, 'id' | 'product_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'price' | 'quantity' | 'weight' | 'coating' | 'ral_number' | 'is_sample'> & {
     sort_order?: number | null
   })[]
-  total_weight?: number
-  total_cost?: number
+  total_weight?: number | null
+  total_cost?: number | null
   item_count?: number
 }
 
+export type CommercialMachineItem = MachineItem
+export type CommercialMachineExpense = MachineExpense
+export type CommercialClientSummary = Pick<Client, 'id'> & {
+  name: string
+  display_name: string
+  is_name_masked: boolean
+  primary_contact_name: string | null
+  phone?: string | null
+  email?: string | null
+  country_city?: string | null
+}
+
 export type MachineDetails = Machine & {
-  machine_items: MachineItem[]
-  machine_expenses: MachineExpense[]
+  machine_items: CommercialMachineItem[]
+  machine_expenses: CommercialMachineExpense[]
   machine_packing_groups?: MachinePackingGroup[]
   production_stages: ProductionStage[]
   supply_items: SupplyItem[]
   invoice: Invoice | Invoice[] | null
   created_by_user?: Pick<User, 'full_name'> | null
   factory?: Pick<Factory, 'name'> | null
-  client?: Pick<Client, 'id' | 'name' | 'primary_contact_name' | 'phone' | 'email' | 'country_city'> | null
+  client?: CommercialClientSummary | null
   total_weight: number
-  total_items_cost: number
-  total_expenses: number
-  total_cost: number
+  total_items_cost: number | null
+  total_expenses: number | null
+  total_cost: number | null
   item_count: number
   has_zinc: boolean
   has_hot_zinc: boolean
   has_cold_zinc: boolean
   has_painting: boolean
   progress: MachineProgress
+  order_code: string
+  can_view_order_prices: boolean
+  can_manage_order_prices: boolean
+  can_use_order_documents: boolean
+  can_use_priced_order_documents: boolean
 }
 
-export type MachineListItem = MachineWithTotals & {
+export type MachineListItem = Omit<MachineWithTotals, 'total_items_cost' | 'total_expenses' | 'total_cost'> & {
   factory?: Pick<Factory, 'name'> | null
   created_by_user?: Pick<User, 'full_name'> | null
-  client?: Pick<Client, 'id' | 'name' | 'primary_contact_name'> | null
+  client?: CommercialClientSummary | null
   product?: string | null
-  machine_items?: Pick<MachineItem, 'id' | 'product_id' | 'product_project_id' | 'product_project_version_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'weight' | 'price' | 'quantity' | 'coating' | 'ral_number' | 'is_sample'>[]
+  machine_items?: (Omit<Pick<MachineItem, 'id' | 'product_id' | 'product_project_id' | 'product_project_version_id' | 'drawing_number' | 'product_name' | 'product_name_uk' | 'product_name_en' | 'product_uktzed' | 'product_drawing_number' | 'weight' | 'price' | 'quantity' | 'coating' | 'ral_number' | 'is_sample'>, 'price'> & { price: number | null })[]
   production_stages?: Pick<ProductionStage, 'stage_type' | 'date_start' | 'date_end' | 'is_skipped'>[]
   supply_items?: Pick<SupplyItem, 'id' | 'status'>[]
   invoice?: Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount' | 'invoice_revision'> | Pick<Invoice, 'status' | 'payment_date' | 'due_date' | 'amount' | 'paid_amount' | 'invoice_revision'>[] | null
@@ -229,6 +246,12 @@ export type MachineListItem = MachineWithTotals & {
   supply_progress: { completed: number; total: number }
   uniqueCoatings: CoatingType[]
   progress: MachineProgress
+  total_items_cost: number | null
+  total_expenses: number | null
+  total_cost: number | null
+  order_code: string
+  can_view_order_prices: boolean
+  can_manage_order_prices: boolean
 }
 
 export type Meeting = {
