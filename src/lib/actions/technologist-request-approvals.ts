@@ -138,6 +138,10 @@ function revalidateApproval(requestId: string) {
   revalidatePath(ROUTES.TASKS)
   revalidatePath(ROUTES.MATERIAL_REQUESTS)
   revalidatePath(ROUTES.SUPPLY_MATERIAL_REQUESTS)
+  revalidatePath(ROUTES.SUPPLY_ORDERS)
+  revalidatePath(ROUTES.REQUESTS)
+  revalidatePath(ROUTES.TECHNOLOGIST_DEPARTMENT_REQUESTS)
+  revalidatePath(ROUTES.NOTIFICATIONS)
 }
 
 export async function beginTechnologistRequestRevision(requestId: string) {

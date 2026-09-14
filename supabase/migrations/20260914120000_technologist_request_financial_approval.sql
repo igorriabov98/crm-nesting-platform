@@ -533,6 +533,146 @@ begin
 end;
 $$;
 
+-- Preserve finalizer validations while permitting non-metal categories, which
+-- have no waste calculation and must not require an invented metallic row.
+do $$ declare v_definition text; v_updated text; begin
+  v_definition := pg_get_functiondef('public.fn_finalize_technologist_request(uuid,uuid,text,integer,jsonb,jsonb)'::regprocedure);
+  v_updated := replace(v_definition, 'if v_payload_count = 0 and v_plan_count = 0 then',
+    'if v_payload_count = 0 and v_plan_count = 0 and (v_manual_count > 0 or not exists (
+      select id from public.request_components where request_id = p_request_id
+      union all select id from public.request_paint where request_id = p_request_id
+      union all select id from public.request_mesh where request_id = p_request_id
+      union all select id from public.request_chain_cord where request_id = p_request_id
+    )) then');
+  if v_updated = v_definition then raise exception 'Не найдена проверка отходности итогового мастера'; end if;
+  execute v_updated;
+end $$;
+
+create or replace function public.fn_submit_supply_position_revision_v1(
+  p_request_id uuid,
+  p_actor uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_revision public.supply_position_revisions%rowtype;
+  v_request public.technologist_requests%rowtype;
+  v_actor_role text;
+  v_count integer;
+  v_total integer := 0;
+  v_replacement_item_id uuid;
+  v_table text;
+  v_preview jsonb;
+begin
+  select * into v_revision from public.supply_position_revisions
+  where replacement_request_id = p_request_id for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = '[REVISION_NOT_FOUND] Корректирующая заявка не найдена';
+  end if;
+  if v_revision.status = 'submitted' then
+    return jsonb_build_object(
+      'revision_id', v_revision.id, 'request_id', p_request_id,
+      'request_item_id', v_revision.replacement_request_item_id,
+      'source_request_id', v_revision.source_request_id,
+      'machine_id', (select machine_id from public.technologist_requests where id = p_request_id),
+      'idempotent', true
+    );
+  end if;
+
+  select role::text into v_actor_role from public.users
+  where id = p_actor and coalesce(is_active, true);
+  if p_actor is distinct from v_revision.assigned_to
+    and coalesce(v_actor_role, '') not in ('planning_director', 'financial_director', 'commercial_director') then
+    raise exception using errcode = '42501', message = '[REVISION_FORBIDDEN] Отправить исправление может назначенный технолог или руководитель';
+  end if;
+
+  select * into v_request from public.technologist_requests where id = p_request_id for update;
+  if v_request.status = 'pending_stock_check' then
+    raise exception using errcode = '55000', message = '[REGULAR_STOCK_CHECK_REQUIRED] Сначала выполните проверку обычного склада';
+  end if;
+  if current_setting('app.financial_approval_request', true) is distinct from p_request_id::text then
+    raise exception using errcode = '55000', message = '[FINANCIAL_APPROVAL_REQUIRED] Исправленная заявка требует финансового согласования';
+  end if;
+  if v_request.status <> 'submitted_to_supply' then
+    raise exception using errcode = '55000', message = '[STOCK_CHECK_REQUIRED] Сначала выполните повторную проверку и резервирование склада';
+  end if;
+
+  foreach v_table in array array[
+    'request_sheet_metal', 'request_circle', 'request_pipe', 'request_knives',
+    'request_paint', 'request_components', 'request_mesh', 'request_chain_cord'
+  ] loop
+    execute format('select count(*) from public.%I where request_id = $1', v_table)
+      into v_count using p_request_id;
+    v_total := v_total + v_count;
+    if v_table = v_revision.source_request_item_table then
+      if v_count <> 1 then
+        raise exception using errcode = '55000', message = '[REVISION_STRUCTURE_LOCKED] В корректирующей заявке должна быть одна позиция исходной категории';
+      end if;
+      execute format('select id from public.%I where request_id = $1', v_table)
+        into v_replacement_item_id using p_request_id;
+    elsif v_count <> 0 then
+      raise exception using errcode = '55000', message = '[REVISION_CATEGORY_LOCKED] Категорию корректирующей позиции менять нельзя';
+    end if;
+  end loop;
+  if v_total <> 1 or v_replacement_item_id is distinct from v_revision.replacement_request_item_id then
+    raise exception using errcode = '55000', message = '[REVISION_STRUCTURE_LOCKED] Структура корректирующей заявки повреждена';
+  end if;
+
+  v_preview := public.fn_preview_supply_position_revision_v1(
+    v_revision.source_request_item_table, v_revision.source_request_item_id
+  );
+  if not coalesce((v_preview->>'eligible')::boolean, false) then
+    raise exception using errcode = '55000', message = coalesce(
+      '[' || (v_preview->'blockers'->0->>'code') || '] ' || (v_preview->'blockers'->0->>'message'),
+      '[POSITION_RETURN_BLOCKED] Исходная позиция больше не может быть заменена'
+    );
+  end if;
+
+  perform set_config('app.supply_position_revision_lifecycle', '1', true);
+  execute format(
+    'update public.%I set order_status = ''cancelled'', cancelled_at = now(), '
+    || 'cancelled_by = $1, cancellation_reason = $2 where id = $3',
+    v_revision.source_request_item_table
+  ) using p_actor, 'Заменено исправленной заявкой: ' || v_revision.reason, v_revision.source_request_item_id;
+
+  update public.technologist_requests
+  set status = 'submitted_to_supply', submitted_at = now(), updated_at = now()
+  where id = p_request_id;
+
+  update public.supply_position_revisions
+  set status = 'submitted', submitted_by = p_actor, submitted_at = now(), updated_at = now()
+  where id = v_revision.id;
+
+  perform set_config('app.supply_position_revision_request_lifecycle', '1', true);
+  update public.department_requests
+  set status = 'done', completed_by = p_actor, completed_at = now(),
+      response = 'Исправленная позиция отправлена снабжению', updated_at = now()
+  where id = v_revision.department_request_id;
+  perform set_config('app.supply_position_revision_request_lifecycle', '', true);
+
+  update public.tasks
+  set status = 'completed', completed_at = now(), updated_at = now()
+  where department_request_id = v_revision.department_request_id
+    and status in ('pending', 'in_progress');
+  insert into public.department_request_events(request_id, event_type, actor_id)
+  values (v_revision.department_request_id, 'completed', p_actor);
+
+  -- Approval publishes the supply notification after completing all reviewer tasks.
+  perform set_config('app.supply_position_revision_lifecycle', '', true);
+
+  return jsonb_build_object(
+    'revision_id', v_revision.id, 'request_id', p_request_id,
+    'request_item_id', v_replacement_item_id,
+    'source_request_id', v_revision.source_request_id,
+    'machine_id', v_request.machine_id, 'idempotent', false
+  );
+end;
+$$;
+
+
 create or replace function public.fn_approve_technologist_request(
   p_approval_version_id uuid, p_actor uuid
 ) returns uuid language plpgsql security definer set search_path = public, storage, pg_temp as $$
@@ -579,6 +719,9 @@ begin
     coalesce(v_version.completion_payload->'archives', '[]'::jsonb)
   );
   perform set_config('request.jwt.claim.sub', coalesce(v_original_sub, p_actor::text), true);
+  if exists (select 1 from public.supply_position_revisions where replacement_request_id = v_request.id) then
+    perform public.fn_submit_supply_position_revision_v1(v_request.id, v_request.created_by);
+  end if;
   perform set_config('app.financial_approval_request', '', true);
 
   update public.technologist_request_approval_versions

@@ -244,6 +244,8 @@ begin
   end;
   update public.request_components set reserved_from_stock = 1 where id = v_second_component;
   if (select quantity_needed from public.request_components where id = v_second_component) <> 2 then raise exception 'stock accounting changed approved demand'; end if;
+  insert into public.request_components(request_id,component_name,quantity_needed)
+    values (v_request,'Заявка без металлических позиций',1);
 
   update public.users set is_active = false where id in (
     select dm.user_id from public.department_members dm join public.positions p on p.id = dm.position_id where p.name = 'Администратор CRM'
@@ -264,6 +266,10 @@ begin
     jsonb_build_object('sourceData',public.fn_technologist_approval_source(v_request))) into v_version;
   if (select revision_number from public.technologist_request_approval_versions where id = v_version) <> 2 then
     raise exception 'third submission is not version 1.2';
+  end if;
+  v_completion := public.fn_approve_technologist_request(v_version,v_finance_one);
+  if v_completion is null or exists (select 1 from public.technologist_request_waste_items where completion_id = v_completion) then
+    raise exception 'non-metal request failed approval or invented waste';
   end if;
 
   if exists (select 1 from public.technologist_requests where id = '94000000-0000-4000-8000-000000000001') then
