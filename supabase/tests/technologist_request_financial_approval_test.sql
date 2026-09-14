@@ -20,6 +20,7 @@ declare
   v_second_machine uuid := gen_random_uuid();
   v_second_request uuid := gen_random_uuid();
   v_second_sheet uuid := gen_random_uuid();
+  v_second_component uuid := gen_random_uuid();
   v_steel_type uuid := gen_random_uuid();
   v_version uuid;
   v_second_version uuid;
@@ -56,6 +57,15 @@ begin
     100, 100, v_steel_type, 1
   );
   update public.request_sheet_metal set thickness_mm = 10, sheet_size = '1000x1000' where id = v_second_sheet;
+  insert into public.request_components(id,request_id,component_name,quantity_needed)
+    values (v_second_component,v_second_request,'Комплектующая согласования',2);
+  begin
+    update public.technologist_requests set status = 'completed' where id = v_second_request;
+    raise exception 'direct completed status bypass unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%операцию финансового согласования%' then raise; end if;
+  end;
 
   select public.fn_submit_technologist_request_for_approval(
     v_request, v_technologist,
@@ -217,6 +227,9 @@ begin
   if not exists (select 1 from public.notifications where user_id = v_supply and related_machine_id = v_second_machine and title = 'Заявка одобрена и готова для снабжения') then
     raise exception 'supply was not notified after the decision';
   end if;
+  -- Stock/supply accounting may evolve; the approved demand and snapshot may not.
+  update public.request_components set reserved_from_stock = 1 where id = v_second_component;
+  if (select quantity_needed from public.request_components where id = v_second_component) <> 2 then raise exception 'stock accounting changed approved demand'; end if;
 
   update public.users set is_active = false where id in (
     select dm.user_id from public.department_members dm join public.positions p on p.id = dm.position_id where p.name = 'Администратор CRM'

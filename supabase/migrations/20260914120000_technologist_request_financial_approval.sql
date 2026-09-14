@@ -127,10 +127,15 @@ returns trigger language plpgsql security definer set search_path = public, pg_t
 declare v_request_id uuid; v_status text; v_fields text[] := array[
   'order_status', 'ordered_at', 'delivered_at', 'custom_delivery_date', 'supplier_id',
   'stock_on_hand_kg', 'stock_parts_kg', 'reserved_from_stock_kg', 'stock_sheet_size',
+  'reserved_from_stock_mm', 'reserved_from_stock_length_mm', 'reserved_from_stock_qty',
+  'reserved_from_stock', 'stock_remainder',
   'cancelled_at', 'cancelled_by', 'cancellation_reason', 'to_order_kg'
 ];
 begin
   v_request_id := case when tg_op = 'DELETE' then old.request_id else new.request_id end;
+  -- Generated columns are unavailable in NEW during BEFORE triggers.
+  -- Compare their input fields instead, never OLD's computed value with NULL.
+  v_fields := v_fields || coalesce((select array_agg(attname::text) from pg_attribute where attrelid = tg_relid and attgenerated <> '' and not attisdropped), '{}'::text[]);
   select status::text into v_status from public.technologist_requests where id = v_request_id for update;
   if v_status = 'pending_financial_approval' then
     raise exception 'Сначала верните заявку на редактирование';
@@ -235,7 +240,9 @@ begin
      and new.status not in ('submitted_to_supply','completed') then
     raise exception 'Одобренную заявку нельзя редактировать';
   end if;
-  if (new.status in ('pending_financial_approval','submitted_to_supply') or old.status = 'pending_financial_approval')
+  if (new.status = 'pending_financial_approval'
+      or (new.status in ('submitted_to_supply','completed') and old.status not in ('submitted_to_supply','completed'))
+      or old.status = 'pending_financial_approval')
      and current_setting('app.financial_approval_request', true) is distinct from old.id::text then
     raise exception 'Используйте операцию финансового согласования заявки';
   end if;
