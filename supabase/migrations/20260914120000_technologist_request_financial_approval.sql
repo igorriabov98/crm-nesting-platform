@@ -235,6 +235,12 @@ on public.technologist_request_approval_versions for each row execute function p
 create or replace function public.fn_guard_financial_approval_request_status()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 begin
+  if (old.status = 'pending_financial_approval' or exists (
+    select 1 from public.technologist_request_approval_versions where request_id = old.id and state = 'approved'
+  )) and (to_jsonb(new) - array['status','updated_at','submitted_at'])
+      is distinct from (to_jsonb(old) - array['status','updated_at','submitted_at']) then
+    raise exception 'Состав и реквизиты отправленной заявки нельзя редактировать';
+  end if;
   if new.status is not distinct from old.status then return new; end if;
   if exists (select 1 from public.technologist_request_approval_versions where request_id = old.id and state = 'approved')
      and new.status not in ('submitted_to_supply','completed') then
@@ -249,7 +255,7 @@ begin
   return new;
 end;
 $$;
-create trigger zz_financial_approval_request_status_guard before update of status
+create trigger zz_financial_approval_request_status_guard before update
 on public.technologist_requests for each row execute function public.fn_guard_financial_approval_request_status();
 
 create or replace function public.fn_guard_financial_approval_completion()

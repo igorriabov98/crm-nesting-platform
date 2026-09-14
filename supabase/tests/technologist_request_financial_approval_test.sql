@@ -77,6 +77,13 @@ begin
   if (select status from public.technologist_requests where id = v_request) <> 'pending_financial_approval' then
     raise exception 'request did not enter pending financial approval';
   end if;
+  begin
+    update public.technologist_requests set machine_id = v_second_machine where id = v_request;
+    raise exception 'pending request moved to another order';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%реквизиты отправленной заявки%' then raise; end if;
+  end;
   if (select count(*) from public.tasks where technologist_request_approval_id = v_version) <> 2 then
     raise exception 'approval task was not created for every active financial director';
   end if;
@@ -228,6 +235,13 @@ begin
     raise exception 'supply was not notified after the decision';
   end if;
   -- Stock/supply accounting may evolve; the approved demand and snapshot may not.
+  begin
+    update public.technologist_requests set notes = 'changed after approval' where id = v_second_request;
+    raise exception 'approved request notes unexpectedly changed';
+  exception when others then
+    get stacked diagnostics v_error = message_text;
+    if v_error not like '%реквизиты отправленной заявки%' then raise; end if;
+  end;
   update public.request_components set reserved_from_stock = 1 where id = v_second_component;
   if (select quantity_needed from public.request_components where id = v_second_component) <> 2 then raise exception 'stock accounting changed approved demand'; end if;
 

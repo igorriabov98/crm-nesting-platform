@@ -23,8 +23,9 @@ declare
 begin
   insert into public.machines(id, factory_id, name, created_by)
   values (v_machine, p_factory, p_machine_name, p_actor);
-  insert into public.technologist_requests(id, machine_id, created_by)
-  values (v_request, v_machine, p_actor);
+  -- Receipt/recalculation fixtures represent requests already handed to supply.
+  insert into public.technologist_requests(id, machine_id, created_by, status)
+  values (v_request, v_machine, p_actor, 'submitted_to_supply');
   insert into public.request_circle(
     id, request_id, diameter_mm, steel_grade, remainder_mm,
     material_id, material_variant_id
@@ -172,10 +173,10 @@ begin
   values
     (v_machine, v_factory, 'RECALC-MISMATCH', v_technologist),
     (v_matching_machine, v_factory, 'RECALC-MATCH', v_technologist);
-  insert into public.technologist_requests(id, machine_id, created_by)
+  insert into public.technologist_requests(id, machine_id, created_by, status)
   values
-    (v_request, v_machine, v_technologist),
-    (v_matching_request, v_matching_machine, v_technologist);
+    (v_request, v_machine, v_technologist, 'submitted_to_supply'),
+    (v_matching_request, v_matching_machine, v_technologist, 'submitted_to_supply');
   insert into public.materials(id, name, category, created_by)
   values (v_material, 'Круг для теста пересчёта', 'circle', v_technologist);
   insert into public.material_variants(
@@ -238,8 +239,8 @@ begin
   -- owns the common plan lock and invalidate the version it just approved.
   insert into public.machines(id, factory_id, name, created_by)
   values (v_approval_race_machine, v_factory, 'RECALC-APPROVAL-RACE', v_technologist);
-  insert into public.technologist_requests(id, machine_id, created_by)
-  values (v_approval_race_request, v_approval_race_machine, v_technologist);
+  insert into public.technologist_requests(id, machine_id, created_by, status)
+  values (v_approval_race_request, v_approval_race_machine, v_technologist, 'submitted_to_supply');
   insert into public.request_circle(
     id, request_id, diameter_mm, steel_grade, remainder_mm,
     material_id, material_variant_id
@@ -340,8 +341,8 @@ begin
     'RECALC-CHILD-BEFORE-APPROVAL',
     v_technologist
   );
-  insert into public.technologist_requests(id, machine_id, created_by)
-  values (v_child_approval_request, v_child_approval_machine, v_technologist);
+  insert into public.technologist_requests(id, machine_id, created_by, status)
+  values (v_child_approval_request, v_child_approval_machine, v_technologist, 'submitted_to_supply');
   insert into public.request_circle(
     id, request_id, diameter_mm, steel_grade, remainder_mm,
     material_id, material_variant_id
