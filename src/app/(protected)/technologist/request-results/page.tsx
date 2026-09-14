@@ -60,7 +60,7 @@ export default async function TechnologistRequestResultsPage() {
       <div className="grid gap-3 md:hidden">{rows.map((row) => {
         const current = row.currentVersion; const order = machine(row)
         return <Card key={row.id}><CardContent className="space-y-4 p-4">
-          <div className="flex items-start justify-between gap-3"><div><p className="font-semibold">№{row.request_number}</p><p className="mt-1 text-sm text-slate-600">{order?.name || 'Без названия'}</p></div><Badge variant="outline">{current ? `Версия ${formatApprovalVersion(current.revision_number)}` : 'Черновик'}</Badge></div>
+          <div className="flex items-start justify-between gap-3"><div><p className="font-semibold">№{row.request_number}</p><p className="mt-1 text-sm text-slate-600">{order?.name || 'Без названия'}</p></div><Badge variant="outline">{current ? `Версия ${formatApprovalVersion(current.revision_number)} · ${stateLabels[current.state] || current.state}` : 'Черновик'}</Badge></div>
           <div className="text-sm"><span className="text-slate-500">Тип материала: </span>{order?.material_type === 'standard' ? 'Стандартный' : order?.material_type === 'non_standard' ? 'Нестандартный' : '—'}</div>
           <Link className={buttonVariants({ variant: 'outline', className: 'min-h-11 w-full' })} href={`${ROUTES.TECHNOLOGIST_REQUEST_RESULTS}/${row.id}`}>Подробнее<ArrowRight className="ml-2 h-4 w-4" /></Link>
         </CardContent></Card>

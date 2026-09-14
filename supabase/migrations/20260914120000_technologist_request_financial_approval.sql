@@ -81,8 +81,15 @@ grant all on public.technologist_request_approval_archives to service_role;
 -- Restrictive policies apply in addition to existing material-access policies.
 create or replace function public.fn_financial_supply_visibility(p_request_id uuid)
 returns boolean language sql stable security definer set search_path = public, pg_temp as $$
-  select not exists (select 1 from public.users u where u.id = auth.uid() and u.role in ('supply_manager','procurement_head'))
-    or exists (select 1 from public.technologist_requests r where r.id = p_request_id and r.status in ('submitted_to_supply','completed'));
+  select exists (select 1 from public.technologist_requests r where r.id = p_request_id and r.status in ('submitted_to_supply','completed'))
+    or (not exists (select 1 from public.users u where u.id = auth.uid() and u.role in ('supply_manager','procurement_head')) and (
+      exists (select 1 from public.technologist_requests r where r.id = p_request_id and r.created_by = auth.uid())
+      or exists (select 1 from public.technologist_requests r join public.tasks t on t.machine_id = r.machine_id
+        where r.id = p_request_id and t.assigned_to = auth.uid() and t.task_type = 'technologist_request' and t.status in ('pending','in_progress','completed'))
+      or exists (select 1 from public.users u where u.id = auth.uid() and u.is_active and u.role in ('planning_director','financial_director','commercial_director'))
+      or exists (select 1 from public.users u join public.department_members dm on dm.user_id = u.id join public.positions p on p.id = dm.position_id
+        where u.id = auth.uid() and u.is_active and p.is_active and p.name = 'Администратор CRM')
+    ));
 $$;
 grant execute on function public.fn_financial_supply_visibility(uuid) to authenticated;
 create policy financial_supply_request_visibility on public.technologist_requests as restrictive
@@ -141,7 +148,7 @@ end $$;
 
 create or replace function public.fn_guard_financial_linked_operation()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_row jsonb; v_table text; v_item uuid; v_request uuid; v_status text;
+declare v_row jsonb; v_table text; v_item uuid; v_request uuid; v_old_request uuid; v_lock_request uuid; v_status text;
 begin
   v_row := case when tg_op = 'DELETE' then to_jsonb(old) else to_jsonb(new) end;
   v_table := v_row->>'request_item_table'; v_item := (v_row->>'request_item_id')::uuid;
@@ -150,16 +157,20 @@ begin
     return case when tg_op = 'DELETE' then old else new end;
   end if;
   execute format('select request_id from public.%I where id = $1', v_table) into v_request using v_item;
-  select status::text into v_status from public.technologist_requests where id = v_request for update;
+  if tg_table_name = 'supply_order_delivery_schedules' and v_request is null then raise exception 'Заявка ещё не передана в снабжение'; end if;
+  if tg_op = 'UPDATE' and old.request_item_table in ('request_sheet_metal','request_round_tube','request_circle','request_pipe',
+    'request_knives','request_components','request_paint','request_mesh','request_chain_cord') then
+    execute format('select request_id from public.%I where id = $1', old.request_item_table) into v_old_request using old.request_item_id;
+  end if;
+  for v_lock_request in select distinct id from unnest(array[v_request,v_old_request]) id where id is not null order by id loop
+  select status::text into v_status from public.technologist_requests where id = v_lock_request for update;
   if v_status = 'pending_financial_approval'
      or (tg_table_name = 'supply_order_delivery_schedules' and (v_status is null or v_status not in ('submitted_to_supply','completed')))
      or (exists (select 1 from public.users where id = auth.uid() and role in ('supply_manager','procurement_head'))
        and v_status not in ('submitted_to_supply','completed')) then
     raise exception 'Заявка ещё не передана в снабжение';
   end if;
-  if tg_op = 'UPDATE' and (old.request_item_table is distinct from new.request_item_table or old.request_item_id is distinct from new.request_item_id) then
-    raise exception 'Нельзя переносить складскую или закупочную операцию между позициями';
-  end if;
+  end loop;
   return case when tg_op = 'DELETE' then old else new end;
 end;
 $$;
