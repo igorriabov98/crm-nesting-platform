@@ -19,7 +19,7 @@ import {
   validateProductProjectUploads,
   type DirectProductProjectUpload,
 } from '@/lib/products/product-project-file-upload'
-import type { ResourceKey } from '@/lib/permissions/resources'
+import { hasPermission, type ResourceKey } from '@/lib/permissions/resources'
 import {
   productFileKindSchema,
   productProjectSchema,
@@ -100,9 +100,9 @@ export type ProductOption = Pick<Product,
   | 'drawing_number'
   | 'characteristics'
   | 'unit_weight_kg'
-  | 'base_price_eur'
   | 'status'
 > & {
+  base_price_eur: Product['base_price_eur'] | null
   current_product_version_id?: string | null
   current_product_version_number?: number | null
   product_version_count?: number
@@ -122,7 +122,8 @@ export type CorrectableProductProjectOption = Pick<ProductProject, 'id' | 'title
 export type ProductProjectApprovalInput = z.infer<typeof productProjectApprovalSchema>
 export type ProductProjectCorrectionInput = z.infer<typeof productProjectCorrectionSchema>
 
-export type ProductWithFiles = Product & {
+export type ProductWithFiles = Omit<Product, 'base_price_eur'> & {
+  base_price_eur: Product['base_price_eur'] | null
   product_files?: ProductFile[] | null
 }
 
@@ -152,6 +153,18 @@ export async function requireProductAccess(resourceKey: Extract<ResourceKey, 'pr
 export async function requireProductManageAccess(resourceKey: Extract<ResourceKey, 'products' | 'product_projects'> = 'products') {
   const context = await requirePermission(resourceKey, 'manage')
   return { ...context, db: dbFrom(context.supabase) }
+}
+
+function canViewProductPrices(context: Awaited<ReturnType<typeof requireProductAccess>>) {
+  return hasPermission(context.permissions, 'client_prices', 'view')
+}
+
+function canManageProductPrices(context: Awaited<ReturnType<typeof requireProductManageAccess>>) {
+  return hasPermission(context.permissions, 'client_prices', 'manage')
+}
+
+function redactProductPrice<T extends { base_price_eur: unknown }>(product: T, canViewPrices: boolean) {
+  return canViewPrices ? product : { ...product, base_price_eur: null }
 }
 
 async function requireProjectClientAccess(projectId: string, operation: 'view' | 'manage' = 'manage') {
@@ -394,7 +407,8 @@ function buildInitialProductFilePayloads(
 
 export async function getProductOptions() {
   try {
-    const { db } = await requireProductAccess()
+    const context = await requireProductAccess()
+    const { db } = context
     const { data, error } = await db
       .from('products')
       .select('id, name_uk, name_en, uktzed, drawing_number, characteristics, unit_weight_kg, base_price_eur, status')
@@ -402,7 +416,8 @@ export async function getProductOptions() {
       .order('name_uk', { ascending: true })
 
     if (error) throw error
-    const products = (data || []) as ProductOption[]
+    const products = ((data || []) as ProductOption[])
+      .map((product) => redactProductPrice(product, canViewProductPrices(context)))
     const productIds = products.map((product) => product.id)
     if (productIds.length === 0) return { data: products, error: null }
 
@@ -437,7 +452,8 @@ export async function getProductOptions() {
 
 export async function getProductProjectSampleOptions() {
   try {
-    const { db } = await requireProductAccess('product_projects')
+    const context = await requireProductAccess('product_projects')
+    const { db } = context
     const { data: projectsData, error: projectsError } = await db
       .from('product_projects')
       .select('id, title, client_id, status, approved_version_id')
@@ -494,7 +510,7 @@ export async function getProductProjectSampleOptions() {
         drawing_number: version.drawing_number,
         characteristics: version.characteristics || version.description || '',
         unit_weight_kg: Number(version.unit_weight_kg),
-        base_price_eur: Number(version.base_price_eur || 0),
+        base_price_eur: canViewProductPrices(context) ? Number(version.base_price_eur || 0) : null,
         status: 'active',
       } satisfies ProductProjectSampleOption]
     })
@@ -507,14 +523,19 @@ export async function getProductProjectSampleOptions() {
 
 export async function getProducts() {
   try {
-    const { db } = await requireProductAccess()
+    const context = await requireProductAccess()
+    const { db } = context
     const { data, error } = await db
       .from('products')
       .select('*, product_files(*)')
       .order('updated_at', { ascending: false })
 
     if (error) throw error
-    return { data: (data || []) as ProductWithFiles[], error: null }
+    return {
+      data: ((data || []) as ProductWithFiles[])
+        .map((product) => redactProductPrice(product, canViewProductPrices(context))),
+      error: null,
+    }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
@@ -522,7 +543,8 @@ export async function getProducts() {
 
 export async function getProduct(id: string) {
   try {
-    const { db } = await requireProductAccess()
+    const context = await requireProductAccess()
+    const { db } = context
     const { data, error } = await db
       .from('products')
       .select('*, product_files(*)')
@@ -530,7 +552,10 @@ export async function getProduct(id: string) {
       .single()
 
     if (error) throw error
-    return { data: data as ProductWithFiles, error: null }
+    return {
+      data: redactProductPrice(data as ProductWithFiles, canViewProductPrices(context)),
+      error: null,
+    }
   } catch (error) {
     return { data: null, error: getErrorMessage(error) }
   }
@@ -541,14 +566,18 @@ export async function createProduct(input: ProductInput) {
   let createdProductId: string | null = null
 
   try {
-    const { db, user } = await requireProductManageAccess()
+    const context = await requireProductManageAccess()
+    const { db, user } = context
     const adminSupabase = createAdminClient()
     const adminDb = dbFrom(adminSupabase)
     cleanupDb = adminDb
     const parsed = productSchema.parse(input)
     const { data, error } = await db
       .from('products')
-      .insert(productPayload(parsed, user.id))
+      .insert(productPayload({
+        ...parsed,
+        base_price_eur: canManageProductPrices(context) ? parsed.base_price_eur : 0,
+      }, user.id))
       .select('*')
       .single()
 
@@ -626,7 +655,13 @@ export async function createProductWithFiles(formData: FormData) {
 
     const { data, error } = await db
       .from('products')
-      .insert({ id: productId, ...productPayload(parsed, user.id) })
+      .insert({
+        id: productId,
+        ...productPayload({
+          ...parsed,
+          base_price_eur: canManageProductPrices(context) ? parsed.base_price_eur : 0,
+        }, user.id),
+      })
       .select('*')
       .single()
 
@@ -666,7 +701,8 @@ export async function createProductWithFiles(formData: FormData) {
 
 export async function updateProduct(id: string, input: ProductInput) {
   try {
-    const { db, user } = await requireProductManageAccess()
+    const context = await requireProductManageAccess()
+    const { db, user } = context
     const parsed = productSchema.parse(input)
     const payload: ProductUpdate = {
       name_uk: parsed.name_uk.trim(),
@@ -675,7 +711,7 @@ export async function updateProduct(id: string, input: ProductInput) {
       drawing_number: parsed.drawing_number.trim(),
       characteristics: parsed.characteristics?.trim() || '',
       unit_weight_kg: parsed.unit_weight_kg,
-      base_price_eur: parsed.base_price_eur,
+      ...(canManageProductPrices(context) ? { base_price_eur: parsed.base_price_eur } : {}),
       requires_vrb_mesh: parsed.requires_vrb_mesh,
       status: parsed.status,
       updated_by: user.id,

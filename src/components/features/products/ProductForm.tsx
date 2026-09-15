@@ -32,7 +32,11 @@ type ProductFormState = {
   status: ProductInput['status']
 }
 
-function initialState(product?: Product | null): ProductFormState {
+type VisibleProduct = Omit<Product, 'base_price_eur'> & {
+  base_price_eur: Product['base_price_eur'] | null
+}
+
+function initialState(product?: VisibleProduct | null): ProductFormState {
   return {
     name_uk: product?.name_uk || '',
     name_en: product?.name_en || '',
@@ -40,7 +44,7 @@ function initialState(product?: Product | null): ProductFormState {
     drawing_number: product?.drawing_number || '',
     characteristics: product?.characteristics || '',
     unit_weight_kg: product ? String(product.unit_weight_kg) : '',
-    base_price_eur: product ? String(product.base_price_eur) : '0',
+    base_price_eur: product?.base_price_eur === null ? '' : product ? String(product.base_price_eur) : '0',
     requires_vrb_mesh: product?.requires_vrb_mesh || false,
     status: product?.status || 'draft',
   }
@@ -68,7 +72,7 @@ function DetailItem({ icon, label, value }: { icon: React.ReactNode; label: stri
   )
 }
 
-export function ProductForm({ product }: { product?: Product | null }) {
+export function ProductForm({ product }: { product?: VisibleProduct | null }) {
   const router = useRouter()
   const { can } = usePermissions()
   const pdfInputRef = useRef<HTMLInputElement>(null)
@@ -77,6 +81,8 @@ export function ProductForm({ product }: { product?: Product | null }) {
   const [isEditing, setIsEditing] = useState(!product)
   const isEdit = Boolean(product?.id)
   const canManage = can('products', 'manage')
+  const canViewPrices = can('client_prices', 'view')
+  const canManagePrices = can('client_prices', 'manage')
 
   function setField<K extends keyof ProductFormState>(field: K, value: ProductFormState[K]) {
     setValues((current) => ({ ...current, [field]: value }))
@@ -171,7 +177,9 @@ export function ProductForm({ product }: { product?: Product | null }) {
           <DetailItem icon={<Barcode className="h-4 w-4" />} label="УКТЗЕД" value={product?.uktzed} />
           <DetailItem icon={<FileText className="h-4 w-4" />} label="Чертёж" value={product?.drawing_number} />
           <DetailItem icon={<Weight className="h-4 w-4" />} label="Вес" value={`${product?.unit_weight_kg || 0} кг`} />
-          <DetailItem icon={<Euro className="h-4 w-4" />} label="Базовая цена" value={`${product?.base_price_eur || 0} EUR`} />
+          {canViewPrices && (
+            <DetailItem icon={<Euro className="h-4 w-4" />} label="Базовая цена" value={`${product?.base_price_eur || 0} EUR`} />
+          )}
           <DetailItem
             icon={<Grid3X3 className="h-4 w-4" />}
             label="Сетка VRB"
@@ -220,10 +228,12 @@ export function ProductForm({ product }: { product?: Product | null }) {
           <Label htmlFor="unit_weight_kg">Вес единицы, кг *</Label>
           <Input id="unit_weight_kg" type="number" min="0" step="0.001" value={values.unit_weight_kg} onChange={(event) => setField('unit_weight_kg', event.target.value)} required className="min-h-11" />
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="base_price_eur">Базовая цена, EUR *</Label>
-          <Input id="base_price_eur" type="number" min="0" step="0.01" value={values.base_price_eur} onChange={(event) => setField('base_price_eur', event.target.value)} required className="min-h-11" />
-        </div>
+        {canViewPrices && (
+          <div className="space-y-1.5">
+            <Label htmlFor="base_price_eur">Базовая цена, EUR *</Label>
+            <Input id="base_price_eur" type="number" min="0" step="0.01" value={values.base_price_eur} onChange={(event) => setField('base_price_eur', event.target.value)} required disabled={!canManagePrices} className="min-h-11" />
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label htmlFor="product-status">Статус</Label>
           <Select value={values.status} onValueChange={(value) => setField('status', (value || 'draft') as ProductInput['status'])}>
