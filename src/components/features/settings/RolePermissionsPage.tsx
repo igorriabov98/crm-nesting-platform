@@ -195,10 +195,10 @@ function MetricCard({
 
 export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
   const router = useRouter()
-  const initialPermissions = useMemo(() => buildState(data.permissions), [data.permissions])
   const [selectedDepartmentId, setSelectedDepartmentId] = useState(data.departments[0]?.id || '')
   const [selectedPreviewUserId, setSelectedPreviewUserId] = useState(data.previewUsers[0]?.id || '')
   const [permissions, setPermissions] = useState(() => buildState(data.permissions))
+  const [persistedPermissions, setPersistedPermissions] = useState(() => buildState(data.permissions))
   const [isSaving, setIsSaving] = useState(false)
   const [isStartingUserSession, setIsStartingUserSession] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -244,7 +244,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
       for (const scope of SUBJECT_SCOPES) {
         for (const resource of data.resources) {
           const key = permissionKey(department.id, scope, resource.key)
-          const before = initialPermissions[key] || EMPTY_PERMISSION
+          const before = persistedPermissions[key] || EMPTY_PERMISSION
           const current = permissions[key] || EMPTY_PERMISSION
           if (before.canView !== current.canView
             || before.canManage !== current.canManage
@@ -255,7 +255,7 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
       }
     }
     return count
-  }, [data.departments, data.resources, initialPermissions, permissions])
+  }, [data.departments, data.resources, permissions, persistedPermissions])
 
   const selectedDepartmentStats = useMemo(() => {
     const stats = {
@@ -349,17 +349,18 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
   }
 
   function resetChanges() {
-    setPermissions(initialPermissions)
+    setPermissions(persistedPermissions)
     toast.info('Несохранённые изменения отменены')
   }
 
   async function onSave() {
     setIsSaving(true)
     try {
+      const submittedPermissions = permissions
       const payload: DepartmentAccessPermissionInput[] = data.departments.flatMap((department) =>
         SUBJECT_SCOPES.flatMap((subjectScope) =>
           data.resources.map((resource) => {
-            const state = getState(permissions, department.id, subjectScope, resource.key)
+            const state = getState(submittedPermissions, department.id, subjectScope, resource.key)
             return {
               departmentId: department.id,
               subjectScope,
@@ -375,7 +376,12 @@ export function RolePermissionsPage({ data }: RolePermissionsPageProps) {
       )
 
       const result = await saveDepartmentAccessPermissions(payload)
-      if (!result.success) throw new Error(result.error || 'Не удалось сохранить права доступа')
+      if (!result.success || !result.permissions) {
+        throw new Error(result.error || 'Не удалось сохранить права доступа')
+      }
+      const savedPermissions = buildState(result.permissions)
+      setPermissions(savedPermissions)
+      setPersistedPermissions(savedPermissions)
       toast.success('Права доступа сохранены')
       router.refresh()
     } catch (error) {
