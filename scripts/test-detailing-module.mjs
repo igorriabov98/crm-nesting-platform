@@ -99,6 +99,8 @@ assert.match(detailingRoute, /activeFactoryId=\{activeFactory\?\.id \|\| null\}/
 assert.match(machineCleanupActorMigration, /SELECT COALESCE\([\s\S]*auth\.uid\(\)[\s\S]*SELECT COALESCE\(machine\.archived_by, machine\.created_by\)/)
 assert.doesNotMatch(machineCleanupActorMigration, /SELECT COALESCE\(auth\.uid\(\), machine\.archived_by, machine\.created_by\)[\s\S]*FROM public\.machines machine/)
 assert.match(receivingPermissionMigration, /crm_user_has_resource_permission[\s\S]*department_access_permissions/)
+assert.match(receivingPermissionMigration, /DROP VIEW IF EXISTS public\.machines_with_totals[\s\S]*CREATE VIEW public\.machines_with_totals AS[\s\S]*m\.\*/)
+assert.match(receivingPermissionMigration, /column_name <> ALL \(ARRAY\['freight_cost', 'total_items_cost', 'total_expenses', 'total_cost'\]\)/)
 assert.match(receivingPermissionMigration, /permission\.subject_scope = CASE WHEN member\.is_department_head THEN 'head' ELSE 'member' END/)
 assert.match(receivingPermissionMigration, /'inventory_detailing_receiving',[\s\S]*true/)
 assert.doesNotMatch(receivingPermissionMigration, /detailing_assert_actor/)

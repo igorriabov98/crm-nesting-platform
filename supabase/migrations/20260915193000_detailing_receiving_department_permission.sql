@@ -1,3 +1,85 @@
+-- Refresh the frozen m.* projection after machines gained creation_year and
+-- annual_order_number. A PostgreSQL view does not acquire later table columns.
+DROP VIEW IF EXISTS public.machines_with_totals;
+
+CREATE VIEW public.machines_with_totals AS
+SELECT
+  m.*,
+  COALESCE(
+    (SELECT SUM(mi.weight * mi.quantity) / 1000
+     FROM public.machine_items mi
+     WHERE mi.machine_id = m.id),
+    0
+  ) AS total_weight,
+  COALESCE(
+    (SELECT SUM(mi.price * mi.quantity)
+     FROM public.machine_items mi
+     WHERE mi.machine_id = m.id),
+    0
+  ) AS total_items_cost,
+  COALESCE(
+    (SELECT SUM(me.amount)
+     FROM public.machine_expenses me
+     WHERE me.machine_id = m.id),
+    0
+  ) AS total_expenses,
+  COALESCE(
+    (SELECT SUM(mi.price * mi.quantity)
+     FROM public.machine_items mi
+     WHERE mi.machine_id = m.id),
+    0
+  ) + COALESCE(
+    (SELECT SUM(me.amount)
+     FROM public.machine_expenses me
+     WHERE me.machine_id = m.id),
+    0
+  ) AS total_cost,
+  COALESCE(
+    (SELECT COUNT(mi.id)
+     FROM public.machine_items mi
+     WHERE mi.machine_id = m.id),
+    0
+  ) AS item_count,
+  EXISTS(
+    SELECT 1
+    FROM public.machine_items mi
+    WHERE mi.machine_id = m.id
+      AND mi.coating IN ('zinc', 'cold_zinc')
+  ) AS has_zinc,
+  EXISTS(
+    SELECT 1
+    FROM public.machine_items mi
+    WHERE mi.machine_id = m.id
+      AND mi.coating = 'powder_coating'
+  ) AS has_painting,
+  EXISTS(
+    SELECT 1
+    FROM public.machine_items mi
+    WHERE mi.machine_id = m.id
+      AND mi.coating = 'zinc'
+  ) AS has_hot_zinc,
+  EXISTS(
+    SELECT 1
+    FROM public.machine_items mi
+    WHERE mi.machine_id = m.id
+      AND mi.coating = 'cold_zinc'
+  ) AS has_cold_zinc
+FROM public.machines m;
+
+DO $$
+DECLARE v_columns text;
+BEGIN
+  REVOKE SELECT ON public.machines_with_totals FROM authenticated;
+  SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) INTO v_columns
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'machines_with_totals'
+    AND column_name <> ALL (ARRAY['freight_cost', 'total_items_cost', 'total_expenses', 'total_cost']);
+  EXECUTE format('GRANT SELECT (%s) ON public.machines_with_totals TO authenticated', v_columns);
+  GRANT SELECT ON public.machines_with_totals TO service_role;
+END;
+$$;
+
 -- Keep the database guard for detailing receipt aligned with the department
 -- access matrix used by the application. The legacy RPC only checked users.role,
 -- so a permission granted in Administration -> Access was rejected by the RPC.
