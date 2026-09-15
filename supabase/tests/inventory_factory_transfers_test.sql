@@ -9,6 +9,8 @@ DECLARE
   v_mukachevo uuid := gen_random_uuid();
   v_actor uuid := gen_random_uuid();
   v_supply_actor uuid := gen_random_uuid();
+  v_matrix_actor uuid := gen_random_uuid();
+  v_matrix_department uuid := gen_random_uuid();
   v_material uuid := gen_random_uuid();
   v_scrap_material uuid := gen_random_uuid();
   v_knife_material uuid := gen_random_uuid();
@@ -84,9 +86,63 @@ BEGIN
   INSERT INTO public.users(id, email, full_name, role, factory_id, is_active)
   VALUES
     (v_actor, 'inventory-transfer-technologist@example.test', 'Тестовый технолог перевозок', 'technologist', v_beregovo, true),
-    (v_supply_actor, 'inventory-transfer-supply@example.test', 'Тестовый снабженец перевозок', 'procurement_head', v_beregovo, true);
+    (v_supply_actor, 'inventory-transfer-supply@example.test', 'Тестовый снабженец перевозок', 'procurement_head', v_beregovo, true),
+    (v_matrix_actor, 'inventory-transfer-matrix@example.test', 'Тестовый сотрудник с правом отдела', 'sales_manager', v_beregovo, true);
   INSERT INTO public.departments(name, head_user_id, factory_id, is_active, sort_order, created_by)
   VALUES ('Снабжение', v_supply_actor, v_beregovo, true, -1000, v_actor);
+
+  INSERT INTO public.departments(id, name, head_user_id, factory_id, is_active, sort_order, created_by)
+  VALUES (v_matrix_department, 'Тест права межзаводской приёмки', v_supply_actor, v_beregovo, true, -1001, v_actor);
+  INSERT INTO public.department_members(user_id, department_id, is_department_head, created_by)
+  VALUES (v_matrix_actor, v_matrix_department, false, v_actor);
+  INSERT INTO public.department_access_permissions(
+    department_id, subject_scope, resource_key, can_view, can_manage, updated_by
+  ) VALUES (
+    v_matrix_department, 'member', 'inventory_detailing_receiving', true, false, v_actor
+  );
+
+  PERFORM set_config('request.jwt.claim.sub', v_matrix_actor::text, true);
+  BEGIN
+    PERFORM public.inventory_transfer_assert_actor(
+      v_matrix_actor,
+      ARRAY[
+        'technologist', 'planning_director',
+        'financial_director', 'commercial_director'
+      ]::public.user_role[]
+    );
+    RAISE EXCEPTION 'Право просмотра ошибочно разрешило межзаводскую приёмку';
+  EXCEPTION WHEN others THEN
+    IF SQLERRM = 'Право просмотра ошибочно разрешило межзаводскую приёмку' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%Недостаточно прав для межскладской операции%' THEN RAISE; END IF;
+  END;
+
+  UPDATE public.department_access_permissions
+  SET can_manage = true
+  WHERE department_id = v_matrix_department
+    AND subject_scope = 'member'
+    AND resource_key = 'inventory_detailing_receiving';
+  PERFORM public.inventory_transfer_assert_actor(
+    v_matrix_actor,
+    ARRAY[
+      'technologist', 'planning_director',
+      'financial_director', 'commercial_director'
+    ]::public.user_role[]
+  );
+
+  BEGIN
+    PERFORM public.inventory_transfer_assert_actor(
+      v_matrix_actor,
+      ARRAY[
+        'technologist', 'supply_manager', 'procurement_head',
+        'planning_director', 'financial_director', 'commercial_director'
+      ]::public.user_role[]
+    );
+    RAISE EXCEPTION 'Право приёмки ошибочно разрешило бронирование перевозки';
+  EXCEPTION WHEN others THEN
+    IF SQLERRM = 'Право приёмки ошибочно разрешило бронирование перевозки' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%Недостаточно прав для межскладской операции%' THEN RAISE; END IF;
+  END;
+
   PERFORM set_config('request.jwt.claim.sub', v_actor::text, true);
 
   INSERT INTO public.materials(id, name, category, created_by)

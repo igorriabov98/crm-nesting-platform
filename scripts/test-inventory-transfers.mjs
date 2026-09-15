@@ -8,10 +8,11 @@ import path from 'node:path'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (relativePath) => readFile(path.join(root, relativePath), 'utf8')
 
-const [enumMigration, migration, inventoryActions, secureInventoryRpc, transferActions, reserveButton, transportPanel,
+const [enumMigration, migration, receivingPermissionMigration, inventoryActions, secureInventoryRpc, transferActions, reserveButton, transportPanel,
   receivingPanel, supplyRequestActions, taskActions, taskCards, productionFactActions, databaseTypes] = await Promise.all([
   read('supabase/migrations/20260721124444_inventory_factory_transfers.sql'),
   read('supabase/migrations/20260721124456_inventory_factory_transfer_module.sql'),
+  read('supabase/migrations/20260915203000_inventory_transfer_receiving_department_permission.sql'),
   read('src/lib/actions/inventory.ts'),
   read('src/lib/inventory/secure-rpc.ts'),
   read('src/lib/actions/inventory-transfers.ts'),
@@ -53,11 +54,17 @@ assert.match(migration, /BEFORE INSERT ON public\.production_fact_cutting_events
 assert.match(migration, /CREATE TRIGGER protect_inventory_transfer_task/)
 assert.match(migration, /SET search_path = ''/)
 assert.match(migration, /REVOKE ALL ON FUNCTION public\.fn_receive_inventory_transfer/)
+assert.match(receivingPermissionMigration, /CREATE OR REPLACE FUNCTION public\.inventory_transfer_assert_actor/)
+assert.match(receivingPermissionMigration, /p_roles = v_receiving_roles/)
+assert.match(receivingPermissionMigration, /crm_user_has_resource_permission\([\s\S]*'inventory_detailing_receiving',[\s\S]*true/)
+assert.match(receivingPermissionMigration, /inventory_transfer_role_allowed\(p_roles\)/)
+assert.match(receivingPermissionMigration, /auth\.uid\(\) IS DISTINCT FROM p_actor/)
 
 assert.match(inventoryActions, /reserveInventoryRowForMachineTransfer/)
 assert.match(secureInventoryRpc, /fn_reserve_inventory_row_for_machine_transfer/)
 assert.match(transferActions, /fn_set_inventory_transfer_date/)
 assert.match(transferActions, /fn_receive_inventory_transfer/)
+assert.match(transferActions, /requirePermission\('inventory_detailing_receiving', 'manage'\)[\s\S]*fn_receive_inventory_transfer/)
 assert.match(reserveButton, /Остатки других заводов/)
 assert.match(reserveButton, /Подтвердите маршрут/)
 assert.match(reserveButton, /window\.confirm/)
