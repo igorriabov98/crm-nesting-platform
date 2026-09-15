@@ -5,6 +5,10 @@ const migration = await readFile('supabase/migrations/20260914180000_commercial_
 const actions = await readFile('src/app/(protected)/sales-plan/actions.ts', 'utf8')
 const documents = await readFile('src/app/api/documents/generate/route.ts', 'utf8')
 const resources = await readFile('src/lib/permissions/resources.ts', 'utf8')
+const productActions = await readFile('src/lib/actions/products.ts', 'utf8')
+const productList = await readFile('src/components/features/products/ProductList.tsx', 'utf8')
+const productForm = await readFile('src/components/features/products/ProductForm.tsx', 'utf8')
+const productDetails = await readFile('src/app/(protected)/products/[id]/page.tsx', 'utf8')
 const protectedFileRoutes = await Promise.all([
   'src/app/api/machine-cutting/files/[id]/route.ts',
   'src/app/api/production/cutting-area/archives/[id]/route.ts',
@@ -33,6 +37,13 @@ assert.match(actions, /Создавать заказ можно только д�
 assert.doesNotMatch(actions, /name: parsed\.name/)
 assert.match(documents, /requireClientCommercialDocumentVisibility/)
 assert.match(documents, /PermissionDeniedError[\s\S]*403/)
+assert.match(productActions, /redactProductPrice[\s\S]*base_price_eur: null/)
+assert.match(productActions, /getProducts\(\)[\s\S]*redactProductPrice\(product, canViewProductPrices\(context\)\)/)
+assert.match(productActions, /getProduct\(id: string\)[\s\S]*redactProductPrice\(data as ProductWithFiles, canViewProductPrices\(context\)\)/)
+assert.match(productActions, /canManageProductPrices\(context\) \? \{ base_price_eur: parsed\.base_price_eur \} : \{\}/)
+assert.match(productList, /can\('client_prices', 'view'\)[\s\S]*canViewPrices && <th[^>]*>Цена<\/th>/)
+assert.match(productForm, /can\('client_prices', 'view'\)[\s\S]*canViewPrices && \([\s\S]*label="Базовая цена"/)
+assert.match(productDetails, /canViewProductPrices[\s\S]*canViewProductPrices && \([\s\S]*label="Базовая цена"/)
 for (const route of protectedFileRoutes) {
   assert.match(route, /requireClientCommercialDocumentVisibility/)
   assert.match(route, /PermissionDeniedError[\s\S]*403/)

@@ -22,6 +22,7 @@ const [
   inventoryPage,
   detailingRoute,
   machineCleanupActorMigration,
+  receivingPermissionMigration,
 ] = await Promise.all([
   read('supabase/migrations/20260719163223_detailing_module.sql'),
   read('supabase/migrations/20260719163222_detailing_task_type.sql'),
@@ -37,6 +38,7 @@ const [
   read('src/components/features/inventory/InventoryPage.tsx'),
   read('src/app/(protected)/inventory/detailing/page.tsx'),
   read('supabase/migrations/20260905100000_fix_detailing_actor_during_machine_cleanup.sql'),
+  read('supabase/migrations/20260915193000_detailing_receiving_department_permission.sql'),
 ])
 
 assert.match(taskTypeMigration, /ADD VALUE IF NOT EXISTS 'detailing_transfer'/)
@@ -96,6 +98,12 @@ assert.match(detailingRoute, /searchParams\?: Promise<\{ factory\?: string \}>/)
 assert.match(detailingRoute, /activeFactoryId=\{activeFactory\?\.id \|\| null\}/)
 assert.match(machineCleanupActorMigration, /SELECT COALESCE\([\s\S]*auth\.uid\(\)[\s\S]*SELECT COALESCE\(machine\.archived_by, machine\.created_by\)/)
 assert.doesNotMatch(machineCleanupActorMigration, /SELECT COALESCE\(auth\.uid\(\), machine\.archived_by, machine\.created_by\)[\s\S]*FROM public\.machines machine/)
+assert.match(receivingPermissionMigration, /crm_user_has_resource_permission[\s\S]*department_access_permissions/)
+assert.match(receivingPermissionMigration, /DROP VIEW IF EXISTS public\.machines_with_totals[\s\S]*CREATE VIEW public\.machines_with_totals AS[\s\S]*m\.\*/)
+assert.match(receivingPermissionMigration, /column_name <> ALL \(ARRAY\['freight_cost', 'total_items_cost', 'total_expenses', 'total_cost'\]\)/)
+assert.match(receivingPermissionMigration, /permission\.subject_scope = CASE WHEN member\.is_department_head THEN 'head' ELSE 'member' END/)
+assert.match(receivingPermissionMigration, /'inventory_detailing_receiving',[\s\S]*true/)
+assert.doesNotMatch(receivingPermissionMigration, /detailing_assert_actor/)
 
 if (process.env.DETAILING_TEST_DATABASE_URL) {
   const result = spawnSync('psql', [
