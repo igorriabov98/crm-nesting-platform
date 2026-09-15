@@ -56,6 +56,7 @@ import {
 } from '@/lib/actions/tasks'
 import { saveProductProjectEngineeringDeliverables } from '@/lib/actions/products'
 import { BusinessScrapCorrectionApprovalButton } from '@/components/features/business-scrap/BusinessScrapCorrectionApprovalButton'
+import { MachineDiscountApprovalButton } from '@/components/features/tasks/MachineDiscountApprovalButton'
 import type { TaskDelegationStatus, TaskStatus, TaskType } from '@/lib/types'
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -69,6 +70,7 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   supply_start: 'Снабжение',
   technologist_request: 'Заявка технолога',
   technologist_request_approval: 'Согласование заявки',
+  order_discount_approval: 'Согласование скидки',
   engineer_confirm: 'Чертежи',
   sales_order_confirmation: 'Подтверждение заказа',
   material_type_selection: 'Тип материала',
@@ -852,6 +854,11 @@ export function TaskCards({
           Проверить и одобрить
         </Link>
       </div>
+    }
+
+    if (task.task_type === 'order_discount_approval' && task.machine_discount_request_id) {
+      if (task.status === 'completed' || task.status === 'cancelled') return null
+      return <div className={groupClass}><MachineDiscountApprovalButton requestId={task.machine_discount_request_id} className={buttonClass} /></div>
     }
 
     if (task.task_type === 'department_request' && task.department_request_id) {

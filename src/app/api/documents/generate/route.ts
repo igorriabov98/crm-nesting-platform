@@ -114,6 +114,9 @@ export async function POST(request: Request) {
     const data = invoice
       ? await getInvoiceDocumentData(invoice.id)
       : await getDocumentData(parsed.machineId)
+    if (includesPrices && data.totals.discount_status === 'pending') {
+      throw new Error('Ценовые документы заблокированы: скидка ожидает подтверждения')
+    }
     const number = safeFilePart(data.machine.invoice_number || data.machine.specification_number || data.machine.id)
 
     if (parsed.type === 'all') {

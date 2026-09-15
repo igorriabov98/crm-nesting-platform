@@ -4,6 +4,7 @@ import type { DocumentData, DocumentItem } from '@/lib/actions/document-generati
 import { PDF_FONT_FAMILY, registerPdfFonts } from './fonts'
 import { formatMoney, formatQuantity } from './format'
 import { PdfText as Text } from './PdfText'
+import { isTransportExpenseCategory } from '@/lib/utils/transport-expense'
 
 registerPdfFonts()
 
@@ -36,6 +37,10 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     minHeight: 42,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    minHeight: 26,
   },
   headerRow: {
     flexDirection: 'row',
@@ -174,6 +179,8 @@ function TableHeader() {
 
 export function OrderSpecificationDocument({ data }: { data: DocumentData }) {
   const orderNumber = data.machine.specification_number || data.machine.name
+  const transportTotal = data.expenses.filter((expense) => isTransportExpenseCategory(expense.category)).reduce((sum, expense) => sum + expense.amount, 0)
+  const otherExpenses = data.expenses.filter((expense) => !isTransportExpenseCategory(expense.category))
 
   return (
     <Document>
@@ -201,13 +208,41 @@ export function OrderSpecificationDocument({ data }: { data: DocumentData }) {
               <ValueCell style={styles.totalPrice}>{formatMoney(item.total)}</ValueCell>
             </View>
           ))}
-          <View style={styles.row} wrap={false}>
+          <View style={styles.summaryRow} wrap={false}>
             <View style={[styles.cell, styles.cellContentCenter, styles.totalLabel]}>
-              <Text>Total/Всього:</Text>
+              <Text>Goods total / Сума товарів:</Text>
             </View>
             <View style={[styles.cell, styles.cellContentCenter, styles.totalValue]}>
               <Text>{formatMoney(data.totals.goods_total)}</Text>
             </View>
+          </View>
+          {Number(data.totals.discount_amount || 0) > 0 && (
+            <>
+              <View style={styles.summaryRow} wrap={false}>
+                <View style={[styles.cell, styles.cellContentCenter, styles.totalLabel]}><Text>Discount / Знижка {formatQuantity(Number(data.totals.discount_percent || 0))}%:</Text></View>
+                <View style={[styles.cell, styles.cellContentCenter, styles.totalValue]}><Text>−{formatMoney(Number(data.totals.discount_amount || 0))}</Text></View>
+              </View>
+              <View style={styles.summaryRow} wrap={false}>
+                <View style={[styles.cell, styles.cellContentCenter, styles.totalLabel]}><Text>Goods after discount / Товари зі знижкою:</Text></View>
+                <View style={[styles.cell, styles.cellContentCenter, styles.totalValue]}><Text>{formatMoney(data.totals.goods_total_after_discount || data.totals.goods_total)}</Text></View>
+              </View>
+            </>
+          )}
+          {transportTotal > 0 && (
+            <View style={styles.summaryRow} wrap={false}>
+              <View style={[styles.cell, styles.cellContentCenter, styles.totalLabel]}><Text>Freight cost / Транспорт:</Text></View>
+              <View style={[styles.cell, styles.cellContentCenter, styles.totalValue]}><Text>{formatMoney(transportTotal)}</Text></View>
+            </View>
+          )}
+          {otherExpenses.map((expense, index) => (
+            <View key={`${expense.label}-${index}`} style={styles.summaryRow} wrap={false}>
+              <View style={[styles.cell, styles.cellContentCenter, styles.totalLabel]}><Text>Additional expenses / Додаткові витрати: {expense.label}</Text></View>
+              <View style={[styles.cell, styles.cellContentCenter, styles.totalValue]}><Text>{formatMoney(expense.amount)}</Text></View>
+            </View>
+          ))}
+          <View style={styles.summaryRow} wrap={false}>
+            <View style={[styles.cell, styles.cellContentCenter, styles.totalLabel]}><Text>Total / Всього:</Text></View>
+            <View style={[styles.cell, styles.cellContentCenter, styles.totalValue]}><Text>{formatMoney(data.totals.grand_total)}</Text></View>
           </View>
         </View>
       </Page>

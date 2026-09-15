@@ -28,7 +28,7 @@ assert.match(migration, /REVOKE ALL ON public\.client_product_prices FROM authen
 assert.match(resources, /key: 'client_identity'[\s\S]*viewOnly: true/)
 assert.match(resources, /key: 'client_prices'[\s\S]*label: 'Цены заказов'[\s\S]*supportsCompanyScope: true/)
 assert.match(actions, /price: commercial\?\.canViewOrderPrices \? item\.price : null/)
-assert.match(actions, /total_cost: commercial\?\.canViewOrderPrices \? m\.total_cost : null/)
+assert.match(actions, /total_cost: commercial\?\.canViewOrderPrices \? totalBeforeDiscount - approvedDiscountAmount : null/)
 assert.match(actions, /Создавать заказ можно только для своей компании/)
 assert.doesNotMatch(actions, /name: parsed\.name/)
 assert.match(documents, /requireClientCommercialDocumentVisibility/)

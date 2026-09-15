@@ -342,6 +342,12 @@ export function MachineKanban({ machines, visibleMachineIds, factories, canManag
           <div>
             <div className="text-slate-400">Стоимость</div>
             <div className="mt-1 font-semibold tabular-nums text-emerald-700">{compactMoney(machine.total_cost)}</div>
+            {machine.discount?.status === 'approved' && (
+              <div className="mt-1 space-y-0.5">
+                <div className="font-medium text-emerald-700">Со скидкой −{machine.discount.discount_percent}%</div>
+                <div className="tabular-nums text-slate-400 line-through">{compactMoney(machine.total_before_discount)}</div>
+              </div>
+            )}
           </div>
         </div>
 

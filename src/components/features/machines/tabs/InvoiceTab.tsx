@@ -142,12 +142,13 @@ export function InvoiceTab({ machine, canManage }: InvoiceTabProps) {
             </p>
 
             {canManage && !machine.is_archived && !showIssueForm && (
-              <Button type="button" onClick={() => setShowIssueForm(true)} className="mt-4 min-h-10 bg-blue-950 hover:bg-blue-900">
+              <Button type="button" onClick={() => setShowIssueForm(true)} disabled={machine.discount?.status === 'pending'} className="mt-4 min-h-10 bg-blue-950 hover:bg-blue-900">
                 <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
                 Создать инвойс
               </Button>
             )}
             {machine.is_archived && <p className="mt-3 text-sm text-amber-800">Для архивной машины выставление недоступно.</p>}
+            {machine.discount?.status === 'pending' && <p className="mt-3 text-sm text-amber-800">Инвойс заблокирован: скидка ожидает подтверждения.</p>}
 
             {showIssueForm && (
               <div className="mt-5 max-w-md rounded-xl border border-blue-100 bg-blue-50/60 p-4">

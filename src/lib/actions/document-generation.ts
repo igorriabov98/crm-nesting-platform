@@ -3,6 +3,7 @@ import 'server-only'
 import { z } from 'zod'
 import { getMachineDeliveryBasisOption } from '@/lib/constants/machine-delivery-basis'
 import { documentGrossWeight, documentLineNetWeight, documentUnitWeight, totalPackingPlaces } from '@/lib/packing-summary'
+import { normalizeDiscountDocumentTotals } from '@/lib/order-discounts'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import type { Database } from '@/lib/types/database'
@@ -164,7 +165,12 @@ export type DocumentData = {
   packingGroups: DocumentPackingGroup[]
   totals: {
     goods_total: number
+    discount_status?: 'none' | 'pending' | 'approved'
+    discount_percent?: number
+    discount_amount?: number
+    goods_total_after_discount?: number
     expenses_total: number
+    total_before_discount?: number
     grand_total: number
     total_net_weight: number
     total_gross_weight: number
@@ -199,9 +205,13 @@ type LooseQueryResult = { data: unknown; error: { message?: string } | null }
 type LooseSingleQuery = PromiseLike<LooseQueryResult> & {
   select: (columns?: string) => LooseSingleQuery
   eq: (column: string, value: unknown) => LooseSingleQuery
+  in: (column: string, values: unknown[]) => LooseSingleQuery
+  order: (column: string, options?: { ascending?: boolean }) => LooseSingleQuery
+  limit: (count: number) => LooseSingleQuery
   is: (column: string, value: unknown) => LooseSingleQuery
   update: (values: unknown) => LooseSingleQuery
   single: () => Promise<LooseQueryResult>
+  maybeSingle: () => Promise<LooseQueryResult>
 }
 type LooseDb = {
   from: (table: string) => LooseSingleQuery
@@ -420,6 +430,19 @@ async function loadDocumentData(machineId: string, enforceSessionVisibility: boo
     })
   const goodsTotal = items.reduce((sum, item) => sum + item.total, 0)
   const expensesTotal = expenses.reduce((sum, expense) => sum + expense.amount, 0)
+  const { data: discountData, error: discountError } = await db
+    .from('machine_discount_requests')
+    .select('id, status, discount_percent, discount_amount')
+    .eq('machine_id', parsedMachineId)
+    .in('status', ['pending', 'approved'])
+    .order('revision_number', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (discountError) throw new Error(discountError.message || 'Не удалось загрузить скидку заказа')
+  const discount = discountData as { status: 'pending' | 'approved'; discount_percent: number; discount_amount: number } | null
+  const approvedDiscountAmount = discount?.status === 'approved' ? toNumber(discount.discount_amount) : 0
+  const approvedDiscountPercent = discount?.status === 'approved' ? toNumber(discount.discount_percent) : 0
+  const goodsTotalAfterDiscount = Math.round((goodsTotal - approvedDiscountAmount) * 100) / 100
   const totalNetWeight = items.reduce((sum, item) => sum + item.net_weight, 0)
   const totalPlaces = totalPackingPlaces(packingGroups)
   const [signatureUrl, stampUrl, clientSignatureUrl, clientStampUrl] = await Promise.all([
@@ -476,8 +499,13 @@ async function loadDocumentData(machineId: string, enforceSessionVisibility: boo
     packingGroups,
     totals: {
       goods_total: goodsTotal,
+      discount_status: discount?.status || 'none',
+      discount_percent: approvedDiscountPercent,
+      discount_amount: approvedDiscountAmount,
+      goods_total_after_discount: goodsTotalAfterDiscount,
       expenses_total: expensesTotal,
-      grand_total: goodsTotal + expensesTotal,
+      total_before_discount: goodsTotal + expensesTotal,
+      grand_total: goodsTotalAfterDiscount + expensesTotal,
       total_net_weight: totalNetWeight,
       total_gross_weight: documentGrossWeight(totalNetWeight),
       total_places: totalPlaces,
@@ -569,6 +597,8 @@ export async function getInvoiceDocumentData(invoiceId: string): Promise<Invoice
       .is('document_snapshot', null)
     if (snapshotError) throw new Error(snapshotError.message)
   }
+
+  snapshot = { ...snapshot, totals: normalizeDiscountDocumentTotals(snapshot.totals) }
 
   const [signatureUrl, stampUrl, clientSignatureUrl, clientStampUrl] = await Promise.all([
     createSignedImageUrl(adminSupabase, snapshot.company.signature_image_path),

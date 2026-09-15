@@ -1,5 +1,6 @@
 import { Database } from './database'
 import type { UserDepartmentMembershipSummary } from './departments'
+import type { MachineDiscountSummary } from '@/lib/order-discounts'
 
 export * from './departments'
 export * from './consumables'
@@ -217,8 +218,13 @@ export type MachineDetails = Machine & {
   client?: CommercialClientSummary | null
   total_weight: number
   total_items_cost: number | null
+  items_total_before_discount: number | null
+  discount_amount: number | null
+  discounted_items_total: number | null
+  total_before_discount: number | null
   total_expenses: number | null
   total_cost: number | null
+  discount: MachineDiscountSummary | null
   item_count: number
   has_zinc: boolean
   has_hot_zinc: boolean
@@ -228,6 +234,7 @@ export type MachineDetails = Machine & {
   order_code: string
   can_view_order_prices: boolean
   can_manage_order_prices: boolean
+  has_active_invoice: boolean
   can_use_order_documents: boolean
   can_use_priced_order_documents: boolean
 }
@@ -247,8 +254,13 @@ export type MachineListItem = Omit<MachineWithTotals, 'total_items_cost' | 'tota
   uniqueCoatings: CoatingType[]
   progress: MachineProgress
   total_items_cost: number | null
+  items_total_before_discount: number | null
+  discount_amount: number | null
+  discounted_items_total: number | null
+  total_before_discount: number | null
   total_expenses: number | null
   total_cost: number | null
+  discount: MachineDiscountSummary | null
   order_code: string
   can_view_order_prices: boolean
   can_manage_order_prices: boolean

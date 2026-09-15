@@ -297,6 +297,7 @@ export function MachineDetail({
                     specificationDate={machine.specification_date}
                     deliveryBasisType={machine.delivery_basis_type}
                     canGeneratePriced={machine.can_use_priced_order_documents}
+                    pricedDocumentsBlocked={machine.discount?.status === 'pending'}
                   />
                 </>
               )}
@@ -399,6 +400,12 @@ export function MachineDetail({
           <div className="bg-white p-4 sm:p-5">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Стоимость</span>
             <span className="mt-1 block text-lg font-bold tabular-nums text-emerald-700">{machine.total_cost == null ? '—' : `€${Number(machine.total_cost).toLocaleString()}`}</span>
+            {machine.discount?.status === 'approved' && (
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Со скидкой −{machine.discount.discount_percent}%</Badge>
+                <span className="text-xs tabular-nums text-slate-500 line-through">€{Number(machine.total_before_discount || 0).toLocaleString()}</span>
+              </div>
+            )}
             <span className="mt-0.5 block text-xs text-slate-500">
               {machine.created_by_user?.full_name || 'Неизвестно'} · {createdDate}
             </span>

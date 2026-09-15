@@ -887,6 +887,7 @@ export function MachineTable({
                           <td className="border-b border-slate-100 px-3 py-4 align-top group-hover:bg-slate-50/70">
                             <div className="font-semibold tabular-nums text-slate-900">{formatWeight(machine.total_weight)}</div>
                             <div className="mt-2 font-semibold tabular-nums text-emerald-700">{formatMoney(machine.total_cost)}</div>
+                            {machine.discount?.status === 'approved' && <div className="mt-1 text-xs"><span className="font-medium text-emerald-700">Со скидкой −{machine.discount.discount_percent}%</span><span className="ml-2 tabular-nums text-slate-400 line-through">{formatMoney(machine.total_before_discount)}</span></div>}
                           </td>
                           <td className="border-b border-slate-100 px-3 py-4 align-top group-hover:bg-slate-50/70">
                             <div className="space-y-3">
@@ -996,6 +997,7 @@ export function MachineTable({
                       <div className="bg-white p-3">
                         <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Стоимость</div>
                         <div className="mt-1 text-sm font-bold tabular-nums text-emerald-700">{formatMoney(machine.total_cost)}</div>
+                        {machine.discount?.status === 'approved' && <div className="mt-1 text-xs"><span className="font-medium text-emerald-700">Со скидкой −{machine.discount.discount_percent}%</span><span className="ml-2 tabular-nums text-slate-400 line-through">{formatMoney(machine.total_before_discount)}</span></div>}
                         <div className="mt-0.5">{getMaterialBadge(machine.material_type)}</div>
                       </div>
                     </div>

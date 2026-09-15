@@ -25,6 +25,7 @@ import { getErrorMessage } from '@/lib/utils/get-error-message'
 import { assertFactoryAccess, type FactoryScopedPermissionContext } from '@/lib/permissions/factory-scope'
 import { resolveActualMaterialDate, type MaterialCompletionItem } from '@/lib/supply-orders/material-completion'
 import { machineTotalWeightTonnes } from '@/lib/machine-weight'
+import { loadActiveMachineDiscounts } from '@/lib/machine-discounts/server'
 import type { CreateMachineInput, MachinePackingSettingsInput, UpdateMachineInput } from '@/lib/types/schemas'
 import type { CoatingType, CurrentUser, MachineDetails, MachineExpense, MachineItem, MachineListItem, MachineStatus, MaterialType, Product } from '@/lib/types'
 import type { Database } from '@/lib/types/database'
@@ -972,7 +973,7 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
       .select(`
         id, name, client_id, creation_year, annual_order_number, material_type, status, factory_id, is_confirmed, planned_material_date,
         actual_material_date, actual_shipping_date, created_at, created_by, total_weight,
-        total_cost, item_count, production_month, production_workshop, production_queue_number,
+        total_items_cost, total_expenses, total_cost, item_count, production_month, production_workshop, production_queue_number,
         contract_id, specification_number, specification_date,
         factory:factories(name),
         client:clients(id, name, primary_contact_name, responsible_user_id),
@@ -998,9 +999,10 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
     const rows = (rawData || []) as unknown as Omit<MachineListItem, 'production_progress' | 'supply_progress' | 'uniqueCoatings' | 'progress'>[]
     const commercialVisibility = await getCommercialVisibilityForClients(rows.map((machine) => machine.client_id), context)
     const machineIds = rows.map((machine) => machine.id)
-    const [progressContexts, actualMaterialDateFallbacks] = await Promise.all([
+    const [progressContexts, actualMaterialDateFallbacks, discounts] = await Promise.all([
       loadMachineProgressContexts(db, machineIds),
       loadSupplyOrderActualMaterialDates(db, rows.filter((machine) => !machine.actual_material_date).map((machine) => machine.id)),
+      loadActiveMachineDiscounts(createAdminClient() as never, machineIds),
     ])
     const mappedData: MachineListItem[] = rows.map((m) => {
       const rawClient = m.client as (MachineListItem['client'] & { responsible_user_id?: string | null }) | Array<MachineListItem['client'] & { responsible_user_id?: string | null }> | null
@@ -1009,6 +1011,12 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
       const invoiceViewScope = permissionDetails.companyScopes.invoices?.view || 'own'
       const canViewInvoice = hasPermission(permissions, 'invoices', 'view')
         && (invoiceViewScope === 'all' || client?.responsible_user_id === user.id)
+      const discount = discounts.get(m.id) || null
+      const approvedDiscountAmount = discount?.status === 'approved' ? Number(discount.discount_amount) : 0
+      const itemsBeforeDiscount = (m.machine_items || [])
+        .filter((item) => !item.is_sample)
+        .reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity), 0)
+      const totalBeforeDiscount = itemsBeforeDiscount + Number(m.total_expenses || 0)
       const machine = {
         ...m,
         client: client ? {
@@ -1021,9 +1029,14 @@ export async function getMachines(factoryFilter?: string | null, productionMonth
         order_code: m.name,
         can_view_order_prices: commercial?.canViewOrderPrices ?? false,
         can_manage_order_prices: commercial?.canManageOrderPrices ?? false,
-        total_cost: commercial?.canViewOrderPrices ? m.total_cost : null,
-        total_items_cost: commercial?.canViewOrderPrices ? m.total_items_cost : null,
+        total_cost: commercial?.canViewOrderPrices ? totalBeforeDiscount - approvedDiscountAmount : null,
+        total_items_cost: commercial?.canViewOrderPrices ? itemsBeforeDiscount : null,
+        items_total_before_discount: commercial?.canViewOrderPrices ? itemsBeforeDiscount : null,
+        discount_amount: commercial?.canViewOrderPrices ? approvedDiscountAmount : null,
+        discounted_items_total: commercial?.canViewOrderPrices ? itemsBeforeDiscount - approvedDiscountAmount : null,
+        total_before_discount: commercial?.canViewOrderPrices ? totalBeforeDiscount : null,
         total_expenses: commercial?.canViewOrderPrices ? m.total_expenses : null,
+        discount: commercial?.canViewOrderPrices ? discount : null,
         machine_items: (m.machine_items || []).map((item) => ({
           ...item,
           price: commercial?.canViewOrderPrices ? item.price : null,
@@ -1111,6 +1124,10 @@ export async function getMachine(id: string) {
       && (invoiceViewScope === 'all' || client?.responsible_user_id === user.id)
     const canManageInvoice = hasPermission(permissions, 'invoices', 'manage')
       && (invoiceManageScope === 'all' || client?.responsible_user_id === user.id)
+    const machineInvoices = Array.isArray(machineData.invoice)
+      ? machineData.invoice
+      : machineData.invoice ? [machineData.invoice] : []
+    machineData.has_active_invoice = machineInvoices.some((invoice) => !invoice.cancelled_at)
     if (!canViewInvoice) machineData.invoice = null
     if (client) {
       delete client.responsible_user_id
@@ -1141,19 +1158,27 @@ export async function getMachine(id: string) {
     const expenses = machineData.machine_expenses || []
     
     const total_weight = machineTotalWeightTonnes(items)
-    const total_items_cost = items.reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity)), 0)
+    const items_total_before_discount = items
+      .filter((item) => !item.is_sample)
+      .reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity)), 0)
+    const total_items_cost = items_total_before_discount
     const total_expenses = expenses.reduce((sum, exp) => sum + Number(exp.amount), 0)
-    const total_cost = total_items_cost + total_expenses
+    const total_before_discount = items_total_before_discount + total_expenses
     const has_hot_zinc = items.some((i) => i.coating === 'zinc')
     const has_cold_zinc = items.some((i) => i.coating === 'cold_zinc')
     const has_zinc = has_hot_zinc || has_cold_zinc
     const has_painting = items.some((i) => i.coating === 'powder_coating')
-    const [progressContexts, actualMaterialDateFallbacks] = await Promise.all([
+    const [progressContexts, actualMaterialDateFallbacks, discounts] = await Promise.all([
       loadMachineProgressContexts(db, [machineData.id]),
       machineData.actual_material_date
         ? Promise.resolve(new Map<string, string>())
         : loadSupplyOrderActualMaterialDates(db, [machineData.id]),
+      loadActiveMachineDiscounts(createAdminClient() as never, [machineData.id]),
     ])
+    const discount = discounts.get(machineData.id) || null
+    const discount_amount = discount?.status === 'approved' ? Number(discount.discount_amount) : 0
+    const discounted_items_total = items_total_before_discount - discount_amount
+    const total_cost = total_before_discount - discount_amount
     const machineWithActualMaterialDate: MachineDetails = {
       ...machineData,
       actual_material_date: machineData.actual_material_date || actualMaterialDateFallbacks.get(machineData.id) || null,
@@ -1166,8 +1191,13 @@ export async function getMachine(id: string) {
       status: getDisplayMachineStatus(machineWithActualMaterialDate),
       total_weight,
       total_items_cost: commercial?.canViewOrderPrices ? total_items_cost : null,
+      items_total_before_discount: commercial?.canViewOrderPrices ? items_total_before_discount : null,
+      discount_amount: commercial?.canViewOrderPrices ? discount_amount : null,
+      discounted_items_total: commercial?.canViewOrderPrices ? discounted_items_total : null,
+      total_before_discount: commercial?.canViewOrderPrices ? total_before_discount : null,
       total_expenses: commercial?.canViewOrderPrices ? total_expenses : null,
       total_cost: commercial?.canViewOrderPrices ? total_cost : null,
+      discount: commercial?.canViewOrderPrices ? discount : null,
       freight_cost: commercial?.canViewOrderPrices ? machineWithActualMaterialDate.freight_cost : null,
       item_count: items.length,
       has_zinc,

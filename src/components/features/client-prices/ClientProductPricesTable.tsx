@@ -11,6 +11,7 @@ import { CLIENT_PRICE_COATING_LABELS, CLIENT_PRICE_COATINGS } from '@/lib/client
 import type { ClientPriceProductRow } from '@/lib/client-prices/types'
 import type { CoatingType } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { ClientPriceAdjustmentDialog } from './ClientPriceAdjustmentDialog'
 
 type DraftMap = Record<string, string>
 
@@ -136,14 +137,17 @@ export function ClientProductPricesTable({
           <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
           <p className="mt-1 text-sm text-slate-500">{description}</p>
         </div>
-        <div className="relative w-full md:w-80">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={searchPlaceholder}
-            className="h-9 border-slate-200 bg-slate-50 pl-9"
-          />
+        <div className="flex w-full flex-col gap-2 sm:flex-row md:w-auto">
+          {clientId && canManage && <ClientPriceAdjustmentDialog clientId={clientId} rows={rows} />}
+          <div className="relative w-full md:w-80">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={searchPlaceholder}
+              className="h-11 border-slate-200 bg-slate-50 pl-9"
+            />
+          </div>
         </div>
       </div>
 
