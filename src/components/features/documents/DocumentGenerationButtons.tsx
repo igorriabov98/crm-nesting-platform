@@ -21,6 +21,7 @@ interface DocumentGenerationButtonsProps {
   specificationDate?: string | null
   deliveryBasisType?: string | null
   canGeneratePriced: boolean
+  pricedDocumentsBlocked?: boolean
 }
 
 const DOCUMENT_OPTIONS: Array<{
@@ -78,6 +79,7 @@ export function DocumentGenerationButtons({
   specificationDate,
   deliveryBasisType,
   canGeneratePriced,
+  pricedDocumentsBlocked = false,
 }: DocumentGenerationButtonsProps) {
   const [loadingType, setLoadingType] = useState<DocumentType | null>(null)
   const isLoading = loadingType !== null
@@ -149,12 +151,14 @@ export function DocumentGenerationButtons({
         {DOCUMENT_OPTIONS.filter((option) => canGeneratePriced || ['packing_list', 'quality_control'].includes(option.type)).map((option) => {
           const isActive = loadingType === option.type
           const Icon = option.kind === "zip" ? Package : FileText
+          const isPriced = ['specification', 'order_specification', 'invoice', 'all'].includes(option.type)
+          const blocked = pricedDocumentsBlocked && isPriced
 
           return (
             <Fragment key={option.type}>
               {option.type === "all" && <DropdownMenuSeparator className="bg-[#E8ECF0]" />}
               <DropdownMenuItem
-                disabled={isLoading}
+                disabled={isLoading || blocked}
                 onClick={() => handleGenerate(option.type)}
                 className="h-9 cursor-pointer gap-2 px-2.5 py-2 text-sm text-[#374151] focus:bg-[#F8F9FA] focus:text-[#1B3A6B]"
               >
@@ -163,7 +167,7 @@ export function DocumentGenerationButtons({
                 ) : (
                   <Icon className="h-4 w-4" />
                 )}
-                <span>{option.label}</span>
+                <span>{option.label}{blocked ? ' — ожидает подтверждения скидки' : ''}</span>
               </DropdownMenuItem>
             </Fragment>
           )

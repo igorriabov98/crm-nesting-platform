@@ -78,6 +78,8 @@ jobs:
         run: npm run test:technologist-completion
       - name: Technologist financial approval contracts
         run: npm run test:technologist-request-financial-approval
+      - name: Client price adjustment and order discount contracts
+        run: npm run test:order-discounts
       - name: Production cutting area request view
         run: npm run test:production-cutting-area
       - name: Long-stock cutting-plan PDF
@@ -176,6 +178,8 @@ jobs:
         run: npm run test:sales-order-confirmation-tasks
       - name: Commercial visibility and order code database lifecycle
         run: npm run test:commercial-visibility
+      - name: Client price adjustment and order discount database lifecycle
+        run: npm run test:order-discounts:db
       - name: VRB trigger permission boundary
         run: npm run test:vrb-outsourcing
       - name: Product-project mail RLS and correction lifecycle

@@ -444,6 +444,26 @@ function SpecificationItemsTable({
           )
         })}
 
+        {showTotals && (
+          <View style={styles.summaryRow} wrap={false}>
+            <Text style={styles.totalsLabelCell}>Goods total / Сума товарів</Text>
+            <Text style={columnStyles.total}>{formatMoney(data.totals.goods_total)}</Text>
+          </View>
+        )}
+
+        {showTotals && Number(data.totals.discount_amount || 0) > 0 && (
+          <>
+            <View style={styles.summaryRow} wrap={false}>
+              <Text style={styles.totalsLabelCell}>Discount / Знижка {formatQuantity(Number(data.totals.discount_percent || 0))}%</Text>
+              <Text style={columnStyles.total}>−{formatMoney(Number(data.totals.discount_amount || 0))}</Text>
+            </View>
+            <View style={styles.summaryRow} wrap={false}>
+              <Text style={[styles.totalsLabelCell, styles.bold]}>Goods after discount / Товари зі знижкою</Text>
+              <Text style={[styles.cell, styles.right, styles.bold, { width: COLS.total }]}>{formatMoney(data.totals.goods_total_after_discount || data.totals.goods_total)}</Text>
+            </View>
+          </>
+        )}
+
         {showTotals && transportTotal > 0 && (
           <View style={styles.summaryRow} wrap={false}>
             <Text style={[styles.totalsLabelCell, styles.bold]}>Foreightcost/Транспорт</Text>

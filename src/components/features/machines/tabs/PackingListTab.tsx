@@ -30,6 +30,7 @@ import {
 } from '@/lib/packing-summary'
 import { cn } from '@/lib/utils'
 import type { MachineDetails } from '@/lib/types'
+import { MachineDiscountSection } from '@/components/features/machines/MachineDiscountSection'
 
 type DraftGroup = {
   id?: string
@@ -315,6 +316,7 @@ export function PackingListTab({ machine, canEdit }: PackingListTabProps) {
 
   return (
     <div className="space-y-4">
+      <MachineDiscountSection machine={machine} />
       <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-violet-100 bg-violet-50 text-violet-700">

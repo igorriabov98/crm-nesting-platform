@@ -324,6 +324,24 @@ function InvoiceItemsTable({ data }: { data: DocumentData }) {
         </View>
       ))}
 
+      <View style={styles.tableRow} wrap={false}>
+        <Text style={[styles.cell, styles.totalsLabel]}>Goods total / Сума товарів:</Text>
+        <Text style={[styles.cell, styles.center, styles.total]}>{formatMoney(data.totals.goods_total)}</Text>
+      </View>
+
+      {Number(data.totals.discount_amount || 0) > 0 && (
+        <>
+          <View style={styles.tableRow} wrap={false}>
+            <Text style={[styles.cell, styles.totalsLabel]}>Discount / Знижка {formatQuantity(Number(data.totals.discount_percent || 0))}%:</Text>
+            <Text style={[styles.cell, styles.center, styles.total]}>−{formatMoney(Number(data.totals.discount_amount || 0))}</Text>
+          </View>
+          <View style={styles.tableRow} wrap={false}>
+            <Text style={[styles.cell, styles.totalsLabel]}>Goods after discount / Товари зі знижкою:</Text>
+            <Text style={[styles.cell, styles.center, styles.bold, styles.total]}>{formatMoney(data.totals.goods_total_after_discount || data.totals.goods_total)}</Text>
+          </View>
+        </>
+      )}
+
       {transportTotal > 0 && (
         <View style={styles.tableRow} wrap={false}>
           <Text style={[styles.cell, styles.transportLabel]}>Foreightcost/Транспорт</Text>

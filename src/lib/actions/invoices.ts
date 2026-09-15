@@ -190,6 +190,9 @@ export async function issueMachineInvoice(input: InvoiceIssueInput) {
     }
 
     const documentData = await getTrustedDocumentData(parsed.machineId)
+    if (documentData.totals.discount_status === 'pending') {
+      throw new Error('Новый инвойс заблокирован: скидка ожидает подтверждения')
+    }
     const missingFields = invoiceDocumentMissingFields(documentData)
     if (missingFields.length > 0) {
       throw new Error(`Инвойс не выставлен. Заполните данные:\n• ${missingFields.join('\n• ')}`)

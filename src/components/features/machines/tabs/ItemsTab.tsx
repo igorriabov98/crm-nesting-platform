@@ -268,9 +268,14 @@ export function ItemsTab({ machine, tasks = [], nestingStates = [], canManageNes
         <div className="text-sm text-[#374151]">
           <span className="text-[#6B7280]">Общий вес:</span> <span className="font-medium">{Number(machine.total_weight || 0).toFixed(2)} т</span>
         </div>
-        <div className="text-sm text-[#1B3A6B] font-medium text-lg">
-          <span className="text-[#6B7280] text-sm pr-2">Итого стоимость товаров:</span>
-          {machine.total_items_cost == null ? '—' : `€${Number(machine.total_items_cost).toLocaleString()}`}
+        <div className="space-y-1 text-right text-sm text-[#1B3A6B]">
+          <div><span className="pr-2 text-[#6B7280]">Товары до скидки:</span><span className="font-medium tabular-nums">{machine.items_total_before_discount == null ? '—' : `€${Number(machine.items_total_before_discount).toLocaleString()}`}</span></div>
+          {machine.discount?.status === 'approved' && (
+            <>
+              <div><span className="pr-2 text-[#6B7280]">Скидка {machine.discount.discount_percent}%:</span><span className="font-medium tabular-nums text-emerald-700">−€{Number(machine.discount_amount || 0).toLocaleString()}</span></div>
+              <div className="text-lg font-semibold"><span className="pr-2 text-sm text-[#6B7280]">Товары со скидкой:</span><span className="tabular-nums">€{Number(machine.discounted_items_total || 0).toLocaleString()}</span></div>
+            </>
+          )}
         </div>
       </div>
 
