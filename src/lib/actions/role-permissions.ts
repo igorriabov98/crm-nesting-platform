@@ -111,6 +111,7 @@ type LooseQuery<T = unknown> = PromiseLike<DbResult<T>> & {
   in: (column: string, values: unknown[]) => LooseQuery<T>
   order: (column: string, options?: { ascending?: boolean }) => LooseQuery<T>
   limit: (count: number) => LooseQuery<T>
+  range: (from: number, to: number) => LooseQuery<T>
   maybeSingle: () => LooseQuery<T>
   upsert: (values: unknown, options?: { onConflict?: string }) => LooseQuery<T>
   insert: (values: unknown) => LooseQuery<T>
@@ -327,12 +328,24 @@ async function getMembershipRows(db: LooseDb) {
 }
 
 async function getAccessRows(db: LooseDb) {
-  const { data, error } = await db
-    .from<DepartmentAccessRow[]>('department_access_permissions')
-    .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope, company_view_scope, company_manage_scope, updated_by, updated_at')
+  const pageSize = 1000
+  const rows: DepartmentAccessRow[] = []
 
-  if (error) throw new Error(error.message || 'Не удалось загрузить права доступа отделов')
-  return Array.isArray(data) ? data : []
+  while (true) {
+    const from = rows.length
+    const { data, error } = await db
+      .from<DepartmentAccessRow[]>('department_access_permissions')
+      .select('department_id, subject_scope, resource_key, can_view, can_manage, factory_scope, company_view_scope, company_manage_scope, updated_by, updated_at')
+      .order('department_id', { ascending: true })
+      .order('subject_scope', { ascending: true })
+      .order('resource_key', { ascending: true })
+      .range(from, from + pageSize - 1)
+
+    if (error) throw new Error(error.message || 'Не удалось загрузить права доступа отделов')
+    const page = Array.isArray(data) ? data : []
+    rows.push(...page)
+    if (page.length < pageSize) return rows
+  }
 }
 
 async function getAuditRows(db: LooseDb) {
@@ -340,7 +353,7 @@ async function getAuditRows(db: LooseDb) {
     .from<AuditRow[]>('department_access_audit_log')
     .select('id, department_id, subject_scope, resource_key, old_can_view, old_can_manage, new_can_view, new_can_manage, old_factory_scope, new_factory_scope, old_company_view_scope, new_company_view_scope, old_company_manage_scope, new_company_manage_scope, changed_by, changed_at, user:users(full_name), department:departments(name)')
     .order('changed_at', { ascending: false })
-    .limit(30)
+    .limit(100)
 
   if (error) return []
   return Array.isArray(data) ? data : []
@@ -727,11 +740,12 @@ export async function saveDepartmentAccessPermissions(input: DepartmentAccessPer
     revalidatePath(ROUTES.ADMIN_SETTINGS)
     revalidatePath(ROUTES.ADMIN_ACCESS_SETTINGS)
 
-    return { success: true, error: null }
+    return { success: true, error: null, permissions: normalized }
   } catch (error) {
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Не удалось сохранить права доступа',
+      permissions: null,
     }
   }
 }

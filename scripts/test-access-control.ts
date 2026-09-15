@@ -28,9 +28,39 @@ const accessSettingsSource = readFileSync(
   join(root, 'src/components/features/settings/RolePermissionsPage.tsx'),
   'utf8',
 )
+const accessActionsSource = readFileSync(
+  join(root, 'src/lib/actions/role-permissions.ts'),
+  'utf8',
+)
 assert(
   /timeZone: 'Europe\/Uzhgorod'/u.test(accessSettingsSource),
   'Даты аудита прав должны форматироваться в фиксированной зоне CRM без hydration mismatch',
+)
+assert(
+  /const \[persistedPermissions, setPersistedPermissions\] = useState\(\(\) => buildState\(data\.permissions\)\)/u.test(accessSettingsSource),
+  'Матрица доступа должна хранить локальный снимок успешно сохранённых прав',
+)
+assert(
+  /const before = persistedPermissions\[key\] \|\| EMPTY_PERMISSION/u.test(accessSettingsSource),
+  'Счётчик черновика должен сравнивать изменения с последним успешно сохранённым снимком',
+)
+assert(
+  /const savedPermissions = buildState\(result\.permissions\)[\s\S]*setPermissions\(savedPermissions\)[\s\S]*setPersistedPermissions\(savedPermissions\)/u.test(accessSettingsSource),
+  'После успешного сохранения матрица и локальный снимок должны принять нормализованные сервером права',
+)
+assert(
+  /return \{ success: true, error: null, permissions: normalized \}/u.test(accessActionsSource),
+  'Сохранение прав должно возвращать нормализованную сервером матрицу',
+)
+assert(
+  accessActionsSource.includes(".from<DepartmentAccessRow[]>('department_access_permissions')")
+    && accessActionsSource.includes('.range(from, from + pageSize - 1)')
+    && accessActionsSource.includes('if (page.length < pageSize) return rows'),
+  'Матрица доступа должна загружать все страницы прав, а не только первые 1000 строк',
+)
+assert(
+  /async function getAuditRows[\s\S]*\.limit\(100\)/u.test(accessActionsSource),
+  'История доступа должна вмещать крупный пакет изменений целиком',
 )
 
 function walk(directory: string, fileName: string): string[] {
